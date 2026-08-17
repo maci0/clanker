@@ -393,6 +393,11 @@ pub const Engine = struct {
     /// pinned into every prompt after the request. Per-instance for the same
     /// reason `feedback` is.
     granted: []const []const u8 = &.{},
+    /// Granted files that could not be shown in the last context because they
+    /// exceeded the granted-file quota. Re-asking for one of these must be
+    /// reported as "too large", not "already in the context above": the model
+    /// never saw it, and the "NOT INCLUDED" line told it to ask.
+    omitted_granted: []const []const u8 = &.{},
     /// File requests left in this run. Set from Options at the top of `run`;
     /// the only thing that makes the request round terminate.
     requests_left: u32 = 0,
@@ -690,7 +695,8 @@ pub const Engine = struct {
             }
             self.requests_left -= 1;
             var missing: std.ArrayList([]const u8) = .empty;
-            const added = try self.grant(want, &missing);
+            var too_large: std.ArrayList([]const u8) = .empty;
+            const added = try self.grant(want, &missing, &too_large);
             if (added > 0) {
                 log.log(.info, "model asked for {d} file(s); {d} newly granted, {d} request(s) left", .{ want.len, added, self.requests_left });
                 for (self.granted) |g| log.log(.debug, "granted: {s}", .{g});
@@ -701,13 +707,17 @@ pub const Engine = struct {
             // Nothing new to show. Asking again would return the same
             // question, so say why and make the next call produce a patch.
             log.log(.warn, "file request added nothing new; asking for a patch instead", .{});
+            const too_large_note = if (too_large.items.len > 0)
+                try std.fmt.allocPrint(self.arena, " Some of those files are too large to include in this context: {s}.", .{try std.mem.join(self.arena, ", ", too_large.items)})
+            else
+                "";
             self.feedback = try std.fmt.allocPrint(
                 self.arena,
-                "You asked for files instead of a patch, but none could be added: {s}{s}{s}Everything else you asked for is already in the context above. Propose the patch now, or answer that no changes are needed.",
+                "You asked for files instead of a patch, but none could be added.{s}{s}{s}Propose the patch now with what is already in the context above, or answer that no changes are needed.",
                 .{
-                    refused orelse "",
-                    if (refused != null) " is outside the readable surface. " else "",
-                    if (missing.items.len > 0) "Some of those paths do not exist in this repository. " else "",
+                    if (refused) |r| try std.fmt.allocPrint(self.arena, " \"{s}\" is outside the readable surface.", .{r}) else "",
+                    if (missing.items.len > 0) " Some of those paths do not exist in this repository." else "",
+                    too_large_note,
                 },
             );
             const stale_id = self.newId() catch null;
@@ -1254,7 +1264,8 @@ pub const Engine = struct {
     fn adoptIdea(self: *Engine, idea: plan_mod.Idea) !void {
         if (idea.files.len > 0) {
             var missing: std.ArrayList([]const u8) = .empty;
-            _ = try self.grant(idea.files, &missing);
+            var too_large: std.ArrayList([]const u8) = .empty;
+            _ = try self.grant(idea.files, &missing, &too_large);
         }
         self.plan_current = try std.fmt.allocPrint(
             self.arena,
@@ -1432,12 +1443,23 @@ pub const Engine = struct {
     /// line, so an invented path would look, from the next prompt, exactly
     /// like a granted file that happened to be empty, and the model would
     /// spend the rest of the run patching against nothing.
-    fn grant(self: *Engine, paths: []const []const u8, missing: *std.ArrayList([]const u8)) !usize {
+    fn grant(self: *Engine, paths: []const []const u8, missing: *std.ArrayList([]const u8), too_large: *std.ArrayList([]const u8)) !usize {
         var list: std.ArrayList([]const u8) = .empty;
         try list.appendSlice(self.arena, self.granted);
         var added: usize = 0;
         for (paths) |p| {
-            if (pathIn(list.items, p)) continue;
+            if (pathIn(list.items, p)) {
+                // Already granted once, so the request cannot add it. But "granted"
+                // does not mean "shown": a granted file over the quota was omitted
+                // from the context the model just read, and its name sat in the
+                // NOT INCLUDED list that told the model to ask for it. That re-ask
+                // is not the "you already have this" case; it is the "this file is
+                // too large to ever be shown" case, and the caller has to say so.
+                if (pathIn(self.omitted_granted, p)) {
+                    try too_large.append(self.arena, p);
+                }
+                continue;
+            }
             std.Io.Dir.cwd().access(self.ctx.io, p, .{}) catch {
                 log.log(.warn, "file request: '{s}' does not exist", .{p});
                 try missing.append(self.arena, p);
@@ -2334,6 +2356,18 @@ pub const Engine = struct {
                 try focus.appendSlice(self.arena, path);
                 try focus.appendSlice(self.arena, "\n");
             }
+        }
+        // Which of the model's earlier grants did not fit. grant() consults
+        // this so a re-request for a too-large file is answered with the real
+        // reason rather than "already in the context above" -- the model never
+        // saw it, and the NOT INCLUDED line above told it to ask for it, so
+        // that answer would leave it re-asking until the retry budget dies.
+        {
+            var dropped: std.ArrayList([]const u8) = .empty;
+            for (self.granted) |g| {
+                if (pathIn(omitted.items, g)) try dropped.append(self.arena, g);
+            }
+            self.omitted_granted = try dropped.toOwnedSlice(self.arena);
         }
         const total = buf.items.len + focus.items.len;
         if (total == 0) return .{ .bulk = "(no source files found)", .focus = "", .files = 0, .bytes = 0 };
@@ -3672,25 +3706,69 @@ test "granting is bounded, refuses what does not exist, and does not double-coun
     var engine = Engine{ .ctx = &ctx, .arena = arena, .provider = &provider, .cfg = &cfg, .hist = undefined, .instructions = "" };
 
     var missing: std.ArrayList([]const u8) = .empty;
+    var too_large: std.ArrayList([]const u8) = .empty;
 
     // A path that does not exist is refused, not granted: collectFile drops an
     // unreadable file with only a debug line, so granting one would look, from
     // the next prompt, exactly like a file that turned out to be empty.
-    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"src/does_not_exist.zig"}, &missing));
+    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"src/does_not_exist.zig"}, &missing, &too_large));
     try std.testing.expectEqual(@as(usize, 1), missing.items.len);
     try std.testing.expectEqual(@as(usize, 0), engine.granted.len);
 
-    try std.testing.expectEqual(@as(usize, 1), try engine.grant(&.{"build.zig"}, &missing));
+    try std.testing.expectEqual(@as(usize, 1), try engine.grant(&.{"build.zig"}, &missing, &too_large));
     try std.testing.expectEqual(@as(usize, 1), engine.granted.len);
 
     // Asking again for something already granted adds nothing, which is what
     // makes the engine answer "you already have this" instead of looping.
-    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"build.zig"}, &missing));
+    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"build.zig"}, &missing, &too_large));
     try std.testing.expectEqual(@as(usize, 1), engine.granted.len);
+    try std.testing.expectEqual(@as(usize, 0), too_large.items.len);
 
     // A later round accumulates onto the earlier one rather than replacing it.
-    try std.testing.expectEqual(@as(usize, 1), try engine.grant(&.{ "build.zig", "README.md" }, &missing));
+    try std.testing.expectEqual(@as(usize, 1), try engine.grant(&.{ "build.zig", "README.md" }, &missing, &too_large));
     try std.testing.expectEqual(@as(usize, 2), engine.granted.len);
+}
+
+test "grant distinguishes an already-shown file from one granted but too large to show" {
+    // The whole point of omitted_granted: a file the model was granted earlier
+    // can still be absent from the context it just read, because it overran the
+    // granted-file quota and landed in the NOT INCLUDED list. Re-asking for it
+    // must not be answered "you already have this" -- the model does not.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env };
+    var cfg = config.Config{};
+    var provider = try config.Provider.single(arena, "p", "http://localhost", .openai_compat, "m", .{});
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = &provider,
+        .cfg = &cfg,
+        .hist = undefined,
+        .instructions = "",
+        .granted = &.{"build.zig"},
+        .omitted_granted = &.{"build.zig"},
+    };
+
+    var missing: std.ArrayList([]const u8) = .empty;
+    var too_large: std.ArrayList([]const u8) = .empty;
+
+    // Already granted but omitted from the last context: reported as too large,
+    // not silently absorbed into "you already have this".
+    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"build.zig"}, &missing, &too_large));
+    try std.testing.expectEqual(@as(usize, 1), too_large.items.len);
+    try std.testing.expectEqualStrings("build.zig", too_large.items[0]);
+
+    // A granted file that WAS shown is the ordinary no-op re-ask.
+    engine.omitted_granted = &.{};
+    try std.testing.expectEqual(@as(usize, 0), try engine.grant(&.{"build.zig"}, &missing, &too_large));
+    try std.testing.expectEqual(@as(usize, 1), too_large.items.len);
 }
 
 test "a file named in the instruction is pinned into the context" {

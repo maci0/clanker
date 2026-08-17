@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve-self stalls re-asking for a granted file too large to include](bugs/2026-08-17-improve-self-stalls-asking-for-too-large-file.md) — Resolved
+
 - [A status change keeps the old text of a multi-line TL;DR bullet](bugs/2026-08-17-status-truncates-a-multi-line-tldr-bullet.md) — Open
 
 - [clanker commit --yes auto-applies the degraded fallback plan](bugs/2026-08-17-commit-yes-applies-a-degraded-fallback-plan.md) — Resolved
