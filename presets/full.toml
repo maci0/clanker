@@ -1,0 +1,5 @@
+# Full preset: no filtering — the default, a no-op so --preset is optional.
+description = "Full access: every tool available (the default)"
+system_prompt_append = ""
+tools_allow = []
+tools_deny = []

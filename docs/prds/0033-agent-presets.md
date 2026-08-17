@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. No source files yet. Proposed: a `preset.toml` file per preset under
+In progress — 2026-08-17. thin slice: presets/research.toml+full.toml + src/preset/preset.zig loader with allow/deny filter (WASM-by-default, only preset-named files); CLI --preset and dispatch wiring follow next thin slice
 a configured set of directories (mirroring `agent.tools_dir`'s list-of-roots
 precedent from PRD 0022), a `clanker preset list|show|new` subcommand
 (mirroring `clanker plugins list|validate|new`'s shape), a `--preset <name>`

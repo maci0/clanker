@@ -1,0 +1,6 @@
+# Read-only research preset: only filesystem reads and web search/fetch.
+description = "Research-only: file reads and web search, no writes"
+system_prompt_append = "You are in research-only preset: read and search freely, but do not write files, run mutating commands, or delegate writes. If a write is truly needed, explain what you would do and ask the operator to switch presets."
+
+tools_deny = ["edit_file", "write_ask", "patch_apply", "exec", "subagent", "swarm", "kanban_*", "todo_*", "goal_*", "compare", "arena"]
+tools_allow = []
