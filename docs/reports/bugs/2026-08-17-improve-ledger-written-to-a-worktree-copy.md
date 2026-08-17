@@ -85,11 +85,36 @@ The improve engine stages each pass into a git worktree under
 than a link to the shared one. The ledger append therefore succeeds — nothing
 errors, nothing warns — into a file that is discarded with the worktree.
 
-The documented behaviour points the other way, which is why this reads as
-correct at every layer. ADR 0017 and the `ensureDir` note in AGENTS.md both
-describe an isolated run's `state` as a *symlink*, and `ck_fs_write_if` was
-given `ensureDir` precisely because of it. The improve worktrees do not get
-that treatment, and nothing checks that they do.
+ADR 0017 and the `ensureDir` note in AGENTS.md both describe an isolated run's
+`state` as a *symlink*, and `ck_fs_write_if` was given `ensureDir` precisely
+because of it. The obvious reading is therefore that improve worktrees simply
+never got that treatment.
+
+That reading is wrong, and this record made it before checking. The engine
+does try. `linkCheckoutStateAt` in `src/improve/worktree.zig` walks `host.shared_prefixes`
+and symlinks `state` (named by `sharedDirectory`) from the worktree back to the
+checkout, and its own comment describes exactly this failure -- "native
+session/run writes later create a private `state/` in the worktree. The two
+readers then disagree about the same run."
+
+Nor is it stale code that postdates these worktrees: the linking landed in
+`c6dfd690` on 08-14 23:41, and all ten worktrees were created on 08-17 between
+11:23 and 16:17. The treatment is attempted, and something skips it.
+
+**Which skip path fires is not established.** That function has exactly two --
+`checkout.access(io, name, .{}) catch continue`, and `symLink(...)` with
+`error.PathAlreadyExists => {}` -- and this record does not say which.
+
+One piece of evidence rules out the obvious guess. The worktree `state` is not
+a copy of the shared directory: it holds 11 entries against the shared
+directory's 41 -- `autolearn.jsonl`, `improvements.jsonl`, `learnings.md`,
+`reasoning.jsonl`, `runs`, `sessions`, `staging`, `token_stats.jsonl` and two
+lock files, exactly the set an improve run writes. Nothing bulk-copied
+`state/`; a private directory was created and populated. That fits the
+`PathAlreadyExists` branch and not a wholesale copy, but the ordering that
+would prove it has not been traced. The checkout's own `state` being a symlink
+to `clanker-state` may matter to `access` and to `symLink` target resolution
+here, and is worth checking first.
 
 Only the merge-back crosses the worktree boundary, and it carries commits, not
 state. `Worktree.merged` answers "did promotion land?" — it says nothing about
@@ -103,10 +128,11 @@ first.
 
 A fix has two halves that must not be confused:
 
-1. **Stop the divergence.** Give an improve worktree the same `state` symlink
-   an isolated run gets, so the append lands in the shared ledger. That is the
-   documented behaviour already (ADR 0017); this is the case that does not
-   follow it.
+1. **Stop the divergence.** Find which of the two skip paths in
+   `linkCheckoutStateAt` fires and close it, so the append lands in the shared
+   ledger. The intent and the code are already there (ADR 0017, `c6dfd690`);
+   this is a link that is attempted and silently not made, which is why no
+   layer reports anything.
 2. **Recover the 23 entries.** They exist only in the worktree copies. Any fix
    that starts by cleaning up `.clanker-worktrees/` destroys them.
 
