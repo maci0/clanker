@@ -373,3 +373,73 @@ zig build
 ```bash
 clanker git push origin main
 ```
+## An interrupted `pull --rebase --autostash` leaves a stash behind
+
+`--autostash` stashes the dirty tree, rebases, and pops it back. If the rebase
+does not reach `rebase (finish)` — interrupted, aborted, or retried — the pop
+never happens and the stash is orphaned. Nothing reports this: the retry
+succeeds, the tree looks right, and the stash sits in a store that
+`git log --branches --tags --not --remotes` does not cover.
+
+Seen on 2026-08-17 in this checkout. The reflog is what shows it:
+
+```bash
+git reflog --date=format:"%H:%M:%S"
+```
+
+```
+07:57:12  commit f88b3fe9
+07:57:19  pull --rebase --autostash (start)   <- stash created
+07:58:56  commit 31a98a6f  same subject       <- first rebase never finished
+08:02:14  pull --rebase --autostash (start)   <- second attempt
+08:02:49  rebase (finish) -> 82033d43
+```
+
+A `(start)` with no matching `rebase (finish)` before the next `(start)` is the
+tell. The orphan also shows as a stash whose base commit is not an ancestor of
+`origin/main` while that commit's *subject* is — the rebase replayed it under a
+new sha:
+
+```bash
+git merge-base --is-ancestor "stash@{0}^" origin/main
+```
+
+**Do not pop it.** The word "autostash" reads as transient housekeeping, which
+is exactly what invites a `stash pop`, and its base is old by then:
+`git diff HEAD stash@{0}` here was 142 files, 1284 insertions and **8804
+deletions**. Popping would have reverted a large amount of landed work to
+restore 8 files that were already present.
+
+Whether its content still matters is a per-line question, not a per-file one.
+Compare the stash against its own parent — not against HEAD, which mixes in
+every commit since — and check each added line against the current file:
+
+```bash
+git diff "stash@{0}^" "stash@{0}" -- <path>
+```
+
+Here 118 of 124 added lines were already present verbatim, and the 6 that were
+not were a single comment block superseded by a later rewrite; the work had been
+redone and committed as `d44669f9` and `fcf193a5`. Two checks that look
+authoritative and are not: `git apply --reverse --check` fails on context drift
+alone, and a matching commit *subject* is not evidence the patch landed — use
+`git cherry origin/main <branch>` for commits.
+
+Dropping is the right disposal once the content is accounted for, but record the
+sha first. A dropped stash stays in the object database for the gc grace window
+and `git show <sha>` still reads it, so the sha in a note is enough; a recovery
+tag is worse, because it comes back as a ref that reads as unpushed work.
+
+```bash
+git rev-parse "stash@{0}"
+```
+
+```bash
+git stash drop "stash@{0}"
+```
+
+Ownership first, always. A stash carries the checkout's git identity, not the
+session's, so every agent's stash is authored by the same person and the
+metadata cannot say whose it is. Creation time against session start times is
+what rules sessions out. Ask the live sessions and get the operator's decision
+before dropping one you did not create.
