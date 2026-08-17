@@ -28,6 +28,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const doc = @import("doc_scaffold.zig");
+const records_grep = @import("records_grep.zig");
 
 /// `list` reads every RFC to report its real status rather than trusting the
 /// index, and each read is bump-allocated out of the host arena for the whole
@@ -542,12 +543,11 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
 }
 
 fn grepDir(where: []const u8, query: []const u8) !std.json.Value {
-    const raw = lib.fsGrep(where, query) catch |err| switch (err) {
-        error.NotFound => return .{ .array = std.json.Array.init(lib.alloc) },
+    return records_grep.grepAll(where, query) catch |err| switch (err) {
+        error.NotFound => .{ .array = std.json.Array.init(lib.alloc) },
+        error.IoError => .{ .array = std.json.Array.init(lib.alloc) },
         else => return err,
     };
-    return std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch
-        .{ .array = std.json.Array.init(lib.alloc) };
 }
 
 // ---------------------------------------------------------------- mutations

@@ -612,6 +612,38 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Record search matches every word of a multi-word query instead of the query
+  as one exact substring, so `clanker reports search "concurrent sessions"`
+  now finds
+  `docs/runbooks/concurrent-agent-sessions-on-one-checkout.md`, which says both
+  words on different lines and which the old matching answered "no report or
+  runbook mentions it" for. A `"quoted phrase"` still asks for the adjacent
+  form, and a one-word query is unchanged. Shared by all five stores
+  (`reports`, `rfc`, `adr`, `prd`, `research`), so the CLI, the HTTP endpoints
+  and the agent tools all inherit it.
+- A `[[peers]]` entry that does not answer no longer ends an ordinary command
+  in a memory leak trace, and the backoff it records is no longer read back out
+  of a freed arena. The per-peer chat cooldown table is process-lifetime state
+  with one slot per peer, so it is a fixed-size table that copies the peer name
+  rather than a heap list borrowing the name out of the request that filled it.
+- `clanker commit` no longer reports success when it could not put the index
+  back. The restoring `git read-tree` discarded the error from the call itself
+  and only inspected the stderr it wrote, so a read-tree that never ran left
+  the half-built index the routine exists to avoid and said nothing. The
+  restore failure is now reported whether or not the commits went through.
+- `state/autolearn.jsonl` and `state/reasoning.jsonl` say so when a record is
+  dropped. Both append paths logged a failed open and then discarded every
+  error after it, so a full disk or a revoked permission lost records while the
+  run looked healthy. All three state logs now share one appender
+  (`src/util/append_line.zig`) that returns its error.
+- `clanker mesh join` no longer leaks a socket per failed handshake. Only the
+  longhand failure branches closed the connection; a short allocation or a peer
+  frame that was malformed or over `mesh.max_frame` returned past them. A peer
+  is also registered only once its reader thread owns the descriptor.
+- `clanker serve` and the mesh listener log when a socket read timeout could
+  not be set, instead of falling back to unbounded reads silently: 64 such
+  connections exhaust the connection threads and stop the server accepting.
+
 - `clanker stats` and `GET /api/stats` no longer stop working once enough
   models have been used. The response was assembled in a fixed 64 KiB buffer
   while the list it holds has one row per (provider, model) pair ever

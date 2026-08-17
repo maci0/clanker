@@ -679,6 +679,123 @@ pub fn setInventoryRowStatus(
     return false;
 }
 
+// ------------------------------------------------------- record search
+
+/// The most terms a record search is split into. Each term costs one host
+/// grep over the store, so the cap bounds the work a single query can ask for;
+/// anything past it is folded into the last term as a phrase.
+pub const max_search_terms = 8;
+
+/// Splits a record-store query into the terms every match must contain.
+/// Whitespace separates terms and a `"quoted phrase"` is one term, so
+/// `concurrent sessions` finds a record that says both words anywhere while
+/// `"concurrent sessions"` still asks for the adjacent phrase.
+///
+/// The store search used to pass the whole query to one substring grep, which
+/// is the phrase form with no way to ask for the other one: `reports search
+/// "concurrent sessions"` found nothing while
+/// `docs/runbooks/concurrent-agent-sessions-on-one-checkout.md` sat in the
+/// store saying both words on different lines. A search that misses an
+/// existing record is worse than one that returns too much, because the caller
+/// concludes the record does not exist and writes a second one.
+///
+/// Slices into `query`; writes at most `buf.len` terms and returns what it
+/// wrote. An unterminated quote runs to the end of the query.
+pub fn searchTerms(query: []const u8, buf: [][]const u8) []const []const u8 {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < query.len and n < buf.len) {
+        while (i < query.len and std.ascii.isWhitespace(query[i])) i += 1;
+        if (i >= query.len) break;
+        if (query[i] == '"') {
+            i += 1;
+            const start = i;
+            const end = std.mem.findScalarPos(u8, query, i, '"') orelse query.len;
+            if (end > start) {
+                buf[n] = query[start..end];
+                n += 1;
+            }
+            i = if (end < query.len) end + 1 else end;
+            continue;
+        }
+        const start = i;
+        while (i < query.len and !std.ascii.isWhitespace(query[i])) i += 1;
+        buf[n] = query[start..i];
+        n += 1;
+    }
+    // A query with nothing but separators still has to search for something.
+    if (n == 0 and query.len > 0) {
+        buf[0] = query;
+        n = 1;
+    }
+    return buf[0..n];
+}
+
+/// The file named by one `{"file":...,"line":...,"text":...}` grep hit.
+fn hitFile(hit: std.json.Value) ?[]const u8 {
+    const obj = switch (hit) {
+        .object => |o| o,
+        else => return null,
+    };
+    return switch (obj.get("file") orelse return null) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+/// Folds one grep result per term into the hits of the records that matched
+/// *every* term: a record is a file, so the AND is over file names and the
+/// surviving hits are the union of the lines each term matched in them. Lines
+/// keep the order the first term that matched them reported, which is file
+/// order within a term, so the result still reads store-order.
+///
+/// `per_term` must already be parsed — each host grep reuses the shared host
+/// arena, so a caller has to parse one result before issuing the next.
+pub fn intersectHits(alloc: std.mem.Allocator, per_term: []const std.json.Value) !std.json.Value {
+    var out = std.json.Array.init(alloc);
+    if (per_term.len == 0) return .{ .array = out };
+
+    // Files the first term matched, then narrowed by each later term. An empty
+    // term result empties the intersection, which is the honest answer: no
+    // record contains all the terms.
+    var keep: std.StringHashMapUnmanaged(void) = .empty;
+    for (arrayItems(per_term[0])) |hit| {
+        if (hitFile(hit)) |f| try keep.put(alloc, f, {});
+    }
+    for (per_term[1..]) |term| {
+        var next: std.StringHashMapUnmanaged(void) = .empty;
+        for (arrayItems(term)) |hit| {
+            const f = hitFile(hit) orelse continue;
+            if (keep.contains(f)) try next.put(alloc, f, {});
+        }
+        keep = next;
+    }
+
+    var seen: std.StringHashMapUnmanaged(void) = .empty;
+    for (per_term) |term| {
+        for (arrayItems(term)) |hit| {
+            const f = hitFile(hit) orelse continue;
+            if (!keep.contains(f)) continue;
+            const line = switch (hit.object.get("line") orelse std.json.Value.null) {
+                .integer => |n| n,
+                else => 0,
+            };
+            const key = try std.fmt.allocPrint(alloc, "{s}:{d}", .{ f, line });
+            if (seen.contains(key)) continue;
+            try seen.put(alloc, key, {});
+            try out.append(hit);
+        }
+    }
+    return .{ .array = out };
+}
+
+fn arrayItems(v: std.json.Value) []const std.json.Value {
+    return switch (v) {
+        .array => |a| a.items,
+        else => &.{},
+    };
+}
+
 // ------------------------------------------------------------------ tests
 
 test "isoDate renders the epoch, a leap day, and a late date" {
@@ -1151,4 +1268,83 @@ test "markMissingToolSlug enforces the marker exactly once, after the date" {
     // Already marked: returned as-is, never doubled.
     const kept = try markMissingToolSlug(alloc, "2026-08-17-missing-clanker-tool-no-rename-verb");
     try std.testing.expectEqualStrings("2026-08-17-missing-clanker-tool-no-rename-verb", kept);
+}
+
+test "searchTerms splits on whitespace and keeps a quoted phrase whole" {
+    var buf: [max_search_terms][]const u8 = undefined;
+
+    const two = searchTerms("concurrent sessions", &buf);
+    try std.testing.expectEqual(@as(usize, 2), two.len);
+    try std.testing.expectEqualStrings("concurrent", two[0]);
+    try std.testing.expectEqualStrings("sessions", two[1]);
+
+    const phrase = searchTerms("\"concurrent sessions\"", &buf);
+    try std.testing.expectEqual(@as(usize, 1), phrase.len);
+    try std.testing.expectEqualStrings("concurrent sessions", phrase[0]);
+
+    const mixed = searchTerms("  commit \"smart commit\"  plan ", &buf);
+    try std.testing.expectEqual(@as(usize, 3), mixed.len);
+    try std.testing.expectEqualStrings("smart commit", mixed[1]);
+
+    // A single word is one term, so a one-word query searches exactly as it
+    // always did.
+    try std.testing.expectEqual(@as(usize, 1), searchTerms("concurrent", &buf).len);
+    // Whitespace only: the query is still what gets searched for.
+    try std.testing.expectEqual(@as(usize, 1), searchTerms("   ", &buf).len);
+    try std.testing.expectEqual(@as(usize, 0), searchTerms("", &buf).len);
+    // An unterminated quote runs to the end rather than dropping the rest.
+    const open_quote = searchTerms("\"never closed", &buf);
+    try std.testing.expectEqual(@as(usize, 1), open_quote.len);
+    try std.testing.expectEqualStrings("never closed", open_quote[0]);
+}
+
+test "searchTerms stops at the term cap" {
+    var buf: [max_search_terms][]const u8 = undefined;
+    const many = searchTerms("a b c d e f g h i j k", &buf);
+    try std.testing.expectEqual(@as(usize, max_search_terms), many.len);
+}
+
+test "intersectHits keeps only records every term matched" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // The reported miss: 'concurrent' and 'sessions' both hit the runbook, on
+    // different lines, and each also hits a record the other does not.
+    const concurrent = try std.json.parseFromSliceLeaky(std.json.Value, alloc,
+        \\[{"file":"runbooks/concurrent.md","line":3,"text":"concurrent agent sessions"},
+        \\ {"file":"bugs/other.md","line":9,"text":"concurrent writes"}]
+    , .{});
+    const sessions = try std.json.parseFromSliceLeaky(std.json.Value, alloc,
+        \\[{"file":"runbooks/concurrent.md","line":12,"text":"five sessions"},
+        \\ {"file":"bugs/unrelated.md","line":2,"text":"sessions list"}]
+    , .{});
+
+    const hits = try intersectHits(alloc, &.{ concurrent, sessions });
+    const items = hits.array.items;
+    try std.testing.expectEqual(@as(usize, 2), items.len);
+    for (items) |h| try std.testing.expectEqualStrings("runbooks/concurrent.md", h.object.get("file").?.string);
+    // Both matching lines survive, not just the first term's.
+    try std.testing.expectEqual(@as(i64, 3), items[0].object.get("line").?.integer);
+    try std.testing.expectEqual(@as(i64, 12), items[1].object.get("line").?.integer);
+
+    // One term is the old behaviour, unchanged.
+    const single = try intersectHits(alloc, &.{concurrent});
+    try std.testing.expectEqual(@as(usize, 2), single.array.items.len);
+
+    // A term nothing matched empties the result rather than widening it.
+    const none = try std.json.parseFromSliceLeaky(std.json.Value, alloc, "[]", .{});
+    const empty = try intersectHits(alloc, &.{ concurrent, none });
+    try std.testing.expectEqual(@as(usize, 0), empty.array.items.len);
+}
+
+test "intersectHits reports a line matched by two terms once" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+    const both = try std.json.parseFromSliceLeaky(std.json.Value, alloc,
+        \\[{"file":"a.md","line":1,"text":"smart commit groups the diff"}]
+    , .{});
+    const hits = try intersectHits(alloc, &.{ both, both });
+    try std.testing.expectEqual(@as(usize, 1), hits.array.items.len);
 }

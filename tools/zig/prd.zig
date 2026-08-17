@@ -35,6 +35,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const doc = @import("doc_scaffold.zig");
+const records_grep = @import("records_grep.zig");
 
 /// `list` reads every PRD to report its real status rather than trusting the
 /// index. PRDs are the longest documents in the tree, so the per-read cap
@@ -435,12 +436,10 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
 /// real hit with an inventory row stapled to it. `isDocPath` drops those and
 /// the template: neither is a record, and neither is what a searcher meant.
 fn grepDir(where: []const u8, query: []const u8) !std.json.Value {
-    const raw = lib.fsGrep(where, query) catch |err| switch (err) {
-        error.NotFound => return .{ .array = std.json.Array.init(lib.alloc) },
+    const parsed = records_grep.grepAll(where, query) catch |err| switch (err) {
+        error.NotFound, error.IoError => return .{ .array = std.json.Array.init(lib.alloc) },
         else => return err,
     };
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch
-        return .{ .array = std.json.Array.init(lib.alloc) };
     if (parsed != .array) return .{ .array = std.json.Array.init(lib.alloc) };
 
     var kept = std.json.Array.init(lib.alloc);

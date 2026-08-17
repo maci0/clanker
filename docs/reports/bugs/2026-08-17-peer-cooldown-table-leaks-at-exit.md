@@ -4,11 +4,11 @@
 
 - **What failed:** fanOut -> recordFailure grows a process-global peer_cooldowns list that only the test-only resetCooldowns frees, so a Debug build prints a DebugAllocator leak trace at exit whenever a configured peer is unreachable.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-17. Fixed: the cooldown table is a fixed-size process-lifetime array that copies the peer name (src/peers/chatrooms.zig), so nothing is allocated to leak and nothing borrows the request arena.
 
 ## Status
 
-Open.
+Resolved on 2026-08-17. Fixed: the cooldown table is a fixed-size process-lifetime array that copies the peer name (src/peers/chatrooms.zig), so nothing is allocated to leak and nothing borrows the request arena.
 
 ## Symptom and impact
 

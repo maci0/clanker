@@ -108,7 +108,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [TUI expanded reply fold shows a stray › on its first body line](bugs/2026-08-17-fold-first-line-keeps-turn-arrow.md) — Resolved
 
-- [Peer cooldown table is never freed, so any command that reaches a down peer ends in a leak trace](bugs/2026-08-17-peer-cooldown-table-leaks-at-exit.md) — Open
+- [Peer cooldown table is never freed, so any command that reaches a down peer ends in a leak trace](bugs/2026-08-17-peer-cooldown-table-leaks-at-exit.md) — Resolved
 
 - [TUI reply fold can be opened but never closed again](bugs/2026-08-17-fold-header-vanishes-when-expanded.md) — Resolved
 

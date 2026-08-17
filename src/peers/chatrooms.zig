@@ -706,46 +706,73 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
 /// message and is not logged as an error on every attempt: the harness backs
 /// off exponentially and logs the down/up transition once. `fanOut` can run
 /// from any request thread (serve runs one thread per connection), so the
-/// shared list below is guarded by a mutex and every read/write happens
+/// shared table below is guarded by a mutex and every read/write happens
 /// inside it.
+///
+/// The table is process-lifetime state with one slot per configured peer, so
+/// it is a fixed-size static array rather than a heap list. Two things follow
+/// from that, and both were bugs while it was an `ArrayList`: nothing has to
+/// free it at exit (a `[[peers]]` entry that does not answer used to end an
+/// ordinary command in a DebugAllocator leak trace), and the name is *copied*
+/// rather than borrowed. The name `recordFailure` sees comes from `fanOut`'s
+/// arena-parsed tool reply, which is freed when that request's arena is, so a
+/// borrowed slice left every later `inCooldown` comparing against memory the
+/// arena had already reclaimed.
+const max_cooldown_peers = 64;
+const max_cooldown_name = 64;
+
 const PeerCooldown = struct {
-    name: []const u8,
+    name_buf: [max_cooldown_name]u8 = undefined,
+    name_len: u8 = 0,
     fail_count: u32 = 0,
     down_since_ns: i128 = 0, // 0 = up
+
+    fn name(self: *const PeerCooldown) []const u8 {
+        return self.name_buf[0..self.name_len];
+    }
 };
 
 var cooldown_mutex: std.Io.Mutex = .init;
-var peer_cooldowns: ?std.ArrayList(PeerCooldown) = null;
+var peer_cooldowns: [max_cooldown_peers]PeerCooldown = @splat(.{});
+var peer_cooldown_count: usize = 0;
+
+/// The slot for `name`, or null when the peer has none yet.
+fn cooldownSlot(name: []const u8) ?*PeerCooldown {
+    for (peer_cooldowns[0..peer_cooldown_count]) |*c| {
+        if (std.mem.eql(u8, c.name(), name)) return c;
+    }
+    return null;
+}
 
 /// True when `name` is still inside its backoff window.
 fn inCooldown(io: std.Io, name: []const u8) bool {
     cooldown_mutex.lockUncancelable(io);
     defer cooldown_mutex.unlock(io);
-    const list = peer_cooldowns orelse return false;
-    for (list.items) |*c| {
-        if (!std.mem.eql(u8, c.name, name)) continue;
-        if (c.down_since_ns == 0) return false;
-        const now = std.Io.Timestamp.now(io, .real).nanoseconds;
-        if (now >= c.down_since_ns and now - c.down_since_ns < cooldownWindow(c.fail_count)) return true;
-        return false;
-    }
-    return false;
+    const c = cooldownSlot(name) orelse return false;
+    if (c.down_since_ns == 0) return false;
+    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    return now >= c.down_since_ns and now - c.down_since_ns < cooldownWindow(c.fail_count);
 }
 
-/// Record a failed delivery; returns the backoff window in seconds (0 if the
-/// cooldown slot could not be allocated).
-fn recordFailure(io: std.Io, gpa: std.mem.Allocator, name: []const u8, now: i128) i64 {
+/// Record a failed delivery; returns the backoff window in seconds (0 when the
+/// peer has no slot and cannot be given one: the table is full, or the name is
+/// longer than a slot holds). Delivery is unaffected either way; only the
+/// backoff and its one-line log are.
+fn recordFailure(io: std.Io, name: []const u8, now: i128) i64 {
     cooldown_mutex.lockUncancelable(io);
     defer cooldown_mutex.unlock(io);
-    if (peer_cooldowns == null) peer_cooldowns = .empty;
-    const list = &peer_cooldowns.?;
-    for (list.items) |*c| {
-        if (!std.mem.eql(u8, c.name, name)) continue;
+    if (cooldownSlot(name)) |c| {
         c.fail_count += 1;
         c.down_since_ns = now;
         return @intCast(@divTrunc(cooldownWindow(c.fail_count), @as(i128, std.time.ns_per_s)));
     }
-    list.append(gpa, .{ .name = name, .fail_count = 1, .down_since_ns = now }) catch return 0;
+    if (peer_cooldown_count == peer_cooldowns.len or name.len > max_cooldown_name) return 0;
+    const c = &peer_cooldowns[peer_cooldown_count];
+    @memcpy(c.name_buf[0..name.len], name);
+    c.name_len = @intCast(name.len);
+    c.fail_count = 1;
+    c.down_since_ns = now;
+    peer_cooldown_count += 1;
     return @intCast(@divTrunc(cooldownWindow(1), @as(i128, std.time.ns_per_s)));
 }
 
@@ -754,24 +781,19 @@ fn recordFailure(io: std.Io, gpa: std.mem.Allocator, name: []const u8, now: i128
 fn recordSuccess(io: std.Io, name: []const u8) bool {
     cooldown_mutex.lockUncancelable(io);
     defer cooldown_mutex.unlock(io);
-    const list = peer_cooldowns orelse return false;
-    for (list.items) |*c| {
-        if (!std.mem.eql(u8, c.name, name)) continue;
-        const was_down = c.fail_count != 0;
-        c.fail_count = 0;
-        c.down_since_ns = 0;
-        return was_down;
-    }
-    return false;
+    const c = cooldownSlot(name) orelse return false;
+    const was_down = c.fail_count != 0;
+    c.fail_count = 0;
+    c.down_since_ns = 0;
+    return was_down;
 }
 
-/// Drops the whole cooldown table. Test-only: the table outlives any one test,
-/// so a test that grows it has to give the memory back itself.
-fn resetCooldowns(io: std.Io, gpa: std.mem.Allocator) void {
+/// Empties the cooldown table. Test-only: the table is process-wide, so a test
+/// that fills it would otherwise leave its peers cooling down for the next one.
+fn resetCooldowns(io: std.Io) void {
     cooldown_mutex.lockUncancelable(io);
     defer cooldown_mutex.unlock(io);
-    if (peer_cooldowns) |*l| l.deinit(gpa);
-    peer_cooldowns = null;
+    peer_cooldown_count = 0;
 }
 
 /// Exponential backoff window for a down peer: 5s base, doubling per
@@ -880,7 +902,7 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, environ_
                 log.log(.info, "chat {s}: delivered", .{r.name});
             }
         } else {
-            const window_s = recordFailure(io, gpa, r.name, now);
+            const window_s = recordFailure(io, r.name, now);
             if (window_s > 0) {
                 log.log(.error_, "chat to '{s}' failed: {s}; marking peer down, backing off {d}s", .{ r.name, r.@"error" orelse "unknown error", window_s });
             } else {
@@ -1438,25 +1460,78 @@ test "down-peer backoff grows, caps, and recovers on success" {
     const io = threaded.io();
 
     // Clear any cooldown state a prior test in this process may have left, and
-    // hand the buffer back on the way out. clearRetainingCapacity keeps the
-    // allocation by contract, and this table is a process-wide global, so
-    // whatever it still holds when the test ends is charged to whichever test
-    // grew it.
-    resetCooldowns(io, std.testing.allocator);
-    defer resetCooldowns(io, std.testing.allocator);
+    // again on the way out: the table is a process-wide global, so a peer this
+    // test marks down would otherwise still be down for the next one.
+    resetCooldowns(io);
+    defer resetCooldowns(io);
 
     const now = std.Io.Timestamp.now(io, .real).nanoseconds;
     try std.testing.expect(!inCooldown(io, "down-peer"));
-    try std.testing.expectEqual(@as(i64, 5), recordFailure(io, std.testing.allocator, "down-peer", now));
+    try std.testing.expectEqual(@as(i64, 5), recordFailure(io, "down-peer", now));
     try std.testing.expect(inCooldown(io, "down-peer"));
 
     // A second consecutive failure doubles the window.
-    try std.testing.expectEqual(@as(i64, 10), recordFailure(io, std.testing.allocator, "down-peer", now));
+    try std.testing.expectEqual(@as(i64, 10), recordFailure(io, "down-peer", now));
 
     // A successful delivery clears the cooldown and reports recovery once.
     try std.testing.expect(recordSuccess(io, "down-peer"));
     try std.testing.expect(!inCooldown(io, "down-peer"));
     try std.testing.expect(!recordSuccess(io, "down-peer"));
+}
+
+test "a cooldown outlives the arena the peer name was parsed into" {
+    // `fanOut` reads each peer's name out of the tool reply it parsed into the
+    // request arena, then hands it to `recordFailure`. The cooldown table is
+    // process-lifetime, so a borrowed name is read back after that arena is
+    // gone; the slot copies the bytes instead.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    resetCooldowns(io);
+    defer resetCooldowns(io);
+
+    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    {
+        var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena_state.deinit();
+        const parsed = try std.json.parseFromSliceLeaky(
+            FanOutResult,
+            arena_state.allocator(),
+            \\{"name":"ephemeral-peer","ok":false,"error":"refused"}
+        ,
+            .{ .ignore_unknown_fields = true },
+        );
+        try std.testing.expectEqual(@as(i64, 5), recordFailure(io, parsed.name, now));
+    }
+    try std.testing.expect(inCooldown(io, "ephemeral-peer"));
+    try std.testing.expect(recordSuccess(io, "ephemeral-peer"));
+}
+
+test "the cooldown table refuses what it cannot hold instead of truncating" {
+    // No slot and an over-long name both mean "no backoff for this peer"; the
+    // 0 return is what keeps `fanOut` from claiming a window it is not keeping.
+    // Truncating instead would alias two peers onto one slot.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    resetCooldowns(io);
+    defer resetCooldowns(io);
+
+    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    const too_long = "p" ** (max_cooldown_name + 1);
+    try std.testing.expectEqual(@as(i64, 0), recordFailure(io, too_long, now));
+    try std.testing.expect(!inCooldown(io, too_long));
+
+    var buf: [16]u8 = undefined;
+    for (0..max_cooldown_peers) |i| {
+        const name = try std.fmt.bufPrint(&buf, "peer-{d}", .{i});
+        try std.testing.expectEqual(@as(i64, 5), recordFailure(io, name, now));
+    }
+    try std.testing.expectEqual(@as(i64, 0), recordFailure(io, "one-too-many", now));
+    // A peer that already has a slot keeps backing off with the table full.
+    try std.testing.expectEqual(@as(i64, 10), recordFailure(io, "peer-0", now));
 }
 
 test "edit, delete and react distinguish missing from not-owner" {

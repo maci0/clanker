@@ -23,6 +23,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const doc = @import("doc_scaffold.zig");
+const records_grep = @import("records_grep.zig");
 
 const reports_dir = "docs/reports";
 const runbooks_dir = "docs/runbooks";
@@ -74,25 +75,25 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
     const want_runbooks = std.mem.eql(u8, kind, "all") or std.mem.eql(u8, kind, "runbook");
     if (!want_reports and !want_runbooks) return lib.fail(out, "kind must be all, report, or runbook");
 
-    // Each host response uses the shared host arena, so parse it before making
-    // the next call. The parsed values are allocated in the guest and remain
-    // valid through response formatting.
-    const reports = if (want_reports) blk: {
-        const raw = lib.fsGrep(reports_dir, query) catch |err| switch (err) {
-            error.NotFound => break :blk emptyMatches(),
+    // grepAll parses each host response before issuing the next call: they
+    // share the host arena. The parsed values are allocated in the guest and
+    // remain valid through response formatting.
+    const reports = if (want_reports)
+        records_grep.grepAll(reports_dir, query) catch |err| switch (err) {
+            error.NotFound => emptyMatches(),
+            error.IoError => return lib.fail(out, "could not parse the reports search result"),
             else => return lib.failErr(out, err, "searching docs/reports"),
-        };
-        break :blk std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch
-            return lib.fail(out, "could not parse the reports search result");
-    } else emptyMatches();
-    const runbooks = if (want_runbooks) blk: {
-        const raw = lib.fsGrep(runbooks_dir, query) catch |err| switch (err) {
-            error.NotFound => break :blk emptyMatches(),
+        }
+    else
+        emptyMatches();
+    const runbooks = if (want_runbooks)
+        records_grep.grepAll(runbooks_dir, query) catch |err| switch (err) {
+            error.NotFound => emptyMatches(),
+            error.IoError => return lib.fail(out, "could not parse the runbooks search result"),
             else => return lib.failErr(out, err, "searching docs/runbooks"),
-        };
-        break :blk std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch
-            return lib.fail(out, "could not parse the runbooks search result");
-    } else emptyMatches();
+        }
+    else
+        emptyMatches();
 
     var w = lib.writer(out);
     var s = lib.json(&w);

@@ -30,6 +30,7 @@ const utf8 = @import("utf8");
 const parse = @import("search_parse.zig");
 const rq = @import("research_queries.zig");
 const doc = @import("doc_scaffold.zig");
+const records_grep = @import("records_grep.zig");
 
 /// Every host result is bump-allocated out of one arena that is not reset
 /// until the call returns, and a deep sweep pulls a dozen search pages through
@@ -918,12 +919,11 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
     const query = lib.str(obj, "query") catch
         return lib.fail(out, "search needs a non-empty query");
     if (query.len > 240) return lib.fail(out, "query is too long (maximum 240 bytes)");
-    const raw = lib.fsGrep(dir, query) catch |err| switch (err) {
-        error.NotFound => "[]",
+    const matches = records_grep.grepAll(dir, query) catch |err| switch (err) {
+        error.NotFound => std.json.Value{ .array = std.json.Array.init(lib.alloc) },
+        error.IoError => return lib.fail(out, "could not parse the search result"),
         else => return lib.failErr(out, err, "searching docs/research"),
     };
-    const matches = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch
-        return lib.fail(out, "could not parse the search result");
 
     var w = lib.writer(out);
     var s = lib.json(&w);
