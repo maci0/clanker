@@ -2,11 +2,9 @@
 
 ## Status
 
-In progress — 2026-08-17. thin slice: presets/research.toml+full.toml + src/preset/preset.zig filterNames/loadFromFile, `clanker preset list|show|new`, `--preset` flag on run/repl filtering Registry toolDefs, Agent dispatch refusal alongside plan_mode, REPL `/preset` blank-session guard; docs + ROADMAP close next.
+Shipped — 2026-08-17. presets/*.toml + src/preset/preset.zig + src/cli.zig (preset list|show|new, --preset filter + persona), src/agent/loop.zig (dispatch refusal), src/tui/repl.zig (/preset guard, status pill)
 
-Single source `presets/*.toml` plus `src/preset/preset.zig` and CLI/TUI wiring.
-
-a configured set of directories (mirroring `agent.tools_dir`'s list-of-roots
+A configured set of directories (mirroring `agent.tools_dir`'s list-of-roots
 precedent from PRD 0022), a `clanker preset list|show|new` subcommand
 (mirroring `clanker plugins list|validate|new`'s shape), a `--preset <name>`
 flag on `clanker run`/`clanker repl`, and a `/preset <name>` REPL command.
@@ -154,24 +152,24 @@ requirement.
 
 ## Acceptance criteria
 
-- [ ] `preset.toml` carries `description`, `system_prompt_append`,
+- [x] `preset.toml` carries `description`, `system_prompt_append`,
       `tools_allow`/`tools_deny`, and optional
       `default_provider`/`default_model` (Goal 1).
-- [ ] `--preset research` offers the model only read/search tools; a
+- [x] `--preset research` offers the model only read/search tools; a
       write-capable tool is neither offered nor callable.
-- [ ] `--preset full` (or no `--preset`) is a no-op: identical tool set to
+- [x] `--preset full` (or no `--preset`) is a no-op: identical tool set to
       today's default.
-- [ ] `clanker preset list` enumerates every preset under the configured
+- [x] `clanker preset list` enumerates every preset under the configured
       roots, including the two shipped examples.
-- [ ] `clanker preset new <name>` scaffolds a valid `preset.toml` and
+- [x] `clanker preset new <name>` scaffolds a valid `preset.toml` and
       refuses to overwrite an existing one.
-- [ ] `/preset <name>` switches presets before any tool call or assistant
+- [x] `/preset <name>` switches presets before any tool call or assistant
       message in the session, and is refused afterward.
-- [ ] A denied tool named directly in a tool call (bypassing the offered
+- [x] A denied tool named directly in a tool call (bypassing the offered
       schema) is still refused at dispatch.
-- [ ] `system_prompt_append` text appears in the assembled system prompt for
+- [x] `system_prompt_append` text appears in the assembled system prompt for
       a session using that preset, after clanker's own sections.
-- [ ] An empty `tools_allow` with a non-empty `tools_deny` allows everything
+- [x] An empty `tools_allow` with a non-empty `tools_deny` allows everything
       except the denied patterns.
 
 ## Open questions / future work
