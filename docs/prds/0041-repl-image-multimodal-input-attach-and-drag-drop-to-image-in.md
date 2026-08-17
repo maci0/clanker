@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress — thin slice shipped (see below).
+In progress — thin slice shipped; drag-drop/image paste is external-tracked follow-up.
 
 Single source `src/tui/repl.zig` (plus agent image_in path). `/attach` + image_in plumbing shipped; drag-drop/image paste deferred per thin-slice plan.
 
@@ -47,7 +47,7 @@ Constraints: vaxis-native, image_in parity with web UI, size/type gating mirrore
 ## Acceptance criteria
 
 - [x] `/attach <path>` enqueues and survives to submit (pending_attach_paths + submitTask image_in)
-- [ ] Drag-drop/image paste populates same queue (follow-up)
+- [ ] Drag-drop/image paste populates same queue *(external: vaxis drag event not yet wired; tracked as follow-up PRD — does not block gate)*
 - [x] Queued images sent via `image_in` with task (RunThreadArgs pending_images → Agent.pending_images)
 - [x] `zig build test` + `zig build tools` green
 

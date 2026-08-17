@@ -72,7 +72,7 @@
   - **Transcript search.** (2026-08-13: shipped on Ctrl-R — incremental case-insensitive search over the transcript; see `docs/prds/0005-repl-tui.md`. This item is closed.)
   - **No *block-level* markdown rendering.** (2026-08-17: shipped — `mdLineSegments` now handles `> ` block quotes (nestable `>>`), `| |` pipe tables with ` │ ` separators, ordered lists `1. `, and indent-aware nested bullets (`  -` depth via `indent/2`) in `src/tui/repl.zig` per RFC 0009/ADR 0021/PRD 0039, with inline bold/italic/code preserved. Multi-line constructs no longer fall back to plain text.)
   - **Single-line input only.** (2026-08-17: shipped — Shift+Enter (and kp_enter) inserts `newline_marker` \u23CE `⏎` via `src/tui/repl.zig`, rendered via `drawComposer` one row per line and decoded by `takeComposerText`; bracketed-paste CR folding and history re-encode preserved, per RFC 0010/ADR 0022/PRD 0040.)
-  - **No image/multimodal input.** The web UI has an attachment path (webui-plan 1.3); this REPL has no route for a task that needs one.
+  - **No image/multimodal input.** (2026-08-17: thin slice shipped — `/attach <path>` validated and queued to `Agent.pending_images` via `src/tui/repl.zig:pending_attach_paths`/`submitTask` with 4×4MB caps mirroring `ui/app/core/attachments.js`; drag-drop/paste deferred, per PRD 0041.)
   - **No plan mode.** `Agent.plan_mode` exists and the web UI toggles it (webui-plan 2.2); nothing in this REPL sets it, so there's no propose-then-apply flow here.
 
   `docs/prds/0005-repl-tui.md` is the full PRD: what the deleted REPL did, the libvaxis migration's design tradeoffs, and a widget-mapping table for closing each gap above.
