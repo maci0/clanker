@@ -29,6 +29,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const environment = lib.optStr(parsed, "environment");
     const component = lib.optStr(parsed, "component");
     const room = lib.optStr(parsed, "room");
+    const repro = lib.optStr(parsed, "repro");
+    const fix_hint = lib.optStr(parsed, "fix_hint");
 
     // Validate severity → board priority mapping
     const priority = mapSeverity(severity) orelse
@@ -78,6 +80,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try body_buf.appendSlice(lib.alloc, "\n### Actual Behaviour\n");
         try body_buf.appendSlice(lib.alloc, a);
         try body_buf.appendSlice(lib.alloc, "\n");
+    }
+
+    if (repro) |r| {
+        try body_buf.appendSlice(lib.alloc, "\n### Reproduce\n```sh\n");
+        try body_buf.appendSlice(lib.alloc, r);
+        try body_buf.appendSlice(lib.alloc, "\n```\n");
+    }
+
+    if (fix_hint) |h| {
+        try body_buf.appendSlice(lib.alloc, "\n### Fix hint\n```\n");
+        try body_buf.appendSlice(lib.alloc, h);
+        try body_buf.appendSlice(lib.alloc, "\n```\n");
     }
 
     // Prefix title with [BUG] if it doesn't already have it
