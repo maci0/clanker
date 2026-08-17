@@ -171,10 +171,10 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
                     const behind = @max(now - a.ts, 0);
                     a.ts += (@divTrunc(behind, step) + 1) * step;
                     next_ts = a.ts;
-                    i += 1;
                 } else {
                     _ = loaded.alarms.orderedRemove(i);
                 }
+                break;
             } else i += 1;
         }
         if (!found) return lib.fail(out, "no alarm with that id");
