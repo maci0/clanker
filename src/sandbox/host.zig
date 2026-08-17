@@ -3315,7 +3315,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
     return Err.ok;
 }
 
-/// Where the compare-and-swap advisory lock for `full` lives: ADR 0020, one
+/// Where the compare-and-swap advisory lock for `full` lives: ADR 0031, one
 /// lock inode per target path under `{state_dir}/locks/` rather than a
 /// `<target>.ck_cas.lock` sidecar beside the target.
 ///
@@ -6944,7 +6944,7 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
         .environ_map = undefined,
     };
 
-    // ADR 0020: the lock lives under state/locks/, so a CAS write must not
+    // ADR 0031: the lock lives under state/locks/, so a CAS write must not
     // drop a permanent `<target>.ck_cas.lock` into the tree it wrote into.
     try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hello"));
     try std.testing.expectError(

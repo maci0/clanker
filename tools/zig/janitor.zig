@@ -334,7 +334,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (staging_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} orphaned staging director{s} (a killed improve run leaves its copy behind)\n", .{ staging_n, if (staging_n == 1) @as([]const u8, "y") else "ies" }));
     if (runs_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} run graphs beyond the newest {d}\n", .{ runs_n, keep_runs }));
     if (logs_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} improve logs beyond the newest {d}\n", .{ logs_n, keep_logs }));
-    if (locks_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} compare-and-swap lock files unused for {d}h\n", .{ locks_n, @divTrunc(keep_lock_ms, 60 * 60 * 1000) }));
+    if (locks_n > 0) try text.appendSlice(a, try std.fmt.allocPrint(a, "  {d} compare-and-swap lock file{s} unused for {d}h (the target is gone or was never rewritten)\n", .{ locks_n, if (locks_n == 1) @as([]const u8, "") else "s", @divTrunc(keep_lock_ms, 60 * 60 * 1000) }));
 
     if (!apply) {
         try text.appendSlice(a, "\nNothing was deleted. Re-run with --yes to remove it.\n");

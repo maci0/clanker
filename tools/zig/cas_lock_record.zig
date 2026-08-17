@@ -1,6 +1,6 @@
 //! The holder record inside a compare-and-swap lock file.
 //!
-//! `ck_fs_write_if` locks on `state/locks/<sha256-of-target>.lock` (ADR 0020)
+//! `ck_fs_write_if` locks on `state/locks/<sha256-of-target>.lock` (ADR 0031)
 //! and writes one fixed-width line into it naming who took the lock and when.
 //! The host writes that line; the `janitor` guest reads it to decide which
 //! lock files have aged out. Writer and reader share this module so the format
