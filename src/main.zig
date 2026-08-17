@@ -354,6 +354,9 @@ pub fn main(init: std.process.Init) !void {
             var w: std.Io.Writer = .fixed(&buf);
             w.print("{any}\n", .{c}) catch {};
             cli.writeStdOut(init.io, w.buffered()) catch {};
+        } else {
+            cli.printUsageError(init.io, "could not load configuration; check config.toml syntax or run `clanker setup` to create one", .{});
+            std.process.exit(1);
         }
         std.process.exit(0);
     }
