@@ -935,7 +935,7 @@ pub const Agent = struct {
                     .result_bytes = answer_len,
                     .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
                     .ok = !(cut and answer_len == 0),
-                    .output = graph_mod.truncatedPreview(resp.message.content orelse ""),
+                    .output = graph_mod.finalAnswerPreview(resp.message.content orelse ""),
                 });
                 if (cut and answer_len == 0) {
                     log.log(.error_, "final reply hit the completion-token limit before any text; raise max_tokens (or the tool's grant) and retry", .{});

@@ -65,6 +65,17 @@ pub fn truncatedPreview(s: []const u8) []const u8 {
     return utf8.cap(s, output_preview_cap);
 }
 
+/// The final node keeps far more of its text than any other node: the graph
+/// is the only durable copy of a run's answer (`clanker run` saves no
+/// session), and `graph answer` reads it back. 64 KiB holds any real answer
+/// while staying well under the graph guest's memory when it reads the file.
+pub const final_answer_cap = 64 * 1024;
+
+/// Bounds the final node's recorded answer to `final_answer_cap` bytes.
+pub fn finalAnswerPreview(s: []const u8) []const u8 {
+    return utf8.cap(s, final_answer_cap);
+}
+
 /// Bounds a node's recorded arguments to `arguments_preview_cap` bytes.
 pub fn truncatedArgs(s: []const u8) []const u8 {
     return utf8.cap(s, arguments_preview_cap);

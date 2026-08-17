@@ -1,10 +1,11 @@
 //! graph: read and persist execution graphs (state/runs/*.json).
-//! Input:  {"args": "" | "list" | "<run-id>" | "json" | "json <run-id>"}
+//! Input:  {"args": "" | "list" | "<run-id>" | "json" | "json <run-id>" | "answer" | "answer <run-id>"}
 //!         {"write": {run_id, task, provider, ...}}
 //! Output: {"ok": true, "text": "..."}  |  {"ok": true}
 //!
 //! `""` renders the latest run, `<run-id>` renders that one, `list` prints one
-//! line per run. The `json` modes put machine-readable text in the same field:
+//! line per run, `answer` prints a run's recorded final answer. The `json`
+//! modes put machine-readable text in the same field:
 //! `json` is an array of run summaries and `json <run-id>` is a whole graph.
 //! The web UI serves those two through `GET /api/runs` so the harness never
 //! reads `state/runs/` itself.
@@ -61,24 +62,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const want = std.mem.trim(u8, args["json ".len..], " \t");
         return runJson(out, alloc, names, want);
     }
+    if (std.mem.eql(u8, args, "answer") or std.mem.startsWith(u8, args, "answer ")) {
+        const want = std.mem.trim(u8, args["answer".len..], " \t");
+        return answerRun(out, alloc, names, want);
+    }
 
     // No argument renders the most recent run; an argument names the run to
-    // render. "Most recent" is the largest timestamp, not the largest name:
-    // a nested `sub-<ns>` id is lexically greater than every `run-<s>` id.
-    var best: ?[]const u8 = null;
-    if (names == .array) {
-        for (names.array.items) |item| {
-            if (item != .string) continue;
-            if (!std.mem.endsWith(u8, item.string, ".json")) continue;
-            if (args.len > 0) {
-                const stem = item.string[0 .. item.string.len - ".json".len];
-                if (std.mem.eql(u8, stem, args)) best = item.string;
-                continue;
-            }
-            if (best == null or lessThanChronological({}, best.?, item.string)) best = item.string;
-        }
-    }
-    const fname = best orelse {
+    // render.
+    const fname = pickRun(names, args) orelse {
         if (args.len > 0) return lib.fail(out, "no such run");
         try out.writeAll("{\"ok\":true,\"text\":\"(no runs yet; clanker run creates one)\"}");
         return;
@@ -147,6 +138,66 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     return lib.okText(out, buf.items);
+}
+
+/// The graph file for `want` (its run id), or the most recent run when
+/// `want` is empty. "Most recent" is the largest timestamp, not the largest
+/// name: a nested `sub-<ns>` id is lexically greater than every `run-<s>` id.
+fn pickRun(names: std.json.Value, want: []const u8) ?[]const u8 {
+    if (names != .array) return null;
+    var best: ?[]const u8 = null;
+    for (names.array.items) |item| {
+        if (item != .string) continue;
+        if (!std.mem.endsWith(u8, item.string, ".json")) continue;
+        if (want.len > 0) {
+            const stem = item.string[0 .. item.string.len - ".json".len];
+            if (std.mem.eql(u8, stem, want)) best = item.string;
+            continue;
+        }
+        if (best == null or lessThanChronological({}, best.?, item.string)) best = item.string;
+    }
+    return best;
+}
+
+/// `answer [run-id]`: print the run's final answer as the graph recorded it.
+/// The graph is the only durable copy of an answer once the terminal
+/// scrolls (`clanker run` saves no session), which is the gap this mode
+/// closes (docs/reports/investigations/
+/// 2026-08-17-missing-clanker-tool-no-verb-prints-a-runs-final-answer.md).
+/// The stored text is capped, so a longer answer says how much of it this is.
+fn answerRun(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value, want: []const u8) !void {
+    const fname = pickRun(names, want) orelse {
+        if (want.len > 0) return lib.fail(out, "no such run");
+        return lib.okText(out, "(no runs yet; clanker run creates one)");
+    };
+    const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{fname});
+    defer alloc.free(path);
+    const content = lib.fsRead(path) catch |err| return lib.failErr(out, err, "reading the run graph");
+    const g = std.json.parseFromSliceLeaky(GraphFile, alloc, content, .{ .ignore_unknown_fields = true }) catch |err| return lib.failErr(out, err, "reading the run graph");
+
+    var k = g.nodes.len;
+    while (k > 0) {
+        k -= 1;
+        const n = g.nodes[k];
+        if (!std.mem.eql(u8, n.kind, "final")) continue;
+        var buf: std.ArrayList(u8) = .empty;
+        defer buf.deinit(alloc);
+        if (n.output.len == 0) {
+            const why = if (n.detail.len > 0) n.detail else n.label;
+            const msg = try std.fmt.allocPrint(alloc, "(the run recorded an empty final answer: {s})", .{why});
+            defer alloc.free(msg);
+            try buf.appendSlice(alloc, msg);
+        } else {
+            try buf.appendSlice(alloc, n.output);
+            if (n.result_bytes > n.output.len) {
+                const note = try std.fmt.allocPrint(alloc, "\n\n[recorded answer is a preview: first {d} of {d} bytes]", .{ n.output.len, n.result_bytes });
+                defer alloc.free(note);
+                try buf.appendSlice(alloc, note);
+            }
+        }
+        return lib.okText(out, buf.items);
+    }
+    return lib.fail(out, "the run recorded no final answer (it may have failed or been stopped mid-turn)");
 }
 
 /// `list`: one line per recorded run, oldest first within the newest page,

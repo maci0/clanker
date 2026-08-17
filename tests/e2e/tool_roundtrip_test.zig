@@ -52,6 +52,15 @@ test "clanker run: a tool call round-trips through the real sandbox" {
     const third_request = mock.request(2) orelse return error.MissingThirdRequest;
     try std.testing.expect(std.mem.find(u8, third_request, "\"tool_call_id\":\"call_2\"") != null);
     try std.testing.expect(std.mem.find(u8, third_request, "hello.txt") != null);
+
+    // The recorded run keeps its answer readable after the fact: this is the
+    // verb the missing-tool record asked for
+    // (docs/reports/investigations/2026-08-17-missing-clanker-tool-no-verb-prints-a-runs-final-answer.md).
+    var answered = try harness.run(gpa, io, tmp.dir, &.{ "graph", "answer" });
+    defer answered.deinit(gpa);
+    if (!answered.ok()) std.debug.print("graph answer failed.\nstdout: {s}\nstderr: {s}\n", .{ answered.stdout, answered.stderr });
+    try std.testing.expect(answered.ok());
+    try std.testing.expect(std.mem.find(u8, answered.stdout, final_text) != null);
 }
 
 test "clanker run: an answer truncated to empty is a failure, not silence" {
