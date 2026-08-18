@@ -452,7 +452,7 @@ pub const Options = struct {
     /// Global `--profile <name>`: load `profiles/<name>.toml` as an overlay
     /// between `config.local.toml` and env/flags (ADR 0024).
     profile: ?[]const u8 = null,
-    /// Global `--dump-config`: print the merged config and exit.
+    /// Global `--dump-config`: print the merged config as JSON and exit.
     dump_config: bool = false,
     /// `mesh <sub> [arg]`: "status" (default), "join" takes host:port,
     /// "leave"/"admit"/"deny" take a peer id. Absent leave is self-leave.
@@ -1636,7 +1636,7 @@ fn renderUsage(buf: []u8) []const u8 {
             writeWrappedHelpBlurb(&w, s.blurb) catch {};
         }
     }
-    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --profile <name>                  overlay profiles/<name>.toml on the config\n  --dump-config                     print the merged config and exit\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
+    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --profile <name>                  overlay profiles/<name>.toml on the config\n  --dump-config                     print the merged config as JSON and exit\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -1965,7 +1965,7 @@ const Flag = enum {
             .reports_kind => "narrow a reports search: all, report, or runbook",
             .commit_all => "group every tracked change, not just what is staged",
             .profile => "use a named config profile from profiles/<name>.toml",
-            .dump_config => "print the merged config and exit",
+            .dump_config => "print the merged config as JSON and exit",
             .preset => "run with a preset from presets/<name>.toml",
         };
     }
