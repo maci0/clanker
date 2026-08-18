@@ -7,6 +7,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker --dump-config` prints the merged config as JSON. It printed Zig's
+  struct-literal debug form, in which a string is a list of byte integers, a
+  provider map is its internal `.bytes = u8@7fdfe1466150` buffer pointer, and
+  the whole config is one unbroken line: neither readable by a person nor
+  parsable by a script, and host addresses on stdout at that. The dump now
+  pipes into `jq`, omits the `*_present`/`*_fields` parse bookkeeping that is
+  not configuration, and holds no credentials (only the `api_key_env` name a
+  provider reads its key from).
+
+- `clanker research --help` and `clanker rfc --help` name `append` and
+  `update` in their usage line. Both accepted the subcommands and documented
+  them in the help body, but the usage line kept naming the older, shorter
+  set, so the one place an operator sees the whole surface disagreed with the
+  parser. The five record stores now declare their subcommand list once, and
+  a test pins each usage line to it. A usage line too long for 80 columns
+  (`rfc` accepts nine subcommands) wraps rather than being trimmed back.
+
 - `bugreport` truncates an over-length title instead of letting it through whole. The `[BUG] ` prefix was budgeted as five bytes rather than six, so a title long enough to need trimming produced a formatted line one byte over the 600-byte buffer, and the fallback on that failure was the untruncated title. Titles now trim to fit the prefix, and shorter ones are unchanged.
 
 - `clanker <command> --help` names the record-store subcommands the parser
