@@ -54,27 +54,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const action = lib.optStr(req, "action") orelse "list";
-    if (std.mem.eql(u8, action, "list")) {
-        const has_filter = req.object.get("enabled") != null;
-        if (has_filter) return doList(out, lib.optBool(req, "enabled", true));
-        return doList(out, null);
-    }
+    if (std.mem.eql(u8, action, "list")) return doList(out);
     if (std.mem.eql(u8, action, "set_enabled")) return doSetEnabled(req, out);
     if (std.mem.eql(u8, action, "add")) return doAdd(req, out);
     if (std.mem.eql(u8, action, "remove")) return doRemove(req, out);
     return lib.fail(out, "action must be list, set_enabled, add, or remove");
 }
 
-fn doList(out: *lib.Out, enabled_filter: ?bool) !void {
+fn doList(out: *lib.Out) !void {
     const loaded = try load();
-    if (enabled_filter) |f| {
-        var filtered: std.ArrayList(Entry) = .empty;
-        defer filtered.deinit(lib.alloc);
-        for (loaded.entries.items) |e| {
-            if (e.enabled == f) filtered.append(lib.alloc, e) catch continue;
-        }
-        return writeList(out, filtered.items);
-    }
     return writeList(out, loaded.entries.items);
 }
 
