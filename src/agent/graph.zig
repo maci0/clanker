@@ -120,6 +120,7 @@ pub const Graph = struct {
                 // latest arguments so the recorded preview matches what the
                 // successful attempt actually ran.
                 last.arguments = node.arguments;
+                last.output = node.output;
                 return;
             }
         }
