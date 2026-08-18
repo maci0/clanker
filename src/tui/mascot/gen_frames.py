@@ -3,7 +3,7 @@
 
 Two outputs, one per renderer:
 
-  src/tui/mascot_frames.zig        quantized half-block cells, one set per size
+  src/tui/mascot/mascot_frames.zig  quantized half-block cells, one set per size
   src/tui/mascot/frame-NN[-f].png  per-frame pngs for the kitty-graphics path
 
 Run from the repo root with the source gif as the only argument:
@@ -324,7 +324,7 @@ def parse_baked(path):
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    zig_out = os.path.join(os.path.dirname(here), "mascot_frames.zig")
+    zig_out = os.path.join(here, "mascot_frames.zig")
 
     # --from-pngs: no gif to hand, so resample only the named sizes and keep
     # the rest exactly as they are.

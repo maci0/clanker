@@ -12360,7 +12360,13 @@ fn handleWorkspaces(
             if (session.listSessions(io, arena, std.Io.Dir.cwd())) |list| {
                 for (list) |m| {
                     if (std.mem.eql(u8, m.workspace, id)) {
-                        session.setWorkspace(io, gpa, arena, std.Io.Dir.cwd(), m.id, "") catch {};
+                        // The workspace is gone either way, but a session whose
+                        // stored record still names it carries a dangling id
+                        // that every later read answers with "workspace not
+                        // found"; say which session lost its pointer.
+                        session.setWorkspace(io, gpa, arena, std.Io.Dir.cwd(), m.id, "") catch |err| {
+                            log.log(.warn, "workspace '{s}' removed but session '{s}' still records it (unlink failed: {s})", .{ id, m.id, @errorName(err) });
+                        };
                     }
                 }
             } else |_| {}

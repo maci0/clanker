@@ -30,7 +30,7 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
 
-const frames = @import("mascot_frames.zig");
+const frames = @import("mascot/mascot_frames.zig");
 const log = @import("../util/log.zig");
 
 pub const frame_count = frames.frame_count;
