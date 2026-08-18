@@ -19,6 +19,7 @@ const registry = @import("../toolhost/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const file_lock = @import("../util/file_lock.zig");
+const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
 const glob = @import("../util/glob.zig");
 const token_stats = @import("../stats/tokens.zig");
@@ -6235,103 +6236,48 @@ test "rootIsProcessCwd treats only the cwd spellings as the process cwd" {
     try std.testing.expect(!rootIsProcessCwd(".."));
 }
 
-test "ckFsStat uses safeJoin policy" {
-    // Verify the safeJoin policy that ckFsStat relies on.
-    var sb = Sandbox{
-        .gpa = std.testing.allocator,
-        .io = undefined,
-        .root_dir = "/tmp/sandbox",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"data/"},
-        .environ_map = undefined,
+test "safeJoin admits paths under a granted prefix and refuses everything else" {
+    // Every `ck_fs_*` host function routes its path through safeJoin, and none
+    // of them can be called directly (each wants a zwasm.Caller), so the policy
+    // they share is asserted once here rather than once per caller.
+    const cases = [_]struct {
+        prefix: []const u8,
+        allowed: []const []const u8,
+        denied: []const []const u8,
+    }{
+        .{
+            .prefix = "data/",
+            .allowed = &.{ "data/info.txt", "data/copy.txt", "data/patch.bin", "data/subdir" },
+            .denied = &.{ "secrets/key", "other/subdir", "data/../secrets/key", "data/../etc/passwd", "" },
+        },
+        .{
+            .prefix = "logs/",
+            .allowed = &.{"logs/app.log"},
+            .denied = &.{ "secrets/key", "logs/../secrets/key", "" },
+        },
     };
-    // Allowed prefix
-    const ok = try safeJoin(&sb, "data/info.txt");
-    defer std.testing.allocator.free(ok);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/info.txt", ok);
-    // Disallowed prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/key"));
-    // Traversal attempt
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
-    // Empty path
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
-}
 
-test "ckFsCopy uses safeJoin policy for both paths" {
-    var sb = Sandbox{
-        .gpa = std.testing.allocator,
-        .io = undefined,
-        .root_dir = "/tmp/sandbox",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"data/"},
-        .environ_map = undefined,
-    };
-    // Both paths allowed
-    const ok_src = try safeJoin(&sb, "data/original.txt");
-    defer std.testing.allocator.free(ok_src);
-    const ok_dst = try safeJoin(&sb, "data/copy.txt");
-    defer std.testing.allocator.free(ok_dst);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/original.txt", ok_src);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/copy.txt", ok_dst);
-    // Source outside prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/original.txt"));
-    // Destination outside prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/copy.txt"));
-    // Traversal in source
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
-    // Traversal in destination
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../etc/passwd"));
-    // Empty paths
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
-}
-
-test "ckFsRename uses safeJoin policy for both paths" {
-    // Verify the safeJoin policy that ckFsRename relies on.
-    var sb = Sandbox{
-        .gpa = std.testing.allocator,
-        .io = undefined,
-        .root_dir = "/tmp/sandbox",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"data/"},
-        .environ_map = undefined,
-    };
-    // Both paths allowed
-    const ok_src = try safeJoin(&sb, "data/old.txt");
-    defer std.testing.allocator.free(ok_src);
-    const ok_dst = try safeJoin(&sb, "data/new.txt");
-    defer std.testing.allocator.free(ok_dst);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/old.txt", ok_src);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/new.txt", ok_dst);
-    // Source outside prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/old.txt"));
-    // Destination outside prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/new.txt"));
-    // Traversal in source
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
-    // Traversal in destination
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../etc/passwd"));
-    // Empty paths
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
-}
-
-test "ckFsDelete uses safeJoin policy" {
-    // Verify the safeJoin policy that ckFsDelete relies on.
-    var sb = Sandbox{
-        .gpa = std.testing.allocator,
-        .io = undefined,
-        .root_dir = "/tmp/sandbox",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"data/"},
-        .environ_map = undefined,
-    };
-    // Allowed prefix
-    const ok = try safeJoin(&sb, "data/file.txt");
-    defer std.testing.allocator.free(ok);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/file.txt", ok);
-    // Disallowed prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/key"));
-    // Traversal attempt
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
+    for (cases) |case| {
+        const prefixes = [_][]const u8{case.prefix};
+        var sb = Sandbox{
+            .gpa = std.testing.allocator,
+            .io = undefined,
+            .root_dir = "/tmp/sandbox",
+            .network_allow = &.{},
+            .fs_prefixes = &prefixes,
+            .environ_map = undefined,
+        };
+        for (case.allowed) |path| {
+            const joined = try safeJoin(&sb, path);
+            defer std.testing.allocator.free(joined);
+            var want_buf: [128]u8 = undefined;
+            const want = try std.fmt.bufPrint(&want_buf, "/tmp/sandbox/{s}", .{path});
+            try std.testing.expectEqualStrings(want, joined);
+        }
+        for (case.denied) |path| {
+            try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, path));
+        }
+    }
 }
 
 test "httpMethodFromCode maps known codes and rejects unknown ones" {
@@ -6344,73 +6290,6 @@ test "httpMethodFromCode maps known codes and rejects unknown ones" {
 
     try std.testing.expectEqual(@as(?std.http.Method, null), httpMethodFromCode(6));
     try std.testing.expectEqual(@as(?std.http.Method, null), httpMethodFromCode(999));
-}
-
-test "ckFsWriteRange uses safeJoin policy" {
-    // Verify the safeJoin policy that ckFsWriteRange relies on.
-    var sb = Sandbox{
-        .gpa = std.testing.allocator,
-        .io = undefined,
-        .root_dir = "/tmp/sandbox",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"data/"},
-        .environ_map = undefined,
-    };
-    // Allowed prefix
-    const ok = try safeJoin(&sb, "data/patch.bin");
-    defer std.testing.allocator.free(ok);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/patch.bin", ok);
-    // Disallowed prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/key"));
-    // Traversal attempt
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../secrets/key"));
-    // Empty path
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
-}
-
-test "ckFsAppend uses safeJoin policy" {
-    // Verify the safeJoin policy that ckFsAppend relies on.
-    var sb = Sandbox{
-        .gpa = std.testing.allocator,
-        .io = undefined,
-        .root_dir = "/tmp/sandbox",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"logs/"},
-        .environ_map = undefined,
-    };
-    // Allowed prefix
-    const ok = try safeJoin(&sb, "logs/app.log");
-    defer std.testing.allocator.free(ok);
-    try std.testing.expectEqualStrings("/tmp/sandbox/logs/app.log", ok);
-    // Disallowed prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "secrets/key"));
-    // Traversal attempt
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "logs/../secrets/key"));
-    // Empty path
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
-}
-
-test "ckFsMkdir rejects paths outside sandbox" {
-    // We can't call ckFsMkdir directly (needs a zwasm.Caller), but we can
-    // verify the safeJoin policy it relies on rejects the same cases.
-    var sb = Sandbox{
-        .gpa = std.testing.allocator,
-        .io = undefined,
-        .root_dir = "/tmp/sandbox",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"data/"},
-        .environ_map = undefined,
-    };
-    // Allowed prefix
-    const ok = try safeJoin(&sb, "data/subdir");
-    defer std.testing.allocator.free(ok);
-    try std.testing.expectEqualStrings("/tmp/sandbox/data/subdir", ok);
-    // Disallowed prefix
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "other/subdir"));
-    // Traversal
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "data/../etc"));
-    // Empty
-    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ""));
 }
 
 test "safeJoin bare prefix does not bleed into sibling names" {
@@ -7176,20 +7055,10 @@ test "a tool with no declared prefixes reaches no file at all" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "../outside"));
 }
 
-test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    // Use "." prefix so safeJoin allows any relative path under root_dir.
-    var sb = Sandbox{
+/// The sandbox the compare-and-swap tests below share: rooted at "." with a
+/// "." prefix, so `safeJoin` allows any relative path under the temp tree.
+fn testSandboxAtRoot(gpa: std.mem.Allocator, io: std.Io) Sandbox {
+    return .{
         .gpa = gpa,
         .io = io,
         .root_dir = ".",
@@ -7197,11 +7066,20 @@ test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
         .fs_prefixes = &.{"."},
         .environ_map = undefined,
     };
+}
+
+test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
+
+    var sb = testSandboxAtRoot(gpa, io);
 
     // 1) Empty expected hash creates a missing file.
-    const rc1 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", "", "hello world");
+    const rc1 = fsWriteIfImpl(&sb, fixture.tmp.dir, "cas_test.txt", "", "hello world");
     try std.testing.expectEqual(Err.ok, rc1);
-    const after1 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    const after1 = try fixture.tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
     defer gpa.free(after1);
     try std.testing.expectEqualStrings("hello world", after1);
 
@@ -7210,16 +7088,16 @@ test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {
     hasher.update("hello world");
     const digest = hasher.finalResult();
     const hex = std.fmt.bytesToHex(digest, .lower);
-    const rc2 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", &hex, "updated");
+    const rc2 = fsWriteIfImpl(&sb, fixture.tmp.dir, "cas_test.txt", &hex, "updated");
     try std.testing.expectEqual(Err.ok, rc2);
-    const after2 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    const after2 = try fixture.tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
     defer gpa.free(after2);
     try std.testing.expectEqualStrings("updated", after2);
 
     // 3) Stale hash writes nothing and returns mismatch.
-    const rc3 = fsWriteIfImpl(&sb, tmp.dir, "cas_test.txt", &hex, "should not land");
+    const rc3 = fsWriteIfImpl(&sb, fixture.tmp.dir, "cas_test.txt", &hex, "should not land");
     try std.testing.expectEqual(Err.mismatch, rc3);
-    const after3 = try tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
+    const after3 = try fixture.tmp.dir.readFileAlloc(io, "cas_test.txt", gpa, .limited(1 << 20));
     defer gpa.free(after3);
     try std.testing.expectEqualStrings("updated", after3);
 }
@@ -7228,25 +7106,19 @@ test "safeJoinSecure refuses a symlinked component unless the sandbox opts in" {
     // ADR 0017: a checkout whose `state/` is a symlink into external storage
     // is a supported layout, but following it is off by default so the
     // escape check stays the same for every deployment that did not ask.
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
 
     // A real directory, and a symlink standing in for it the way `state` does.
-    try tmp.dir.createDirPath(io, "real_state/runs");
-    try tmp.dir.symLink(io, "real_state", "state", .{});
+    try fixture.tmp.dir.createDirPath(io, "real_state/runs");
+    try fixture.tmp.dir.symLink(io, "real_state", "state", .{});
 
     // safeJoinSecure stats through `std.Io.Dir.cwd()`, so the root has to be a
     // path that resolves from the process cwd rather than a handle. tmpDir
     // creates its directory at this fixed place.
-    const root = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    const root = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}", .{fixture.tmp.sub_path});
     defer gpa.free(root);
 
     var sb = Sandbox{
@@ -7280,16 +7152,10 @@ test "fsWriteIfImpl survives racing creates of a not-yet-existing lock file" {
     // (~2 in 400) and reports FileNotFound, which this function would turn
     // into Err.invalid -- a valid write refused for no reason. Every attempt
     // here must end ok or mismatch; never invalid.
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
 
     const Worker = struct {
         dir: std.Io.Dir,
@@ -7298,14 +7164,7 @@ test "fsWriteIfImpl survives racing creates of a not-yet-existing lock file" {
         invalid: u32 = 0,
 
         fn run(self: *@This()) void {
-            var sb = Sandbox{
-                .gpa = self.gpa,
-                .io = self.io,
-                .root_dir = ".",
-                .network_allow = &.{},
-                .fs_prefixes = &.{"."},
-                .environ_map = undefined,
-            };
+            var sb = testSandboxAtRoot(self.gpa, self.io);
             var i: usize = 0;
             while (i < 25) : (i += 1) {
                 // Empty expected hash: ok on the create, mismatch once another
@@ -7320,7 +7179,7 @@ test "fsWriteIfImpl survives racing creates of a not-yet-existing lock file" {
     var workers: [8]Worker = undefined;
     var threads: [8]std.Thread = undefined;
     for (&workers, 0..) |*w, i| {
-        w.* = .{ .dir = tmp.dir, .io = io, .gpa = gpa };
+        w.* = .{ .dir = fixture.tmp.dir, .io = io, .gpa = gpa };
         threads[i] = try std.Thread.spawn(.{}, Worker.run, .{w});
     }
     for (&threads) |*t| t.join();
@@ -7328,71 +7187,45 @@ test "fsWriteIfImpl survives racing creates of a not-yet-existing lock file" {
 }
 
 test "fsWriteIfImpl creates missing parent directories" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
 
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var sb = Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = ".",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"."},
-        .environ_map = undefined,
-    };
+    var sb = testSandboxAtRoot(gpa, io);
 
     // Use a path with no shared/cwd component: `state/` is a symlink in
     // improve staging worktrees (linkSharedState), so safeJoinSecure reports
     // it as an escape and the test fails every improve-self run. A throwaway
     // nested path still exercises the missing-parent-directory creation.
-    const rc = fsWriteIfImpl(&sb, tmp.dir, "sub/dir/schedule.json", "", "{\"entries\":[]}");
+    const rc = fsWriteIfImpl(&sb, fixture.tmp.dir, "sub/dir/schedule.json", "", "{\"entries\":[]}");
     try std.testing.expectEqual(Err.ok, rc);
-    const got = try tmp.dir.readFileAlloc(io, "sub/dir/schedule.json", gpa, .limited(1 << 20));
+    const got = try fixture.tmp.dir.readFileAlloc(io, "sub/dir/schedule.json", gpa, .limited(1 << 20));
     defer gpa.free(got);
     try std.testing.expectEqualStrings("{\"entries\":[]}", got);
 }
 
 test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mismatch" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
 
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var sb = Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = ".",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"."},
-        .environ_map = undefined,
-    };
+    var sb = testSandboxAtRoot(gpa, io);
 
     // ADR 0031: the lock lives under state/locks/, so a CAS write must not
     // drop a permanent `<target>.ck_cas.lock` into the tree it wrote into.
-    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hello"));
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, fixture.tmp.dir, "docs/note.md", "", "hello"));
     try std.testing.expectError(
         error.FileNotFound,
-        tmp.dir.statFile(io, "docs/note.md.ck_cas.lock", .{}),
+        fixture.tmp.dir.statFile(io, "docs/note.md.ck_cas.lock", .{}),
     );
-    const lock_dir = try tmp.dir.statFile(io, "state/locks", .{});
+    const lock_dir = try fixture.tmp.dir.statFile(io, "state/locks", .{});
     try std.testing.expectEqual(std.Io.File.Kind.directory, lock_dir.kind);
 
     // One lock inode per target path, and the name carries no part of the
     // target: a reader must not be able to reconstruct `docs/note.md` from it.
-    var locks = try tmp.dir.openDir(io, "state/locks", .{ .iterate = true });
+    var locks = try fixture.tmp.dir.openDir(io, "state/locks", .{ .iterate = true });
     defer locks.close(io);
     var it = locks.iterate();
     var lock_count: usize = 0;
@@ -7427,9 +7260,9 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
     const stale = "0" ** 64;
     try std.testing.expectEqual(
         Err.mismatch,
-        fsWriteIfImpl(&sb, tmp.dir, "never/written/here.md", stale, "nope"),
+        fsWriteIfImpl(&sb, fixture.tmp.dir, "never/written/here.md", stale, "nope"),
     );
-    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "never", .{}));
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.dir.statFile(io, "never", .{}));
 }
 
 test "a CAS lock is keyed by the resolved target, so two spellings share one lock" {
@@ -7440,20 +7273,14 @@ test "a CAS lock is keyed by the resolved target, so two spellings share one loc
     // std.process.currentPathAlloc. Two names meant two lock inodes on one
     // file, so neither writer excluded the other and the earlier write was lost
     // (docs/reports/bugs/2026-08-17-cas-lock-name-hashes-an-unresolved-path.md).
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "notes");
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
+    try fixture.tmp.dir.createDirPath(io, "notes");
 
     var abs_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const abs = abs_buf[0..try tmp.dir.realPath(io, &abs_buf)];
+    const abs = abs_buf[0..try fixture.tmp.dir.realPath(io, &abs_buf)];
 
     var relative = Sandbox{
         .gpa = gpa,
@@ -7472,13 +7299,13 @@ test "a CAS lock is keyed by the resolved target, so two spellings share one loc
         .environ_map = undefined,
     };
 
-    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&relative, tmp.dir, "notes/x.md", "", "one"));
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&relative, fixture.tmp.dir, "notes/x.md", "", "one"));
     // The second sandbox addresses the same file, so an empty expected hash is
     // now a mismatch rather than a create. That is what makes the count below
     // meaningful: one file, reached twice.
-    try std.testing.expectEqual(Err.mismatch, fsWriteIfImpl(&absolute, tmp.dir, "notes/x.md", "", "two"));
+    try std.testing.expectEqual(Err.mismatch, fsWriteIfImpl(&absolute, fixture.tmp.dir, "notes/x.md", "", "two"));
 
-    var locks = try tmp.dir.openDir(io, "state/locks", .{ .iterate = true });
+    var locks = try fixture.tmp.dir.openDir(io, "state/locks", .{ .iterate = true });
     defer locks.close(io);
     var it = locks.iterate();
     var lock_count: usize = 0;
@@ -7494,17 +7321,11 @@ test "CAS locks live under the sandbox root, not beside the process cwd" {
     // was resolved against the sandbox root, so a sandbox rooted in a test's
     // tmp tree wrote permanent lock files into the operator's real state/locks:
     // 328 of the 387 files there on 2026-08-17 named a .zig-cache/tmp target.
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "proj/docs");
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
+    try fixture.tmp.dir.createDirPath(io, "proj/docs");
 
     var sb = Sandbox{
         .gpa = gpa,
@@ -7515,10 +7336,10 @@ test "CAS locks live under the sandbox root, not beside the process cwd" {
         .environ_map = undefined,
     };
 
-    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hi"));
-    const lock_dir = try tmp.dir.statFile(io, "proj/state/locks", .{});
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, fixture.tmp.dir, "docs/note.md", "", "hi"));
+    const lock_dir = try fixture.tmp.dir.statFile(io, "proj/state/locks", .{});
     try std.testing.expectEqual(std.Io.File.Kind.directory, lock_dir.kind);
-    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state", .{}));
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.dir.statFile(io, "state", .{}));
 }
 
 test "a CAS write sweeps aged lock files and keeps fresh or held ones" {
@@ -7526,17 +7347,11 @@ test "a CAS write sweeps aged lock files and keeps fresh or held ones" {
     // fires on its own (ADR 0008) -- so the sweep has to happen on the path
     // that creates the files. An operator who never types `clanker janitor
     // --yes` would otherwise keep every lock file forever.
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state/locks");
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
+    try fixture.tmp.dir.createDirPath(io, "state/locks");
 
     const now: i64 = @intCast(log.unixMilliseconds());
     const aged_ms = now - 13 * 60 * 60 * 1000;
@@ -7546,30 +7361,23 @@ test "a CAS write sweeps aged lock files and keeps fresh or held ones" {
 
     var rec: [cas_lock_record.record_len]u8 = undefined;
     cas_lock_record.render(&rec, 1, aged_ms, "reports", "docs/target-that-is-gone.md");
-    try tmp.dir.writeFile(io, .{ .sub_path = aged, .data = &rec });
-    try tmp.dir.writeFile(io, .{ .sub_path = held, .data = &rec });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = aged, .data = &rec });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = held, .data = &rec });
     cas_lock_record.render(&rec, 2, now, "reports", "docs/written-just-now.md");
-    try tmp.dir.writeFile(io, .{ .sub_path = fresh, .data = &rec });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = fresh, .data = &rec });
 
     // An aged record is not a held lock: the record names the *last*
     // acquisition and a hold is only ever answered by trying to take it. A
     // writer that has been inside fs_write_if since before the window must
     // keep its lock file.
-    const holder = try tmp.dir.createFile(io, held, .{ .truncate = false, .lock = .exclusive });
+    const holder = try fixture.tmp.dir.createFile(io, held, .{ .truncate = false, .lock = .exclusive });
 
-    var sb = Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = ".",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"."},
-        .environ_map = undefined,
-    };
-    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hello"));
+    var sb = testSandboxAtRoot(gpa, io);
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, fixture.tmp.dir, "docs/note.md", "", "hello"));
 
-    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, aged, .{}));
-    _ = try tmp.dir.statFile(io, fresh, .{});
-    _ = try tmp.dir.statFile(io, held, .{});
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.dir.statFile(io, aged, .{}));
+    _ = try fixture.tmp.dir.statFile(io, fresh, .{});
+    _ = try fixture.tmp.dir.statFile(io, held, .{});
     holder.close(io);
 }
 
@@ -7585,48 +7393,35 @@ test "a recordless lock file is swept once settled, never while fresh or held" {
     // in-flight case; the age floor covers the sliver where a writer has opened
     // the file but not yet locked it. A non-empty record that cannot be parsed
     // stays untouched -- unknown is still not old.
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state/locks");
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
+    try fixture.tmp.dir.createDirPath(io, "state/locks");
 
     const settled = "state/locks/" ++ "4" ** 64 ++ ".lock";
     const fresh = "state/locks/" ++ "5" ** 64 ++ ".lock";
     const held = "state/locks/" ++ "6" ** 64 ++ ".lock";
     const garbage = "state/locks/" ++ "7" ** 64 ++ ".lock";
     for ([_][]const u8{ settled, fresh, held }) |p| {
-        try tmp.dir.writeFile(io, .{ .sub_path = p, .data = "" });
+        try fixture.tmp.dir.writeFile(io, .{ .sub_path = p, .data = "" });
     }
-    try tmp.dir.writeFile(io, .{ .sub_path = garbage, .data = "not a record at all\n" });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = garbage, .data = "not a record at all\n" });
 
     const now: i64 = @intCast(log.unixMilliseconds());
     const old_ns: i128 = @as(i128, now - 2 * 60 * 60 * 1000) * std.time.ns_per_ms;
     for ([_][]const u8{ settled, held, garbage }) |p| {
-        try tmp.dir.setTimestamps(io, p, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = @intCast(old_ns) } } });
+        try fixture.tmp.dir.setTimestamps(io, p, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = @intCast(old_ns) } } });
     }
-    const holder = try tmp.dir.createFile(io, held, .{ .truncate = false, .lock = .exclusive });
+    const holder = try fixture.tmp.dir.createFile(io, held, .{ .truncate = false, .lock = .exclusive });
 
-    var sb = Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = ".",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"."},
-        .environ_map = undefined,
-    };
-    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/note.md", "", "hi"));
+    var sb = testSandboxAtRoot(gpa, io);
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, fixture.tmp.dir, "docs/note.md", "", "hi"));
 
-    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, settled, .{}));
-    _ = try tmp.dir.statFile(io, fresh, .{});
-    _ = try tmp.dir.statFile(io, held, .{});
-    _ = try tmp.dir.statFile(io, garbage, .{});
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.dir.statFile(io, settled, .{}));
+    _ = try fixture.tmp.dir.statFile(io, fresh, .{});
+    _ = try fixture.tmp.dir.statFile(io, held, .{});
+    _ = try fixture.tmp.dir.statFile(io, garbage, .{});
     holder.close(io);
 }
 
@@ -7634,40 +7429,27 @@ test "the lock sweep is rate limited by its marker, not run on every CAS write" 
     // The sweep walks a directory, so it must not run once per compare-and-swap
     // write. The marker's mtime is what spaces the passes out, and it is shared
     // between processes for the same reason the lock is.
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
 
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var sb = Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = ".",
-        .network_allow = &.{},
-        .fs_prefixes = &.{"."},
-        .environ_map = undefined,
-    };
+    var sb = testSandboxAtRoot(gpa, io);
 
     // First write: the marker does not exist, so this pass sweeps and stamps it.
-    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/one.md", "", "1"));
-    _ = try tmp.dir.statFile(io, "state/locks/" ++ cas_lock_sweep_marker, .{});
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, fixture.tmp.dir, "docs/one.md", "", "1"));
+    _ = try fixture.tmp.dir.statFile(io, "state/locks/" ++ cas_lock_sweep_marker, .{});
 
     const now: i64 = @intCast(log.unixMilliseconds());
     const aged = "state/locks/" ++ "3" ** 64 ++ ".lock";
     var rec: [cas_lock_record.record_len]u8 = undefined;
     cas_lock_record.render(&rec, 1, now - 13 * 60 * 60 * 1000, "reports", "docs/gone.md");
-    try tmp.dir.writeFile(io, .{ .sub_path = aged, .data = &rec });
+    try fixture.tmp.dir.writeFile(io, .{ .sub_path = aged, .data = &rec });
 
     // Second write, well inside the interval: no walk, so the aged file is
     // still there. It goes on the next pass.
-    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, tmp.dir, "docs/two.md", "", "2"));
-    _ = try tmp.dir.statFile(io, aged, .{});
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, fixture.tmp.dir, "docs/two.md", "", "2"));
+    _ = try fixture.tmp.dir.statFile(io, aged, .{});
 }
 
 test "a tool may run only the commands its manifest names" {
