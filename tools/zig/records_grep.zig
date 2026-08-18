@@ -220,3 +220,41 @@ pub fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void
     try s.endObject();
     lib.commit(out, &w);
 }
+
+/// The `open` reply the four numbered stores share: the record's own text,
+/// plus the title and status read back out of it. `noun` names the record in
+/// the refusals, article included ("an ADR", "a research note").
+///
+/// All four had their own byte-identical copy of this, differing only in that
+/// noun and in the store they read from.
+pub fn openNumbered(
+    out: *lib.Out,
+    obj: std.json.Value,
+    dir: []const u8,
+    statuses: []const []const u8,
+    noun: []const u8,
+) !void {
+    const path = lib.str(obj, "path") catch
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "open needs the path of {s}", .{noun}));
+    if (!doc.isPathIn(dir, path))
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "path must be a markdown file directly below {s}/", .{dir}));
+    const raw = lib.fsRead(path) catch |err|
+        return lib.failErr(out, err, try std.fmt.allocPrint(lib.alloc, "opening {s}", .{noun}));
+    const text = try lib.alloc.dupe(u8, raw);
+
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("title");
+    try s.write(doc.documentTitle(text));
+    try s.objectField("status");
+    try s.write(doc.statusFrom(text, statuses));
+    try s.objectField("text");
+    try s.write(text);
+    try s.endObject();
+    lib.commit(out, &w);
+}

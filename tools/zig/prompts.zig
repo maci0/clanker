@@ -38,6 +38,23 @@ const StoredPrompt = struct {
     updated: i64 = 0,
 };
 
+/// One stored prompt, in the shape both the store file and the `list` reply
+/// use.
+fn writePrompt(s: *std.json.Stringify, p: StoredPrompt) !void {
+    try s.beginObject();
+    try s.objectField("id");
+    try s.write(p.id);
+    try s.objectField("title");
+    try s.write(p.title);
+    try s.objectField("content");
+    try s.write(p.content);
+    try s.objectField("created");
+    try s.write(p.created);
+    try s.objectField("updated");
+    try s.write(p.updated);
+    try s.endObject();
+}
+
 fn newId() []const u8 {
     // Time-mixed for the same reason as knowledge.zig's newId: a pinned
     // agent.seed makes bare lib.random() identical across invocations.
@@ -65,20 +82,7 @@ fn saveAll(prompts: []const StoredPrompt) !void {
     defer buf.deinit();
     var s = std.json.Stringify{ .writer = &buf.writer, .options = .{} };
     try s.beginArray();
-    for (prompts) |p| {
-        try s.beginObject();
-        try s.objectField("id");
-        try s.write(p.id);
-        try s.objectField("title");
-        try s.write(p.title);
-        try s.objectField("content");
-        try s.write(p.content);
-        try s.objectField("created");
-        try s.write(p.created);
-        try s.objectField("updated");
-        try s.write(p.updated);
-        try s.endObject();
-    }
+    for (prompts) |p| try writePrompt(&s, p);
     try s.endArray();
     try lib.fsWrite(store_path, buf.written());
 }
@@ -94,20 +98,7 @@ fn actionList(out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("prompts");
     try s.beginArray();
-    for (all) |p| {
-        try s.beginObject();
-        try s.objectField("id");
-        try s.write(p.id);
-        try s.objectField("title");
-        try s.write(p.title);
-        try s.objectField("content");
-        try s.write(p.content);
-        try s.objectField("created");
-        try s.write(p.created);
-        try s.objectField("updated");
-        try s.write(p.updated);
-        try s.endObject();
-    }
+    for (all) |p| try writePrompt(&s, p);
     try s.endArray();
     try s.endObject();
     lib.commit(out, &w);
