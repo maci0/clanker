@@ -138,7 +138,17 @@
   --lamp-ring: 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
   --lamp-glow: 0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
 
-  /* A panel has depth on the backplane: offset and blur, never a halo. */
+  /* A panel has depth on the backplane: offset and blur, never a halo. Three
+     rungs, because there were always three and only two had names: a plate
+     seated flush on the backplane (--lift-low), one standing off it (--lift),
+     and one floating clear of it (--lift-high). The seated rung was the one
+     every rule retyped, in five recipes between 0.04 and 0.12 alpha, and
+     because a retyped `rgba(0, 0, 0, 0.04)` is a literal it never reached the
+     dark block or any of themes/*.json -- so a seated plate had no edge at all
+     on graphite and cast a black shadow under hackerman's green-on-black.
+     Every theme redefines all three; a shadow that is not one of them is a
+     shadow the theme cannot see. */
+  --lift-low: 0 1px 2px rgba(24, 29, 26, 0.10);
   --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
   --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
 
@@ -227,6 +237,7 @@
     --chat-hue-7: #a3e635;
     --code-bg: #121411;
     --code-fg: #e8eae5;
+    --lift-low: 0 1px 2px rgba(0, 0, 0, 0.40);
     --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
     --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
   }
@@ -813,7 +824,7 @@ form[hidden] { display: none; }
   padding: var(--space-3);
   margin: var(--space-2) 0;
   background: var(--surface);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  box-shadow: var(--lift-low);
 }
 .event-ask .ask-question {
   font-family: var(--sans); font-size: var(--step-0);
@@ -1092,12 +1103,12 @@ form[hidden] { display: none; }
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 0.55rem 0.7rem 0.45rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 8px 24px -12px rgba(0,0,0,0.08);
+  box-shadow: var(--lift-low);
   transition: box-shadow 160ms ease, border-color 160ms ease;
 }
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 12px 32px -16px rgba(0,0,0,0.12);
+  box-shadow: var(--lift);
 }
 .composer > label[for="task"] {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -1180,7 +1191,7 @@ button.primary:where(:not(.pf-v6-c-button)),
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
   color: var(--on-accent); background: var(--accent);
   border: 0; border-radius: var(--radius-pill); cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  box-shadow: var(--lift-low);
 }
 button.secondary:where(:not(.pf-v6-c-button)) {
   font-size: var(--step-0); padding: var(--space-2) 0.8rem;
@@ -1207,7 +1218,7 @@ button.pf-v6-c-button {
   min-height: 40px; padding: 0.5rem 1.05rem;
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
   border: 0; border-radius: var(--radius-pill); cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  box-shadow: var(--lift-low);
 }
 button.pf-v6-c-button.pf-m-primary,
 button.pf-v6-c-button:not(.pf-m-secondary):not(.pf-m-plain):not(.pf-m-danger):not(.pf-m-link) {
@@ -1993,7 +2004,7 @@ mark {
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface); color: var(--fg);
   font-family: var(--sans); font-size: var(--step-0); line-height: 1.35; cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  box-shadow: var(--lift-low);
 }
 .suggestion:hover { border-color: var(--border); background: var(--surface-2); }
 .suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -2522,7 +2533,7 @@ h2#session-title {
   width: 100%; min-height: 54px; max-height: 140px; resize: vertical; font-size: var(--step-0);
   border-radius: var(--radius-lg); padding: 0.5rem var(--space-3); font-family: var(--sans);
   border: 1px solid var(--rule); background: var(--surface);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06); line-height: 1.4;
+  box-shadow: var(--lift-low); line-height: 1.4;
 }
 .board-quick-add .board-add-form textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
 .board-quick-add .board-add-actions { display: flex; gap: var(--space-2); align-items: center; }
@@ -2540,7 +2551,7 @@ h2#session-title {
 .board-col-menu {
   position: absolute; top: 100%; right: 0; z-index: 50;
   min-width: 220px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); box-shadow: 0 8px 16px rgba(0,0,0,.25);
+  border-radius: var(--radius-lg); box-shadow: var(--lift);
   padding: var(--space-1) 0; display: none;
 }
 .board-col-menu.is-open { display: block; }
@@ -2693,7 +2704,7 @@ h2#session-title {
 .card:hover .card-quick-edit-btn { opacity: 1; }
 .card:active { transform: translateY(0); }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent), 0 1px 3px rgba(0, 0, 0, 0.1); }
+.card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent), var(--lift-low); }
 .card[aria-current="true"] .card-title { color: var(--accent-text); }
 .card[data-dragging="true"] { opacity: 0.35; transform: scale(0.97); box-shadow: none; }
 /* Card quick-edit pencil — appears on hover */
@@ -3125,7 +3136,7 @@ h2#session-title {
   white-space: pre-wrap; overflow-wrap: anywhere;
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface); color: var(--fg);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  box-shadow: var(--lift-low);
 }
 .log-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 

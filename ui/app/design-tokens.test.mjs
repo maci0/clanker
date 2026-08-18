@@ -162,6 +162,117 @@ test("the lamp tokens the sheets reference are declared", () => {
   }
 });
 
+// Elevation was the fifth axis, and the one that drifted furthest out of the
+// theme's reach. Three rungs exist but only two had names, so a plate seated
+// on the backplane was retyped as a literal at fifteen sites in five recipes
+// (0 1px 2px/3px/4px between 0.04 and 0.12 alpha) -- including the composer,
+// which had grown the full SaaS-card pair of a hairline plus a soft 24px
+// bloom that raised on focus. A literal shadow is invisible to a theme:
+// :root, the system-dark block and all ten themes/*.json redefine --lift and
+// --lift-high, so those fifteen kept casting a light-theme black smudge on
+// graphite and under hackerman's green-on-black.
+
+test("elevation is a --lift rung, never a retyped shadow", () => {
+  // Elevation is the layer with an offset: a plate casts its shadow to one
+  // side. A layer with no offset is a different idiom entirely -- a focus
+  // ring, an avatar's surface halo, a lamp's glow -- and has its own tokens.
+  // Insets are the recessed well and the pressed actuator, also not height.
+  const layers = (value) => {
+    const out = [];
+    let depth = 0, buf = "";
+    for (const ch of value) {
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      if (ch === "," && depth === 0) { out.push(buf); buf = ""; continue; }
+      buf += ch;
+    }
+    return out.concat(buf).map((s) => s.trim()).filter(Boolean);
+  };
+  const hasOffset = (layer) => {
+    const lengths = layer.match(/(^|\s)-?[0-9.]+(px|rem|em)?(?=\s|$)/g) || [];
+    return lengths.slice(0, 2).some((n) => parseFloat(n) !== 0);
+  };
+  const strays = [];
+  for (const [name, css] of sheets()) {
+    for (const { value, line } of declarations(css, "box-shadow")) {
+      if (value === "none") continue;
+      for (const layer of layers(value)) {
+        if (layer.startsWith("inset") || layer.includes("var(--lift") || !hasOffset(layer)) continue;
+        // The mobile drawer casts sideways; no vertical rung says that, so it
+        // names the theme's --scrim, which is what it lays over anyway.
+        if (layer.includes("var(--scrim)")) continue;
+        strays.push(`${name}:${line}  box-shadow layer \`${layer}\``);
+      }
+    }
+  }
+  assert.deepEqual(strays, [], `elevation must name a rung (--lift-low/--lift/--lift-high):\n${strays.join("\n")}`);
+});
+
+test("every theme declares all three elevation rungs", () => {
+  // A rung declared only in app.css is a rung the ten themes cannot retune,
+  // which is how a light-theme smudge survives on graphite.
+  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const rungs = ["--lift-low", "--lift", "--lift-high"];
+  for (const token of rungs) {
+    assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
+  }
+  const themesDir = join(here, "..", "..", "themes");
+  for (const file of readdirSync(themesDir).filter((f) => f.endsWith(".json"))) {
+    const { tokens } = JSON.parse(readFileSync(join(themesDir, file), "utf8"));
+    for (const token of rungs) {
+      assert.ok(tokens[token], `themes/${file} redefines elevation but is missing ${token}`);
+    }
+  }
+});
+
+// The icon grid is the sixth axis, and typed pictographs are how it drifts.
+// ICON_PATHS exists because a star glyph and a multiplication sign could not
+// share a stroke; its header says so. The music dock still typed its whole
+// transport -- bars from U+23xx, a triangle from U+25B6, speakers from
+// U+1F50A -- and the last of those are emoji, which a browser paints in its
+// own colours whatever the theme says. Emoji are content here (a reaction, a
+// room avatar, a :shortcode:), never chrome.
+
+test("colour emoji are chat content, never drawn chrome", () => {
+  // Emoji-presentation blocks only. U+2713/U+25B6-style symbols render as
+  // monochrome text and are not what this is about.
+  const emoji = /[\u{1F300}-\u{1FAFF}]|️/u;
+  // The three tables that own emoji as data: the :shortcode: map, the
+  // reaction sets, and the room-avatar ring.
+  const owners = new Set(["app/app.js", "app/core/chat.js"]);
+  const strays = [];
+  const scripts = [
+    ["app/app.js", join(here, "app.js")],
+    ["app/core/chat.js", join(here, "core", "chat.js")],
+  ];
+  for (const name of readdirSync(pluginsDir, { withFileTypes: true })) {
+    if (!name.isDirectory()) continue;
+    try {
+      const path = join(pluginsDir, name.name, "app.js");
+      readFileSync(path, "utf8");
+      scripts.push([`plugins/${name.name}/app.js`, path]);
+    } catch {
+      // Not every plugin ships a script.
+    }
+  }
+  for (const [name, path] of scripts) {
+    if (owners.has(name)) continue;
+    readFileSync(path, "utf8").split("\n").forEach((line, i) => {
+      if (emoji.test(line)) strays.push(`${name}:${i + 1}  ${line.trim().slice(0, 72)}`);
+    });
+  }
+  assert.deepEqual(strays, [], `chrome is drawn from ICON_PATHS, not typed:\n${strays.join("\n")}`);
+});
+
+test("the icons the music dock names are drawn in the one grid", () => {
+  const icons = readFileSync(join(here, "core", "icons.js"), "utf8");
+  const dock = readFileSync(join(pluginsDir, "music", "app.js"), "utf8");
+  assert.match(dock, /api\.icon\(name, 16\)/, "the dock must draw its glyphs, not type them");
+  for (const name of ["play", "pause", "prev", "next", "volume", "mute", "note"]) {
+    assert.match(icons, new RegExp(`\\n\\s*${name}: \\[`), `ICON_PATHS.${name} is named by the dock but never drawn`);
+  }
+});
+
 const CARD_HUES = ["green", "yellow", "orange", "red", "purple", "blue", "sky", "pink", "lime", "black"];
 
 test("card colours are --card-* tokens, never literals", () => {

@@ -2848,17 +2848,17 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     return h.writeResult(bytes, buf[0..w.end]);
 }
 
-/// ck_fs_find(dir_path, pattern), recursively find files under a sandbox
-/// directory whose names match a simple glob pattern. The pattern supports
-/// '*' (matches any sequence of non-'/' chars) and '?' (matches exactly one
-/// non-'/' char); everything else is a literal match. Returns a JSON string
-/// array of relative paths (relative to the sandbox root) in the host arena.
-/// Stops after `fs_find_max_results` matches, the same bound grep uses on
-/// lines: a `*` walk of a large tree used to serialize every path (or fail
-/// the whole call with too_large) instead of returning a useful page.
-/// Enforces the same fs_prefixes policy as ck_fs_read.
-/// Returns Err.not_found when the directory does not exist.
-pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32 {
+/// Shared body of `ck_fs_find` and `ck_fs_grep`: resolve the directory under
+/// the same fs_prefixes policy `ck_fs_read` enforces, then serialize whatever
+/// `recurse` writes as one JSON array in the host arena.
+fn fsWalkJson(
+    caller: *zwasm.Caller,
+    dir_ptr: u32,
+    dir_len: u32,
+    pat_ptr: u32,
+    pat_len: u32,
+    comptime recurse: anytype,
+) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
     const dir_path = sliceOf(bytes, dir_ptr, dir_len) orelse return Err.invalid;
@@ -2877,10 +2877,24 @@ pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
     s.beginArray() catch return Err.too_large;
 
     var count: u32 = 0;
-    fsFindRecurse(h, &s, dir, dir_path, pattern, 0, &count) catch return Err.too_large;
+    recurse(h, &s, dir, dir_path, pattern, 0, &count) catch return Err.too_large;
 
     s.endArray() catch return Err.too_large;
     return h.writeResult(bytes, buf[0..w.end]);
+}
+
+/// ck_fs_find(dir_path, pattern), recursively find files under a sandbox
+/// directory whose names match a simple glob pattern. The pattern supports
+/// '*' (matches any sequence of non-'/' chars) and '?' (matches exactly one
+/// non-'/' char); everything else is a literal match. Returns a JSON string
+/// array of relative paths (relative to the sandbox root) in the host arena.
+/// Stops after `fs_find_max_results` matches, the same bound grep uses on
+/// lines: a `*` walk of a large tree used to serialize every path (or fail
+/// the whole call with too_large) instead of returning a useful page.
+/// Enforces the same fs_prefixes policy as ck_fs_read.
+/// Returns Err.not_found when the directory does not exist.
+pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32 {
+    return fsWalkJson(caller, dir_ptr, dir_len, pat_ptr, pat_len, fsFindRecurse);
 }
 
 const fs_find_max_depth: u32 = 12;
@@ -2942,28 +2956,7 @@ pub const globMatch = glob.match;
 /// (containing null bytes in the first 512 bytes) are skipped. Enforces the
 /// same fs_prefixes policy as ck_fs_read.
 pub fn ckFsGrep(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32, pat_len: u32) u32 {
-    const h = getHost(caller);
-    const bytes = memBytes(caller) orelse return Err.invalid;
-    const dir_path = sliceOf(bytes, dir_ptr, dir_len) orelse return Err.invalid;
-    const pattern = sliceOf(bytes, pat_ptr, pat_len) orelse return Err.invalid;
-    if (pattern.len == 0) return Err.invalid;
-    const full = safeJoinSecure(h.sandbox, dir_path) catch return Err.denied;
-    defer h.sandbox.gpa.free(full);
-
-    var dir = std.Io.Dir.cwd().openDir(h.sandbox.io, full, .{ .iterate = true }) catch return Err.not_found;
-    defer dir.close(h.sandbox.io);
-
-    const buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_fs_bytes) catch return Err.too_large;
-    defer h.sandbox.gpa.free(buf);
-    var w: std.Io.Writer = .fixed(buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{} };
-    s.beginArray() catch return Err.too_large;
-
-    var count: u32 = 0;
-    fsGrepRecurse(h, &s, dir, dir_path, pattern, 0, &count) catch return Err.too_large;
-
-    s.endArray() catch return Err.too_large;
-    return h.writeResult(bytes, buf[0..w.end]);
+    return fsWalkJson(caller, dir_ptr, dir_len, pat_ptr, pat_len, fsGrepRecurse);
 }
 
 const fs_grep_max_depth: u32 = 12;

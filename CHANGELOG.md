@@ -19,6 +19,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI's elevation is a token again. Three rungs of shadow existed but
+  only two had names, so a plate seated on the backplane was retyped as a
+  literal at sixteen sites in five recipes (`0 1px 2px`/`3px`/`4px` between
+  0.04 and 0.12 alpha), the chat composer among them, where it had grown the
+  full rounded-card pair of a hairline plus a soft 24px bloom that raised on
+  focus. A literal shadow is invisible to a theme: `:root`, the system-dark
+  block and all ten `themes/*.json` retune `--lift` and `--lift-high`, so
+  those sixteen kept casting a light-theme black smudge on graphite and under
+  hackerman's green-on-black. The seated rung is `--lift-low` now, declared
+  beside the other two in every theme, and `ui/app/design-tokens.test.mjs`
+  fails on any offset shadow that is not a rung. The mobile chat drawer keeps
+  its sideways cast, which no vertical rung says, and names `--scrim` for it.
+- The music dock's controls are drawn from the web UI's icon grid instead of
+  typed. Its transport pulled glyphs from three Unicode blocks at once (bars
+  from U+23xx, a triangle from U+25B6, speakers from U+1F50A) and the last of
+  those are emoji, so a browser painted the mute and volume buttons in its own
+  colours next to monochrome siblings whatever the theme said. `ICON_PATHS`
+  gains `play`, `pause`, `prev`, `next`, `volume`, `mute` and `note` on the
+  same 24-grid and 1.75 stroke as every other icon, and the dock reaches for
+  them through `api.icon`. Emoji stay where they are content -- reactions,
+  room avatars, `:shortcode:` -- and a test now pins that they are never
+  chrome.
 - The web UI's indicator lamps are one recipe again. The dome the sheet's
   header calls "one boldness, spent in one place" had been retyped by hand at
   five call sites and had drifted to two highlight opacities, three glow

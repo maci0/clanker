@@ -87,6 +87,20 @@ export var ICON_PATHS = {
   aiInfo: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M12 11v5", "M12 8h.01"],
   // A face: the rooms emoji picker trigger.
   smile: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M9 10v.5", "M15 10v.5", "M8.5 14c1.1 1.6 2.7 2.4 3.5 2.4s2.4-.8 3.5-2.4"],
+  // Transport. The music dock typed these from three Unicode blocks at once
+  // (U+23xx bars, U+25B6 triangle, U+1F50A speaker) -- and the last two are
+  // emoji, so a browser painted them in its own colours next to monochrome
+  // ones. Drawn here they share the grid and the stroke like everything else.
+  play: ["M9 6.5l9 5.5-9 5.5z"],
+  pause: ["M9.5 6.5v11", "M14.5 6.5v11"],
+  prev: ["M7 6.5v11", "M18 6.5l-8.5 5.5L18 17.5z"],
+  next: ["M17 6.5v11", "M6 6.5l8.5 5.5L6 17.5z"],
+  // A speaker cone; the muted variant strikes it rather than changing shape,
+  // so the two states read as one control.
+  volume: ["M5 9.5h3l4-3.5v12l-4-3.5H5z", "M15 9.5a3.5 3.5 0 010 5"],
+  mute: ["M5 9.5h3l4-3.5v12l-4-3.5H5z", "M15.5 10l4 4", "M19.5 10l-4 4"],
+  // A note: the collapsed dock's handle.
+  note: ["M10 17.5V6l8-1.5V16", "M8 15.5a2 2 0 100 4 2 2 0 000-4z", "M16 14a2 2 0 100 4 2 2 0 000-4z"],
 };
 
 export function icon(name, size) {

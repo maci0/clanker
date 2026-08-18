@@ -103,12 +103,12 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   function syncChrome() {
     var paused = audio.paused;
     document.querySelectorAll(".music-btn-play").forEach(function (b) {
-      b.textContent = paused ? "▶" : "❚❚";
+      setGlyph(b, paused ? "play" : "pause");
       b.setAttribute("aria-label", paused ? "Play" : "Pause");
     });
     var muted = audio.muted || audio.volume === 0;
     document.querySelectorAll(".music-mute").forEach(function (b) {
-      b.textContent = muted ? "🔇" : "🔊";
+      setGlyph(b, muted ? "mute" : "volume");
       b.setAttribute("aria-label", audio.muted ? "Unmute" : "Mute");
     });
     var title = current() ? current().title : "No track";
@@ -230,22 +230,37 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     draw();
   }
 
-  function btn(label, aria, onclick) {
+  // The dock's controls are drawn from the host's one icon grid rather than
+  // typed: the glyphs it used came from three Unicode blocks and two of them
+  // (the speakers) were emoji, which a browser paints in its own colours next
+  // to monochrome siblings. Falls back to the label text where a host predates
+  // api.icon so the dock is never a row of blank buttons.
+  function setGlyph(b, name) {
+    // syncChrome runs on every timeupdate; rebuilding an SVG four times a
+    // second for a glyph that did not change is work nobody asked for.
+    if (b.dataset.glyph === name) return;
+    b.dataset.glyph = name;
+    b.textContent = "";
+    if (api && api.icon) b.appendChild(api.icon(name, 16));
+    else b.textContent = name;
+  }
+
+  function btn(name, aria, onclick) {
     var b = document.createElement("button");
     b.type = "button";
     b.className = "music-btn";
-    b.textContent = label;
+    setGlyph(b, name);
     b.setAttribute("aria-label", aria);
     b.addEventListener("click", onclick);
     return b;
   }
 
   function transport(into) {
-    into.appendChild(btn("⏮", "Previous", function () { step(-1); }));
-    var play = btn(audio.paused ? "▶" : "❚❚", audio.paused ? "Play" : "Pause", playPause);
+    into.appendChild(btn("prev", "Previous", function () { step(-1); }));
+    var play = btn(audio.paused ? "play" : "pause", audio.paused ? "Play" : "Pause", playPause);
     play.className += " music-btn-play";
     into.appendChild(play);
-    into.appendChild(btn("⏭", "Next", function () { step(1); }));
+    into.appendChild(btn("next", "Next", function () { step(1); }));
   }
 
   function seekBlock() {
@@ -283,7 +298,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   function volumeBlock() {
     var wrap = document.createElement("div");
     wrap.className = "music-vol";
-    var mute = btn(audio.muted || audio.volume === 0 ? "🔇" : "🔊", audio.muted ? "Unmute" : "Mute", function () {
+    var mute = btn(audio.muted || audio.volume === 0 ? "mute" : "volume", audio.muted ? "Unmute" : "Mute", function () {
       audio.muted = !audio.muted;
       syncChrome();
     });
@@ -317,7 +332,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     dock.textContent = "";
     dock.setAttribute("data-collapsed", String(collapsed));
     if (collapsed) {
-      var open = btn("♪", "Show music player", function () { setCollapsed(false); });
+      var open = btn("note", "Show music player", function () { setCollapsed(false); });
       open.className += " music-fab";
       dock.appendChild(open);
       return;
@@ -328,8 +343,8 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     var transportRow = document.createElement("div");
     transportRow.className = "music-transport";
     transport(transportRow);
-    var hide = btn("▾", "Hide music player", function () { setCollapsed(true); });
-    var openView = btn("☰", "Open music view", function () { if (api) api.showView("music"); });
+    var hide = btn("chevronDown", "Hide music player", function () { setCollapsed(true); });
+    var openView = btn("list", "Open music view", function () { if (api) api.showView("music"); });
     dock.appendChild(hide);
     dock.appendChild(title);
     dock.appendChild(transportRow);
