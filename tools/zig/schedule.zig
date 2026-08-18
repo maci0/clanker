@@ -54,17 +54,16 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const action = lib.optStr(req, "action") orelse "list";
-    if (std.mem.eql(u8, action, "list")) return doList(req, out);
+    if (std.mem.eql(u8, action, "list")) return doList(out);
     if (std.mem.eql(u8, action, "set_enabled")) return doSetEnabled(req, out);
     if (std.mem.eql(u8, action, "add")) return doAdd(req, out);
     if (std.mem.eql(u8, action, "remove")) return doRemove(req, out);
     return lib.fail(out, "action must be list, set_enabled, add, or remove");
 }
 
-fn doList(req: std.json.Value, out: *lib.Out) !void {
+fn doList(out: *lib.Out) !void {
     const loaded = try load();
-    const filter_id = lib.optStr(req, "id");
-    return writeList(out, loaded.entries.items, filter_id);
+    return writeList(out, loaded.entries.items);
 }
 
 fn doSetEnabled(req: std.json.Value, out: *lib.Out) !void {
@@ -96,7 +95,6 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
         break :blk @trunc(n_f);
     };
-    const enabled = lib.optBool(req, "enabled", true);
     const now: i64 = @trunc(lib.nowSeconds());
     if (logic.firstFire(cron_text, now, tz) == null)
         return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
@@ -114,7 +112,6 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
             .provider = lib.optStr(req, "provider"),
             .model = lib.optStr(req, "model"),
             .tz_offset_minutes = tz,
-            .enabled = enabled,
             .created = now,
         };
         try loaded.entries.append(lib.alloc, entry);
@@ -180,7 +177,7 @@ fn store(loaded: Loaded) !bool {
     return true;
 }
 
-fn writeList(out: *lib.Out, entries: []const Entry, filter_id: ?[]const u8) !void {
+fn writeList(out: *lib.Out, entries: []const Entry) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -192,7 +189,7 @@ fn writeList(out: *lib.Out, entries: []const Entry, filter_id: ?[]const u8) !voi
     try s.endArray();
     try s.objectField("log");
     try s.beginArray();
-    try writeLog(&s, filter_id);
+    try writeLog(&s);
     try s.endArray();
     try s.endObject();
     lib.commit(out, &w);
@@ -247,7 +244,7 @@ fn writeEntry(s: *std.json.Stringify, e: Entry) !void {
     try s.endObject();
 }
 
-fn writeLog(s: *std.json.Stringify, filter_id: ?[]const u8) !void {
+fn writeLog(s: *std.json.Stringify) !void {
     const raw = lib.fsReadTail(ledger_path, 64 * 1024) catch return;
     var recs: std.ArrayList(Record) = .empty;
     var it = std.mem.splitScalar(u8, raw, '\n');
@@ -255,9 +252,6 @@ fn writeLog(s: *std.json.Stringify, filter_id: ?[]const u8) !void {
         const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) continue;
         const rec = std.json.parseFromSliceLeaky(Record, lib.alloc, trimmed, .{ .ignore_unknown_fields = true }) catch continue;
-        if (filter_id) |fid| {
-            if (!std.mem.eql(u8, rec.id, fid)) continue;
-        }
         recs.append(lib.alloc, rec) catch continue;
     }
     std.mem.reverse(Record, recs.items);
