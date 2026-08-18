@@ -340,7 +340,10 @@ fn parseResponse(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]co
         .usage = usage_out,
         .finish_reason = try mapFinish(arena, cand.finishReason, calls.items.len > 0),
         .reasoning = if (reasoning_buf.items.len > 0) try reasoning_buf.toOwnedSlice(arena) else null,
-        .raw = try arena.dupe(u8, body),
+        // `body` is the caller's arena-owned copy (client.zig dups the gpa
+        // body into the arena before parsing), so aliasing it keeps the
+        // documented "arena-owned" contract without a second full copy.
+        .raw = body,
     };
 }
 

@@ -332,6 +332,20 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_d
 /// the exclusive `lock_file_name` lock, not because of any single-threading
 /// assumption.
 pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
+    return appendInner(base, io, gpa, arena, state_dir, cfg, msg, true);
+}
+
+/// Same as `append`, but for a message this process generated itself
+/// (`sendMessageOpts`): the id comes from `makeId` (pid + monotonic counter),
+/// so it cannot already exist in the log, and skipping the dedup scan avoids
+/// JSON-parsing up to `max_history` lines of the retained window on every
+/// local send. Wire-delivered messages keep going through `append` (and its
+/// dedup), because a redelivery can repeat an id another process appended.
+pub fn appendLocal(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message) !void {
+    return appendInner(base, io, gpa, arena, state_dir, cfg, msg, false);
+}
+
+fn appendInner(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, msg: Message, dedup: bool) !void {
     if (state_dir.len > 0) try ensure_dir.ensureDir(base, io, state_dir);
     const path = try subPath(arena, state_dir, log_path);
 
@@ -365,7 +379,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // retry of a just-appended message, so scanning the tail of the retained
     // window finds any duplicate: parsing every record in the log used to cost
     // one JSON parse per message on every send.
-    if (msg.id.len > 0) {
+    if (dedup and msg.id.len > 0) {
         if (hasMessageId(arena, existing, msg.id, cfg.chatrooms.max_history)) {
             log.log(.debug, "[chat] duplicate message id '{s}' ignored", .{msg.id});
             return;
@@ -410,7 +424,15 @@ fn jsonlLineCount(raw: []const u8) usize {
 /// True when `id` appears among the last `max` lines of `raw`. The log is
 /// trimmed to `max_history` entries on every append, so the last `max` lines
 /// cover the whole log; walking from the end also finds a duplicate (always a
-/// recent redelivery) after parsing only a few lines.
+/// recent redelivery) after checking only a few lines.
+///
+/// A line is only JSON-parsed when it plausibly carries the id: an exact
+/// `"id":"<id>"` field pattern must be present first. `makeId` ids are
+/// `m<ts>-<pid>-<seq>` — digits, letters, hyphens — which JSON never escapes,
+/// so the byte pattern is exact for them. A match inside message *content*
+/// (someone types `{"id":"x"}`) still falls through to the real parse and is
+/// rejected by the `m.id` comparison, so a false byte match cannot drop a
+/// legitimate message; it only costs one extra parse.
 fn hasMessageId(arena: std.mem.Allocator, raw: []const u8, id: []const u8, max: u32) bool {
     if (max == 0) return false;
     var end = raw.len;
@@ -421,9 +443,28 @@ fn hasMessageId(arena: std.mem.Allocator, raw: []const u8, id: []const u8, max: 
         const line = raw[start..end];
         end = if (start > 0) start - 1 else 0;
         if (line.len == 0) continue;
+        checked += 1;
+        // The field pattern is exact (the quotes and colon are JSON syntax, so
+        // no unescaped sequence in a JSON string value can contain it), and
+        // without it the line cannot be the message we are looking for. `id`
+        // serializes after `room`/`from`/`text`, which may themselves contain
+        // the pattern, so every occurrence is examined; a byte match only
+        // gates the parse, the `m.id` comparison below is the final word.
+        const needle = "\"id\":\"";
+        var search_from: usize = 0;
+        var plausibly_ours = false;
+        while (std.mem.indexOf(u8, line[search_from..], needle)) |rel| {
+            const k = search_from + rel;
+            const after = line[k + needle.len ..];
+            if (std.mem.startsWith(u8, after, id) and after.len >= id.len and after[id.len] == '"') {
+                plausibly_ours = true;
+                break;
+            }
+            search_from = k + needle.len;
+        }
+        if (!plausibly_ours) continue;
         const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
         if (std.mem.eql(u8, m.id, id)) return true;
-        checked += 1;
     }
     return false;
 }
@@ -756,7 +797,7 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
         .id = try makeId(arena, ts),
         .thread_ts = thread_ts,
     };
-    try append(base, io, gpa, arena, state_dir, cfg, msg);
+    try appendLocal(base, io, gpa, arena, state_dir, cfg, msg);
     fanOut(io, gpa, arena, environ_map, cfg, msg);
     return msg;
 }
@@ -1202,6 +1243,84 @@ test "append + readHistory + listRooms round-trip" {
 
     const fresh = try readNew(tmp.dir, io, arena, "", &cfg, .{ .ts = 1000 });
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
+}
+
+test "append dedups a redelivered id even when an older text holds the id byte pattern" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    // The first message's text contains the exact `"id":"m42"` field pattern:
+    // the byte prefilter in `hasMessageId` must not stop at that false match
+    // and miss the real `id` field of the later redelivery.
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "a",
+        .text = "look: \"id\":\"m42\"",
+        .ts = 1,
+        .id = "m1",
+    });
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "b",
+        .text = "real",
+        .ts = 2,
+        .id = "m42",
+    });
+    // Redelivery of m42: dropped despite the false byte pattern in m1's text.
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "b",
+        .text = "real again",
+        .ts = 3,
+        .id = "m42",
+    });
+    const raw = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, raw, "\"id\":\"m42\""));
+}
+
+test "appendLocal skips dedup while append keeps it" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    // A locally generated id (the path `sendMessageOpts` takes) is unique by
+    // construction, so appendLocal writes it twice without a dedup scan.
+    const m = Message{ .room = "dev", .from = "test-clanker", .text = "hello", .ts = 1, .id = "m1-2-1" };
+    try appendLocal(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
+    try appendLocal(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
+    // A redelivery of the same id through the wire path must still dedup.
+    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
+
+    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
+    try std.testing.expectEqual(@as(usize, 2), hist.len);
+    try std.testing.expectEqualStrings("hello", hist[0].text);
+    try std.testing.expectEqualStrings("hello", hist[1].text);
 }
 
 test "append trims to max_history and keeps the newest lines" {
