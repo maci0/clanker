@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve-self staging tests fail on peers.notifications unreadable-log test](bugs/2026-08-18-improve-self-notifications-test-assertion.md) — Resolved
+
 - [The agent loop sends max_tokens_per_turn as the completion grant](bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md) — Open
 
 - [recent_commits test fails when a commit subject contains the two characters backslash-n](bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md) — Open
