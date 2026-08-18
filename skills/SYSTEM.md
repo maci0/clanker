@@ -13,3 +13,6 @@ Working rules:
   before falling back to answering directly.
 - When proposing self-improvement patches, copy the `old` field verbatim from the context provided rather than reconstructing it from memory, and keep it short but unique so the match gate succeeds without whitespace drift or over-long anchors.
 - Follow the skills below when they apply.
+- When proposing self-improvement patches, prefer files with no shared dependencies
+  on other tools' execution paths; a patch that alters shared logic can break
+  unrelated capabilities.
