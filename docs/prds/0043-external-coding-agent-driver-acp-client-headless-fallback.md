@@ -31,28 +31,31 @@ The operator has Claude Code, Codex, and Grok Build logins (OAuth / subscription
 
 ## Design
 
-The driver is a native harness module (a `cmdAcp`-class verb), not a guest. It inverts the role of the existing ACP server: instead of being driven over stdio, clanker drives a vendor ACP agent over stdio, and folds the transcript it receives into the run-graph/autolearn path the native agent loop already uses.
+The driver is native harness code, not a guest and not `clanker acp` (that verb is the *server*, ADR 0026). clanker starts the vendor CLI as a subprocess and speaks ACP as the *client*.
 
-**Two paths, one transcript.** Path A (ACP client) sends initialize → authenticate → session/new → session/prompt and consumes session/update; it must implement session/request_permission and may need fs/* and terminal/* (ACP spec, opened 2026-08-18). Path B (headless spawn) runs `claude -p`, `codex exec`, `grok -p`. Both must emit one compatible transcript shape into state/runs, or only one path can write a run.
+**Operator surface.** No new work verb. Existing starts (`clanker run`, `repl`, `goal`, `POST /api/run`) gain a backend selector (`--backend` / `[agent] backend`, names like `grok`, `codex`, `claude`). Unset keeps today's in-process LLM loop. A fourth verb would fork the product the way a second `clanker acp` already would.
 
-**Why native, not ck_job / ck_exec.** ck_job is jobs+subagent only (src/sandbox/jobs.zig); ck_exec's allowlist is git/zig/uv (src/sandbox/host.zig) and must never gain claude/codex/grok, because that would hand a guest arbitrary subprocess reach beyond its manifest. Spawn lives beside src/agent/subprocess.zig and src/acp/.
+**Two paths, one Graph.** Path A sends initialize → authenticate (if the agent requires it) → session/new → session/prompt and consumes session/update; it implements session/request_permission (ACP client baseline). fs/* and terminal/* are not required to start: if the agent demands them, refuse the capability or fall through to B. Path B runs `claude -p`, `codex exec`, `grok -p`. Both persist the same `src/agent/graph.zig` `Graph` via the graph guest `write` action (the same JSON `Agent.persistGraph` already builds). They do **not** call `persistGraph` — that function is private on `Agent` and only runs at the end of an in-process loop. ACP `session/update` tool/message events map onto existing `NodeKind` (`tool`, `llm`, `final`). B writes a degraded graph: one `llm`/`final` pair from stdout. That is one schema, not two.
 
-**Credential boundary.** The vendor CLI is the only holder of the credential. clanker passes no token and never reads one back; it scans stdout/stderr only for transcript framing, not credentials.
+**ACP hang.** Cancel the child, persist a failed A node, then B for that vendor. Not "B or an error".
+
+**Why native, not ck_job / ck_exec.** ck_job is jobs+subagent only (src/sandbox/jobs.zig). ck_exec allowlists git/zig/uv (src/sandbox/host.zig) and must not gain claude/codex/grok — that would let a guest spawn those CLIs outside the harness policy. Spawn lives in src/acp/ next to the client, using the process table in src/agent/subprocess.zig.
+
+**Credential boundary.** clanker does not put a vendor token in config, argv, or logs, and does not parse one out of the stream. The child uses its own login store. JSON-RPC on stdio is the protocol, not a scan for "framing."
 
 **Dependencies.**
 - ADR 0032 — the decision this implements.
-- RFC 0020 — the options and argument.
-- ADR 0026 / PRD 0030 (src/acp/server.zig) — JSON-RPC line framing only; the client reuses the wire, not the server.
-- src/agent/loop.zig persistGraph — where a driven run's node lands.
-- src/agent/auto_learn.zig — what reads it.
-- Hard blocker: none of the driver exists yet; the ACP client must be written before phase 1 can record a run.
+- RFC 0020 — the argument.
+- ADR 0026 / PRD 0030 / src/acp/server.zig — JSON-RPC line framing only. session/request_permission on the server is the other direction (clanker asks the IDE). The client must implement the inverse (vendor agent asks clanker).
+- tools/zig/graph.zig `write` + src/agent/graph.zig — persist shape.
+- src/agent/auto_learn.zig `recordRun` — usage event (provider/model/tokens/tools). Hard blocker: none. The work is writing the client.
 
 **Implementation.**
-1. Create src/acp/client.zig — ACP client state machine (initialize/authenticate/session/new/session/prompt, session/update, session/request_permission). Add a cli/config flag to spawn the Grok first-party `agent stdio` and record a run (edit src/cli.zig, src/config.zig).
-2. Same client plus a Codex adapter argv (`codex-acp` community adapter).
-3. Claude adapter once the published ACP package is confirmed (Claude Code has no first-party acp verb).
-4. Create src/acp/fallback_spawn.zig (or similar) — path B: `claude -p`, `codex exec`, `grok -p`.
-5. docs/ + CHANGELOG.md.
+1. src/acp/client.zig (state machine + spawn). src/cli.zig / src/config.zig `--backend` / `[agent] backend`. Drive Grok `agent stdio`. Persist via graph `write` + autolearn.recordRun.
+2. Same client, Codex argv `npx -y @agentclientprotocol/codex-acp` (published adapter).
+3. Same client, Claude published ACP adapter once the package is opened and pinned.
+4. src/acp/fallback_spawn.zig — B, same Graph write, used when ACP is missing or a turn is cancelled as broken.
+5. CHANGELOG, docs/README.md, AGENTS.md.
 
 
 
@@ -61,7 +64,7 @@ The driver is a native harness module (a `cmdAcp`-class verb), not a guest. It i
 | Condition | Behaviour |
 | --- | --- |
 | Vendor has no ACP | Fall back to B (headless spawn). |
-| ACP hangs or deadlocks on session/request_permission | Cancel the child, then B or an error. |
+| ACP hangs or deadlocks on session/request_permission | Cancel the child, persist a failed A node, then B. |
 | Child exits non-zero | Failed run; persistGraph records the failure. |
 | Unknown vendor | Refuse. |
 | Vendor update breaks ACP | B takes over; A is not a hard dependency for that vendor. |

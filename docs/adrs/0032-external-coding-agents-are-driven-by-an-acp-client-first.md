@@ -10,7 +10,7 @@ The operator has Claude Code, Codex, and/or Grok Build logins and no console API
 
 ## Decision
 
-Do both, in order. Ship a native ACP client first, everywhere a vendor speaks ACP (Grok first-party agent stdio; Claude/Codex via published adapters). Ship first-party headless spawn (claude -p, codex exec, grok -p) afterwards as the fallback when that vendor has no ACP or a provider update breaks ACP. Spawn is harness-native, not ck_job or ck_exec. The vendor credential never enters clanker.
+Do both, in order. Ship a native ACP client first, everywhere a vendor speaks ACP (Grok first-party agent stdio; Claude/Codex via published adapters). Ship first-party headless spawn (claude -p, codex exec, grok -p) afterwards as the fallback when that vendor has no ACP or a provider update breaks ACP. Spawn is harness-native, not ck_job or ck_exec. The vendor credential never enters clanker. The feature this decides is [PRD 0043](../prds/0043-external-coding-agent-driver-acp-client-headless-fallback.md).
 
 > The RFC recommended: **Recommended option:** Do both, in order. Option A (generic ACP client) first, everywhere a vendor speaks ACP. Option B (first-party headless spawn) afterwards as a fallback when that vendor has no ACP path, or when a provider update breaks ACP. B is not the product and not optional insurance we skip; it is the second deliverable so a Claude/Codex/Grok release cannot take the harness down.
 
