@@ -262,6 +262,14 @@ pub const Options = struct {
     /// recursive delete is not undoable.
     apply: bool = false,
     verbose: bool = false,
+    /// `--quiet`/`-q`: the other end of `--verbose`. Progress logging is on at
+    /// `info` by default, so a scripted `clanker run` gets `[INFO] ... [exec]`
+    /// tracing on stderr it never asked for and, until this flag, could only
+    /// silence through `CLANKER_LOG_LEVEL` -- an environment variable, for
+    /// something the invocation knows. `--verbose` wins if both are given: it
+    /// is the ask for more, and asking for more and less at once is not a
+    /// mistake worth failing an invocation over.
+    quiet: bool = false,
     /// `serve --webui-port <port>` (and the older `--port`, still accepted).
     /// Named for the surface it serves rather than for the process, leaving
     /// room for a second surface to get its own port without either name
@@ -678,6 +686,9 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
                 used = .verbose;
+            } else if (std.mem.eql(u8, a, "--quiet") or std.mem.eql(u8, a, "-q")) {
+                opts.quiet = true;
+                used = .quiet;
             } else if (std.mem.eql(u8, a, "--worktree") or std.mem.eql(u8, a, "-wt")) {
                 opts.worktree = true;
                 used = .worktree;
@@ -1216,7 +1227,10 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
     if (opts.command != .help and opts.command != .version and opts.command != .git) {
         for (seen_flags[0..seen_flags_len]) |f| {
             if (!commandAccepts(opts.command, f)) {
-                setDiag(diag, f.name());
+                // The primary spelling, not the heading form: naming the flag
+                // as "--model, -m is not an option" reads as two rejected
+                // arguments, and no one typed the comma.
+                setDiag(diag, primaryFlagName(f));
                 if (cmd_out) |c| c.* = opts.command;
                 return error.FlagNotForCommand;
             }
@@ -1614,7 +1628,7 @@ fn renderUsage(buf: []u8) []const u8 {
             writeWrappedHelpBlurb(&w, s.blurb) catch {};
         }
     }
-    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
+    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -1657,7 +1671,7 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
             w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
     }
-    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --help, -h.\n") catch {};
+    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --quiet, -q; --help, -h.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -1667,7 +1681,12 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
 /// value to parse.
 fn renderFlagHelp(buf: []u8, flag: Flag) []const u8 {
     var w: std.Io.Writer = .fixed(buf);
-    w.print("usage: clanker {s} -h\n\n", .{flag.name()}) catch {};
+    // The usage line is a command to retype, so it carries one spelling: the
+    // primary long form. `flag.name()` is the *heading* form and carries the
+    // aliases and the value placeholder with it, which rendered as
+    // "usage: clanker --continue, -c -h" and "usage: clanker --mascot-size
+    // <size> -h" — neither of which runs.
+    w.print("usage: clanker {s} -h\n\n", .{primaryFlagName(flag)}) catch {};
 
     if (flag == .mascot) {
         w.writeAll(
@@ -1735,6 +1754,7 @@ fn printFlagHelp(io: std.Io, flag: Flag) void {
 /// believes it took effect.
 const Flag = enum {
     verbose,
+    quiet,
     provider,
     model,
     reasoning_effort,
@@ -1788,8 +1808,9 @@ const Flag = enum {
     fn name(self: Flag) []const u8 {
         return switch (self) {
             .verbose => "--verbose, -v",
+            .quiet => "--quiet, -q",
             .provider => "--provider",
-            .model => "--model",
+            .model => "--model, -m",
             .reasoning_effort => "--reasoning-effort",
             .session => "--session",
             .continue_last => "--continue, -c",
@@ -1847,8 +1868,9 @@ const Flag = enum {
     fn describe(self: Flag) []const u8 {
         return switch (self) {
             .verbose => "log diagnostic progress while clanker runs",
+            .quiet => "drop progress logging to errors only (--verbose wins if both are given)",
             .provider => "use this provider instead of the configured default",
-            .model => "the model to use, or <provider>/<model> (alias -m)",
+            .model => "the model to use, or <provider>/<model>",
             .reasoning_effort => "pin reasoning effort for every turn: none, low, medium, high, or max (beats config and auto-thinking)",
             .session => "resume a saved conversation by id",
             .continue_last => "pick up the most recently touched session",
@@ -1900,7 +1922,7 @@ const Flag = enum {
     }
 
     fn global(self: Flag) bool {
-        return self == .verbose or self == .profile or self == .dump_config;
+        return self == .verbose or self == .quiet or self == .profile or self == .dump_config;
     }
 };
 
@@ -1920,6 +1942,7 @@ fn flagForHelp(arg: []const u8, command: Command) ?Flag {
         if (std.mem.eql(u8, arg, primaryFlagName(f))) return f;
     }
     if (std.mem.eql(u8, arg, "-v")) return .verbose;
+    if (std.mem.eql(u8, arg, "-q")) return .quiet;
     if (std.mem.eql(u8, arg, "-m")) return .model;
     if (std.mem.eql(u8, arg, "-c")) return .continue_last;
     if (std.mem.eql(u8, arg, "-wt") or std.mem.eql(u8, arg, "--no-worktree")) return .worktree;
@@ -1958,8 +1981,8 @@ const Spec = struct {
     detail: []const u8 = "",
 };
 
-/// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
-/// so are not listed per command.
+/// `--verbose`/`-v`, `--quiet`/`-q`, `--help`/`-h` and `--version` are accepted
+/// everywhere and so are not listed per command.
 const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
@@ -2005,7 +2028,7 @@ const specs = [_]Spec{
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
-    .{ .command = .commit, .usage = "commit [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups staged (or all) files,\nvalidates conventional commit messages, then asks before committing.\n\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
+    .{ .command = .commit, .usage = "commit [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups staged (or all) files,\nvalidates conventional commit messages, then asks before committing.\n\nThe confirmation is a terminal prompt, so a script must pass --yes:\nwith stdin redirected clanker refuses rather than reading the empty\nanswer as a no and exiting 0.\n\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
 };
 
 fn specFor(cmd: Command) ?*const Spec {
@@ -6172,11 +6195,17 @@ fn cmdMesh(init: std.process.Init, opts: Options) !void {
         .sub = opts.mesh_sub,
         .arg1 = opts.mesh_arg1,
     }, control_host, listen.port) catch |err| switch (err) {
-        mesh_cmd.Error.BadSubcommand => return error.BadSubcommand,
-        mesh_cmd.Error.MissingArg => return error.MissingArg,
-        mesh_cmd.Error.MeshOff => return error.ModuleDisabled,
-        mesh_cmd.Error.ServeNotRunning => return error.ServeNotRunning,
-        mesh_cmd.Error.RequestFailed => return error.HttpError,
+        // Same contract as the record stores: `mesh_cmd` has already written
+        // the diagnostic, and its line is the specific one — it names the URL
+        // it dialled, which is what tells a two-serve host *which* serve is
+        // down. Mapping these onto generic errors printed a second, vaguer
+        // line under it ("clanker serve is not running"), so only the exit
+        // status is left to set here.
+        mesh_cmd.Error.BadSubcommand, mesh_cmd.Error.MissingArg => {
+            printUsageHintFor(init.io, "mesh");
+            std.process.exit(2);
+        },
+        mesh_cmd.Error.MeshOff, mesh_cmd.Error.ServeNotRunning, mesh_cmd.Error.RequestFailed => std.process.exit(1),
         else => return err,
     };
 }
@@ -6316,10 +6345,24 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // multi-commit plan once landed as `chore: update working tree`. A human
     // confirming interactively still may, eyes open — the note is on screen.
     if (preview.degraded and opts.apply) {
-        try writeStdOut(io, "refusing --yes: the grouping degraded to a fallback plan (see the note above); rerun clanker commit, or confirm interactively without --yes\n");
-        return error.DegradedCommitPlan;
+        // The refusal is a diagnostic, not part of the plan: it goes to
+        // stderr so a caller capturing stdout for the plan still sees why
+        // nothing was written, and it is the only line printed — returning a
+        // bare `error.DegradedCommitPlan` on top of it put a Zig error name
+        // in front of the operator with the explanation on another stream.
+        printUsageError(io, "refusing --yes: the grouping degraded to a fallback plan (see the note above); rerun clanker commit, or confirm interactively without --yes", .{});
+        std.process.exit(1);
     }
     if (!opts.apply) {
+        // A prompt nobody can answer is not a safety check. With stdin
+        // redirected or closed — a script, CI, `clanker commit </dev/null` —
+        // the read below returns zero bytes, which read as "not y": the
+        // command printed "aborted" and exited 0, so an automated caller was
+        // told it had succeeded at committing nothing. Name the flag instead.
+        if (!(std.Io.File.stdin().isTty(io) catch false)) {
+            printUsageError(io, "refusing to commit: stdin is not a terminal, so `Proceed? [y/N]` cannot be answered; pass --yes to apply the plan above, or --dry-run to only print it", .{});
+            std.process.exit(1);
+        }
         try writeStdOut(io, "Proceed? [y/N] ");
         var buf: [8]u8 = undefined;
         // readStreaming takes a vector of buffers, not one buffer.
@@ -6472,12 +6515,23 @@ fn cmdGit(init: std.process.Init, opts: Options) !void {
         }
         try argv.append(init.gpa, arg);
     }
-    const result = try std.process.run(init.gpa, init.io, .{ .argv = argv.items });
-    defer init.gpa.free(result.stdout);
-    defer init.gpa.free(result.stderr);
-    try std.Io.File.stdout().writeStreamingAll(init.io, result.stdout);
-    try std.Io.File.stderr().writeStreamingAll(init.io, result.stderr);
-    if (result.term != .exited or result.term.exited != 0) return error.GitFailed;
+    // Inherited stdio and git's own exit status: a passthrough that is not
+    // transparent is worse than no passthrough. `std.process.run` captured
+    // both streams and replayed them after git had finished, so `clanker git
+    // log` could not reach a pager, `| head` could not stop it early, and a
+    // large `diff` was held whole in memory. It then flattened every failure
+    // to `error.GitFailed` (exit 1) with a "git exited with an error" line
+    // printed under git's own message, which erases the codes callers read:
+    // `git diff --quiet` answers 1 for "there are changes" and 128 for "not a
+    // repository", and `merge-base --is-ancestor` is 1-vs-128 the same way.
+    var child = try std.process.spawn(init.io, .{ .argv = argv.items });
+    switch (try child.wait(init.io)) {
+        .exited => |code| std.process.exit(code),
+        // Signalled or stopped rather than exited. 128 is the shell's band for
+        // that; the exact signal is not recoverable portably here, and any
+        // nonzero already tells a script the command did not succeed.
+        else => std.process.exit(128),
+    }
 }
 
 fn cmdRevert(init: std.process.Init, opts: Options) !void {
@@ -16026,6 +16080,7 @@ test "every registered option routes a following help flag to itself" {
 
     const aliases = [_]struct { []const u8, Flag }{
         .{ "-v", .verbose },
+        .{ "-q", .quiet },
         .{ "-m", .model },
         .{ "-c", .continue_last },
         .{ "-wt", .worktree },
@@ -16045,12 +16100,37 @@ test "every option can render its own help" {
         const help = renderFlagHelp(&buf, flag);
         try std.testing.expect(std.mem.startsWith(u8, help, "usage: clanker "));
         try std.testing.expect(std.mem.find(u8, help, primaryFlagName(flag)) != null);
+        // The usage line is meant to be retyped, so it carries the one
+        // spelling that runs: not the heading form, which folds in the alias
+        // ("--continue, -c -h") or the value placeholder ("--mascot-size
+        // <size> -h") and produces a command line clanker itself rejects.
+        const prefix = "usage: clanker ";
+        const usage_line = help[prefix.len..std.mem.findScalar(u8, help, '\n').?];
+        var expected_buf: [64]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&expected_buf, "{s} -h", .{primaryFlagName(flag)});
+        try std.testing.expectEqualStrings(expected, usage_line);
         var lines = std.mem.splitScalar(u8, help, '\n');
         while (lines.next()) |line| try std.testing.expect(line.len <= 80);
     }
     const mascot = renderFlagHelp(&buf, .mascot);
     try std.testing.expect(std.mem.find(u8, mascot, "MODES") != null);
     try std.testing.expect(std.mem.find(u8, mascot, "clanker repl") != null);
+}
+
+test "--quiet is global, and --verbose wins when both are given" {
+    // Both are accepted on every command, so neither can be refused as "not an
+    // option for this command"; main.zig applies quiet first and verbose
+    // second, which is what makes the louder of the two win.
+    const q = try parse(&.{ "clanker", "stats", "--quiet" }, null);
+    try std.testing.expect(q.quiet);
+    try std.testing.expect(!q.verbose);
+
+    const short = try parse(&.{ "clanker", "-q", "sessions" }, null);
+    try std.testing.expect(short.quiet);
+    try std.testing.expectEqual(Command.sessions, short.command);
+
+    const both = try parse(&.{ "clanker", "-q", "-v", "stats" }, null);
+    try std.testing.expect(both.quiet and both.verbose);
 }
 
 test "mistyped commands get conservative suggestions" {

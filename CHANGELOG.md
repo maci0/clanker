@@ -27,6 +27,37 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker git <args...>` is a transparent passthrough again. It captured both
+  of git's streams and replayed them after git had finished, so `clanker git
+  log` never reached a pager, `| head` could not stop it early, and a large
+  `diff` was held whole in memory; every nonzero status was then flattened to
+  1 with a "git exited with an error" line printed under git's own message.
+  Stdio is inherited and git's own exit status is the command's, so
+  `clanker git diff --quiet` is 1 for "there are changes" and 128 for "not a
+  repository", the way the callers of those codes expect.
+- `clanker commit` with stdin redirected (a script, CI, `clanker commit
+  </dev/null`) read the unanswerable `Proceed? [y/N]` prompt as a no: it
+  printed "aborted" and exited 0, so an automated caller was told it had
+  succeeded at committing nothing. It now refuses with a diagnostic naming
+  `--yes`, and exits 1.
+- The five record stores (`reports`, `research`, `rfc`, `adr`, `prd`) reported
+  a refused request as a timestamped `[ERROR] ts_ms=...` log record, so
+  `clanker adr open <missing>` read like a subsystem fault while
+  `clanker workflow show <missing>` — the same mistake — answered with a plain
+  `error: ...` line. Both are diagnostics now. An answer that is not readable
+  JSON stays a log record: that one really is a broken build, not a bad
+  argument.
+- `clanker mesh` printed two error lines for one failure, the second vaguer
+  than the first: the specific "clanker serve is not reachable at <url>" was
+  followed by a generic "clanker serve is not running". Only the line naming
+  the URL it dialled survives, which is what identifies the serve on a host
+  running several.
+- `clanker --continue -h` and the other aliased or value-taking options headed
+  their help with a usage line that does not run — `usage: clanker --continue,
+  -c -h`, `usage: clanker --mascot-size <size> -h`. The usage line carries the
+  primary spelling; the aliases stay in the heading below it.
+- `clanker stats --model x` reported the rejected flag as `--model, -m`, which
+  reads as two arguments. It names the spelling on its own now.
 - `clanker sessions` listed nothing and exited 1 with "query must be at least 3
   characters". The listing reaches the `sessions` guest through the CLI's
   generic passthrough, which always sends `{"args":"<argv tail>"}` — empty for
@@ -163,6 +194,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `--quiet`/`-q`, accepted on every command, drops logging to errors only. It
+  is the missing counterpart to `--verbose`: progress logging runs at `info`
+  by default, so a scripted `clanker run` collected `[INFO] ... [exec]`
+  tracing on stderr that only the `CLANKER_LOG_LEVEL` environment variable
+  could turn off. Precedence is file, then environment, then flags, with
+  `--verbose` beating `--quiet` when both are given.
 - `zig build test` runs `ui/app/design-tokens.test.mjs`, which fails when a
   stylesheet under `ui/app/` or `ui/plugins/` sets a `border-radius` or
   `font-size` that is not one of the declared tokens. An off-scale literal

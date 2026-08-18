@@ -361,6 +361,10 @@ pub fn main(init: std.process.Init) !void {
         }
         std.process.exit(0);
     }
+    // Order is the precedence: `--quiet` overrides CLANKER_LOG_LEVEL above,
+    // and `--verbose` overrides both. Two flags on one invocation asking for
+    // opposite things resolves toward more output rather than refusing.
+    if (opts.quiet) log.setLevel(.error_);
     if (opts.verbose) log.setLevel(.debug);
 
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
@@ -391,7 +395,6 @@ pub fn main(init: std.process.Init) !void {
             error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
             error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
             error.ModuleDisabled => "this module is disabled in config.toml",
-            error.ServeNotRunning => "clanker serve is not running; start it with modules.mesh = true",
             error.UnknownProvider => "no provider by that name in config.toml; run `clanker providers check` for the list",
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",
@@ -406,7 +409,6 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownEval => "no eval by that name; run `clanker eval` with no argument to list them",
             error.PresetsDirUnusable => "presets/ could not be created or opened; check permissions in the working directory",
             error.HttpError => "the HTTP request failed; check the provider's status and your network",
-            error.GitFailed => "git exited with an error (see output above)",
             error.ArenaRefused => "the arena match was refused (see output above)",
             error.CompareRefused => "the comparison was refused (see output above)",
             else => null,
