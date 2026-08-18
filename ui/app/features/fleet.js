@@ -638,6 +638,18 @@ function renderFloor(runs, roster){
 var _meshTimer = null;
 var _meshTopo = "";
 var _refreshMapFn = null;
+var _mapCoalesce = null;
+
+/* Live events arrive one per chat message (noteChat publishes both `chat` and
+   `talk`) and a map refresh is three fetches. Coalesce a burst into one
+   refresh instead of tripling every message into HTTP traffic. */
+function scheduleMapRefresh() {
+  if (_mapCoalesce) return;
+  _mapCoalesce = setTimeout(function () {
+    _mapCoalesce = null;
+    if (_refreshMapFn) _refreshMapFn();
+  }, 500);
+}
 
 /* The mesh poll follows the view the way the rooms and arena polls do:
    armed while Fleet is open, stopped by stopFleet when the operator leaves.
@@ -653,6 +665,7 @@ function startMeshTimer() {
 
 export function stopFleet() {
   if (_meshTimer) { clearInterval(_meshTimer); _meshTimer = null; }
+  if (_mapCoalesce) { clearTimeout(_mapCoalesce); _mapCoalesce = null; }
 }
 
 function meshPos(nodes, i, w, h) {
@@ -904,7 +917,7 @@ export function initFleet() {
     initFleet._liveBound = true;
     onLive(function (ev) {
       if (!ev) return;
-      if (ev.t === "talk" || ev.t === "run" || ev.t === "mesh") refreshMap();
+      if (ev.t === "talk" || ev.t === "run" || ev.t === "mesh") scheduleMapRefresh();
     });
   }
   startMeshTimer();

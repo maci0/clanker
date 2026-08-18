@@ -229,11 +229,61 @@ pub fn loadNamedTool(
     llm_ctx: ?*client.Ctx,
 ) !*ToolModule {
     const tool = reg.get(tool_name) orelse return error.UnknownTool;
-    const wasm_bytes = try std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20));
-    defer gpa.free(wasm_bytes);
+    const wasm_bytes = try cachedWasm(io, tool.wasm);
     const sb = try arena.create(host.Sandbox);
     sb.* = try host.sandboxFor(gpa, io, arena, environ_map, cfg, tool, llm_ctx);
     return ToolModule.load(gpa, io, sb, wasm_bytes);
+}
+
+/// Process-wide cache of tool wasm bytes, keyed by the descriptor's `wasm`
+/// path and validated by a stat (size + mtime).
+///
+/// Every `toolJson` / `toolText` call — that is, every HTTP route that relays a
+/// guest and every record-store CLI verb — used to open and read the module
+/// afresh, ~80 KB apiece, and one web UI page load issues tens of them. The
+/// agent loop already keeps the same cache per run (`Agent.wasmBytes`); this is
+/// that cache for the callers that have no run to hang it on. `ToolModule.load`
+/// copies what it compiles (the old code freed these bytes right after), so a
+/// cached buffer is only ever read.
+///
+/// ponytail: a superseded generation is leaked, not freed. Another thread may
+/// still be compiling from it, and invalidation happens on `zig build tools`,
+/// not per call, so the leak is bounded by how often the modules are rebuilt.
+const WasmCache = struct {
+    const Entry = struct { stamp: u64, bytes: []const u8 };
+
+    /// Outlives every request that fills it, so it cannot borrow a caller's gpa.
+    const gpa = std.heap.page_allocator;
+    var map: std.StringHashMapUnmanaged(Entry) = .empty;
+    /// Spun rather than parked: the critical section is one stat plus a map
+    /// lookup, and connection threads have no `std.Io` mutex to hand.
+    var mutex: std.atomic.Mutex = .unlocked;
+
+    fn lock() void {
+        while (!mutex.tryLock()) std.Thread.yield() catch {};
+    }
+};
+
+/// The wasm at `path`, read once per (path, mtime, size).
+fn cachedWasm(io: std.Io, path: []const u8) ![]const u8 {
+    const base = std.Io.Dir.cwd();
+    const st = try base.statFile(io, path, .{});
+    var h = std.hash.Wyhash.init(0x1F83D9ABFB41BD6B);
+    h.update(std.mem.asBytes(&st.size));
+    h.update(std.mem.asBytes(&st.mtime));
+    const stamp = h.final();
+
+    WasmCache.lock();
+    defer WasmCache.mutex.unlock();
+
+    if (WasmCache.map.get(path)) |e| {
+        if (e.stamp == stamp) return e.bytes;
+    }
+    const bytes = try base.readFileAlloc(io, path, WasmCache.gpa, .limited(1 << 20));
+    const gop = try WasmCache.map.getOrPut(WasmCache.gpa, path);
+    if (!gop.found_existing) gop.key_ptr.* = try WasmCache.gpa.dupe(u8, path);
+    gop.value_ptr.* = .{ .stamp = stamp, .bytes = bytes };
+    return bytes;
 }
 
 fn seedRng(seed: u64, salt: []const u8, io: std.Io) u64 {
@@ -253,6 +303,27 @@ fn seedRng(seed: u64, salt: []const u8, io: std.Io) u64 {
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "a tool's wasm is read from disk once, not once per call" {
+    var tp = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer tp.deinit();
+    const io = tp.io();
+
+    const path = "zig-out/tools/chat.wasm";
+    const first = cachedWasm(io, path) catch |err| switch (err) {
+        // `zig build tools` has not run in this checkout.
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    const second = try cachedWasm(io, path);
+    // Same backing buffer: the second call answered from the cache instead of
+    // opening and re-reading the module.
+    try std.testing.expectEqual(first.ptr, second.ptr);
+
+    const direct = try std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(direct);
+    try std.testing.expectEqualSlices(u8, direct, first);
+}
 
 test "zwasm loads a Zig-compiled module and calls it" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
