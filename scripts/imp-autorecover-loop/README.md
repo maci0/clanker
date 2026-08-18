@@ -114,15 +114,16 @@ non-zero `improve-self` exit also starts a repair.
 The repair is `clanker run --no-worktree` with the Clanker checkout as its
 working directory, so its changes are made directly on Clanker's `main`
 checkout rather than on an automatic goal worktree. The escalation run below is
-the same command, with `--escalate-model` added when one is given.
+the same command; when `--escalate-model` is set, that value is passed as
+`--model`.
 
 Every clanker repair run works from the **latest** `improve-self` log. A failed
-repair run is never retried against the log that triggered it: it is handed one
-level down instead, and once that level is done the loop returns to
-`improve-self`. If the batch fails again, the next repair run works from that new
-batch's errors, never from the previous attempt's. Each earlier attempt's exit
-status is carried into the next prompt as a sentence, so Clanker knows what has
-already been tried.
+repair run is never retried against the log that triggered it: it goes to the
+escalation run, which may then go to the harness. After that stack finishes,
+the loop returns to `improve-self`. If the batch fails again, the next repair
+run works from that new batch's errors, never from the previous attempt's.
+Each earlier attempt's exit status is carried into the next prompt as a
+sentence, so Clanker knows what has already been tried.
 
 ## Repairing a failed clanker repair run
 
@@ -181,8 +182,9 @@ reads `AGENTS.md`, so the repair and escalation prompts are unchanged; a
 harness has neither, and only Claude Code reads `CLAUDE.md` on its own. See
 [docs/architecture.md](docs/architecture.md#why-only-the-harness-prompt-carries-the-tooling-rules).
 
-Both harnesses are resolved before the first `improve-self` batch, so a missing
-one fails immediately rather than hours later when a repair finally needs it.
+The clanker binary and any `--fix-repairs-with` command are resolved before
+the first `improve-self` batch, so a missing one fails immediately rather
+than hours later when a repair finally needs it.
 
 Use a finite repair limit when supervising an experiment. It counts
 *consecutive* failed clanker repair runs, and resets whenever a repair run, an
@@ -197,8 +199,9 @@ default and never gives up:
 ## When a run is stopped
 
 No child may hang the loop, so every run the loop starts has two limits. A run
-that hits either is stopped and counts as a failed run, which means the level
-below it repairs it exactly as it would any other failure.
+that hits either is stopped and counts as a failed run, so the next repair
+level handles it the same way. A stopped harness run has no level below it:
+the loop returns to `improve-self`.
 
 A repair, escalation or harness run is capped at one hour of wall clock:
 
@@ -252,7 +255,7 @@ Name a checkout and binary directly:
 
 `run.sh` applies the same order — `CLANKER_BIN`, then `PATH`, then the
 checkout build — and passes the result down explicitly, so the resolved path is
-printed before anything runs:
+printed before the menus and the loop:
 
 ```bash
 CLANKER_DIR=~/src/clanker ./run.sh

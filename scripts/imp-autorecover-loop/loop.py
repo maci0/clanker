@@ -78,7 +78,7 @@ ESCALATE_STAGE = "escalate"
 HARNESS_STAGE = "harness"
 EXAMPLES = """
 EXAMPLES
-  run.sh                                    menus for all three, then run
+  run.sh                                    start the three menus, then the loop
 
   loop.py                                   clanker from PATH, configured model
   loop.py --model ollama/qwen3.6-27b-tuned  that model for improve-self
@@ -109,9 +109,12 @@ REPAIR
      harness fixes it, from the escalation run's error lines.
      Without that flag, level 4 is skipped.
 
-  Every level returns to improve-self afterwards, so the loop
-  keeps going. Each only ever triggers on a non-zero exit, and
-  every harness is resolved before the first batch starts.
+  A failed repair run goes to escalation; a failed escalation
+  run goes to the harness when one is set. A success at any
+  level, or a finished harness run, returns to improve-self.
+  Each only ever triggers on a non-zero exit. The clanker
+  binary and any --fix-repairs-with command are resolved
+  before the first batch starts.
 
 WATCHDOG
   No run may hang the loop, so every child has two limits.
@@ -126,8 +129,9 @@ WATCHDOG
                     batch. Off by default: a batch is meant to
                     run long.
 
-  A stopped run counts as a failed run, so the level below it
-  repairs it exactly as it would any other failure.
+  A stopped run counts as a failed run, so the next repair
+  level handles it the same way. A stopped harness run has
+  no level below it: the loop returns to improve-self.
 """
 # Only the outside harness gets this. A clanker run already has clanker's verbs
 # as its own tools and its system prompt already carries the checkout's
