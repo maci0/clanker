@@ -7035,6 +7035,36 @@ fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, styl
     }
 }
 
+/// A `/theme` palette swatch: twelve single-cell blocks, one per role in the
+/// theme's `Rgb` (fenced-code token colours first, then the chrome roles), so
+/// a full palette is visible before it is applied. Writes nothing and returns
+/// false when the theme has no RGB palette (`default`/`mono`), which keeps
+/// those rows aligned with the palette rows; a narrow terminal clips the tail
+/// blocks rather than wrapping.
+fn writeThemePalette(surface: vxfw.Surface, row: u16, col: *u16, name: []const u8) bool {
+    const rgb = theme_mod.palette(name) orelse return false;
+    const colors = [_]theme_mod.Rgb24{
+        rgb.keyword,
+        rgb.string,
+        rgb.number,
+        rgb.builtin,
+        rgb.preproc,
+        rgb.comment,
+        rgb.dim,
+        rgb.tool,
+        rgb.err,
+        rgb.rule,
+        rgb.prompt,
+        rgb.accent,
+    };
+    inline for (colors) |c| {
+        if (col.* + 1 > surface.size.width) return true;
+        surface.writeCell(col.*, row, .{ .char = .{ .grapheme = "\xe2\x96\x88", .width = 1 }, .style = .{ .fg = .{ .rgb = c } } });
+        col.* += 1;
+    }
+    return true;
+}
+
 fn statusTextFits(width: u16, col: u16, text: []const u8) bool {
     return width_mod.displayWidth(text) <= @as(usize, width -| col);
 }

@@ -550,6 +550,22 @@ pub fn isKnown(name: []const u8) bool {
     return theme_by_name.get(name) != null;
 }
 
+/// The full twelve-role RGB palette for a theme, `null` when the theme
+/// carries no RGB palette (`default`/`mono`). The REPL's `/theme` picker
+/// renders these as one-cell blocks so a palette is visible before it is
+/// applied; `swatch` narrows the same palette to the four chrome colours.
+pub fn palette(name: []const u8) ?Rgb {
+    const id = theme_by_name.get(name) orelse return null;
+    return themeFromId(id).rgb;
+}
+
+/// Four chrome colours (`prompt`, `tool`, `err`, `accent`) for a compact
+/// swatch. `null` when the theme carries no RGB palette (`default`/`mono`).
+pub fn swatch(name: []const u8) ?[4]Rgb24 {
+    const rgb = palette(name) orelse return null;
+    return .{ rgb.prompt, rgb.tool, rgb.err, rgb.accent };
+}
+
 test "isKnown accepts every canonical name and rejects a typo" {
     for (names) |n| try std.testing.expect(isKnown(n));
     try std.testing.expect(isKnown("catppuccin"));
@@ -560,6 +576,40 @@ test "isKnown accepts every canonical name and rejects a typo" {
     try std.testing.expect(isKnown("day"));
     try std.testing.expect(!isKnown("nord"));
     try std.testing.expect(!isKnown(""));
+}
+
+test "palette exposes all twelve roles and is null for non-palette themes" {
+    const mocha_rgb = Theme.mocha.rgb.?;
+    const p = palette("mocha").?;
+    try std.testing.expectEqual(mocha_rgb.keyword, p.keyword);
+    try std.testing.expectEqual(mocha_rgb.string, p.string);
+    try std.testing.expectEqual(mocha_rgb.number, p.number);
+    try std.testing.expectEqual(mocha_rgb.builtin, p.builtin);
+    try std.testing.expectEqual(mocha_rgb.preproc, p.preproc);
+    try std.testing.expectEqual(mocha_rgb.comment, p.comment);
+    try std.testing.expectEqual(mocha_rgb.dim, p.dim);
+    try std.testing.expectEqual(mocha_rgb.tool, p.tool);
+    try std.testing.expectEqual(mocha_rgb.err, p.err);
+    try std.testing.expectEqual(mocha_rgb.rule, p.rule);
+    try std.testing.expectEqual(mocha_rgb.prompt, p.prompt);
+    try std.testing.expectEqual(mocha_rgb.accent, p.accent);
+    try std.testing.expect(palette("catppuccin") != null);
+    try std.testing.expect(palette("default") == null);
+    try std.testing.expect(palette("mono") == null);
+    try std.testing.expect(palette("nord") == null);
+}
+
+test "swatch exposes chrome colours and is null for non-palette themes" {
+    const mocha_rgb = Theme.mocha.rgb.?;
+    const sw = swatch("mocha").?;
+    try std.testing.expectEqual(mocha_rgb.prompt, sw[0]);
+    try std.testing.expectEqual(mocha_rgb.tool, sw[1]);
+    try std.testing.expectEqual(mocha_rgb.err, sw[2]);
+    try std.testing.expectEqual(mocha_rgb.accent, sw[3]);
+    try std.testing.expect(swatch("catppuccin") != null);
+    try std.testing.expect(swatch("default") == null);
+    try std.testing.expect(swatch("mono") == null);
+    try std.testing.expect(swatch("nord") == null);
 }
 
 test "default theme matches the REPL's existing byte-for-byte colors" {
