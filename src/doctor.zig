@@ -79,11 +79,7 @@ fn runChecks(
 ) !void {
     rep.section("config");
     if (!fileExists(io, "config.toml")) {
-        if (fileExists(io, "config.local.toml")) {
-            rep.line(.fail, "config.toml", "missing but config.local.toml present; remove the orphaned override or restore the base config");
-        } else {
-            rep.line(.fail, "config.toml", "missing; run `clanker setup`");
-        }
+        rep.line(.fail, "config.toml", "missing; run `clanker setup`");
         return;
     }
     rep.line(.ok, "config.toml", "");
@@ -116,11 +112,6 @@ fn runChecks(
     while (it.next()) |entry| {
         const p = entry.value_ptr;
         const is_default = std.mem.eql(u8, p.name, cfg.default_provider);
-        // A missing scheme is the most common URL typo and would otherwise
-        // surface as an opaque connection failure at request time.
-        if (!std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://")) {
-            rep.line(.warn, p.name, try std.fmt.allocPrint(arena, "{s} lacks an http(s) scheme", .{p.base_url}));
-        }
         if (p.api_key_env) |env_name| {
             const set = if (environ_map.get(env_name)) |v| v.len > 0 else false;
             if (set) usable += 1;
@@ -257,7 +248,7 @@ pub fn cmdDoctor(init: std.process.Init) !void {
 /// Provider name to the env var it reads, for the "what could I use" hint.
 /// Only providers clanker ships in config.toml need an entry; anything else
 /// is reported by name from the config itself.
-fn wouldWork(io: std.Io, environ_map: *std.process.Environ.Map, cfg: *const config.Config, arena: std.mem.Allocator) !?[]const u8 {
+fn wouldWork(environ_map: *std.process.Environ.Map, cfg: *const config.Config, arena: std.mem.Allocator) !?[]const u8 {
     var it = cfg.providers.iterator();
     while (it.next()) |entry| {
         const p = entry.value_ptr;
@@ -265,15 +256,6 @@ fn wouldWork(io: std.Io, environ_map: *std.process.Environ.Map, cfg: *const conf
             if (environ_map.get(env_name)) |v| {
                 if (v.len > 0) return try arena.dupe(u8, p.name);
             }
-        } else if (llm_registry.forKind(p.kind).auth.file_credential) {
-            if (vertex_token.resolveCredentialsPath(arena, p.service_account_file, environ_map)) |path| {
-                if (fileExists(io, path)) return try arena.dupe(u8, p.name);
-            }
-        } else if (p.service_account_file.len > 0) {
-            if (fileExists(io, p.service_account_file)) return try arena.dupe(u8, p.name);
-        } else {
-            // Local runtime: no credential needed.
-            return try arena.dupe(u8, p.name);
         }
     }
     return null;
@@ -325,7 +307,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
         w.print("  Default provider '{s}' has what it needs.\n", .{active}) catch {};
     } else {
         w.print("  Default provider '{s}' has no credential in this environment.\n", .{active}) catch {};
-        if (try wouldWork(io, init.environ_map, &cfg, arena)) |other| {
+        if (try wouldWork(init.environ_map, &cfg, arena)) |other| {
             w.print("  '{s}' does. Set default_provider = \"{s}\" in config.local.toml to use it.\n", .{ other, other }) catch {};
         } else {
             const p = cfg.provider(active) catch null;
