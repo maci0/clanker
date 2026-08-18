@@ -48,6 +48,10 @@ const status_column_max: usize = 18;
 /// the titles on a straight edge.
 const status_column_min: usize = 10;
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "search", "open", "create", "append", "update", "status", "rename" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -62,8 +66,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "rename")) return rename(io, arena, opts, tool);
 
-    common.usageError("unknown reports subcommand '{s}' (expected list, search, open, create, append, update, status or rename)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("reports", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --

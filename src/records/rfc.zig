@@ -44,6 +44,10 @@ const title_column_bytes: usize = 58;
 /// Statuses are one word ("Draft", "Discussion", "Decided", ...).
 const status_column_max: usize = 12;
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "recommend", "status" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     try common.out(init.io, try run(init.arena.allocator(), opts, tool));
 }
@@ -64,8 +68,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "recommend")) return recommend(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
-    common.usageError("unknown rfc subcommand '{s}' (expected list, search, open, checklist, create, append, update, recommend or status)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("rfc", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --
