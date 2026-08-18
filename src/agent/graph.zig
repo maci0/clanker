@@ -194,6 +194,26 @@ test "truncatedArgs caps at arguments_preview_cap without splitting a codepoint"
     try std.testing.expectEqualStrings(small, truncatedArgs(small));
 }
 
+test "finalAnswerPreview is UTF-8 safe at the 64 KiB cap" {
+    const short = "answer";
+    try std.testing.expectEqualStrings(short, finalAnswerPreview(short));
+
+    var ascii: [final_answer_cap + 1]u8 = undefined;
+    @memset(ascii[0..], 'x');
+    const ascii_cut = finalAnswerPreview(&ascii);
+    try std.testing.expectEqual(final_answer_cap, ascii_cut.len);
+
+    var mixed: [final_answer_cap + 3]u8 = undefined;
+    @memset(mixed[0..], 'a');
+    mixed[final_answer_cap - 1] = 0xC3;
+    mixed[final_answer_cap] = 0xA9;
+    mixed[final_answer_cap + 1] = 'b';
+    const mixed_cut = finalAnswerPreview(&mixed);
+    try std.testing.expectEqual(final_answer_cap - 1, mixed_cut.len);
+    try std.testing.expect(mixed_cut.len == 0 or (mixed_cut[mixed_cut.len - 1] & 0xC0) != 0x80);
+    try std.testing.expect(std.mem.find(u8, mixed_cut, &.{0xA9}) == null);
+}
+
 test "repeated steps collapse, and a step revisited later marks the loop" {
     const gpa = std.testing.allocator;
     var g = Graph{ .run_id = "run-test", .task = "t", .provider = "p", .started_at = 0 };
