@@ -52,11 +52,19 @@ pub fn store(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, record: Recor
     // The log itself is the bounded delivery ledger. The check and rewrite
     // share one lock, so simultaneous redeliveries cannot both append.
     if (record.id) |id| if (id.len > 0) {
+        // One arena for the whole scan, reset per line: the log holds
+        // thousands of records at its cap and every append walks all of
+        // them, so building and tearing down an allocator per line was the
+        // bulk of what this loop cost. A line with no `"id"` key at all can
+        // never carry one, and skipping its parse is what keeps the common
+        // (no redelivery) case off the parser entirely.
+        var parsed_arena = std.heap.ArenaAllocator.init(gpa);
+        defer parsed_arena.deinit();
         var lines = std.mem.splitScalar(u8, existing, '\n');
         while (lines.next()) |line| {
             if (line.len == 0) continue;
-            var parsed_arena = std.heap.ArenaAllocator.init(gpa);
-            defer parsed_arena.deinit();
+            if (std.mem.find(u8, line, "\"id\"") == null) continue;
+            _ = parsed_arena.reset(.retain_capacity);
             const prior = std.json.parseFromSliceLeaky(Record, parsed_arena.allocator(), line, .{ .ignore_unknown_fields = true }) catch continue;
             if (prior.id) |prior_id| if (std.mem.eql(u8, prior_id, id)) return;
         }

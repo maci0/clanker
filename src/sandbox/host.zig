@@ -3083,6 +3083,13 @@ fn fsGrepFile(
     const check_len = @min(data.len, 512);
     if (std.mem.findScalar(u8, data[0..check_len], 0) != null) return;
 
+    // Almost every file in a project-root walk holds no hit at all, and the
+    // line loop below pays a fresh substring search per line to find that
+    // out. One search over the whole buffer answers it instead: a pattern
+    // absent from the bytes is absent from every line of them, so this only
+    // ever skips work the loop would have done for nothing.
+    if (std.mem.find(u8, data, pattern) == null) return;
+
     // Scan line by line.
     var line_no: u32 = 1;
     var start: usize = 0;

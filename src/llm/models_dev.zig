@@ -84,6 +84,218 @@ fn jsonU32(obj: std.json.ObjectMap, key: []const u8) ?u32 {
     return @as(u32, @trunc(n));
 }
 
+// ------------------------------------------------------- raw member scanning --
+
+// The snapshot is ~4 MB and a `Config.load` needs the handful of members that
+// name configured providers. A full `std.json.Value` parse of the whole file
+// cost ~350 ms of pure CPU on *every* CLI invocation, because `Config.load`
+// runs `applyCatalogSpecs` unconditionally: `clanker --help` (no config) is
+// 13 ms, any config-loading verb was 360 ms. So the file is walked once as
+// bytes here, and only the spans that matched a provider are handed to
+// `std.json`. Same shape as `tools/zig/manifest_scan.zig`, which exists for
+// the same reason on the guest side.
+
+/// One member of a JSON object: the raw key bytes (escapes unresolved) and
+/// the raw span of its value (a string span includes its quotes, an
+/// object/array span its braces/brackets).
+pub const Member = struct { key: []const u8, value: []const u8 };
+
+/// Walks a JSON object's members without building a value tree. Stops at the
+/// first malformed byte rather than reporting it: a corrupt snapshot must
+/// degrade to "no catalog specs", never fail a config load.
+pub const MemberIterator = struct {
+    raw: []const u8,
+    i: usize,
+    done: bool = false,
+
+    /// Null when `raw` does not open an object.
+    pub fn init(raw: []const u8) ?MemberIterator {
+        const open = skipWs(raw, 0);
+        if (open >= raw.len or raw[open] != '{') return null;
+        return .{ .raw = raw, .i = open + 1 };
+    }
+
+    pub fn next(self: *MemberIterator) ?Member {
+        if (self.done) return null;
+        const raw = self.raw;
+        var i = skipWs(raw, self.i);
+        while (i < raw.len and raw[i] == ',') i = skipWs(raw, i + 1);
+        if (i >= raw.len or raw[i] == '}' or raw[i] != '"') {
+            self.done = true;
+            return null;
+        }
+        const key_end = stringEnd(raw, i) orelse {
+            self.done = true;
+            return null;
+        };
+        const key = raw[i + 1 .. key_end];
+        i = skipWs(raw, key_end + 1);
+        if (i >= raw.len or raw[i] != ':') {
+            self.done = true;
+            return null;
+        }
+        i = skipWs(raw, i + 1);
+        const val_end = valueEnd(raw, i) orelse {
+            self.done = true;
+            return null;
+        };
+        self.i = val_end;
+        return .{ .key = key, .value = raw[i..val_end] };
+    }
+};
+
+fn skipWs(raw: []const u8, from: usize) usize {
+    var i = from;
+    while (i < raw.len and (raw[i] == ' ' or raw[i] == '\t' or raw[i] == '\r' or raw[i] == '\n')) i += 1;
+    return i;
+}
+
+/// Index of the closing quote of the string opening at `start`.
+fn stringEnd(raw: []const u8, start: usize) ?usize {
+    var i = start + 1;
+    var escaped = false;
+    while (i < raw.len) : (i += 1) {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        switch (raw[i]) {
+            '\\' => escaped = true,
+            '"' => return i,
+            else => {},
+        }
+    }
+    return null;
+}
+
+/// One past the end of the JSON value starting at `start`. Honours strings so
+/// a brace inside `"a}b"` cannot close a span early.
+fn valueEnd(raw: []const u8, start: usize) ?usize {
+    if (start >= raw.len) return null;
+    switch (raw[start]) {
+        '"' => return (stringEnd(raw, start) orelse return null) + 1,
+        '{', '[' => {
+            var depth: usize = 0;
+            var in_string = false;
+            var escaped = false;
+            var i = start;
+            while (i < raw.len) : (i += 1) {
+                const c = raw[i];
+                if (escaped) {
+                    escaped = false;
+                    continue;
+                }
+                if (in_string) {
+                    switch (c) {
+                        '\\' => escaped = true,
+                        '"' => in_string = false,
+                        else => {},
+                    }
+                    continue;
+                }
+                switch (c) {
+                    '"' => in_string = true,
+                    '{', '[' => depth += 1,
+                    '}', ']' => {
+                        depth -= 1;
+                        if (depth == 0) return i + 1;
+                    },
+                    else => {},
+                }
+            }
+            return null;
+        },
+        // Bare scalar: number / true / false / null.
+        else => {
+            var i = start;
+            while (i < raw.len and raw[i] != ',' and raw[i] != '}' and raw[i] != ']' and
+                raw[i] != ' ' and raw[i] != '\t' and raw[i] != '\r' and raw[i] != '\n') i += 1;
+            return i;
+        },
+    }
+}
+
+/// Every top-level member of the snapshot, in document order. Empty when the
+/// body is not an object, which is what a truncated download reads as.
+pub fn topLevelMembers(arena: std.mem.Allocator, body: []const u8) []const Member {
+    var out: std.ArrayList(Member) = .empty;
+    var it = MemberIterator.init(body) orelse return &.{};
+    while (it.next()) |m| out.append(arena, m) catch return out.items;
+    return out.items;
+}
+
+/// The raw span of `key` inside the object `obj_raw`, or null.
+fn memberSpan(obj_raw: []const u8, key: []const u8) ?[]const u8 {
+    var it = MemberIterator.init(obj_raw) orelse return null;
+    while (it.next()) |m| if (std.mem.eql(u8, m.key, key)) return m.value;
+    return null;
+}
+
+/// A JSON string span's contents. Borrows when there is nothing to unescape,
+/// which is every `api` URL the catalog has ever carried; anything else goes
+/// through `std.json` for just that one small token.
+fn spanString(arena: std.mem.Allocator, span: []const u8) ?[]const u8 {
+    if (span.len < 2 or span[0] != '"' or span[span.len - 1] != '"') return null;
+    const inner = span[1 .. span.len - 1];
+    if (std.mem.findScalar(u8, inner, '\\') == null) return inner;
+    return std.json.parseFromSliceLeaky([]const u8, arena, span, .{}) catch null;
+}
+
+/// `findProvider`'s rule over raw spans: exact name, then exact `api` URL,
+/// then same host, then a shared `api_key_env`, each taking the first hit in
+/// document order. Returns the matched provider's raw JSON span, so the
+/// caller parses one provider instead of the whole snapshot.
+///
+/// An exact name hit stops the walk: it outranks every fallback, so nothing
+/// later in the document can change the answer. That is the ordinary case —
+/// `anthropic`, `openai`, `deepseek` are all models.dev ids — and it means a
+/// configured provider costs a key comparison, not a scan of its models.
+pub fn findProviderSpan(
+    arena: std.mem.Allocator,
+    members: []const Member,
+    name: []const u8,
+    base_url: []const u8,
+    api_key_env: ?[]const u8,
+) ?[]const u8 {
+    const want_base = std.mem.trimEnd(u8, base_url, "/");
+    const want_host = hostOf(base_url);
+    var api_match: ?[]const u8 = null;
+    var host_fallback: ?[]const u8 = null;
+    var env_fallback: ?[]const u8 = null;
+    for (members) |m| {
+        if (name.len > 0 and std.mem.eql(u8, m.key, name)) return m.value;
+        if (m.value.len == 0 or m.value[0] != '{') continue;
+        // Nothing below can beat a hit already recorded, so skip the field
+        // scans once all three fallbacks are decided.
+        if (api_match != null and host_fallback != null and env_fallback != null) continue;
+        const api: []const u8 = blk: {
+            const span = memberSpan(m.value, "api") orelse break :blk "";
+            break :blk spanString(arena, span) orelse "";
+        };
+        if (api_match == null and api.len > 0 and want_base.len > 0 and
+            std.mem.eql(u8, std.mem.trimEnd(u8, api, "/"), want_base)) api_match = m.value;
+        if (host_fallback == null) if (want_host) |wh| {
+            if (hostOf(api)) |eh| {
+                if (std.mem.eql(u8, eh, wh)) host_fallback = m.value;
+            }
+        };
+        if (env_fallback == null) if (api_key_env) |want_env| {
+            if (memberSpan(m.value, "env")) |envs| {
+                // `env` is a small array of names; parsing just that span is
+                // cheaper than a second raw-array walker for one field.
+                const parsed = std.json.parseFromSliceLeaky([]const []const u8, arena, envs, .{}) catch &[_][]const u8{};
+                for (parsed) |e| {
+                    if (std.mem.eql(u8, e, want_env)) {
+                        env_fallback = m.value;
+                        break;
+                    }
+                }
+            }
+        };
+    }
+    return api_match orelse host_fallback orelse env_fallback;
+}
+
 /// The catalog provider for this clanker provider: exact name, then exact
 /// `api` URL, then same host, then a shared `api_key_env`.
 pub fn findProvider(
@@ -214,6 +426,81 @@ test "findProvider prefers the catalog name, then the api URL" {
     try std.testing.expect(findProvider(catalog, "xai", "", null) != null);
     try std.testing.expect(findProvider(catalog, "nope", "https://api.x.ai/v1", null) != null);
     try std.testing.expect(findProvider(catalog, "nope", "https://other.test/v1", null) == null);
+}
+
+const multi_sample =
+    \\{
+    \\  "alpha": {"api": "https://alpha.test/v1", "env": ["ALPHA_KEY"], "models": {"a1": {}}},
+    \\  "beta":  {"api": "https://beta.test/v1",  "env": ["BETA_KEY"],  "models": {"b1": {}}},
+    \\  "gamma": {"api": "https://beta.test/v2",  "env": ["SHARED_KEY"],"models": {"g1": {}}}
+    \\}
+;
+
+/// The span scanner is what `Config.load` uses, so its answer must be the one
+/// `findProvider` would have given on the same bytes -- every rung of the
+/// rule, not just the exact-name case that covers the configured providers.
+fn expectSameMatch(arena: std.mem.Allocator, body: []const u8, name: []const u8, base_url: []const u8, env: ?[]const u8) !void {
+    const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    const want = findProvider(catalog, name, base_url, env);
+    const members = topLevelMembers(arena, body);
+    const got_span = findProviderSpan(arena, members, name, base_url, env);
+    if (want == null) {
+        try std.testing.expect(got_span == null);
+        return;
+    }
+    const got = try std.json.parseFromSliceLeaky(std.json.Value, arena, got_span.?, .{});
+    // Providers are distinguishable by `api`, so that field identifies which
+    // one each route landed on.
+    try std.testing.expectEqualStrings(want.?.object.get("api").?.string, got.object.get("api").?.string);
+}
+
+test "findProviderSpan matches findProvider on name, api, host, and env" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Exact name wins over an api URL that names a different provider.
+    try expectSameMatch(arena, multi_sample, "alpha", "https://beta.test/v1", null);
+    // Exact api URL, no name.
+    try expectSameMatch(arena, multi_sample, "nope", "https://beta.test/v1", null);
+    // Same host, different path: falls back to the first host match.
+    try expectSameMatch(arena, multi_sample, "nope", "https://beta.test/v9", null);
+    // Only the env name is shared.
+    try expectSameMatch(arena, multi_sample, "nope", "https://unrelated.test/v1", "SHARED_KEY");
+    // Nothing matches.
+    try expectSameMatch(arena, multi_sample, "nope", "https://unrelated.test/v1", "NO_SUCH_KEY");
+    // Trailing slash is trimmed on both sides, as findProvider does.
+    try expectSameMatch(arena, multi_sample, "", "https://alpha.test/v1/", null);
+    // The single-provider fixture with a real models tree.
+    try expectSameMatch(arena, sample, "xai", "", null);
+    try expectSameMatch(arena, sample, "nope", "https://api.x.ai/v1", null);
+    try expectSameMatch(arena, sample, "nope", "https://other.test/v1", null);
+}
+
+test "topLevelMembers spans values without parsing them" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const members = topLevelMembers(arena, multi_sample);
+    try std.testing.expectEqual(@as(usize, 3), members.len);
+    try std.testing.expectEqualStrings("alpha", members[0].key);
+    try std.testing.expectEqualStrings("gamma", members[2].key);
+    // The span is the whole object, so it re-parses on its own.
+    const gamma = try std.json.parseFromSliceLeaky(std.json.Value, arena, members[2].value, .{});
+    try std.testing.expectEqualStrings("https://beta.test/v2", gamma.object.get("api").?.string);
+
+    // A brace inside a string must not close a span early, and a truncated
+    // body must degrade to "no members" rather than a bogus one.
+    const braced =
+        \\{"a": {"note": "}{"}, "b": {"api": "https://b.test"}}
+    ;
+    const m2 = topLevelMembers(arena, braced);
+    try std.testing.expectEqual(@as(usize, 2), m2.len);
+    try std.testing.expectEqualStrings("b", m2[1].key);
+    try std.testing.expectEqual(@as(usize, 0), topLevelMembers(arena, "[1,2]").len);
+    try std.testing.expectEqual(@as(usize, 0), topLevelMembers(arena, "not json").len);
+    try std.testing.expectEqual(@as(usize, 0), topLevelMembers(arena, "{\"a\": {\"unterminated").len);
 }
 
 test "findModel matches a wire SKU and a slashed alias tail" {

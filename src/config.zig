@@ -1616,11 +1616,18 @@ pub const Config = struct {
     /// display wins. Missing snapshot is a no-op: load never downloads.
     fn applyCatalogSpecs(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, cfg: *Config) void {
         const body = models_dev.readLocal(io, dir, arena) orelse return;
-        const catalog = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{ .ignore_unknown_fields = true }) catch return;
+        // The snapshot is ~4 MB and this runs on every `Config.load`, so it is
+        // split into raw top-level spans in one byte pass and only the spans
+        // that match a configured provider reach `std.json`. Parsing the whole
+        // file into a `std.json.Value` tree cost ~350 ms of CPU per CLI
+        // invocation for the few kilobytes of it any config actually reads.
+        const members = models_dev.topLevelMembers(arena, body);
+        if (members.len == 0) return;
         var it = cfg.providers.iterator();
         while (it.next()) |pkv| {
             const p = pkv.value_ptr;
-            const cat_p = models_dev.findProvider(catalog, p.name, p.base_url, p.api_key_env) orelse continue;
+            const span = models_dev.findProviderSpan(arena, members, p.name, p.base_url, p.api_key_env) orelse continue;
+            const cat_p = std.json.parseFromSliceLeaky(std.json.Value, arena, span, .{ .ignore_unknown_fields = true }) catch continue;
             var mit = p.models.iterator();
             while (mit.next()) |mkv| {
                 const key = mkv.key_ptr.*;

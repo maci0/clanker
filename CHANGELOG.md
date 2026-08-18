@@ -45,6 +45,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- Every command that loads config starts about 280 ms faster. `Config.load`
+  filled unset model specs by parsing the whole ~4 MB `state/models-dev.json`
+  snapshot into a `std.json.Value` tree, on every invocation, for the few
+  kilobytes of it a configured provider reads. The snapshot is now split into
+  raw top-level spans in one byte pass and only the spans matching a
+  configured provider are parsed. Measured on `clanker phonebook`: 357 ms ->
+  78 ms; `clanker stats` 365 ms -> 85 ms. Specs, and the name/api/host/env
+  matching order that picks a catalog provider, are unchanged.
+- `ck_fs_grep` skips a file's line loop when the pattern appears nowhere in
+  its bytes, instead of paying a substring search per line to discover that.
+  Most files in a project-root walk hold no hit at all.
+
 - `GET /webui/plugins/<name>/app.js|app.css` now sends an `ETag` and
   `Cache-Control: no-cache` instead of `no-store`. The bytes are still read
   from disk on every request, so an edited plugin is picked up as immediately
