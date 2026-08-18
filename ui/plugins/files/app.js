@@ -461,7 +461,7 @@ clanker.registerView({
     copyBtn.addEventListener("click", function() {
       if (!openPath) return;
       var orig = copyBtn.textContent;
-      function done() { copyBtn.textContent = "Copied!"; setTimeout(function(){ copyBtn.textContent = orig; }, 1500); }
+      function done() { copyBtn.textContent = "Copied"; setTimeout(function(){ copyBtn.textContent = orig; }, 1500); }
       if (navigator.clipboard) {
         navigator.clipboard.writeText(openPath).then(done).catch(done);
       } else {

@@ -35,6 +35,30 @@ function sheets() {
   return out;
 }
 
+// The script half of the same sweep. `sheets()` reaches every stylesheet, so
+// a rule that drifts is caught -- but a declaration written into JS as an
+// inline style is not in any sheet, and that is exactly where the prompts
+// catalogue kept a `font-size:13px` and a `gap:0.5rem` (a step and a rung of
+// the scales, spelled as literals) until this walk found them. Every module
+// the page ships, not just the two entry points the emoji test started with.
+function scripts() {
+  const out = [];
+  const walk = (dir, prefix) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(path, `${prefix}${entry.name}/`);
+        continue;
+      }
+      if (!entry.name.endsWith(".js")) continue;
+      out.push([`${prefix}${entry.name}`, readFileSync(path, "utf8")]);
+    }
+  };
+  walk(here, "app/");
+  walk(pluginsDir, "plugins/");
+  return out;
+}
+
 // Declarations only: `--radius-pill: 999px` in :root is the definition, and
 // the custom-property name is what tells the two apart.
 function declarations(css, prop) {
@@ -277,23 +301,11 @@ test("colour emoji are chat content, never drawn chrome", () => {
   // reaction sets, and the room-avatar ring.
   const owners = new Set(["app/app.js", "app/core/chat.js"]);
   const strays = [];
-  const scripts = [
-    ["app/app.js", join(here, "app.js")],
-    ["app/core/chat.js", join(here, "core", "chat.js")],
-  ];
-  for (const name of readdirSync(pluginsDir, { withFileTypes: true })) {
-    if (!name.isDirectory()) continue;
-    try {
-      const path = join(pluginsDir, name.name, "app.js");
-      readFileSync(path, "utf8");
-      scripts.push([`plugins/${name.name}/app.js`, path]);
-    } catch {
-      // Not every plugin ships a script.
-    }
-  }
-  for (const [name, path] of scripts) {
+  // Every shipped module, not only the two entry points: features/ and lib/
+  // draw chrome too, and nothing was watching them.
+  for (const [name, src] of scripts()) {
     if (owners.has(name)) continue;
-    readFileSync(path, "utf8").split("\n").forEach((line, i) => {
+    src.split("\n").forEach((line, i) => {
       if (emoji.test(line)) strays.push(`${name}:${i + 1}  ${line.trim().slice(0, 72)}`);
     });
   }
@@ -368,4 +380,41 @@ test("card hues stay theme-constant", () => {
     const count = [...appCss.matchAll(new RegExp(`\\n\\s*--card-${hue}\\s*:`, "g"))].length;
     assert.equal(count, 1, `--card-${hue} is declared ${count} times; it must be theme-constant`);
   }
+});
+
+// The seventh axis, and the one the sheet tests structurally cannot see: a
+// declaration written into JS. `el.style.cssText = "font-size:13px"` is the
+// same drift as a stray rule -- a step of the type scale respelled as a
+// literal -- but it lives in a script, so `sheets()` never reads it and the
+// radius/type/space tests above all pass while the page renders off-token.
+// The prompts catalogue drifted exactly this way. An inline style is allowed
+// to position and lay out; it is not allowed to restate a scale.
+test("inline styles in scripts carry no off-token size", () => {
+  // Only the three axes that have a token scale. `flex`, `display`, `opacity`
+  // and friends have no token to be off, and positioning a hidden clipboard
+  // shim is not a design decision.
+  const sized = /(?:^|[;"'`\s])(border-radius|font-size|box-shadow)\s*:\s*([^;"'`]+)/g;
+  const allowed = /^(inherit|0|[0-9.]+em|16px|50%|none|var\(--(radius(-sm|-lg|-pill)?|step-(-1|-2|0|1|2|3)|lift(-low|-high)?|bevel-(raised|inset|pressed))\))$/;
+  const strays = [];
+  for (const [name, src] of scripts()) {
+    if (name.endsWith(".test.mjs")) continue;
+    // The export artefacts build a whole self-contained stylesheet for a
+    // document that is not this page and cannot read its tokens; they are
+    // reviewed against themes/*.json instead. The sheet is assembled as a
+    // run of concatenated string literals, so the exemption runs from the
+    // `exportCss` declaration to the statement that ends it, not one line.
+    let inExportCss = false;
+    src.split("\n").forEach((line, i) => {
+      if (/\bexportCss\s*=/.test(line)) inExportCss = true;
+      const exempt = inExportCss;
+      if (inExportCss && /;\s*$/.test(line)) inExportCss = false;
+      if (exempt) return;
+      for (const m of line.matchAll(sized)) {
+        const value = m[2].trim();
+        if (value.split(/\s+/).every((part) => allowed.test(part))) continue;
+        strays.push(`${name}:${i + 1}  ${m[1]}: ${value}`);
+      }
+    });
+  }
+  assert.deepEqual(strays, [], `off-token inline styles (move the rule into a sheet):\n${strays.join("\n")}`);
 });

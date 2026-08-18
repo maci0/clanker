@@ -2942,7 +2942,22 @@ function drawRun(g) {
       // "<script>". One escaper, `core/utils.js`'s escapeHtml, at every
       // interpolation site including this one.
       var esc = escapeHtml;
-      var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>body{font-family:ui-sans-serif,system-ui;padding:1.2rem;max-width:70rem;margin:auto}pre{white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:0.8rem;border-radius:8px;overflow:auto}svg{max-width:100%;height:auto}</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + esc(JSON.stringify(g, null, 2)) + "</pre>";
+            // The exported graph is the second artefact that leaves the machine
+      // (`clanker session export` is the other), so it carries the same
+      // Control Cabinet vocabulary rather than a default sans on a grey
+      // rounded box: RAL panel greys, 3px machined edges, engraved mono for
+      // the readings. Values match tools/zig/session_export_logic.zig, which
+      // took them from themes/light.json and themes/dark.json — both files
+      // are self-contained by contract and cannot read the theme store.
+      var exportCss = ":root{color-scheme:light dark;--bg:#dcd9d1;--fg:#1b1c18;--muted:#4f534b;--edge:#b9b5aa;--card:#eeebe4;--code:#d4d0c6}"
+        + "@media (prefers-color-scheme:dark){:root{--bg:#171916;--fg:#e8eae5;--muted:#a3aaa1;--edge:#454a44;--card:#232622;--code:#121411}}"
+        + "body{font-family:ui-sans-serif,system-ui;background:var(--bg);color:var(--fg);padding:1.2rem;max-width:70rem;margin:auto}"
+        + "h1{font:700 1.1rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all}"
+        + "body > p{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;color:var(--muted)}"
+        + "hr{border:0;border-top:1px solid var(--edge)}"
+        + "pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border:1px solid var(--edge);padding:0.8rem;border-radius:3px;overflow:auto;font-size:.8rem}"
+        + "svg{max-width:100%;height:auto}";
+      var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>" + exportCss + "</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + esc(JSON.stringify(g, null, 2)) + "</pre>";
       var blob = new Blob([html], {type:"text/html"});
       var url = URL.createObjectURL(blob);
       var a = document.createElement("a"); a.href = url; a.download = g.run_id + ".html";
