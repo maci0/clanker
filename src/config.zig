@@ -836,12 +836,6 @@ pub const Chatrooms = struct {
 
 pub const Memory = struct {
     backend: []const u8 = "hybrid",
-    chunk_strategy: []const u8 = "markdown",
-    chunk_size: u32 = 800,
-    chunk_overlap: u32 = 120,
-    embedding_provider: []const u8 = "",
-    embedding_model: []const u8 = "",
-    vector_backend: []const u8 = "builtin",
     vector_top_k: u32 = 5,
     vector_threshold: f32 = 0.35,
 };
@@ -2757,34 +2751,14 @@ pub const Config = struct {
             else => return error.MemoryNotObject,
         };
         var m = Memory{};
-        warnUnknownKeys(obj, &.{ "backend", "chunk", "embedding", "vector" }, "memory");
+        warnUnknownKeys(obj, &.{ "backend", "vector" }, "memory");
         if (obj.get("backend")) |k| m.backend = try jsonStr(k, "backend");
-        if (obj.get("chunk")) |k| {
-            const co = switch (k) {
-                .object => |o| o,
-                else => return error.MemoryNotObject,
-            };
-            warnUnknownKeys(co, &.{ "size", "overlap", "strategy" }, "memory.chunk");
-            if (co.get("size")) |x| m.chunk_size = try jsonUnsigned(u32, x, "chunk.size");
-            if (co.get("overlap")) |x| m.chunk_overlap = try jsonUnsigned(u32, x, "chunk.overlap");
-            if (co.get("strategy")) |x| m.chunk_strategy = try jsonStr(x, "chunk.strategy");
-        }
-        if (obj.get("embedding")) |k| {
-            const eo = switch (k) {
-                .object => |o| o,
-                else => return error.MemoryNotObject,
-            };
-            warnUnknownKeys(eo, &.{ "provider", "model" }, "memory.embedding");
-            if (eo.get("provider")) |x| m.embedding_provider = try jsonStr(x, "embedding.provider");
-            if (eo.get("model")) |x| m.embedding_model = try jsonStr(x, "embedding.model");
-        }
         if (obj.get("vector")) |k| {
             const vo = switch (k) {
                 .object => |o| o,
                 else => return error.MemoryNotObject,
             };
-            warnUnknownKeys(vo, &.{ "backend", "top_k", "threshold" }, "memory.vector");
-            if (vo.get("backend")) |x| m.vector_backend = try jsonStr(x, "vector.backend");
+            warnUnknownKeys(vo, &.{ "top_k", "threshold" }, "memory.vector");
             if (vo.get("top_k")) |x| m.vector_top_k = try jsonUnsigned(u32, x, "vector.top_k");
             if (vo.get("threshold")) |x| m.vector_threshold = @floatCast(try jsonFloat(x, "vector.threshold"));
         }
@@ -5440,9 +5414,9 @@ test "config.toml documents every key the loader accepts" {
         }
     }
 
-    // `[memory]`'s keys are nested tables, so its field names (chunk_size,
-    // vector_top_k, ...) are not the spellings a file uses. Check those.
-    inline for ([_][]const u8{ "memory", "chunk", "embedding", "vector", "size", "overlap", "strategy", "top_k", "threshold", "backend" }) |key| {
+    // `[memory]`'s keys are nested tables, so its field names (vector_top_k,
+    // ...) are not the spellings a file uses. Check those.
+    inline for ([_][]const u8{ "memory", "vector", "top_k", "threshold", "backend" }) |key| {
         if (!documentsKey(text, key)) {
             std.debug.print("config.toml does not document memory key {s}\n", .{key});
             return error.UndocumentedConfigKey;

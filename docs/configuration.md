@@ -602,22 +602,14 @@ A second process on the same host uses another `id`, `listen_port`,
   here is exposed by binding `serve` more widely.
 - **`[chatrooms]`** — `on`, `rooms` (default subscriptions), `max_history`.
 - **`[memory]`** — RAG backend. One key at the top level, `backend`
-  (`hybrid`/`vector`/`keyword`); everything else lives in a sub-table, so the
-  spellings are `[memory.chunk]` `size`/`overlap`/`strategy`,
-  `[memory.embedding]` `provider`/`model`, and `[memory.vector]`
-  `backend`/`top_k`/`threshold`. (Note: several fields here are parsed but not
-  yet honored by the WASM memory tool — see `docs/prds/0007-memory.md` Known
-  issues.)
+  (`hybrid`/`vector`/`keyword`), and the retrieval cut-offs under
+  `[memory.vector]`. Chunk size, chunk overlap and the embedder are inputs to
+  the `memory` tool call, not config: the harness passes only `backend`,
+  `vector.top_k` and `vector.threshold` (`src/cli.zig`).
 
   | Key | Default |
   | --- | --- |
   | `backend` | `"hybrid"` |
-  | `chunk.size` | `800` |
-  | `chunk.overlap` | `120` |
-  | `chunk.strategy` | `"markdown"` |
-  | `embedding.provider` | `""` (unset) |
-  | `embedding.model` | `""` (unset) |
-  | `vector.backend` | `"builtin"` |
   | `vector.top_k` | `5` |
   | `vector.threshold` | `0.35` |
 
@@ -625,13 +617,7 @@ A second process on the same host uses another `id`, `listen_port`,
   [memory]
   backend = "hybrid"
 
-  [memory.chunk]
-  size = 800
-  overlap = 120
-  strategy = "markdown"
-
   [memory.vector]
-  backend = "builtin"
   top_k = 5
   threshold = 0.35
   ```

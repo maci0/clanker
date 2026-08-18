@@ -496,22 +496,12 @@ max_history = 500
 # file_chunk_bytes = 32768
 
 # Retrieval memory. `hybrid` combines the keyword index with vector search;
-# an empty embedding provider falls back to keyword-only, so vector search is
-# opt-in by naming one.
+# `keyword` skips the vector pass. Chunking and the embedder are the memory
+# tool's own inputs, not config.
 # [memory]
 # backend = "hybrid"
 #
-# [memory.chunk]
-# size = 800
-# overlap = 120
-# strategy = "markdown"
-#
-# [memory.embedding]
-# provider = ""
-# model = ""
-#
 # [memory.vector]
-# backend = "builtin"
 # top_k = 5
 # threshold = 0.35
 

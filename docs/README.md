@@ -1212,7 +1212,7 @@ Fields:
 - `advisor`: optional fail-open post-turn critique (`enabled`, `provider`, `model`, `scope`, `context_turns`, `timeout_ms`).
 - `ttsr`: optional turn-time self-repair (`max_retries_per_turn`, `buffer_bytes`, and `[[ttsr.rules]]`).
 - `kernel`: persistent eval-kernel controls (`enabled`, `max_output_bytes`, `cleanup_delay_ms`); it remains off by default because a kernel is an unsandboxed subprocess.
-- `memory`: RAG backend. `backend` at the top level, then the `[memory.chunk]` (`size`, `overlap`, `strategy`), `[memory.embedding]` (`provider`, `model`) and `[memory.vector]` (`backend`, `top_k`, `threshold`) sub-tables. See [docs/configuration.md](configuration.md).
+- `memory`: RAG backend. `backend` at the top level, then the `[memory.vector]` (`top_k`, `threshold`) sub-table. See [docs/configuration.md](configuration.md).
 
 ### Environment variables
 
