@@ -28,6 +28,12 @@ pub const Tool = struct {
     /// manifest omits `llm_description` (see `parseDescriptor`), so an
     /// unmigrated tool still works, just not as cheaply.
     llm_description: []const u8 = "",
+    /// Binding usage rules for this tool, injected into the system prompt's
+    /// "## Tool guidance" section whenever the tool is in the catalog and
+    /// echoed by `load_tools`. Distinct from the descriptions, which say what
+    /// the tool does: this says how it must be used, and it rides ahead of the
+    /// catalog so a lazy-loaded tool's rules are read before its schema is.
+    prompt_guidance: []const u8 = "",
     /// Where the module is, as resolved by `resolveWasmPath` at load: a path
     /// with a separator (`zig-out/tools/x.wasm`) is read from the process's
     /// working directory, a bare name from the manifest's own directory. Not
@@ -557,6 +563,33 @@ pub const Registry = struct {
         return out.written();
     }
 
+    /// The body of the system prompt's "## Tool guidance" section: one
+    /// `### name` block per enabled catalog tool that declares
+    /// `prompt_guidance`, sorted like the catalog. Rendered from the whole
+    /// registry rather than the loaded tool defs, because in catalog mode a
+    /// tool's schema may be lazy-loaded while its usage rules must be visible
+    /// from the first request.
+    pub fn guidanceText(self: *const Registry, arena: std.mem.Allocator) ![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var listed: std.ArrayList([]const u8) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr.*;
+            if (t.internal or !t.enabled or t.prompt_guidance.len == 0) continue;
+            try listed.append(arena, t.name);
+        }
+        std.mem.sort([]const u8, listed.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        for (listed.items) |name| {
+            const t = self.get(name).?;
+            try out.writer.print("### {s}\n\n{s}\n\n", .{ t.name, t.prompt_guidance });
+        }
+        return out.written();
+    }
+
     fn firstLine(s: []const u8) []const u8 {
         const line = s[0 .. std.mem.findScalar(u8, s, '\n') orelse s.len];
         // Long enough to choose by, short enough that forty of them stay cheap.
@@ -673,6 +706,9 @@ pub const Registry = struct {
         };
         if (obj.get("llm_description")) |ld| {
             if (ld == .string and ld.string.len > 0) t.llm_description = ld.string;
+        }
+        if (obj.get("prompt_guidance")) |pg| {
+            if (pg == .string) t.prompt_guidance = pg.string;
         }
         if (obj.get("check")) |c| {
             if (c == .bool) t.check = c.bool;
@@ -1059,6 +1095,39 @@ test "a descriptor schema always reaches the provider with a type" {
     ;
     const b = try Registry.parseDescriptor(arena, bare);
     try std.testing.expect(b.input_schema == .object);
+}
+
+test "prompt_guidance is parsed from the descriptor and rendered for catalog tools only" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const guided =
+        \\{ "name": "rfc", "description": "d", "wasm": "r.wasm",
+        \\  "prompt_guidance": "GUIDANCE_MARKER open the cited source, not the note" }
+    ;
+    const t = try Registry.parseDescriptor(arena, guided);
+    try std.testing.expectEqualStrings("GUIDANCE_MARKER open the cited source, not the note", t.prompt_guidance);
+
+    // An internal tool's guidance never reaches the prompt, and a tool with no
+    // guidance contributes no block.
+    const hidden =
+        \\{ "name": "webui", "description": "d", "wasm": "w.wasm",
+        \\  "internal": true, "prompt_guidance": "HIDDEN_MARKER" }
+    ;
+    const plain =
+        \\{ "name": "calc", "description": "d", "wasm": "c.wasm" }
+    ;
+    var reg = Registry{};
+    try reg.tools.put(arena, t.name, t);
+    try reg.tools.put(arena, (try Registry.parseDescriptor(arena, hidden)).name, try Registry.parseDescriptor(arena, hidden));
+    try reg.tools.put(arena, (try Registry.parseDescriptor(arena, plain)).name, try Registry.parseDescriptor(arena, plain));
+
+    const text = try reg.guidanceText(arena);
+    try std.testing.expect(std.mem.find(u8, text, "### rfc") != null);
+    try std.testing.expect(std.mem.find(u8, text, "GUIDANCE_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, text, "HIDDEN_MARKER") == null);
+    try std.testing.expect(std.mem.find(u8, text, "calc") == null);
 }
 
 test "a missing tools_dir yields an empty registry without error" {

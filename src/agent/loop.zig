@@ -400,6 +400,7 @@ pub const Agent = struct {
             .peers = peer_names.items,
             .catalog = catalog,
             .workflows_catalog = wf_catalog,
+            .tool_guidance = reg.guidanceText(arena) catch "",
             .global_instructions_file = global_path,
             .home = home,
             .git_remote_ops = cfg.agent.git_remote_ops,
@@ -543,6 +544,7 @@ pub const Agent = struct {
             .peers = self.peer_names,
             .catalog = if (self.catalog_mode) (self.reg.catalogText(scratch, &self.revealed) catch "") else "",
             .workflows_catalog = wf_catalog,
+            .tool_guidance = self.reg.guidanceText(self.arena) catch "",
             .global_instructions_file = global_path,
             .home = home,
             .git_remote_ops = self.cfg.agent.git_remote_ops,
@@ -2354,6 +2356,14 @@ pub const Agent = struct {
             try s.write(t.description);
             try s.objectField("input_schema");
             try s.write(t.input_schema);
+            // The descriptor's binding usage rules, repeated at the moment of
+            // use: the system prompt carries them too, but a model that just
+            // loaded the tool is about to call it, and this is the last text
+            // it reads first.
+            if (t.prompt_guidance.len > 0) {
+                try s.objectField("guidance");
+                try s.write(t.prompt_guidance);
+            }
             try s.endObject();
         }
         try s.endArray();

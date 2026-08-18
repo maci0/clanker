@@ -5,6 +5,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- Tool descriptors may declare `prompt_guidance`: binding usage rules the
+  harness injects into the system prompt's new `## Tool guidance` section
+  (ahead of the catalog, for every enabled non-internal tool that declares
+  one) and echoes as `guidance` in the `load_tools` reply, so the rules are
+  read again at the moment the tool is loaded. The `rfc` tool is the first
+  user: its guidance states that a claim is verified only by opening the
+  original source it cites — a `docs/research/` note is a summary, not a
+  source — after a live run interpreted "check against its own source" as
+  re-reading the note. The rfc tool's own create/seed messages were
+  tightened the same way.
+
 ### Changed
 
 - `clanker --dump-config` prints the merged config as JSON. It printed Zig's

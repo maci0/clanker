@@ -55,6 +55,12 @@ pub const PromptParts = struct {
     home: []const u8 = "",
     /// Rendered workflow catalog (from workflows.catalogText). Empty omits the section.
     workflows_catalog: []const u8 = "",
+    /// Rendered per-tool usage rules (from registry.guidanceText): the
+    /// `prompt_guidance` a descriptor declares. Placed with the instruction
+    /// layers, ahead of the static workflow sections and the catalog, because
+    /// these are binding rules for how a tool is used, not descriptions of
+    /// what it does. Empty omits the section.
+    tool_guidance: []const u8 = "",
     /// Whether the `git` tool may push to remotes, merge, and checkout
     /// (config `agent.git_remote_ops`, read at session start). The tool
     /// catalog only hedges with "lifts when enabled", which does not tell the
@@ -415,6 +421,15 @@ pub fn build(
         try buf.appendSlice(arena, "\n\n");
     }
 
+    // Per-tool usage rules declared by the tool descriptors themselves
+    // (`prompt_guidance` in the manifest). With the instruction layers rather
+    // than beside the catalog: a rule for how a tool must be used has to be
+    // read before the task starts, not discovered when the schema loads.
+    if (parts.tool_guidance.len > 0) {
+        try buf.appendSlice(arena, "## Tool guidance\n\n");
+        try buf.appendSlice(arena, parts.tool_guidance);
+    }
+
     // Skills (agent-editable markdown files in skills_dir). Title +
     // description only: full bodies ride every turn if inlined, so the
     // `skills` tool is how a later turn reads one. Disabled skills (frontmatter
@@ -737,6 +752,60 @@ test "build includes global, project, and local AGENTS.md sections" {
     const lpos = std.mem.find(u8, prompt, "LOCAL_AGENTS_MARKER_def").?;
     try std.testing.expect(gpos < ppos);
     try std.testing.expect(ppos < lpos);
+}
+
+test "build injects declared tool guidance ahead of the static workflow sections" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "SYSTEM.md", .data = "BASE" });
+    try tmp.dir.createDirPath(io, "skills");
+
+    const base_path = try tmpRel(std.testing.allocator, &tmp, "SYSTEM.md");
+    defer std.testing.allocator.free(base_path);
+    const skills_path = try tmpRel(std.testing.allocator, &tmp, "skills");
+    defer std.testing.allocator.free(skills_path);
+    const learnings_path = try tmpRel(std.testing.allocator, &tmp, "missing-learnings.md");
+    defer std.testing.allocator.free(learnings_path);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Missing instruction-layer paths, so the test does not inline the repo's
+    // real AGENTS.md (which itself mentions the section name).
+    const missing_path = try tmpRel(std.testing.allocator, &tmp, "missing.md");
+    defer std.testing.allocator.free(missing_path);
+
+    const prompt = try build(arena, io, .{
+        .system_prompt_file = base_path,
+        .skills_dir = skills_path,
+        .learnings_file = learnings_path,
+        .project_agents_file = missing_path,
+        .local_instructions_file = missing_path,
+        .tool_guidance = "### rfc\n\nGUIDANCE_MARKER_qrs\n\n",
+    }, &.{});
+
+    try std.testing.expect(std.mem.find(u8, prompt, "## Tool guidance") != null);
+    const gpos = std.mem.find(u8, prompt, "GUIDANCE_MARKER_qrs").?;
+    // Ahead of the static workflow sections, so a tool's binding rules read
+    // before the generic advice and long before the catalog.
+    const rpos = std.mem.find(u8, prompt, "## Research notes and RFCs").?;
+    try std.testing.expect(gpos < rpos);
+
+    // No declared guidance, no empty header.
+    const bare = try build(arena, io, .{
+        .system_prompt_file = base_path,
+        .skills_dir = skills_path,
+        .learnings_file = learnings_path,
+        .project_agents_file = missing_path,
+        .local_instructions_file = missing_path,
+    }, &.{});
+    try std.testing.expect(std.mem.find(u8, bare, "## Tool guidance") == null);
 }
 
 test "build omits unavailable or empty instruction layers; project still included" {
