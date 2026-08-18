@@ -81,3 +81,16 @@ Reproduced again on the very next promoted run: imp-1787083378744109070 ("Correc
 Both occurrences promoted a small `test_only`/comment-only change whose capability evals needed a retry ("capability evals: N case(s) failed; retrying only those" -> "PASS on retry") before going green. That retry step is now the strongest lead for where the stale worktree/index state leaks back into the main checkout — worth checking whether the retry path re-applies the *original* (pre-fix) staged copy for its second attempt and that copy is what ends up synced into main after promotion, rather than the version that actually passed.
 
 Fixed the same way: `git restore --staged` then `git restore --source=HEAD --worktree`. Both fixes verified with a clean `zig build test` (exit 0) before pushing.
+## Third occurrence, and a confirmed structural lead
+
+Third promoted run, same shape again: imp-1787085004582376221 ("Preallocate the converted message list in advisor.summarizeTurn..."), fast-forwarded to 31471696, one capability eval failed and passed on retry, then `src/agent/advisor.zig` was found staged with the exact inverse diff. Now 3/3 promoted runs today share this pattern: a `test_only` or `behavior`-class change, a capability-eval retry, and a post-promotion revert of exactly the file the proposal touched. Fixed the same way (restore --staged + --source=HEAD --worktree), verified with `zig build test` exit 0, pushed.
+
+**Confirmed structural fact, not yet tied definitively to the symptom:** `state/staging/<id>/` (created by `prepareStaging`/`copyTreeInto`, a plain byte-for-byte file copy, not a `git worktree add`) has no `.git` of its own — verified directly:
+
+```
+ls state/staging/<any-old-id>/.git   # No such file or directory
+```
+
+Both `capabilityGate` and `capabilityGateRetry` (src/improve/engine.zig ~2042, ~2099) spawn `clanker eval <name>` as a **live LLM agent subprocess** with `.cwd = .{ .dir = staged_dir }`. Any capability eval whose `requires_tool` is `git` (`git_allow`, `git_deny`) has that subprocess run real `git` commands rooted at `staged_dir`. Because that directory has no `.git`, git's normal upward search resolves those commands against the **live checkout's** `.git`, not an isolated copy — `git_deny` specifically prompts the eval agent to attempt `git reset --hard`, which is supposed to be denied by the sandbox's exec policy but, if it or a similar destructive/restoring git command ever slips through (a policy gap, or the model choosing a slightly different-but-still-broad command while "retrying"), would act on the live repository's working tree rather than a disposable copy.
+
+This does not yet fully explain the *exact* symptom (the revert lands on the specific file the proposal touched, and pre-promotion the live tree has nothing to revert for that eval's timing), but it is a real, verified hazard on its own: every capability gate run — success or failure — executes real git subprocesses with a shared `.git`, and `state/staging/` is a subdirectory of the live checkout rather than an isolated tree.
