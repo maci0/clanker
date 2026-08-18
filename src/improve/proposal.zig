@@ -5,6 +5,9 @@ const std = @import("std");
 const json = std.json;
 const log = @import("../util/log.zig");
 const strField = @import("../util/json.zig").strField;
+const config = @import("../config.zig");
+const registry = @import("../toolhost/registry.zig");
+const runtime = @import("../sandbox/runtime.zig");
 
 pub const Change = struct {
     file: []const u8,
@@ -317,6 +320,55 @@ fn textField(arena: std.mem.Allocator, obj: json.ObjectMap, key: []const u8) ![]
 }
 
 // ------------------------------------------------------------------- tests --
+
+/// Applies `changes` under `staging` through the sandboxed `patch_apply` WASM
+/// tool (fs_prefixes: ["state/staging"]) instead of a native file-write path.
+/// The tool only performs the text edits; the decision to gate and promote the
+/// result stays with the caller, native. Shared by the improve engine and the
+/// autoresearch loop: both apply this same proposal shape to a staging tree,
+/// and a second copy of the encoding is a second thing to keep in step with
+/// the tool's input schema.
+pub fn applyPatchViaTool(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config.Config,
+    staging: []const u8,
+    changes: []const Change,
+) !void {
+    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    const mod = try runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, "patch_apply", null);
+    defer mod.deinit();
+
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("changes");
+    try s.beginArray();
+    for (changes) |c| {
+        const rel = try std.fmt.allocPrint(arena, "{s}/{s}", .{ staging, c.file });
+        try s.beginObject();
+        try s.objectField("file");
+        try s.write(rel);
+        try s.objectField("old");
+        try s.write(c.old);
+        try s.objectField("new");
+        try s.write(c.new);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+
+    const raw = try mod.executeTool(enc.written());
+    defer gpa.free(raw);
+    const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, arena, raw, .{ .ignore_unknown_fields = true }) catch
+        return error.PatchApplyFailed;
+    if (!resp.ok) {
+        log.log(.error_, "patch_apply tool: {s}", .{resp.@"error"});
+        return error.PatchApplyFailed;
+    }
+}
 
 test "validatePath" {
     try std.testing.expect(validatePath("src/main.zig"));

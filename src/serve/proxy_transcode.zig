@@ -11,6 +11,7 @@ const config = @import("../config.zig");
 const providers = @import("../llm/registry.zig");
 const types = @import("../llm/types.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
+const openai = @import("../llm/providers/openai.zig");
 const vertex = @import("../llm/providers/vertex.zig");
 
 /// Drop `model` (Vertex addresses it in the URL) and set `anthropic_version`.
@@ -448,23 +449,7 @@ fn writeOpenaiMessage(s: *json.Stringify, msg: types.Message) !void {
     if (msg.content) |c| try s.write(c) else try s.write(null);
     if (msg.tool_calls) |calls| {
         try s.objectField("tool_calls");
-        try s.beginArray();
-        for (calls) |tc| {
-            try s.beginObject();
-            try s.objectField("id");
-            try s.write(tc.id);
-            try s.objectField("type");
-            try s.write("function");
-            try s.objectField("function");
-            try s.beginObject();
-            try s.objectField("name");
-            try s.write(tc.name);
-            try s.objectField("arguments");
-            try s.write(tc.arguments);
-            try s.endObject();
-            try s.endObject();
-        }
-        try s.endArray();
+        try openai.writeToolCalls(s, calls);
     }
     try s.endObject();
 }

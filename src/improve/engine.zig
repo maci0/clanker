@@ -1472,42 +1472,8 @@ pub const Engine = struct {
         return added;
     }
 
-    /// Applies the proposal's changes under `staging` through the sandboxed
-    /// `patch_apply` WASM tool (fs_prefixes: ["state/staging"]) instead of a
-    /// native file-write path. The tool only performs the text edits; the
-    /// decision to gate and promote the result stays here, native.
     fn applyPatch(self: *Engine, staging: []const u8, changes: []const proposal_mod.Change) !void {
-        var reg = try registry.Registry.load(self.ctx.io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir);
-        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, &reg, "patch_apply", null);
-        defer mod.deinit();
-
-        var enc: std.Io.Writer.Allocating = .init(self.arena);
-        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
-        try s.beginObject();
-        try s.objectField("changes");
-        try s.beginArray();
-        for (changes) |c| {
-            const rel = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ staging, c.file });
-            try s.beginObject();
-            try s.objectField("file");
-            try s.write(rel);
-            try s.objectField("old");
-            try s.write(c.old);
-            try s.objectField("new");
-            try s.write(c.new);
-            try s.endObject();
-        }
-        try s.endArray();
-        try s.endObject();
-
-        const raw = try mod.executeTool(enc.written());
-        defer self.ctx.gpa.free(raw);
-        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
-            return error.PatchApplyFailed;
-        if (!resp.ok) {
-            log.log(.error_, "patch_apply tool: {s}", .{resp.@"error"});
-            return error.PatchApplyFailed;
-        }
+        return proposal_mod.applyPatchViaTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, staging, changes);
     }
 
     /// Reads recent git history for reverts of promoted improvements and

@@ -96,40 +96,10 @@ pub const Loop = struct {
         }
         if (best) |b| log.log(.info, "autoresearch {s} done: best {s} = {d}", .{ owned_id, opts.metric_name, b }) else log.log(.info, "autoresearch {s} done: no metric recorded", .{owned_id});
     }
-    /// Applies `changes` under `staging` through the sandboxed `patch_apply`
-    /// WASM tool instead of hand-rolled exact-match string replacement, the
-    /// same tool the self-improve engine uses for its own staging tree.
+    /// The same staging-tree patch application the improve engine performs,
+    /// through the same sandboxed `patch_apply` tool.
     fn applyPatch(self: *Loop, staging: []const u8, changes: []const proposal_mod.Change) !void {
-        const gpa = self.ctx.gpa;
-        const io = self.ctx.io;
-        var reg = try registry.Registry.load(io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir);
-        const mod = try runtime.loadNamedTool(gpa, io, self.arena, self.ctx.environ_map, self.cfg, &reg, "patch_apply", null);
-        defer mod.deinit();
-
-        var enc: std.Io.Writer.Allocating = .init(self.arena);
-        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
-        try s.beginObject();
-        try s.objectField("changes");
-        try s.beginArray();
-        for (changes) |c| {
-            const rel = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ staging, c.file });
-            try s.beginObject();
-            try s.objectField("file");
-            try s.write(rel);
-            try s.objectField("old");
-            try s.write(c.old);
-            try s.objectField("new");
-            try s.write(c.new);
-            try s.endObject();
-        }
-        try s.endArray();
-        try s.endObject();
-
-        const raw = try mod.executeTool(enc.written());
-        defer gpa.free(raw);
-        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
-            return error.PatchApplyFailed;
-        if (!resp.ok) return error.PatchApplyFailed;
+        return proposal_mod.applyPatchViaTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, staging, changes);
     }
     /// Writes one iteration result into the run's ledger through the
     /// sandboxed `autoresearch` WASM tool (`op: "append"`, fs-scoped to

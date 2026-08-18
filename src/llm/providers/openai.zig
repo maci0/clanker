@@ -40,6 +40,29 @@ fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, _: bool) anyer
 
 // ---------------------------------------------------------------- request --
 
+/// The OpenAI `tool_calls` array, as both the request body and the proxy's
+/// non-streaming response reply carry it. The streaming *delta* shape is a
+/// different object (indexed, every field optional) and stays separate.
+pub fn writeToolCalls(s: *json.Stringify, calls: []const types.ToolCall) !void {
+    try s.beginArray();
+    for (calls) |tc| {
+        try s.beginObject();
+        try s.objectField("id");
+        try s.write(tc.id);
+        try s.objectField("type");
+        try s.write("function");
+        try s.objectField("function");
+        try s.beginObject();
+        try s.objectField("name");
+        try s.write(tc.name);
+        try s.objectField("arguments");
+        try s.write(tc.arguments);
+        try s.endObject();
+        try s.endObject();
+    }
+    try s.endArray();
+}
+
 fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildError![]u8 {
     var b = common.Builder.init(gpa);
     errdefer b.deinit();
@@ -86,23 +109,7 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
         }
         if (m.tool_calls) |calls| {
             try s.objectField("tool_calls");
-            try s.beginArray();
-            for (calls) |tc| {
-                try s.beginObject();
-                try s.objectField("id");
-                try s.write(tc.id);
-                try s.objectField("type");
-                try s.write("function");
-                try s.objectField("function");
-                try s.beginObject();
-                try s.objectField("name");
-                try s.write(tc.name);
-                try s.objectField("arguments");
-                try s.write(tc.arguments);
-                try s.endObject();
-                try s.endObject();
-            }
-            try s.endArray();
+            try writeToolCalls(&s, calls);
         }
         if (m.tool_call_id) |tid| {
             try s.objectField("tool_call_id");

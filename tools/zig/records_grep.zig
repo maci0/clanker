@@ -258,3 +258,41 @@ pub fn openNumbered(
     try s.endObject();
     lib.commit(out, &w);
 }
+
+/// The `status` action's reply, identical across all five record stores: the
+/// path, the label it now carries, and whether the store's README inventory
+/// copy went with it. Only the note explaining a missed inventory write is
+/// store-specific, and only the PRD store has a follow-up reminder, so both
+/// are passed in.
+pub fn writeStatusReply(
+    out: *lib.Out,
+    path: []const u8,
+    label: []const u8,
+    indexed: bool,
+    note: []const u8,
+    reminder: ?[]const u8,
+) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("status");
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("status");
+    try s.write(label);
+    try s.objectField("indexed");
+    try s.write(indexed);
+    if (!indexed) {
+        try s.objectField("note");
+        try s.write(note);
+    }
+    if (reminder) |r| {
+        try s.objectField("reminder");
+        try s.write(r);
+    }
+    try s.endObject();
+    lib.commit(out, &w);
+}

@@ -577,25 +577,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     // CAS miss leaves the RFC correct and names the line to reconcile.
     const indexed = setInventoryStatus(std.fs.path.basename(path), label) catch false;
 
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("action");
-    try s.write("status");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("status");
-    try s.write(label);
-    try s.objectField("indexed");
-    try s.write(indexed);
-    if (!indexed) {
-        try s.objectField("note");
-        try s.write("the RFC's status changed, but its docs/rfcs/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status word by hand so the index does not disagree with the RFC");
-    }
-    try s.endObject();
-    lib.commit(out, &w);
+    try records_grep.writeStatusReply(out, path, label, indexed, "the RFC's status changed, but its docs/rfcs/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status word by hand so the index does not disagree with the RFC", null);
 }
 
 /// Derived from `statuses`, so what `status` accepts and what `list` reads

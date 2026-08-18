@@ -1045,7 +1045,6 @@ pub const Config = struct {
     memory_present: bool = false,
     instance_present: bool = false,
     serve_present: bool = false,
-    serve_as_present: bool = false,
     default_provider_present: bool = false,
     peers_present: bool = false,
     web_present: bool = false,
@@ -1377,7 +1376,6 @@ pub const Config = struct {
             cfg.serve = parsed.serve;
             cfg.serve_fields = parsed.fields;
             cfg.serve_present = true;
-            cfg.serve_as_present = parsed.fields.serve_as;
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
