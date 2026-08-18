@@ -116,6 +116,11 @@ fn runChecks(
     while (it.next()) |entry| {
         const p = entry.value_ptr;
         const is_default = std.mem.eql(u8, p.name, cfg.default_provider);
+        // A missing scheme is the most common URL typo and would otherwise
+        // surface as an opaque connection failure at request time.
+        if (!std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://")) {
+            rep.line(.warn, p.name, try std.fmt.allocPrint(arena, "{s} lacks an http(s) scheme", .{p.base_url}));
+        }
         if (p.api_key_env) |env_name| {
             const set = if (environ_map.get(env_name)) |v| v.len > 0 else false;
             if (set) usable += 1;
