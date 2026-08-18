@@ -1,5 +1,5 @@
 //! Serve-owned mesh sockets (PRD 0011). Codec stays in peers/mesh.zig.
-//! `trySendChat` is what chatrooms.fanOut prefers; HTTP is the fallback.
+//! `chatrooms.fanOut` delivers chat over HTTP via the sandboxed `peers` tool.
 
 const std = @import("std");
 const mesh = @import("../peers/mesh.zig");
@@ -270,46 +270,6 @@ fn payloadObj(arena: std.mem.Allocator, raw: []const u8) !std.json.ObjectMap {
         .object => |o| o,
         else => return error.InvalidFrame,
     };
-}
-
-/// Deliver on a live mesh link. False means the caller should use HTTP.
-pub fn trySendChat(gpa: std.mem.Allocator, peer_id: []const u8, peer_name: []const u8, msg: ChatBody) bool {
-    const rt = runtime orelse return false;
-    rt.mu.lock();
-    const m = findMember(rt, peer_id) orelse findMember(rt, peer_name);
-    const fd = if (m) |row| row.fd else -1;
-    var to_buf: [64]u8 = undefined;
-    const to_len: usize = if (m) |row| row.id_len else 0;
-    if (m) |row| @memcpy(to_buf[0..to_len], row.id[0..to_len]);
-    // Residual posix: the member fd is owned by the connection thread, which
-    // can close it (and the number be recycled by a newly accepted peer) as
-    // soon as this lock drops. dup under the lock so the write below targets
-    // this socket even if the connection dies mid-send: the duplicate keeps
-    // the open file description alive and cannot be redirected by fd reuse.
-    const send_fd = if (fd >= 0) std.c.dup(fd) else -1;
-    rt.mu.unlock();
-    if (send_fd < 0) return false;
-    defer _ = std.c.close(send_fd);
-    if (to_len == 0) return false;
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    var out: std.Io.Writer.Allocating = .init(arena_state.allocator());
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return false;
-    s.objectField("version") catch return false;
-    s.write(mesh.protocol_version) catch return false;
-    s.objectField("kind") catch return false;
-    s.write("CHAT") catch return false;
-    s.objectField("id") catch return false;
-    s.write(msg.id) catch return false;
-    s.objectField("from") catch return false;
-    s.write(rt.our_id) catch return false;
-    s.objectField("to") catch return false;
-    s.write(to_buf[0..to_len]) catch return false;
-    s.objectField("payload") catch return false;
-    s.write(.{ .room = msg.room, .from = msg.from, .text = msg.text, .id = msg.id, .ts = msg.ts }) catch return false;
-    s.endObject() catch return false;
-    return writeFrame(send_fd, gpa, out.written());
 }
 
 fn handleInbound(rt: *Runtime, raw: []const u8) void {
