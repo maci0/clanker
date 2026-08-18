@@ -27,6 +27,25 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker-proxy` exits 2 on a bad invocation instead of 0. A missing `--host`
+  value, an unparseable `--port`, and an unrecognized flag all printed the
+  usage line and returned normally from `main`, so `clanker-proxy --prot 9000
+  && curl ...` read a refused invocation as a started proxy. Each now names the
+  offending argument on stderr and exits 2, the same usage-error code `clanker`
+  itself uses. `clanker-proxy --help` / `-h` is a real flag now (previously it
+  fell through to the unknown-argument branch) and prints the option reference
+  on stdout, exit 0.
+- The URL a starting listener prints goes to stdout, not stderr. `clanker
+  serve` with stdout piped promised "the original bare `http://host:port/webui`
+  line", and `clanker-proxy` its `http://host:port/v1` line, but both went
+  through `std.debug.print`, which writes to stderr: `clanker serve | grep -m1
+  webui` blocked forever while the URL scrolled past on the terminal.
+- `clanker --help` and every `clanker <command> --help` name `--profile
+  <name>` and `--dump-config`. Both are accepted on every command and their own
+  `clanker --profile -h` said "Available on every command", but neither help
+  footer listed them, so nothing an operator could read said they existed. A
+  test now pins every flag the parser treats as global to both footers.
+
 - `clanker git <args...>` is a transparent passthrough again. It captured both
   of git's streams and replayed them after git had finished, so `clanker git
   log` never reached a pager, `| head` could not stop it early, and a large

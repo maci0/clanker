@@ -6,9 +6,10 @@
 //! `clanker serve --proxy-port` does on its dedicated listener.
 //!
 //! Flags: `--host <addr>` (default 127.0.0.1) and `--port <port>` (default
-//! 17922). `CLANKER_HOST` / `CLANKER_PROXY_PORT` fill in when flags are
-//! absent. `[serve] proxy_token_env` guards the endpoint the same way it
-//! does on the full binary.
+//! 17922), plus `--version` and `--help`/`-h`. `CLANKER_HOST` /
+//! `CLANKER_PROXY_PORT` fill in when flags are absent. `[serve]
+//! proxy_token_env` guards the endpoint the same way it does on the full
+//! binary.
 
 const std = @import("std");
 const config = @import("config.zig");
@@ -16,6 +17,7 @@ const proxy = @import("serve/proxy.zig");
 const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
 const raw_http = @import("util/raw_http.zig");
+const diag = @import("util/diag.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const rate_limit = @import("llm/rate_limit.zig");
 const build_options = @import("build_options");
@@ -68,15 +70,20 @@ pub fn main(init: std.process.Init) !void {
     _ = args_it.next(); // argv[0]
     while (args_it.next()) |arg| {
         if (std.mem.eql(u8, arg, "--host")) {
-            host = args_it.next() orelse return usage();
+            host = args_it.next() orelse usageError("--host needs an address, for example --host 0.0.0.0", .{});
         } else if (std.mem.eql(u8, arg, "--port")) {
-            const raw = args_it.next() orelse return usage();
-            port = std.fmt.parseInt(u16, raw, 10) catch return usage();
+            const raw = args_it.next() orelse usageError("--port needs a port number", .{});
+            port = std.fmt.parseInt(u16, raw, 10) catch usageError("--port wants a 16-bit port number, got '{s}'", .{raw});
         } else if (std.mem.eql(u8, arg, "--version")) {
             try std.Io.File.stdout().writeStreamingAll(io, "clanker-proxy " ++ build_options.version ++ "\n");
             return;
+        } else if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            // Asked-for help is the command's output, so stdout and exit 0,
+            // matching `clanker --help`.
+            try std.Io.File.stdout().writeStreamingAll(io, usage_text);
+            return;
         } else {
-            return usage();
+            usageError("unrecognized argument '{s}'", .{arg});
         }
     }
 
@@ -92,7 +99,13 @@ pub fn main(init: std.process.Init) !void {
     defer server.socket.close(io);
 
     log.log(.info, "clanker-proxy listening on {s}:{d}", .{ host, port });
-    std.debug.print("http://{s}:{d}/v1\n", .{ host, port });
+    // The endpoint URL is this command's one line of output, so it goes to
+    // stdout; `std.debug.print` sent it to stderr, where a script capturing
+    // the URL never saw it.
+    var url_buf: [128]u8 = undefined;
+    if (std.fmt.bufPrint(&url_buf, "http://{s}:{d}/v1\n", .{ host, port })) |line| {
+        std.Io.File.stdout().writeStreamingAll(io, line) catch {};
+    } else |_| {}
 
     while (true) {
         const stream = server.accept(io) catch |err| {
@@ -113,8 +126,32 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-fn usage() void {
-    std.debug.print("usage: clanker-proxy [--host <addr>] [--port <port>]\n", .{});
+const usage_text =
+    \\usage: clanker-proxy [--host <addr>] [--port <port>]
+    \\
+    \\OpenAI/Anthropic compatibility proxy, mounting /v1 at the root. Reads the
+    \\same config.toml / config.local.toml pair as clanker.
+    \\
+    \\  --host <addr>   interface to bind (default 127.0.0.1, or CLANKER_HOST)
+    \\  --port <port>   port to listen on (default 17922, or CLANKER_PROXY_PORT)
+    \\  --version       print the version
+    \\  --help, -h      this text
+    \\
+    \\A flag always wins over the matching environment variable.
+    \\
+;
+
+/// One `error: ...` line plus the usage block on stderr, then exit 2.
+///
+/// The old `return usage()` printed the usage and let `main` return, so the
+/// process exited **0**: `clanker-proxy --prot 9000 && curl ...` read a
+/// refused invocation as a started server. Usage errors exit 2 here, the same
+/// code `clanker` itself uses, so a caller can tell "you typed it wrong" from
+/// "the machine could not do it" (1).
+fn usageError(comptime fmt: []const u8, args: anytype) noreturn {
+    diag.errorLine(fmt, args);
+    std.debug.print("{s}", .{usage_text});
+    std.process.exit(2);
 }
 
 const Conn = struct {

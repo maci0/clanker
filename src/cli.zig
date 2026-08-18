@@ -1628,7 +1628,7 @@ fn renderUsage(buf: []u8) []const u8 {
             writeWrappedHelpBlurb(&w, s.blurb) catch {};
         }
     }
-    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
+    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --profile <name>                  overlay profiles/<name>.toml on the config\n  --dump-config                     print the merged config and exit\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -1671,7 +1671,7 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
             w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
     }
-    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --quiet, -q; --help, -h.\n") catch {};
+    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --quiet, -q; --profile <name>;\n--dump-config; --help, -h.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -6568,7 +6568,14 @@ fn printServeBanner(io: std.Io, environ_map: *std.process.Environ.Map, disp: []c
     const stdout = std.Io.File.stdout();
     const tty = stdout.isTty(io) catch false;
     if (!tty) {
-        std.debug.print("http://{s}/webui\n", .{disp});
+        // `std.debug.print` writes to *stderr*, so the one line the doc
+        // comment promises a piped stdout was the one line it never got:
+        // `clanker serve | grep -m1 webui` blocked forever while the URL went
+        // to the terminal. The bare line is data, so it goes where the card
+        // below goes.
+        var url_buf: [512]u8 = undefined;
+        const line = std.fmt.bufPrint(&url_buf, "http://{s}/webui\n", .{disp}) catch return;
+        stdout.writeStreamingAll(io, line) catch {};
         return;
     }
     const color = !no_color.requested(environ_map);
@@ -16292,6 +16299,30 @@ test "top-level help stays within 80 columns" {
     while (lines.next()) |line| {
         if (line.len > 80) {
             std.debug.print("help line is {d} columns: {s}\n", .{ line.len, line });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "every everywhere-flag is named in both help footers" {
+    // `Flag.global()` is what the parser accepts on every command; the two
+    // help footers are hand-written prose. They drifted: --profile and
+    // --dump-config worked on every command and their own `-h` said
+    // "Available on every command", while `clanker --help` and every
+    // `clanker <cmd> --help` listed only --verbose/--quiet/--help.
+    var top_buf: [16384]u8 = undefined;
+    const top = renderUsage(&top_buf);
+    var cmd_buf: [16384]u8 = undefined;
+    const cmd = renderCommandHelp(&cmd_buf, .stats);
+    for (std.enums.values(Flag)) |f| {
+        if (!f.global()) continue;
+        const spelling = primaryFlagName(f);
+        if (std.mem.find(u8, top, spelling) == null) {
+            std.debug.print("top-level help never names {s}\n", .{spelling});
+            return error.TestUnexpectedResult;
+        }
+        if (std.mem.find(u8, cmd, spelling) == null) {
+            std.debug.print("command help footer never names {s}\n", .{spelling});
             return error.TestUnexpectedResult;
         }
     }
