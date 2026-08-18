@@ -80,7 +80,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [improve-self fast-forwards main's ref but leaves the working tree/index reverted to pre-promotion content](bugs/2026-08-19-improve-self-merge-leaves-worktree-reverted.md) — Investigating
+- [improve-self fast-forwards main's ref but leaves the working tree/index reverted to pre-promotion content](bugs/2026-08-19-improve-self-merge-leaves-worktree-reverted.md) — Resolved
 
 - [zigLibDir spawns bare zig with no PATH search or environment, always failing](bugs/2026-08-19-zig-lib-dir-never-resolves-in-sandbox.md) — Resolved
 

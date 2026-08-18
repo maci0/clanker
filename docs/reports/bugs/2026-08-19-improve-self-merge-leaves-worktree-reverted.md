@@ -4,11 +4,11 @@
 
 - **What failed:** After imp-1787081817304037321 promoted and fast-forwarded main to 136e80b2 (adding a test to graph.zig), the actual working tree file and index still lacked the new test - git show HEAD had it, git diff HEAD did not. A blind commit-as-is pass right after promotion would have re-deleted the just-verified test. Fixed by git restore --source=HEAD --worktree, not yet root-caused in the merge-back code path.
 - **Impact:** To be confirmed.
-- **Resolution:** Investigating on 2026-08-18. Working tree/index restored locally to match HEAD (git restore --staged + --source=HEAD --worktree); the merge-back defect itself in the engine's fast-forward path is not yet root-caused or fixed.
+- **Resolution:** Resolved on 2026-08-18. Root cause found in src/improve/worktree.zig: Worktree.mergeBack's fast-forward path moves the shared branch ref and resets only its own throwaway worktree, by design -- it never resyncs whatever other checkout invoked improve-self. Confirmed unconditional on every promotion, unrelated to eval retries. No code fix proposed (real design tradeoff); documented as operational guidance instead.
 
 ## Status
 
-Investigating on 2026-08-18. Working tree/index restored locally to match HEAD (git restore --staged + --source=HEAD --worktree); the merge-back defect itself in the engine's fast-forward path is not yet root-caused or fixed.
+Resolved on 2026-08-18. Root cause found in src/improve/worktree.zig: Worktree.mergeBack's fast-forward path moves the shared branch ref and resets only its own throwaway worktree, by design -- it never resyncs whatever other checkout invoked improve-self. Confirmed unconditional on every promotion, unrelated to eval retries. No code fix proposed (real design tradeoff); documented as operational guidance instead.
 
 ## Symptom and impact
 
@@ -94,3 +94,32 @@ ls state/staging/<any-old-id>/.git   # No such file or directory
 Both `capabilityGate` and `capabilityGateRetry` (src/improve/engine.zig ~2042, ~2099) spawn `clanker eval <name>` as a **live LLM agent subprocess** with `.cwd = .{ .dir = staged_dir }`. Any capability eval whose `requires_tool` is `git` (`git_allow`, `git_deny`) has that subprocess run real `git` commands rooted at `staged_dir`. Because that directory has no `.git`, git's normal upward search resolves those commands against the **live checkout's** `.git`, not an isolated copy — `git_deny` specifically prompts the eval agent to attempt `git reset --hard`, which is supposed to be denied by the sandbox's exec policy but, if it or a similar destructive/restoring git command ever slips through (a policy gap, or the model choosing a slightly different-but-still-broad command while "retrying"), would act on the live repository's working tree rather than a disposable copy.
 
 This does not yet fully explain the *exact* symptom (the revert lands on the specific file the proposal touched, and pre-promotion the live tree has nothing to revert for that eval's timing), but it is a real, verified hazard on its own: every capability gate run — success or failure — executes real git subprocesses with a shared `.git`, and `state/staging/` is a subdirectory of the live checkout rather than an isolated tree.
+## Fourth occurrence — falsifies the retry theory, and the real root cause
+
+Fourth promoted run, imp-1787086617067521436 ("Graph.add keeps the latest output preview when it collapses a repeated node"), fast-forwarded to 6f010350. This time capability evals **passed on the first try, no retry at all** — yet `src/agent/graph.zig` was again found staged with the exact inverse diff after the run exited. 4/4 promoted runs today reverted the calling checkout; 3/4 needed an eval retry and 1/4 did not. That rules out the eval-retry theory from the prior two updates as the cause — it happened even with zero retries, so it must be unconditional on every promotion.
+
+**Confirmed root cause**, found by reading the actual merge path this time (`src/improve/worktree.zig`, not the direct-write promote loop in `engine.zig` I'd read earlier for a different, unused code path):
+
+`Worktree.mergeBack`'s fast-forward branch (worktree.zig ~163-176) does exactly two things on success:
+1. `updateRefCas`: a bare `git update-ref refs/heads/<base> <new_sha> <old_sha>` — moves the **shared** ref, nothing else. `git update-ref` never touches any checkout's working tree or index.
+2. `resyncLocalBranch`: `git -C <isolated-worktree-path> reset --hard <new_sha>` — resets **only the improve-self run's own throwaway worktree** (`.clanker-worktrees/<run-id>`), never the checkout the human/operator invoked `improve-self` from.
+
+The function's own doc comment confirms this is deliberate, not an oversight — it explicitly describes trying a bare `git update-ref` on its own tracking branch and rejecting it because it "left the worktree's checked-out FILES at the pre-merge content", which is why `resyncLocalBranch` exists at all. But that reasoning and fix apply only to the isolated worktree's own consistency (so the *next* improve-self iteration in the same worktree sees the merged content); nothing anywhere in the promote/merge-back path ever considers or resyncs whatever *other* checkout of the same branch invoked the run in the first place.
+
+In every observation today, that other checkout was the exact directory `clanker improve-self ...` was invoked from (`/home/maci/Desktop/clanker`, the primary worktree, with `main` checked out) — the natural, expected way to run the command per its own `--help` and every AGENTS.md example. After the ref moves: `git log`/`git show HEAD` there correctly show the new commit (they read the moved ref), but that checkout's own index and working-tree files were never touched, so `git status`/`git diff HEAD` show the promoted change reverted — exactly the symptom, on every single promotion, unconditionally.
+## Resolution (of the investigation, not a code fix)
+
+No code change proposed here. This is a real design gap with a legitimate tradeoff either way — always resyncing the calling checkout could itself be destructive if that checkout has its own uncommitted work in progress (the exact hazard the existing concurrent-sessions runbook is about), so silently doing a `reset --hard` there on every promotion would trade one surprise for a worse one. Whether/how to fix it (a warning printed to the invoking terminal, an opt-in `--sync-caller` flag, or leaving it as an operator responsibility) is a real design decision, not something to make unilaterally mid-investigation.
+
+## Operational guidance (confirmed correct by this investigation)
+
+After invoking `clanker improve-self` from an interactive checkout, always `git status`/`git diff HEAD` before trusting the checkout is clean — if it promoted anything, the calling checkout **will** show the promotion's inverse as a staged (and working-tree) change, unconditionally, every time. This is not tangled/conflicted state and does not need `git stash`/branch-preservation dances: the correct fix is simply
+
+```
+git restore --staged <path>                          # if index disagrees with HEAD
+git restore --source=HEAD --worktree -- <path>        # sync working tree to the (already correct) HEAD
+```
+
+then verify with a real build/test (`zig build test`, exit code checked directly per the AGENTS.md `tail`-masks-exit-code caveat) before pushing. Never `git commit` the stale staged state as-is — it would silently re-delete whatever `improve-self` just promoted and verified, while the commit history claims it landed.
+
+The existing runbook `docs/runbooks/concurrent-agent-sessions-on-one-checkout.md` already describes an adjacent symptom ("unexplained imp- commits and a staged file that undoes them") but frames it as transient, mid-iteration state from a *still-running* respawning loop (`scripts/imp-autorecover-loop/loop.py`) that resolves once the loop goes quiet. All four occurrences here were the process having already fully exited (confirmed via `state/improve.lock` absent and no matching process in `ps`), so "wait for it to finish" does not apply and the state does not self-resolve — the fix above is needed regardless of whether a background loop is also active.
