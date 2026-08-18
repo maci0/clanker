@@ -2,7 +2,7 @@
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
 import { readJson, fmtInt, fmtBytes } from "../core/utils.js";
-import { loadHljs } from "../core/vendor.js";
+import { paintTomlInto } from "../core/vendor.js";
 
 function askConfirm(message, opts) {
   return import("../core/ui.js").then(function (mod) { return mod.uiConfirm(message, opts); });
@@ -570,12 +570,7 @@ function editToml() {
 function paintEditToml() {
   var text = document.getElementById("models-edit-toml-text");
   var code = document.getElementById("models-edit-toml-code");
-  if (!text || !code) return;
-  loadHljs().then(function () {
-    var out = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true });
-    code.innerHTML = out.value;
-    code.appendChild(document.createTextNode("\n"));
-  }).catch(function () { code.textContent = text.value; });
+  if (text && code) paintTomlInto(text, code);
 }
 
 function setTomlMode(on) {

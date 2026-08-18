@@ -465,7 +465,7 @@ function drawRun(g) {
       // "<script>". One escaper, `core/utils.js`'s escapeHtml, at every
       // interpolation site including this one.
       var esc = escapeHtml;
-            // The exported graph is the second artefact that leaves the machine
+      // The exported graph is the second artefact that leaves the machine
       // (`clanker session export` is the other), so it carries the same
       // Control Cabinet vocabulary rather than a default sans on a grey
       // rounded box: RAL panel greys, 3px machined edges, engraved mono for

@@ -937,17 +937,12 @@ function clearDropIndicators() {
   for (var i = 0; i < indicators.length; i++) indicators[i].remove();
 }
 
-function handleCardDrop(draggedId, targetColumn, targetCardId, above) {
-  // For now, move card to the target column (cross-column drag)
-  // The server doesn't support position ordering yet, so we just move columns
+/* Only the column changes: the board has no per-column ordering to post, so a
+   drop within one column is a no-op and the indicator is the only feedback. */
+function handleCardDrop(draggedId, targetColumn) {
   var draggedCard = cardById(draggedId);
-  if (!draggedCard) return;
-  if (draggedCard.column !== targetColumn) {
-    // Cross-column move
-    postBoard({ op: "move", id: draggedId, column: targetColumn }, "Moved.");
-  }
-  // Within-column reorder: visually swap and track position
-  // (Server-side ordering support would go here)
+  if (!draggedCard || draggedCard.column === targetColumn) return;
+  postBoard({ op: "move", id: draggedId, column: targetColumn }, "Moved.");
 }
 
 function cardDetailInner() { return el.cardDetailBox || el.cardDetail; }

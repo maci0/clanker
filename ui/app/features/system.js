@@ -5,7 +5,7 @@
    and a GET /api/mcp/servers it never read. They load with the System view now,
    like every other feature view. */
 import { readJson } from "../core/utils.js";
-import { loadHljs } from "../core/vendor.js";
+import { paintTomlInto } from "../core/vendor.js";
 import { uiConfirm, showLoadError } from "../core/ui.js";
 
 /* ---- config editor (System view) ----------------------------------------
@@ -30,14 +30,7 @@ function bindConfigEditor() {
   function isDirty() { return text.value !== savedText; }
   function markClean() { savedText = text.value; }
 
-  function paint() {
-    loadHljs().then(function () {
-      var out = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true });
-      code.innerHTML = out.value;
-      // Trailing newline keeps the pre as tall as the textarea's last line.
-      code.appendChild(document.createTextNode("\n"));
-    }).catch(function () { code.textContent = text.value; });
-  }
+  function paint() { paintTomlInto(text, code); }
 
   function syncScroll() {
     var pre = code.parentElement;

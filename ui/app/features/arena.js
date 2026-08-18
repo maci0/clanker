@@ -514,14 +514,14 @@ function drawFrame(ts) {
     // Pairwise faces the two sprites across the centre; a royale lines them up.
     var facing = n <= 2 ? (i === 0 ? 1 : -1) : (cx < cv.width / 2 ? 1 : -1);
     var acting = last && last.combatant === i ? last.move : null;
-    drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal);
+    drawCombatant(ctx, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal);
   }
 
   // The compactor runs after the verdict, over the top of the still stage.
   if (!reduced && m.status !== "running") drawCompactor(ctx, cv, m, t, ground, cw, pal);
 }
 
-function drawCombatant(ctx, cv, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal) {
+function drawCombatant(ctx, c, i, cx, ground, facing, acting, t, lunge, reduced, m, pal) {
   var gone = c.eliminated || c.conceded;
   var bob = reduced || gone ? 0 : Math.sin(t / 420 + i * 1.1) * 2;
   var kneel = c.conceded || c.eliminated ? 8 : 0;

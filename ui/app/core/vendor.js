@@ -50,6 +50,16 @@ export function loadHljs() {
   return loadVendor("hljs.min.js", function () { return !!window.hljs; }).then(registerToml);
 }
 
+// Highlight a TOML textarea into the <pre><code> layered behind it. The
+// trailing newline keeps the pre as tall as the textarea's last line; falling
+// back to plain text means a missing vendor bundle costs colour, not the editor.
+export function paintTomlInto(text, code) {
+  return loadHljs().then(function () {
+    code.innerHTML = window.hljs.highlight(text.value, { language: "toml", ignoreIllegals: true }).value;
+    code.appendChild(document.createTextNode("\n"));
+  }).catch(function () { code.textContent = text.value; });
+}
+
 export function loadMermaid() {
   return loadVendor("mermaid.min.js", function () { return !!(window.mermaid && window.mermaid.render); });
 }
