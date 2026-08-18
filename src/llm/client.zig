@@ -245,16 +245,7 @@ pub fn chat(
         attempt += 1;
         try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
         outcome = doFetch(ctx, &client, url, body, cred, impl, provider, arena, err_detail) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
         if (isRetryable(outcome.status) and attempt < max_attempts) {
@@ -746,6 +737,31 @@ fn sendStreamBody(req: *std.http.Client.Request, body: []const u8) !void {
     try req.connection.?.flush();
 }
 
+/// The transport-failure arm every attempt of the retry loop shares. Returns
+/// true once the backoff has been slept and the attempt should be retried, and
+/// false after the give-up has been logged and recorded, leaving the caller to
+/// return the error it caught.
+fn retryAfterTransportError(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    attempt: u32,
+    llm_t0: std.Io.Timestamp,
+    err: anyerror,
+) !bool {
+    if (attempt < max_attempts and isRetryableTransport(err)) {
+        noteRetry();
+        try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+        return true;
+    }
+    log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+        provider.name, @errorName(err), attempt, max_attempts,
+    });
+    noteError();
+    recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+    return false;
+}
+
 fn sleepRetry(io: std.Io, attempt: u32, provider_name: []const u8, http_status: u16, reason: []const u8) !void {
     const delay = retryDelayNs(io, attempt);
     if (http_status == 0) {
@@ -884,16 +900,7 @@ pub fn chatStream(
             .headers = headers,
             .extra_headers = extra[0..extra_len],
         }) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
         req_slot = opened;
@@ -907,30 +914,12 @@ pub fn chatStream(
             log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
         }
         sendStreamBody(req, body) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
 
         response = req.receiveHead(&redirect_buffer) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
 
