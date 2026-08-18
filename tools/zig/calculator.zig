@@ -1,8 +1,8 @@
 //! calculator: pure arithmetic tool — no host function calls, so it can run
 //! even with the most restrictive sandbox policy.
 //!
-//! Input:  {"a": <number>, "b": <number>, "op": "+" | "-" | "*" | "/" | "^"}
-//!         or {"expr": "2+3*4"} (operators + - * / ^, parentheses, precedence)
+//! Input:  {"a": <number>, "b": <number>, "op": "+" | "-" | "*" | "/" | "%" | "^"}
+//!         or {"expr": "2+3*4"} (operators + - * / % ^, parentheses, precedence)
 //! Output: {"ok": true, "result": <number>}
 
 const std = @import("std");
@@ -54,10 +54,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         a * b
     else if (std.mem.eql(u8, op, "/"))
         if (b == 0) return lib.fail(out, "division by zero") else a / b
+    else if (std.mem.eql(u8, op, "%"))
+        if (b == 0) return lib.fail(out, "modulo by zero") else @rem(a, b)
     else if (std.mem.eql(u8, op, "^"))
         std.math.pow(f64, a, b)
     else
-        return lib.fail(out, "unknown op; use + - * / ^");
+        return lib.fail(out, "unknown op; use + - * / % ^");
 
     var buf: [128]u8 = undefined;
     const body = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"result\":{d}}}", .{result});
@@ -117,6 +119,10 @@ const ExprParser = struct {
                 const right = try self.parseUnary();
                 if (right == 0) return error.DivisionByZero;
                 left /= right;
+            } else if (self.eat('%')) {
+                const right = try self.parseUnary();
+                if (right == 0) return error.DivisionByZero;
+                left = @rem(left, right);
             } else return left;
         }
     }
