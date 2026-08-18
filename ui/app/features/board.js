@@ -881,12 +881,9 @@ function cardNode(c) {
     e.dataTransfer.setData("text/plain", c.id);
     e.dataTransfer.effectAllowed = "move";
     b.setAttribute("data-dragging", "true");
-    // Store the column we are dragging from
-    boardDragSource = { cardId: c.id, column: c.column };
   });
   b.addEventListener("dragend", function () {
     b.removeAttribute("data-dragging");
-    boardDragSource = null;
     clearDropIndicators();
   });
   // Cards are also drop targets for intra-column reorder
@@ -903,9 +900,7 @@ function cardNode(c) {
     clearDropIndicators();
     var draggedId = e.dataTransfer.getData("text/plain");
     if (!draggedId || draggedId === c.id) return;
-    var rect = b.getBoundingClientRect();
-    var above = (e.clientY - rect.top) < rect.height / 2;
-    handleCardDrop(draggedId, c.column, c.id, above);
+    handleCardDrop(draggedId, c.column);
   });
 
   /* Dragging is not available to a keyboard, so the same move is on the
@@ -923,9 +918,6 @@ function cardNode(c) {
   });
   return b;
 }
-
-/* ---- Drag-and-drop helpers for within-column reordering ---- */
-var boardDragSource = null;
 
 function showDropIndicator(targetCard, e) {
   clearDropIndicators();

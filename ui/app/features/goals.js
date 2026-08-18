@@ -16,7 +16,7 @@ import { readJson } from "../core/utils.js";
 import { T, bind, UI, state, uiConfirm, uiPrompt } from "../core/ui.js";
 import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn, goalWorktreeTitle } from "../core/goals.js";
 import { icon } from "../core/icons.js";
-import { makeLineSplitter } from "../core/stream.js";
+import { makeLineSplitter, pumpInto } from "../core/stream.js";
 import { board, postBoard, loadBoard, boardIsLoaded } from "./board.js";
 
 var el = null;
@@ -489,15 +489,7 @@ function runGoal(g, opts) {
     signal: controller.signal
   }).then(function (resp) {
     if (!resp.ok || !resp.body) throw new Error("server responded HTTP " + resp.status);
-    var reader = resp.body.getReader();
-    var decoder = new TextDecoder();
-    return (function pump() {
-      return reader.read().then(function (chunk) {
-        if (chunk.done) return;
-        splitter.push(decoder.decode(chunk.value, { stream: true }));
-        return pump();
-      });
-    })();
+    return pumpInto(resp.body, splitter);
   }).then(function () {
     splitter.flush();
     if (goalRuns[g.id] && goalRuns[g.id].status === "running") {

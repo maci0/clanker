@@ -96,9 +96,12 @@ test("the page head still preloads the heavy entry, not the light modules", func
 });
 
 test("eager JS stays inside its weight budget", function () {
-  // Everything a chat-only visit downloads. 192 KiB of gzipped first-party JS
-  // is ~250 ms on a 6 Mbit/s uplink and the bulk of time-to-interactive.
-  assert.ok(eagerJsGz <= 192, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 192K`);
+  // Everything a chat-only visit downloads. 144 KiB of gzipped first-party JS
+  // is ~190 ms on a 6 Mbit/s uplink and the bulk of time-to-interactive. The
+  // budget follows the wins down: it was 192K while the Runs view sat inline
+  // in app.js, and a budget left far above the real number stops catching the
+  // accretion it exists to catch.
+  assert.ok(eagerJsGz <= 144, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 144K`);
 });
 
 test("first paint stays inside its weight budget", function () {
@@ -112,7 +115,7 @@ test("first paint stays inside its weight budget", function () {
 
 test("single large files stay inside their budgets", function () {
   const appJsRaw = fileBytes("app.js").length / KiB;
-  assert.ok(appJsRaw <= 384, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 384K`);
+  assert.ok(appJsRaw <= 256, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 256K`);
   const htmlRaw = fileBytes("index.html").length / KiB;
   assert.ok(htmlRaw <= 96, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 96K`);
   const viewsRaw = fileBytes("views.css").length / KiB;

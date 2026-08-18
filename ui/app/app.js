@@ -6,7 +6,7 @@ import { loadTheme as loadThemeMod, applyTheme as applyThemeMod, bindThemeToggle
 import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
-import { makeLineSplitter as makeLineSplitterMod, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
+import { makeLineSplitter as makeLineSplitterMod, pumpInto, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
@@ -2429,15 +2429,7 @@ el.form.addEventListener("submit", function (e) {
       });
     }
     if (!resp.body) throw new Error("server responded HTTP " + resp.status);
-    var reader = resp.body.getReader();
-    var decoder = new TextDecoder();
-    return (function pump() {
-      return reader.read().then(function (chunk) {
-        if (chunk.done) return;
-        splitter.push(decoder.decode(chunk.value, { stream: true }));
-        return pump();
-      });
-    })();
+    return pumpInto(resp.body, splitter);
   }).then(function () {
     splitter.flush();
     finalizeAnswer(turn);
