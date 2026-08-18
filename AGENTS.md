@@ -4,7 +4,7 @@ clanker is a self-improving AI agent harness in **Zig 0.16.0**; tools run as san
 
 ## Build & test
 
-- `zig build` — build the host (musl on Linux). Cross-compile: `-Dtarget=x86_64-linux-musl`.
+- `zig build` — build the host (musl on Linux). Cross-compile: `-Dtarget=x86_64-linux-musl`. Optimize mode is Zig's default, **Debug**, and `zig-out/bin/clanker` is that build, so never profile it: a scalar byte loop LLVM turns into 1.5 GB/s in ReleaseFast reads as 44% of `clanker stats` under Debug, and the wasm interpreter (also built Debug, see `zwasm_dep` in `build.zig`) swamps everything else. `-Doptimize=ReleaseFast` before `perf`/`hyperfine`, or measure the one function in a standalone ReleaseFast harness.
 - `zig build tools` — compile `tools/zig/*.zig` → `zig-out/tools/*.wasm`.
 - `zig build test` — unit + integration tests; must pass before any change. Tests live in `test` blocks. New `src/` modules must be referenced from `comptime` in `src/main.zig` or tests don't run. Pure `tools/zig/` helpers (no guest ABI) go in `host_tested_helpers` in `build.zig`; WASM guests can't run `test` blocks.
 - `zig build e2e` — black-box E2E against mock LLM server. Not part of `zig build test`; run separately.
