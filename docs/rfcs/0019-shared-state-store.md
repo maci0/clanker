@@ -19,7 +19,7 @@ Decide which backend, concurrency-control mechanism and access path clanker shou
 **Why now.** Four things force the choice.
 
 - The fleet is growing, and the mesh (PRD 0011) leaves most of `state/` per-host: `token_stats.jsonl`, `improvements.jsonl`, `autolearn.jsonl`, `reasoning.jsonl`, knowledge and `learnings.md` have no replication story, so a fleet does not pool what it learns.
-- Worktree state sharing is a recurring breakage: the `shared_root` special case inside `safeJoinSecure` has produced two bug reports, one hardening rollback (`44071710`), and a live refusal observed during research.
+- Worktree state sharing is a recurring breakage: the `shared_root` special case inside `safeJoinSecure` has produced a bug report and an investigation, one hardening rollback (`44071710`), and a live refusal observed during research.
 - The in-tree CAS (`ck_fs_write_if`) was defective until 2026-08-17 — two writers could hold two locks on one file — so "already works" was not true when the research began.
 - The research note is complete enough to decide from; it surveys the field and deliberately leaves the choice to this RFC.
 
@@ -33,6 +33,8 @@ Decide which backend, concurrency-control mechanism and access path clanker shou
 6. Partition behaviour: CP (refuse writes without a quorum) vs AP (accept everywhere, converge). Whether an isolated agent should stall or keep working is the product question that selects the row.
 
 **Out of scope.** This RFC does not decide the claim/lease mechanism for shared resources — RFC 0008 covers that and explicitly defers "which store holds bulk state" here. It does not decide the tier-1 transport (loopback HTTP vs unix socket) beyond defaulting to the PRD 0011 loopback pattern (open question 7). It does not decide the exact schema; the note's appendix sketches a candidate.
+
+**Who decides, and by when.** The operator. Tier 1 (option A) is decidable now and blocks the first next step, so this RFC should leave discussion before tier-1 implementation starts; the tier-2 backend is not locked until the operator answers open questions 1 and 2, which the next steps put to them via ask_user.
 
 ## Current state
 
@@ -151,7 +153,7 @@ The note places the candidates on two axes: topology (central store vs full repl
 
 - **What it is:** replicated data types that merge concurrent edits without coordination.
 - **Fit:** poor on the merits — the append logs need ordering, not merging; per-entity dirs have no concurrent writers; a shared backend removes the problem CRDTs solve. The one slice where one would earn its keep (two agents editing one card/goal) is resolved as LWW by every option here.
-- **Cons:** 16–32 bytes/char metadata + full history; no Zig implementation; convergence ≠ correctness; at least one production migration away.
+- **Cons:** per-character metadata overhead plus full editing history retained per document (the 16–32 B/char figure is unverified at source — loro.dev returned 403 to the verification pass, and the note's evidence log says to reopen it before quoting); no Zig implementation; convergence ≠ correctness; at least one production migration away.
 - **Evidence:** Loro perf, crdt-benchmarks, Cinapse migration (read 2026-08-16).
 
 ### I. PRD 0011's full mesh — peer-to-peer, per-entity ownership (full per host, CP-ish; native)
@@ -255,7 +257,7 @@ Ordered by what blocks a decision, most blocking first.
 10. **Should `state/` be a git repository?** Not searched; per-agent branches with explicit merges is a well-understood model.
 11. **Hand-written LWW-register + OR-set for goal/card edits?** A refinement on whichever backend wins.
 12. **Could `cr-sqlite` be used without Corrosion?** The extension plus clanker's own gossip — no second daemon, no Rust; entirely unexplored.
-13. **Is Marmot real?** Recorded from discussion threads; repo/conflict semantics never fetched; least verified.
+13. **Is Marmot production-ready?** Its repo was fetched 2026-08-16 (v2 architecture, HLC conflict model and stated limitations verified there — the discussion-thread description of v1 was corrected then), but v2 is a young rewrite: 2PC write-path behaviour at the stated agent counts, out-of-order sync on ordered logs, and the missing Zig/gRPC client are unassessed.
 
 ## Next steps / action items
 
