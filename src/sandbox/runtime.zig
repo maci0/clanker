@@ -1657,15 +1657,23 @@ test "recent_commits wasm tool summarizes git history in one call (ck_exec)" {
     const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod.deinit();
     // count:1 pins the shape: exactly one "hash  date  subject  (author)"
-    // line, so a trailing newline or an uncapped log shows up as the extra
-    // escaped newline it would put in the JSON string.
+    // line. A trailing newline in git log would land as a real '\n' in
+    // the parsed text field. Searching the raw JSON for the two-byte
+    // sequence backslash-n also matches a subject that literally mentions
+    // "\n" (83784944), so the assertion has to parse.
     const out = try mod.executeTool("{\"count\":1}");
     defer std.testing.allocator.free(out);
-    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
-    try std.testing.expect(std.mem.find(u8, out, "\\n") == null);
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, out, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value == .object);
+    const ok = parsed.value.object.get("ok") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(ok == .bool and ok.bool);
+    const text_v = parsed.value.object.get("text") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(text_v == .string);
+    try std.testing.expect(std.mem.findScalar(u8, text_v.string, '\n') == null);
     // The author is the one field the format wraps in parens, so its
     // presence says the whole format string survived argv assembly.
-    try std.testing.expect(std.mem.find(u8, out, "(") != null);
+    try std.testing.expect(std.mem.findScalar(u8, text_v.string, '(') != null);
 }
 
 test "symbolic_regression wasm fits y=2x+1" {

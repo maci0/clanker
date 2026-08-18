@@ -805,6 +805,30 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - `clanker stats`' log trim no longer fails silently. Every other failure on
   the token-stats append path was logged; a trim that kept failing left
   `state/token_stats.jsonl` growing past its cap with nothing reporting it.
+- Each agent turn now sends the model's configured `max_tokens` as the
+  completion grant. `llmChat` and the streaming path used to send
+  `agent.max_tokens_per_turn` (default 4096), which is the per-turn
+  input/compaction floor. On a reasoning model those 4096 tokens were
+  spent on `reasoning_content`, the final reply arrived
+  `finish_reason: length` with empty content, and the run died
+  `AnswerTruncatedToEmpty` (escalation `run-1787011404`,
+  `deepseek-v4-pro` configured at 32768).
+- A `ck_exec` result whose stdout or stderr exceeds the keep budget
+  (`56 KiB` / `8 KiB`) now carries its truncation `note` as a JSON
+  string. `Stringify.print` was writing the sentence as raw text, so the
+  object did not parse; `repo_search` then handed the blob back and the
+  agent warned that the tool returned malformed JSON (escalation
+  `run-1787001820`, query `repair`, 65148 bytes).
+- The provider fallback chain skips a configured name whose credentials
+  are missing, the same `unconfiguredReason` gate TUI `/model` already
+  uses. A DeepSeek stream `ReadFailed` used to then try `openai` and die
+  `MissingApiKey` even though `OPENAI_API_KEY` was unset.
+- The `recent_commits` host test parses the tool's JSON and asserts the
+  `text` field has no raw newline. Searching the serialized JSON for the
+  two-byte sequence backslash-n also matched a subject that literally
+  mentioned `\n` (improve-self commit `83784944`), so `zig build test`
+  failed on a healthy tool.
+
 - An atomic write to a symlinked path no longer replaces the symlink with a
   private regular file. The write is a temp file plus a rename, and a rename
   lands on the *link itself*, so every later write went somewhere no other

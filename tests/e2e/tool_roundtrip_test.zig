@@ -98,6 +98,48 @@ test "clanker run --reasoning-effort pins the request's reasoning field" {
     try std.testing.expectEqual(@as(usize, 1), mock.requestCount());
 }
 
+test "clanker run: the request uses the model max_tokens, not max_tokens_per_turn" {
+    // Regression: llmChat / the streaming path sent agent.max_tokens_per_turn
+    // (default 4096) as ChatParams.max_tokens. That key is the per-turn
+    // input/compaction cap. Escalation run-1787011404 used deepseek-v4-pro
+    // configured at 32768, still requested 4096, spent the grant on
+    // reasoning_content, and died AnswerTruncatedToEmpty.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const turn0 = try mock_llm.textTurn(gpa, "ok");
+    defer gpa.free(turn0);
+    const mock = try mock_llm.Server.start(io, gpa, &.{turn0});
+    defer mock.stop();
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+
+    const base = try tmp.dir.readFileAlloc(io, "config.toml", gpa, .limited(1 << 20));
+    defer gpa.free(base);
+    const patched = try std.mem.replaceOwned(u8, gpa, base, "max_tokens = 4096", "max_tokens = 8192");
+    defer gpa.free(patched);
+    const with_cap = try std.fmt.allocPrint(gpa,
+        \\{s}
+        \\max_tokens_per_turn = 4096
+        \\
+    , .{patched});
+    defer gpa.free(with_cap);
+    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = with_cap });
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "run", "say hi" });
+    defer result.deinit(gpa);
+    if (!result.ok()) std.debug.print("clanker run failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(result.ok());
+    const first = mock.request(0) orelse return error.MissingRequest;
+    try std.testing.expect(std.mem.find(u8, first, "\"max_tokens\":8192") != null);
+    try std.testing.expect(std.mem.find(u8, first, "\"max_tokens\":4096") == null);
+}
+
 test "clanker run: an answer truncated to empty is a failure, not silence" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});

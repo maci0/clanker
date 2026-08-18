@@ -5081,7 +5081,9 @@ fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []c
         try s.objectField("truncated");
         try s.write(true);
         try s.objectField("note");
-        try s.print("output was {d} bytes and was cut to {d}; narrow the pattern or the path to see the rest", .{ stdout.len, exec_stdout_keep });
+        var note_buf: [160]u8 = undefined;
+        const note = std.fmt.bufPrint(&note_buf, "output was {d} bytes and was cut to {d}; narrow the pattern or the path to see the rest", .{ stdout.len, exec_stdout_keep }) catch "output was cut; narrow the pattern or the path to see the rest";
+        try s.write(note);
     }
     try s.endObject();
 }
@@ -6751,6 +6753,25 @@ test "writeExecResult serializes exit code and output streams as JSON" {
     try std.testing.expect(!obj2.get("ok").?.bool);
     try std.testing.expectEqual(@as(i64, 3), obj2.get("code").?.integer);
     try std.testing.expectEqualStrings("boom", obj2.get("stderr").?.string);
+}
+
+test "writeExecResult truncation note is a JSON string" {
+    // A search whose stdout exceeds exec_stdout_keep used to emit
+    // `"note":output was N bytes...` (Stringify.print writes raw text).
+    // repo_search then writeAll'd that blob and the agent warned
+    // malformed JSON (run-1787001820, query "repair", 65148 bytes).
+    var buf: [80 * 1024]u8 = undefined;
+    const big = "x" ** (exec_stdout_keep + 64);
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeExecResult(&w, 0, big, "");
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..w.end], .{});
+    defer parsed.deinit();
+    const obj = parsed.value.object;
+    try std.testing.expect(obj.get("ok").?.bool);
+    try std.testing.expect(obj.get("truncated").?.bool);
+    const note = obj.get("note") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(note == .string);
+    try std.testing.expect(std.mem.find(u8, note.string, "narrow the pattern") != null);
 }
 
 test "a \".\" prefix authorizes the whole sandbox root" {

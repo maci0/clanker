@@ -80,6 +80,14 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The agent loop sends max_tokens_per_turn as the completion grant](bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md) — Open
+
+- [recent_commits test fails when a commit subject contains the two characters backslash-n](bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md) — Open
+
+- [The fallback chain attempts providers that have no credentials](bugs/2026-08-18-fallback-tries-unconfigured-providers.md) — Open
+
+- [A truncated ck_exec result emits an unquoted note and is not JSON](bugs/2026-08-18-exec-truncated-note-is-not-json.md) — Open
+
 - [improve-self stalls re-asking for a granted file too large to include](bugs/2026-08-17-improve-self-stalls-asking-for-too-large-file.md) — Resolved
 
 - [A status change keeps the old text of a multi-line TL;DR bullet](bugs/2026-08-17-status-truncates-a-multi-line-tldr-bullet.md) — Open
@@ -172,6 +180,11 @@ Project agents receive this workflow through the harness prompt and
 
 <!-- inventory:investigation:start -->
 - [The REPL had no /rfc although clanker rfc exists](investigations/2026-08-17-missing-clanker-tool-rfc-slash-command-in-tui.md) — Resolved
+- [Escalation run died AnswerTruncatedToEmpty after 34 iterations](investigations/2026-08-18-escalation-run-answer-truncated-to-empty.md) — Investigating
+
+- [improve-self staging compile errors and recent_commits test failed the gate](investigations/2026-08-18-improve-self-staging-and-recent-commits.md) — Investigating
+
+- [Escalation run died on DeepSeek ReadFailed and an unconfigured OpenAI fallback](investigations/2026-08-18-escalation-run-failed-on-llm-fallback.md) — Investigating
 
 - [pty e2e text assertions race vaxis's cell diff](investigations/2026-08-17-pty-text-assertions-race-the-cell-diff.md) — Resolved
 
