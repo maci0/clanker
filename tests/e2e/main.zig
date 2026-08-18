@@ -11,6 +11,7 @@ comptime {
     _ = @import("journeys_test.zig");
     _ = @import("records_api_test.zig");
     _ = @import("live_sse_test.zig");
+    _ = @import("webui_assets_test.zig");
     _ = @import("commit_apply_test.zig");
     _ = @import("pty_resize_test.zig");
     _ = @import("pty.zig");
