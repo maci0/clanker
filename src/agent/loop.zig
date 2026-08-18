@@ -631,6 +631,13 @@ pub const Agent = struct {
         };
         defer {
             g.duration_ms = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            // Stamped at exit, not only at start: `chatWithFallbackChain`
+            // repoints `self.provider` to whoever actually served, and a
+            // graph that kept the requested name would record a provider
+            // that never answered while token_stats named the real one
+            // (run-1787063448: graph said anthropic, the tokens were
+            // deepseek's). The persisted provider is the one that served.
+            g.provider = self.provider.name;
             if (self.cfg.modules.graphs) self.persistGraph(&g);
             g.deinit(self.ctx.gpa);
         }

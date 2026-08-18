@@ -828,24 +828,21 @@ const ModelCandidate = struct {
 /// Flattens every configured provider's models into one list, in config
 /// order (providers, then models within a provider), which is what makes the
 /// picker's unfiltered list read as grouped-by-provider without a separate
-/// sort pass. A provider whose credentials cannot possibly be present is
-/// skipped entirely (the same offline `unconfiguredReason` gate `providers
-/// check` applies before it pings), so the picker never offers a model the
-/// operator cannot call on this machine.
+/// sort pass. A provider this process cannot call is skipped entirely
+/// (`providers.unusableReason`: the offline credential gate plus the
+/// loopback probe), so the picker never offers a model the operator cannot
+/// call on this machine.
 fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, io: ?std.Io) ![]const ModelCandidate {
     var out: std.ArrayList(ModelCandidate) = .empty;
     var pit = cfg.providers.iterator();
     while (pit.next()) |pentry| {
-        if (providers.unconfiguredReason(arena, environ_map, pentry.value_ptr) != null) continue;
-        // A keyless loopback provider (vllm/ollama) passes the credential
-        // gate whether or not its server is running; one local TCP connect
-        // settles it without pinging anything over a network. Null io skips
-        // the probe (unit tests exercise the flattening, not the machine).
-        if (io) |the_io| {
-            if (providers.loopbackEndpoint(pentry.value_ptr.base_url)) |lb| {
-                if (!providers.loopbackAlive(the_io, lb.port)) continue;
-            }
-        }
+        // The combined gate: the credential check plus, when io is present, a
+        // loopback TCP probe for keyless local providers (vllm/ollama), since
+        // those pass the credential gate whether or not their server runs.
+        // Null io skips the probe (unit tests exercise the flattening, not
+        // the machine). The web UI's `GET /api/providers` annotation applies
+        // this same function, so both pickers offer the same set.
+        if (providers.unusableReason(arena, environ_map, pentry.value_ptr, io) != null) continue;
         const provider_start = out.items.len;
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {

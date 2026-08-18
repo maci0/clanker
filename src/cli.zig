@@ -10702,8 +10702,69 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"providers tool unavailable\"}");
         return;
     };
-    const body = overlayLiveProviderModels(io, gpa, arena, cfg, environ_map, raw) orelse raw;
+    const annotated = annotateProviderUsability(arena, cfg, environ_map, io, raw) orelse raw;
+    const body = overlayLiveProviderModels(io, gpa, arena, cfg, environ_map, annotated) orelse annotated;
     respondTool(stream, body);
+}
+
+/// Adds `usable` (and `reason` when false) to each provider row of the
+/// guest's list. The guest cannot answer this: usability is this serve
+/// process's environ plus which loopback ports answer, and neither reaches
+/// the sandbox. The verdict is `providers.unusableReason` — the exact gate
+/// the TUI `/model` picker applies — so the web chat picker and `/model`
+/// offer the same set while the row itself stays in the payload: the Models
+/// view is inventory and still names a configured-but-unkeyed provider, the
+/// way `clanker providers check` prints "not configured". Null when the raw
+/// body has no provider rows to annotate (caller falls back to it verbatim).
+fn annotateProviderUsability(
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    io: ?std.Io,
+    raw: []const u8,
+) ?[]const u8 {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return null;
+    if (parsed != .object) return null;
+    const rows = parsed.object.get("providers") orelse return null;
+    if (rows != .array) return null;
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return null;
+    var top = parsed.object.iterator();
+    while (top.next()) |kv| {
+        if (std.mem.eql(u8, kv.key_ptr.*, "providers")) continue;
+        s.objectField(kv.key_ptr.*) catch return null;
+        s.write(kv.value_ptr.*) catch return null;
+    }
+    s.objectField("providers") catch return null;
+    s.beginArray() catch return null;
+    for (rows.array.items) |item| {
+        if (item != .object) {
+            s.write(item) catch return null;
+            continue;
+        }
+        s.beginObject() catch return null;
+        var kit = item.object.iterator();
+        while (kit.next()) |kv| {
+            s.objectField(kv.key_ptr.*) catch return null;
+            s.write(kv.value_ptr.*) catch return null;
+        }
+        const reason: ?[]const u8 = if (json_util.strFieldOrNull(item.object, "name")) |name| blk: {
+            const prov = cfg.providers.getPtr(name) orelse break :blk null;
+            break :blk providers.unusableReason(arena, environ_map, prov, io);
+        } else null;
+        s.objectField("usable") catch return null;
+        s.write(reason == null) catch return null;
+        if (reason) |r| {
+            s.objectField("reason") catch return null;
+            s.write(r) catch return null;
+        }
+        s.endObject() catch return null;
+    }
+    s.endArray() catch return null;
+    s.endObject() catch return null;
+    return out.written();
 }
 
 /// When the guest list has a provider with no static models, ask that
@@ -10746,10 +10807,16 @@ fn overlayLiveProviderModels(
         s.beginArray() catch return null;
         const models = item.object.get("models");
         const empty = models == null or models.? != .array or models.?.array.items.len == 0;
+        // A row `annotateProviderUsability` marked not-callable never gets a
+        // live fill: the fetch would spend its whole timeout on an endpoint
+        // this process provably cannot call (missing key, dead loopback).
+        const row_usable = if (item.object.get("usable")) |u| u == .bool and u.bool else true;
         if (!empty) {
             for (models.?.array.items) |m| {
                 s.write(m) catch return null;
             }
+        } else if (!row_usable) {
+            // Leave the models array empty; the row stays as inventory.
         } else if (cfg.providers.getPtr(name)) |prov| {
             const budget_s = prov.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
             writeLiveModels(io, gpa, arena, prov, environ_map, @as(i64, budget_s) * std.time.ms_per_s, &s);
@@ -14577,6 +14644,22 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         }
         provider_copy.default_model = req.model;
     }
+    // A request that names a provider this process cannot call is refused
+    // with the reason rather than started: the fallback chain would serve it
+    // under a different provider while the graph and the chat kept the
+    // requested name, so the run would finish looking like a model that never
+    // answered. The gate is the one the chat picker's list was built from
+    // (`providers.unusableReason`), so a refusal here means a stale or
+    // hand-written client, never a row the picker offered. A request that
+    // names no provider keeps the configured default and its fallback chain.
+    if (req.provider.len > 0) {
+        if (providers.unusableReason(arena, environ_map, provider, io)) |reason| {
+            const err_body = std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"provider '{s}' is not callable from this server: {s}\"}}", .{ provider.name, reason }) catch
+                "{\"ok\":false,\"error\":\"provider is not callable from this server\"}";
+            respond(stream, 400, "Bad Request", err_body);
+            return;
+        }
+    }
     // Image attachments need a vision-capable model. If the selected provider
     // cannot take the image, route the run to a fallback provider that can:
     // the preferred fallback (a per-run `fallback_provider` chosen in the
@@ -14871,10 +14954,19 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
         }
         const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+        // When the fallback chain replaced the requested provider mid-run,
+        // say so on the stream: the run must not finish looking like the
+        // provider that never answered.
+        if (!std.mem.eql(u8, a.provider.name, provider.name)) {
+            writeStreamEvent(stream.socket.handle, "status", .{ .message = std.fmt.allocPrint(arena, "Served by fallback provider '{s}' — '{s}' did not answer.", .{ a.provider.name, provider.name }) catch "Served by a fallback provider." });
+        }
         // Otherwise the answer was already streamed via runStreamDelta; a
         // structured "done" event carries the turn's stats, then the
         // trailing Connection: close ends the client-side stream.
+        // `served_by` is whoever actually answered (the fallback chain
+        // repoints the agent's provider), which can differ from the request.
         writeStreamEvent(stream.socket.handle, "done", .{
+            .served_by = a.provider.name,
             .prompt_tokens = a.stats.total_prompt_tokens,
             .completion_tokens = a.stats.total_completion_tokens,
             .cost = a.stats.cost,
@@ -14949,6 +15041,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     s.write(true) catch return;
     s.objectField("content") catch return;
     s.write(content) catch return;
+    // Whoever actually answered: the fallback chain repoints the agent's
+    // provider, so this can differ from the provider the request named.
+    s.objectField("served_by") catch return;
+    s.write(a.provider.name) catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", rbuf[0..w.end]);
 }
@@ -16919,6 +17015,75 @@ test "providers list overlay only fires when a models array is empty" {
         \\{"ok":true,"default":"ollama","providers":[{"name":"ollama","models":[]}]}
     ));
     try std.testing.expect(!providers_logic.listNeedsLiveModelsAlloc(arena, "{\"providers\":[]}"));
+}
+
+test "provider list rows carry usable with a reason for a missing key, and the row stays" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("CLI_TEST_SET_KEY", "x");
+
+    var cfg = config.Config{};
+    var keyed = try config.Provider.single(arena, "deepseek", "https://api.deepseek.test", .openai_compat, "m", .{});
+    keyed.api_key_env = "CLI_TEST_SET_KEY";
+    try cfg.providers.put(arena, "deepseek", keyed);
+    var unkeyed = try config.Provider.single(arena, "anthropic", "https://api.anthropic.test", .anthropic, "claude-opus-5", .{});
+    unkeyed.api_key_env = "CLI_TEST_UNSET_KEY";
+    try cfg.providers.put(arena, "anthropic", unkeyed);
+
+    const raw =
+        \\{"ok":true,"default":"deepseek","default_provider":"deepseek","providers":[
+        \\  {"name":"deepseek","default_model":"m","models":[{"name":"m"}]},
+        \\  {"name":"anthropic","default_model":"claude-opus-5","models":[{"name":"claude-opus-5"}]}
+        \\]}
+    ;
+    const annotated = annotateProviderUsability(arena, &cfg, &env, null, raw).?;
+    // The keyed row is callable; the unkeyed row is marked, not stripped:
+    // the Models view is inventory and must still name it, with the reason.
+    try std.testing.expect(std.mem.find(u8, annotated, "\"name\":\"deepseek\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"name\":\"anthropic\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"reason\":\"CLI_TEST_UNSET_KEY not set\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, annotated, "\"usable\":false"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, annotated, "\"usable\":true"));
+    // Top-level fields and the model rows survive the rewrite.
+    try std.testing.expect(std.mem.find(u8, annotated, "\"default\":\"deepseek\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"default_provider\":\"deepseek\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"name\":\"claude-opus-5\"") != null);
+
+    // A body with no provider rows (the guest's not_configured shape) is
+    // left for the caller to relay verbatim.
+    try std.testing.expect(annotateProviderUsability(arena, &cfg, &env, null, "{\"ok\":false,\"error\":\"not_configured\"}") == null);
+}
+
+test "provider list marks a dead loopback endpoint not usable" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    const port = server.socket.address.getPort();
+    const url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/v1", .{port});
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "vllm-local", try config.Provider.single(arena, "vllm-local", url, .openai_compat, "m", .{}));
+    const raw = try std.fmt.allocPrint(arena,
+        \\{{"ok":true,"default":"vllm-local","providers":[{{"name":"vllm-local","base_url":"{s}","models":[{{"name":"m"}}]}}]}}
+    , .{url});
+
+    const alive = annotateProviderUsability(arena, &cfg, &env, io, raw).?;
+    try std.testing.expect(std.mem.find(u8, alive, "\"usable\":true") != null);
+    server.deinit(io);
+    const dead = annotateProviderUsability(arena, &cfg, &env, io, raw).?;
+    try std.testing.expect(std.mem.find(u8, dead, "\"usable\":false") != null);
+    try std.testing.expect(std.mem.find(u8, dead, "listening") != null);
 }
 
 test "a live /models listing fills the picker, skipping entries it cannot name" {

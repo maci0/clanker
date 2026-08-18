@@ -1469,9 +1469,11 @@ only ones that block choosing a tier-2 backend.
     That would give multi-writer full replication with no second daemon and no
     Rust, which is the combination nothing else in this note offers. Entirely
     unexplored, and the most interesting loose end here.
-13. **Is Marmot real?** Recorded from discussion threads only; repo, licence,
-    maturity and conflict semantics were never fetched. It is the least verified
-    option in the note and would need a pass of its own before being weighed.
+13. **Is Marmot production-ready?** Its repo, licence, architecture and conflict
+    semantics were fetched 2026-08-16 (see option M, which corrected the earlier
+    discussion-thread description of v1), but v2 is a young rewrite: 2PC
+    write-path behaviour at the stated agent counts and out-of-order sync on
+    ordered logs would need a pass of their own before it is weighed.
 
 ## What would change the answer
 
