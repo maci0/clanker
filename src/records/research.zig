@@ -50,9 +50,6 @@ pub const Tool = common.Tool;
 /// not in a column of candidates, and an 80-column terminal cannot hold it
 /// anyway.
 const snippet_bytes: usize = 96;
-/// Statuses are one word ("Draft", "Current", "Stale", "Superseded").
-const status_column_max: usize = 18;
-const status_column_min: usize = 10;
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     try common.out(init.io, try run(init.arena.allocator(), opts, tool));
@@ -216,22 +213,7 @@ pub fn renderList(arena: std.mem.Allocator, index_md: []const u8) ![]const u8 {
 
     try w.writer.writeAll("NOTES\n\n");
     const width = reports_cmd.statusWidth(entries);
-    for (entries) |e| {
-        const status = if (e.note.len > 0 and e.note.len <= status_column_max) e.note else "";
-        try w.writer.splatByteAll(' ', 2);
-        try w.writer.print("{s}", .{status});
-        try w.writer.splatByteAll(' ', width -| status.len);
-        try w.writer.print("{s}\n", .{e.title});
-        try w.writer.splatByteAll(' ', 2 + width);
-        try w.writer.print("{s}\n", .{e.path});
-        // Prose that would not fit the status column keeps its own line rather
-        // than being cut to a width it was never written for.
-        if (status.len == 0 and e.note.len > 0) {
-            try w.writer.splatByteAll(' ', 2 + width);
-            try w.writer.print("{s}\n", .{e.note});
-        }
-        try w.writer.writeByte('\n');
-    }
+    for (entries) |e| try reports_cmd.renderInventoryRow(&w.writer, e, width, 2 + width);
 
     try w.writer.writeAll("NEXT\n\n");
     try w.writer.writeAll("  clanker research open <path>        print one note in full\n");

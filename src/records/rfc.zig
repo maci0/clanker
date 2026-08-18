@@ -233,17 +233,13 @@ pub fn renderList(arena: std.mem.Allocator, rfcs: []const std.json.Value, next_n
         const title = json_util.strFieldOrEmpty(r.object, "title");
         // An unreadable RFC still gets a row: the path is what the reader
         // needs to go look, and hiding it would make it invisible.
-        const status = if (json_util.strFieldOrEmpty(r.object, "status").len == 0)
-            "?"
-        else
-            json_util.strFieldOrEmpty(r.object, "status");
+        const raw_status = json_util.strFieldOrEmpty(r.object, "status");
+        const status = if (raw_status.len == 0) "?" else raw_status;
         try w.writer.print("  {s}", .{utf8.cap(status, status_column_max)});
-        var pad = status_width -| status.len;
-        while (pad > 0) : (pad -= 1) try w.writer.writeByte(' ');
+        try w.writer.splatByteAll(' ', status_width -| status.len);
         try w.writer.print("  {s}\n", .{path});
         if (title.len > 0) {
-            var indent = status_width + 4;
-            while (indent > 0) : (indent -= 1) try w.writer.writeByte(' ');
+            try w.writer.splatByteAll(' ', status_width + 4);
             try w.writer.print("{s}\n", .{utf8.cap(title, title_column_bytes)});
         }
     }

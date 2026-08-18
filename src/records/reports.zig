@@ -241,22 +241,7 @@ pub fn renderList(arena: std.mem.Allocator, reports_index: []const u8, runbooks_
         // -- it is indented instead, so the titles stay the left edge that is
         // scanned and the detail stays visibly subordinate to them.
         const detail_indent = if (width == 0) 4 else 2 + width;
-        for (entries) |e| {
-            const status = if (e.note.len > 0 and e.note.len <= status_column_max) e.note else "";
-            try w.writer.splatByteAll(' ', 2);
-            try w.writer.print("{s}", .{status});
-            try w.writer.splatByteAll(' ', width -| status.len);
-            try w.writer.print("{s}\n", .{e.title});
-            try w.writer.splatByteAll(' ', detail_indent);
-            try w.writer.print("{s}\n", .{e.path});
-            // Prose that would not fit the status column keeps its own line
-            // rather than being cut down to a width it was never written for.
-            if (status.len == 0 and e.note.len > 0) {
-                try w.writer.splatByteAll(' ', detail_indent);
-                try w.writer.print("{s}\n", .{e.note});
-            }
-            try w.writer.writeByte('\n');
-        }
+        for (entries) |e| try renderInventoryRow(&w.writer, e, width, detail_indent);
     }
 
     if (total == 0) {
@@ -289,6 +274,30 @@ pub fn statusWidth(entries: []const Entry) usize {
     }
     if (widest == 0) return 0;
     return @max(widest, status_column_min);
+}
+
+/// One row of an inventory listing: the status column, the title, then the
+/// path (and any summary too long for that column) indented under it.
+///
+/// `clanker research` prints the same table, so the row lives here beside
+/// `statusWidth` rather than being written out twice. The indent is a
+/// parameter because a store with no status column indents its detail
+/// differently from one that has it to sit under.
+pub fn renderInventoryRow(w: *std.Io.Writer, e: Entry, width: usize, detail_indent: usize) !void {
+    const status = if (e.note.len > 0 and e.note.len <= status_column_max) e.note else "";
+    try w.splatByteAll(' ', 2);
+    try w.print("{s}", .{status});
+    try w.splatByteAll(' ', width -| status.len);
+    try w.print("{s}\n", .{e.title});
+    try w.splatByteAll(' ', detail_indent);
+    try w.print("{s}\n", .{e.path});
+    // Prose that would not fit the status column keeps its own line rather
+    // than being cut down to a width it was never written for.
+    if (status.len == 0 and e.note.len > 0) {
+        try w.splatByteAll(' ', detail_indent);
+        try w.print("{s}\n", .{e.note});
+    }
+    try w.writeByte('\n');
 }
 
 /// Read one `<!-- inventory:<kind>:start -->` block out of an index README.
