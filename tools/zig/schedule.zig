@@ -252,6 +252,9 @@ fn writeEntry(s: *std.json.Stringify, e: Entry) !void {
         try s.objectField("next_run");
         try s.write(next);
     }
+    const status = logic.diagnose(e.enabled, e.cron, e.last_run, e.created, e.tz_offset_minutes);
+    try s.objectField("status");
+    try s.write(status);
     try s.endObject();
 }
 
