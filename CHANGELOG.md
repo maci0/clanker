@@ -5,6 +5,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- `clanker gate` runs a `test-root-coverage` gate: every file under `src/`
+  with a top-level `test` block must be referenced from the comptime import
+  block in `src/main.zig`. Zig 0.16 runs test blocks only in the root file,
+  so a module missing from that list compiles and its tests never run while
+  `zig build test` stays green.
+
 ### Breaking
 
 - The committed `config.toml` renames the Moonshot provider table

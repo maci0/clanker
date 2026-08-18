@@ -1,5 +1,9 @@
 //! Background jobs: exec children in the 0016 registry, plus continuable
-//! subagent threads. The `jobs` guest talks to this through ck_job.
+//! subagent threads. The `jobs` guest talks to this through ck_job, and the
+//! `ck_job` channel in sandbox/host.zig is the only caller, so the channel's
+//! code sits with the channel the way `ck_kernel`'s does in sandbox/kernel.zig.
+//! Only the session-keyed process table stays in agent/subprocess.zig, which
+//! the DAP shares.
 //!
 //! Exec children ignore stdio (a pipe nobody drains deadlocks once the
 //! kernel buffer fills) and are reaped on a waiter thread. The registry
@@ -7,8 +11,8 @@
 //! row so a recycled pid is never signalled.
 
 const std = @import("std");
-const session = @import("session.zig");
-const subprocess = @import("subprocess.zig");
+const session = @import("../agent/session.zig");
+const subprocess = @import("../agent/subprocess.zig");
 
 const SpinMutex = struct {
     raw: std.atomic.Mutex = .unlocked,

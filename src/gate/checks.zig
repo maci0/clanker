@@ -1653,3 +1653,125 @@ test "releaseContractGate rejects a changelog without Unreleased" {
     const bad = "# Changelog\n\n## [0.1.0] - 2026-01-01\n";
     try std.testing.expect(std.mem.find(u8, bad, "## [Unreleased]") == null);
 }
+
+// ------------------------------------------------- test-root coverage gate --
+
+/// True when `src` declares at least one top-level `test` block. Test blocks
+/// are always at column zero, so an indented `test` inside a string or a
+/// comment does not count.
+fn hasTopLevelTest(src: []const u8) bool {
+    if (std.mem.startsWith(u8, src, "test ")) return true;
+    return std.mem.find(u8, src, "\ntest ") != null;
+}
+
+/// True when `src/main.zig` references `rel` (a path relative to `src/`) in
+/// its comptime import block. The quotes are part of the needle so
+/// `agent/loop.zig` cannot be satisfied by `agent/loop.zig.bak`.
+fn rootImports(main_src: []const u8, rel: []const u8) bool {
+    var buf: [512]u8 = undefined;
+    const needle = std.fmt.bufPrint(&buf, "@import(\"{s}\")", .{rel}) catch return true;
+    return std.mem.find(u8, main_src, needle) != null;
+}
+
+/// Strips a leading `./` and then a leading `src/`, returning the path
+/// relative to `src/`. Null for anything outside `src/`.
+fn relativeToSrc(path: []const u8) ?[]const u8 {
+    const p = if (std.mem.startsWith(u8, path, "./")) path[2..] else path;
+    if (!std.mem.startsWith(u8, p, "src/")) return null;
+    return p["src/".len..];
+}
+
+/// Zig 0.16 runs `test` blocks only in the root source file, so a module
+/// under `src/` that `src/main.zig` never references compiles fine and its
+/// tests simply never run. `zig build test` stays green either way, which
+/// makes this the one gate failure that cannot be found by running the
+/// suite: the missing tests are invisible in its output. Enforcing the
+/// convention here is what keeps "add a module, add a line to main.zig" from
+/// being a rule only the author of the last module remembers.
+pub fn testRootCoverageGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, files: []const []const u8) !GateResult {
+    const main_src = dir.readFileAlloc(io, "src/main.zig", gpa, .limited(1 << 20)) catch {
+        return .{ .ok = false, .label = "test-root-coverage", .detail = "src/main.zig could not be read" };
+    };
+    defer gpa.free(main_src);
+    return scanForUnrootedTests(gpa, io, dir, files, main_src);
+}
+
+/// The gate's body with the root source passed in, so a test can pin the
+/// failing verdict against a root that references nothing.
+fn scanForUnrootedTests(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, files: []const []const u8, main_src: []const u8) !GateResult {
+    var misses: usize = 0;
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+    for (files) |f| {
+        if (!std.mem.endsWith(u8, f, ".zig")) continue;
+        const rel = relativeToSrc(f) orelse continue;
+        if (std.mem.eql(u8, rel, "main.zig")) continue;
+        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch |err| {
+            log.log(.warn, "test-root-coverage: could not read {s}: {s}", .{ f, @errorName(err) });
+            return .{ .ok = false, .label = "test-root-coverage", .detail = "a source file could not be scanned" };
+        };
+        defer gpa.free(content);
+        if (!hasTopLevelTest(content)) continue;
+        if (rootImports(main_src, rel)) continue;
+        misses += 1;
+        miss_w.print("{s}; ", .{rel}) catch {};
+    }
+    if (misses == 0) return .{ .ok = true, .label = "test-root-coverage" };
+    // miss_buf is this frame's stack. Same aliasing convention as lintGate
+    // and providerKindLeakGate: detail and stderr share one owned copy, freed
+    // exactly once by deinit.
+    const owned = try std.fmt.allocPrint(
+        gpa,
+        "these modules have test blocks that never run; add `_ = @import(\"...\")` for each to the comptime block in src/main.zig: {s}",
+        .{miss_w.buffered()},
+    );
+    return .{ .ok = false, .label = "test-root-coverage", .detail = owned, .stderr = owned };
+}
+
+test "hasTopLevelTest only counts test blocks at column zero" {
+    try std.testing.expect(hasTopLevelTest("test \"a\" {}\n"));
+    try std.testing.expect(hasTopLevelTest("const std = @import(\"std\");\ntest \"a\" {}\n"));
+    try std.testing.expect(!hasTopLevelTest("fn f() void {\n    // test \"a\"\n}\n"));
+    try std.testing.expect(!hasTopLevelTest("const s = \"latest \";\n"));
+}
+
+test "rootImports matches the whole quoted path" {
+    const root = "comptime {\n    _ = @import(\"agent/loop.zig\");\n}\n";
+    try std.testing.expect(rootImports(root, "agent/loop.zig"));
+    try std.testing.expect(!rootImports(root, "agent/loop.zig.bak"));
+    try std.testing.expect(!rootImports(root, "loop.zig"));
+    try std.testing.expect(!rootImports(root, "agent/session.zig"));
+}
+
+test "relativeToSrc accepts walker paths and rejects anything outside src" {
+    try std.testing.expectEqualStrings("agent/loop.zig", relativeToSrc("./src/agent/loop.zig").?);
+    try std.testing.expectEqualStrings("cli.zig", relativeToSrc("src/cli.zig").?);
+    try std.testing.expect(relativeToSrc("./tools/zig/adr.zig") == null);
+    try std.testing.expect(relativeToSrc("./tests/e2e/main.zig") == null);
+}
+
+test "testRootCoverageGate passes on the live checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const files = [_][]const u8{ "./src/gate/checks.zig", "./src/agent/loop.zig", "./src/cli.zig" };
+    var result = try testRootCoverageGate(gpa, io, std.Io.Dir.cwd(), &files);
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}
+
+test "testRootCoverageGate names a module whose tests would never run" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    // A root that references nothing: this file's own tests are then exactly
+    // the untested-module case the gate exists to catch.
+    const empty_root = "comptime {}\n";
+    const files = [_][]const u8{"./src/gate/checks.zig"};
+    var result = try scanForUnrootedTests(gpa, io, std.Io.Dir.cwd(), &files, empty_root);
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "gate/checks.zig") != null);
+}

@@ -357,7 +357,7 @@ Verify with the gate rather than by eye:
 clanker gate
 ```
 
-It runs build, test, tools, fmt, lint, provider-kind, tools-ts-toolchain and
-release-contract. `zig build e2e` is separate and is not part of it.
+It runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,
+tools-ts-toolchain and release-contract. `zig build e2e` is separate and is not part of it.
 
 Every command takes `--help`; read it before guessing at flags.

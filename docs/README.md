@@ -376,6 +376,11 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 - `selfhost_build`: `zig build`
 - `selfhost_tests`: `zig build test`
 - `selfhost_tools`: `zig build tools`
+- `test-root-coverage`: every `src/**/*.zig` holding a top-level `test` block
+  is referenced from the comptime import block in `src/main.zig`. Zig 0.16
+  runs test blocks only in the root file, so a module missing from that list
+  compiles and its tests never run; `zig build test` stays green either way,
+  which is why this is a gate and not a convention.
 - plus `zig fmt`, a lint check, a release-contract check (CHANGELOG,
   RELEASES.md, and README links stay aligned with `build.zig.zon`), and — in
   the improve loop — the capability

@@ -2294,8 +2294,9 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
 }
 
 /// Runs all deterministic gates (build, test, tools, fmt, lint,
-/// tools-ts-toolchain, release-contract) against the current checkout. Throws error.GateFailed on
-/// the first failure.
+/// provider-kind, test-root-coverage, tools-ts-toolchain, release-contract)
+/// against the current checkout. Throws error.GateFailed on the first
+/// failure.
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
@@ -2321,6 +2322,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     var provider_kind = try gate_checks.providerKindLeakGate(gpa, io, std.Io.Dir.cwd(), files);
     defer provider_kind.deinit(gpa);
     try reportGate(io, "provider-kind", provider_kind);
+
+    var test_root = try gate_checks.testRootCoverageGate(gpa, io, std.Io.Dir.cwd(), files);
+    defer test_root.deinit(gpa);
+    try reportGate(io, "test-root-coverage", test_root);
 
     var tools_ts = try gate_checks.toolsTsToolchainGate(gpa, io, std.Io.Dir.cwd());
     defer tools_ts.deinit(gpa);
