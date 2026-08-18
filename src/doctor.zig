@@ -79,7 +79,11 @@ fn runChecks(
 ) !void {
     rep.section("config");
     if (!fileExists(io, "config.toml")) {
-        rep.line(.fail, "config.toml", "missing; run `clanker setup`");
+        if (fileExists(io, "config.local.toml")) {
+            rep.line(.fail, "config.toml", "missing but config.local.toml present; remove the orphaned override or restore the base config");
+        } else {
+            rep.line(.fail, "config.toml", "missing; run `clanker setup`");
+        }
         return;
     }
     rep.line(.ok, "config.toml", "");
