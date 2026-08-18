@@ -15,6 +15,7 @@ pub const max_log_records: usize = 20;
 pub const TaskError = error{
     TaskEmpty,
     TaskTooLong,
+    InvalidContent,
 };
 
 /// Same alphabet `session.validSessionId` uses: schedule ids are typed into
@@ -41,6 +42,9 @@ pub fn validateTask(task: []const u8) TaskError![]const u8 {
     const trimmed = std.mem.trim(u8, task, " \t\r\n");
     if (trimmed.len == 0) return TaskError.TaskEmpty;
     if (trimmed.len > max_task_bytes) return TaskError.TaskTooLong;
+    for (trimmed) |b| {
+        if (b == 0) return TaskError.InvalidContent;
+    }
     return trimmed;
 }
 
