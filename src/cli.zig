@@ -9954,8 +9954,19 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         return;
     }
 
+    // The lock covers the cache and the search that reads it, and stops
+    // there. It used to be held by `defer` across `respondCompressible` too,
+    // which gzips several kilobytes and writes them to a socket: one slow
+    // reader then blocked every other catalog search in the process for the
+    // length of its own transfer. The response body is arena memory copied
+    // out of the tree by `writeSearch`, so it survives the unlock even if a
+    // concurrent `/api/catalog/refresh` swaps the snapshot underneath.
+    var out: std.Io.Writer.Allocating = .init(arena);
     _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
-    defer _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+    var unlocked = false;
+    defer if (!unlocked) {
+        _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+    };
 
     if (catalog_parsed == null) {
         if (catalog_cache == null) {
@@ -9985,9 +9996,11 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
     catalog_mod.writeSearch(&s, found.hits, found.truncated) catch return;
+    unlocked = true;
+    _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
 
@@ -12822,26 +12835,35 @@ fn handleWorkspaces(
     s.objectField("workspaces") catch return;
     s.beginArray() catch return;
 
-    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, null, true, false, countChats(sessions, "")) catch return;
+    // One pass over the sessions, not one per workspace. Every chat carries a
+    // workspace label, so the per-workspace count is a group-by, and the
+    // orphan pass needs the same table to say which labels the registry does
+    // not know. Scanning the whole list per row made this handler quadratic
+    // in a store that only ever grows.
+    var chats_by_workspace = chatCounts(arena, sessions) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    const chatsIn = struct {
+        fn count(map: *const std.StringArrayHashMapUnmanaged(usize), id: []const u8) usize {
+            return map.get(id) orelse 0;
+        }
+    }.count;
+
+    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, null, true, false, chatsIn(&chats_by_workspace, "")) catch return;
     for (registered) |w| {
-        writeWorkspaceJson(&s, w.id, w.name, workspacePrimaryPath(w), w.roots, false, false, countChats(sessions, w.id)) catch return;
+        writeWorkspaceJson(&s, w.id, w.name, workspacePrimaryPath(w), w.roots, false, false, chatsIn(&chats_by_workspace, w.id)) catch return;
     }
     // Label-only folders that predate the registry still appear so their
-    // chats stay reachable until a path is attached.
-    var seen_orphans: std.ArrayList([]const u8) = .empty;
-    for (sessions) |m| {
-        if (m.workspace.len == 0) continue;
-        if (workspace_mod.find(registered, m.workspace) != null) continue;
-        var already = false;
-        for (seen_orphans.items) |o| {
-            if (std.mem.eql(u8, o, m.workspace)) {
-                already = true;
-                break;
-            }
-        }
-        if (already) continue;
-        seen_orphans.append(arena, m.workspace) catch continue;
-        writeWorkspaceJson(&s, m.workspace, m.workspace, "", null, false, true, countChats(sessions, m.workspace)) catch continue;
+    // chats stay reachable until a path is attached. The count table is
+    // already deduplicated by label, so each orphan is emitted once without
+    // a second `seen` list to scan.
+    var orphans = chats_by_workspace.iterator();
+    while (orphans.next()) |kv| {
+        const id = kv.key_ptr.*;
+        if (id.len == 0) continue;
+        if (workspace_mod.find(registered, id) != null) continue;
+        writeWorkspaceJson(&s, id, id, "", null, false, true, kv.value_ptr.*) catch continue;
     }
 
     s.endArray() catch return;
@@ -12849,12 +12871,21 @@ fn handleWorkspaces(
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
 
-fn countChats(sessions: []const session.SessionMeta, id: []const u8) usize {
-    var n: usize = 0;
+/// Chats per workspace label, in first-seen order (which is newest-first:
+/// `listSessions` sorts by `updated`). Insertion-ordered so the orphan rows
+/// `/api/workspaces` emits from it stay stable across requests.
+fn chatCounts(
+    arena: std.mem.Allocator,
+    sessions: []const session.SessionMeta,
+) !std.StringArrayHashMapUnmanaged(usize) {
+    var counts: std.StringArrayHashMapUnmanaged(usize) = .empty;
+    try counts.ensureTotalCapacity(arena, @intCast(sessions.len + 1));
     for (sessions) |m| {
-        if (std.mem.eql(u8, m.workspace, id)) n += 1;
+        const gop = try counts.getOrPut(arena, m.workspace);
+        if (!gop.found_existing) gop.value_ptr.* = 0;
+        gop.value_ptr.* += 1;
     }
-    return n;
+    return counts;
 }
 
 fn writeWorkspaceJson(
@@ -17935,4 +17966,29 @@ test "runStreamTodos with no stream and no allocator is a no-op, not a crash" {
     run_stream_socket = null;
     serve_gpa = null;
     runStreamTodos("[]");
+}
+
+test "chatCounts groups every session by workspace in one pass" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const sessions = [_]session.SessionMeta{
+        .{ .id = "a", .workspace = "proj" },
+        .{ .id = "b", .workspace = "" },
+        .{ .id = "c", .workspace = "proj" },
+        .{ .id = "d", .workspace = "other" },
+        .{ .id = "e", .workspace = "" },
+    };
+    var counts = try chatCounts(arena, &sessions);
+
+    try std.testing.expectEqual(@as(usize, 2), counts.get("proj").?);
+    try std.testing.expectEqual(@as(usize, 2), counts.get("").?);
+    try std.testing.expectEqual(@as(usize, 1), counts.get("other").?);
+    try std.testing.expect(counts.get("missing") == null);
+    // Insertion order is session order, so `/api/workspaces` emits its
+    // orphan rows newest-first the way the old per-session loop did.
+    try std.testing.expectEqualStrings("proj", counts.keys()[0]);
+    try std.testing.expectEqualStrings("", counts.keys()[1]);
+    try std.testing.expectEqualStrings("other", counts.keys()[2]);
 }

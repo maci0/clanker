@@ -11,6 +11,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 - Web UI plugins load their code when their tab is first opened, not on every page load. An enabled addon's tab, title and group come from its `plugin.json` (already answered by `/api/webui/plugins`), so the page can offer it without downloading a byte of it; `app.js` and `app.css` arrive on first open, the same deferral the built-in feature views already had. Across the nine shipped addons that is 53.3 KB gzipped and 16 requests off every visit, chat-only ones included. An addon that does work outside its own view sets `"eager": true` in its `plugin.json` and keeps loading at startup; the music dock is the shipped case. A deferred script that fails to arrive leaves its tab in place showing the failure with a Retry, rather than an empty panel.
 
+- `GET /api/workspaces` counts a workspace's chats in one pass over the session listing instead of one pass per workspace. It re-scanned every session for each registered workspace, then again for each label-only orphan, with a linear `seen` list on top, so a store that only grows made the handler quadratic. The rows and their order are unchanged.
+
+- `GET /api/catalog` releases the models.dev snapshot lock before it answers. The lock guards the cached 3.8 MB body and the parsed tree, but it was held by `defer` across gzip and the socket write as well, so one slow reader serialized every other catalog search in the process for the length of its own transfer. It now covers the parse and the search only; the response body is already copied out of the tree by then.
+
 - Tool descriptors are loaded once per process instead of once per call: `toolJson` (every CLI tool invocation and every HTTP API route under `clanker serve`) re-read and re-parsed all 118 `*.tool.json` manifests, ~180 KB of JSON and ~260 `openat` per request. A cache validated by a stat sweep serves them instead, so an added, removed, edited, or toggled plugin is still picked up without a restart.
 
 ### Fixed
