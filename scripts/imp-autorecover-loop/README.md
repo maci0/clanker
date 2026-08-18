@@ -5,11 +5,28 @@ fails.
 
 ## Quick start
 
-Select the improve-self model, the escalation model and the repair harness from
-menus, then run:
-
 ```bash
 ./run.sh
+```
+
+That starts three menus, in order: improve-self model, escalation model, repair
+harness. The loop starts after those choices.
+
+The committed menus are a starting point.  
+To give them what is available locally - a specific repair harness and its flags, an escalation model, the
+improve-self models your machine actually has:  
+1. Copy `run.sh` to `run.local.sh` 
+2. Edit the `MODELS`, `ESCALATE_MODELS` and `FIXERS` arrays there
+`run.local.sh` is gitignored, so those edits stay on your machine
+
+```bash
+cp run.sh run.local.sh
+```
+
+Then run that copy instead:
+
+```bash
+./run.local.sh
 ```
 
 Skip the menus and run the loop directly:
@@ -64,7 +81,8 @@ Escalation runs take their own model from `--escalate-model`; see
 [Repairing a failed clanker repair run](#repairing-a-failed-clanker-repair-run).
 
 Add entries to the menu by editing the `MODELS` array at the top of
-`run.sh`. The literal entry `default` passes no `--model` at all.
+`run.local.sh`, not `run.sh`. The literal entry `default` passes no
+`--model` at all.
 
 ## Choosing goals
 
@@ -254,9 +272,11 @@ with the checkout as its working directory, so one `clanker` binary covers
 `CLANKER MODEL` is the model `improve-self` batches run on; `ESCALATION MODEL`
 is the model the clanker escalation run uses; `REPAIR HARNESS` is what repairs a
 failed escalation run. They are the `MODELS`, `ESCALATE_MODELS` and `FIXERS`
-arrays at the top of `run.sh`. The sentinel entries `default` and `none`
-mean "pass no flag", and Enter selects the first entry. Passing `--model`,
-`--escalate-model` or `--fix-repairs-with` yourself skips the matching menu:
+arrays at the top of the launcher. Edit them in `run.local.sh` so the
+committed `run.sh` stays a generic starting point. The sentinel entries
+`default` and `none` mean "pass no flag", and Enter selects the first entry.
+Passing `--model`, `--escalate-model` or `--fix-repairs-with` yourself skips
+the matching menu:
 
 ```bash
 ./run.sh --fix-repairs-with "codex exec"
