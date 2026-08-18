@@ -64,39 +64,51 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     if (description) |d| {
-        try body_buf.appendSlice(lib.alloc, "\n### Description\n");
-        try body_buf.appendSlice(lib.alloc, d);
-        try body_buf.appendSlice(lib.alloc, "\n");
+        if (d.len > 0) {
+            try body_buf.appendSlice(lib.alloc, "\n### Description\n");
+            try body_buf.appendSlice(lib.alloc, d);
+            try body_buf.appendSlice(lib.alloc, "\n");
+        }
     }
 
     if (steps) |s| {
-        try body_buf.appendSlice(lib.alloc, "\n### Steps to Reproduce\n");
-        try body_buf.appendSlice(lib.alloc, s);
-        try body_buf.appendSlice(lib.alloc, "\n");
+        if (s.len > 0) {
+            try body_buf.appendSlice(lib.alloc, "\n### Steps to Reproduce\n");
+            try body_buf.appendSlice(lib.alloc, s);
+            try body_buf.appendSlice(lib.alloc, "\n");
+        }
     }
 
     if (expected) |e| {
-        try body_buf.appendSlice(lib.alloc, "\n### Expected Behaviour\n");
-        try body_buf.appendSlice(lib.alloc, e);
-        try body_buf.appendSlice(lib.alloc, "\n");
+        if (e.len > 0) {
+            try body_buf.appendSlice(lib.alloc, "\n### Expected Behaviour\n");
+            try body_buf.appendSlice(lib.alloc, e);
+            try body_buf.appendSlice(lib.alloc, "\n");
+        }
     }
 
     if (actual) |a| {
-        try body_buf.appendSlice(lib.alloc, "\n### Actual Behaviour\n");
-        try body_buf.appendSlice(lib.alloc, a);
-        try body_buf.appendSlice(lib.alloc, "\n");
+        if (a.len > 0) {
+            try body_buf.appendSlice(lib.alloc, "\n### Actual Behaviour\n");
+            try body_buf.appendSlice(lib.alloc, a);
+            try body_buf.appendSlice(lib.alloc, "\n");
+        }
     }
 
     if (repro) |r| {
-        try body_buf.appendSlice(lib.alloc, "\n### Reproduce\n```sh\n");
-        try body_buf.appendSlice(lib.alloc, r);
-        try body_buf.appendSlice(lib.alloc, "\n```\n");
+        if (r.len > 0) {
+            try body_buf.appendSlice(lib.alloc, "\n### Reproduce\n```sh\n");
+            try body_buf.appendSlice(lib.alloc, r);
+            try body_buf.appendSlice(lib.alloc, "\n```\n");
+        }
     }
 
     if (fix_hint) |h| {
-        try body_buf.appendSlice(lib.alloc, "\n### Fix hint\n```\n");
-        try body_buf.appendSlice(lib.alloc, h);
-        try body_buf.appendSlice(lib.alloc, "\n```\n");
+        if (h.len > 0) {
+            try body_buf.appendSlice(lib.alloc, "\n### Fix hint\n```\n");
+            try body_buf.appendSlice(lib.alloc, h);
+            try body_buf.appendSlice(lib.alloc, "\n```\n");
+        }
     }
 
     // Prefix title with [BUG] if it doesn't already have it
