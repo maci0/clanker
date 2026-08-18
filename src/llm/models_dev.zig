@@ -150,20 +150,45 @@ fn skipWs(raw: []const u8, from: usize) usize {
     return i;
 }
 
+/// Index of the first byte of `raw[from..]` that is one of `set`, or null.
+///
+/// A lane-at-a-time scan, because this is the whole cost of walking the
+/// snapshot: `valueEnd` below reads every one of its ~4 MB to find the few
+/// spans a config asks for, and a byte-at-a-time state machine did that at
+/// ~100 MB/s, which was 44% of the CPU of *every* config-loading clanker
+/// command. Nearly all of those bytes are ordinary text between two
+/// structural characters, so the skip is what matters, not the state machine.
+fn findAnyOf(comptime set: []const u8, raw: []const u8, from: usize) ?usize {
+    const lanes = 32;
+    const V = @Vector(lanes, u8);
+    const Bits = std.meta.Int(.unsigned, lanes);
+    var i = from;
+    while (i + lanes <= raw.len) : (i += lanes) {
+        const chunk: V = raw[i..][0..lanes].*;
+        var bits: Bits = 0;
+        inline for (set) |b| {
+            const eq: @Vector(lanes, bool) = chunk == @as(V, @splat(b));
+            bits |= @as(Bits, @bitCast(eq));
+        }
+        if (bits != 0) return i + @ctz(bits);
+    }
+    while (i < raw.len) : (i += 1) {
+        inline for (set) |b| {
+            if (raw[i] == b) return i;
+        }
+    }
+    return null;
+}
+
 /// Index of the closing quote of the string opening at `start`.
 fn stringEnd(raw: []const u8, start: usize) ?usize {
     var i = start + 1;
-    var escaped = false;
-    while (i < raw.len) : (i += 1) {
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        switch (raw[i]) {
-            '\\' => escaped = true,
-            '"' => return i,
-            else => {},
-        }
+    while (i <= raw.len) {
+        const j = findAnyOf("\"\\", raw, i) orelse return null;
+        if (raw[j] == '"') return j;
+        // A backslash escapes exactly one following byte; a trailing one with
+        // nothing after it leaves the string unterminated.
+        i = j + 2;
     }
     return null;
 }
@@ -176,31 +201,20 @@ fn valueEnd(raw: []const u8, start: usize) ?usize {
         '"' => return (stringEnd(raw, start) orelse return null) + 1,
         '{', '[' => {
             var depth: usize = 0;
-            var in_string = false;
-            var escaped = false;
             var i = start;
-            while (i < raw.len) : (i += 1) {
-                const c = raw[i];
-                if (escaped) {
-                    escaped = false;
-                    continue;
-                }
-                if (in_string) {
-                    switch (c) {
-                        '\\' => escaped = true,
-                        '"' => in_string = false,
-                        else => {},
-                    }
-                    continue;
-                }
-                switch (c) {
-                    '"' => in_string = true,
-                    '{', '[' => depth += 1,
-                    '}', ']' => {
-                        depth -= 1;
-                        if (depth == 0) return i + 1;
+            while (i < raw.len) {
+                const j = findAnyOf("\"{[}]", raw, i) orelse return null;
+                switch (raw[j]) {
+                    '"' => i = (stringEnd(raw, j) orelse return null) + 1,
+                    '{', '[' => {
+                        depth += 1;
+                        i = j + 1;
                     },
-                    else => {},
+                    else => {
+                        depth -= 1;
+                        if (depth == 0) return j + 1;
+                        i = j + 1;
+                    },
                 }
             }
             return null;
@@ -501,6 +515,39 @@ test "topLevelMembers spans values without parsing them" {
     try std.testing.expectEqual(@as(usize, 0), topLevelMembers(arena, "[1,2]").len);
     try std.testing.expectEqual(@as(usize, 0), topLevelMembers(arena, "not json").len);
     try std.testing.expectEqual(@as(usize, 0), topLevelMembers(arena, "{\"a\": {\"unterminated").len);
+}
+
+test "value spans survive escapes and structural bytes at every lane offset" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The span walk reads 32 bytes at a time, so a quote, a backslash or a
+    // brace landing on any offset within a lane (and on the tail past the
+    // last full lane) has to behave the same. Padding shifts every following
+    // structural byte one place per iteration.
+    var pad: usize = 0;
+    while (pad < 40) : (pad += 1) {
+        const filler = try arena.alloc(u8, pad);
+        @memset(filler, 'x');
+        const body = try std.fmt.allocPrint(
+            arena,
+            "{{\"a\": {{\"note\": \"{s}\\\"}}{{[\\\\\", \"n\": 1}}, \"b\": {{\"api\": \"https://b.test\"}}}}",
+            .{filler},
+        );
+        const m = topLevelMembers(arena, body);
+        try std.testing.expectEqual(@as(usize, 2), m.len);
+        try std.testing.expectEqualStrings("b", m[1].key);
+        // Each span must still be valid JSON on its own.
+        const a = try std.json.parseFromSliceLeaky(std.json.Value, arena, m[0].value, .{});
+        try std.testing.expectEqual(@as(i64, 1), a.object.get("n").?.integer);
+        const b = try std.json.parseFromSliceLeaky(std.json.Value, arena, m[1].value, .{});
+        try std.testing.expectEqualStrings("https://b.test", b.object.get("api").?.string);
+    }
+
+    // A string ending in a lone backslash never terminates: the member walk
+    // must stop rather than run off the end or report a bogus span.
+    try std.testing.expectEqual(@as(usize, 0), topLevelMembers(arena, "{\"a\": \"tail\\").len);
 }
 
 test "findModel matches a wire SKU and a slashed alias tail" {
