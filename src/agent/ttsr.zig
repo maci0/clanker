@@ -54,9 +54,6 @@ pub const Pattern = struct {
 
     pub fn matches(self: Pattern, hay: []const u8) bool {
         if (self.parts.len == 0) return self.leading_star;
-        if (self.parts.len == 1 and !self.leading_star and !self.trailing_star) {
-            return std.mem.find(u8, hay, self.parts[0]) != null;
-        }
         var rest = hay;
         for (self.parts) |part| {
             const at = std.mem.find(u8, rest, part) orelse return false;
