@@ -5,6 +5,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- The web UI's Models view announces each panel's outcome on its own status
+  line (`#models-status`, `#models-live-status`, `#models-catalog-status`)
+  and writes failures too. One shared `aria-live` line was only ever written
+  on success, so after a failed live listing a screen reader kept hearing a
+  stale "12 catalog matches." from the Discover panel.
+
 ### Changed
 
 - The web UI's tools catalogue (`ui/app/core/tools.js`) and run-graph layout

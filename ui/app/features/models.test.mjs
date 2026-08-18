@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { configSnippet } from "./models.js";
+import { configSnippet, modelsStatusId } from "./models.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
@@ -90,4 +90,21 @@ test("Configured table folds alias variants behind a group toggle", function () 
   assert.match(js, /models-group-toggle/);
   assert.match(js, /data-group/);
   assert.match(js, /variants\.length > 1/);
+});
+
+test("each panel announces on its own status line", function () {
+  assert.equal(modelsStatusId(), "models-status");
+  assert.equal(modelsStatusId("live"), "models-live-status");
+  assert.equal(modelsStatusId("catalog"), "models-catalog-status");
+  // All three lines exist as polite live regions.
+  assert.match(html, /id="models-status" role="status" aria-live="polite"/);
+  assert.match(html, /id="models-live-status" role="status" aria-live="polite"/);
+  assert.match(html, /id="models-catalog-status" role="status" aria-live="polite"/);
+});
+
+test("live and catalog failures overwrite their panel's status line", function () {
+  // A failed listing must not leave the panel announcing its last success.
+  assert.match(js, /status\("Could not list models: " \+ err\.message, "live"\)/);
+  assert.match(js, /status\("Catalog search failed: " \+ err\.message, "catalog"\)/);
+  assert.match(js, /status\("Catalog refresh failed: " \+ err\.message, "catalog"\)/);
 });
