@@ -39,6 +39,9 @@
     "--chat-hue-7": "#3f6212",
     "--lift-low": "0 1px 2px rgba(76, 79, 105, 0.08)",
     "--lift": "0 1px 2px rgba(76, 79, 105, 0.10), 0 6px 18px -8px rgba(76, 79, 105, 0.30)",
-    "--lift-high": "0 2px 4px rgba(76, 79, 105, 0.12), 0 20px 44px -16px rgba(76, 79, 105, 0.40)"
+    "--lift-high": "0 2px 4px rgba(76, 79, 105, 0.12), 0 20px 44px -16px rgba(76, 79, 105, 0.40)",
+    "--bevel-raised": "inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(76, 79, 105, 0.10)",
+    "--bevel-inset": "inset 0 1px 2px rgba(76, 79, 105, 0.08)",
+    "--bevel-pressed": "inset 0 1px 2px rgba(76, 79, 105, 0.18)"
   }
 }

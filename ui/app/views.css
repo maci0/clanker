@@ -660,7 +660,7 @@
 /* ── Create channel dialog ── */
 .slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 0; background: var(--surface); box-shadow: var(--lift); max-width: 400px; width: 90vw; }
 
-.slack-dialog::backdrop { background: rgba(0,0,0,.5); }
+.slack-dialog::backdrop { background: var(--scrim); }
 
 .slack-dialog-form { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
 
@@ -1100,7 +1100,7 @@ button.tool-name:focus-visible { outline: 2px solid var(--accent); outline-offse
   min-height: 32px; padding: 0.15rem 0.7rem; font-size: var(--step-0); font-weight: 600;
   font-family: var(--mono); border-radius: var(--radius-sm); cursor: pointer;
   background: var(--surface); border: 1px solid var(--border); color: var(--fg-muted);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: var(--bevel-raised);
 }
 
 .tool-toggle[data-on="true"] { color: var(--ok); border-color: var(--ok); }
@@ -1158,7 +1158,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
 
-.tool-toggle:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.18); }
+.tool-toggle:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--bevel-pressed); }
 
 .tool-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 

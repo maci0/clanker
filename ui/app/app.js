@@ -252,13 +252,20 @@ var currentWorkspace = loadCurrentWorkspace();
 window.clankerWorkspace = currentWorkspace;
 var knownWorkspaces = [];
 
+// Write-only: nothing reads the key back (a visit always starts a new
+// conversation), but the first turn and every later switch need a stable id.
+// localStorage throws in private mode and over quota, and a session id that
+// did not persist is not worth failing the switch over.
+function rememberSession(id) {
+  try { window.localStorage.setItem("clanker.session", id); } catch (e) {}
+}
+
 function loadSession() {
   // A visit starts a new conversation. The last session stays in the
   // sidebar; opening it is a click. `#chat?session=` is the explicit
-  // resume path. localStorage is still written so the first turn and
-  // later switches have a stable id.
+  // resume path.
   var id = newSessionId();
-  try { window.localStorage.setItem("clanker.session", id); } catch (e) {}
+  rememberSession(id);
   return id;
 }
 
@@ -355,7 +362,7 @@ el.newChat.addEventListener("click", function () {
   flushDraft();
   sessionId = newSessionId();
   el.task.value = "";
-  try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+  rememberSession(sessionId);
   el.transcript.textContent = "";
   // createTurn hides the empty state and nothing ever put it back, so after
   // one run plus New chat the area became the ambiguity the empty state was
@@ -967,7 +974,7 @@ function switchSession(id, jump) {
   sessionId = id;
   resetSessionMetrics();
   el.task.value = "";
-  try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+  rememberSession(sessionId);
   var opened = currentSessionMeta();
   if (opened && (opened.workspace || "") !== currentWorkspace) {
     setCurrentWorkspace(opened.workspace || "", { silent: true });
@@ -1141,7 +1148,7 @@ el.sessionFork.addEventListener("click", function () {
     })
     .then(function (newId) {
       sessionId = newId;
-      try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+      rememberSession(sessionId);
       renderSessionChip();
       el.sessionStatus.textContent = "Forked. You are now in the copy.";
       return loadSessions();
@@ -1198,7 +1205,7 @@ el.sessionDelete.addEventListener("click", function () {
         // Nothing left for the draft to belong to.
         dropDraft(sessionId);
         sessionId = newSessionId();
-        try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+        rememberSession(sessionId);
         el.transcript.textContent = "";
         renderSessionChip();
         return loadSessions();
@@ -1857,7 +1864,7 @@ function renderStats(turn, stats, task) {
         })
         .then(function (newId) {
           sessionId = newId;
-          try { window.localStorage.setItem("clanker.session", sessionId); } catch (e) {}
+          rememberSession(sessionId);
           renderSessionChip();
           el.sessionStatus.textContent = "Branched at turn " + n + ". You are now in the copy.";
           return loadSessions();
@@ -6019,7 +6026,7 @@ el.runCopy.addEventListener("click", function () {
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
           .then(function(d){
             el.sessionStatus.textContent = "Imported.";
-            if (d.id){ sessionId = d.id; try{ window.localStorage.setItem("clanker.session", sessionId); }catch(_){} renderSessionChip(); }
+            if (d.id){ sessionId = d.id; rememberSession(sessionId); renderSessionChip(); }
             return loadSessions();
           }).catch(function(err){ uiToast("Import failed: "+err.message); });
       };

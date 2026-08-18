@@ -46,6 +46,21 @@ function declarations(css, prop) {
   return found;
 }
 
+// A box-shadow is a comma-separated list of layers, and the commas inside
+// rgba()/color-mix() are not separators. Both shadow tests walk layers, so the
+// split lives here rather than in whichever one was written first.
+function splitLayers(value) {
+  const out = [];
+  let depth = 0, buf = "";
+  for (const ch of value) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(buf); buf = ""; continue; }
+    buf += ch;
+  }
+  return out.concat(buf).map((s) => s.trim()).filter(Boolean);
+}
+
 test("every border-radius is a token, a full circle, or none", () => {
   // 50% is a circle (lamp domes, avatars) and 0 squares a corner off; neither
   // is a size on the scale, so neither has a token to name it.
@@ -177,17 +192,6 @@ test("elevation is a --lift rung, never a retyped shadow", () => {
   // side. A layer with no offset is a different idiom entirely -- a focus
   // ring, an avatar's surface halo, a lamp's glow -- and has its own tokens.
   // Insets are the recessed well and the pressed actuator, also not height.
-  const layers = (value) => {
-    const out = [];
-    let depth = 0, buf = "";
-    for (const ch of value) {
-      if (ch === "(") depth++;
-      else if (ch === ")") depth--;
-      if (ch === "," && depth === 0) { out.push(buf); buf = ""; continue; }
-      buf += ch;
-    }
-    return out.concat(buf).map((s) => s.trim()).filter(Boolean);
-  };
   const hasOffset = (layer) => {
     const lengths = layer.match(/(^|\s)-?[0-9.]+(px|rem|em)?(?=\s|$)/g) || [];
     return lengths.slice(0, 2).some((n) => parseFloat(n) !== 0);
@@ -196,7 +200,7 @@ test("elevation is a --lift rung, never a retyped shadow", () => {
   for (const [name, css] of sheets()) {
     for (const { value, line } of declarations(css, "box-shadow")) {
       if (value === "none") continue;
-      for (const layer of layers(value)) {
+      for (const layer of splitLayers(value)) {
         if (layer.startsWith("inset") || layer.includes("var(--lift") || !hasOffset(layer)) continue;
         // The mobile drawer casts sideways; no vertical rung says that, so it
         // names the theme's --scrim, which is what it lays over anyway.
@@ -208,11 +212,43 @@ test("elevation is a --lift rung, never a retyped shadow", () => {
   assert.deepEqual(strays, [], `elevation must name a rung (--lift-low/--lift/--lift-high):\n${strays.join("\n")}`);
 });
 
+test("a bevel is a --bevel token, never a retyped inset", () => {
+  // The inset idioms are the other half of the same contract as --lift: a
+  // raised plate's machined edge, the well milled into it, and an actuator
+  // held down. They were seven literals in six alphas, and because a literal
+  // is invisible to themes/*.json the pressed actuator simply vanished on
+  // hackerman, whose shadows are green. A ring (`inset 0 0 0 2px var(--accent)`)
+  // and a selection marker (`inset 3px 0 0 var(--accent)`) are different
+  // idioms that already name their colour, so the rule is about the literal:
+  // an inset that hardcodes a colour is an inset no theme can repaint.
+  const colourLiteral = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\s*\(/;
+  const strays = [];
+  for (const [name, css] of sheets()) {
+    for (const { value, line } of declarations(css, "box-shadow")) {
+      if (value === "none") continue;
+      for (const layer of splitLayers(value)) {
+        if (!layer.startsWith("inset")) continue;
+        if (!colourLiteral.test(layer)) continue;
+        strays.push(`${name}:${line}  inset layer \`${layer}\``);
+      }
+    }
+  }
+  assert.deepEqual(
+    strays,
+    [],
+    `bevels must name a token (--bevel-raised/--bevel-inset/--bevel-pressed):\n${strays.join("\n")}`,
+  );
+});
+
 test("every theme declares all three elevation rungs", () => {
   // A rung declared only in app.css is a rung the ten themes cannot retune,
-  // which is how a light-theme smudge survives on graphite.
+  // which is how a light-theme smudge survives on graphite. The bevels are on
+  // this list for the same reason and by the same rule.
   const appCss = readFileSync(join(here, "app.css"), "utf8");
-  const rungs = ["--lift-low", "--lift", "--lift-high"];
+  const rungs = [
+    "--lift-low", "--lift", "--lift-high",
+    "--bevel-raised", "--bevel-inset", "--bevel-pressed",
+  ];
   for (const token of rungs) {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
