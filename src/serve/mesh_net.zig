@@ -481,7 +481,7 @@ const join_wait_ns: i96 = 10 * std.time.ns_per_s;
 
 /// `addr.connect` runs the TCP handshake on the caller's thread, and the
 /// Threaded io has no connect timeout of its own (its `ConnectOptions.timeout`
-/// is unimplemented and panics). An unreachable peer therefore hung
+/// is an unimplemented stub that panics). An unreachable peer therefore hung
 /// the JOIN on the kernel connect timeout. Run the connect as a concurrent
 /// task and cancel it at the deadline, the same shape as `httpGetDeadline` in
 /// cli.zig: cancel interrupts the blocking syscall and joins the task, and the
