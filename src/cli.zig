@@ -530,6 +530,53 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
 /// Parse CLI args, returning the resolved command through `cmd_out` (set on
 /// `error.FlagNotForCommand` / `error.BadSubcommand`) so callers can name the
 /// actual command in a help hint even when a global flag precedes it.
+const BoolFlag = struct { spelling: []const u8, field: []const u8, value: bool, flag: Flag };
+const ValueFlag = struct { spelling: []const u8, field: []const u8, flag: Flag };
+
+/// Flags whose whole parse is "set this field, remember the flag". Walked
+/// with `inline for`, so each row compiles to the comparison a hand-written
+/// `else if` had; spellings are distinct, so row order does not matter.
+const bool_flags = [_]BoolFlag{
+    .{ .spelling = "--dry-run", .field = "dry_run", .value = true, .flag = .dry_run },
+    .{ .spelling = "--no-worktree", .field = "no_worktree", .value = true, .flag = .worktree },
+    .{ .spelling = "--yes", .field = "apply", .value = true, .flag = .yes },
+    .{ .spelling = "--tasks", .field = "eval_tasks_only", .value = true, .flag = .tasks },
+    .{ .spelling = "--proxy", .field = "proxy", .value = true, .flag = .proxy },
+    .{ .spelling = "--no-proxy", .field = "proxy", .value = false, .flag = .proxy },
+    .{ .spelling = "--synthesize", .field = "compare_synthesize", .value = true, .flag = .compare_synthesize },
+    .{ .spelling = "--reveal", .field = "compare_reveal", .value = true, .flag = .compare_reveal },
+    .{ .spelling = "--dump-config", .field = "dump_config", .value = true, .flag = .dump_config },
+};
+
+/// The same, for flags taking a value.
+const value_flags = [_]ValueFlag{
+    .{ .spelling = "--provider", .field = "provider", .flag = .provider },
+    .{ .spelling = "--mascot-size", .field = "mascot_size", .flag = .mascot_size },
+    .{ .spelling = "--mascot-facing", .field = "mascot_facing", .flag = .mascot_facing },
+    .{ .spelling = "--mascot-speed", .field = "mascot_speed", .flag = .mascot_speed },
+    .{ .spelling = "--theme", .field = "theme", .flag = .theme },
+    .{ .spelling = "--session", .field = "session", .flag = .session },
+    .{ .spelling = "--goal", .field = "goal", .flag = .goal },
+    .{ .spelling = "--host", .field = "host", .flag = .host },
+    .{ .spelling = "--harness", .field = "research_harness", .flag = .research_harness },
+    .{ .spelling = "--metric", .field = "research_metric", .flag = .research_metric },
+    .{ .spelling = "--pattern", .field = "research_pattern", .flag = .research_pattern },
+    .{ .spelling = "--for", .field = "arena_for", .flag = .arena_for },
+    .{ .spelling = "--against", .field = "arena_against", .flag = .arena_against },
+    .{ .spelling = "--for-provider", .field = "arena_for_provider", .flag = .arena_for_provider },
+    .{ .spelling = "--against-provider", .field = "arena_against_provider", .flag = .arena_against_provider },
+    .{ .spelling = "--show", .field = "compare_show", .flag = .compare_show },
+    .{ .spelling = "--pick", .field = "compare_pick", .flag = .compare_pick },
+    .{ .spelling = "--tz-offset", .field = "schedule_tz", .flag = .schedule_tz },
+    .{ .spelling = "--kind", .field = "reports_kind", .flag = .reports_kind },
+    .{ .spelling = "--judge-provider", .field = "arena_judge_provider", .flag = .arena_judge_provider },
+    .{ .spelling = "--match", .field = "arena_match", .flag = .arena_match },
+    .{ .spelling = "--defend", .field = "arena_defend", .flag = .arena_defend },
+    .{ .spelling = "--alternative", .field = "arena_alternative", .flag = .arena_alternative },
+    .{ .spelling = "--profile", .field = "profile", .flag = .profile },
+    .{ .spelling = "--preset", .field = "preset", .flag = .preset },
+};
+
 pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?*Command) !Options {
     var opts = Options{};
     var idx: usize = 1;
@@ -612,27 +659,26 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         // are legal for is checked once the command is known.
         if (!end_of_flags and a.len > 0 and a[0] == '-') {
             var used: ?Flag = null;
-            if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
+            inline for (bool_flags) |bf| {
+                if (used == null and std.mem.eql(u8, a, bf.spelling)) {
+                    @field(opts, bf.field) = bf.value;
+                    used = bf.flag;
+                }
+            }
+            inline for (value_flags) |vf| {
+                if (used == null and std.mem.eql(u8, a, vf.spelling)) {
+                    @field(opts, vf.field) = try takeValue(args, &idx, inline_value, a, diag);
+                    used = vf.flag;
+                }
+            }
+            if (used != null) {
+                // Handled by the tables above.
+            } else if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
                 used = .verbose;
-            } else if (std.mem.eql(u8, a, "--dry-run")) {
-                opts.dry_run = true;
-                used = .dry_run;
             } else if (std.mem.eql(u8, a, "--worktree") or std.mem.eql(u8, a, "-wt")) {
                 opts.worktree = true;
                 used = .worktree;
-            } else if (std.mem.eql(u8, a, "--no-worktree")) {
-                opts.no_worktree = true;
-                used = .worktree;
-            } else if (std.mem.eql(u8, a, "--yes")) {
-                opts.apply = true;
-                used = .yes;
-            } else if (std.mem.eql(u8, a, "--tasks")) {
-                opts.eval_tasks_only = true;
-                used = .tasks;
-            } else if (std.mem.eql(u8, a, "--provider")) {
-                opts.provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .provider;
             } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
                 opts.continue_last = true;
                 used = .continue_last;
@@ -642,18 +688,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 // so consuming the next argv would eat a task or a subcommand.
                 opts.mascot = inline_value orelse "on";
                 used = .mascot;
-            } else if (std.mem.eql(u8, a, "--mascot-size")) {
-                opts.mascot_size = try takeValue(args, &idx, inline_value, a, diag);
-                used = .mascot_size;
-            } else if (std.mem.eql(u8, a, "--mascot-facing")) {
-                opts.mascot_facing = try takeValue(args, &idx, inline_value, a, diag);
-                used = .mascot_facing;
-            } else if (std.mem.eql(u8, a, "--mascot-speed")) {
-                opts.mascot_speed = try takeValue(args, &idx, inline_value, a, diag);
-                used = .mascot_speed;
-            } else if (std.mem.eql(u8, a, "--theme")) {
-                opts.theme = try takeValue(args, &idx, inline_value, a, diag);
-                used = .theme;
             } else if (std.mem.eql(u8, a, "--model") or std.mem.eql(u8, a, "-m")) {
                 opts.model = try takeValue(args, &idx, inline_value, a, diag);
                 used = .model;
@@ -664,12 +698,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     return error.BadReasoningEffort;
                 };
                 used = .reasoning_effort;
-            } else if (std.mem.eql(u8, a, "--session")) {
-                opts.session = try takeValue(args, &idx, inline_value, a, diag);
-                used = .session;
-            } else if (std.mem.eql(u8, a, "--goal")) {
-                opts.goal = try takeValue(args, &idx, inline_value, a, diag);
-                used = .goal;
             } else if (std.mem.eql(u8, a, "--iters")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.iters = std.fmt.parseInt(u32, v, 10) catch {
@@ -696,15 +724,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 };
                 opts.webui_port_deprecated_alias = true;
                 used = .webui_port;
-            } else if (std.mem.eql(u8, a, "--host")) {
-                opts.host = try takeValue(args, &idx, inline_value, a, diag);
-                used = .host;
-            } else if (std.mem.eql(u8, a, "--proxy")) {
-                opts.proxy = true;
-                used = .proxy;
-            } else if (std.mem.eql(u8, a, "--no-proxy")) {
-                opts.proxy = false;
-                used = .proxy;
             } else if (std.mem.eql(u8, a, "--proxy-port")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.proxy_port = std.fmt.parseInt(u16, v, 10) catch {
@@ -728,12 +747,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     if (tt.len > 0) try appendRepeatable(&opts.research_targets, tt);
                 }
                 used = .research_target;
-            } else if (std.mem.eql(u8, a, "--harness")) {
-                opts.research_harness = try takeValue(args, &idx, inline_value, a, diag);
-                used = .research_harness;
-            } else if (std.mem.eql(u8, a, "--metric")) {
-                opts.research_metric = try takeValue(args, &idx, inline_value, a, diag);
-                used = .research_metric;
             } else if (std.mem.eql(u8, a, "--direction")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 if (!std.mem.eql(u8, v, "min") and !std.mem.eql(u8, v, "max")) {
@@ -742,9 +755,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 }
                 opts.research_direction = v;
                 used = .research_direction;
-            } else if (std.mem.eql(u8, a, "--pattern")) {
-                opts.research_pattern = try takeValue(args, &idx, inline_value, a, diag);
-                used = .research_pattern;
             } else if (std.mem.eql(u8, a, "--budget")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.research_budget = std.fmt.parseInt(u32, v, 10) catch {
@@ -752,18 +762,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     return error.BadBudget;
                 };
                 used = .research_budget;
-            } else if (std.mem.eql(u8, a, "--for")) {
-                opts.arena_for = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_for;
-            } else if (std.mem.eql(u8, a, "--against")) {
-                opts.arena_against = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_against;
-            } else if (std.mem.eql(u8, a, "--for-provider")) {
-                opts.arena_for_provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_for_provider;
-            } else if (std.mem.eql(u8, a, "--against-provider")) {
-                opts.arena_against_provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_against_provider;
             } else if (std.mem.eql(u8, a, "--rounds")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.arena_rounds = std.fmt.parseInt(u32, v, 10) catch {
@@ -800,36 +798,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 const trimmed = std.mem.trim(u8, v, " \t");
                 if (trimmed.len > 0) try appendRepeatable(&opts.compare_with, trimmed);
                 used = .compare_with;
-            } else if (std.mem.eql(u8, a, "--show")) {
-                opts.compare_show = try takeValue(args, &idx, inline_value, a, diag);
-                used = .compare_show;
-            } else if (std.mem.eql(u8, a, "--pick")) {
-                opts.compare_pick = try takeValue(args, &idx, inline_value, a, diag);
-                used = .compare_pick;
-            } else if (std.mem.eql(u8, a, "--synthesize")) {
-                opts.compare_synthesize = true;
-                used = .compare_synthesize;
-            } else if (std.mem.eql(u8, a, "--reveal")) {
-                opts.compare_reveal = true;
-                used = .compare_reveal;
-            } else if (std.mem.eql(u8, a, "--tz-offset")) {
-                opts.schedule_tz = try takeValue(args, &idx, inline_value, a, diag);
-                used = .schedule_tz;
-            } else if (std.mem.eql(u8, a, "--kind")) {
-                opts.reports_kind = try takeValue(args, &idx, inline_value, a, diag);
-                used = .reports_kind;
-            } else if (std.mem.eql(u8, a, "--judge-provider")) {
-                opts.arena_judge_provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_judge_provider;
-            } else if (std.mem.eql(u8, a, "--match")) {
-                opts.arena_match = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_match;
-            } else if (std.mem.eql(u8, a, "--defend")) {
-                opts.arena_defend = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_defend;
-            } else if (std.mem.eql(u8, a, "--alternative")) {
-                opts.arena_alternative = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_alternative;
             } else if (std.mem.eql(u8, a, "--position")) {
                 // Repeatable, and not comma-split the way --target is: a stance
                 // is prose, and "use a queue, not direct calls" is one position
@@ -838,15 +806,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 const trimmed = std.mem.trim(u8, v, " \t");
                 if (trimmed.len > 0) try appendRepeatable(&opts.arena_positions, trimmed);
                 used = .arena_position;
-            } else if (std.mem.eql(u8, a, "--profile")) {
-                opts.profile = try takeValue(args, &idx, inline_value, a, diag);
-                used = .profile;
-            } else if (std.mem.eql(u8, a, "--dump-config")) {
-                opts.dump_config = true;
-                used = .dump_config;
-            } else if (std.mem.eql(u8, a, "--preset")) {
-                opts.preset = try takeValue(args, &idx, inline_value, a, diag);
-                used = .preset;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
