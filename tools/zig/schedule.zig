@@ -128,15 +128,34 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         var found = false;
+        var removed_cron: []const u8 = "";
+        var removed_task: []const u8 = "";
         var i: usize = 0;
         while (i < loaded.entries.items.len) {
             if (std.mem.eql(u8, loaded.entries.items[i].id, id)) {
+                removed_cron = loaded.entries.items[i].cron;
+                removed_task = loaded.entries.items[i].task;
                 _ = loaded.entries.orderedRemove(i);
                 found = true;
             } else i += 1;
         }
         if (!found) return lib.fail(out, "no such entry");
-        if (try store(loaded)) return out.writeAll("{\"ok\":true}");
+        if (try store(loaded)) {
+            var w = lib.writer(out);
+            var s = lib.json(&w);
+            try s.beginObject();
+            try s.objectField("ok");
+            try s.write(true);
+            try s.objectField("id");
+            try s.write(id);
+            try s.objectField("cron");
+            try s.write(removed_cron);
+            try s.objectField("task");
+            try s.write(removed_task);
+            try s.endObject();
+            lib.commit(out, &w);
+            return;
+        }
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
