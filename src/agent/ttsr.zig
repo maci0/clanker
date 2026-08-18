@@ -8,7 +8,8 @@ pub const PatternError = error{ EmptyPattern, BadEscape, OutOfMemory };
 /// Compiled pattern: a sequence of literal fragments separated by `*`.
 pub const Pattern = struct {
     parts: []const []const u8,
-    /// True when the pattern begins with `*`.
+    /// Set when the pattern starts with `*`; when no literal fragments
+    /// remain this is what makes an all-wildcards pattern match every input.
     leading_star: bool,
     /// True when the pattern ends with `*`.
     trailing_star: bool,
