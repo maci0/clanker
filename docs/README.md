@@ -573,7 +573,7 @@ changes as tools are added.
 
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
-| `calculator` | none | Arithmetic, either `{"a","b","op"}` or `{"expr": "2+3*4"}` (`+ - * / ^`, parentheses, standard precedence) |
+| `calculator` | none | Arithmetic, either `{"a","b","op"}` or `{"expr": "2+3*4"}` (`+ - * / % ^`, parentheses, standard precedence, `sqrt(x)`) |
 | `read_file` | `.` | Read a file by line (`start_line`, `line_count`) or by byte (`offset`, `limit`). Whole lines either way, and a short result says where to resume |
 | `list_files` | `.` | What is in a directory, optionally recursive, with a `suffix` filter |
 | `find_files` | `.` | Find files by name anywhere under a directory; a pattern with no wildcard matches any name containing it, and a path is split into directory and name |
