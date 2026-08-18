@@ -100,6 +100,7 @@ and Implementation lists checkable file-level phases.
 | [0040](0040-repl-multi-line-input-shift-enter-newline-enter-submits.md) | REPL multi-line input: Shift+Enter newline, Enter submits | Shipped |  |
 | [0041](0041-repl-image-multimodal-input-attach-and-drag-drop-to-image-in.md) | REPL image/multimodal input: /attach and drag-drop to image_in | Draft |  |
 | [0042](0042-config-profiles-profile-and-dump-config-file-overlay.md) | Config profiles: --profile and --dump-config (file overlay) | Draft |  |
+| [0043](0043-external-coding-agent-driver-acp-client-headless-fallback.md) | External coding-agent driver (ACP client, headless fallback) | Draft | Draft; driver is not built yet — phases name files to create |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts)

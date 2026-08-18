@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-08-18.
+Decided — 2026-08-18. See ADR 0032.
 
 An RFC is a *request for comment*: it presents the options and a recommendation
 so a decision can be made, and it is not itself the decision record. When it is
