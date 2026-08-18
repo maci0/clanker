@@ -52,6 +52,13 @@ pub const Pattern = struct {
         };
     }
 
+    /// Returns true when every literal fragment appears somewhere in `hay`, in
+    /// order, with each `*` wildcard spanning any bytes (including none).
+    /// Matching is deliberately unanchored: a leading or trailing `*` does not
+    /// change which slices match the bare fragments, because plain fragment
+    /// search never requires the first fragment at offset 0 nor the last at the
+    /// end. The only pattern without fragments is all wildcards, which matches
+    /// every input.
     pub fn matches(self: Pattern, hay: []const u8) bool {
         if (self.parts.len == 0) return self.leading_star;
         var rest = hay;
