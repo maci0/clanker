@@ -297,6 +297,12 @@ pub fn build(b: *std.Build) void {
     const css_split_js_test = b.addSystemCommand(&.{ "node", "--test" });
     css_split_js_test.addFileArg(b.path("ui/app/css-split.test.mjs"));
     test_step.dependOn(&css_split_js_test.step);
+    // Radii and type steps are tokens, not literals: a stray `border-radius:
+    // 12px` reads as no bug at all, so nothing catches the sheet drifting back
+    // toward the rounded-card default one declaration at a time.
+    const design_tokens_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    design_tokens_js_test.addFileArg(b.path("ui/app/design-tokens.test.mjs"));
+    test_step.dependOn(&design_tokens_js_test.step);
     // What a visitor actually downloads, and what it is allowed to grow to.
     // These numbers are the regression record for the critical path.
     const weight_budget_js_test = b.addSystemCommand(&.{ "node", "--test" });

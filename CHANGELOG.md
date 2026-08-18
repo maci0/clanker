@@ -5,8 +5,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Changed
+
+- The web UI's corner radii and type sizes now all come from the design
+  tokens `app.css` declares, so the Control Cabinet's machined edges hold
+  across every view. The chat composer (24px) and your own chat bubbles
+  (18px) were rounded like a generic messenger, and the Kanban board was a
+  12px/8px island with its own look; all three now use the 2/3/4px plate
+  radii the rest of the panel uses. Font sizes collapse onto the step scale,
+  which gains a `--step--2` (10px) rung for the dense badge and graph-node
+  readouts that previously used off-scale 9px and 10px literals. Touch
+  fields keep their 16px, which is an iOS zoom guard rather than a
+  typographic choice.
+
 ### Added
 
+- `zig build test` runs `ui/app/design-tokens.test.mjs`, which fails when a
+  stylesheet under `ui/app/` or `ui/plugins/` sets a `border-radius` or
+  `font-size` that is not one of the declared tokens. An off-scale literal
+  reads as no bug at all, so nothing used to catch the sheets drifting back
+  toward the rounded-card default one declaration at a time.
 - `clanker gate` runs a `test-root-coverage` gate: every file under `src/`
   with a top-level `test` block must be referenced from the comptime import
   block in `src/main.zig`. Zig 0.16 runs test blocks only in the root file,
@@ -44,6 +62,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   capabilities) come from the models.dev snapshot.
 
 ### Changed
+
+- `clanker adr list` and `clanker rfc list` read only each record's header
+  instead of the whole document. Both listings show a title and a status,
+  which live in the first few lines, but each row cost a whole-file read into
+  the guest's shared 1 MiB host arena plus a copy in the guest arena, so the
+  cost grew with how long the records happened to be and a store of long
+  records ran the arena out and dropped its later rows. The read is now capped
+  at 4 KiB per record (`doc_scaffold.header_read_bytes`, what `clanker prd
+  list` already used), which bounds a listing at the row cap regardless of
+  document size: on this repository's `docs/rfcs/` that is 272 KB of reads
+  down to 74 KB.
 
 - Every command that loads config starts about 280 ms faster. `Config.load`
   filled unset model specs by parsing the whole ~4 MB `state/models-dev.json`

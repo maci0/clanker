@@ -92,7 +92,7 @@
 
 .run-crumbs { scrollbar-width: thin; }
 
-.run-crumbs button { font-size: 12px; }
+.run-crumbs button { font-size: var(--step-0); }
 
 .run-crumbs button[aria-current="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
@@ -104,11 +104,11 @@
 
 .run-minimap:hover { border-color: var(--accent); }
 
-.run-minimap-viewport { position: absolute; border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 3px; cursor: grab; pointer-events: auto; }
+.run-minimap-viewport { position: absolute; border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: var(--radius); cursor: grab; pointer-events: auto; }
 
 .run-minimap-viewport:active { cursor: grabbing; }
 
-.run-minimap-label { position: absolute; left: 4px; top: 2px; font-family: var(--mono); font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); pointer-events: none; }
+.run-minimap-label { position: absolute; left: 4px; top: 2px; font-family: var(--mono); font-size: var(--step--2); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); pointer-events: none; }
 
 .run-minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
@@ -165,7 +165,7 @@
 
 .run-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.run-node-duration { position: absolute; top: 4px; right: 6px; font-size: 10px; font-weight: 600; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.35rem; line-height: 1.4; }
+.run-node-duration { position: absolute; top: 4px; right: 6px; font-size: var(--step--2); font-weight: 600; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius-pill); padding: 0 0.35rem; line-height: 1.4; }
 
 /* The run's bottleneck. The badge already says "slowest" in words, so this is
    emphasis on top of a label rather than the only thing carrying it. */
@@ -222,9 +222,9 @@
   border-radius: var(--radius-sm); background: var(--surface-2);
 }
 
-.diff-view { font-family: var(--mono); font-size: 12px; line-height: 1.5; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
+.diff-view { font-family: var(--mono); font-size: var(--step-0); line-height: 1.5; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
 
-.diff-header { padding: 0.4rem 0.6rem; background: var(--surface-2); border-bottom: 1px solid var(--rule); font-weight: 600; color: var(--fg-muted); font-size: 11px; }
+.diff-header { padding: 0.4rem 0.6rem; background: var(--surface-2); border-bottom: 1px solid var(--rule); font-weight: 600; color: var(--fg-muted); font-size: var(--step--1); }
 
 .diff-line { display: flex; padding: 0 0.4rem; white-space: pre-wrap; overflow-wrap: anywhere; }
 
@@ -342,7 +342,7 @@
   flex-shrink: 0;
 }
 
-.slack-sidebar-head h2 { font-size: 15px; font-weight: 700; margin: 0; }
+.slack-sidebar-head h2 { font-size: var(--step-1); font-weight: 700; margin: 0; }
 
 .slack-search-box {
   padding: 0.5rem 0.75rem; flex-shrink: 0;
@@ -351,7 +351,7 @@
 .slack-search-box input {
   width: 100%; padding: 0.35rem 0.5rem;
   border: 1px solid var(--rule); border-radius: var(--radius);
-  background: var(--surface); color: var(--fg); font-size: 12px;
+  background: var(--surface); color: var(--fg); font-size: var(--step-0);
 }
 
 .slack-search-box input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -364,7 +364,7 @@
 
 .slack-room-group-head {
   display: flex; align-items: center; gap: 0.25rem;
-  padding: 0.25rem 0.75rem; font-size: 12px; font-weight: 600;
+  padding: 0.25rem 0.75rem; font-size: var(--step-0); font-weight: 600;
   color: var(--fg-muted); cursor: pointer; user-select: none;
   text-transform: uppercase; letter-spacing: 0.03em;
   /* A real button now, so it needs the button reset a row of slack-room-item
@@ -378,7 +378,7 @@
 .slack-room-group-head:hover { color: var(--fg); }
 
 .slack-caret {
-  display: inline-block; font-size: 10px;
+  display: inline-block; font-size: var(--step--2);
   transition: transform 0.15s ease;
 }
 
@@ -393,7 +393,7 @@
 .slack-room-item {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.3rem 0.75rem 0.3rem 1.25rem;
-  font-size: 13px; color: var(--fg-muted); cursor: pointer;
+  font-size: var(--step-0); color: var(--fg-muted); cursor: pointer;
   border-radius: 0; border: none; background: none;
   width: 100%; text-align: left;
   transition: background 0.1s ease;
@@ -419,7 +419,7 @@
 
 .slack-room-item.is-active:hover { background: var(--surface-2); }
 
-.slack-room-icon { width: 16px; text-align: center; flex-shrink: 0; font-size: 12px; }
+.slack-room-icon { width: 16px; text-align: center; flex-shrink: 0; font-size: var(--step-0); }
 
 .slack-room-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -427,8 +427,8 @@
 
 .slack-room-badge {
   background: var(--danger); color: var(--on-danger);
-  font-size: 10px; font-weight: 700; min-width: 18px;
-  height: 18px; border-radius: 9px;
+  font-size: var(--step--2); font-weight: 700; min-width: 18px;
+  height: 18px; border-radius: var(--radius-pill);
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 5px; flex-shrink: 0;
 }
@@ -448,15 +448,15 @@
 
 .slack-room-item-name {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--step-0);
 }
 
 .slack-room-item.has-unread .slack-room-item-name { font-weight: 700; color: var(--fg); }
 
 .slack-room-item-count {
   background: var(--danger); color: var(--on-danger);
-  font-size: 10px; font-weight: 700; min-width: 18px; height: 18px;
-  border-radius: 9px; display: inline-flex; align-items: center;
+  font-size: var(--step--2); font-weight: 700; min-width: 18px; height: 18px;
+  border-radius: var(--radius-pill); display: inline-flex; align-items: center;
   justify-content: center; padding: 0 5px; flex-shrink: 0;
 }
 
@@ -489,10 +489,10 @@
   min-width: 0; flex: 1;
 }
 
-#chat-channel-title { font-size: 15px; font-weight: 700; white-space: nowrap; }
+#chat-channel-title { font-size: var(--step-1); font-weight: 700; white-space: nowrap; }
 
 .slack-channel-topic {
-  font-size: 12px; color: var(--fg-muted);
+  font-size: var(--step-0); color: var(--fg-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border-left: 1px solid var(--rule); padding-left: 0.5rem; margin-left: 0.25rem;
   cursor: pointer;
@@ -530,14 +530,14 @@
 .slack-search-bar input {
   flex: 1; padding: 0.35rem 0.5rem;
   border: 1px solid var(--rule); border-radius: var(--radius);
-  background: var(--surface); color: var(--fg); font-size: 13px;
+  background: var(--surface); color: var(--fg); font-size: var(--step-0);
 }
 
 .slack-search-bar input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .slack-search-results {
   width: 100%; max-height: 200px; overflow-y: auto;
-  margin-top: 0.25rem; font-size: 12px;
+  margin-top: 0.25rem; font-size: var(--step-0);
 }
 
 .slack-search-result {
@@ -571,12 +571,12 @@
 
 .slack-pins-head {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 0.5rem; font-weight: 600; font-size: 13px;
+  margin-bottom: 0.5rem; font-weight: 600; font-size: var(--step-0);
 }
 
 .slack-pins-title { display: inline-flex; align-items: center; gap: 0.35rem; }
 
-.slack-pins-list { font-size: 12px; }
+.slack-pins-list { font-size: var(--step-0); }
 
 .slack-pin-item {
   padding: 0.35rem 0; border-bottom: 1px solid var(--rule);
@@ -585,7 +585,7 @@
 
 .slack-pin-item:last-child { border-bottom: none; }
 
-.slack-pin-sender { font-weight: 600; font-size: 11px; color: var(--accent-text); flex-shrink: 0; }
+.slack-pin-sender { font-weight: 600; font-size: var(--step--1); color: var(--accent-text); flex-shrink: 0; }
 
 .slack-pin-text { flex: 1; overflow-wrap: anywhere; }
 
@@ -603,7 +603,7 @@
 .slack-composer-row input[type="text"] {
   flex: 1; padding: 0.5rem 0.75rem;
   border: 1px solid var(--rule); border-radius: var(--radius);
-  background: var(--bg); color: var(--fg); font-size: 13px;
+  background: var(--bg); color: var(--fg); font-size: var(--step-0);
 }
 
 .slack-composer-row input[type="text"]:focus-visible {
@@ -613,22 +613,22 @@
 
 .slack-composer-row button[type="submit"] {
   padding: 0.45rem 1rem; border-radius: var(--radius);
-  font-weight: 600; font-size: 13px;
+  font-weight: 600; font-size: var(--step-0);
 }
 
 .slack-formatting-hint {
-  font-size: 11px; color: var(--fg-muted); margin-top: 0.25rem;
+  font-size: var(--step--1); color: var(--fg-muted); margin-top: 0.25rem;
   padding-left: 0;
 }
 
-.slack-formatting-hint code { font-size: 11px; padding: 0.1rem 0.25rem; }
+.slack-formatting-hint code { font-size: var(--step--1); padding: 0.1rem 0.25rem; }
 
 
 /* ── Emoji picker ── */
 .slack-emoji-picker {
   position: absolute; bottom: 100%; left: 1rem; z-index: 40;
   background: var(--surface); border: 1px solid var(--rule);
-  border-radius: var(--radius-lg, 8px); box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  border-radius: var(--radius-lg); box-shadow: 0 4px 16px rgba(0,0,0,.2);
   padding: 0.5rem; max-width: 320px;
   display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px;
 }
@@ -636,7 +636,7 @@
 .slack-emoji-picker[hidden] { display: none; }
 
 .slack-emoji-picker button {
-  font-size: 18px; padding: 0.25rem; border: none; background: none;
+  font-size: var(--step-2); padding: 0.25rem; border: none; background: none;
   border-radius: var(--radius); cursor: pointer;
 }
 
@@ -658,7 +658,7 @@
 
 
 /* ── Create channel dialog ── */
-.slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg, 8px); padding: 0; background: var(--surface); box-shadow: var(--lift); max-width: 400px; width: 90vw; }
+.slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 0; background: var(--surface); box-shadow: var(--lift); max-width: 400px; width: 90vw; }
 
 .slack-dialog::backdrop { background: rgba(0,0,0,.5); }
 
@@ -666,7 +666,7 @@
 
 .slack-dialog-form h3 { margin: 0; font-size: 16px; }
 
-.slack-dialog-form input, .slack-dialog-form textarea { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: 14px; }
+.slack-dialog-form input, .slack-dialog-form textarea { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: var(--step-1); }
 
 .slack-dialog-form input:focus-visible, .slack-dialog-form textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -683,7 +683,7 @@
 
 /* ── Typing indicator ── */
 .slack-typing-indicator {
-  padding: 0.15rem 1rem; font-size: 11px; color: var(--fg-muted);
+  padding: 0.15rem 1rem; font-size: var(--step--1); color: var(--fg-muted);
   min-height: 1.25rem; flex-shrink: 0;
 }
 
@@ -712,7 +712,7 @@
 .slack-new-divider {
   display: flex; align-items: center; gap: 0.75rem;
   margin: 0.5rem 0; padding: 0 1rem;
-  font-size: 11px; font-weight: 700; color: var(--danger);
+  font-size: var(--step--1); font-weight: 700; color: var(--danger);
   text-transform: uppercase; letter-spacing: 0.04em;
 }
 
@@ -761,7 +761,7 @@
 
 .chat-log:empty::before {
   content: "Loading messages…"; color: var(--fg-muted);
-  font-family: var(--sans); font-size: 13px;
+  font-family: var(--sans); font-size: var(--step-0);
 }
 
 /* Slack-style "New messages" divider */
@@ -777,22 +777,22 @@
 }
 
 .chat-unread-divider span {
-  font-family: var(--sans); font-size: 11px; font-weight: 700;
+  font-family: var(--sans); font-size: var(--step--1); font-weight: 700;
   color: var(--danger); text-transform: uppercase; letter-spacing: 0.03em;
   white-space: nowrap;
 }
 
-.chat-msg { position: relative; font-family: var(--sans); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 0.15rem; align-items: stretch; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; }
+.chat-msg { position: relative; font-family: var(--sans); font-size: var(--step-0); line-height: 1.5; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 0.15rem; align-items: stretch; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; }
 
 .chat-msg[data-grouped="true"] { padding-top: 0.2rem; padding-bottom: 0.2rem; }
 
 .chat-msg[data-grouped="true"] .chat-meta { display: none; }
 
-.chat-gutter-time { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: center; }
+.chat-gutter-time { font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: center; }
 
 .chat-msg:hover .chat-gutter-time, .chat-msg:focus-within .chat-gutter-time { opacity: 1; }
 
-.chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem 0.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem 0.25rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
 
 .chat-msg:hover .chat-actions, .chat-msg:focus-within .chat-actions { display: flex; }
 
@@ -803,46 +803,46 @@
   }
 }
 
-.chat-actions button { min-height: 24px; padding: 0 0.45rem; font-size: 11px; border-radius: 999px; }
+.chat-actions button { min-height: 24px; padding: 0 0.45rem; font-size: var(--step--1); border-radius: var(--radius-pill); }
 
 .chat-reactions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.35rem; }
 
 .chat-reactions:empty { display: none; }
 
-.chat-reaction { font-size: 12px; padding: 0.1rem 0.4rem; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface-2); cursor: pointer; }
+.chat-reaction { font-size: var(--step-0); padding: 0.1rem 0.4rem; border-radius: var(--radius-pill); border: 1px solid var(--rule); background: var(--surface-2); cursor: pointer; }
 
 .chat-reaction:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .chat-reaction[data-mine="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 
-.chat-edited { font-size: 11px; color: var(--fg-muted); font-style: italic; }
+.chat-edited { font-size: var(--step--1); color: var(--fg-muted); font-style: italic; }
 
 .chat-deleted { color: var(--fg-muted); font-style: italic; }
 
 .chat-msg-deleted .chat-actions { display: none; }
 
-.chat-edit-input { width: 100%; padding: 0.3rem 0.5rem; font: inherit; font-size: 13px; background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px; }
+.chat-edit-input { width: 100%; padding: 0.3rem 0.5rem; font: inherit; font-size: var(--step-0); background: var(--surface); color: var(--fg); border: 1px solid var(--accent); border-radius: var(--radius-lg); }
 
 .chat-edit-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-.chat-topic { font-size: 12px; color: var(--fg-muted); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); font-style: italic; }
+.chat-topic { font-size: var(--step-0); color: var(--fg-muted); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); font-style: italic; }
 
-.chat-thread-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.4rem; font-size: 12px; }
+.chat-thread-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.4rem; font-size: var(--step-0); }
 
 .chat-thread-bar[hidden] { display: none; }
 
 /* 24px is the WCAG 2.5.8 floor; pointer:coarse below raises these to 44px. */
-.chat-thread-bar button { min-height: 24px; padding: 0 0.5rem; font-size: 11px; border-radius: 999px; }
+.chat-thread-bar button { min-height: 24px; padding: 0 0.5rem; font-size: var(--step--1); border-radius: var(--radius-pill); }
 
 .chat-thread-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; border-left: 2px solid var(--rule); padding-left: 0.6rem; }
 
 .chat-thread-list[hidden] { display: none; }
 
-.chat-thread-reply { font-size: 12px; color: var(--fg); padding: 0.15rem 0; }
+.chat-thread-reply { font-size: var(--step-0); color: var(--fg); padding: 0.15rem 0; }
 
 .chat-msg:hover { background: color-mix(in srgb, var(--surface-2) 40%, transparent); border-left-color: var(--rule); }
 
-.chat-day { display: flex; align-items: center; gap: 0.75rem; font-family: var(--sans); font-size: 11px; font-weight: 600; color: var(--fg-muted); letter-spacing: 0.04em; text-transform: uppercase; padding: 0.5rem 0 0.35rem; margin-top: 0.4rem; border-top: 0; }
+.chat-day { display: flex; align-items: center; gap: 0.75rem; font-family: var(--sans); font-size: var(--step--1); font-weight: 600; color: var(--fg-muted); letter-spacing: 0.04em; text-transform: uppercase; padding: 0.5rem 0 0.35rem; margin-top: 0.4rem; border-top: 0; }
 
 .chat-day::before, .chat-day::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--rule) 60%, transparent); }
 
@@ -856,13 +856,13 @@
 
 .chat-from { color: var(--fg); font-weight: 700; }
 
-.chat-mark { width: 20px; height: 20px; border-radius: 999px; display: grid; place-items: center; font-size: 11px; background: var(--surface-2); border: 1px solid var(--rule); }
+.chat-mark { width: 20px; height: 20px; border-radius: var(--radius-pill); display: grid; place-items: center; font-size: var(--step--1); background: var(--surface-2); border: 1px solid var(--rule); }
 
 /* This instance's own messages, so a room reads as a conversation rather
    than a log of indistinguishable lines. */
 .chat-msg.mine .chat-from { color: var(--ok); }
 
-.chat-from[data-color] { padding: 0.05rem 0.4rem; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.chat-from[data-color] { padding: 0.05rem 0.4rem; border-radius: var(--radius-pill); font-size: var(--step--1); font-weight: 600; }
 
 .chat-from[data-color="0"] { color: var(--chat-hue-0); border-bottom: 2px solid var(--chat-hue-0); }
 
@@ -880,7 +880,7 @@
 
 .chat-from[data-color="7"] { color: var(--chat-hue-7); border-bottom: 2px solid var(--chat-hue-7); }
 
-.chat-time[data-seen="true"]::after { content: " ✓✓"; color: var(--ok); font-size: 11px; }
+.chat-time[data-seen="true"]::after { content: " ✓✓"; color: var(--ok); font-size: var(--step--1); }
 
 .chat-time { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 
@@ -902,20 +902,20 @@
    something anyone typed. */
 .chat-text.chat-action { color: var(--fg-muted); font-style: italic; }
 
-.chat-unfurl { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); border-radius: var(--radius); padding: 0.3rem 0.5rem; background: var(--surface-2); text-decoration: none; }
+.chat-unfurl { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--step-0); color: var(--accent-text); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--rule)); border-radius: var(--radius); padding: 0.3rem 0.5rem; background: var(--surface-2); text-decoration: none; }
 
 .chat-composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; align-items: stretch; }
 
 .chat-composer input {
   flex: 1; min-width: 12rem; min-height: 40px; padding: 0.45rem 0.75rem;
-  font-family: var(--sans); font-size: 13px;
+  font-family: var(--sans); font-size: var(--step-0);
   background: var(--surface); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 999px;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
 }
 
 .chat-composer { position: relative; }
 
-.chat-composer button { border-radius: 999px; min-height: 40px; }
+.chat-composer button { border-radius: var(--radius-pill); min-height: 40px; }
 
 
 /* ---- usage: what the model calls actually cost ----
@@ -1023,7 +1023,7 @@
   margin: var(--space-4) 0 var(--space-1); padding: 0.3rem 0.1rem;
   border: none; border-top: 1px solid var(--rule); background: transparent;
   cursor: pointer; text-align: left;
-  font-family: var(--sans); font-size: 11px; color: var(--fg-muted);
+  font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
   text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
 }
 
@@ -1057,7 +1057,7 @@
 
 .skill-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); margin-right: var(--space-3); }
 
-.skill-meta { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.skill-meta { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 
 .skill-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 
@@ -1069,7 +1069,7 @@
 
 .prompt-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); margin-right: var(--space-3); }
 
-.prompt-meta { font-family: var(--mono); font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.prompt-meta { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 
 .prompt-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 
@@ -1307,7 +1307,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .fleet-a2a { margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); }
 
-.fleet-a2a-head { font-family: var(--sans); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: var(--space-2); }
+.fleet-a2a-head { font-family: var(--sans); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: var(--space-2); }
 
 .fleet-a2a-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); overflow-wrap: anywhere; }
 
@@ -1367,7 +1367,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .mesh-map-section h3 {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: var(--step--1);
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1440,7 +1440,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .mesh-node-label {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--step--1);
   fill: var(--fg);
   text-anchor: middle;
   pointer-events: none;
@@ -1448,7 +1448,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .mesh-node-meta {
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: var(--step--2);
   fill: var(--fg-muted);
   text-anchor: middle;
   pointer-events: none;
@@ -1515,23 +1515,23 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .arena-combatants { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0; }
 
-.arena-combatant { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.arena-combatant { display: flex; align-items: center; gap: 8px; font-size: var(--step-0); }
 
 .arena-combatant[data-out="true"] { opacity: 0.55; }
 
 .arena-combatant[data-winner="true"] .arena-combatant-name { color: var(--ok, #2fae4d); font-weight: 600; }
 
-.arena-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.arena-swatch { width: 10px; height: 10px; border-radius: var(--radius-sm); flex: none; }
 
-.arena-hp { width: 90px; height: 7px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: 999px; overflow: hidden; flex: none; }
+.arena-hp { width: 90px; height: 7px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius-pill); overflow: hidden; flex: none; }
 
-.arena-hp-fill { display: block; height: 100%; border-radius: 999px; }
+.arena-hp-fill { display: block; height: 100%; border-radius: var(--radius-pill); }
 
-.arena-graph > summary { cursor: pointer; font-size: 12px; color: var(--fg-muted); margin: 4px 0; }
+.arena-graph > summary { cursor: pointer; font-size: var(--step-0); color: var(--fg-muted); margin: 4px 0; }
 
 .arena-round { margin: 0.5rem 0; }
 
-.arena-round > summary { cursor: pointer; font-weight: 600; font-size: 13px; margin: 0.4rem 0; }
+.arena-round > summary { cursor: pointer; font-weight: 600; font-size: var(--step-0); margin: 0.4rem 0; }
 
 .arena-round .tool-card { margin-left: 0.9rem; }
 
@@ -1563,9 +1563,9 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .compare-answer[data-winner="true"] .compare-answer-head { color: var(--ok, #2fae4d); }
 
-.compare-answer-head { margin: 0; font-size: 13px; }
+.compare-answer-head { margin: 0; font-size: var(--step-0); }
 
-.compare-answer-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.compare-answer-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--step-0); }
 
 .compare-answer-who { margin: 0; }
 
@@ -1573,7 +1573,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .compare-your-pick { color: var(--ok, #2fae4d); }
 
-.compare-key-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 12px; }
+.compare-key-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: var(--step-0); }
 
 .compare-key-list dt { font-weight: 600; }
 
@@ -1649,14 +1649,14 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .search-hit-title { font-weight: 600; }
 
-.search-hit-snippet { margin: 4px 0; font-size: 13px; overflow-wrap: anywhere; }
+.search-hit-snippet { margin: 4px 0; font-size: var(--step-0); overflow-wrap: anywhere; }
 
 /* The match itself. mark's default yellow ignores the palette and is
    unreadable on the dark themes, so it is tokenized like everything else. */
 .search-hit-snippet mark {
   background: color-mix(in srgb, var(--accent) 28%, transparent);
   color: inherit;
-  border-radius: 3px;
+  border-radius: var(--radius);
   padding: 0 2px;
 }
 

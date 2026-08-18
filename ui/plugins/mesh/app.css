@@ -5,7 +5,7 @@
   grid-template-columns: 7rem 1fr;
   gap: 4px var(--space-3);
   margin: 0 0 var(--space-3);
-  font-size: 13px;
+  font-size: var(--step-0);
 }
 
 .mesh-facts dt {
@@ -47,7 +47,7 @@
 
 .mesh-member[data-down="true"] { border-style: dashed; }
 
-.mesh-member-id { font-size: 13px; }
+.mesh-member-id { font-size: var(--step-0); }
 
 .mesh-up[data-state="ok"] { color: var(--ok, #2fae4d); }
 .mesh-up[data-state="down"] { color: var(--danger, #d33); }
@@ -64,7 +64,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--step-0);
   min-width: 16rem;
   flex: 1 1 16rem;
 }

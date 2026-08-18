@@ -27,7 +27,7 @@
   padding-inline-start: calc(var(--space-4) + 0.9rem);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-lg);
 }
 
 /* IEC lamp: state on a dome, not a card side-tab. The note still names
@@ -130,7 +130,7 @@
 .health-band-track {
   height: 8px;
   background: var(--surface-2);
-  border-radius: 4px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
@@ -138,7 +138,7 @@
   height: 100%;
   min-width: 0;
   background: var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-lg);
 }
 
 /* One hue, getting stronger as the band gets slower: the bands are an ordered
