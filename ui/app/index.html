@@ -1126,7 +1126,9 @@ lamps carry further). The seven named palettes ride the same tokens.
      The feature views (features/board.js, goals, knowledge, prompts, todos,
      models, arena, fleet) are deliberately NOT <script> tags here: each is
      dynamically imported by app.js the first time its view is opened, so a
-     visit that never leaves chat downloads none of them. Schedule, Search,
+     visit that never leaves chat downloads none of them. core/tools.js is
+     lazy for the same reason: it only renders the Tools and Prompts views, and
+     lib/graph.js loads with the first run graph drawn. Schedule, Search,
      and Compare are disk plugins under ui/plugins/. -->
 <script type="module" src="/webui/preact-boot.js"></script>
 <script type="module" src="/webui/core/utils.js"></script>
@@ -1150,10 +1152,8 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/core/plugins.js"></script>
 <script type="module" src="/webui/core/palette.js"></script>
 <script type="module" src="/webui/core/modelpicker.js"></script>
-<script type="module" src="/webui/core/tools.js"></script>
 <script type="module" src="/webui/core/usage.js"></script>
 <script type="module" src="/webui/lib/markdown.js"></script>
-<script type="module" src="/webui/lib/graph.js"></script>
 <script type="module" src="/webui/lib/board.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>

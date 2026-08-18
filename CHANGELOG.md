@@ -7,6 +7,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- The web UI's tools catalogue (`ui/app/core/tools.js`) and run-graph layout
+  (`ui/app/lib/graph.js`) now load on first use instead of on every visit.
+  Neither is reachable from Chat: the first only renders the Tools and
+  Prompts views, the second only ever runs through `drawRun`. They were
+  eager `<script type="module">` tags and static imports of `app.js`, so a
+  visit that checked a streamed answer and left still downloaded and parsed
+  both. What a chat-only visit fetches drops from 153.7 KB gzipped over 31
+  requests to 143.3 KB over 29, measured by `ui/app/weight-budget.test.mjs`,
+  which is also the budget that keeps it there. A failed chunk shows the
+  view's Try again rather than an empty panel, and the run graph says
+  "Could not load the run graph." in place of drawing nothing.
 - `clanker rfc search` no longer answers with hits from `docs/rfcs/README.md`
   and `docs/rfcs/TEMPLATE.md`. The inventory lists every RFC by title, so a
   real match came back with an index line stapled to it; `adr search` and

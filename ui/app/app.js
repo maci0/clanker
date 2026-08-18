@@ -8,7 +8,6 @@ import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartne
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, highlightInto as mdHighlightInto, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
-import { metricsFor as graphMetricsFor, buildStages as graphBuildStages, graphSummaryText as graphSummaryTextMod, toDagInput as graphToDagInput, buildIncompleteNode as graphBuildIncompleteNode, buildNodeBox as graphBuildNodeBox, layoutGraph as graphLayoutGraph } from "./lib/graph.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { runRows as runRowsMod, groupRunsByDay as groupRunsByDayMod, matchesRunQuery, runFailed } from "./lib/runs-list.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
@@ -23,7 +22,6 @@ import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/l
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
-import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, loadWorkflows as toolsLoadWorkflows, loadSkills as toolsLoadSkills, bindTools as toolsBind } from "./core/tools.js";
 import { goalStatusLabel } from "./core/goals.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
@@ -2836,8 +2834,28 @@ function diffRuns(aId, bId){
   }).catch(function(e){ if(status) status.textContent="Diff failed: "+e.message; });
 }
 
-var metricsFor = graphMetricsFor;
-var buildStages = graphBuildStages;
+/* The run-graph layout (lib/graph.js, ~18 KB) is only ever reached through
+   drawRun, and only the Runs view draws. It loads on first draw the way the
+   d3-dag bundle it feeds already does, so a visit that stays in chat never
+   fetches it. `graphModule` stays null until then; drawRun is the one gate,
+   because every other entry point here (showNodeDetail's metrics line, the
+   Copy summary button) is reachable only from a graph that has been drawn. */
+var graphModule = null;
+var graphModulePromise = null;
+function loadGraphModule() {
+  if (!graphModulePromise) {
+    graphModulePromise = import("./lib/graph.js").then(function (m) {
+      graphModule = m;
+      return m;
+    }, function (err) {
+      graphModulePromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
+  return graphModulePromise;
+}
+function metricsFor(node) { return graphModule.metricsFor(node); }
+function buildStages(nodes) { return graphModule.buildStages(nodes); }
 
 var lastGraph = null;
 var lastBuilt = null;
@@ -2860,6 +2878,15 @@ window.addEventListener("pagehide", function () {
 });
 
 function drawRun(g) {
+  // The layout helpers arrive with the chunk above. Re-enter once it has,
+  // and say so in the graph panel if it never does, so a dead chunk is a
+  // visible failure rather than a Runs view that silently stays empty.
+  if (!graphModule) {
+    loadGraphModule().then(function () { drawRun(g); }).catch(function () {
+      showLoadError(el.runGraph, "Could not load the run graph.", function () { drawRun(g); });
+    });
+    return;
+  }
   // Redraws also happen on window resize (same run, new layout) — only
   // close the detail panel when the run itself actually changed, not on
   // every resize while someone's mid-read of a node's output.
@@ -3348,12 +3375,8 @@ function drawRun(g) {
   doLayout(_searchQ);
 }
 
-var graphSummaryText = graphSummaryTextMod;
-var toDagInput = graphToDagInput;
-var layoutGraph = graphLayoutGraph;
-
-var buildIncompleteNode = graphBuildIncompleteNode;
-var buildNodeBox = graphBuildNodeBox;
+function graphSummaryText(built) { return graphModule.graphSummaryText(built); }
+function layoutGraph(canvas, built, slowest, opts) { return graphModule.layoutGraph(canvas, built, slowest, opts); }
 
 /* Rows for the edit-diff card: removed/added lines with a couple of context
    lines around the change, computed from an edit tool's old/new fragments.
@@ -4912,26 +4935,43 @@ function loadUsage() {
 // ---- tools: every WASM plugin, and a switch for the optional ones ------
 
 var allToolsHolder = { list: [] };
-var allTools = allToolsHolder.list;
 
 var toolState = uiState({ tools: [], filter: "" });
 
-var renderTools = toolsRenderTools;
-var showToolDetail = toolsShowDetail;
-var toggleTool = toolsToggle;
-var loadTools = toolsLoadTools;
-
-toolsBind({
-  el: el,
-  allToolsHolder: allToolsHolder,
-  toolState: toolState,
-  clip: clip,
-  readJson: readJson,
-  scrollTo: scrollTo,
-  bind: bind,
-  T: T,
-  UI: UI
-});
+/* The tools catalogue (core/tools.js, ~20 KB) renders the Tools view and the
+   Prompts view's workflow/skill lists. Neither is chat, so it loads on first
+   open like the feature views rather than on every visit. `bindTools` used to
+   run at page load; it now runs inside the loader, once. */
+var toolsModulePromise = null;
+function loadToolsModule() {
+  if (!toolsModulePromise) {
+    toolsModulePromise = import("./core/tools.js").then(function (m) {
+      bindOnce("tools-module", function () {
+        m.bindTools({
+          el: el,
+          allToolsHolder: allToolsHolder,
+          toolState: toolState,
+          clip: clip,
+          readJson: readJson,
+          scrollTo: scrollTo,
+          bind: bind,
+          T: T,
+          UI: UI
+        });
+      });
+      return m;
+    }, function (err) {
+      toolsModulePromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
+  return toolsModulePromise;
+}
+/* Reached from the command palette, which can fire before the Tools view has
+   ever been opened; the module loads on demand and the detail opens after. */
+var showToolDetail = function (t) {
+  loadToolsModule().then(function (m) { m.showToolDetail(t); }).catch(function () {});
+};
 
 // ---- views: one section visible at a time -----------------------------
 
@@ -5127,9 +5167,12 @@ var viewLoaders = {
   },
   prompts: function () {
     bindOnce("prompts", function () { loadPromptsModule().then(function (m) { m.bindPrompts(); }); });
-    return Promise.all([loadPromptsModule().then(function (m) { return m.loadPromptsView(); }), toolsLoadWorkflows(), toolsLoadSkills()]);
+    return Promise.all([
+      loadPromptsModule().then(function (m) { return m.loadPromptsView(); }),
+      loadToolsModule().then(function (m) { return Promise.all([m.loadWorkflows(), m.loadSkills()]); })
+    ]);
   },
-  tools: loadTools,
+  tools: function () { return loadToolsModule().then(function (m) { return m.loadTools(); }); },
   system: function () { return Promise.all([loadUsage(), loadStatus(), loadLogList(), loadWebuiPlugins()]); }
 };
 
