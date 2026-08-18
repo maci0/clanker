@@ -9,6 +9,7 @@ const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const strField = @import("../util/json.zig").strField;
 const manifest = @import("manifest.zig");
+const test_env = @import("../util/test_env.zig");
 
 pub const Tool = struct {
     /// Schema version of the descriptor this was parsed from. Absent in the
@@ -882,17 +883,13 @@ pub const Registry = struct {
 // ------------------------------------------------------------------- tests --
 
 test "registry loads descriptors" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     try dir.writeFile(io, .{
@@ -908,7 +905,7 @@ test "registry loads descriptors" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
     const tool = reg.get("calculator").?;
     try std.testing.expectEqualStrings("calculator", tool.name);
     // Bare name: resolved beside the manifest, so a self-contained plugin
@@ -920,17 +917,13 @@ test "registry loads descriptors" {
 }
 
 test "a descriptor's fuel budget is parsed, and junk values keep the default" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     try dir.writeFile(io, .{
@@ -946,23 +939,19 @@ test "a descriptor's fuel budget is parsed, and junk values keep the default" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
     try std.testing.expectEqual(@as(u64, 250_000_000), reg.get("thrifty").?.fuel);
     try std.testing.expectEqual(@as(u64, 0), reg.get("sloppy").?.fuel);
 }
 
 test "plugin toggles disable optional tools but never core ones" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     try dir.writeFile(io, .{
@@ -983,7 +972,7 @@ test "plugin toggles disable optional tools but never core ones" {
         .data = "{\"disabled\":[\"web_search\",\"status\"]}",
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
     try std.testing.expect(!reg.get("web_search").?.enabled);
     try std.testing.expect(reg.get("status").?.enabled); // core: toggle ignored
 
@@ -993,17 +982,13 @@ test "plugin toggles disable optional tools but never core ones" {
 }
 
 test "config overrides apply only to keys the descriptor opted in" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     // `max_depth` is offered for tuning; `secret` is not.
@@ -1031,7 +1016,7 @@ test "config overrides apply only to keys the descriptor opted in" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
 
     const rlm = reg.get("rlm").?;
     try std.testing.expectEqual(@as(i64, 6), rlm.config.object.get("max_depth").?.integer);
@@ -1080,106 +1065,89 @@ test "a missing tools_dir yields an empty registry without error" {
     // Wrong path is a soft miss (warn + empty), not a hard fail, serve and
     // doctor both load this way. The log must not sole-blame zig build tools;
     // that phrasing is asserted by source grep in the change's verification.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"no-such-tools-dir"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"no-such-tools-dir"});
     try std.testing.expectEqual(@as(usize, 0), reg.tools.count());
     try std.testing.expect(reg.get("webui") == null);
 }
 
 test "a two-entry tools_dir list loads both directories" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "builtins");
-    try tmp.dir.createDirPath(io, "extra");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "builtins");
+    try env.tmp.dir.createDirPath(io, "extra");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "builtins/alpha.tool.json",
         .data =
         \\{ "name": "alpha", "description": "a", "wasm": "alpha.wasm", "input_schema": {} }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "extra/beta.tool.json",
         .data =
         \\{ "name": "beta", "description": "b", "wasm": "beta.wasm", "input_schema": {} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{ "builtins", "extra" });
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{ "builtins", "extra" });
     try std.testing.expectEqual(@as(usize, 2), reg.tools.count());
     try std.testing.expectEqualStrings("builtins/alpha.wasm", reg.get("alpha").?.wasm);
     try std.testing.expectEqualStrings("extra/beta.wasm", reg.get("beta").?.wasm);
 }
 
 test "a later tools_dir wins a cross-directory name collision" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "builtins");
-    try tmp.dir.createDirPath(io, "override");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "builtins");
+    try env.tmp.dir.createDirPath(io, "override");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "builtins/echo.tool.json",
         .data =
         \\{ "name": "echo", "description": "stock", "wasm": "stock.wasm", "input_schema": {} }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "override/echo.tool.json",
         .data =
         \\{ "name": "echo", "description": "local", "wasm": "local.wasm", "input_schema": {} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{ "builtins", "override" });
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{ "builtins", "override" });
     try std.testing.expectEqual(@as(usize, 1), reg.tools.count());
     try std.testing.expectEqualStrings("local", reg.get("echo").?.description);
     try std.testing.expectEqualStrings("override/local.wasm", reg.get("echo").?.wasm);
 }
 
 test "a missing tools_dir list entry does not empty the rest" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "builtins");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "builtins");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "builtins/keep.tool.json",
         .data =
         \\{ "name": "keep", "description": "k", "wasm": "keep.wasm", "input_schema": {} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{ "no-such-extra", "builtins" });
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{ "no-such-extra", "builtins" });
     try std.testing.expectEqual(@as(usize, 1), reg.tools.count());
     try std.testing.expect(reg.get("keep") != null);
 }
@@ -1379,21 +1347,16 @@ test "a manifest with no version is v1, and an unknown version is refused" {
 }
 
 test "a bare wasm name resolves beside its manifest; a path never moves" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const io = env.io();
 
     // What a third-party package looks like: one directory holding the
     // manifest and the module, with no idea what clanker's cwd will be.
-    try tmp.dir.createDirPath(io, "vendor/hello");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "vendor/hello");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "vendor/hello/hello.tool.json",
         .data =
         \\{ "name": "hello", "description": "d", "wasm": "hello.wasm", "input_schema": {"type":"object"} }
@@ -1401,14 +1364,14 @@ test "a bare wasm name resolves beside its manifest; a path never moves" {
     });
     // An in-tree manifest names a path from the repo root and must keep
     // meaning exactly that.
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "vendor/hello/rooted.tool.json",
         .data =
         \\{ "name": "rooted", "description": "d", "wasm": "zig-out/tools/rooted.wasm", "input_schema": {"type":"object"} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"vendor/hello"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"vendor/hello"});
     try std.testing.expectEqualStrings("vendor/hello/hello.wasm", reg.get("hello").?.wasm);
     try std.testing.expectEqualStrings("zig-out/tools/rooted.wasm", reg.get("rooted").?.wasm);
 

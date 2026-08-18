@@ -22,6 +22,7 @@ const atomic_write = @import("../util/atomic_write.zig");
 const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const utf8 = @import("../util/utf8.zig");
+const test_env = @import("../util/test_env.zig");
 
 /// Guards the read-modify-write in `append`. Separate from the log so that
 /// trimming, which replaces the log, cannot invalidate a held lock.
@@ -1219,15 +1220,10 @@ test "jsonlLineCount ignores blank lines" {
 }
 
 test "append + readHistory + listRooms round-trip" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.instance.name = "test-clanker";
@@ -1236,39 +1232,34 @@ test "append + readHistory + listRooms round-trip" {
     cfg.chatrooms.max_history = 100;
 
     const m1 = Message{ .room = "dev", .from = "test-clanker", .text = "hello world", .ts = 1000, .id = "m1" };
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m1);
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m1);
     const m2 = Message{ .room = "dev", .from = "other", .text = "hi back", .ts = 1001, .id = "m2" };
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m2);
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m2);
 
-    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
     try std.testing.expectEqual(@as(usize, 2), hist.len);
     try std.testing.expectEqualStrings("hi back", hist[0].text); // newest first
     try std.testing.expectEqualStrings("hello world", hist[1].text);
 
-    const after = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 1000, 50);
+    const after = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 1000, 50);
     try std.testing.expectEqual(@as(usize, 1), after.len);
     try std.testing.expectEqualStrings("hi back", after[0].text);
 
-    const rooms = try listRooms(tmp.dir, io, arena, "", &cfg);
+    const rooms = try listRooms(env.tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 1), rooms.len);
     try std.testing.expectEqualStrings("dev", rooms[0].room);
     try std.testing.expectEqual(@as(usize, 2), rooms[0].messages);
     try std.testing.expectEqualStrings("other", rooms[0].last_from);
 
-    const fresh = try readNew(tmp.dir, io, arena, "", &cfg, .{ .ts = 1000 });
+    const fresh = try readNew(env.tmp.dir, io, arena, "", &cfg, .{ .ts = 1000 });
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
 }
 
 test "append dedups a redelivered id even when an older text holds the id byte pattern" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.instance.name = "test-clanker";
@@ -1279,14 +1270,14 @@ test "append dedups a redelivered id even when an older text holds the id byte p
     // The first message's text contains the exact `"id":"m42"` field pattern:
     // the byte prefilter in `hasMessageId` must not stop at that false match
     // and miss the real `id` field of the later redelivery.
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "a",
         .text = "look: \"id\":\"m42\"",
         .ts = 1,
         .id = "m1",
     });
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "b",
         .text = "real",
@@ -1294,28 +1285,23 @@ test "append dedups a redelivered id even when an older text holds the id byte p
         .id = "m42",
     });
     // Redelivery of m42: dropped despite the false byte pattern in m1's text.
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "b",
         .text = "real again",
         .ts = 3,
         .id = "m42",
     });
-    const raw = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(1 << 20));
+    const raw = try env.tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(raw);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, raw, "\"id\":\"m42\""));
 }
 
 test "appendLocal skips dedup while append keeps it" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.instance.name = "test-clanker";
@@ -1326,27 +1312,22 @@ test "appendLocal skips dedup while append keeps it" {
     // A locally generated id (the path `sendMessageOpts` takes) is unique by
     // construction, so appendLocal writes it twice without a dedup scan.
     const m = Message{ .room = "dev", .from = "test-clanker", .text = "hello", .ts = 1, .id = "m1-2-1" };
-    try appendLocal(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
-    try appendLocal(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
+    try appendLocal(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
+    try appendLocal(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
     // A redelivery of the same id through the wire path must still dedup.
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, m);
 
-    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
     try std.testing.expectEqual(@as(usize, 2), hist.len);
     try std.testing.expectEqualStrings("hello", hist[0].text);
     try std.testing.expectEqualStrings("hello", hist[1].text);
 }
 
 test "append trims to max_history and keeps the newest lines" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.chatrooms.on = true;
@@ -1359,7 +1340,7 @@ test "append trims to max_history and keeps the newest lines" {
     // memory and the log came back corrupted / the write EFAULTed).
     var i: usize = 0;
     while (i < 6) : (i += 1) {
-        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
             .room = "dev",
             .from = "test-clanker",
             .text = try std.fmt.allocPrint(arena, "line {d}", .{i}),
@@ -1369,28 +1350,23 @@ test "append trims to max_history and keeps the newest lines" {
     }
 
     // Only the newest 3 survive, oldest dropped first.
-    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 50);
     try std.testing.expectEqual(@as(usize, 3), hist.len);
     try std.testing.expectEqualStrings("line 5", hist[0].text); // newest first
     try std.testing.expectEqualStrings("line 4", hist[1].text);
     try std.testing.expectEqualStrings("line 3", hist[2].text);
 
     // The trimmed log must still be a valid, parseable room file.
-    const rooms = try listRooms(tmp.dir, io, arena, "", &cfg);
+    const rooms = try listRooms(env.tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 1), rooms.len);
     try std.testing.expectEqual(@as(usize, 3), rooms[0].messages);
 }
 
 test "append still trims and dedups when the retained window exceeds 1 MiB" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.chatrooms.on = true;
@@ -1404,7 +1380,7 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
     const text = "x" ** 4096;
     var i: usize = 0;
     while (i < 300) : (i += 1) {
-        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
             .room = "dev",
             .from = "test-clanker",
             .text = text,
@@ -1415,7 +1391,7 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
 
     // Only the newest 256 of 300 survive, and the oldest surviving line is
     // m44 (m0..m43 were trimmed). The log is ~1.1 MiB, past the old cap.
-    const raw = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
+    const raw = try env.tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
     defer std.testing.allocator.free(raw);
     var lines: std.ArrayList([]const u8) = .empty;
     defer lines.deinit(std.testing.allocator);
@@ -1432,14 +1408,14 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
     // must dedup even though its line sits at the end of a > 1 MiB log. The
     // old scan walked the tail of the truncated 1 MiB prefix -- the middle
     // of the file -- and appended a duplicate.
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "test-clanker",
         .text = text,
         .ts = 999,
         .id = "m299",
     });
-    const raw2 = try tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
+    const raw2 = try env.tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(4 * 1024 * 1024));
     defer std.testing.allocator.free(raw2);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, raw2, "\"id\":\"m299\""));
 
@@ -1448,27 +1424,22 @@ test "append still trims and dedups when the retained window exceeds 1 MiB" {
     // short read, and each of these turns that into an empty result, so the
     // fixed 1 MiB cap they used to carry silently emptied the agent inbox,
     // the board fold and the room list on any room this size.
-    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 5);
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 5);
     try std.testing.expectEqual(@as(usize, 5), hist.len);
-    const asc = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "dev", 0, 5);
+    const asc = try readHistoryAsc(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 5);
     try std.testing.expectEqual(@as(usize, 5), asc.msgs.len);
-    const fresh = try readNew(tmp.dir, io, arena, "", &cfg, .{ .id = "m290" });
+    const fresh = try readNew(env.tmp.dir, io, arena, "", &cfg, .{ .id = "m290" });
     try std.testing.expectEqual(@as(usize, inbox_limit), fresh.len);
-    const rooms = try listRooms(tmp.dir, io, arena, "", &cfg);
+    const rooms = try listRooms(env.tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 1), rooms.len);
     try std.testing.expectEqual(@as(usize, 256), rooms[0].messages);
 }
 
 test "readHistoryAsc pages oldest-first and extends through a shared boundary timestamp" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.instance.name = "test-clanker";
@@ -1488,14 +1459,14 @@ test "readHistoryAsc pages oldest-first and extends through a shared boundary ti
         .{ .ts = 2, .id = "d" },
     };
     for (specs) |sp| {
-        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "board", .from = "t", .text = "x", .ts = sp.ts, .id = sp.id });
+        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "board", .from = "t", .text = "x", .ts = sp.ts, .id = sp.id });
     }
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "dev", .from = "t", .text = "x", .ts = 2, .id = "zz" });
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{ .room = "dev", .from = "t", .text = "x", .ts = 2, .id = "zz" });
 
     // limit 2 cuts inside the ts=2 group: the page must extend through it
     // (4 messages: ts 1, 2, 2, 2), or the caller's next `after` cursor of 2
     // would skip the group's remainder.
-    const p1 = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 0, 2);
+    const p1 = try readHistoryAsc(env.tmp.dir, io, arena, "", &cfg, "board", 0, 2);
     try std.testing.expectEqual(@as(usize, 4), p1.msgs.len);
     try std.testing.expect(p1.has_more);
     try std.testing.expectEqualStrings("a", p1.msgs[0].id);
@@ -1503,33 +1474,28 @@ test "readHistoryAsc pages oldest-first and extends through a shared boundary ti
     try std.testing.expectEqualStrings("d", p1.msgs[3].id);
 
     // The next page picks up exactly where the cursor points.
-    const p2 = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 2, 2);
+    const p2 = try readHistoryAsc(env.tmp.dir, io, arena, "", &cfg, "board", 2, 2);
     try std.testing.expectEqual(@as(usize, 2), p2.msgs.len);
     try std.testing.expect(!p2.has_more);
     try std.testing.expectEqualStrings("e", p2.msgs[0].id);
     try std.testing.expectEqualStrings("f", p2.msgs[1].id);
 
     // A page that fits under the limit reports no more and stays ascending.
-    const all = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 0, 50);
+    const all = try readHistoryAsc(env.tmp.dir, io, arena, "", &cfg, "board", 0, 50);
     try std.testing.expectEqual(@as(usize, 6), all.msgs.len);
     try std.testing.expect(!all.has_more);
 
     // A zero limit is an empty page, not an underflow on `limit - 1`.
-    const none = try readHistoryAsc(tmp.dir, io, arena, "", &cfg, "board", 0, 0);
+    const none = try readHistoryAsc(env.tmp.dir, io, arena, "", &cfg, "board", 0, 0);
     try std.testing.expectEqual(@as(usize, 0), none.msgs.len);
     try std.testing.expect(!none.has_more);
 }
 
 test "inbox cursor drains a capped same-timestamp burst without loss" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.chatrooms.max_history = 100;
@@ -1537,7 +1503,7 @@ test "inbox cursor drains a capped same-timestamp burst without loss" {
     var i: usize = 0;
     while (i < inbox_limit + 2) : (i += 1) {
         const id = try std.fmt.allocPrint(arena, "burst-{d}", .{i});
-        try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
             .room = "dev",
             .from = "peer",
             .text = "burst",
@@ -1546,10 +1512,10 @@ test "inbox cursor drains a capped same-timestamp burst without loss" {
         });
     }
 
-    const first = try readNew(tmp.dir, io, arena, "", &cfg, .{});
+    const first = try readNew(env.tmp.dir, io, arena, "", &cfg, .{});
     try std.testing.expectEqual(@as(usize, inbox_limit), first.len);
     try std.testing.expectEqualStrings("burst-0", first[0].id);
-    const second = try readNew(tmp.dir, io, arena, "", &cfg, .{
+    const second = try readNew(env.tmp.dir, io, arena, "", &cfg, .{
         .id = first[first.len - 1].id,
         .ts = first[first.len - 1].ts,
     });
@@ -1559,45 +1525,36 @@ test "inbox cursor drains a capped same-timestamp burst without loss" {
 }
 
 test "subscribe on/off round-trip" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.chatrooms.on = true;
     cfg.chatrooms.rooms = &.{"dev"};
 
-    try subscribe(tmp.dir, io, std.testing.allocator, arena, "", "ops", true);
-    const rooms = try subscribedRooms(tmp.dir, io, arena, "", &cfg);
+    try subscribe(env.tmp.dir, io, std.testing.allocator, arena, "", "ops", true);
+    const rooms = try subscribedRooms(env.tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 2), rooms.len);
-    try std.testing.expect(isSubscribed(tmp.dir, io, arena, "", &cfg, "ops"));
+    try std.testing.expect(isSubscribed(env.tmp.dir, io, arena, "", &cfg, "ops"));
 
-    try subscribe(tmp.dir, io, std.testing.allocator, arena, "", "dev", false);
-    const rooms2 = try subscribedRooms(tmp.dir, io, arena, "", &cfg);
+    try subscribe(env.tmp.dir, io, std.testing.allocator, arena, "", "dev", false);
+    const rooms2 = try subscribedRooms(env.tmp.dir, io, arena, "", &cfg);
     try std.testing.expectEqual(@as(usize, 1), rooms2.len);
     try std.testing.expectEqualStrings("ops", rooms2[0]);
 }
 
 test "subscribe does not overwrite malformed state" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     const malformed = "{not-json";
-    try tmp.dir.writeFile(io, .{ .sub_path = sub_path, .data = malformed });
-    try std.testing.expectError(error.InvalidSubscriptionState, subscribe(tmp.dir, io, std.testing.allocator, arena, "", "ops", true));
-    const preserved = try tmp.dir.readFileAlloc(io, sub_path, arena, .limited(1024));
+    try env.tmp.dir.writeFile(io, .{ .sub_path = sub_path, .data = malformed });
+    try std.testing.expectError(error.InvalidSubscriptionState, subscribe(env.tmp.dir, io, std.testing.allocator, arena, "", "ops", true));
+    const preserved = try env.tmp.dir.readFileAlloc(io, sub_path, arena, .limited(1024));
     try std.testing.expectEqualStrings(malformed, preserved);
 }
 
@@ -1605,81 +1562,66 @@ test "meta ops with empty state_dir stay in the working directory" {
     // metaPath used to build "/room_meta.json" for state_dir == "", which
     // openat resolves at the filesystem root. The module's contract is that
     // every state file lives under base + state_dir, and "" means cwd.
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try setTopic(tmp.dir, io, std.testing.allocator, arena, "", "dev", "topic");
-    const topic = try getTopic(tmp.dir, io, arena, "", "dev");
+    try setTopic(env.tmp.dir, io, std.testing.allocator, arena, "", "dev", "topic");
+    const topic = try getTopic(env.tmp.dir, io, arena, "", "dev");
     try std.testing.expectEqualStrings("topic", topic.?);
 
     // The meta file must exist under the base dir, never at "/room_meta.json".
-    try tmp.dir.access(io, "room_meta.json", .{});
-    const pinned = try togglePin(tmp.dir, io, std.testing.allocator, arena, "", "dev", "m1");
+    try env.tmp.dir.access(io, "room_meta.json", .{});
+    const pinned = try togglePin(env.tmp.dir, io, std.testing.allocator, arena, "", "dev", "m1");
     try std.testing.expect(pinned);
-    const pins = try getPins(tmp.dir, io, arena, "", "dev");
+    const pins = try getPins(env.tmp.dir, io, arena, "", "dev");
     try std.testing.expectEqual(@as(usize, 1), pins.?.len);
 }
 
 test "receive filters by subscription" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.chatrooms.on = true;
     cfg.chatrooms.rooms = &.{"dev"};
 
     const in_room = Message{ .room = "dev", .from = "peer", .text = "hi", .ts = 1, .id = "a" };
-    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, in_room));
+    try std.testing.expect(try receive(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, in_room));
     const out_room = Message{ .room = "other", .from = "peer", .text = "hi", .ts = 2, .id = "b" };
-    try std.testing.expect(!try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, out_room));
+    try std.testing.expect(!try receive(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, out_room));
 
-    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "other", 0, 10);
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "other", 0, 10);
     try std.testing.expectEqual(@as(usize, 0), hist.len);
 }
 
 test "receive ignores a redelivered message id" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.chatrooms.on = true;
     cfg.chatrooms.rooms = &.{"dev"};
 
     const msg = Message{ .room = "dev", .from = "peer", .text = "hi", .ts = 1, .id = "dup-1" };
-    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, msg));
+    try std.testing.expect(try receive(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, msg));
     // Redelivered (e.g. the sender retried after losing the response): same
     // state as running once, not a second entry.
-    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, msg));
+    try std.testing.expect(try receive(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, msg));
 
-    const hist = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 10);
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 10);
     try std.testing.expectEqual(@as(usize, 1), hist.len);
 
     // An id-less message (an old peer that never sent one) is never deduped.
     const no_id = Message{ .room = "dev", .from = "peer", .text = "no id here", .ts = 2, .id = "" };
-    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
-    try std.testing.expect(try receive(tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
-    const hist2 = try readHistory(tmp.dir, io, arena, "", &cfg, "dev", 0, 10);
+    try std.testing.expect(try receive(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
+    try std.testing.expect(try receive(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, no_id));
+    const hist2 = try readHistory(env.tmp.dir, io, arena, "", &cfg, "dev", 0, 10);
     try std.testing.expectEqual(@as(usize, 3), hist2.len);
 }
 
@@ -1837,15 +1779,10 @@ test "the cooldown table refuses what it cannot hold instead of truncating" {
 }
 
 test "edit, delete and react distinguish missing from not-owner" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var cfg = config_mod.Config{};
     cfg.instance.name = "alice";
@@ -1853,7 +1790,7 @@ test "edit, delete and react distinguish missing from not-owner" {
     cfg.chatrooms.rooms = &.{"dev"};
     cfg.chatrooms.max_history = 100;
 
-    try append(tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
         .room = "dev",
         .from = "alice",
         .text = "mine",
@@ -1861,64 +1798,54 @@ test "edit, delete and react distinguish missing from not-owner" {
         .id = "m1",
     });
 
-    try std.testing.expectError(error.NotFound, editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "x", "alice"));
-    try std.testing.expectError(error.NotOwner, editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "x", "bob"));
-    const edited = try editMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "updated", "alice");
+    try std.testing.expectError(error.NotFound, editMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "x", "alice"));
+    try std.testing.expectError(error.NotOwner, editMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "x", "bob"));
+    const edited = try editMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "updated", "alice");
     try std.testing.expectEqualStrings("updated", edited.text);
 
-    try std.testing.expectError(error.NotFound, toggleReaction(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "👍", "alice"));
-    try std.testing.expect(try toggleReaction(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "👍", "alice"));
+    try std.testing.expectError(error.NotFound, toggleReaction(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "👍", "alice"));
+    try std.testing.expect(try toggleReaction(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "👍", "alice"));
 
-    try std.testing.expectError(error.NotFound, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "alice"));
-    try std.testing.expectError(error.NotOwner, deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "bob"));
-    try deleteMessage(tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "alice");
+    try std.testing.expectError(error.NotFound, deleteMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "nope", "alice"));
+    try std.testing.expectError(error.NotOwner, deleteMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "bob"));
+    try deleteMessage(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, "m1", "alice");
 }
 
 test "an unreadable room_meta.json refuses the write instead of erasing the other rooms" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     // Two rooms with metadata, then the file is corrupted under us.
-    try setTopic(tmp.dir, io, std.testing.allocator, arena, "", "dev", "shipping");
-    try setTopic(tmp.dir, io, std.testing.allocator, arena, "", "ops", "on call");
-    try tmp.dir.writeFile(io, .{ .sub_path = "room_meta.json", .data = "{not json" });
+    try setTopic(env.tmp.dir, io, std.testing.allocator, arena, "", "dev", "shipping");
+    try setTopic(env.tmp.dir, io, std.testing.allocator, arena, "", "ops", "on call");
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "room_meta.json", .data = "{not json" });
 
     // Metadata mutation is read-modify-write, so a failed read must not become
     // an empty map: that rewrites the file with only the room being edited.
     try std.testing.expectError(
         error.SyntaxError,
-        setTopic(tmp.dir, io, std.testing.allocator, arena, "", "dev", "clobbered"),
+        setTopic(env.tmp.dir, io, std.testing.allocator, arena, "", "dev", "clobbered"),
     );
-    const after = try tmp.dir.readFileAlloc(io, "room_meta.json", arena, .limited(4096));
+    const after = try env.tmp.dir.readFileAlloc(io, "room_meta.json", arena, .limited(4096));
     try std.testing.expectEqualStrings("{not json", after);
 }
 
 test "pins stay bounded and a missing meta file is not an error" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     // No file yet is the one read failure that legitimately means "empty".
-    try std.testing.expectEqual(@as(?[]const []const u8, null), try getPins(tmp.dir, io, arena, "", "dev"));
+    try std.testing.expectEqual(@as(?[]const []const u8, null), try getPins(env.tmp.dir, io, arena, "", "dev"));
 
     var i: usize = 0;
     while (i < max_pins_per_room + 5) : (i += 1) {
-        _ = try togglePin(tmp.dir, io, std.testing.allocator, arena, "", "dev", try std.fmt.allocPrint(arena, "m{d}", .{i}));
+        _ = try togglePin(env.tmp.dir, io, std.testing.allocator, arena, "", "dev", try std.fmt.allocPrint(arena, "m{d}", .{i}));
     }
-    const pins = (try getPins(tmp.dir, io, arena, "", "dev")).?;
+    const pins = (try getPins(env.tmp.dir, io, arena, "", "dev")).?;
     try std.testing.expectEqual(max_pins_per_room, pins.len);
     // Oldest dropped, newest kept.
     try std.testing.expectEqualStrings("m5", pins[0]);

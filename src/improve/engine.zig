@@ -33,6 +33,7 @@ const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const disk_cap = @import("../util/disk_cap.zig");
 const worktree_mod = @import("worktree.zig");
+const test_env = @import("../util/test_env.zig");
 
 pub const Options = struct {
     instructions: []const u8,
@@ -4088,13 +4089,11 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     // The improvement machinery is modifiable, so the one thing that must not
     // be removable is the gating itself. This runs against the staged text,
     // which is the only place a patch exists before it is promoted.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = fixture.io();
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
     var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
@@ -4107,9 +4106,7 @@ test "a patch that drops a gate call from the engine is rejected before it compi
         .instructions = "",
     };
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
+    const staged = fixture.tmp.dir;
     try staged.createDirPath(io, "src/improve");
 
     // A file that still contains every load-bearing call passes.

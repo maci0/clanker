@@ -94,6 +94,7 @@ const webui_vendor_patternfly = ui_vendor.patternfly;
 const webui_vendor_patternfly_addons = ui_vendor.patternfly_addons;
 const edit_distance = @import("util/edit_distance.zig");
 const no_color = @import("util/no_color.zig");
+const test_env = @import("util/test_env.zig");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
@@ -10096,22 +10097,18 @@ fn readConfigForEdit(io: std.Io, arena: std.mem.Allocator, name: []const u8) ![]
 }
 
 test "a config file that cannot be read is an error, never an empty edit base" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     // Absent is an empty file: that is what a first-time edit sees.
-    try std.testing.expectEqualStrings("", try readConfigForEditIn(io, arena, tmp.dir, "config.local.toml"));
+    try std.testing.expectEqualStrings("", try readConfigForEditIn(io, arena, env.tmp.dir, "config.local.toml"));
 
     // Present but unreadable is not. Callers splice into these bytes and
     // write the splice back, so "" here silently replaces the whole config.
-    try tmp.dir.createDirPath(io, "config.local.toml");
-    try std.testing.expectError(error.ConfigFileUnreadable, readConfigForEditIn(io, arena, tmp.dir, "config.local.toml"));
+    try env.tmp.dir.createDirPath(io, "config.local.toml");
+    try std.testing.expectError(error.ConfigFileUnreadable, readConfigForEditIn(io, arena, env.tmp.dir, "config.local.toml"));
 }
 
 /// `GET /api/config/raw?file=<name>` — the file's current bytes, for the
@@ -11037,26 +11034,21 @@ fn collectThemeEntries(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ![
 }
 
 test "collectThemeEntries orders by order then name and skips junk" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const arena = env.arena();
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    try env.tmp.dir.createDirPath(io, "themes");
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/zeta.json", .data = "{\"scheme\":\"dark\",\"order\":2,\"tokens\":{\"--bg\":\"#111\"}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/alpha.json", .data = "{\"scheme\":\"light\",\"order\":2,\"tokens\":{\"--bg\":\"#eee\"}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/first.json", .data = "{\"scheme\":\"dark\",\"order\":1,\"tokens\":{\"--bg\":\"#000\"}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/notes.md", .data = "nope" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/catalog.json", .data = "{\"tokens\":{}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/bad.json", .data = "not json" });
 
-    try tmp.dir.createDirPath(io, "themes");
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/zeta.json", .data = "{\"scheme\":\"dark\",\"order\":2,\"tokens\":{\"--bg\":\"#111\"}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/alpha.json", .data = "{\"scheme\":\"light\",\"order\":2,\"tokens\":{\"--bg\":\"#eee\"}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/first.json", .data = "{\"scheme\":\"dark\",\"order\":1,\"tokens\":{\"--bg\":\"#000\"}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/notes.md", .data = "nope" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/catalog.json", .data = "{\"tokens\":{}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/bad.json", .data = "not json" });
-
-    const entries = try collectThemeEntries(io, tmp.dir, arena);
+    const entries = try collectThemeEntries(io, env.tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 3), entries.len);
     try std.testing.expectEqualStrings("first", entries[0].id);
     try std.testing.expectEqualStrings("alpha", entries[1].id);
@@ -12347,25 +12339,20 @@ test "fork route suffix parsing yields a valid source id and refuses traversal" 
 }
 
 test "forkSession mints an id that still passes validSessionId" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const arena = env.arena();
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try session.saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try session.saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = "sess-1",
         .title = "t",
         .messages = &.{.{ .role = .user, .content = "hi" }},
         .created = 1,
         .updated = 2,
     });
-    const forked = try session.forkSession(io, std.testing.allocator, arena, tmp.dir, "sess-1");
+    const forked = try session.forkSession(io, std.testing.allocator, arena, env.tmp.dir, "sess-1");
     // The fork id is returned to the client and must itself stay addressable
     // through the id-validated session endpoints.
     try std.testing.expect(session.validSessionId(forked));
@@ -15677,17 +15664,13 @@ test "parseWithCommand resolves the real command when a global flag precedes it"
 }
 
 test "the listener resolves config < env < flag, in that order" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = fixture.io();
 
-    try tmp.dir.writeFile(io, .{
+    try fixture.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -15705,7 +15688,7 @@ test "the listener resolves config < env < flag, in that order" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, fixture.tmp.dir, "config.toml", "absent.toml");
 
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
@@ -15755,17 +15738,13 @@ test "with nothing configured the listener is loopback on the default port" {
     // The safe default has to survive the new layering: an install with no
     // [serve] table, no CLANKER_* and no flags must still bind loopback
     // rather than land on the network by accident.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = fixture.io();
 
-    try tmp.dir.writeFile(io, .{
+    try fixture.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -15778,7 +15757,7 @@ test "with nothing configured the listener is loopback on the default port" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, fixture.tmp.dir, "config.toml", "absent.toml");
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
 
@@ -15799,15 +15778,11 @@ test "serve --proxy and --no-proxy resolve against the file and env" {
     const port = try parse(&.{ "clanker", "serve", "--proxy-port", "17922" }, null);
     try std.testing.expectEqual(@as(?u16, 17922), port.proxy_port);
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    try tmp.dir.writeFile(io, .{
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
+    const io = fixture.io();
+    try fixture.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -15823,7 +15798,7 @@ test "serve --proxy and --no-proxy resolve against the file and env" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, fixture.tmp.dir, "config.toml", "absent.toml");
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
 
@@ -16297,17 +16272,13 @@ test "eval help uses operator-facing names" {
 }
 
 test "--model provider/model picks both, and leaves a slashed model id alone" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -16326,7 +16297,7 @@ test "--model provider/model picks both, and leaves a slashed model id alone" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, env.tmp.dir, "config.toml", "absent.toml");
 
     // The prefix names a provider, so it selects one.
     const split = try resolveProvider(&cfg, .{ .model = "zai/glm-5.2" });
@@ -16557,16 +16528,12 @@ test "run failure detail names the provider and hints at vision when images were
 }
 
 test "resolveRunTask attaches explicit and newest-active goals from real goals.json" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.createDirPath(io, "state");
     // Two active goals; the higher `updated` must win auto-steer. One done
     // goal must never be selected.
     const goals_json =
@@ -16576,10 +16543,10 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
         \\  {"id":"new","objective":"ship the feature","completion_criterion":"tests green","boundaries":"docs only","status":"active","updated":50}
         \\]
     ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
 
     // Explicit id: that goal only, even if not the newest.
-    const explicit = try resolveRunTask(arena, io, tmp.dir, "do the thing", "old", false);
+    const explicit = try resolveRunTask(arena, io, env.tmp.dir, "do the thing", "old", false);
     try std.testing.expect(std.mem.find(u8, explicit.task, "## Active goal") != null);
     try std.testing.expect(std.mem.find(u8, explicit.task, "old objective") != null);
     try std.testing.expect(std.mem.find(u8, explicit.task, "do the thing") != null);
@@ -16589,7 +16556,7 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
     // Auto: newest active (updated=50), not the done goal with updated=99.
     // The resolved goal_id must be the one auto-steer actually picked, so
     // its status can be advanced (and its run registered) after the run.
-    const auto = try resolveRunTask(arena, io, tmp.dir, "chat task", null, true);
+    const auto = try resolveRunTask(arena, io, env.tmp.dir, "chat task", null, true);
     try std.testing.expect(std.mem.find(u8, auto.task, "ship the feature") != null);
     try std.testing.expect(std.mem.find(u8, auto.task, "tests green") != null);
     try std.testing.expect(std.mem.find(u8, auto.task, "chat task") != null);
@@ -16597,67 +16564,59 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
     try std.testing.expectEqualStrings("new", auto.goal_id.?);
 
     // Goal-only: empty task becomes a work order for that goal.
-    const goal_only = try resolveRunTask(arena, io, tmp.dir, "", "new", false);
+    const goal_only = try resolveRunTask(arena, io, env.tmp.dir, "", "new", false);
     try std.testing.expect(std.mem.find(u8, goal_only.task, "Work on this goal until the completion criterion is met.") != null);
     try std.testing.expect(std.mem.find(u8, goal_only.task, "ship the feature") != null);
 
     // A requested saved goal must exist; falling back to an unscoped task
     // would silently run the wrong thing.
-    try std.testing.expectError(error.GoalNotFound, resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false));
+    try std.testing.expectError(error.GoalNotFound, resolveRunTask(arena, io, env.tmp.dir, "plain", "no-such", false));
 
     // Auto with no active goals leaves the task alone.
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
-    const none = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
+    const none = try resolveRunTask(arena, io, env.tmp.dir, "plain", null, true);
     try std.testing.expectEqualStrings("plain", none.task);
     try std.testing.expect(none.goal_id == null);
 }
 
 test "an unreadable goals.json is not an empty goal list" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.createDirPath(io, "state");
 
     // No store at all: nothing to steer with, and that is not a failure.
-    try std.testing.expectEqual(@as(?[]const std.json.Value, null), try readGoalsArray(arena, io, tmp.dir));
+    try std.testing.expectEqual(@as(?[]const std.json.Value, null), try readGoalsArray(arena, io, env.tmp.dir));
 
     // A store that is there and will not parse. Answering "no goals" here made
     // a saved goal look deleted: `--goal <id>` said not found, and an
     // auto-steered run dropped its steering without a word.
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[{\"id\":\"g1\",}]" });
-    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, tmp.dir));
-    try std.testing.expectError(error.GoalStoreUnreadable, loadGoalById(arena, io, tmp.dir, "g1"));
-    try std.testing.expectError(error.GoalStoreUnreadable, resolveRunTask(arena, io, tmp.dir, "plain", "g1", false));
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[{\"id\":\"g1\",}]" });
+    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, env.tmp.dir));
+    try std.testing.expectError(error.GoalStoreUnreadable, loadGoalById(arena, io, env.tmp.dir, "g1"));
+    try std.testing.expectError(error.GoalStoreUnreadable, resolveRunTask(arena, io, env.tmp.dir, "plain", "g1", false));
 
     // Auto-steering is opportunistic, so it degrades to an unsteered run
     // rather than refusing it -- but the goal id must not be invented.
-    const degraded = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
+    const degraded = try resolveRunTask(arena, io, env.tmp.dir, "plain", null, true);
     try std.testing.expectEqualStrings("plain", degraded.task);
     try std.testing.expect(degraded.goal_id == null);
 
     // A JSON document that is not a goal list is the same hazard.
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "{\"goals\":[]}" });
-    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, tmp.dir));
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "{\"goals\":[]}" });
+    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, env.tmp.dir));
 }
 
 test "runIterationBudget precedence: body override, then goal default, then global" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.createDirPath(io, "state");
     // "budgeted" carries a stored max_iterations of 60; "plain" has none.
     const goals_json =
         \\[
@@ -16666,33 +16625,33 @@ test "runIterationBudget precedence: body override, then goal default, then glob
         \\  {"id":"done","objective":"d","completion_criterion":"c","status":"done","max_iterations":99,"updated":30}
         \\]
     ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
 
     // A per-run override always wins, whatever the goal stores.
-    const overridden = runIterationBudget(arena, io, tmp.dir, 7, "budgeted", false);
+    const overridden = runIterationBudget(arena, io, env.tmp.dir, 7, "budgeted", false);
     try std.testing.expectEqual(@as(u32, 7), overridden.?);
     // An override even beats an explicit goal with no stored value.
-    const overridden_plain = runIterationBudget(arena, io, tmp.dir, 7, "plain", false);
+    const overridden_plain = runIterationBudget(arena, io, env.tmp.dir, 7, "plain", false);
     try std.testing.expectEqual(@as(u32, 7), overridden_plain.?);
 
     // Blank box + a goal with a stored budget uses that goal's value.
-    const goal_default = runIterationBudget(arena, io, tmp.dir, null, "budgeted", false);
+    const goal_default = runIterationBudget(arena, io, env.tmp.dir, null, "budgeted", false);
     try std.testing.expectEqual(@as(u32, 60), goal_default.?);
 
     // Auto-steer resolves the newest active goal (updated=20, "plain") which
     // has no stored budget -> null (global default applies).
-    const auto_none = runIterationBudget(arena, io, tmp.dir, null, null, true);
+    const auto_none = runIterationBudget(arena, io, env.tmp.dir, null, null, true);
     try std.testing.expect(auto_none == null);
     // The done goal's budget is never picked by auto-steer.
-    const explicit_done = runIterationBudget(arena, io, tmp.dir, null, "done", false);
+    const explicit_done = runIterationBudget(arena, io, env.tmp.dir, null, "done", false);
     try std.testing.expectEqual(@as(u32, 99), explicit_done.?);
 
     // A goal with no stored value and no override -> null (global fallback).
-    const explicit_plain = runIterationBudget(arena, io, tmp.dir, null, "plain", false);
+    const explicit_plain = runIterationBudget(arena, io, env.tmp.dir, null, "plain", false);
     try std.testing.expect(explicit_plain == null);
 
     // No goal at all -> null.
-    const no_goal = runIterationBudget(arena, io, tmp.dir, null, null, false);
+    const no_goal = runIterationBudget(arena, io, env.tmp.dir, null, null, false);
     try std.testing.expect(no_goal == null);
 }
 
@@ -17850,20 +17809,16 @@ test "webui chrome icons are drawn, not typed as unicode" {
 }
 
 test "runStreamTodos frames the private list as one \\x01 todos event" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
     // A file stands in for the stream socket: writeAllFd only ever writes to
     // a raw fd, and a file is one that can be read back without a reader
     // thread to keep a pipe from filling.
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var sink = try tmp.dir.createFile(io, "stream.bin", .{});
+    var sink = try env.tmp.dir.createFile(io, "stream.bin", .{});
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const arena = env.arena();
 
     var list = private_todos.List{ .alloc = std.testing.allocator };
     defer list.deinit();
@@ -17880,7 +17835,7 @@ test "runStreamTodos frames the private list as one \\x01 todos event" {
     run_stream_socket = null;
     sink.close(io);
 
-    const line = try tmp.dir.readFileAlloc(io, "stream.bin", arena, .limited(64 * 1024));
+    const line = try env.tmp.dir.readFileAlloc(io, "stream.bin", arena, .limited(64 * 1024));
 
     try std.testing.expect(line.len > 0);
     try std.testing.expectEqual(@as(u8, 1), line[0]);

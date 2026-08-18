@@ -29,6 +29,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const test_env = @import("../util/test_env.zig");
 
 pub const registry_path = "state/worktrees.json";
 const goals_path = "state/goals.json";
@@ -294,31 +295,27 @@ test "statusRetires covers archived and abandoned, and nothing a reviewer still 
 }
 
 test "register replaces a row for the same path instead of appending" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const arena = env.arena();
 
-    register(std.testing.allocator, io, tmp.dir, .{
+    register(std.testing.allocator, io, env.tmp.dir, .{
         .path = "/wt/1",
         .branch = "clanker/run-1",
         .base_branch = "main",
         .goal_id = "g1",
         .created = 1,
     });
-    register(std.testing.allocator, io, tmp.dir, .{
+    register(std.testing.allocator, io, env.tmp.dir, .{
         .path = "/wt/2",
         .branch = "clanker/run-2",
         .base_branch = "main",
         .goal_id = "g2",
         .created = 2,
     });
-    register(std.testing.allocator, io, tmp.dir, .{
+    register(std.testing.allocator, io, env.tmp.dir, .{
         .path = "/wt/1",
         .branch = "clanker/run-1b",
         .base_branch = "main",
@@ -326,7 +323,7 @@ test "register replaces a row for the same path instead of appending" {
         .created = 3,
     });
 
-    const rows = read(io, tmp.dir, arena);
+    const rows = read(io, env.tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 2), rows.len);
     // Order is preserved apart from the replaced row, which moves to the end.
     try std.testing.expectEqualStrings("/wt/2", rows[0].path);
@@ -335,33 +332,29 @@ test "register replaces a row for the same path instead of appending" {
 }
 
 test "reconcile classifies by goal status and drops rows whose worktree is gone" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const arena = env.arena();
 
     // Four rows: a live goal, an unlinked run, a goal that is gone from the
     // file, and a row whose directory does not exist.
-    try tmp.dir.createDirPath(io, "live");
-    try tmp.dir.createDirPath(io, "none");
-    try tmp.dir.createDirPath(io, "missing-goal");
-    try ensure_dir.ensureDir(tmp.dir, io, "state");
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data =
+    try env.tmp.dir.createDirPath(io, "live");
+    try env.tmp.dir.createDirPath(io, "none");
+    try env.tmp.dir.createDirPath(io, "missing-goal");
+    try ensure_dir.ensureDir(env.tmp.dir, io, "state");
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data =
         \\[{"id":"g-live","status":"active"},{"id":"g-arch","status":"archived"}]
     });
-    try tmp.dir.writeFile(io, .{ .sub_path = registry_path, .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = registry_path, .data =
         \\[{"path":"live","branch":"b1","base_branch":"main","goal_id":"g-live"},
         \\ {"path":"none","branch":"b2","base_branch":"main","goal_id":""},
         \\ {"path":"missing-goal","branch":"b3","base_branch":"main","goal_id":"g-deleted"},
         \\ {"path":"vanished","branch":"b4","base_branch":"main","goal_id":"g-arch"}]
     });
 
-    const out = reconcile(std.testing.allocator, io, tmp.dir, false);
+    const out = reconcile(std.testing.allocator, io, env.tmp.dir, false);
     // `live` is 2: the active goal, plus the row whose goal is gone from the
     // file. A deleted goal row says nothing about the commits its run
     // produced, and the other reading of it loses them.
@@ -375,7 +368,7 @@ test "reconcile classifies by goal status and drops rows whose worktree is gone"
     try std.testing.expectEqual(@as(usize, 0), out.actionable());
 
     // The vanished row is dropped; the other three survive the rewrite.
-    const rows = read(io, tmp.dir, arena);
+    const rows = read(io, env.tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 3), rows.len);
 }
 
