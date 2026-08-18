@@ -197,6 +197,17 @@ fn effectiveConfig(alloc: std.mem.Allocator, d: Descriptor, overrides: std.json.
     return .{ .object = merged };
 }
 
+/// The settings panel's name for a descriptor default's type, or null for a
+/// shape a single form field cannot hold (null, array, object).
+fn configTypeName(v: std.json.Value) ?[]const u8 {
+    return switch (v) {
+        .bool => "boolean",
+        .integer, .float, .number_string => "number",
+        .string => "string",
+        else => null,
+    };
+}
+
 fn collectNames(alloc: std.mem.Allocator, list: ?std.json.Value, out: *std.ArrayList([]const u8)) !void {
     const v = list orelse return;
     if (v != .array) return;
@@ -295,6 +306,21 @@ fn listStructured(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plug
                 const v = p.config.object.get(key) orelse continue;
                 try s.objectField(key);
                 try s.write(v);
+            }
+            try s.endObject();
+            // Each editable key's declared type, read off the descriptor's
+            // shipped default — never the override. The page used to derive
+            // the type from `typeof` on the current value, so a key with no
+            // override yet was typed "undefined" and saved back as a string,
+            // and a poisoned override kept its wrong type forever.
+            try s.objectField("config_types");
+            try s.beginObject();
+            for (p.config_editable) |key| {
+                if (p.d.config != .object) break;
+                const v = p.d.config.object.get(key) orelse continue;
+                const type_name = configTypeName(v) orelse continue;
+                try s.objectField(key);
+                try s.write(type_name);
             }
             try s.endObject();
         }
