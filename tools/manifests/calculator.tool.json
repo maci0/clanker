@@ -1,14 +1,14 @@
 {
   "name": "calculator",
-  "description": "Evaluate arithmetic. Input either {\"a\": number, \"b\": number, \"op\": \"+|-|*|/|^\"} or {\"expr\": \"2+3*4\"} (operators + - * / ^, parentheses, standard precedence). Returns {\"ok\": true, \"result\": number}.",
-  "llm_description": "Evaluate arithmetic. Input {a,b,op:'+|-|*|/|^'} or {expr:'2+3*4'} (+ - * / ^, parentheses, standard precedence). Returns {ok:true, result:number}.",
+  "description": "Evaluate arithmetic. Input either {\"a\": number, \"b\": number, \"op\": \"+|-|*|/|%|^\"} or {\"expr\": \"2+3*4\"} (operators + - * / % ^, parentheses, standard precedence, sqrt(x) function). Returns {\"ok\": true, \"result\": number}.",
+  "llm_description": "Evaluate arithmetic. Input {a,b,op:'+|-|*|/|%|^'} or {expr:'2+3*4'} (+ - * / % ^, parentheses, standard precedence, sqrt(x)). Returns {ok:true, result:number}.",
   "wasm": "zig-out/tools/calculator.wasm",
   "input_schema": {
     "type": "object",
     "properties": {
       "expr": {
         "type": "string",
-        "description": "Arithmetic expression such as \"2+3*4\" or \"(1+2)^3\". Operators + - * / ^, parentheses, standard precedence. When present, a/b/op are ignored."
+        "description": "Arithmetic expression such as \"2+3*4\" or \"(1+2)^3\". Operators + - * / % ^, parentheses, standard precedence, sqrt(x) function. When present, a/b/op are ignored."
       },
       "a": {
         "type": "number"
@@ -23,6 +23,7 @@
           "-",
           "*",
           "/",
+          "%",
           "^"
         ]
       }
