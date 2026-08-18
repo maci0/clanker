@@ -93,7 +93,7 @@ fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // would otherwise contend with the handle appendLine is about to hold.
     if (base.statFile(io, event_path, .{})) |st| {
         if (st.size > max_log_bytes) trimLog(base, io, gpa, arena) catch |err| {
-            log.log(.warn, "autolearn: trim failed: {s}", .{@errorName(err)});
+            log.log(.warn, "autolearn: failed to trim log: {s}", .{@errorName(err)});
         };
     } else |_| {}
 
