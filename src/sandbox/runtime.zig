@@ -2495,3 +2495,76 @@ test "arena wasm tool runs a battle royale to a verdict when no provider answers
     // Nobody took damage, so nobody outargued anybody.
     try std.testing.expectEqualStrings("draw", match.get("verdict").?.object.get("reason").?.string);
 }
+
+fn pluginsCall(io: std.Io, root: []const u8, wasm: []const u8, env: *std.process.Environ.Map, input: []const u8) ![]u8 {
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "state/plugins.json", "state/plugin_config.json", "tools/manifests" },
+        .environ_map = env,
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    return mod.executeTool(input);
+}
+
+test "plugins wasm tool declares each editable key's type from the descriptor default" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "tools/manifests");
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "tools/manifests/fake_tuner.tool.json", .data =
+        \\{ "name": "fake_tuner", "description": "a fixture", "wasm": "zig-out/tools/fake.wasm",
+        \\  "config": { "max_depth": 3, "label": "hi", "loud": false, "shape": {"a": 1} },
+        \\  "config_editable": ["max_depth", "label", "loud", "shape", "ghost"] }
+    });
+    // A hand-edited override holding a number as a string: the effective
+    // config must report what is actually saved, while the declared type
+    // stays the descriptor default's, which is what lets the page heal the
+    // override on the next save instead of re-deriving "string" forever.
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/plugin_config.json", .data = "{\"fake_tuner\":{\"max_depth\":\"9\"}}" });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/plugins.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const out = try pluginsCall(io, root, wasm, &env_map, "{\"args\":\"json\"}");
+    defer std.testing.allocator.free(out);
+
+    var parsed_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer parsed_arena.deinit();
+    const a = parsed_arena.allocator();
+    const envelope = try std.json.parseFromSliceLeaky(std.json.Value, a, out, .{});
+    const text = envelope.object.get("text").?.string;
+    const doc = try std.json.parseFromSliceLeaky(std.json.Value, a, text, .{});
+    var fake: ?std.json.Value = null;
+    for (doc.object.get("plugins").?.array.items) |p| {
+        if (std.mem.eql(u8, p.object.get("name").?.string, "fake_tuner")) fake = p;
+    }
+    try std.testing.expect(fake != null);
+    const p = fake.?.object;
+
+    // The override reached the effective config as saved, wrong type and all.
+    const cfg = p.get("config").?.object;
+    try std.testing.expectEqualStrings("9", cfg.get("max_depth").?.string);
+
+    // The declared types come from the descriptor's shipped defaults. A key
+    // whose default a single form field cannot hold (shape: an object) and a
+    // key with no default at all (ghost) declare nothing.
+    const types = p.get("config_types").?.object;
+    try std.testing.expectEqualStrings("number", types.get("max_depth").?.string);
+    try std.testing.expectEqualStrings("string", types.get("label").?.string);
+    try std.testing.expectEqualStrings("boolean", types.get("loud").?.string);
+    try std.testing.expect(types.get("shape") == null);
+    try std.testing.expect(types.get("ghost") == null);
+}

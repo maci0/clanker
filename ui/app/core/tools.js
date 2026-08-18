@@ -95,6 +95,18 @@ function buildToolRow(t) {
   return row;
 }
 
+/** Which kind of value a settings field holds. The descriptor's declared
+ *  type (config_types, from the manifest's shipped default) wins: `typeof`
+ *  on the current value typed a key with no override yet as "undefined" and
+ *  saved it back as a string, and it re-derived a poisoned override's wrong
+ *  type forever. `typeof current` stays as the fallback for a third-party
+ *  manifest that ships no default. */
+export function configFieldKind(t, key, current) {
+  var declared = t.config_types ? t.config_types[key] : undefined;
+  if (declared === "number" || declared === "boolean" || declared === "string") return declared;
+  return typeof current;
+}
+
 function buildToolConfig(t) {
   var details = document.createElement("details");
   details.className = "tool-config";
@@ -106,6 +118,7 @@ function buildToolConfig(t) {
   var inputs = {};
   t.config_editable.forEach(function (key) {
     var current = (t.config || {})[key];
+    var kind = configFieldKind(t, key, current);
     var field = document.createElement("div");
     field.className = "tool-field";
     var id = "cfg-" + t.name + "-" + key;
@@ -115,9 +128,9 @@ function buildToolConfig(t) {
     field.appendChild(label);
     var input = document.createElement("input");
     input.id = id;
-    input.type = typeof current === "number" ? "number" : "text";
+    input.type = kind === "number" ? "number" : "text";
     input.value = current === undefined || current === null ? "" : String(current);
-    input.dataset.kind = typeof current;
+    input.dataset.kind = kind;
     field.appendChild(input);
     inputs[key] = input;
     body.appendChild(field);
