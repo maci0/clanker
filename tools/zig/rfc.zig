@@ -48,6 +48,12 @@ const inventory_end = "<!-- inventory:rfc:end -->";
 /// arena degrades into a listing instead of an error.
 const max_listed_reads: usize = 60;
 
+/// The statuses an RFC carries, stated once: `labelFor` renders from this and
+/// `list`/`open` read a Status line against it. All one word, but read through
+/// `doc.statusFrom` all the same, because `statusWord` cuts at the first
+/// separator and would read `**Decided.**` as `**Decided`.
+const statuses = [_][]const u8{ "Draft", "Discussion", "Decided", "Deferred", "Withdrawn", "Superseded" };
+
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
@@ -447,7 +453,7 @@ fn list(out: *lib.Out) !void {
             try rows.append(lib.alloc, .{
                 .path = path,
                 .title = doc.documentTitle(text),
-                .status = doc.statusWord(text),
+                .status = doc.statusFrom(text, &statuses),
             });
         }
     }
@@ -507,7 +513,7 @@ fn open(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("title");
     try s.write(doc.documentTitle(text));
     try s.objectField("status");
-    try s.write(doc.statusWord(text));
+    try s.write(doc.statusFrom(text, &statuses));
     try s.objectField("text");
     try s.write(text);
     try s.endObject();
@@ -724,16 +730,10 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     lib.commit(out, &w);
 }
 
-/// Spelled out rather than derived, so adding a status has to touch both the
-/// accepted vocabulary and the rendering.
+/// Derived from `statuses`, so what `status` accepts and what `list` reads
+/// back off an RFC cannot drift apart.
 fn labelFor(wanted: []const u8) ?[]const u8 {
-    if (std.ascii.eqlIgnoreCase(wanted, "draft")) return "Draft";
-    if (std.ascii.eqlIgnoreCase(wanted, "discussion")) return "Discussion";
-    if (std.ascii.eqlIgnoreCase(wanted, "decided")) return "Decided";
-    if (std.ascii.eqlIgnoreCase(wanted, "deferred")) return "Deferred";
-    if (std.ascii.eqlIgnoreCase(wanted, "withdrawn")) return "Withdrawn";
-    if (std.ascii.eqlIgnoreCase(wanted, "superseded")) return "Superseded";
-    return null;
+    return doc.labelFrom(wanted, &statuses);
 }
 
 fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {

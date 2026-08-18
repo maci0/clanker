@@ -333,8 +333,8 @@ Run-loop and path settings. The commonly-touched keys:
 | `tool_result_prune_bytes`, `tool_result_prune_head_bytes`, `tool_result_prune_tail_bytes` | 8192, 4096, 1024 | Request-only head/tail pruning for oversized tool results. Threshold `0` disables it; saved transcripts remain exact. |
 | `repeat_tool_thresholds`, `repeat_tool_exclude` | `[3, 5, 8]`, todo tools | Advisory reminders for consecutive canonical-equivalent tool calls. Excluded name patterns (with optional `*`) neither increment nor reset a chain. |
 | `repeat_tool_abort_threshold` | 0 | Consecutive identical tool calls after which the turn fails with `RepeatedToolCalls` instead of being reminded again. `0` disables it. The reminders above are advice; a model that ignores them repeats until `max_iterations`, buying a completion per round. |
-| `request_timeout_ms` | 0 | Deadline on one non-streaming completion end to end, and on the wait for a streaming one's *first* bytes. `0` is unbounded — see [Request deadlines](#request-deadlines). |
-| `stream_idle_timeout_ms` | 0 | Longest gap between reads of a streaming response before it is abandoned. `0` is unbounded. |
+| `request_timeout_ms` | 900000 | Deadline on one non-streaming completion end to end, and on the wait for a streaming one's *first* bytes. `0` opts out and is unbounded — see [Request deadlines](#request-deadlines). |
+| `stream_idle_timeout_ms` | 120000 | Longest gap between reads of a streaming response before it is abandoned. `0` opts out and is unbounded. |
 | `max_total_tokens`, `max_tokens_per_turn`, `max_history_tokens` | -, 4096, 16000 | Token budgets that drive compaction. `max_tokens_per_turn` is the per-turn *input* floor (compaction must never sit below it); the completion grant sent to the provider is the model's `max_tokens`. `max_history_tokens` is lifted for a run when it sits below what compaction cannot remove — see [History budget and compaction](#history-budget-and-compaction). |
 | `tool_catalog` | true | Send full schemas only for hot tools; let the model request the rest by name (saves thousands of tokens/request with many tools). |
 | `hot_tools` | 10 | How many most-used tools keep their schemas loaded unasked. |
@@ -402,6 +402,11 @@ Two clocks, because a stream has two ways to stop:
 |---|---|---|
 | `request_timeout_ms` | silence before any sign of life | whole call (non-streaming), first bytes (streaming) |
 | `stream_idle_timeout_ms` | gap between two reads | streaming only, once bytes are flowing |
+
+Both are bounded by default (15 minutes and 2 minutes), because a config that
+omits them is exactly the case with no error to recover from: a fresh checkout,
+an isolated run, an improve worktree. Setting either to `0` is the explicit
+opt-out.
 
 Set both, not just the idle one. A streaming read completes only when its 8 KiB
 buffer fills or the stream ends, so a provider that emits a few hundred bytes

@@ -57,7 +57,7 @@ const max_listed_reads: usize = 60;
 /// progress" is not matched as something shorter that happens to sit inside
 /// it. `docs/prds/README.md` documents the first three; the rest are wordings
 /// already in the tree that a reader should still see reported truthfully.
-const statuses = [_][]const u8{ "In progress", "Implemented", "Shipped", "Partial", "Draft" };
+const statuses = [_][]const u8{ "In progress", "Shipped", "Draft" };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -563,15 +563,11 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     lib.commit(out, &w);
 }
 
-/// Spelled out rather than derived, so adding a status has to touch both the
-/// accepted vocabulary and the rendering. `in_progress` is spelled with an
-/// underscore on the wire and a space in the document.
+/// Derived from `statuses`, so what `status` accepts and what `list` reads
+/// back off a record cannot drift apart. `in_progress` is spelled with an
+/// underscore on the wire and a space in the document; `labelFrom` reads both.
 fn labelFor(wanted: []const u8) ?[]const u8 {
-    if (std.ascii.eqlIgnoreCase(wanted, "draft")) return "Draft";
-    if (std.ascii.eqlIgnoreCase(wanted, "in_progress")) return "In progress";
-    if (std.ascii.eqlIgnoreCase(wanted, "in progress")) return "In progress";
-    if (std.ascii.eqlIgnoreCase(wanted, "shipped")) return "Shipped";
-    return null;
+    return doc.labelFrom(wanted, &statuses);
 }
 
 fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {

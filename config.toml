@@ -223,7 +223,9 @@ repeat_tool_abort_threshold = 0
 # Deadlines on the model call itself. Without them a provider that accepts the
 # connection and then says nothing hangs the run forever: std.http.Client has
 # no read timeout, and no retry fires because a call that never returns never
-# produces an error. 0 on either leaves that clock unbounded.
+# produces an error. Both are bounded by default (900000 / 120000); the values
+# below restate that default, and 0 on either is the explicit opt-out that
+# leaves the clock unbounded.
 #
 # request_timeout_ms bounds one non-streaming completion end to end, and the
 # wait for the first bytes of a streaming one. Keep it well above the slowest

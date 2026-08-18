@@ -35,6 +35,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   provider reproduces the 0.1.0 behavior exactly. Specs (context, cost,
   capabilities) come from the models.dev snapshot.
 
+### Fixed
+
+- Each record store (`reports`, `research`, `rfc`, `adr`, `prd`) now states
+  its status vocabulary once instead of twice. `prd` had already drifted:
+  its listing recognised `Implemented` and `Partial`, which `prd status`
+  refused to set. A listing also reads the Status line against that
+  vocabulary in every store, so a decorated line (`**Decided.**`) no longer
+  lists as `**Decided`.
+
 ### Added
 
 - `/rfc` in the REPL: the RFC store, with the same subcommands, records and
@@ -55,8 +64,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   forever. `agent.request_timeout_ms` bounds one non-streaming completion
   end to end and the wait for a streaming one's first bytes;
   `agent.stream_idle_timeout_ms` bounds the gap between reads once a
-  stream is flowing. Both default to `0` (unbounded, the previous
-  behaviour); the shipped `config.toml` sets 900000 and 120000. A lapsed
+  stream is flowing. Both are bounded by default (900000 and 120000, the
+  values the shipped `config.toml` restates), because a config that omits
+  them is the case with no error to recover from; `0` on either is the
+  explicit opt-out that leaves the clock unbounded. A lapsed
   deadline surfaces as `Timeout` and goes straight to
   `agent.fallback_providers` rather than being retried against the same
   silent endpoint. Set both: a streaming read completes only on a full

@@ -524,14 +524,10 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     lib.commit(out, &w);
 }
 
-/// Spelled out rather than derived, so adding a status has to touch both the
-/// accepted vocabulary and the rendering.
+/// Derived from `statuses`, so what `status` accepts and what `list` reads
+/// back off a record cannot drift apart.
 fn labelFor(wanted: []const u8) ?[]const u8 {
-    if (std.ascii.eqlIgnoreCase(wanted, "proposed")) return "Proposed";
-    if (std.ascii.eqlIgnoreCase(wanted, "accepted")) return "Accepted";
-    if (std.ascii.eqlIgnoreCase(wanted, "superseded")) return "Superseded";
-    if (std.ascii.eqlIgnoreCase(wanted, "deprecated")) return "Deprecated";
-    return null;
+    return doc.labelFrom(wanted, &statuses);
 }
 
 fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {

@@ -475,16 +475,14 @@ fn reportKindOf(path: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Written out rather than derived, so adding a status has to touch both the
-/// accepted vocabulary and its display spelling, which is what keeps the two
-/// in step.
+/// The lifecycle a bug report or investigation moves through, stated once:
+/// `labelFor` renders from it and nothing else names these words.
+const statuses = [_][]const u8{ "Open", "Investigating", "Resolved", "Reopened", "Closed" };
+
+/// Derived from `statuses`, so the accepted vocabulary and its display
+/// spelling cannot drift apart.
 fn labelFor(wanted: []const u8) ?[]const u8 {
-    if (std.ascii.eqlIgnoreCase(wanted, "open")) return "Open";
-    if (std.ascii.eqlIgnoreCase(wanted, "investigating")) return "Investigating";
-    if (std.ascii.eqlIgnoreCase(wanted, "resolved")) return "Resolved";
-    if (std.ascii.eqlIgnoreCase(wanted, "reopened")) return "Reopened";
-    if (std.ascii.eqlIgnoreCase(wanted, "closed")) return "Closed";
-    return null;
+    return doc.labelFrom(wanted, &statuses);
 }
 
 fn setInventoryStatus(kind: []const u8, link: []const u8, label: []const u8) !bool {

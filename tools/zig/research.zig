@@ -44,6 +44,12 @@ const template_path = dir ++ "/TEMPLATE.md";
 const inventory_start = "<!-- inventory:research:start -->";
 const inventory_end = "<!-- inventory:research:end -->";
 
+/// The statuses a research note carries, stated once: `labelFor` renders from
+/// this and `open` reads a Status line against it. All one word, but read
+/// through `doc.statusFrom` all the same, because `statusWord` cuts at the
+/// first separator and would read `**Current.**` as `**Current`.
+const statuses = [_][]const u8{ "Draft", "Current", "Stale", "Superseded" };
+
 /// Ceiling on HTTP round trips in one sweep. A deep sweep is already the
 /// slowest call in the catalog; without a ceiling a caller with twelve
 /// explicit queries turns it into a minute of dead air.
@@ -955,7 +961,7 @@ fn open(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("title");
     try s.write(doc.documentTitle(text));
     try s.objectField("status");
-    try s.write(doc.statusWord(text));
+    try s.write(doc.statusFrom(text, &statuses));
     try s.objectField("text");
     try s.write(text);
     try s.endObject();
@@ -1090,14 +1096,10 @@ fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
 }
 
 /// The display spelling of an accepted status, or null when it is not one.
-/// Written out rather than derived so a new status has to be added in both the
-/// vocabulary and the rendering, which is what keeps the two in step.
+/// Derived from `statuses`, so what `status` accepts and what `open` reads back
+/// off a note cannot drift apart.
 fn labelFor(wanted: []const u8) ?[]const u8 {
-    if (std.ascii.eqlIgnoreCase(wanted, "draft")) return "Draft";
-    if (std.ascii.eqlIgnoreCase(wanted, "current")) return "Current";
-    if (std.ascii.eqlIgnoreCase(wanted, "stale")) return "Stale";
-    if (std.ascii.eqlIgnoreCase(wanted, "superseded")) return "Superseded";
-    return null;
+    return doc.labelFrom(wanted, &statuses);
 }
 
 fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {

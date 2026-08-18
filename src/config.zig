@@ -372,12 +372,20 @@ pub const Agent = struct {
     /// the connection and then says nothing blocks the agent loop forever with
     /// no error to retry. See `client.Abort` for the `shutdown(2)` lever that
     /// makes the blocked read return.
-    request_timeout_ms: u32 = 0,
+    ///
+    /// Bounded by default, because the unbounded case has no error to recover
+    /// from: a config that omits the key is what an isolated run, an improve
+    /// worktree, and a fresh checkout all load, and 0 there means the run never
+    /// ends rather than the deadline being "off". 15 minutes sits above the
+    /// slowest legitimate non-streaming answer (a reasoning model generates its
+    /// whole trace before responding); `= 0` still opts out explicitly.
+    request_timeout_ms: u32 = 900_000,
     /// Longest gap between two reads of a streaming response before it is
     /// abandoned. 0 leaves it unbounded. Separate from `request_timeout_ms`
     /// because a healthy stream can legitimately run far past any whole-call
     /// ceiling; what a healthy stream does not do is go quiet mid-answer.
-    stream_idle_timeout_ms: u32 = 0,
+    /// Bounded by default for the same reason as `request_timeout_ms`.
+    stream_idle_timeout_ms: u32 = 120_000,
     max_total_tokens: ?u32 = null,
     /// Per-turn cap on input tokens; conversation is compacted before a turn
     /// whose content would exceed it.
@@ -4483,9 +4491,10 @@ test "agent request deadlines and the repeat abort threshold parse and default t
         ,
     });
     const base = try Config.load(io, arena, tmp.dir, "config.toml", "missing.local.toml");
-    // Unbounded unless asked for: the deadline is opt-in.
-    try std.testing.expectEqual(@as(u32, 0), base.agent.request_timeout_ms);
-    try std.testing.expectEqual(@as(u32, 0), base.agent.stream_idle_timeout_ms);
+    // Bounded unless opted out of: a hang has no error to retry, so the
+    // deadline a config omits is the one a fresh checkout most needs.
+    try std.testing.expectEqual(@as(u32, 900_000), base.agent.request_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 120_000), base.agent.stream_idle_timeout_ms);
     try std.testing.expectEqual(@as(u32, 0), base.agent.repeat_tool_abort_threshold);
 
     try tmp.dir.writeFile(io, .{
@@ -4500,6 +4509,18 @@ test "agent request deadlines and the repeat abort threshold parse and default t
     try std.testing.expectEqual(@as(u32, 12), cfg.agent.repeat_tool_abort_threshold);
     // A partial local agent object must not reset what the base file set.
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
+
+    // 0 is still the explicit opt-out, and now that it is no longer the
+    // default it is the only way to ask for an unbounded clock.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\agent = { request_timeout_ms = 0, stream_idle_timeout_ms = 0 }
+        ,
+    });
+    const unbounded = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(u32, 0), unbounded.agent.request_timeout_ms);
+    try std.testing.expectEqual(@as(u32, 0), unbounded.agent.stream_idle_timeout_ms);
 }
 
 test "agent.tools_dir accepts a string or an array" {

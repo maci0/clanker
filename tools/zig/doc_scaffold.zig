@@ -299,6 +299,36 @@ pub fn statusFrom(text: []const u8, vocabulary: []const []const u8) []const u8 {
     return best orelse statusWord(text);
 }
 
+/// The display spelling of a status a caller asked for, or null when it is not
+/// in the store's vocabulary.
+///
+/// Paired with `statusFrom` so a store states its statuses once: the same table
+/// decides what `status` will accept and what `list` can read back off a
+/// record. Spelling them out twice is how `prd` came to read "Implemented" and
+/// "Partial" in a listing while refusing to set either. The wire spelling is
+/// matched loosely — case, and `_`/`-` for the space in a two-word phrase — so
+/// `in_progress` reaches "In progress" without a second alias row.
+pub fn labelFrom(wanted: []const u8, vocabulary: []const []const u8) ?[]const u8 {
+    for (vocabulary) |phrase| {
+        if (phrase.len != wanted.len) continue;
+        var i: usize = 0;
+        const same = while (i < phrase.len) : (i += 1) {
+            const a = std.ascii.toLower(phrase[i]);
+            const b = normalizeStatusByte(wanted[i]);
+            if (a != b) break false;
+        } else true;
+        if (same) return phrase;
+    }
+    return null;
+}
+
+fn normalizeStatusByte(c: u8) u8 {
+    return switch (c) {
+        '_', '-' => ' ',
+        else => std.ascii.toLower(c),
+    };
+}
+
 fn findIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
     if (needle.len == 0 or needle.len > haystack.len) return null;
     var i: usize = 0;
@@ -882,6 +912,32 @@ test "statusFrom reads a two-word status that statusWord would cut at the space"
     try std.testing.expectEqualStrings("Shipped", statusFrom("## Status\n\nShipped. Source of truth: `ui/app/*`\n", &vocabulary));
     try std.testing.expectEqualStrings("Shipped", statusFrom("## Status\n\n**Web UI plugins: Shipped.** TUI is draft.\n", &vocabulary));
     try std.testing.expectEqualStrings("Draft", statusFrom("## Status\n\nDraft. No source files yet.\n", &vocabulary));
+}
+
+test "labelFrom reads the wire spelling of a status against the same vocabulary" {
+    const vocabulary = [_][]const u8{ "In progress", "Shipped", "Draft" };
+    try std.testing.expectEqualStrings("Draft", labelFrom("draft", &vocabulary).?);
+    try std.testing.expectEqualStrings("Shipped", labelFrom("SHIPPED", &vocabulary).?);
+    // The two-word phrase arrives with an underscore or a hyphen on the wire.
+    try std.testing.expectEqualStrings("In progress", labelFrom("in_progress", &vocabulary).?);
+    try std.testing.expectEqualStrings("In progress", labelFrom("in-progress", &vocabulary).?);
+    try std.testing.expectEqualStrings("In progress", labelFrom("In progress", &vocabulary).?);
+    try std.testing.expect(labelFrom("implemented", &vocabulary) == null);
+    try std.testing.expect(labelFrom("", &vocabulary) == null);
+    // A prefix is not a status: "ship" must not reach "Shipped".
+    try std.testing.expect(labelFrom("ship", &vocabulary) == null);
+}
+
+test "labelFrom and statusFrom agree on one vocabulary" {
+    // The point of the pair: every status `status` accepts is one `list` can
+    // read back, which is what a second hand-written table kept breaking.
+    const vocabulary = [_][]const u8{ "In progress", "Shipped", "Draft" };
+    for ([_][]const u8{ "draft", "in_progress", "shipped" }) |wanted| {
+        const label = labelFrom(wanted, &vocabulary).?;
+        var buf: [64]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "## Status\n\n{s}. Written by the status action.\n", .{label}) catch unreachable;
+        try std.testing.expectEqualStrings(label, statusFrom(text, &vocabulary));
+    }
 }
 
 test "statusFrom falls back to the first word when no known status matches" {
