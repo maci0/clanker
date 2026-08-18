@@ -88,8 +88,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // For ast-grep, parse the exec result into structured matches.
     if (std.mem.eql(u8, engine, "ast-grep")) {
         const ag_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, result, .{ .ignore_unknown_fields = true }) catch
-            return out.writeAll(result);
-        if (ag_parsed != .object) return out.writeAll(result);
+            return lib.fail(out, "search ran but its result was not readable JSON; narrow the query or the path");
+        if (ag_parsed != .object) return lib.fail(out, "search ran but its result was not a JSON object; narrow the query or the path");
 
         const ag_code: i64 = if (ag_parsed.object.get("code")) |c| switch (c) {
             .integer => |i| i,
@@ -236,10 +236,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, engine, "rg")) {
         // Extract stdout from the exec result.
         const exec_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, result, .{ .ignore_unknown_fields = true }) catch
-            return out.writeAll(result);
-        if (exec_parsed != .object) return out.writeAll(result);
-        const stdout_val = exec_parsed.object.get("stdout") orelse return out.writeAll(result);
-        const stdout = if (stdout_val == .string) stdout_val.string else return out.writeAll(result);
+            return lib.fail(out, "search ran but its result was not readable JSON; narrow the query or the path");
+        if (exec_parsed != .object) return lib.fail(out, "search ran but its result was not a JSON object; narrow the query or the path");
+        const stdout_val = exec_parsed.object.get("stdout") orelse return lib.fail(out, "search ran but its result had no stdout; narrow the query or the path");
+        const stdout = if (stdout_val == .string) stdout_val.string else return lib.fail(out, "search ran but its stdout was not text; narrow the query or the path");
         if (stdout.len == 0) {
             return lib.okText(out, "no matches");
         }

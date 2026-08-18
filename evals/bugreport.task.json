@@ -1,0 +1,19 @@
+{
+  "name": "bugreport",
+  "kind": "task",
+  "description": "The bugreport tool must accept a title and description, format them into a structured body, map severity to a board priority, and post via the kanban_add cross-tool call — returning ok:true with a card_id. It goes red when the formatting path breaks, the severity mapping rejects valid input, or the cross-tool routing fails.",
+  "prompt": "Use the bugreport tool with {\"title\":\"eval smoke test\",\"description\":\"the thing broke\"}. Look at the tool's JSON result. If its ok field is true and a card_id field is present, reply with exactly CLEAN. Otherwise reply with exactly BROKEN.",
+  "requires_tool": "bugreport",
+  "criteria": [
+    {
+      "includes": [
+        "CLEAN"
+      ]
+    },
+    {
+      "excludes": [
+        "BROKEN"
+      ]
+    }
+  ]
+}

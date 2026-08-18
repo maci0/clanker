@@ -840,7 +840,7 @@ pub const Agent = struct {
                     .messages = request_messages,
                     .tools = self.iterTools(),
                     .reasoning_effort = effort,
-                    .max_tokens = self.cfg.agent.max_tokens_per_turn,
+                    .max_tokens = turnCompletionBudget(self.provider),
                 }, err_detail, ttsrStreamWrap, self.stop_flag) catch |err| {
                     if (err != error.Interrupted) {
                         try self.recordFailedLlm(&g, iteration, llm_t0, err, err_detail.*);
@@ -966,7 +966,7 @@ pub const Agent = struct {
             // the exact value, mirroring the session-budget behavior below).
             if (self.cfg.modules.token_budget) {
                 if (resp.usage) |u| {
-                    const per_turn_cap = self.cfg.agent.max_tokens_per_turn;
+                    const per_turn_cap = turnCompletionBudget(self.provider);
                     if (u.completion_tokens > per_turn_cap) {
                         log.log(.warn, "per-turn token budget exceeded ({d} > {d} completion tokens); stopping run", .{ u.completion_tokens, per_turn_cap });
                         return error.PerTurnTokenBudgetExceeded;
@@ -2449,7 +2449,7 @@ pub const Agent = struct {
             .messages = messages,
             .tools = self.iterTools(),
             .reasoning_effort = effort,
-            .max_tokens = self.cfg.agent.max_tokens_per_turn,
+            .max_tokens = turnCompletionBudget(self.provider),
         }, err_detail, null, null) catch |err| {
             try self.recordFailedLlm(g, iteration, started, err, err_detail.*);
             return err;
@@ -3135,6 +3135,16 @@ const TtsrStreamGuard = struct {
 
 threadlocal var ttsr_guard: ?*TtsrStreamGuard = null;
 
+/// Completion grant for one agent turn. `max_tokens_per_turn` is an
+/// input/compaction cap and must not be sent as ChatParams.max_tokens:
+/// on a reasoning model that 4096 is spent on reasoning_content first,
+/// and a length-stopped empty reply fails the run (run-1787011404,
+/// deepseek-v4-pro configured at 32768). The model's configured
+/// `max_tokens` is the grant.
+fn turnCompletionBudget(provider: *const config.Provider) u32 {
+    return provider.activeModel().max_tokens;
+}
+
 fn ttsrStreamWrap(delta: []const u8) void {
     if (ttsr_guard) |g| g.feed(delta);
 }
@@ -3223,7 +3233,7 @@ fn chatWithFallbackChain(
             }
         }
 
-        const next = nextFallbackProvider(cfg, p.provider.name, cfg.agent.fallback_providers, names_tried.items, &chain_i) orelse {
+        const next = nextFallbackProvider(cfg, ctx.environ_map, arena, p.provider.name, cfg.agent.fallback_providers, names_tried.items, &chain_i) orelse {
             if (reports.items.len > 0) {
                 err_detail.* = try std.fmt.allocPrint(arena, "fallback chain exhausted: {s}", .{reports.items});
             }
@@ -3235,10 +3245,14 @@ fn chatWithFallbackChain(
     }
 }
 
-/// Next unused, configured name in `chain` after `chain_i`. Unknown names
-/// are skipped with a warning. The current provider is never returned.
+/// Next unused, configured, usable name in `chain` after `chain_i`.
+/// Unknown names and providers `unconfiguredReason` rejects (missing
+/// key, no scheme, empty URL) are skipped with a warning. The current
+/// provider is never returned.
 fn nextFallbackProvider(
     cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    arena: std.mem.Allocator,
     current_name: []const u8,
     chain: []const []const u8,
     already: []const []const u8,
@@ -3257,7 +3271,13 @@ fn nextFallbackProvider(
             }
         }
         if (seen) continue;
-        if (cfg.providers.getPtr(name)) |p| return p;
+        if (cfg.providers.getPtr(name)) |p| {
+            if (providers.unconfiguredReason(arena, environ_map, p)) |why| {
+                log.log(.warn, "fallback: '{s}' is not usable ({s}); skipping", .{ name, why });
+                continue;
+            }
+            return p;
+        }
         log.log(.warn, "fallback: '{s}' is not a configured provider; skipping", .{name});
     }
     return null;
@@ -4298,6 +4318,8 @@ test "nextFallbackProvider skips unknown names and already-tried ones" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
 
     var cfg = config.Config{};
     try cfg.providers.put(arena, "a", try config.Provider.single(arena, "a", "https://a.test", .openai_compat, "ma", .{}));
@@ -4305,11 +4327,47 @@ test "nextFallbackProvider skips unknown names and already-tried ones" {
     try cfg.providers.put(arena, "c", try config.Provider.single(arena, "c", "https://c.test", .openai_compat, "mc", .{}));
 
     var i: usize = 0;
-    const first = nextFallbackProvider(&cfg, "a", &.{ "missing", "a", "b", "c" }, &.{"a"}, &i).?;
+    const first = nextFallbackProvider(&cfg, &env, arena, "a", &.{ "missing", "a", "b", "c" }, &.{"a"}, &i).?;
     try std.testing.expectEqualStrings("b", first.name);
-    const second = nextFallbackProvider(&cfg, "b", &.{ "missing", "a", "b", "c" }, &.{ "a", "b" }, &i).?;
+    const second = nextFallbackProvider(&cfg, &env, arena, "b", &.{ "missing", "a", "b", "c" }, &.{ "a", "b" }, &i).?;
     try std.testing.expectEqualStrings("c", second.name);
-    try std.testing.expect(nextFallbackProvider(&cfg, "c", &.{ "missing", "a", "b", "c" }, &.{ "a", "b", "c" }, &i) == null);
+    try std.testing.expect(nextFallbackProvider(&cfg, &env, arena, "c", &.{ "missing", "a", "b", "c" }, &.{ "a", "b", "c" }, &i) == null);
+}
+
+test "turnCompletionBudget uses the model grant, not max_tokens_per_turn" {
+    // Escalation run-1787011404 sent 4096 (the compaction cap) even though
+    // deepseek-v4-pro was configured at 32768. The two knobs must stay
+    // distinct so a future revert of the call sites is visible.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var p = try config.Provider.single(arena, "ds", "https://api.deepseek.com", .openai_compat, "deepseek-v4-pro", .{ .max_tokens = 32768 });
+    try std.testing.expectEqual(@as(u32, 32768), turnCompletionBudget(&p));
+    const cfg = config.Config{};
+    try std.testing.expectEqual(@as(u32, 4096), cfg.agent.max_tokens_per_turn);
+    try std.testing.expect(turnCompletionBudget(&p) != cfg.agent.max_tokens_per_turn);
+}
+
+test "nextFallbackProvider skips a configured provider that has no credential" {
+    // TUI /model already filters with unconfiguredReason. The chain used
+    // to walk any name that had a providers table row, so a DeepSeek
+    // ReadFailed then tried openai and died MissingApiKey
+    // (run-1787001820).
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    var cfg = config.Config{};
+    var openai = try config.Provider.single(arena, "openai", "https://api.openai.com/v1", .openai_compat, "gpt", .{});
+    openai.api_key_env = "OPENAI_API_KEY";
+    try cfg.providers.put(arena, "openai", openai);
+    try cfg.providers.put(arena, "kimi", try config.Provider.single(arena, "kimi", "https://kimi.test", .openai_compat, "k", .{}));
+
+    var i: usize = 0;
+    const next = nextFallbackProvider(&cfg, &env, arena, "deepseek", &.{ "openai", "kimi" }, &.{}, &i).?;
+    try std.testing.expectEqualStrings("kimi", next.name);
 }
 
 test "answerAsParent answers through the parent's provider" {

@@ -21,20 +21,25 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const title_raw = lib.str(parsed, "title") catch
         return lib.fail(out, "missing required field: title");
+    if (std.mem.trim(u8, title_raw, " \t\r\n").len == 0)
+        return lib.fail(out, "title must be a non-empty string");
     const description = lib.optStr(parsed, "description");
     const steps = lib.optStr(parsed, "steps_to_reproduce");
     const expected = lib.optStr(parsed, "expected");
     const actual = lib.optStr(parsed, "actual");
     const severity = lib.optStr(parsed, "severity") orelse "normal";
     const environment = lib.optStr(parsed, "environment");
-    const component = lib.optStr(parsed, "component");
+    const component = lib.optStr(parsed, "component") orelse inferComponent(title_raw);
     const room = lib.optStr(parsed, "room");
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
 
     // Validate severity → board priority mapping
-    const priority = mapSeverity(severity) orelse
-        return lib.fail(out, "severity must be one of: critical, high, normal, medium, low, minor");
+    const priority = mapSeverity(severity) orelse {
+        var buf: [128]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "severity must be one of: critical, high, normal, medium, low, minor (got \"{s}\")", .{severity}) catch return lib.fail(out, "invalid severity");
+        return lib.fail(out, msg);
+    };
 
     // Build the formatted body
     var body_buf: std.ArrayList(u8) = .empty;
@@ -100,8 +105,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (std.ascii.startsWithIgnoreCase(title_raw, "[bug]")) {
             break :blk title_raw;
         }
-        const n = std.fmt.bufPrint(&title_buf, "[BUG] {s}", .{title_raw}) catch title_raw;
-        break :blk n;
+        const prefix_len: usize = 5; // "[BUG] "
+        const max_title = title_buf.len - prefix_len;
+        const t = if (title_raw.len > max_title) title_raw[0..max_title] else title_raw;
+        break :blk std.fmt.bufPrint(&title_buf, "[BUG] {s}", .{t}) catch title_raw;
     };
 
     // Build the kanban_add args as JSON
@@ -147,5 +154,13 @@ fn mapSeverity(sev: []const u8) ?[]const u8 {
     if (std.ascii.eqlIgnoreCase(sev, "low") or
         std.ascii.eqlIgnoreCase(sev, "minor"))
         return "low";
+    return null;
+}
+
+fn inferComponent(title: []const u8) ?[]const u8 {
+    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools" };
+    for (tokens) |tok| {
+        if (std.ascii.indexOfIgnoreCase(title, tok)) |_| return tok;
+    }
     return null;
 }

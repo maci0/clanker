@@ -6,6 +6,10 @@ const std = @import("std");
 const cron = @import("schedule_cron.zig");
 
 pub const max_task_bytes: usize = 4000;
+/// Upper bound on a cron spec's byte length. The longest legitimate five-field
+/// spec is well under 100 bytes; anything longer is pathological and is refused
+/// before the parser tokenizes it, saving CPU on the schedule-add path.
+pub const max_cron_spec_bytes: usize = 256;
 pub const max_log_records: usize = 20;
 
 pub const TaskError = error{
@@ -55,6 +59,7 @@ pub fn nextId(arena: std.mem.Allocator, ids: []const []const u8) ![]const u8 {
 /// A spec that parses but can never match (`0 0 30 2 *`) is refused at add
 /// time rather than sitting in the list looking scheduled.
 pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
+    if (cron_text.len > max_cron_spec_bytes) return null;
     const spec = cron.parse(cron_text) catch return null;
     return spec.nextAfter(now, tz_offset_minutes);
 }
@@ -106,4 +111,7 @@ test "firstFire refuses a spec that never comes around" {
     try std.testing.expect(firstFire("* * * * *", now, 0) != null);
     try std.testing.expectEqual(@as(?i64, null), firstFire("0 0 30 2 *", now, 0));
     try std.testing.expectEqual(@as(?i64, null), firstFire("not a spec", now, 0));
+    // A pathologically long spec is rejected before the parser sees it.
+    const too_long = "*" ++ "x" ** (max_cron_spec_bytes + 1);
+    try std.testing.expectEqual(@as(?i64, null), firstFire(too_long, now, 0));
 }

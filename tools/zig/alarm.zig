@@ -104,6 +104,10 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, next });
         try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now, .every = every });
         if (try store(loaded)) {
+            if (every > 0) {
+                const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d},\"every_minutes\":{d}}}", .{ id, fire - now, every });
+                return out.writeAll(reply);
+            }
             const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d}}}", .{ id, fire - now });
             return out.writeAll(reply);
         }
@@ -171,10 +175,10 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
                     const behind = @max(now - a.ts, 0);
                     a.ts += (@divTrunc(behind, step) + 1) * step;
                     next_ts = a.ts;
-                    i += 1;
                 } else {
                     _ = loaded.alarms.orderedRemove(i);
                 }
+                break;
             } else i += 1;
         }
         if (!found) return lib.fail(out, "no alarm with that id");
@@ -203,6 +207,7 @@ fn doCancel(obj: std.json.ObjectMap, out: *lib.Out) !void {
             if (std.mem.eql(u8, loaded.alarms.items[i].id, id)) {
                 _ = loaded.alarms.orderedRemove(i);
                 found = true;
+                break;
             } else i += 1;
         }
         if (!found) return lib.fail(out, "no alarm with that id");
@@ -225,7 +230,7 @@ fn load() !Loaded {
         else => return err,
     };
     result.seen_hash = try lib.hash(raw);
-    const parsed = std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch return result;
+    const parsed = try std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true });
     for (parsed) |a| try result.alarms.append(lib.alloc, a);
     return result;
 }
