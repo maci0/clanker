@@ -7,6 +7,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- Every `clanker` invocation no longer forks `zig env` at startup. The Zig standard-library path it resolves is read by exactly two cold paths (the `zig_std` tool, and the improve engine's std-symbol help for a patch that failed to compile), so `sandbox/host.zig` resolves it on first use and caches it in a static buffer instead. `--help`, `mcp`, `acp` and every CLI verb were each paying a fork+exec of the compiler for a path they never read. `clanker sessions` drops from 10.1 ms to 7.9 ms and `clanker stats` from 12.0 ms to 9.5 ms (ReleaseFast, hyperfine, 30 runs), with system time roughly halved.
+
 - Completed background jobs (`ck_job`, so `jobs` start-and-forget execs and background subagents) are dropped once 64 finished ones are retained. The two tables were process-global and never trimmed, so a long-lived `clanker serve` held every background subagent's task and result text for the life of the process, and every `wait`/`kill`/`list` scanned the whole accumulation. `list` and `wait` still answer for anything running and for the newest 64 completed jobs; older completed ids now read as not-found. A job a `wait` is currently holding is never reaped out from under it.
 
 - `[memory.chunk]`, `[memory.embedding]` and `[memory.vector] backend` are gone. Nothing had read them since the native `src/memory/` layer was replaced by the sandboxed `memory` tool: chunk size, overlap, strategy and the embedder are inputs to a `memory` tool call, and only the builtin hash+cosine path exists. They parsed into fields nobody read, and the reference documented them as settings. `[memory]` now carries `backend`, `vector.top_k` and `vector.threshold`, all three read; setting one of the removed keys is reported as an unknown key instead of being silently ignored.
@@ -38,7 +40,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   write are given the same scope, so the plan that is confirmed is the plan
   that lands.
 
-### Fixed
 
 - `clanker goal --help`, `clanker autoresearch --help` and `clanker repl
   --help` name every flag their command accepts. `goal` took `--provider`,
@@ -257,6 +258,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `zig build test` stays green.
 
 ### Fixed
+
+- `zig build` failed at HEAD: the `an unreadable log is an error, not an empty one` test in `src/peers/notifications.zig` mixed `expectError` with a `catch` block and did not parse, so no build mode could compile the tree.
 
 - The web UI's tool settings panel types each field from the descriptor's
   declared default (`config_types` in `GET /api/plugins`, read off the
