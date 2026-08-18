@@ -33,6 +33,7 @@ pub const Kind = enum {
     arena3d_view,
     todos_view,
     models_view,
+    system_view,
     vendor,
     chat,
     labels,
@@ -77,6 +78,7 @@ pub fn kindFor(target: []const u8) Kind {
     if (std.mem.endsWith(u8, target, "features/arena.js")) return .arena_view;
     if (std.mem.endsWith(u8, target, "features/todos.js")) return .todos_view;
     if (std.mem.endsWith(u8, target, "features/models.js")) return .models_view;
+    if (std.mem.endsWith(u8, target, "features/system.js")) return .system_view;
     if (std.mem.endsWith(u8, target, "vendor.js")) return .vendor;
     if (std.mem.endsWith(u8, target, "chat.js")) return .chat;
     if (std.mem.endsWith(u8, target, "labels.js")) return .labels;
@@ -168,6 +170,7 @@ pub const asset_paths = [_][]const u8{
     "/webui/features/prompts.js",
     "/webui/features/todos.js",
     "/webui/features/models.js",
+    "/webui/features/system.js",
 };
 
 pub fn isAssetPath(path: []const u8) bool {

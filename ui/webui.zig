@@ -31,6 +31,7 @@ const knowledge_view = @embedFile("app/features/knowledge.js");
 const prompts_view = @embedFile("app/features/prompts.js");
 const todos_view = @embedFile("app/features/todos.js");
 const models_view = @embedFile("app/features/models.js");
+const system_view = @embedFile("app/features/system.js");
 const icons = @embedFile("app/core/icons.js");
 const ui = @embedFile("app/core/ui.js");
 const utils = @embedFile("app/core/utils.js");
@@ -83,7 +84,7 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list }, [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js" }) |asset, name| {
+    for ([_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list }, [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js" }) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -143,6 +144,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/features/prompts.js")) return .{ .body = prompts_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/todos.js")) return .{ .body = todos_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/models.js")) return .{ .body = models_view, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/features/system.js")) return .{ .body = system_view, .content_type = "text/javascript; charset=utf-8" };
     return .{ .body = page, .content_type = "text/html; charset=utf-8" };
 }
 

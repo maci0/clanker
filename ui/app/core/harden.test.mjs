@@ -441,6 +441,9 @@ test("failed list loads keep a visible retry in the panel", function () {
   const arena = readFileSync(join(here, "../features/arena.js"), "utf8");
   const app = readFileSync(join(here, "../app.js"), "utf8");
   const logs = readFileSync(join(here, "logs.js"), "utf8");
+  // The MCP list and config editor moved out of app.js into the lazily
+  // imported System view module; the retry they render is the same one.
+  const system = readFileSync(join(here, "../features/system.js"), "utf8");
   assert.match(schedule, /Try again/);
   assert.match(schedule, /clanker\.registerView/);
   assert.match(prompts, /showLoadError\(document\.getElementById\("prompts-list"\)/);
@@ -455,9 +458,9 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(compare, /showError\(list, msg, load\)/);
   assert.match(arena, /showLoadError\(byId\("arena-list"\)/);
   assert.match(app, /showLoadError\(el\.usage/);
-  assert.match(app, /showLoadError\(list, msg, load\)/);
-  assert.match(app, /function syncMcpTransportFields/);
-  assert.match(app, /stdio needs a command to spawn/);
+  assert.match(system, /showLoadError\(list, msg, load\)/);
+  assert.match(system, /function syncMcpTransportFields/);
+  assert.match(system, /stdio needs a command to spawn/);
   assert.match(html, /data-mcp-for="stdio"/);
   assert.match(html, /data-mcp-for="http"/);
   assert.match(css, /\.models-edit-form label\[hidden\] \{ display: none; \}/);
