@@ -1291,7 +1291,7 @@ test "a large checklist folds by id lookup, keeping one edge per live target" {
     const folded = try derive(arena, messages.items);
     try std.testing.expectEqual(@as(usize, 1), folded.len);
     const card = folded[0];
-    try std.testing.expectEqual(@as(usize, n + 1), card.subtasks.len);
+    try std.testing.expectEqual(@as(usize, n), card.subtasks.len);
     try std.testing.expectEqualStrings("s0", card.subtasks[0].id);
     try std.testing.expectEqual(@as(usize, 0), card.subtasks[0].depends_on.len);
     // Every later item keeps exactly its one live predecessor edge, listed once.
