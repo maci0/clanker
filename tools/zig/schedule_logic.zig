@@ -15,7 +15,6 @@ pub const max_log_records: usize = 20;
 pub const TaskError = error{
     TaskEmpty,
     TaskTooLong,
-    InvalidContent,
 };
 
 /// Same alphabet `session.validSessionId` uses: schedule ids are typed into
@@ -42,9 +41,6 @@ pub fn validateTask(task: []const u8) TaskError![]const u8 {
     const trimmed = std.mem.trim(u8, task, " \t\r\n");
     if (trimmed.len == 0) return TaskError.TaskEmpty;
     if (trimmed.len > max_task_bytes) return TaskError.TaskTooLong;
-    for (trimmed) |b| {
-        if (b == 0) return TaskError.InvalidContent;
-    }
     return trimmed;
 }
 
@@ -66,12 +62,6 @@ pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
     if (cron_text.len > max_cron_spec_bytes) return null;
     const spec = cron.parse(cron_text) catch return null;
     return spec.nextAfter(now, tz_offset_minutes);
-}
-
-/// Timezone offsets outside -720..840 minutes (UTC-12 to UTC+14) produce fire
-/// times off by days. Reject them at write time with a distinct diagnostic.
-pub fn validTzOffset(tz: i32) bool {
-    return tz >= -720 and tz <= 840;
 }
 
 test "validId matches the session-id alphabet" {

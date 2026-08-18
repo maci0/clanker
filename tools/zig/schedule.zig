@@ -2,7 +2,6 @@
 //! Input:  {"action":"list"}
 //!         {"action":"set_enabled","id":"sch-1","enabled":false}
 //!         {"action":"add","cron":"0 9 * * 1-5","task":"..."}
-//!         {"action":"update","id":"sch-1","cron":"0 9 * * *"}
 //!         {"action":"remove","id":"sch-1"}
 //! Output: {"ok":true,"entries":[...],"log":[...]} | {"ok":true,"entry":{...}}
 //!
@@ -58,9 +57,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "list")) return doList(out);
     if (std.mem.eql(u8, action, "set_enabled")) return doSetEnabled(req, out);
     if (std.mem.eql(u8, action, "add")) return doAdd(req, out);
-    if (std.mem.eql(u8, action, "update")) return doUpdate(req, out);
     if (std.mem.eql(u8, action, "remove")) return doRemove(req, out);
-    return lib.fail(out, "action must be list, set_enabled, add, update, or remove");
+    return lib.fail(out, "action must be list, set_enabled, add, or remove");
 }
 
 fn doList(out: *lib.Out) !void {
@@ -92,14 +90,12 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
     const task = logic.validateTask(task_raw) catch |err| return lib.fail(out, switch (err) {
         error.TaskEmpty => "the task is empty",
         error.TaskTooLong => "the task is too long to schedule",
-        error.InvalidContent => "the task contains invalid bytes",
     });
     const tz: i32 = blk: {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
         break :blk @trunc(n_f);
     };
     const now: i64 = @trunc(lib.nowSeconds());
-    if (!logic.validTzOffset(tz)) return lib.fail(out, "tz_offset_minutes must be between -720 and 840");
     if (logic.firstFire(cron_text, now, tz) == null)
         return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
 
@@ -141,40 +137,6 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
         }
         if (!found) return lib.fail(out, "no such entry");
         if (try store(loaded)) return out.writeAll("{\"ok\":true}");
-    }
-    return lib.fail(out, "schedule file kept changing underneath; try again");
-}
-
-fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
-    const id = lib.optStr(req, "id") orelse return lib.fail(out, "update needs an id");
-    if (!logic.validId(id)) return lib.fail(out, "bad entry id");
-
-    const cron_text = lib.optStr(req, "cron");
-    const task_raw = lib.optStr(req, "task");
-    if (cron_text == null and task_raw == null)
-        return lib.fail(out, "update needs at least a cron or task change");
-
-    var attempt: u32 = 0;
-    while (attempt < 3) : (attempt += 1) {
-        var loaded = try load();
-        const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
-
-        if (cron_text) |ct| {
-            if (!logic.validTzOffset(e.tz_offset_minutes)) return lib.fail(out, "tz_offset_minutes must be between -720 and 840");
-            if (logic.firstFire(ct, @trunc(lib.nowSeconds()), e.tz_offset_minutes) == null)
-                return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
-            e.cron = ct;
-        }
-        if (task_raw) |tr| {
-            const task = logic.validateTask(tr) catch |err| return lib.fail(out, switch (err) {
-                error.TaskEmpty => "the task is empty",
-                error.TaskTooLong => "the task is too long to schedule",
-                error.InvalidContent => "the task contains invalid bytes",
-            });
-            e.task = task;
-        }
-
-        if (try store(loaded)) return writeOne(out, e.*);
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
