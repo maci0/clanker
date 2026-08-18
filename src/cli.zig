@@ -7467,10 +7467,7 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: st
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
+    const parsed = jsonBody(NotifyRequestBody, arena, body, stream) orelse return;
     const from = parsed.from orelse "";
     const kind = parsed.kind orelse "";
     const topic = parsed.topic orelse "";
@@ -7504,14 +7501,8 @@ fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Conf
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatMessageBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatMessageBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
     const text = parsed.text orelse "";
     if (text.len > chatrooms.max_text_len) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"text too long\"}");
@@ -7716,14 +7707,8 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatSendBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatSendBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
     const text = parsed.text orelse "";
     if (text.len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
@@ -7771,14 +7756,8 @@ fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Co
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatSubscribeBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatSubscribeBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
     chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, parsed.on) catch |err| {
         log.log(.error_, "POST /api/chat/subscribe room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"subscribe failed\"}");
@@ -7792,22 +7771,10 @@ fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatReactBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
-    const emoji = parsed.emoji orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing emoji\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatReactBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
+    const emoji = requiredField("emoji", parsed.emoji, stream) orelse return;
     // Same cap as the guest `chat react` op (chatrooms.max_emoji_len), so a
     // reaction can never carry a whole payload or an empty label.
     if (emoji.len == 0 or emoji.len > chatrooms.max_emoji_len) {
@@ -7834,22 +7801,10 @@ fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatEditBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
-    const text = parsed.text orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing text\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatEditBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
+    const text = requiredField("text", parsed.text, stream) orelse return;
     // Same text contract as POST /api/chat/send and the guest `chat edit` op
     // (src/sandbox/host.zig): empty or over-cap edits must not be storable,
     // or a message could exceed the documented max_text_len.
@@ -7885,18 +7840,9 @@ fn handleChatDelete(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatDeleteBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatDeleteBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
     _ = room;
     chatrooms.deleteMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, cfg.instance.name) catch |err| switch (err) {
         error.NotFound => {
@@ -7921,18 +7867,9 @@ fn handleChatPin(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatPinBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatPinBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
     const pinned = chatrooms.togglePin(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, msg_id) catch |err| {
         log.log(.error_, "POST /api/chat/pin: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"pin failed\"}");
@@ -7946,18 +7883,9 @@ fn handleChatTopic(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatTopicBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const topic = parsed.topic orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing topic\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatTopicBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const topic = requiredField("topic", parsed.topic, stream) orelse return;
     // Same cap as the guest `chat set_topic` op (chatrooms.max_topic_len):
     // without it a topic could overflow the fixed room_meta.json frame.
     if (topic.len > chatrooms.max_topic_len) {
@@ -8377,10 +8305,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(A2ARequest, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
+    const parsed = jsonBody(A2ARequest, arena, body, stream) orelse return;
     const id = parsed.id orelse .null;
     var text: []const u8 = "";
     if (parsed.params) |p| {
@@ -10974,14 +10899,8 @@ fn handleWebuiPlugins(
 
     var input: []const u8 = "{}";
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(WebuiPluginPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        const name = req.name orelse {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
-            return;
-        };
+        const req = jsonBody(WebuiPluginPost, arena, body, stream) orelse return;
+        const name = requiredField("name", req.name, stream) orelse return;
         // No explicit target preserves the old toggle semantics, resolved
         // against the guest-owned registry rather than a second native copy.
         const on = req.enabled orelse blk: {
@@ -11373,10 +11292,7 @@ fn handleBoard(
 fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, body: []const u8, stream: std.Io.net.Stream) void {
     var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
     defer guard.release();
-    const req = std.json.parseFromSliceLeaky(GoalPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
+    const req = jsonBody(GoalPost, arena, body, stream) orelse return;
     if (req.objective != null) {
         var input: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
@@ -11639,10 +11555,7 @@ fn handleSessions(
             return;
         }
         if (std.mem.eql(u8, method, "POST")) {
-            const req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-                return;
-            };
+            const req = jsonBody(SessionPatchBody, arena, body, stream) orelse return;
             if (req.archived) |arch| {
                 session.setArchived(io, gpa, arena, std.Io.Dir.cwd(), id, arch) catch {
                     respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
@@ -11698,10 +11611,7 @@ fn handleSessions(
 
     // Import: POST /api/sessions with {import_chat:true, title, messages:[{role,content}]}
     if (std.mem.eql(u8, method, "POST")) {
-        const import_req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
+        const import_req = jsonBody(SessionPatchBody, arena, body, stream) orelse return;
         if (import_req.import_chat orelse false) {
             const msgs = import_req.messages orelse &[_]session.StoredMessage{};
             const title = import_req.title orelse "imported chat";
@@ -12583,14 +12493,8 @@ fn handlePlugins(
     const arena = arena_state.allocator();
 
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(PluginToggleBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        const name = req.name orelse {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
-            return;
-        };
+        const req = jsonBody(PluginToggleBody, arena, body, stream) orelse return;
+        const name = requiredField("name", req.name, stream) orelse return;
         // The name becomes a word in the tool's argument string, so anything
         // with whitespace in it would silently become a different command.
         if (name.len == 0 or name.len > 64 or std.mem.findAny(u8, name, " \t\r\n") != null) {
@@ -12813,10 +12717,7 @@ fn handleWorkspaces(
             return;
         }
         if (std.mem.eql(u8, method, "POST")) {
-            const req = std.json.parseFromSliceLeaky(WorkspaceBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-                return;
-            };
+            const req = jsonBody(WorkspaceBody, arena, body, stream) orelse return;
             const name: ?[]const u8 = if (req.name.len > 0) req.name else null;
             const folder: ?[]const u8 = if (req.path.len > 0) req.path else null;
             if (name == null and folder == null and req.roots.len == 0) {
@@ -12856,10 +12757,7 @@ fn handleWorkspaces(
     }
 
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(WorkspaceBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
+        const req = jsonBody(WorkspaceBody, arena, body, stream) orelse return;
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         const owner = selfInstanceId(cfg);
         const created = (if (req.roots.len > 0)
@@ -15088,6 +14986,26 @@ test "retrieval prompt labels knowledge as untrusted and separates operator task
 
 fn connHeader() []const u8 {
     return if (request_keep_alive) "Connection: keep-alive\r\n" else "Connection: close\r\n";
+}
+
+/// Parses a request body into `T`, answering the shared 400 when it is not
+/// valid JSON for that shape. Every `POST /api/*` handler wants the same
+/// refusal, so it lives here once rather than in each of them.
+fn jsonBody(comptime T: type, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) ?T {
+    return std.json.parseFromSliceLeaky(T, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return null;
+    };
+}
+
+/// Unwraps a field a route requires, answering the shared "missing <name>"
+/// 400 when the body omitted it. `name` is comptime so the message is a
+/// literal rather than something the handler has to format into a buffer.
+fn requiredField(comptime name: []const u8, value: anytype, stream: std.Io.net.Stream) ?@typeInfo(@TypeOf(value)).optional.child {
+    return value orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing " ++ name ++ "\"}");
+        return null;
+    };
 }
 
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
