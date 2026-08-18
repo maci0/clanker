@@ -33,7 +33,14 @@ The operator has Claude Code, Codex, and Grok Build logins (OAuth / subscription
 
 The driver is native harness code, not a guest and not `clanker acp` (that verb is the *server*, ADR 0026). clanker starts the vendor CLI as a subprocess and speaks ACP as the *client*.
 
-**Operator surface.** No new work verb. Existing starts (`clanker run`, `repl`, `goal`, `POST /api/run`) gain a backend selector (`--backend` / `[agent] backend`, names like `grok`, `codex`, `claude`). Unset keeps today's in-process LLM loop. A fourth verb would fork the product the way a second `clanker acp` already would.
+**Operator surface.** No new work verb. The same backend selector is how every start picks the worker:
+
+- CLI: `--backend` / `[agent] backend` on `run`, `repl`, and `goal` (names like `grok`, `codex`, `claude`).
+- HTTP: `POST /api/run` takes the same field the web picker already sends for provider/model.
+- Web UI model picker: these are rows in that picker, not a second dropdown. They sit in their own group under a short heading that says they are a local coding-agent backend (vendor CLI + login), not a `[providers.*]` API-key model. Same list, same save (`clanker.model` / whatever the picker already persists), visibly not DeepSeek/Anthropic-the-HTTP-API.
+- TUI `/model` uses the same grouping so the two pickers do not drift.
+
+Unset keeps today's in-process LLM loop. List a backend when that vendor CLI is actually present (PATH / configured command), not when an API key is set — `unconfiguredReason` does not apply. A fourth verb would fork the product the way a second `clanker acp` already would.
 
 **Two paths, one Graph.** Path A sends initialize → authenticate (if the agent requires it) → session/new → session/prompt and consumes session/update; it implements session/request_permission (ACP client baseline). fs/* and terminal/* are not required to start: if the agent demands them, refuse the capability or fall through to B. Path B runs `claude -p`, `codex exec`, `grok -p`. Both persist the same `src/agent/graph.zig` `Graph` via the graph guest `write` action (the same JSON `Agent.persistGraph` already builds). They do **not** call `persistGraph` — that function is private on `Agent` and only runs at the end of an in-process loop. ACP `session/update` tool/message events map onto existing `NodeKind` (`tool`, `llm`, `final`). B writes a degraded graph: one `llm`/`final` pair from stdout. That is one schema, not two.
 
@@ -51,7 +58,7 @@ The driver is native harness code, not a guest and not `clanker acp` (that verb 
 - src/agent/auto_learn.zig `recordRun` — usage event (provider/model/tokens/tools). Hard blocker: none. The work is writing the client.
 
 **Implementation.**
-1. src/acp/client.zig (state machine + spawn). src/cli.zig / src/config.zig `--backend` / `[agent] backend`. Drive Grok `agent stdio`. Persist via graph `write` + autolearn.recordRun.
+1. src/acp/client.zig (state machine + spawn). src/cli.zig / src/config.zig `--backend` / `[agent] backend`. GET /api/providers (or the same payload) lists backends as a separate group. ui/app/core/modelpicker.js (and TUI /model) render that group under the heading. Drive Grok `agent stdio`. Persist via graph `write` + autolearn.recordRun.
 2. Same client, Codex argv `npx -y @agentclientprotocol/codex-acp` (published adapter).
 3. Same client, Claude published ACP adapter once the package is opened and pinned.
 4. src/acp/fallback_spawn.zig — B, same Graph write, used when ACP is missing or a turn is cancelled as broken.
@@ -77,6 +84,7 @@ The driver is native harness code, not a guest and not `clanker acp` (that verb 
 - [ ] No vendor credential is seen, stored, or logged by clanker on either path. (Goal 3)
 - [ ] Each driven session writes a run-graph node and autolearn can read it. (Goal 4)
 - [ ] Spawn is harness-native, not ck_job and not ck_exec's allowlist. (Goal 5)
+- [ ] The web UI model picker (and TUI /model) lists installed coding-agent backends in their own group, headed as a local CLI backend rather than an API-key provider; choosing one is what POST /api/run and run/repl/goal send as the backend. (Operator surface)
 
 ## Open questions / future work
 
