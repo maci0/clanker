@@ -64,15 +64,6 @@ pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
     return spec.nextAfter(now, tz_offset_minutes);
 }
 
-/// Whether a cron spec is syntactically parseable. Callers use this to give a
-/// specific error ("malformed") rather than conflating it with the distinct
-/// case of a parseable-but-impossible schedule ("never fires").
-pub fn parses(cron_text: []const u8) bool {
-    if (cron_text.len > max_cron_spec_bytes) return false;
-    _ = cron.parse(cron_text) catch return false;
-    return true;
-}
-
 test "validId matches the session-id alphabet" {
     try std.testing.expect(validId("sch-1"));
     try std.testing.expect(validId("nightly"));
