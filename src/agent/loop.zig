@@ -2499,8 +2499,7 @@ pub const Agent = struct {
     }
 
     fn persistGraphOrErr(self: *Agent, g: *const graph_mod.Graph) !void {
-        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "graph", null);
-        defer mod.deinit();
+        const mod = try self.cachedInternalModule("graph");
 
         var enc: std.Io.Writer.Allocating = .init(self.arena);
         var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
@@ -2573,6 +2572,18 @@ pub const Agent = struct {
         if (!resp.ok) log.log(.warn, "graph write: {s}", .{resp.@"error"});
     }
 
+    /// Loads a named internal tool (spill, rewind, graph) through the same
+    /// `self.modules` cache as regular tool calls, so a per-iteration use does
+    /// not re-read the wasm from disk and recompile it every turn. The module
+    /// is freed with the rest of the cache when `run()` returns.
+    fn cachedInternalModule(self: *Agent, tool_name: []const u8) !*runtime.ToolModule {
+        if (self.modules.get(tool_name)) |m| return m;
+        const m = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, tool_name, null);
+        errdefer m.deinit();
+        self.modules.put(self.arena, tool_name, m) catch return error.OutOfMemory;
+        return m;
+    }
+
     /// Persists pruned tool results through the sandboxed `spill` WASM tool
     /// (fs_prefixes: ["state/spills/"]) instead of a native file-write path,
     /// the same split as `persistGraphOrErr`: the decision runs natively (it
@@ -2603,8 +2614,7 @@ pub const Agent = struct {
         // rewrite them is the per-iteration cost this skips.
         if (pending.items.len == 0) return wrote;
 
-        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "spill", null);
-        defer mod.deinit();
+        const mod = try self.cachedInternalModule("spill");
 
         for (pending.items) |sp| {
             var enc: std.Io.Writer.Allocating = .init(self.arena);
@@ -2647,8 +2657,7 @@ pub const Agent = struct {
     /// clean tree (nothing to snapshot).
     fn snapshotRewind(self: *Agent, tool: []const u8) ?[]const u8 {
         const session_id = if (self.session_id.len > 0) self.session_id else "default";
-        const mod = runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, "rewind", null) catch return null;
-        defer mod.deinit();
+        const mod = self.cachedInternalModule("rewind") catch return null;
 
         var enc: std.Io.Writer.Allocating = .init(self.arena);
         var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
