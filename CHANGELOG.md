@@ -20,6 +20,25 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- Catalog specs are applied from the models.dev snapshot without parsing the
+  matched provider. `Config.load` used to build a `std.json.Value` tree of the
+  whole provider member -- for an aggregator that is hundreds of models and the
+  bulk of the 4 MB snapshot -- to read the specs of the two or three models a
+  config actually names; only the named models' spans reach `std.json` now.
+  Every config-loading command pays this on startup.
+
+- A REPL turn no longer copies the whole system prompt into the run arena when
+  the prompt has not changed. `refreshSystemPrompt` runs once per turn and
+  built the prompt (plus every skill file, the learnings file and the workflow
+  catalog it reads) straight into the arena that lives for the session, so a
+  long conversation accumulated one full copy of all of it per turn even though
+  the text was almost always identical. It builds in scratch and copies only on
+  a real change.
+
+- Image attachments no longer keep their raw bytes for the rest of the REPL
+  session: only the base64 the request carries is retained, instead of that
+  plus a second full copy of every attachment (up to 4 MiB apiece).
+
 - `clanker --dump-config` prints the merged config as JSON. It printed Zig's
   struct-literal debug form, in which a string is a list of byte integers, a
   provider map is its internal `.bytes = u8@7fdfe1466150` buffer pointer, and
