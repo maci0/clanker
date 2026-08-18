@@ -60,6 +60,7 @@ pub fn nextId(arena: std.mem.Allocator, ids: []const []const u8) ![]const u8 {
 /// time rather than sitting in the list looking scheduled.
 pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
     if (cron_text.len > max_cron_spec_bytes) return null;
+    if (now < 0) return null;
     const spec = cron.parse(cron_text) catch return null;
     return spec.nextAfter(now, tz_offset_minutes);
 }
@@ -114,4 +115,6 @@ test "firstFire refuses a spec that never comes around" {
     // A pathologically long spec is rejected before the parser sees it.
     const too_long = "*" ++ "x" ** (max_cron_spec_bytes + 1);
     try std.testing.expectEqual(@as(?i64, null), firstFire(too_long, now, 0));
+    // A negative timestamp is nonsensical and is refused before tokenization.
+    try std.testing.expectEqual(@as(?i64, null), firstFire("* * * * *", -1, 0));
 }
