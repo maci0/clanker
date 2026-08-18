@@ -1105,6 +1105,13 @@ pub const Config = struct {
     }
 
     pub fn loadWithProfile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8, profile: ?[]const u8) !Config {
+        return loadInner(io, arena, dir, file_name, local_file_name, profile, true);
+    }
+
+    /// `apply_catalog` false skips `applyCatalogSpecs`, which reads and scans
+    /// the ~4 MB models.dev snapshot. Only `loadQuiet` passes false: it wants
+    /// one `[modules]` flag, and the catalog fills nothing outside `[models]`.
+    fn loadInner(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8, profile: ?[]const u8, apply_catalog: bool) !Config {
         if (!diagnostics_suppressed) last_load_diagnostic = false;
         const base = (try loadFile(io, arena, dir, file_name, .required)).?;
         var cfg = base.cfg;
@@ -1130,7 +1137,7 @@ pub const Config = struct {
         // that only sets, say, `default_provider` has no "providers" section by
         // design, and warning about it points at a config that is in fact fine.
         if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
-        applyCatalogSpecs(io, arena, dir, &cfg);
+        if (apply_catalog) applyCatalogSpecs(io, arena, dir, &cfg);
         if (cfg.providers.count() == 0) {
             log.log(.warn, "config {s}: no providers defined", .{base.path});
         } else if (cfg.providers.get(cfg.default_provider) == null) {
@@ -1186,7 +1193,11 @@ pub const Config = struct {
         const prior = diagnostics_suppressed;
         diagnostics_suppressed = true;
         defer diagnostics_suppressed = prior;
-        return load(io, arena, dir, file_name, local_file_name);
+        // No catalog: the caller reads `modules.dotenv` and throws the rest
+        // away, and the command behind it loads again in full moments later.
+        // Applying specs here read and walked the whole models.dev snapshot a
+        // second time on every single invocation.
+        return loadInner(io, arena, dir, file_name, local_file_name, null, false);
     }
 
     /// Returns and clears the operator-facing diagnostic emitted by the most
@@ -3996,6 +4007,47 @@ test "unset model specs fill from the models.dev snapshot; written values win" {
     try std.testing.expectEqual(@as(u32, 500000), capped.context_window);
     try std.testing.expectEqual(@as(u32, 8192), capped.max_tokens);
     try std.testing.expect(capped.max_tokens_set);
+}
+
+test "loadQuiet answers the modules flag without applying catalog specs" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "state/models-dev.json",
+        .data =
+        \\{"xai": {"api": "https://api.x.ai/v1", "models": {"grok-4.6": {"limit": {"context": 500000}}}}}
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "xai"
+        \\[modules]
+        \\dotenv = false
+        \\[providers.xai]
+        \\base_url = "https://api.x.ai/v1"
+        \\[models."xai/grok-4.6"]
+        \\provider = "xai"
+        ,
+    });
+
+    // The flag the startup dotenv probe reads is what loadQuiet must answer.
+    const quiet = try Config.loadQuiet(io, arena, tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expect(!quiet.modules.dotenv);
+    // ... and it must not pay for the snapshot walk to do it.
+    try std.testing.expectEqual((Model{}).context_window, quiet.providers.getPtr("xai").?.models.get("grok-4.6").?.context_window);
+
+    // The command behind the probe still gets the filled spec.
+    const full = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expectEqual(@as(u32, 500000), full.providers.getPtr("xai").?.models.get("grok-4.6").?.context_window);
 }
 
 test "rpm is accepted on a provider and on a model" {
