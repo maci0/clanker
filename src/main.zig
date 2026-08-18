@@ -254,7 +254,7 @@ pub fn main(init: std.process.Init) !void {
             else
                 cli.printUsageError(init.io, "unrecognized argument '{s}'", .{shown}),
             error.MissingArg => if (std.mem.eql(u8, diag, "export"))
-                cli.printUsageError(init.io, "clanker session needs `export <id>`; to list conversations run `clanker sessions`", .{})
+                cli.printUsageError(init.io, "clanker session needs a subcommand: `export <id>` or `search <query>`; to list conversations run `clanker sessions`", .{})
             else if (std.mem.eql(u8, diag, "conversation id"))
                 cli.printUsageError(init.io, "clanker session export needs a conversation id; run `clanker sessions` for the list", .{})
             else if (std.mem.eql(u8, diag, "improvement id"))
