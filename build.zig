@@ -292,6 +292,11 @@ pub fn build(b: *std.Build) void {
     const webui_load_js_test = b.addSystemCommand(&.{ "node", "--test" });
     webui_load_js_test.addFileArg(b.path("ui/app/webui-load.test.mjs"));
     test_step.dependOn(&webui_load_js_test.step);
+    // The app.css/views.css split is a first-paint contract: nothing in the
+    // deferred sheet may style an element the first draw shows.
+    const css_split_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    css_split_js_test.addFileArg(b.path("ui/app/css-split.test.mjs"));
+    test_step.dependOn(&css_split_js_test.step);
     // Operator vs Chat column widths live in the shipped stylesheet.
     const layout_js_test = b.addSystemCommand(&.{ "node", "--test" });
     layout_js_test.addFileArg(b.path("ui/app/core/layout.test.mjs"));

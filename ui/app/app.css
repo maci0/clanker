@@ -1597,7 +1597,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
 /* Narrow viewports: primary composer actions and rail channels stay hittable
    even when the UA reports a fine pointer (phones + many tablets). */
 @media (max-width: 40rem) {
-  /* iOS Safari zooms the page when a focused field is under 16px. */
+/* iOS Safari zooms the page when a focused field is under 16px. */
   input[type="text"]:not(.pf-v6-c-form-control),
   input[type="search"]:not(.pf-v6-c-form-control),
   input[type="date"]:not(.pf-v6-c-form-control),
@@ -1611,55 +1611,52 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .composer textarea {
     font-size: 16px;
   }
-  .composer .toolbar #submit,
+.composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
-  button.chip-btn,
+button.chip-btn,
   button.pf-v6-c-button.pf-m-plain.chip-btn { min-height: 44px; min-width: 44px; }
-  .rail-tab,
+.rail-tab,
   .pf-v6-c-nav__link.rail-tab,
   button.pf-v6-c-nav__link.rail-tab {
     min-height: 44px;
     padding-block: 0.55rem;
   }
-  .rail-item,
+.rail-item,
   .rail-new,
   button.rail-new,
   button.pf-v6-c-button.rail-new {
     min-height: 44px;
     height: 44px;
   }
-  .rail-pin,
+.rail-pin,
   button.rail-pin {
     min-height: 44px;
     min-width: 44px;
   }
-  .session-actions .secondary,
+.session-actions .secondary,
   .session-actions .more > summary,
   .session-actions button {
     min-height: 44px;
   }
-  .chat-actions button,
+.chat-actions button,
   .chat-thread-bar button {
     min-height: 44px;
     min-width: 44px;
   }
-  .slack-room-item {
-    min-height: 44px;
-  }
-  .composer .toolbar #voice-btn,
+.composer .toolbar #voice-btn,
   .composer .toolbar button.secondary {
     min-height: 44px;
   }
-  button.chip.header-model,
+button.chip.header-model,
   button.chip.model-pill,
   #header-model,
   #composer-model {
     min-height: 44px;
   }
-  button.rail-group {
+button.rail-group {
     min-height: 44px;
   }
-  .composer details > summary,
+.composer details > summary,
   .composer details.more > summary,
   #params > summary {
     min-height: 44px;
@@ -1667,6 +1664,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
     align-items: center;
   }
 }
+
 
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a
    press. Harmless on pointer devices too. */
@@ -1677,11 +1675,10 @@ button:active:not(:disabled) {
 @media (prefers-reduced-motion: reduce) { button:active:not(:disabled) { transform: none; } }
 
 @media (forced-colors: active) {
-  button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-tag,
+button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-tag,
   .code-block, .code-head, .copy-code-btn, .run-node-incomplete { border: 1px solid ButtonText; }
-  .run-edges path { stroke: CanvasText; }
-  :focus-visible { outline: 2px solid Highlight; }
-  /* Selection is carried by lamps and box-shadow everywhere, and forced-colors
+:focus-visible { outline: 2px solid Highlight; }
+/* Selection is carried by lamps and box-shadow everywhere, and forced-colors
      drops box-shadow and overrides backgrounds, so "where am I" disappeared
      entirely — worst in the palette, where the highlighted row is the only
      clue what Enter will do. */
@@ -1695,6 +1692,7 @@ button:active:not(:disabled) {
     forced-color-adjust: none;
   }
 }
+
 
 /* Overlays: the palette and the shortcut sheet. Both are one box on a scrim,
    positioned high rather than centred so the list grows downward into space
@@ -2078,9 +2076,7 @@ mark {
 .board-lane-control { min-width: 32px; min-height: 32px; padding: 0 var(--space-2); font-size: 12px; border-radius: 999px; }
 /* The 32px base is the fine-pointer density compromise; coarse pointers need a
    full 44px target, declared here (after the base) so this wins by source order. */
-@media (pointer: coarse) {
-  .board-lane-control { min-width: 44px; min-height: 44px; }
-}
+
 .board-empty {
   max-width: var(--measure); margin: var(--space-5) 0; padding: var(--space-4) 0;
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); text-align: left; color: var(--fg-muted);
@@ -2448,9 +2444,7 @@ h2#session-title {
      re-laid out the whole board row every frame for 200ms. */
   transition: background 180ms ease, box-shadow 180ms ease, opacity 200ms ease;
 }
-@media (max-width: 40rem) {
-  .board-col { flex: 1 1 100%; min-width: 0; max-width: none; }
-}
+
 .board-col[data-collapsed="true"] { flex: 0 0 40px; min-width: 40px; max-width: 40px; cursor: pointer; opacity: 0.8; }
 .board-col[data-collapsed="true"]:hover { opacity: 1; }
 .board-col[data-collapsed="true"] .board-cards, .board-col[data-collapsed="true"] .board-quick-add, .board-col[data-collapsed="true"] .board-empty-slot { display: none; }
@@ -2867,7 +2861,7 @@ h2#session-title {
   display: grid; grid-template-columns: 1fr 168px; gap: var(--space-4);
   padding: var(--space-3) var(--space-4) var(--space-4);
 }
-@media (max-width: 40rem) { .card-detail-layout { grid-template-columns: 1fr; } }
+
 .card-detail-main { min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); }
 .card-detail-sidebar { display: flex; flex-direction: column; gap: var(--space-2); }
 .card-detail-sidebar-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-muted); margin-bottom: 0.15rem; }
@@ -3201,4 +3195,22 @@ h2#session-title {
   /* Same iOS zoom contract as the page-wide phone-field guard: this
      textarea's 13px rule is declared after that guard. */
   .board-quick-add .board-add-form textarea { font-size: 16px; }
+}@media (pointer: coarse) {
+  button:where(:not(.pf-v6-c-button)),
+  button.pf-v6-c-button,
+  .chat-composer button,
+  #view-chat .suggestion,
+  input:where([type="text"], [type="search"], [type="number"], [type="url"]),
+  select {
+    min-height: 44px;
+  }
+}@media (max-width: 40rem) {
+  /* The view-scoped fields this guard used to cover (.slack-*, .run-picker
+     search, .config-editor, .models-edit-toml-editor) live in views.css,
+     which loads after this sheet, so their 16px reset rides in the deferred
+     file's trailing block and still wins the cascade there. This one stays:
+     the rail's workspace picker is part of the first paint. */
+  .rail-workspace-bar select {
+    font-size: 16px;
+  }
 }

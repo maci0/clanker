@@ -1,13 +1,3 @@
-/* View-scoped styles for the pages the first draw does not show.
-
-   Split out of app.css so the render-blocking sheet only carries the frame,
-   the chat column, and the goals/kanban section (which absorbed base UI
-   rules and is not safely separable). This sheet is loaded non-blocking from
-   index.html (`media="print"`, swapped to `all` by app.js) and covers the
-   runs, rooms, usage, models, tools, fleet and search views. The rule in
-   css-split.test.mjs pins the contract: no selector here may match an
-   element the first paint shows. */
-
 /* ---- runs: the execution graph of a recorded run ---- */
 
 
@@ -1229,6 +1219,21 @@ button.tool-name:hover { color: var(--accent-text); }
 
 
 /* ---- goals: what the agent is steering toward ---- */
+@media (max-width: 40rem) {
+.slack-room-item {
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+.run-edges path { stroke: CanvasText; }
+}
+@media (pointer: coarse) {
+  .board-lane-control { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 40rem) {
+  .board-col { flex: 1 1 100%; min-width: 0; max-width: none; }
+}
+@media (max-width: 40rem) { .card-detail-layout { grid-template-columns: 1fr; } }
 /* ---- fleet: cross-agent roster + grouped runs ----
    Inline styles are not used here so CSP can stay strict and the panel's
    vocabulary (tokens, motion, borders) stays in one place. */
@@ -1675,16 +1680,6 @@ button.tool-name:hover { color: var(--accent-text); }
    the file so it outranks the equal-specificity 40px rules above; coarse
    pointer only, so desktop density is untouched. Plugin sheets load after
    this one and may still opt controls out (Files' compact filenames). */
-@media (pointer: coarse) {
-  button:where(:not(.pf-v6-c-button)),
-  button.pf-v6-c-button,
-  .chat-composer button,
-  #view-chat .suggestion,
-  input:where([type="text"], [type="search"], [type="number"], [type="url"]),
-  select {
-    min-height: 44px;
-  }
-}
 
 
 /* ── config editor (System) ────────────────────────────────────────────────
@@ -1730,12 +1725,15 @@ button.tool-name:hover { color: var(--accent-text); }
 /* Rooms, workspace, run-picker, and the config overlay all set a desktop
    field size after (or more specifically than) the page-wide 16px phone
    guard. iOS Safari zooms the page when a focused field is under 16px. */
+
+/* The field-size guard for view-scoped fields, kept last in this sheet so it
+   still overrides the desktop sizes declared above it (app.css carries the
+   first-paint half, the rail's workspace picker). */
 @media (max-width: 40rem) {
   .slack-search-box input,
   .slack-search-bar input,
   .slack-composer-row input[type="text"],
   .run-picker input[type="search"],
-  .rail-workspace-bar select,
   .config-editor textarea,
   .models-edit-toml-editor textarea {
     font-size: 16px;

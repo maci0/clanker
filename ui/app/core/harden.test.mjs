@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const css = readFileSync(join(here, "..", "app.css"), "utf8");
+// app.css and views.css are one stylesheet split for the critical path; these
+// assertions are about shipped behavior, not delivery order, so they read both.
+const css = readFileSync(join(here, "..", "app.css"), "utf8") + "\n" + readFileSync(join(here, "..", "views.css"), "utf8");
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
 const uiSrc = readFileSync(join(here, "ui.js"), "utf8");
 
@@ -497,8 +499,10 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   const roomsDesktop = css.indexOf(".slack-composer-row input[type=\"text\"] {\n");
   const roomsPhone = css.lastIndexOf(".slack-composer-row input[type=\"text\"],");
   assert.ok(roomsDesktop >= 0 && roomsPhone > roomsDesktop, "phone Rooms composer must override the 13px desktop size");
+  // The rail's workspace picker keeps its own 16px guard in app.css (it is
+  // first paint); it must come after the desktop 12px rule in the same sheet.
   const wsDesktop = css.indexOf(".rail-workspace-bar select {\n");
-  const wsPhone = css.lastIndexOf(".rail-workspace-bar select,");
+  const wsPhone = css.lastIndexOf(".rail-workspace-bar select {\n    font-size: 16px;");
   assert.ok(wsDesktop >= 0 && wsPhone > wsDesktop, "phone workspace picker must override the 12px desktop size");
 });
 

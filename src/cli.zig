@@ -9552,7 +9552,7 @@ fn handleWebuiAsset(
     const cache = webuiRenderCache(kind);
     const gz = webuiGzipCache(kind);
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, target, cache, stream) orelse return;
-    const content_type: []const u8 = if (kind == .css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
+    const content_type: []const u8 = if (kind == .css or kind == .views_css) "text/css; charset=utf-8" else "text/javascript; charset=utf-8";
 
     // These are compiled into the binary and change with every rebuild, so
     // they cannot carry a far-future cache lifetime, but re-sending the same
