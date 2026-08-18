@@ -1621,10 +1621,13 @@ pub const Config = struct {
         // invocation for the few kilobytes of it any config actually reads.
         const members = models_dev.topLevelMembers(arena, body);
         if (members.len == 0) return;
+        // Built once for the whole provider loop: the per-member `api`/`env`
+        // extraction it replaces used to run once per configured provider.
+        const index = models_dev.indexProviders(arena, members);
         var it = cfg.providers.iterator();
         while (it.next()) |pkv| {
             const p = pkv.value_ptr;
-            const span = models_dev.findProviderSpan(arena, members, p.name, p.base_url, p.api_key_env) orelse continue;
+            const span = models_dev.findProviderSpan(index, p.name, p.base_url, p.api_key_env) orelse continue;
             const cat_p = std.json.parseFromSliceLeaky(std.json.Value, arena, span, .{ .ignore_unknown_fields = true }) catch continue;
             var mit = p.models.iterator();
             while (mit.next()) |mkv| {
