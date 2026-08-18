@@ -1,7 +1,6 @@
 #!/bin/bash
-# Select the improve-self model, the model the clanker escalation run uses, and
-# the harness that repairs a failed escalation run, resolve the Clanker checkout
-# and binary, then run the loop.
+# Resolve the Clanker checkout and binary, ask which improve-self model, which
+# escalation model and which repair harness to use, then run the loop.
 set -euo pipefail
 
 LOOP="$(dirname "$(readlink -f "$0")")/loop.py"
@@ -49,11 +48,10 @@ if [[ "${1:-}" == -h || "${1:-}" == --help ]]; then
     cat <<'USAGE'
 usage: run.sh [loop arguments...]
 
-Select the model improve-self batches run on, the model the clanker escalation
-run uses, and the harness that repairs a failed escalation run, then exec
-loop.py with the checkout and binary already resolved. Every argument is passed
-straight through to the loop, and passing --model, --escalate-model or
---fix-repairs-with yourself skips the matching menu.
+Starts menus for the improve-self model, the escalation model and the repair
+harness, then execs loop.py with the checkout and binary already resolved.
+Every argument is passed straight through to the loop, and passing --model,
+--escalate-model or --fix-repairs-with yourself skips the matching menu.
 
 REPAIR LEVELS
   1  clanker improve-self       a batch of iterations
@@ -67,14 +65,15 @@ ENVIRONMENT
                                              back to $CLANKER_DIR/zig-out/bin/clanker)
 
 EXAMPLES
-  run.sh                                      select from all menus, then run
+  run.sh                                      start the menus, then the loop
   run.sh --iters 5 "improve the clanker tui"  pass options to the loop
   run.sh --escalate-model zai/glm-5.2         skip the escalation model menu
   run.sh --fix-repairs-with "codex exec"      skip the harness menu
   CLANKER_DIR=~/src/clanker run.sh            drive another checkout
 
-Edit the MODELS, ESCALATE_MODELS and FIXERS arrays at the top of this file to
-change the menus. Run loop.py --help for the loop's own options.
+Copy this file to run.local.sh and edit the MODELS, ESCALATE_MODELS and
+FIXERS arrays there to change the menus. run.local.sh is gitignored.
+Run loop.py --help for the loop's own options.
 USAGE
     exit 0
 fi
