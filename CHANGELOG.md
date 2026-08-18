@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker <command> --help` names the record-store subcommands the parser
+  actually accepts. `adr` and `prd` omitted `append` and `update` from their
+  usage line, and `research` omitted `create`, while each command's own error
+  message listed them, so the usage line was the narrower of two disagreeing
+  lists. `clanker session --help` and the bare-`clanker session` usage error
+  now name `search <query>` beside `export <id>`: `session` resolves to the
+  export help, so the other half of the command was reachable only from the
+  top-level list.
+
 - Every `clanker` invocation no longer forks `zig env` at startup. The Zig standard-library path it resolves is read by exactly two cold paths (the `zig_std` tool, and the improve engine's std-symbol help for a patch that failed to compile), so `sandbox/host.zig` resolves it on first use and caches it in a static buffer instead. `--help`, `mcp`, `acp` and every CLI verb were each paying a fork+exec of the compiler for a path they never read. `clanker sessions` drops from 10.1 ms to 7.9 ms and `clanker stats` from 12.0 ms to 9.5 ms (ReleaseFast, hyperfine, 30 runs), with system time roughly halved.
 
 - Completed background jobs (`ck_job`, so `jobs` start-and-forget execs and background subagents) are dropped once 64 finished ones are retained. The two tables were process-global and never trimmed, so a long-lived `clanker serve` held every background subagent's task and result text for the life of the process, and every `wait`/`kill`/`list` scanned the whole accumulation. `list` and `wait` still answer for anything running and for the newest 64 completed jobs; older completed ids now read as not-found. A job a `wait` is currently holding is never reaped out from under it.
