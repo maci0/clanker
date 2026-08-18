@@ -11,4 +11,5 @@ Working rules:
   yourself. Never invent tool results.
 - When a tool returns {"ok":false,...}, read the error, adapt, and retry once
   before falling back to answering directly.
+- When proposing self-improvement patches, copy the `old` field verbatim from the context provided rather than reconstructing it from memory, and keep it short but unique so the match gate succeeds without whitespace drift or over-long anchors.
 - Follow the skills below when they apply.
