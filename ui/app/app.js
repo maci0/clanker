@@ -1129,15 +1129,15 @@ function currentSessionMeta() {
 
 /* A fork is a branch you can abandon: the same messages under a new id, so
    trying a different direction never costs the conversation it came from.
-   The server answers with the new id and this switches to it, because the
-   point of forking is to continue in the copy. */
-el.sessionFork.addEventListener("click", function () {
+   Branching is the same move with a cut point, so both go through here: POST,
+   adopt the id the server answers with, and continue in the copy. */
+function switchToSessionCopy(path, btn, verb, doneMessage) {
   if (!currentSessionMeta()) {
     el.sessionStatus.textContent = "This conversation has no saved turns yet.";
     return;
   }
-  el.sessionFork.disabled = true;
-  fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/fork", { method: "POST" })
+  btn.disabled = true;
+  fetch("/api/sessions/" + encodeURIComponent(sessionId) + path, { method: "POST" })
     .then(function (r) {
       return r.json().then(function (data) {
         if (!r.ok || !data.ok || !data.id) throw new Error(data.error || ("HTTP " + r.status));
@@ -1148,13 +1148,17 @@ el.sessionFork.addEventListener("click", function () {
       sessionId = newId;
       rememberSession(sessionId);
       renderSessionChip();
-      el.sessionStatus.textContent = "Forked. You are now in the copy.";
+      el.sessionStatus.textContent = doneMessage;
       return loadSessions();
     })
     .catch(function (err) {
-      el.sessionStatus.textContent = "Could not fork: " + err.message;
+      el.sessionStatus.textContent = "Could not " + verb + ": " + err.message;
     })
-    .finally(function () { el.sessionFork.disabled = false; });
+    .finally(function () { btn.disabled = false; });
+}
+
+el.sessionFork.addEventListener("click", function () {
+  switchToSessionCopy("/fork", el.sessionFork, "fork", "Forked. You are now in the copy.");
 });
 
 el.sessionRename.addEventListener("click", function () {
@@ -1844,32 +1848,10 @@ function renderStats(turn, stats, task) {
     upgradePfButton(branchBtn);
     branchBtn.title = "Continue from this turn in a new conversation";
     branchBtn.addEventListener("click", function () {
-      if (!currentSessionMeta()) {
-        el.sessionStatus.textContent = "This conversation has no saved turns yet.";
-        return;
-      }
       // The turn's own stratum index, which is the same 1-based number the
       // server's branch endpoint cuts the transcript at.
       var n = parseInt((turn.root.querySelector(".turn-depth") || {}).textContent, 10) || 1;
-      branchBtn.disabled = true;
-      fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/branch/" + n, { method: "POST" })
-        .then(function (r) {
-          return r.json().then(function (data) {
-            if (!r.ok || !data.ok || !data.id) throw new Error(data.error || ("HTTP " + r.status));
-            return data.id;
-          });
-        })
-        .then(function (newId) {
-          sessionId = newId;
-          rememberSession(sessionId);
-          renderSessionChip();
-          el.sessionStatus.textContent = "Branched at turn " + n + ". You are now in the copy.";
-          return loadSessions();
-        })
-        .catch(function (err) {
-          el.sessionStatus.textContent = "Could not branch: " + err.message;
-        })
-        .finally(function () { branchBtn.disabled = false; });
+      switchToSessionCopy("/branch/" + n, branchBtn, "branch", "Branched at turn " + n + ". You are now in the copy.");
     });
     actions.appendChild(branchBtn);
 

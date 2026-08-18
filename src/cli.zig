@@ -7684,11 +7684,7 @@ fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
             return;
         },
     };
-    if (added) {
-        respond(stream, 200, "OK", "{\"ok\":true,\"added\":true}");
-    } else {
-        respond(stream, 200, "OK", "{\"ok\":true,\"added\":false}");
-    }
+    respond(stream, 200, "OK", if (added) "{\"ok\":true,\"added\":true}" else "{\"ok\":true,\"added\":false}");
 }
 
 fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
@@ -7800,11 +7796,7 @@ fn handleChatPin(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"pin failed\"}");
         return;
     };
-    if (pinned) {
-        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":true}");
-    } else {
-        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":false}");
-    }
+    respond(stream, 200, "OK", if (pinned) "{\"ok\":true,\"pinned\":true}" else "{\"ok\":true,\"pinned\":false}");
 }
 
 fn handleChatTopic(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
@@ -14250,6 +14242,26 @@ fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8, p
 /// provider. Prefix the provider name always; when images were attached, add
 /// a hint that the model may not be vision-capable, the most common
 /// image-upload failure class.
+// Escape `detail` through the JSON stringifier: provider error text can
+// contain quotes, backslashes, or newlines that plain bufPrint interpolation
+// would turn into malformed JSON clients cannot parse. `fallback` is the body
+// used when even the escaped form does not fit.
+fn respondRunError(stream: std.Io.net.Stream, detail: []const u8, fallback: []const u8) void {
+    var ebuf: [8192]u8 = undefined;
+    var ew: std.Io.Writer = .fixed(&ebuf);
+    var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
+    const built = err_body: {
+        es.beginObject() catch break :err_body false;
+        es.objectField("ok") catch break :err_body false;
+        es.write(false) catch break :err_body false;
+        es.objectField("error") catch break :err_body false;
+        es.write(detail) catch break :err_body false;
+        es.endObject() catch break :err_body false;
+        break :err_body true;
+    };
+    respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else fallback);
+}
+
 fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_images: bool, detail: []const u8) []const u8 {
     const suffix: []const u8 = if (had_images)
         "; with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled"
@@ -14863,22 +14875,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .evaluate = serverGoalLoopEvaluate,
         }) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
-            // Escape `detail` through the JSON stringifier: provider error text
-            // can contain quotes, backslashes, or newlines that plain bufPrint
-            // interpolation would turn into malformed JSON clients cannot parse.
-            var ebuf: [8192]u8 = undefined;
-            var ew: std.Io.Writer = .fixed(&ebuf);
-            var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
-            const built = err_body: {
-                es.beginObject() catch break :err_body false;
-                es.objectField("ok") catch break :err_body false;
-                es.write(false) catch break :err_body false;
-                es.objectField("error") catch break :err_body false;
-                es.write(detail) catch break :err_body false;
-                es.endObject() catch break :err_body false;
-                break :err_body true;
-            };
-            respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"goal loop failed\"}");
+            respondRunError(stream, detail, "{\"ok\":false,\"error\":\"goal loop failed\"}");
             return;
         };
         loop_outcome = outcome;
@@ -14886,22 +14883,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     } else blk: {
         const resp = a.run(&messages, final_task, &err_detail) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
-            // Escape `detail` through the JSON stringifier: provider error text
-            // can contain quotes, backslashes, or newlines that plain bufPrint
-            // interpolation would turn into malformed JSON clients cannot parse.
-            var ebuf: [8192]u8 = undefined;
-            var ew: std.Io.Writer = .fixed(&ebuf);
-            var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
-            const built = err_body: {
-                es.beginObject() catch break :err_body false;
-                es.objectField("ok") catch break :err_body false;
-                es.write(false) catch break :err_body false;
-                es.objectField("error") catch break :err_body false;
-                es.write(detail) catch break :err_body false;
-                es.endObject() catch break :err_body false;
-                break :err_body true;
-            };
-            respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"run failed\"}");
+            respondRunError(stream, detail, "{\"ok\":false,\"error\":\"run failed\"}");
             return;
         };
         break :blk resp.message.content orelse "";

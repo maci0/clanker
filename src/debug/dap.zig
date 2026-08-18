@@ -451,6 +451,14 @@ fn jsonInt(obj: std.json.ObjectMap, key: []const u8) ?i64 {
     };
 }
 
+fn jsonStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const v = obj.get(key) orelse return null;
+    return switch (v) {
+        .string => |n| n,
+        else => null,
+    };
+}
+
 fn findAdapter(adapters: []const config_mod.DebugAdapter, name: []const u8) ?[]const []const u8 {
     for (adapters) |a| {
         if (std.mem.eql(u8, a.name, name)) return a.command;
@@ -479,18 +487,23 @@ fn renderResult(arena: std.mem.Allocator, body: []const u8, events: []const []co
     return out.toOwnedSlice();
 }
 
-fn flattenStack(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u8 {
-    const events = try sess.takeEvents(arena);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch
-        return renderResult(arena, body, events);
+// The adapter answers with a DAP envelope around the payload, but a bare body
+// is also accepted; the flatteners want the payload object either way.
+fn replyBodyObject(arena: std.mem.Allocator, body: []const u8) ?std.json.ObjectMap {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch return null;
     const body_obj = switch (parsed) {
         .object => |o| o.get("body") orelse parsed,
         else => parsed,
     };
-    const obj = switch (body_obj) {
+    return switch (body_obj) {
         .object => |o| o,
-        else => return renderResult(arena, body, events),
+        else => null,
     };
+}
+
+fn flattenStack(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u8 {
+    const events = try sess.takeEvents(arena);
+    const obj = replyBodyObject(arena, body) orelse return renderResult(arena, body, events);
     const frames_v = obj.get("stackFrames") orelse return renderResult(arena, body, events);
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
@@ -505,15 +518,9 @@ fn flattenStack(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u
             const fo = f.object;
             try s.beginObject();
             try s.objectField("id");
-            try s.write(switch (fo.get("id") orelse std.json.Value{ .integer = 0 }) {
-                .integer => |n| n,
-                else => @as(i64, 0),
-            });
+            try s.write(jsonInt(fo, "id") orelse 0);
             try s.objectField("name");
-            try s.write(switch (fo.get("name") orelse std.json.Value{ .string = "" }) {
-                .string => |n| n,
-                else => "",
-            });
+            try s.write(jsonStr(fo, "name") orelse "");
             if (fo.get("source")) |src| {
                 if (src == .object) {
                     if (src.object.get("path") orelse src.object.get("name")) |p| {
@@ -525,10 +532,7 @@ fn flattenStack(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u
                 }
             }
             try s.objectField("line");
-            try s.write(switch (fo.get("line") orelse std.json.Value{ .integer = 0 }) {
-                .integer => |n| n,
-                else => @as(i64, 0),
-            });
+            try s.write(jsonInt(fo, "line") orelse 0);
             try s.endObject();
         }
     }
@@ -541,16 +545,7 @@ fn flattenStack(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u
 
 fn flattenVars(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u8 {
     const events = try sess.takeEvents(arena);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch
-        return renderResult(arena, body, events);
-    const body_obj = switch (parsed) {
-        .object => |o| o.get("body") orelse parsed,
-        else => parsed,
-    };
-    const obj = switch (body_obj) {
-        .object => |o| o,
-        else => return renderResult(arena, body, events),
-    };
+    const obj = replyBodyObject(arena, body) orelse return renderResult(arena, body, events);
     const vars_v = obj.get("variables") orelse return renderResult(arena, body, events);
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
@@ -565,25 +560,13 @@ fn flattenVars(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u8
             const vo = v.object;
             try s.beginObject();
             try s.objectField("name");
-            try s.write(switch (vo.get("name") orelse std.json.Value{ .string = "" }) {
-                .string => |n| n,
-                else => "",
-            });
+            try s.write(jsonStr(vo, "name") orelse "");
             try s.objectField("value");
-            try s.write(switch (vo.get("value") orelse std.json.Value{ .string = "" }) {
-                .string => |n| n,
-                else => "",
-            });
+            try s.write(jsonStr(vo, "value") orelse "");
             try s.objectField("type");
-            try s.write(switch (vo.get("type") orelse std.json.Value{ .string = "" }) {
-                .string => |n| n,
-                else => "",
-            });
+            try s.write(jsonStr(vo, "type") orelse "");
             try s.objectField("variables_reference");
-            try s.write(switch (vo.get("variablesReference") orelse std.json.Value{ .integer = 0 }) {
-                .integer => |n| n,
-                else => @as(i64, 0),
-            });
+            try s.write(jsonInt(vo, "variablesReference") orelse 0);
             try s.endObject();
         }
     }
@@ -596,31 +579,16 @@ fn flattenVars(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u8
 
 fn flattenEval(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u8 {
     const events = try sess.takeEvents(arena);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch
-        return renderResult(arena, body, events);
-    const body_obj = switch (parsed) {
-        .object => |o| o.get("body") orelse parsed,
-        else => parsed,
-    };
-    const obj = switch (body_obj) {
-        .object => |o| o,
-        else => return renderResult(arena, body, events),
-    };
+    const obj = replyBodyObject(arena, body) orelse return renderResult(arena, body, events);
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
     try s.objectField("result");
-    try s.write(switch (obj.get("result") orelse std.json.Value{ .string = "" }) {
-        .string => |n| n,
-        else => "",
-    });
+    try s.write(jsonStr(obj, "result") orelse "");
     try s.objectField("type");
-    try s.write(switch (obj.get("type") orelse std.json.Value{ .string = "" }) {
-        .string => |n| n,
-        else => "",
-    });
+    try s.write(jsonStr(obj, "type") orelse "");
     try s.objectField("events");
     try writeEvents(&s, events);
     try s.endObject();

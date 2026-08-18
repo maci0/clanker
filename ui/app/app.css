@@ -46,17 +46,31 @@
   --code-bg: #d4d0c6;
   --code-fg: #1b1c18;
 
-  /* Per-sender chat hues: one stable color per clanker name so different
-     senders read as different people at a glance. Light-tuned here; the
-     dark blocks redefine them brighter so they stay legible on graphite. */
-  --chat-hue-0: #0b57d0;
-  --chat-hue-1: #7c3aed;
-  --chat-hue-2: #047857;
-  --chat-hue-3: #92400e;
-  --chat-hue-4: #b91c1c;
-  --chat-hue-5: #0f6f8f;
-  --chat-hue-6: #9333ea;
-  --chat-hue-7: #3f6212;
+  /* Per-sender chat hues: one stable colour per clanker name so different
+     senders read as different people at a glance.
+
+     These are the card enamels below, shaded for text: the same RAL Classic
+     vocabulary as the panel greys, not a second palette. They used to be a
+     framework's default ramp used raw (violet-600, purple-600, emerald-700,
+     lime-800 and friends), which is how a page that had exiled violet from
+     its chrome one screen up still painted two of its eight senders violet.
+     Worse, all ten themes/*.json shipped byte-identical copies of two sets,
+     so hackerman's green-on-black CRT and latte's pastel both drew senders
+     in the same borrowed ramp: a "theme" that themed everything but this.
+
+     Day is each enamel darkened until it clears 5.5:1 on the panel face,
+     night is the same enamel tinted until it clears 5.5:1 on the cabinet
+     interior, a derivation per theme family rather than one set inverted. Leaf
+     green is pushed past its minimum on purpose: at the bar it and yellow
+     green were the same colour. Pinned by design-tokens.test.mjs. */
+  --chat-hue-0: #1d5c9e;  /* RAL 5017 traffic blue */
+  --chat-hue-1: #9c386a;  /* RAL 4003 heather violet */
+  --chat-hue-2: #1f4a24;  /* RAL 6002 leaf green */
+  --chat-hue-3: #984517;  /* RAL 2001 red orange */
+  --chat-hue-4: #6c4a86;  /* RAL 4008 signal violet */
+  --chat-hue-5: #406727;  /* RAL 6018 yellow green */
+  --chat-hue-6: #a72920;  /* RAL 3001 signal red */
+  --chat-hue-7: #715b00;  /* RAL 1004 golden yellow */
 
   /* Card cover/label hues. Theme-constant on purpose: a card's colour must
      mean the same thing whichever theme the browser picked, so these are the
@@ -248,14 +262,14 @@
     --scrim: rgba(0, 0, 0, 0.56);
     --warn: #fbbf24;
     --warn-text: #fcd34d;
-    --chat-hue-0: #82aaff;
-    --chat-hue-1: #b799ff;
-    --chat-hue-2: #4ade80;
-    --chat-hue-3: #fbbf24;
-    --chat-hue-4: #f87171;
-    --chat-hue-5: #22d3ee;
-    --chat-hue-6: #c084fc;
-    --chat-hue-7: #a3e635;
+    --chat-hue-0: #62a1e2;  /* RAL 5017 traffic blue */
+    --chat-hue-1: #d385ac;  /* RAL 4003 heather violet */
+    --chat-hue-2: #a0d8a7;  /* RAL 6002 leaf green */
+    --chat-hue-3: #e5834e;  /* RAL 2001 red orange */
+    --chat-hue-4: #ae92c3;  /* RAL 4008 signal violet */
+    --chat-hue-5: #6bad41;  /* RAL 6018 yellow green */
+    --chat-hue-6: #e58079;  /* RAL 3001 signal red */
+    --chat-hue-7: #c19a00;  /* RAL 1004 golden yellow */
     --code-bg: #121411;
     --code-fg: #e8eae5;
     --lift-low: 0 1px 2px rgba(0, 0, 0, 0.40);

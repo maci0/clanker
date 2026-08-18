@@ -587,6 +587,28 @@ function menuAvatar(name) {
   av.textContent = (name || "?").slice(0, 2).toUpperCase();
   return av;
 }
+// The card avatar and the detail sidebar open the same Members picker; only
+// the popup's anchoring differs.
+function memberPicker(c, anchored) {
+  var popup = menuPopup(anchored);
+  popup.classList.add("member-picker-popup");
+  popup.appendChild(menuTitle("Members", !anchored));
+  var unBtn = menuItem({ muted: true });
+  unBtn.appendChild(icon("close", 12));
+  unBtn.appendChild(document.createTextNode(" Remove member"));
+  unBtn.addEventListener("click", function () { popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
+  popup.appendChild(unBtn);
+  var peers = (_getKnownPeers() || []).map(function (p) { return typeof p === "string" ? p : p.name || p; });
+  if (c.assignee && peers.indexOf(c.assignee) === -1) peers.unshift(c.assignee);
+  peers.forEach(function (name) {
+    var opt = menuItem({ current: name === c.assignee });
+    opt.appendChild(menuAvatar(name));
+    opt.appendChild(document.createTextNode(name));
+    opt.addEventListener("click", function () { popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
+    popup.appendChild(opt);
+  });
+  return popup;
+}
 function dismissOnOutside(node, extra) {
   var closePop = function (ev) {
     if (node.contains(ev.target) || (extra && extra.contains && extra.contains(ev.target))) return;
@@ -837,28 +859,10 @@ function cardNode(c) {
     av.title = c.assignee + " — click to reassign";
     av.addEventListener("click", function(e){
       e.stopPropagation();
-      // Trello-style member picker popup
       var existing = document.querySelector(".member-picker-popup");
       if (existing) existing.remove();
-      var popup = menuPopup();
-      popup.classList.add("member-picker-popup");
-      popup.appendChild(menuTitle("Members", true));
-      var unBtn = menuItem({ muted: true });
-      unBtn.appendChild(icon("close", 12));
-      unBtn.appendChild(document.createTextNode(" Remove assignee"));
-      unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
-      popup.appendChild(unBtn);
-      var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
-      if (peers.indexOf(c.assignee) === -1 && c.assignee) peers.unshift(c.assignee);
-      peers.forEach(function(name){
-        var opt = menuItem({ current: name === c.assignee });
-        opt.appendChild(menuAvatar(name));
-        opt.appendChild(document.createTextNode(name));
-        opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
-        popup.appendChild(opt);
-      });
+      var popup = memberPicker(c, false);
       dismissOnOutside(popup);
-      // Position near the avatar
       av.style.position = "relative";
       av.appendChild(popup);
     });
@@ -1295,23 +1299,7 @@ function showCardDetail(id) {
   assignBtn.addEventListener("click", function() {
     var existing = assignWrap.querySelector(".member-picker-popup");
     if (existing) { existing.remove(); return; }
-    var popup = menuPopup(true);
-    popup.classList.add("member-picker-popup");
-    popup.appendChild(menuTitle("Members"));
-    var unBtn = menuItem({ muted: true });
-    unBtn.appendChild(icon("close", 12));
-    unBtn.appendChild(document.createTextNode(" Remove member"));
-    unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
-    popup.appendChild(unBtn);
-    var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
-    if (c.assignee && peers.indexOf(c.assignee) === -1) peers.unshift(c.assignee);
-    peers.forEach(function(name){
-      var opt = menuItem({ current: name === c.assignee });
-      opt.appendChild(menuAvatar(name));
-      opt.appendChild(document.createTextNode(name));
-      opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
-      popup.appendChild(opt);
-    });
+    var popup = memberPicker(c, true);
     dismissOnOutside(popup, assignBtn);
     assignWrap.appendChild(popup);
   });

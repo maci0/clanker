@@ -442,6 +442,29 @@ function openDialog(build) {
   });
 }
 
+// Both dialogs end the same way: a Cancel that answers with the caller's
+// "nothing happened" value, then the confirming button.
+function dialogActions(form, okLabel, danger, onCancel, onOk) {
+  var actions = document.createElement("div");
+  actions.className = "slack-dialog-actions";
+  var cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "secondary";
+  cancel.textContent = "Cancel";
+  upgradePfButton(cancel);
+  cancel.addEventListener("click", onCancel);
+  actions.appendChild(cancel);
+  var ok = document.createElement("button");
+  ok.type = "button";
+  ok.className = danger ? "danger" : "";
+  ok.textContent = okLabel;
+  upgradePfButton(ok);
+  ok.addEventListener("click", onOk);
+  actions.appendChild(ok);
+  form.appendChild(actions);
+  return { cancel: cancel, ok: ok };
+}
+
 export function uiConfirm(message, opts) {
   opts = opts || {};
   return openDialog(function (form, done) {
@@ -452,24 +475,9 @@ export function uiConfirm(message, opts) {
     p.className = "ui-dialog-message";
     p.textContent = message;
     form.appendChild(p);
-    var actions = document.createElement("div");
-    actions.className = "slack-dialog-actions";
-    var cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "secondary";
-    cancel.textContent = "Cancel";
-    upgradePfButton(cancel);
-    cancel.addEventListener("click", function () { done(false); });
-    actions.appendChild(cancel);
-    var ok = document.createElement("button");
-    ok.type = "button";
-    ok.className = opts.danger ? "danger" : "";
-    ok.textContent = opts.confirmLabel || "OK";
-    upgradePfButton(ok);
-    ok.addEventListener("click", function () { done(true); });
-    actions.appendChild(ok);
-    form.appendChild(actions);
-    window.setTimeout(function () { (opts.danger ? cancel : ok).focus(); }, 0);
+    var btns = dialogActions(form, opts.confirmLabel || "OK", opts.danger,
+      function () { done(false); }, function () { done(true); });
+    window.setTimeout(function () { (opts.danger ? btns.cancel : btns.ok).focus(); }, 0);
   }).then(function (v) { return v === true; });
 }
 
@@ -504,22 +512,8 @@ export function uiPrompt(message, initial, opts) {
     form.appendChild(input);
     upgradePfFormControl(input);
     upgradePfLabel(label);
-    var actions = document.createElement("div");
-    actions.className = "slack-dialog-actions";
-    var cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.className = "secondary";
-    cancel.textContent = "Cancel";
-    upgradePfButton(cancel);
-    cancel.addEventListener("click", function () { done(null); });
-    actions.appendChild(cancel);
-    var ok = document.createElement("button");
-    ok.type = "button";
-    ok.textContent = opts.confirmLabel || "Save";
-    upgradePfButton(ok);
-    ok.addEventListener("click", function () { done(input.value); });
-    actions.appendChild(ok);
-    form.appendChild(actions);
+    dialogActions(form, opts.confirmLabel || "Save", false,
+      function () { done(null); }, function () { done(input.value); });
     window.setTimeout(function () { input.focus(); input.select(); }, 0);
   });
 }
