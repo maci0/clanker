@@ -190,6 +190,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   on success, so after a failed live listing a screen reader kept hearing a
   stale "12 catalog matches." from the Discover panel.
 
+### Fixed
+
+- `clanker write-goal` (and the TUI `/write-goal` and the `goal_write` tool)
+  no longer pastes the whole intent into every field its keywords cover: a
+  rich intent used to come back with the objective, criterion, proof and
+  boundaries all holding the same blob. Each field now holds only the
+  sentence(s) — or, for a one-sentence intent, the clause — of the intent
+  that answer that fork, a fork the intent left open still gets its stated
+  default under Assumed / Still open, and a fork whose only matching text is
+  already claimed by another field defaults rather than duplicating it. The
+  raw intent survives once, as the record's `intent`. The draft logic moved
+  to `tools/zig/write_goal_logic.zig` and is host-tested, so its tests now
+  actually run (`test` blocks in a wasm guest never did).
+
 ### Changed
 
 - The web UI's tools catalogue (`ui/app/core/tools.js`) and run-graph layout

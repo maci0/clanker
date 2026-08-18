@@ -19,244 +19,15 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 
-// Pure draft logic, folded into this guest so it needs no build.zig
-// registration and no cross-module import. Owns two of the four workflow
-// steps: deciding which forks the intent answers, and assembling the Draft.
-const draft = struct {
-    pub const Field = enum {
-        objective,
-        completion_criterion,
-        proof,
-        boundaries,
-        stop_rule,
-    };
-
-    /// One fork the intent left open, phrased as a question a human can answer.
-    pub const Question = struct {
-        field: Field,
-        prompt: []const u8,
-        options: []const []const u8,
-    };
-
-    /// The assembled draft. `intent` is the raw ask; the five fields are the
-    /// reviewable handoff; `assumptions` and `unresolved` record what was filled
-    /// by default (headless or over-budget) so nothing is silently invented.
-    pub const Draft = struct {
-        intent: []const u8,
-        objective: []const u8,
-        completion_criterion: []const u8,
-        proof: []const u8,
-        boundaries: []const u8,
-        stop_rule: []const u8,
-        assumptions: []const []const u8 = &.{},
-        unresolved: []const []const u8 = &.{},
-    };
-
-    /// Whether the intent text already answers a given fork, by keyword.
-    pub fn intentAnswers(field: Field, intent: []const u8) bool {
-        return switch (field) {
-            .objective => objectiveHint(intent),
-            .completion_criterion => criterionHint(intent),
-            .proof => criterionHint(intent), // proof is usually stated with the criterion
-            .boundaries => boundariesHint(intent),
-            .stop_rule => stopHint(intent),
-        };
-    }
-
-    fn objectiveHint(hay: []const u8) bool {
-        const markers = [_][]const u8{ " exists", " survives", " is ", " stays", " remains", " will ", " must " };
-        for (markers) |m| if (containsFold(hay, m)) return true;
-        return false;
-    }
-
-    fn criterionHint(hay: []const u8) bool {
-        const markers = [_][]const u8{ "eval", "test", "criterion", " pass", " check", " gate", "verified", "verifiable" };
-        for (markers) |m| if (containsFold(hay, m)) return true;
-        return false;
-    }
-
-    fn boundariesHint(hay: []const u8) bool {
-        const markers = [_][]const u8{ "without ", "don't change", "do not change", "preserve", "keep ", "not touch", "leave ", "untouched", "except ", "out of scope" };
-        for (markers) |m| if (containsFold(hay, m)) return true;
-        return false;
-    }
-
-    fn stopHint(hay: []const u8) bool {
-        const markers = [_][]const u8{ "stop", "revert", "budget", "cap", "limit", "iterations", "rounds", "max " };
-        for (markers) |m| if (containsFold(hay, m)) return true;
-        return false;
-    }
-
-    /// Case-insensitive substring search — no copy, so no stack slice escapes.
-    fn containsFold(haystack: []const u8, needle: []const u8) bool {
-        if (needle.len == 0 or needle.len > haystack.len) return false;
-        const last = haystack.len - needle.len;
-        var i: usize = 0;
-        while (i <= last) : (i += 1) {
-            var matched = true;
-            for (needle, 0..) |n, j| {
-                if (std.ascii.toLower(haystack[i + j]) != n) {
-                    matched = false;
-                    break;
-                }
-            }
-            if (matched) return true;
-        }
-        return false;
-    }
-
-    /// The ordered candidate questions. Order matters: criterion and objective
-    /// are the only two required fields, so they rank first; proof and stop_rule
-    /// are optional and rank last.
-    pub const candidate_questions = [_]Question{
-        .{
-            .field = .completion_criterion,
-            .prompt = "How will someone independently tell this is done?",
-            .options = &.{ "A command that must pass", "A file that must exist", "An eval that must pass", "Reviewer judgment on the stated criterion" },
-        },
-        .{
-            .field = .objective,
-            .prompt = "Is the intent already a well-formed objective, or should it be rephrased?",
-            .options = &.{ "Keep the intent verbatim as the objective", "Rephrase it as an outcome statement" },
-        },
-        .{
-            .field = .boundaries,
-            .prompt = "What stays untouched?",
-            .options = &.{ "Nothing — do everything in scope", "Leave existing behaviour alone", "Do not touch a specific area (I'll say which)", "Keep the change additive" },
-        },
-        .{
-            .field = .proof,
-            .prompt = "What artifact demonstrates completion?",
-            .options = &.{ "A command and its expected output", "A file that must exist", "An eval that must pass", "No artifact — the criterion is the proof" },
-        },
-        .{
-            .field = .stop_rule,
-            .prompt = "When should the attempt stop rather than keep spending?",
-            .options = &.{ "When a gate fails", "After a fixed number of iterations", "When the criterion is met", "No cap — run to completion" },
-        },
-    };
-
-    /// The questions to actually ask: the material (open) forks, in order,
-    /// capped at `max`. The owned slice is allocated from `alloc`.
-    pub fn chooseQuestions(alloc: std.mem.Allocator, intent: []const u8, max: usize) []const Question {
-        var count: usize = 0;
-        for (candidate_questions) |q| {
-            if (!intentAnswers(q.field, intent)) count += 1;
-        }
-        const n = @min(count, max);
-        var result: [candidate_questions.len]Question = undefined;
-        var i: usize = 0;
-        for (candidate_questions) |q| {
-            if (i >= n) break;
-            if (intentAnswers(q.field, intent)) continue;
-            result[i] = q;
-            i += 1;
-        }
-        const owned = alloc.alloc(Question, i) catch return &.{};
-        @memcpy(owned, result[0..i]);
-        return owned;
-    }
-
-    /// A default value for a fork the intent left open and nobody answered.
-    pub fn defaultFor(comptime field: Field) []const u8 {
-        return switch (field) {
-            .objective => "TBD — restate the intent as an outcome.",
-            .completion_criterion => "TBD — the intent did not state how completion is judged; revisit before persisting.",
-            .proof => "TBD — no proof artifact was specified.",
-            .boundaries => "None stated; assume the change is scoped to the intent.",
-            .stop_rule => "None specified; stop when a gate fails or the criterion is met.",
-        };
-    }
-
-    pub fn fieldName(comptime field: Field) []const u8 {
-        return switch (field) {
-            .objective => "objective",
-            .completion_criterion => "completion_criterion",
-            .proof => "proof",
-            .boundaries => "boundaries",
-            .stop_rule => "stop_rule",
-        };
-    }
-
-    /// Render the draft as a human-reviewable markdown block.
-    pub fn renderMarkdown(alloc: std.mem.Allocator, d: *const Draft) ![]const u8 {
-        var out = std.ArrayList(u8).empty;
-        try out.appendSlice(alloc, "Goal draft\n\n");
-        const pairs = [_]struct { name: []const u8, val: []const u8 }{
-            .{ .name = "objective", .val = d.objective },
-            .{ .name = "completion_criterion", .val = d.completion_criterion },
-            .{ .name = "proof", .val = d.proof },
-            .{ .name = "boundaries", .val = d.boundaries },
-            .{ .name = "stop_rule", .val = d.stop_rule },
-        };
-        for (pairs) |p| {
-            try out.appendSlice(alloc, try std.fmt.allocPrint(alloc, "- **{s}:** {s}\n", .{ p.name, p.val }));
-        }
-        if (d.assumptions.len > 0) {
-            try out.appendSlice(alloc, "\n**Assumed** (no human answer):\n");
-            for (d.assumptions) |a| try out.appendSlice(alloc, try std.fmt.allocPrint(alloc, "- {s}\n", .{a}));
-        }
-        if (d.unresolved.len > 0) {
-            try out.appendSlice(alloc, "\n**Still open:**\n");
-            for (d.unresolved) |u| try out.appendSlice(alloc, try std.fmt.allocPrint(alloc, "- {s}\n", .{u}));
-        }
-        return out.toOwnedSlice(alloc);
-    }
-
-    test "intent that states boundaries and a criterion answers those forks" {
-        const intent = "Make runs survive a restart without changing the prompt format, verified by the e2e restart test";
-        try std.testing.expect(intentAnswers(.objective, intent));
-        try std.testing.expect(intentAnswers(.completion_criterion, intent));
-        try std.testing.expect(intentAnswers(.proof, intent));
-        try std.testing.expect(intentAnswers(.boundaries, intent));
-        try std.testing.expect(!intentAnswers(.stop_rule, intent));
-    }
-
-    test "vague intent leaves all five forks open" {
-        const intent = "improve the repl";
-        for (candidate_questions) |q| {
-            try std.testing.expect(!intentAnswers(q.field, intent));
-        }
-    }
-
-    test "chooseQuestions caps and keeps candidate order" {
-        const intent = "improve the repl";
-        const two = chooseQuestions(std.testing.allocator, intent, 2);
-        defer std.testing.allocator.free(two);
-        try std.testing.expect(two.len == 2);
-        try std.testing.expect(two[0].field == .completion_criterion);
-    }
-
-    test "markdown renders all five fields plus assumptions" {
-        var d = Draft{
-            .intent = "x",
-            .objective = "o",
-            .completion_criterion = "c",
-            .proof = "p",
-            .boundaries = "b",
-            .stop_rule = "s",
-            .assumptions = &.{"assumed default"},
-        };
-        const md = try renderMarkdown(std.testing.allocator, &d);
-        defer std.testing.allocator.free(md);
-        try std.testing.expect(std.mem.find(u8, md, "**objective:**") != null);
-        try std.testing.expect(std.mem.find(u8, md, "**stop_rule:**") != null);
-        try std.testing.expect(std.mem.find(u8, md, "assumed default") != null);
-    }
-};
+// Pure draft logic — which forks the intent answers, per-segment extraction,
+// Draft assembly, markdown rendering — lives in write_goal_logic.zig, listed
+// in build.zig's host_tested_helpers so `zig build test` runs its tests (a
+// wasm guest's own test blocks never run).
+const draft = @import("write_goal_logic.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
-
-const field_count = 5;
-const fields = [_]draft.Field{
-    .objective,
-    .completion_criterion,
-    .proof,
-    .boundaries,
-    .stop_rule,
-};
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const v = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
@@ -300,7 +71,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     // 3. Interview up to the budget. A failed ask (nobody reachable) is
     //    headless: stop asking and record assumptions instead.
-    var answers: [field_count]?[]const u8 = .{null} ** field_count;
+    var answers: [draft.field_count]?[]const u8 = .{null} ** draft.field_count;
     var questions_asked: usize = 0;
     for (qs) |q| {
         const reply = askOne(q.prompt, q.options, to_parent) orelse break;
@@ -308,8 +79,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         questions_asked += 1;
     }
 
-    // 4. Assemble the Draft: answered > covered-by-intent > default + open.
-    const d = assemble(lib.alloc, intent, &answers);
+    // 4. Assemble the Draft: answered > extracted-from-intent > default + open.
+    const d = draft.assemble(lib.alloc, intent, &answers);
 
     // 5. Readable markdown rendering.
     const md = draft.renderMarkdown(lib.alloc, &d) catch
@@ -340,60 +111,6 @@ fn askOne(question: []const u8, options: []const []const u8, to_parent: bool) ?[
     const v = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return null;
     if (v != .object) return null;
     return lib.optStr(v, "answer");
-}
-
-fn assemble(alloc: std.mem.Allocator, intent: []const u8, answers: *const [field_count]?[]const u8) draft.Draft {
-    var vals: [field_count][]const u8 = undefined;
-    var open: [field_count][]const u8 = undefined;
-    var n_open: usize = 0;
-
-    inline for (fields) |f| {
-        const idx = @intFromEnum(f);
-        if (answers[idx]) |a| {
-            vals[idx] = a;
-        } else if (draft.intentAnswers(f, intent)) {
-            // The intent itself already covers this fork; keep it verbatim.
-            vals[idx] = intent;
-        } else {
-            // Open and unanswered: default it, but say so — never silently
-            // invent. It stays on the unresolved list for the review step.
-            vals[idx] = draft.defaultFor(f);
-            open[n_open] = draft.fieldName(f);
-            n_open += 1;
-        }
-    }
-
-    // Copy the open field names into owned arena slices so they outlive this
-    // frame — never point the returned Draft at stack arrays.
-    const assumptions = alloc.alloc([]const u8, n_open) catch return emptyDraft(intent, vals);
-    const unresolved = alloc.alloc([]const u8, n_open) catch return emptyDraft(intent, vals);
-    @memcpy(assumptions, open[0..n_open]);
-    @memcpy(unresolved, open[0..n_open]);
-
-    return .{
-        .intent = intent,
-        .objective = vals[@intFromEnum(draft.Field.objective)],
-        .completion_criterion = vals[@intFromEnum(draft.Field.completion_criterion)],
-        .proof = vals[@intFromEnum(draft.Field.proof)],
-        .boundaries = vals[@intFromEnum(draft.Field.boundaries)],
-        .stop_rule = vals[@intFromEnum(draft.Field.stop_rule)],
-        .assumptions = assumptions,
-        .unresolved = unresolved,
-    };
-}
-
-/// On OOM, return the five fields filled with no open/assumption lists.
-fn emptyDraft(intent: []const u8, vals: [field_count][]const u8) draft.Draft {
-    return .{
-        .intent = intent,
-        .objective = vals[@intFromEnum(draft.Field.objective)],
-        .completion_criterion = vals[@intFromEnum(draft.Field.completion_criterion)],
-        .proof = vals[@intFromEnum(draft.Field.proof)],
-        .boundaries = vals[@intFromEnum(draft.Field.boundaries)],
-        .stop_rule = vals[@intFromEnum(draft.Field.stop_rule)],
-        .assumptions = &.{},
-        .unresolved = &.{},
-    };
 }
 
 fn emit(out: *lib.Out, d: draft.Draft, md: []const u8, questions_asked: usize) !void {
