@@ -2104,6 +2104,7 @@ pub const Agent = struct {
         sb.private_todos = self.private_todos;
         sb.ask_fn = self.ask_fn;
         sb.parent_ask = self.parent_ask;
+        sb.tool_policy = self.toolPolicy();
         // Offer this agent as an answerer only where a sub-agent could exist
         // to ask: ckSubagent hands own_ask down as the nested run's
         // parent_ask.
@@ -2680,10 +2681,10 @@ pub const Agent = struct {
     fn toolPolicy(self: *Agent) host.ToolPolicy {
         const S = struct {
             fn check(ctx: *anyopaque, name: []const u8) bool {
-                const self: *Agent = @ptrCast(@alignCast(ctx));
-                if (self.preset) |preset| if (!preset_mod.allowed(preset.*, name)) return false;
-                if (self.plan_mode) {
-                    if (self.reg.get(name)) |t| if (t.enabled and t.needsConfirm()) return false;
+                const agent: *Agent = @ptrCast(@alignCast(ctx));
+                if (agent.preset) |preset| if (!preset_mod.allowed(preset.*, name)) return false;
+                if (agent.plan_mode) {
+                    if (agent.reg.get(name)) |t| if (t.enabled and t.needsConfirm()) return false;
                 }
                 return true;
             }
@@ -3048,6 +3049,7 @@ pub const Agent = struct {
             .arguments = eff_args,
             .wasm_bytes = wasm_bytes,
             .subagent_runner = self.subagent_runner,
+            .tool_policy = self.toolPolicy(),
         };
         const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
         thread.join();
@@ -3427,6 +3429,7 @@ const ToolWorker = struct {
     arguments: []const u8,
     wasm_bytes: []const u8,
     subagent_runner: ?host.SubagentRunner = null,
+    tool_policy: ?host.ToolPolicy = null,
     out: ?[]u8 = null,
     err: ?anyerror = null,
 
@@ -3492,7 +3495,7 @@ const ToolWorker = struct {
             // two execution paths disagreed about the same tool's settings.
             .config_json = try host.toolConfigFor(arena_state.allocator(), self.tool, self.cfg),
             .fuel = self.tool.fuel,
-            .tool_policy = self.toolPolicy(),
+            .tool_policy = self.tool_policy,
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args_bytes={d}", .{ self.tool.name, self.arguments.len });

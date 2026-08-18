@@ -351,11 +351,22 @@ pub fn build(b: *std.Build) void {
     // declares `extern "env"` functions the host test binary cannot link — so
     // the pure ones are listed rather than globbed, which is also what keeps
     // "is this testable" an explicit property of a file.
+    const helper_utf8_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/utf8.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
     for (host_tested_helpers) |stem| {
         const mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
             .target = test_target,
             .optimize = optimize,
+            .imports = &.{
+                // The same `utf8` import the wasm guests get, so a helper that
+                // caps text on a codepoint boundary reaches the one shared
+                // helper instead of carrying a second copy of the loop.
+                .{ .name = "utf8", .module = helper_utf8_mod },
+            },
         });
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod })).step);
     }

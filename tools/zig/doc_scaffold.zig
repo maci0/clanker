@@ -16,30 +16,19 @@ const std = @import("std");
 
 // ---------------------------------------------------------------- dates
 
+/// The epoch↔civil conversion lives in one place, the schedule dialect's
+/// `schedule_cron.zig` (Howard Hinnant's `civil_from_days`, fuzzed by
+/// `zig build test`); a document date is that same conversion read as UTC, so
+/// this module holds no second copy that could drift.
+const cron = @import("schedule_cron.zig");
+
 pub const Civil = struct { year: i64, month: u8, day: u8 };
 
-/// Days since the Unix epoch to a civil date (Howard Hinnant's
-/// `civil_from_days`). UTC, not local time: a document dated by whichever
-/// machine wrote it is worse than one dated consistently.
+/// Days since the Unix epoch to a civil date. UTC, not local time: a document
+/// dated by whichever machine wrote it is worse than one dated consistently.
 pub fn civilFromUnix(unix_seconds: i64) Civil {
-    const seconds_per_day: i64 = 86_400;
-    var days = @divFloor(unix_seconds, seconds_per_day);
-
-    days += 719_468;
-    const era = @divFloor(days, 146_097);
-    const doe = days - era * 146_097;
-    const yoe = @divTrunc(doe - @divTrunc(doe, 1460) + @divTrunc(doe, 36524) - @divTrunc(doe, 146096), 365);
-    const y = yoe + era * 400;
-    const doy = doe - (365 * yoe + @divTrunc(yoe, 4) - @divTrunc(yoe, 100));
-    const mp = @divTrunc(5 * doy + 2, 153);
-    const d = doy - @divTrunc(153 * mp + 2, 5) + 1;
-    const m = mp + (if (mp < 10) @as(i64, 3) else @as(i64, -9));
-
-    return .{
-        .year = y + @intFromBool(m <= 2),
-        .month = @intCast(m),
-        .day = @intCast(d),
-    };
+    const c = cron.civilFromEpoch(unix_seconds);
+    return .{ .year = c.year, .month = c.month, .day = c.day };
 }
 
 /// `YYYY-MM-DD` into `buf`, which must hold at least 10 bytes.

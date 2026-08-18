@@ -5,6 +5,11 @@
 //! (`loadGraphListing`, which needs the sandbox fs ABI) stays in the guest.
 
 const std = @import("std");
+// The cap that must not split a codepoint is the one every other surface
+// (graph previews, autolearn JSONL, confirm prompts) uses; a second boundary
+// loop here could drift the way those sites once did. The `utf8` import is
+// the same named module the wasm guests get (build.zig).
+const utf8 = @import("utf8");
 
 const GraphNode = struct {
     kind: []const u8 = "",
@@ -68,10 +73,7 @@ pub fn listingNodeCount(g: GraphFile) usize {
 /// boundary so the JSON stays valid no matter where the cut lands.
 pub fn labelOf(task: []const u8) []const u8 {
     const line = task[0 .. std.mem.findScalar(u8, task, '\n') orelse task.len];
-    if (line.len <= label_max) return line;
-    var end: usize = label_max;
-    while (end > 0 and line[end] & 0xC0 == 0x80) end -= 1;
-    return line[0..end];
+    return utf8.cap(line, label_max);
 }
 
 const label_max = 200;

@@ -81,51 +81,19 @@ pub fn escape(w: *std.Io.Writer, text: []const u8) !void {
     if (start < text.len) try w.writeAll(text[start..]);
 }
 
-/// Days since the Unix epoch to a civil (year, month, day), and the seconds
-/// within the day to a wall clock. Howard Hinnant's `civil_from_days`, valid
-/// for any date this will ever see. Rendered as UTC rather than local time:
-/// an exported transcript is read somewhere other than where it was made, so
-/// a bare timestamp with no zone is worse than one that names its own.
-const Civil = struct {
-    year: i64,
-    month: u8,
-    day: u8,
-    hour: u8,
-    minute: u8,
-    second: u8,
-};
-
-fn civilFromUnix(unix_seconds: i64) Civil {
-    const seconds_per_day: i64 = 86_400;
-    // Floor division, so a pre-1970 timestamp does not round toward zero and
-    // land a day late.
-    var days = @divFloor(unix_seconds, seconds_per_day);
-    const rem = unix_seconds - days * seconds_per_day;
-
-    days += 719_468;
-    const era = @divFloor(days, 146_097);
-    const doe = days - era * 146_097; // [0, 146096]
-    const yoe = @divTrunc(doe - @divTrunc(doe, 1460) + @divTrunc(doe, 36524) - @divTrunc(doe, 146096), 365);
-    const y = yoe + era * 400;
-    const doy = doe - (365 * yoe + @divTrunc(yoe, 4) - @divTrunc(yoe, 100));
-    const mp = @divTrunc(5 * doy + 2, 153);
-    const d = doy - @divTrunc(153 * mp + 2, 5) + 1;
-    const m = mp + (if (mp < 10) @as(i64, 3) else @as(i64, -9));
-
-    return .{
-        .year = y + @intFromBool(m <= 2),
-        .month = @intCast(m),
-        .day = @intCast(d),
-        .hour = @intCast(@divTrunc(rem, 3600)),
-        .minute = @intCast(@divTrunc(@rem(rem, 3600), 60)),
-        .second = @intCast(@rem(rem, 60)),
-    };
-}
+/// Unix seconds to a civil wall clock, rendered as UTC rather than local
+/// time: an exported transcript is read somewhere other than where it was
+/// made, so a bare timestamp with no zone is worse than one that names its
+/// own. The date arithmetic is the schedule dialect's — Howard Hinnant's
+/// `civil_from_days`, which clanker keeps in one place (schedule_cron.zig,
+/// where `zig build test` fuzzes it) instead of a second copy that could
+/// drift the way the schedule's own copy once did.
+const cron = @import("schedule_cron.zig");
 
 fn writeTimestamp(w: *std.Io.Writer, unix_seconds: i64) !void {
     // Not escaped, and does not need to be: every byte here comes from a
     // format of integers this function computed itself.
-    const c = civilFromUnix(unix_seconds);
+    const c = cron.civilFromEpoch(unix_seconds);
     try w.print("{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2} UTC", .{
         c.year,
         c.month,
@@ -301,16 +269,16 @@ test "escape leaves text with nothing to escape byte-identical" {
     try std.testing.expectEqualStrings(plain, buf.written());
 }
 
-test "civilFromUnix converts the epoch, a leap day and a pre-epoch time" {
-    const a = civilFromUnix(0);
-    try std.testing.expectEqual(@as(i64, 1970), a.year);
+test "civilFromEpoch converts the epoch, a leap day and a pre-epoch time" {
+    const a = cron.civilFromEpoch(0);
+    try std.testing.expectEqual(@as(i32, 1970), a.year);
     try std.testing.expectEqual(@as(u8, 1), a.month);
     try std.testing.expectEqual(@as(u8, 1), a.day);
     try std.testing.expectEqual(@as(u8, 0), a.hour);
 
     // 2024-02-29T12:24:56Z
-    const b = civilFromUnix(1_709_209_496);
-    try std.testing.expectEqual(@as(i64, 2024), b.year);
+    const b = cron.civilFromEpoch(1_709_209_496);
+    try std.testing.expectEqual(@as(i32, 2024), b.year);
     try std.testing.expectEqual(@as(u8, 2), b.month);
     try std.testing.expectEqual(@as(u8, 29), b.day);
     try std.testing.expectEqual(@as(u8, 12), b.hour);
@@ -319,8 +287,8 @@ test "civilFromUnix converts the epoch, a leap day and a pre-epoch time" {
 
     // Floor division, not truncation: one second before the epoch is the
     // last second of 1969, not the first of 1970.
-    const c = civilFromUnix(-1);
-    try std.testing.expectEqual(@as(i64, 1969), c.year);
+    const c = cron.civilFromEpoch(-1);
+    try std.testing.expectEqual(@as(i32, 1969), c.year);
     try std.testing.expectEqual(@as(u8, 12), c.month);
     try std.testing.expectEqual(@as(u8, 31), c.day);
     try std.testing.expectEqual(@as(u8, 23), c.hour);
