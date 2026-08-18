@@ -9,6 +9,7 @@
 //! matched line is the same problem in every store, so it is one function.
 
 const std = @import("std");
+const diag = @import("../util/diag.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
@@ -17,7 +18,8 @@ pub const Error = error{
     BadSubcommand,
     MissingArg,
     /// The tool ran and refused the request (`{"ok":false,...}`), or answered
-    /// something the command cannot read. The detail is already logged.
+    /// something the command cannot read. The reason is already on stderr: a
+    /// refusal as a diagnostic, an unreadable answer as a log record.
     ToolFailed,
 };
 
@@ -101,12 +103,19 @@ pub fn request(arena: std.mem.Allocator, fields: []const Field) ![]const u8 {
 /// The caller still returns `BadSubcommand`/`MissingArg`, which is what makes
 /// the exit status 2.
 pub fn usageError(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print("error: " ++ fmt ++ "\n", args);
+    diag.errorLine(fmt, args);
 }
 
 /// Runs the store's tool and returns its parsed answer, or `ToolFailed` with
-/// the reason already logged. `store` is the command's own name, which is what
-/// prefixes the log line.
+/// the reason already on stderr. `store` is the command's own name, which is
+/// what prefixes the message.
+///
+/// A refusal is the caller's mistake — a path outside the store, a status
+/// change missing its note — so it gets the same `error: ...` diagnostic as
+/// `clanker workflow show nope`; it used to arrive as a timestamped `[ERROR]
+/// ts_ms=...` record, which made "no such ADR" read like a subsystem fault.
+/// An answer that is not readable JSON is the opposite case, a broken build
+/// rather than a bad argument, and stays a log record.
 pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: []const u8) !std.json.Value {
     const raw = try tool.call(tool.ctx, input);
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
@@ -120,7 +129,7 @@ pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: 
     const ok = parsed.object.get("ok");
     if (ok == null or ok.? != .bool or !ok.?.bool) {
         const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
-        log.log(.error_, "{s}: {s}", .{ store, detail });
+        diag.errorLine("{s}: {s}", .{ store, detail });
         return Error.ToolFailed;
     }
     return parsed;
