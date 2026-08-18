@@ -93,6 +93,7 @@ const webui_vendor_three_core = ui_vendor.three_core;
 const webui_vendor_patternfly = ui_vendor.patternfly;
 const webui_vendor_patternfly_addons = ui_vendor.patternfly_addons;
 const edit_distance = @import("util/edit_distance.zig");
+const no_color = @import("util/no_color.zig");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
@@ -4033,7 +4034,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     run_out = &out_w;
     // NO_COLOR (https://no-color.org) is the standard opt-out; honour it
     // ahead of the isTty check rather than requiring a clanker-specific flag.
-    run_stdout_color = init.environ_map.get("NO_COLOR") == null and (stdout_file.isTty(io) catch false);
+    run_stdout_color = !no_color.requested(init.environ_map) and (stdout_file.isTty(io) catch false);
     a.on_token = &runDelta;
 
     // The spinner and the live tool-status line belong to the REPL. `run` is
@@ -4789,10 +4790,11 @@ fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.sessions) return error.ModuleDisabled;
     const q = std.mem.trim(u8, opts.task orelse return error.MissingArg, " \t\r\n");
+    // A too-short query is a usage mistake, not a search that found nothing.
+    // It used to print to stdout and exit 0, so a script could not tell it
+    // from an empty result set and read the diagnostic as data.
     if (q.len < session_search_min_len) {
-        const msg = try std.fmt.allocPrint(arena, "query must be at least {d} characters\n", .{session_search_min_len});
-        try writeStdOut(io, msg);
-        return;
+        usageExitFor(io, "session", "session search needs at least {d} characters: clanker session search \"<query>\"", .{session_search_min_len});
     }
     const hits = session.searchSessions(io, arena, std.Io.Dir.cwd(), q, session_search_limit) catch {
         return error.ToolFailed;
@@ -5443,7 +5445,7 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
     const sub = opts.preset_sub orelse "list";
     const target = opts.preset_target;
     if (std.mem.eql(u8, sub, "list")) {
-        if (target != null) return printUsageError(io, "preset list takes no argument", .{});
+        if (target != null) usageExitFor(io, "preset", "preset list takes no argument", .{});
         var dir = std.Io.Dir.cwd().openDir(io, "presets", .{ .iterate = true }) catch {
             try std.Io.File.stdout().writeStreamingAll(io, "(no presets/ directory)\n");
             return;
@@ -5476,34 +5478,36 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
         }
         return;
     } else if (std.mem.eql(u8, sub, "show")) {
-        const name = target orelse return printUsageError(io, "preset show <name>", .{});
+        const name = target orelse usageExitFor(io, "preset", "preset show needs a name: clanker preset show <name>; run `clanker preset list` to see names", .{});
         const path = try std.fmt.allocPrint(gpa, "presets/{s}.toml", .{name});
         defer gpa.free(path);
         const text = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(64 * 1024)) catch {
-            return printUsageError(io, "no preset '{s}'", .{name});
+            printUsageError(io, "no preset '{s}'; run `clanker preset list` to see names", .{name});
+            std.process.exit(1);
         };
         defer gpa.free(text);
         try std.Io.File.stdout().writeStreamingAll(io, text);
         if (text.len == 0 or text[text.len - 1] != '\n') try std.Io.File.stdout().writeStreamingAll(io, "\n");
         return;
     } else if (std.mem.eql(u8, sub, "new")) {
-        const name = target orelse return printUsageError(io, "preset new <name>", .{});
+        const name = target orelse usageExitFor(io, "preset", "preset new needs a name: clanker preset new <name>", .{});
         if (name.len == 0 or std.mem.findScalar(u8, name, '/') != null or std.mem.findScalar(u8, name, '\\') != null or std.mem.find(u8, name, "..") != null)
-            return printUsageError(io, "invalid preset name '{s}'", .{name});
+            usageExitFor(io, "preset", "invalid preset name '{s}'; use a plain file name with no '/', '\\' or '..'", .{name});
         _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch {
             var cwd = std.Io.Dir.cwd();
             try cwd.createDirPath(io, "presets");
-            _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return printUsageError(io, "cannot create presets/", .{});
+            _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return error.PresetsDirUnusable;
         };
         // Re-open after maybe-create to get a handle we own.
-        var dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return printUsageError(io, "cannot open presets/", .{});
+        var dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return error.PresetsDirUnusable;
         defer dir.close(io);
         const path = try std.fmt.allocPrint(gpa, "{s}.toml", .{name});
         defer gpa.free(path);
         if (std.Io.Dir.openFile(dir, io, path, .{ .mode = .read_only }) catch null) |f| {
             var file = f;
             file.close(io);
-            return printUsageError(io, "preset '{s}' already exists", .{name});
+            printUsageError(io, "preset '{s}' already exists; pick another name or delete presets/{s}.toml first", .{ name, name });
+            std.process.exit(1);
         }
         const scaffold =
             \\description = ""
@@ -5518,7 +5522,7 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
         try std.Io.File.stdout().writeStreamingAll(io, line);
         return;
     } else {
-        return printUsageError(io, "unknown preset subcommand '{s}' (list, show, new)", .{sub});
+        usageExitFor(io, "preset", "unknown preset subcommand '{s}' (list, show, new)", .{sub});
     }
 }
 
@@ -6519,7 +6523,7 @@ fn printServeBanner(io: std.Io, environ_map: *std.process.Environ.Map, disp: []c
         std.debug.print("http://{s}/webui\n", .{disp});
         return;
     }
-    const color = environ_map.get("NO_COLOR") == null;
+    const color = !no_color.requested(environ_map);
     const bold = if (color) "\x1b[1m" else "";
     const dim = if (color) "\x1b[2m" else "";
     const green = if (color) "\x1b[32m" else "";

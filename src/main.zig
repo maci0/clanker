@@ -141,6 +141,7 @@ comptime {
     _ = @import("util/file_lock.zig");
     _ = @import("util/disk_cap.zig");
     _ = @import("util/edit_distance.zig");
+    _ = @import("util/no_color.zig");
     _ = @import("util/ensure_dir.zig");
     _ = @import("util/json.zig");
     _ = @import("util/raw_http.zig");
@@ -403,6 +404,7 @@ pub fn main(init: std.process.Init) !void {
             error.GateFailed => "one or more gates failed (see output above)",
             error.EvalsFailed => "one or more evals failed (see output above)",
             error.UnknownEval => "no eval by that name; run `clanker eval` with no argument to list them",
+            error.PresetsDirUnusable => "presets/ could not be created or opened; check permissions in the working directory",
             error.HttpError => "the HTTP request failed; check the provider's status and your network",
             error.GitFailed => "git exited with an error (see output above)",
             error.ArenaRefused => "the arena match was refused (see output above)",

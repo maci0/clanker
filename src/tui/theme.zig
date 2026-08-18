@@ -17,6 +17,7 @@
 //! guess is visible and self-correcting (`--theme mono`), not silent.
 
 const std = @import("std");
+const no_color = @import("../util/no_color.zig");
 
 pub const Rgb24 = [3]u8;
 
@@ -521,9 +522,7 @@ pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Th
     if (name) |n| {
         if (theme_by_name.get(n)) |id| return themeFromId(id);
     }
-    if (environ_map.get("NO_COLOR")) |v| {
-        if (v.len > 0) return Theme.mono;
-    }
+    if (no_color.requested(environ_map)) return Theme.mono;
     return Theme.default;
 }
 
