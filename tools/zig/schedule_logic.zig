@@ -68,6 +68,12 @@ pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
     return spec.nextAfter(now, tz_offset_minutes);
 }
 
+/// Timezone offsets outside -720..840 minutes (UTC-12 to UTC+14) produce fire
+/// times off by days. Reject them at write time with a distinct diagnostic.
+pub fn validTzOffset(tz: i32) bool {
+    return tz >= -720 and tz <= 840;
+}
+
 test "validId matches the session-id alphabet" {
     try std.testing.expect(validId("sch-1"));
     try std.testing.expect(validId("nightly"));

@@ -99,6 +99,7 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
         break :blk @trunc(n_f);
     };
     const now: i64 = @trunc(lib.nowSeconds());
+    if (!logic.validTzOffset(tz)) return lib.fail(out, "tz_offset_minutes must be between -720 and 840");
     if (logic.firstFire(cron_text, now, tz) == null)
         return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
 
@@ -159,6 +160,7 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
         const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
 
         if (cron_text) |ct| {
+            if (!logic.validTzOffset(e.tz_offset_minutes)) return lib.fail(out, "tz_offset_minutes must be between -720 and 840");
             if (logic.firstFire(ct, @trunc(lib.nowSeconds()), e.tz_offset_minutes) == null)
                 return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
             e.cron = ct;
