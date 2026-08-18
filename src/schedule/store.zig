@@ -40,12 +40,17 @@ pub const Error = error{
     NoSuchEntry,
     TaskTooLong,
     TaskEmpty,
-    /// `state/schedule.json` exists but could not be read back as an entry
+    /// `state/schedule.json`  exists but could not be read back as an entry
     /// list. Every mutation rewrites the whole file, so this cannot be
     /// answered with an empty list: doing that turns one unreadable store
     /// into a `schedule add` that deletes every other entry. The operator is
     /// told to fix or move the file instead.
     StoreUnreadable,
+    /// `state/schedule/log.jsonl` exists but could not be read back. Unlike
+    /// the store this does not risk data loss (a display-only read), but a
+    /// blank ledger misleads the operator into believing their audit trail is
+    /// gone when it is merely unreadable by this process.
+    LedgerUnreadable,
 };
 
 /// One scheduled entry. Field names are the JSON keys; `state/schedule.json`
@@ -280,7 +285,13 @@ pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: R
 /// skipped rather than failing the read: one bad line must not hide the rest
 /// of the history.
 pub fn readRecords(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, limit: usize) ![]Record {
-    const raw = base.readFileAlloc(io, ledger_path, arena, .limited(2 * max_ledger_bytes)) catch return &.{};
+    const raw = base.readFileAlloc(io, ledger_path, arena, .limited(2 * max_ledger_bytes)) catch |err| switch (err) {
+        error.FileNotFound => return &.{},
+        else => {
+            log.log(.error_, "schedule: cannot read {s}: {s}", .{ ledger_path, @errorName(err) });
+            return Error.LedgerUnreadable;
+        },
+    };
     var all: std.ArrayList(Record) = .empty;
     var it = std.mem.splitScalar(u8, raw, '\n');
     while (it.next()) |line| {
@@ -520,10 +531,11 @@ test "an unreadable ledger costs the new record, not the whole history" {
     try ensure_dir.ensureDir(tmp.dir, io, ledger_path);
     appendRecord(io, testing.allocator, tmp.dir, .{ .ts = 1, .id = "sch-1", .cron = "* * * * *", .task = "t", .trigger = "due", .ok = true });
 
-    // Still a directory, so nothing was written through it.
+    // Still a directory: the read surfaces the problem rather than showing an
+    // empty ledger that would mislead the operator into believing the trail is gone.
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    try testing.expectEqual(@as(usize, 0), (try readRecords(io, arena_state.allocator(), tmp.dir, 4)).len);
+    try testing.expectError(Error.LedgerUnreadable, readRecords(io, arena_state.allocator(), tmp.dir, 4));
 }
 
 test "a task must be non-empty and bounded" {
