@@ -3377,6 +3377,9 @@ const GoalContext = struct {
     /// Workspace (project) id the goal belongs to; "" is the default workspace
     /// (RFC 0001). Used to name the goal's output room and its board.
     workspace: []const u8 = "",
+    /// Whether a goal loop is in flight. True when a run starts and cleared at
+    /// its terminal outcome; a process that died mid-loop leaves it true.
+    running: bool = false,
     /// Task-prompt preamble (`## Active goal` …). Arena-owned.
     section: []const u8,
 };
@@ -3432,6 +3435,7 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
     const proof = json_util.strFieldOrEmpty(obj, "proof");
     const boundaries = json_util.strFieldOrEmpty(obj, "boundaries");
     const stop_rule = json_util.strFieldOrEmpty(obj, "stop_rule");
+    const running = if (obj.get("running")) |v| (v == .bool and v.bool) else false;
     return .{
         .id = idv.string,
         .objective = objective,
@@ -3441,6 +3445,7 @@ fn goalFromObject(arena: std.mem.Allocator, obj: std.json.ObjectMap) !?GoalConte
         .stop_rule = stop_rule,
         .max_iterations = goalMaxIterations(obj),
         .workspace = json_util.strFieldOrEmpty(obj, "workspace"),
+        .running = running,
         .section = try formatGoalSection(arena, objective, completion, proof, boundaries, stop_rule),
     };
 }
@@ -3507,6 +3512,26 @@ fn findNewestActiveGoalIn(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir)
         }
     }
     return best;
+}
+
+/// Goals whose loop was in flight when the process last stopped: `running`
+/// true and still `active`. These are the goals `clanker serve` resumes on
+/// startup. A freshly `add-goal`'d record has `running: false`, so it is not
+/// silently started.
+fn runningGoalsForResume(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) ![]GoalContext {
+    const goals = try readGoalsArray(arena, io, dir) orelse return &.{};
+    var out: std.ArrayList(GoalContext) = .empty;
+    for (goals) |item| {
+        if (item != .object) continue;
+        const obj = item.object;
+        const status = json_util.strFieldOrEmpty(obj, "status");
+        if (status.len > 0 and !std.mem.eql(u8, status, "active")) continue;
+        const running = if (obj.get("running")) |v| (v == .bool and v.bool) else false;
+        if (!running) continue;
+        const g = try goalFromObject(arena, obj) orelse continue;
+        try out.append(arena, g);
+    }
+    return out.toOwnedSlice(arena);
 }
 
 /// Prepends a goal preamble to `task`. When `task` is empty, builds a default
@@ -4036,6 +4061,9 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             .provider = provider,
             .condition = goal_condition,
         };
+        if (resolved_task.goal_id) |gid| {
+            markGoalRunning(io, init.gpa, arena, &cfg, init.environ_map, gid, true);
+        }
         const outcome = goal_loop.run(arena, goal_condition, task_text, cfg.agent.max_goal_turns, .{
             .context = &loop_ctx,
             .run_turn = cliGoalLoopRunTurn,
@@ -6668,6 +6696,17 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         };
     }
 
+    // Resume goals left `running` by a previous process. Detached so the accept
+    // loop starts immediately; each goal runs to a terminal outcome on its own
+    // io thread and the result is recorded back to state/goals.json.
+    if (cfg.modules.goal) {
+        if (std.Thread.spawn(.{}, resumeActiveGoals, .{ gpa, &cfg, init.environ_map })) |t| {
+            t.detach();
+        } else |err| {
+            log.log(.warn, "goal auto-resume thread failed to start: {s}", .{@errorName(err)});
+        }
+    }
+
     const surface: proxy.Surface = if (listen.proxy_enabled and !dedicated) .both else .webui;
     while (true) {
         const stream = server.accept(io) catch |err| {
@@ -8923,6 +8962,8 @@ fn recordGoalLoopOutcome(
     s.write(outcome.reason) catch return;
     s.objectField("goal_loop_turns") catch return;
     s.print("{d}", .{outcome.turns}) catch return;
+    s.objectField("running") catch return;
+    s.write(false) catch return;
     s.endObject() catch return;
     var what_buf: [96]u8 = undefined;
     const what = std.fmt.bufPrint(&what_buf, "goal '{s}' loop outcome", .{goal_id}) catch "goal loop outcome";
@@ -8952,6 +8993,108 @@ fn markGoalWorktree(
     var what_buf: [96]u8 = undefined;
     const what = std.fmt.bufPrint(&what_buf, "goal '{s}' worktree {s}", .{ goal_id, branch }) catch "goal worktree";
     callGoalUpdate(io, gpa, arena, cfg, environ_map, input.written(), what);
+}
+
+/// Marks a goal loop in flight or finished. The durable `running` flag is what
+/// lets `clanker serve` resume a goal whose loop was cut short by a restart.
+fn markGoalRunning(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    goal_id: []const u8,
+    running: bool,
+) void {
+    var input: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
+    s.beginObject() catch return;
+    s.objectField("id") catch return;
+    s.write(goal_id) catch return;
+    s.objectField("running") catch return;
+    s.write(running) catch return;
+    s.endObject() catch return;
+    callGoalUpdate(io, gpa, arena, cfg, environ_map, input.written(), if (running) "goal loop started" else "goal loop finished");
+}
+
+/// Resumes one goal that was in flight when the process stopped: builds a run
+/// context for its workspace, drives the same goal loop to a terminal outcome,
+/// and records it. Failures must not take the server down — the goal stays
+/// `running` and is retried on the next restart.
+fn resumeGoal(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    g: GoalContext,
+) void {
+    var run_cfg = cfg.*;
+    run_cfg.agent.workspace_id = g.workspace;
+    if (workspaceSandboxPath(io, arena, g.workspace)) |root| {
+        run_cfg.agent.sandbox_root = root;
+        if (workspaceSandboxRoots(io, arena, g.workspace)) |roots| run_cfg.agent.sandbox_roots = roots;
+    }
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = &run_cfg };
+    const provider = cfg.provider(null) catch {
+        log.log(.warn, "resume goal '{s}': no default provider", .{g.id});
+        return;
+    };
+    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "resume goal '{s}': registry load failed: {s}", .{ g.id, @errorName(err) });
+        return;
+    };
+    const tool_defs = reg.toToolDefs(arena) catch |err| {
+        log.log(.error_, "resume goal '{s}': tool defs failed: {s}", .{ g.id, @errorName(err) });
+        return;
+    };
+    var a = agent.Agent.init(&ctx, arena, provider, &run_cfg, &reg, tool_defs) catch |err| {
+        log.log(.error_, "resume goal '{s}': agent init failed: {s}", .{ g.id, @errorName(err) });
+        return;
+    };
+    defer a.deinit();
+    a.subagent_runner = if (run_cfg.modules.subagents) &subagent.runNested else null;
+
+    const condition = if (g.completion_criterion.len > 0) g.completion_criterion else g.objective;
+    const initial_task = goal_prompt.task(arena, g.objective) catch g.objective;
+    var messages: std.ArrayList(types.Message) = .empty;
+    var answers: std.ArrayList(u8) = .empty;
+    var loop_ctx = ServerGoalLoopContext{
+        .a = &a,
+        .messages = &messages,
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = provider,
+        .condition = condition,
+        .answers = &answers,
+    };
+    log.log(.info, "resuming goal '{s}'", .{g.id});
+    const outcome = goal_loop.run(arena, condition, initial_task, run_cfg.agent.max_goal_turns, .{
+        .context = &loop_ctx,
+        .run_turn = serverGoalLoopRunTurn,
+        .evaluate = serverGoalLoopEvaluate,
+    }) catch |err| {
+        log.log(.error_, "resume goal '{s}' failed: {s}", .{ g.id, @errorName(err) });
+        markGoalRunning(io, gpa, arena, cfg, environ_map, g.id, false);
+        return;
+    };
+    recordGoalLoopOutcome(io, gpa, arena, cfg, environ_map, g.id, outcome);
+}
+
+/// Entry point for the detached startup thread: finds goals left `running` by a
+/// previous process and resumes them one at a time.
+fn resumeActiveGoals(gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map) void {
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const goals = runningGoalsForResume(arena, io, std.Io.Dir.cwd()) catch return;
+    for (goals) |g| {
+        resumeGoal(io, gpa, arena, cfg, environ_map, g);
+    }
 }
 
 test "steer registry: register by goal or session, steer, poll, release" {
@@ -14453,6 +14596,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .condition = goal_condition,
                 .answers = &answers,
             };
+            if (resolved.goal_id) |gid| markGoalRunning(io, gpa, arena, cfg, environ_map, gid, true);
             const outcome = goal_loop.run(arena, goal_condition, final_task, run_cfg.agent.max_goal_turns, .{
                 .context = &loop_ctx,
                 .run_turn = serverGoalLoopRunTurn,
@@ -14528,6 +14672,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .condition = goal_condition,
             .answers = &answers,
         };
+        if (resolved.goal_id) |gid| markGoalRunning(io, gpa, arena, cfg, environ_map, gid, true);
         const outcome = goal_loop.run(arena, goal_condition, final_task, run_cfg.agent.max_goal_turns, .{
             .context = &loop_ctx,
             .run_turn = serverGoalLoopRunTurn,

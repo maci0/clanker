@@ -11,6 +11,10 @@ pub const Goal = struct {
     boundaries: []const u8 = "",
     stop_rule: []const u8 = "",
     status: []const u8 = "active",
+    /// Whether a goal loop is in flight. Set true when a run starts and false
+    /// at its terminal outcome; a process that dies mid-loop leaves this true,
+    /// which is what lets `clanker serve` resume the goal on restart.
+    running: bool = false,
     /// Workspace (project) id this goal belongs to (RFC 0001). "" is the
     /// default workspace (the serve cwd).
     workspace: []const u8 = "",
@@ -93,6 +97,8 @@ pub const Patch = struct {
     /// Re-points the goal's workspace (RFC 0001). Null leaves it; "" moves it
     /// to the default workspace.
     workspace: ?[]const u8 = null,
+    /// Sets/clears the in-flight flag (auto-resume marker). Null leaves it.
+    running: ?bool = null,
     max_iterations: ?u32 = null,
     worktree: Worktree = .leave,
     goal_loop_reason: ?[]const u8 = null,
@@ -157,6 +163,7 @@ pub fn apply(alloc: std.mem.Allocator, goals: []const Goal, patch: Patch, now: i
         var updated = g;
         if (patch.status) |s| updated.status = s;
         if (patch.workspace) |w| updated.workspace = w;
+        if (patch.running) |r| updated.running = r;
         if (patch.max_iterations) |n| updated.max_iterations = n;
         switch (patch.worktree) {
             .leave => {},
@@ -360,6 +367,21 @@ test "apply re-points a goal's workspace and leaves it when absent" {
     const untouched = try apply(gpa, &goals, .{ .id = "g1", .status = "review" }, 5);
     defer gpa.free(untouched);
     try std.testing.expectEqualStrings("relumea", untouched[0].workspace);
+}
+
+test "apply sets and clears the in-flight flag" {
+    const gpa = std.testing.allocator;
+    const goals = [_]Goal{
+        .{ .id = "g1", .objective = "a", .created = 1, .updated = 1 },
+    };
+    const started = try apply(gpa, &goals, .{ .id = "g1", .running = true }, 2);
+    defer gpa.free(started);
+    try std.testing.expect(started[0].running);
+
+    const stopped = try apply(gpa, started, .{ .id = "g1", .running = false, .status = "review" }, 3);
+    defer gpa.free(stopped);
+    try std.testing.expect(!stopped[0].running);
+    try std.testing.expectEqualStrings("review", stopped[0].status);
 }
 
 test "task visibility splits public from private-by-instance" {

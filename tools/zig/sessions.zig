@@ -44,9 +44,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const path = try std.fmt.allocPrint(lib.alloc, "state/sessions/{s}", .{fname});
             defer lib.alloc.free(path);
             // Title/updated/counters sit in front of the transcript. A full
-            // ck_fs_read of every file both costs up to 16 MiB apiece and
-            // burns the 1 MiB host arena, so later sessions vanished from
-            // the list.
+            // ck_fs_read of every file both costs up to 1 MiB apiece (the
+            // host cap, max_fs_bytes) and burns the 1 MiB host arena, so
+            // later sessions vanished from the list.
             const content = lib.fsReadRange(path, 0, 4096) catch continue;
             const row = logic.listingFromPrefix(lib.alloc, content) orelse continue;
             try metas.append(lib.alloc, .{

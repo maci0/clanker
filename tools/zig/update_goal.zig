@@ -31,6 +31,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (lib.optStr(req, "from")) |from| patch.from_status = from;
     if (lib.optStr(req, "status")) |s| patch.status = s;
     if (lib.optStr(req, "workspace")) |w| patch.workspace = w;
+    if (req.object.get("running")) |v| {
+        patch.running = switch (v) {
+            .bool => |b| b,
+            else => return lib.fail(out, "running must be a boolean"),
+        };
+    }
     if (lib.optNum(req, "max_iterations")) |n| {
         if (n < 0 or @floor(n) != n)
             return lib.fail(out, "max_iterations must be an integer from 1 to 1000");

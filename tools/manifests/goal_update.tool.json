@@ -25,6 +25,10 @@
         "type": "string",
         "description": "Re-point the goal to this workspace (project) id; empty moves it to the default workspace."
       },
+      "running": {
+        "type": "boolean",
+        "description": "Mark a goal loop in flight (true) or finished (false); the auto-resume hook reads this."
+      },
       "max_iterations": {
         "type": "integer",
         "minimum": 1,
