@@ -63,6 +63,38 @@ test "clanker run: a tool call round-trips through the real sandbox" {
     try std.testing.expect(std.mem.find(u8, answered.stdout, final_text) != null);
 }
 
+test "clanker run: descriptor prompt_guidance reaches the wire in the system prompt" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const turn0 = try mock_llm.textTurn(gpa, "hi");
+    defer gpa.free(turn0);
+    const mock = try mock_llm.Server.start(io, gpa, &.{turn0});
+    defer mock.stop();
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "run", "say hi" });
+    defer result.deinit(gpa);
+    if (!result.ok()) std.debug.print("clanker run failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(result.ok());
+
+    // The rfc descriptor declares prompt_guidance, so the very first request's
+    // system prompt must carry the "## Tool guidance" section with the rfc
+    // block — before any tool is loaded, which is the point: the rules ride
+    // ahead of the lazy-loaded schema.
+    try std.testing.expectEqual(@as(usize, 1), mock.requestCount());
+    const first = mock.request(0) orelse return error.MissingRequest;
+    try std.testing.expect(std.mem.find(u8, first, "## Tool guidance") != null);
+    try std.testing.expect(std.mem.find(u8, first, "### rfc") != null);
+    try std.testing.expect(std.mem.find(u8, first, "A docs/research/ note is never a source") != null);
+}
+
 test "clanker run --reasoning-effort pins the request's reasoning field" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
