@@ -151,8 +151,7 @@ clanker.registerView({
       var btn = mk("button", "files-sort-btn", label);
       btn.type = "button";
       btn.addEventListener("click", function() {
-        sortKey = (sortKey === key) ? key : key;
-        if (sortKey === key && btn.dataset.active) sortDir *= -1; else sortDir = 1;
+        if (btn.dataset.active) sortDir *= -1; else sortDir = 1;
         sortKey = key;
         refreshSort();
         renderEntries();

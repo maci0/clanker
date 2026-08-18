@@ -9,7 +9,7 @@ function node(tag) {
     attributes: {},
     className: "",
     parentNode: null,
-    textContent: tag ? "" : "",
+    textContent: "",
     appendChild: function (c) {
       this.childNodes.push(c);
       c.parentNode = this;

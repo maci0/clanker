@@ -5131,15 +5131,6 @@ const Model = struct {
         return true;
     }
 
-    /// Transcript line count, read under the bridge lock: finishTurn appends
-    /// to `self.lines` from the worker thread while a turn is in flight, and
-    /// the scroll keys land on the UI thread during exactly that window.
-    fn lineCount(self: *Model) usize {
-        bridge_mutex.lockUncancelable(bridge_io);
-        defer bridge_mutex.unlock(bridge_io);
-        return self.lines.items.len;
-    }
-
     /// Line count plus the row-aware scroll floor (`topWindowEnd`) for the
     /// key/wheel handlers, read together under the bridge lock so both
     /// describe the same transcript. Uses the width of the last draw — the

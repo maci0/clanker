@@ -338,7 +338,7 @@ function statusLine(m) {
   }
   var out = m.verdict ? m.verdict.headline : "Match finished.";
   var gone = (m.combatants || []).filter(function (c) { return c.eliminated; });
-  if (gone.length) out += " " + gone.map(function (c) { return c.label; }).join(", ") + (gone.length === 1 ? " eliminated." : " eliminated.");
+  if (gone.length) out += " " + gone.map(function (c) { return c.label; }).join(", ") + " eliminated.";
   return out;
 }
 

@@ -204,6 +204,98 @@ fn printSkipped(w: *std.Io.Writer, skipped: usize, file: []const u8) !void {
     try w.print("    … {d} more matching line(s) in {s}\n", .{ skipped, file });
 }
 
+// ------------------------------------------------- reading and editing --
+
+// `open`, `append` and `update` are the same request in all five stores: a
+// path (plus content) in, a fixed one-line confirmation out. Each store used
+// to carry its own copy, differing only in the store name and the example path
+// its usage line suggests, so they are three functions taking those two.
+
+/// `<store> open <path>` — the record's markdown as it was written, with a
+/// trailing newline. A record is markdown meant to be read, so it is returned
+/// as it is rather than reflowed.
+pub fn openRecord(
+    arena: std.mem.Allocator,
+    store: []const u8,
+    example_path: []const u8,
+    path_arg: ?[]const u8,
+    tool: Tool,
+) ![]const u8 {
+    const path = path_arg orelse {
+        log.log(.error_, "{s} open needs a path: clanker {s} open {s}", .{ store, store, example_path });
+        return Error.MissingArg;
+    };
+    const input = try request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "open" } },
+        .{ .name = "path", .value = .{ .text = path } },
+    });
+    const result = try callTool(arena, store, tool, input);
+    const text = json_util.strFieldOrEmpty(result.object, "text");
+    if (text.len > 0 and text[text.len - 1] != '\n') return std.fmt.allocPrint(arena, "{s}\n", .{text});
+    return text;
+}
+
+/// `<store> append <path> <markdown>`. `example` is the whole usage line after
+/// `clanker <store> append `, because each store suggests a different section
+/// heading for the kind of record it holds.
+pub fn appendRecord(
+    arena: std.mem.Allocator,
+    store: []const u8,
+    example: []const u8,
+    path_arg: ?[]const u8,
+    content_arg: ?[]const u8,
+    tool: Tool,
+) ![]const u8 {
+    const path = path_arg orelse {
+        log.log(.error_, "{s} append needs a path and markdown content: clanker {s} append {s}", .{ store, store, example });
+        return Error.MissingArg;
+    };
+    const content = content_arg orelse {
+        log.log(.error_, "{s} append needs the markdown to add after the path", .{store});
+        return Error.MissingArg;
+    };
+    const input = try request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "append" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "content", .value = .{ .text = content } },
+    });
+    const result = try callTool(arena, store, tool, input);
+    return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
+}
+
+/// `<store> update <path> <old> <new>`. An empty replacement deletes the old
+/// text, which the tools support, so the third argument has to be present but
+/// may be "".
+pub fn updateRecord(
+    arena: std.mem.Allocator,
+    store: []const u8,
+    path_arg: ?[]const u8,
+    old_arg: ?[]const u8,
+    new_arg: ?[]const u8,
+    tool: Tool,
+) ![]const u8 {
+    const path = path_arg orelse {
+        log.log(.error_, "{s} update needs a path, the exact old text, and its replacement", .{store});
+        return Error.MissingArg;
+    };
+    const old = old_arg orelse {
+        log.log(.error_, "{s} update needs the exact current text to replace; copy it from `clanker {s} open {s}`", .{ store, store, path });
+        return Error.MissingArg;
+    };
+    const new = new_arg orelse {
+        log.log(.error_, "{s} update needs replacement text after the old text (\"\" removes it)", .{store});
+        return Error.MissingArg;
+    };
+    const input = try request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "update" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "old", .value = .{ .text = old } },
+        .{ .name = "new", .value = .{ .text = new } },
+    });
+    const result = try callTool(arena, store, tool, input);
+    return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
+}
+
 // ----------------------------------------------------------------- tests --
 
 const testing = std.testing;

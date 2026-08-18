@@ -4059,16 +4059,24 @@ function announceChatArrival(fresh) {
   var text = String(last.text || "").replace(/\s+/g, " ").trim();
   el.chatStatus.textContent = who + (text ? ": " + text.slice(0, 80) : " sent a message");
 }
-function ingestChatMessages(messages) {
+function ingestChatMessages(messages, room) {
+  // Keyed on messageKey rather than m.id: an id-less message (a peer too
+  // old to send one — chatrooms.zig defaults the field to "" and accepts
+  // it) otherwise registered "" as seen, and every later id-less message
+  // was discarded as a duplicate of it.
   var fresh = (messages || []).filter(function (m) { return m && !chatSeen[chatMessageKey(m)]; }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); });
   if (!el.chatLog) return;
   var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
+  // Only sender grouping resets across batches; the day key must persist
+  // or every poll batch would open with a repeat of the same date banner.
   if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; }
   var placed = false;
   fresh.forEach(function (m) {
     rememberChatId(chatMessageKey(m));
     if (m.ts > chatLastTs) chatLastTs = m.ts;
     lastSeenAt[m.from] = m.ts;
+    /* Slack-style "New messages" divider: shown once, before the first
+       message whose ts exceeds the cutoff captured when the room opened. */
     if (!placed && _chatUnreadCutoff > 0 && m.ts > _chatUnreadCutoff) {
       placed = true;
       var divider = document.createElement("div");
@@ -4082,10 +4090,11 @@ function ingestChatMessages(messages) {
     if (node._daySep) el.chatLog.appendChild(node._daySep);
     el.chatLog.appendChild(node);
   });
+  /* Consumed — subsequent batches should not re-insert the divider */
   _chatUnreadCutoff = 0;
   announceChatArrival(fresh);
   if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
-  syncChatLogEmpty(el.chatRoom && el.chatRoom.value);
+  syncChatLogEmpty(room || (el.chatRoom && el.chatRoom.value));
 }
 function pollChat(room) {
   return fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=" + chatLastTs)
@@ -4096,43 +4105,7 @@ function pollChat(room) {
         chatFailing = false;
         el.chatStatus.textContent = "Reconnected.";
       }
-      // Keyed on messageKey rather than m.id: an id-less message (a peer too
-      // old to send one — chatrooms.zig defaults the field to "" and accepts
-      // it) otherwise registered "" as seen, and every later id-less message
-      // was discarded as a duplicate of it.
-      var fresh = (data.messages || [])
-        .filter(function (m) { return !chatSeen[chatMessageKey(m)]; })
-        .sort(function (a, b) { return a.ts - b.ts; });
-      var following = el.chatLog.scrollHeight - el.chatLog.scrollTop - el.chatLog.clientHeight < 40;
-      // Only sender grouping resets across batches; the day key must persist
-      // or every poll batch would open with a repeat of the same date banner.
-      if (fresh.length) { _lastChatFrom = null; _lastChatTs = 0; }
-      var _unreadDividerPlaced = false;
-      fresh.forEach(function (m) {
-        rememberChatId(chatMessageKey(m));
-        if (m.ts > chatLastTs) chatLastTs = m.ts;
-        lastSeenAt[m.from] = m.ts;
-        /* Slack-style "New messages" divider: shown once, before the first
-           message whose ts exceeds the cutoff captured when the room opened. */
-        if (!_unreadDividerPlaced && _chatUnreadCutoff > 0 && m.ts > _chatUnreadCutoff) {
-          _unreadDividerPlaced = true;
-          var divider = document.createElement("div");
-          divider.className = "chat-unread-divider";
-          divider.setAttribute("role", "separator");
-          divider.setAttribute("aria-label", "New messages");
-          divider.innerHTML = "<span>New messages</span>";
-          el.chatLog.appendChild(divider);
-        }
-        var node = buildChatMessage(m);
-        if (node._daySep) el.chatLog.appendChild(node._daySep);
-        el.chatLog.appendChild(node);
-      });
-      /* Consumed — subsequent poll batches should not re-insert the divider */
-      _chatUnreadCutoff = 0;
-      // presence dot freshness handled via CSS only — timestamps already in lastSeenAt for future use
-      announceChatArrival(fresh);
-      if (fresh.length && following) el.chatLog.scrollTop = el.chatLog.scrollHeight;
-      syncChatLogEmpty(room);
+      ingestChatMessages(data.messages, room);
     })
     .catch(function (err) {
       // Backs off rather than giving up. Stopping outright meant one

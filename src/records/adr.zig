@@ -92,21 +92,7 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 }
 
 fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const path = opts.arg1 orelse {
-        log.log(.error_, "adr open needs a path: clanker adr open docs/adrs/<number>-<slug>.md", .{});
-        return Error.MissingArg;
-    };
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "open" } },
-        .{ .name = "path", .value = .{ .text = path } },
-    });
-
-    const result = try common.callTool(arena, "adr", tool, input);
-    // The ADR is markdown that was written to be read; print it as it is.
-    const text = json_util.strFieldOrEmpty(result.object, "text");
-    try common.out(io, text);
-    if (text.len > 0 and text[text.len - 1] != '\n') try common.out(io, "\n");
+    try common.out(io, try common.openRecord(arena, "adr", "docs/adrs/<number>-<slug>.md", opts.arg1, tool));
 }
 
 // ------------------------------------------------------------------ writing --
@@ -161,50 +147,11 @@ fn missingCreateArg(what: []const u8) Error {
 }
 
 fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const path = opts.arg1 orelse {
-        log.log(.error_, "adr append needs a path and markdown content: clanker adr append docs/adrs/<name>.md \"## Revision\\n\\n...\"", .{});
-        return Error.MissingArg;
-    };
-    const content = opts.arg2 orelse {
-        log.log(.error_, "adr append needs the markdown to add after the path", .{});
-        return Error.MissingArg;
-    };
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "append" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "content", .value = .{ .text = content } },
-    });
-
-    const result = try common.callTool(arena, "adr", tool, input);
-    try common.out(io, try std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    try common.out(io, try common.appendRecord(arena, "adr", "docs/adrs/<name>.md \"## Revision\\n\\n...\"", opts.arg1, opts.arg2, tool));
 }
 
 fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const path = opts.arg1 orelse {
-        log.log(.error_, "adr update needs a path, the exact old text, and its replacement", .{});
-        return Error.MissingArg;
-    };
-    const old = opts.arg2 orelse {
-        log.log(.error_, "adr update needs the exact current text to replace; copy it from `clanker adr open {s}`", .{path});
-        return Error.MissingArg;
-    };
-    // An empty replacement deletes the old text, which the tool supports, so
-    // the third argument has to be present but may be "".
-    const new = opts.arg3 orelse {
-        log.log(.error_, "adr update needs replacement text after the old text (\"\" removes it)", .{});
-        return Error.MissingArg;
-    };
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "update" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "old", .value = .{ .text = old } },
-        .{ .name = "new", .value = .{ .text = new } },
-    });
-
-    const result = try common.callTool(arena, "adr", tool, input);
-    try common.out(io, try std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")}));
+    try common.out(io, try common.updateRecord(arena, "adr", opts.arg1, opts.arg2, opts.arg3, tool));
 }
 
 fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {

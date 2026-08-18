@@ -92,21 +92,7 @@ fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    const path = opts.arg1 orelse {
-        log.log(.error_, "rfc open needs a path: clanker rfc open docs/rfcs/<number>-<slug>.md", .{});
-        return Error.MissingArg;
-    };
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "open" } },
-        .{ .name = "path", .value = .{ .text = path } },
-    });
-
-    const result = try common.callTool(arena, "rfc", tool, input);
-    // The RFC is markdown that was written to be read; return it as it is.
-    const text = json_util.strFieldOrEmpty(result.object, "text");
-    if (text.len > 0 and text[text.len - 1] != '\n') return std.fmt.allocPrint(arena, "{s}\n", .{text});
-    return text;
+    return common.openRecord(arena, "rfc", "docs/rfcs/<number>-<slug>.md", opts.arg1, tool);
 }
 
 /// What an RFC has to pin down, and the question to put to whoever asked for
@@ -157,50 +143,11 @@ fn missingCreateArg(what: []const u8) Error {
 }
 
 fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    const path = opts.arg1 orelse {
-        log.log(.error_, "rfc append needs a path and markdown content: clanker rfc append docs/rfcs/<name>.md \"## Option C\\n\\n...\"", .{});
-        return Error.MissingArg;
-    };
-    const content = opts.arg2 orelse {
-        log.log(.error_, "rfc append needs the markdown to add after the path", .{});
-        return Error.MissingArg;
-    };
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "append" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "content", .value = .{ .text = content } },
-    });
-
-    const result = try common.callTool(arena, "rfc", tool, input);
-    return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
+    return common.appendRecord(arena, "rfc", "docs/rfcs/<name>.md \"## Option C\\n\\n...\"", opts.arg1, opts.arg2, tool);
 }
 
 fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    const path = opts.arg1 orelse {
-        log.log(.error_, "rfc update needs a path, the exact old text, and its replacement", .{});
-        return Error.MissingArg;
-    };
-    const old = opts.arg2 orelse {
-        log.log(.error_, "rfc update needs the exact current text to replace; copy it from `clanker rfc open {s}`", .{path});
-        return Error.MissingArg;
-    };
-    // An empty replacement deletes the old text, which the tool supports, so
-    // the third argument has to be present but may be "".
-    const new = opts.arg3 orelse {
-        log.log(.error_, "rfc update needs replacement text after the old text (\"\" removes it)", .{});
-        return Error.MissingArg;
-    };
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "update" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "old", .value = .{ .text = old } },
-        .{ .name = "new", .value = .{ .text = new } },
-    });
-
-    const result = try common.callTool(arena, "rfc", tool, input);
-    return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
+    return common.updateRecord(arena, "rfc", opts.arg1, opts.arg2, opts.arg3, tool);
 }
 
 /// The Recommendation section, which is the point of the document: a
