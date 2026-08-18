@@ -48,7 +48,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     for (dirs, 0..) |dir, idx| {
         if (dir.len == 0) continue;
         if (idx == 1 and std.mem.eql(u8, dir, workflows_dir)) continue;
-        const names_json = listMarkdownFiles(dir) catch continue;
+        const names_json = lib.fsList(dir) catch continue;
         const names_val = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, names_json, .{}) catch continue;
         if (names_val != .array) continue;
         for (names_val.array.items) |item| {
@@ -92,17 +92,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     // When the caller asks with {"name":"x","chain":""} or simply inspects, surface it.
     if (wants_chain) {
         const c = logic.extractChainFrontmatter(lib.alloc, wf.body) catch null;
-        if (c) |cj| return writeOneWithChain(out, wf, cj);
+        if (c) |cj| return writeOne(out, wf, cj);
     }
     if (args.len > 0) {
         const expanded = logic.instantiate(lib.alloc, wf.body, args) catch return lib.fail(out, "could not expand workflow");
         return writePrompt(out, wf.name, expanded);
     }
-    return writeOne(out, wf);
-}
-
-fn listMarkdownFiles(dir: []const u8) ![]const u8 {
-    return try lib.fsList(dir);
+    return writeOne(out, wf, null);
 }
 
 fn writeList(out: *lib.Out, wfs: []const logic.Workflow) !void {
@@ -136,7 +132,7 @@ fn writeList(out: *lib.Out, wfs: []const logic.Workflow) !void {
     lib.commit(out, &w);
 }
 
-fn writeOne(out: *lib.Out, wf: logic.Workflow) !void {
+fn writeOne(out: *lib.Out, wf: logic.Workflow, chain_json: ?[]const u8) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -154,31 +150,10 @@ fn writeOne(out: *lib.Out, wf: logic.Workflow) !void {
     try s.write(wf.rel_path);
     try s.objectField("body");
     try s.write(wf.body);
-    try s.endObject();
-    try s.endObject();
-    lib.commit(out, &w);
-}
-
-fn writeOneWithChain(out: *lib.Out, wf: logic.Workflow, chain_json: []const u8) !void {
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("workflow");
-    try s.beginObject();
-    try s.objectField("name");
-    try s.write(wf.name);
-    try s.objectField("description");
-    try s.write(wf.description);
-    try s.objectField("arg_hint");
-    try s.write(wf.arg_hint);
-    try s.objectField("rel_path");
-    try s.write(wf.rel_path);
-    try s.objectField("body");
-    try s.write(wf.body);
-    try s.objectField("chain");
-    try s.write(chain_json);
+    if (chain_json) |cj| {
+        try s.objectField("chain");
+        try s.write(cj);
+    }
     try s.endObject();
     try s.endObject();
     lib.commit(out, &w);

@@ -909,7 +909,7 @@ const max_llm_many_targets: usize = 8;
 
 /// One leg of a ck_llm_many fan-out: everything the thread needs on the way in,
 /// everything it learned on the way out. `text` and `detail` are gpa-owned and
-/// freed by the caller after encoding, mirroring ckSwarm's SwarmCall.
+/// freed by the caller after encoding, mirroring ckSwarm's SubagentCall.
 const LlmManyCall = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -4490,6 +4490,29 @@ fn swarmAccessAllowed(name: []const u8) bool {
     return std.mem.eql(u8, name, "swarm");
 }
 
+/// One nested agent run, driven on its own thread by `ck_subagent` and by each
+/// member of a `ck_swarm` batch.
+const SubagentCall = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config_mod.Config,
+    task: []const u8,
+    provider_name: ?[]const u8,
+    brief: Brief,
+    parent_ask: ?ParentAsk,
+    parent_run_id: []const u8,
+    runner: SubagentRunner,
+    result: ?[]const u8 = null,
+    err: ?anyerror = null,
+    fn run(self: *@This()) void {
+        self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask, self.parent_run_id) catch |e| {
+            self.err = e;
+            return;
+        };
+    }
+};
+
 pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
     if (!subagentAccessAllowed(h.sandbox.tool_self_name)) {
@@ -4526,26 +4549,6 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     // Run the nested agent on its own thread with a large stack: nesting a
     // second zwasm interpreter on the caller's stack (which may itself be a
     // tool worker already running zwasm) overflows the native stack.
-    const SubagentCall = struct {
-        io: std.Io,
-        gpa: std.mem.Allocator,
-        environ_map: *std.process.Environ.Map,
-        cfg: *const config_mod.Config,
-        task: []const u8,
-        provider_name: ?[]const u8,
-        brief: Brief,
-        parent_ask: ?ParentAsk,
-        parent_run_id: []const u8,
-        runner: SubagentRunner,
-        result: ?[]const u8 = null,
-        err: ?anyerror = null,
-        fn run(self: *@This()) void {
-            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask, self.parent_run_id) catch |e| {
-                self.err = e;
-                return;
-            };
-        }
-    };
     var call = SubagentCall{
         .io = h.sandbox.io,
         .gpa = h.sandbox.gpa,
@@ -4714,34 +4717,13 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         if (p == .string and p.string.len > 0) provider_name = p.string;
     }
     const cfg = h.sandbox.cfg orelse return Err.not_found;
-    // Each member gets the same brief a lone subagent would: what larger
-    // work this serves. Unlike subagent, there is no per-task context/files
-    //, a swarm task is expected to be a complete, self-contained brief
-    // since members cannot see each other or the parent's transcript.
+    // Each member gets the same brief a lone subagent would: what larger work
+    // this serves. Unlike subagent there is no per-task context/files: a swarm
+    // task is expected to be a complete, self-contained brief, since members
+    // cannot see each other or the parent's transcript.
     const brief = Brief{ .parent_task = h.sandbox.parent_task };
 
-    const SwarmCall = struct {
-        io: std.Io,
-        gpa: std.mem.Allocator,
-        environ_map: *std.process.Environ.Map,
-        cfg: *const config_mod.Config,
-        task: []const u8,
-        provider_name: ?[]const u8,
-        brief: Brief,
-        parent_ask: ?ParentAsk,
-        parent_run_id: []const u8,
-        runner: SubagentRunner,
-        result: ?[]const u8 = null,
-        err: ?anyerror = null,
-        fn run(self: *@This()) void {
-            self.result = self.runner(self.io, self.gpa, self.environ_map, self.cfg, self.task, self.provider_name, self.brief, self.parent_ask, self.parent_run_id) catch |e| {
-                self.err = e;
-                return;
-            };
-        }
-    };
-
-    const calls = arena.alloc(SwarmCall, tasks.len) catch return Err.too_large;
+    const calls = arena.alloc(SubagentCall, tasks.len) catch return Err.too_large;
     for (tasks, 0..) |task, i| {
         calls[i] = .{
             .io = h.sandbox.io,
@@ -4760,7 +4742,7 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const threads = arena.alloc(std.Thread, calls.len) catch return Err.too_large;
     var spawned: usize = 0;
     while (spawned < calls.len) : (spawned += 1) {
-        threads[spawned] = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SwarmCall.run, .{&calls[spawned]}) catch break;
+        threads[spawned] = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&calls[spawned]}) catch break;
     }
     for (threads[0..spawned]) |th| th.join();
     // Any call past `spawned` never ran: result and err both stay null,

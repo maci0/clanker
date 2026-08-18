@@ -342,7 +342,7 @@ function statusLine(m) {
   return out;
 }
 
-function lastMove(m) {
+export function lastMove(m) {
   var rounds = m.rounds || [];
   for (var i = rounds.length - 1; i >= 0; i--) {
     var mv = rounds[i].moves || [];

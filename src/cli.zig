@@ -7073,7 +7073,6 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         const is_webui = isWebuiIndexPath(path) or
             isWebuiAssetPath(path) or
-            std.mem.eql(u8, path, "/webui/import-map.json") or
             std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.startsWith(u8, path, "/webui/themes/") or
@@ -7173,8 +7172,6 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleHttpMetrics(stream);
         } else if (isWebuiRead(method) and isWebuiIndexPath(path)) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/import-map.json")) {
-            handleWebuiImportMap(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/preact.module.js")) {
             respondJs(gpa, stream, webui_vendor_preact, &gzip_preact, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/htm.module.js")) {
@@ -9521,15 +9518,26 @@ fn webuiAssetTag(
 
 /// Rewrite absolute `/webui/` asset URLs to `/webui/~<tag>/` and inject an
 /// import map so ES module absolute imports resolve under the same tag.
+///
+/// The map is written *inline*, not as `<script type="importmap" src="...">`.
+/// An external map costs a whole blocking round trip before any module can be
+/// resolved — the map is ~370 bytes, so the request is pure latency — and it
+/// only works at all in Chromium 133+: Firefox and Safari ignore a map with
+/// `src`, which left `core/ui.js`'s absolute
+/// `import ... from "/webui/vendor/signals-core.module.js"` resolving to the
+/// untagged URL while the head preloaded the tagged one. Those browsers
+/// therefore fetched the three vendor modules twice (~6.9 KB gz of wasted
+/// preload) and never saw the cache-bust tag that makes a rebuild land.
 fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u8) ![]const u8 {
     const needle = "/webui/";
     const already = "/webui/~";
     const replacement = try std.fmt.allocPrint(arena, "/webui/~{s}/", .{tag});
+    var map_buf: [1024]u8 = undefined;
     const map = try std.fmt.allocPrint(
         arena,
-        \\<script type="importmap" src="/webui/~{s}/import-map.json"></script>
+        \\<script type="importmap">{s}</script>
     ,
-        .{tag},
+        .{try webuiImportMapJson(&map_buf, tag)},
     );
 
     var out: std.ArrayList(u8) = .empty;
@@ -9651,24 +9659,6 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
 /// painted the rail chrome and never ran app.js.
 fn webuiImportMapJson(buf: []u8, tag: []const u8) ![]const u8 {
     return std.fmt.bufPrint(buf, "{{\"imports\":{{\"/webui/vendor/\":\"/webui/~{s}/vendor/\",\"/webui/core/\":\"/webui/~{s}/core/\",\"/webui/lib/\":\"/webui/~{s}/lib/\",\"/webui/features/\":\"/webui/~{s}/features/\",\"/webui/app.js\":\"/webui/~{s}/app.js\",\"/webui/app.css\":\"/webui/~{s}/app.css\",\"/webui/preact-boot.js\":\"/webui/~{s}/preact-boot.js\"}}}}", .{ tag, tag, tag, tag, tag, tag, tag });
-}
-
-fn handleWebuiImportMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
-    const tag = webuiAssetTag(io, gpa, cfg) orelse {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui asset tag unavailable\"}");
-        return;
-    };
-    var body_buf: [512]u8 = undefined;
-    const body = webuiImportMapJson(&body_buf, tag) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"import map overflow\"}");
-        return;
-    };
-    request_status = 200;
-    const cache_control = webuiAssetCacheControl("no-cache");
-    var hbuf: [512]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/importmap+json\r\nContent-Length: {d}\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ body.len, cache_control, connHeader() }) catch return;
-    raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, body);
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
@@ -17794,8 +17784,15 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
     // preloads the untagged URL while the script tag loads the tagged one, the
     // browser fetches the same file twice.
     try std.testing.expect(std.mem.find(u8, out, "modulepreload\" href=\"/webui/~deadbeef/app.js\"") != null);
+    // Inline, never `src=`: an external map is a blocking round trip before
+    // any module resolves, and Firefox and Safari ignore it outright.
     try std.testing.expect(std.mem.find(u8, out, "type=\"importmap\"") != null);
-    try std.testing.expect(std.mem.find(u8, out, "src=\"/webui/~deadbeef/import-map.json\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "importmap\" src=") == null);
+    try std.testing.expect(std.mem.find(u8, out, "import-map.json") == null);
+    try std.testing.expect(std.mem.find(u8, out, "{\"imports\":{\"/webui/vendor/\":\"/webui/~deadbeef/vendor/\"") != null);
+    // The map's own keys must survive the rewrite pass untagged, or every
+    // specifier it exists to remap stops matching.
+    try std.testing.expect(std.mem.find(u8, out, "\"/webui/core/\":\"/webui/~deadbeef/core/\"") != null);
     try std.testing.expect(std.mem.find(u8, out, "href=\"/webui/app.css\"") == null);
 }
 

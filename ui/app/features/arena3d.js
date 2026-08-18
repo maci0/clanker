@@ -19,6 +19,7 @@
 
 import { reducedMotion } from "../core/vendor.js";
 import { hashName, themeToken } from "../core/utils.js";
+import { lastMove } from "./arena.js";
 
 var THREE = null;
 var S = null; // live scene state, null when unmounted
@@ -220,15 +221,6 @@ function hpColorOf(frac, p) {
 }
 
 /* ---------------------------------------------------------------- effects */
-
-function lastMove(m) {
-  var rounds = m.rounds || [];
-  for (var i = rounds.length - 1; i >= 0; i--) {
-    var mv = rounds[i].moves || [];
-    if (mv.length) return mv[mv.length - 1];
-  }
-  return null;
-}
 
 // A move effect is a closure advanced per-frame until it returns false.
 function addBolt(fromI, toI, color) {
