@@ -69,8 +69,19 @@ function failWithRetry(host, message, retryFn) {
   host.appendChild(p);
 }
 
-function status(msg) {
-  var el = document.getElementById("models-status");
+/* One status line per panel. The view used to share a single #models-status
+   for Configured, Live and Discover, and only successes wrote it — so a
+   stale "12 catalog matches." kept being announced after a live listing had
+   just failed. Which line a message lands on is data, so the mapping is a
+   pure function the test can hold still. */
+export function modelsStatusId(panel) {
+  if (panel === "live") return "models-live-status";
+  if (panel === "catalog") return "models-catalog-status";
+  return "models-status";
+}
+
+function status(msg, panel) {
+  var el = document.getElementById(modelsStatusId(panel));
   if (el) el.textContent = msg;
 }
 
@@ -689,12 +700,14 @@ function loadLive() {
       });
       if (!rows.length) {
         out.appendChild(empty("The provider listed no models."));
+        status("The provider listed no models.", "live");
         return;
       }
       out.appendChild(table(["id", "ctx"], rows));
-      status(rows.length + " models from " + sel.value + ".");
+      status(rows.length + " models from " + sel.value + ".", "live");
     })
     .catch(function (err) {
+      status("Could not list models: " + err.message, "live");
       failWithRetry(out, "Could not list: " + err.message, loadLive);
     })
     .finally(function () { btn.disabled = false; });
@@ -748,15 +761,17 @@ function searchCatalog() {
       });
       if (!rows.length) {
         out.appendChild(empty("No catalog entry matches \"" + query + "\". Try another name, or refresh the catalog."));
+        status("No catalog entry matches \"" + query + "\".", "catalog");
         return;
       }
       out.appendChild(table(["provider/model", "ctx", "in $/1M", "out $/1M", "capabilities", ""], rows));
-      status(rows.length + (d.truncated ? "+ (truncated)" : "") + " catalog matches.");
+      status(rows.length + (d.truncated ? "+ (truncated)" : "") + " catalog matches.", "catalog");
       if (d.truncated) {
         out.appendChild(empty("Showing the first " + rows.length + " matches — narrow the query for more specific results."));
       }
     })
     .catch(function (err) {
+      status("Catalog search failed: " + err.message, "catalog");
       failWithRetry(out, "Catalog search failed: " + err.message, searchCatalog);
     })
     .finally(function () { catalogSearching = false; syncCatalogBtn(); });
@@ -774,14 +789,14 @@ function refreshCatalog() {
     .then(readJson)
     .then(function (d) {
       var n = typeof d.bytes === "number" ? d.bytes : 0;
-      status("Catalog refreshed (" + fmtBytes(n) + "). Search uses the new snapshot.");
+      status("Catalog refreshed (" + fmtBytes(n) + "). Search uses the new snapshot.", "catalog");
       if (out) {
         out.textContent = "";
         out.appendChild(empty("Catalog updated. Search again to see current matches."));
       }
     })
     .catch(function (err) {
-      status("Catalog refresh failed.");
+      status("Catalog refresh failed: " + err.message, "catalog");
       failWithRetry(out, "Catalog refresh failed: " + err.message, refreshCatalog);
     })
     .finally(function () { if (btn) btn.disabled = false; });

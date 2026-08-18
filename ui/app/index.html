@@ -687,6 +687,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="models-live-btn">List models</button>
       </div>
       <div id="models-live-out" class="section-output"></div>
+      <p class="sr-only" id="models-live-status" role="status" aria-live="polite"></p>
       <h3 class="detail-head subsection-head">Discover (models.dev)</h3>
       <div class="transcript-tools">
         <label for="models-catalog-q">Search</label>
@@ -695,6 +696,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="models-catalog-refresh">Refresh catalog</button>
       </div>
       <div id="models-catalog-out" class="section-output"></div>
+      <p class="sr-only" id="models-catalog-status" role="status" aria-live="polite"></p>
       <!-- The [models."…"] block for a discovered model: the same TOML
            `clanker providers fill` prints. Shown as selectable text rather than
            only copied, because navigator.clipboard needs a secure context and
