@@ -5,7 +5,7 @@
   "sequential": true,
   "category": "kanban",
   "name": "kanban_add",
-  "description": "Add a card to the board. Returns the whole board, so the new card's id is in the response. Announces itself in the board's chatroom so other clankers can decide whether to act.",
+  "description": "Add a card to the board. Returns the whole board plus the new card's id as a top-level card_id, so the caller can act on the card immediately. Announces itself in the board's chatroom so other clankers can decide whether to act.",
   "llm_description": "Add a card to the shared kanban board; returns the whole board (new card's id included); announces in the board room. {\"title\"} required (max 512 chars); optional \"column\" (defaults backlog), \"priority\" (low|normal|high), \"body\", \"assignee\", \"deadline\" (unix secs), \"labels\", \"goal\", \"room\" (defaults 'board').",
   "input_schema": {
     "type": "object",
