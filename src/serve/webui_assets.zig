@@ -22,6 +22,7 @@ const std = @import("std");
 /// without its own slot the way it could when each was a hand-written global.
 pub const Kind = enum {
     css,
+    views_css,
     js,
     boot,
     board_view,
@@ -65,6 +66,7 @@ pub const Kind = enum {
 };
 
 pub fn kindFor(target: []const u8) Kind {
+    if (std.mem.endsWith(u8, target, "views.css")) return .views_css;
     if (std.mem.endsWith(u8, target, ".css")) return .css;
     if (std.mem.endsWith(u8, target, "preact-boot.js")) return .boot;
     if (std.mem.endsWith(u8, target, "features/board.js")) return .board_view;
@@ -125,6 +127,7 @@ pub fn kindFor(target: []const u8) Kind {
 /// this list has never heard of.
 pub const asset_paths = [_][]const u8{
     "/webui/app.css",
+    "/webui/views.css",
     "/webui/app.js",
     "/webui/preact-boot.js",
     "/webui/core/attachments.js",

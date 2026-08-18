@@ -8,6 +8,12 @@
 <link rel="stylesheet" href="/webui/vendor/patternfly.min.css" media="print" data-pf="1">
 <noscript><link rel="stylesheet" href="/webui/vendor/patternfly.min.css"></noscript>
 <link rel="stylesheet" href="/webui/app.css">
+<!-- The runs/rooms/models/tools/fleet/kanban-adjacent view styles are not
+     needed for the first draw, so like PatternFly they load with media="print"
+     (never applied) and are swapped to "all" by app.js once ready. The frame
+     and chat styles in app.css above stay render-blocking. -->
+<link rel="stylesheet" href="/webui/views.css" media="print" data-views="1">
+<noscript><link rel="stylesheet" href="/webui/views.css"></noscript>
 <style>
 /* Before app.css arrives, PatternFly parks the sidebar off-canvas below 75rem.
    Keep our rail on-screen for anything wider than a phone so first paint

@@ -31,13 +31,15 @@ import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatR
 
 /* CSP blocks inline onload handlers, so PatternFly stays media=print until
    this module runs. Flip to all as soon as the sheet is ready so first paint
-   skipped the 1.8MB decode but structure styles still arrive. */
-(function activatePatternFly() {
-  var link = document.querySelector('link[data-pf]');
-  if (!link) return;
-  function arm() { link.media = "all"; }
-  if (link.sheet) arm();
-  else link.addEventListener("load", arm);
+   skipped the 1.8MB decode but structure styles still arrive. Same for the
+   view-scoped views.css, which is render-blocking for nothing on first draw. */
+(function activateDeferredSheets() {
+  [document.querySelector('link[data-pf]'), document.querySelector('link[data-views]')].forEach(function (link) {
+    if (!link) return;
+    function arm() { link.media = "all"; }
+    if (link.sheet) arm();
+    else link.addEventListener("load", arm);
+  });
 })();
 
 document.addEventListener("DOMContentLoaded", function () {
