@@ -95,6 +95,7 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
         break :blk @trunc(n_f);
     };
+    const enabled = lib.optBool(req, "enabled", true);
     const now: i64 = @trunc(lib.nowSeconds());
     if (logic.firstFire(cron_text, now, tz) == null)
         return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
@@ -112,6 +113,7 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
             .provider = lib.optStr(req, "provider"),
             .model = lib.optStr(req, "model"),
             .tz_offset_minutes = tz,
+            .enabled = enabled,
             .created = now,
         };
         try loaded.entries.append(lib.alloc, entry);
