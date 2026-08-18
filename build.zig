@@ -325,7 +325,8 @@ pub fn build(b: *std.Build) void {
     // by hand. Declared after tools_step exists, further down.
 
     // ------------------------------------------------------- wasm tool builds
-    // `zig build tools` compiles every tools/zig/<name>.zig into a
+    // `zig build tools` compiles every guest tool under tools/zig/ (lib.zig
+    // and the host-tested helpers listed above are skipped) into a
     // wasm32-freestanding module installed at zig-out/tools/<name>.wasm.
     const tools_step = b.step("tools", "Compile tools/zig/*.zig into zig-out/tools/*.wasm");
     const tool_target = b.resolveTargetQuery(.{
