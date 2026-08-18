@@ -3174,7 +3174,6 @@ fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u
     const full_dst = safeJoinSecure(h.sandbox, dst_sub) catch return Err.denied;
     defer h.sandbox.gpa.free(full_dst);
 
-    // Read the source file (up to max_fs_bytes).
     const data = std.Io.Dir.cwd().readFileAlloc(h.sandbox.io, full_src, h.sandbox.gpa, .limited(h.sandbox.max_fs_bytes)) catch |err| switch (err) {
         error.FileNotFound => return Err.not_found,
         error.StreamTooLong => return Err.too_large,
@@ -3182,12 +3181,10 @@ fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u
     };
     defer h.sandbox.gpa.free(data);
 
-    // Create parent directories for the destination.
     if (std.mem.findScalarLast(u8, full_dst, '/')) |slash| {
         if (slash > 0) std.Io.Dir.cwd().createDirPath(h.sandbox.io, full_dst[0..slash]) catch {};
     }
 
-    // Write the destination file.
     std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full_dst, .data = data }) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,

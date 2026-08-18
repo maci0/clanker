@@ -168,12 +168,6 @@ pub fn json(w: *std.Io.Writer) std.json.Stringify {
     return .{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
 }
 
-/// `{"ok":false,"error":"<msg>"}`, with `msg` escaped as a JSON string.
-///
-/// Every tool used to carry its own copy of this that interpolated the
-/// message raw, so any message containing a quote, backslash, or newline
-/// produced output the host could not parse — turning a useful error into a
-/// parse failure. Escaping it once here makes that unrepresentable.
 /// Reports a host-call failure in terms of what the caller can do about it.
 ///
 /// `@errorName` was going straight to the model at 28 call sites: "NotFound",
@@ -194,6 +188,12 @@ pub fn failErr(out: *Out, err: anyerror, what: []const u8) !void {
     return fail(out, msg);
 }
 
+/// `{"ok":false,"error":"<msg>"}`, with `msg` escaped as a JSON string.
+///
+/// Every tool used to carry its own copy of this that interpolated the
+/// message raw, so any message containing a quote, backslash, or newline
+/// produced output the host could not parse — turning a useful error into a
+/// parse failure. Escaping it once here makes that unrepresentable.
 pub fn fail(out: *Out, msg: []const u8) !void {
     out.reset();
     var w = writer(out);
@@ -216,6 +216,20 @@ pub fn okText(out: *Out, text: []const u8) !void {
     try s.write(true);
     try s.objectField("text");
     try s.write(text);
+    try s.endObject();
+    commit(out, &w);
+}
+
+/// `{"ok":true,"payload":"<payload>"}` — the successful reply of a transform
+/// plugin, whose payload replaces the wrapped tool's result.
+pub fn okPayload(out: *Out, payload: []const u8) !void {
+    var w = writer(out);
+    var s = json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("payload");
+    try s.write(payload);
     try s.endObject();
     commit(out, &w);
 }
