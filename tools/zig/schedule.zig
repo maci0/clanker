@@ -3,7 +3,6 @@
 //!         {"action":"set_enabled","id":"sch-1","enabled":false}
 //!         {"action":"add","cron":"0 9 * * 1-5","task":"..."}
 //!         {"action":"remove","id":"sch-1"}
-//!         {"action":"get","id":"sch-1"}
 //! Output: {"ok":true,"entries":[...],"log":[...]} | {"ok":true,"entry":{...}}
 //!
 //! The store is the same file `clanker schedule` and `/api/schedule` use.
@@ -59,8 +58,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "set_enabled")) return doSetEnabled(req, out);
     if (std.mem.eql(u8, action, "add")) return doAdd(req, out);
     if (std.mem.eql(u8, action, "remove")) return doRemove(req, out);
-    if (std.mem.eql(u8, action, "get")) return doGet(req, out);
-    return lib.fail(out, "action must be list, set_enabled, add, remove, or get");
+    return lib.fail(out, "action must be list, set_enabled, add, or remove");
 }
 
 fn doList(out: *lib.Out) !void {
@@ -79,11 +77,7 @@ fn doSetEnabled(req: std.json.Value, out: *lib.Out) !void {
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
-        if (enabled and !e.enabled) {
-            if (logic.firstFire(e.cron, now, e.tz_offset_minutes) == null)
-                return lib.fail(out, "entry's cron spec never fires again; fix it before enabling");
-            e.last_run = now;
-        }
+        if (enabled and !e.enabled) e.last_run = now;
         e.enabled = enabled;
         if (try store(loaded)) return writeOne(out, e.*);
     }
@@ -145,14 +139,6 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
         if (try store(loaded)) return out.writeAll("{\"ok\":true}");
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
-}
-
-fn doGet(req: std.json.Value, out: *lib.Out) !void {
-    const id = lib.optStr(req, "id") orelse return lib.fail(out, "get needs an id");
-    if (!logic.validId(id)) return lib.fail(out, "bad entry id");
-    var loaded = try load();
-    const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
-    return writeOne(out, e.*);
 }
 
 fn find(loaded: *Loaded, id: []const u8) ?*Entry {
