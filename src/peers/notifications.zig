@@ -38,7 +38,14 @@ pub fn store(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, record: Recor
     var guard = file_lock.acquire(io, base, "state", "notifications", gpa);
     defer guard.release();
 
-    const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(max_bytes)) catch null;
+    // The append is a read-modify-write of the whole log, so only a genuinely
+    // absent file may read as empty. Flattening every other failure (the log
+    // grown past the cap, a permission or I/O error) to "" would rewrite the
+    // ledger down to this one record and drop the dedupe history with it.
+    const maybe_existing = base.readFileAlloc(io, path, gpa, .limited(max_bytes)) catch |err| switch (err) {
+        error.FileNotFound => null,
+        else => return err,
+    };
     defer if (maybe_existing) |e| gpa.free(e);
     const existing = maybe_existing orelse &[_]u8{};
 
@@ -104,4 +111,27 @@ test "notification redelivery is stored once" {
         count += 1;
     };
     try std.testing.expectEqual(@as(usize, 1), count);
+}
+
+test "an unreadable log is an error, not an empty one" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A directory where the log belongs stands in for any read failure that
+    // is not FileNotFound: the store must refuse rather than replace it.
+    try ensure_dir.ensureDir(tmp.dir, io, "state");
+    try ensure_dir.ensureDir(tmp.dir, io, path);
+
+    try std.testing.expectError(error.FileNotFound, store(io, std.testing.allocator, tmp.dir, .{
+        .from = "peer",
+        .kind = "message",
+        .topic = "",
+        .payload = .{ .string = "hello" },
+        .ts = 1,
+        .received_at = 2,
+        .id = "delivery-1",
+    }));
 }

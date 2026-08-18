@@ -9798,6 +9798,22 @@ fn configRawAllowed(name: []const u8) bool {
     return std.mem.eql(u8, name, "config.toml") or std.mem.eql(u8, name, "config.local.toml");
 }
 
+/// One of those two files, read for an edit that writes the result back.
+/// A missing file is genuinely an empty one; every other failure (the file
+/// past the 1 MiB cap, a permission or I/O error) must not be flattened to
+/// `""`, because the callers splice into these bytes and then write the
+/// splice back: an unreadable config would be silently replaced by the one
+/// table being edited, with the response still reporting success.
+fn readConfigForEdit(io: std.Io, arena: std.mem.Allocator, name: []const u8) ![]const u8 {
+    return std.Io.Dir.cwd().readFileAlloc(io, name, arena, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => "",
+        else => {
+            log.log(.error_, "{s} could not be read: {s}", .{ name, @errorName(err) });
+            return error.ConfigFileUnreadable;
+        },
+    };
+}
+
 /// `GET /api/config/raw?file=<name>` — the file's current bytes, for the
 /// web UI's editor. A missing file is an empty editor, not an error.
 fn handleConfigRawGet(io: std.Io, gpa: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
@@ -9809,7 +9825,10 @@ fn handleConfigRawGet(io: std.Io, gpa: std.mem.Allocator, target: []const u8, st
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"file must be config.toml or config.local.toml\"}");
         return;
     }
-    const content = std.Io.Dir.cwd().readFileAlloc(io, file, arena, .limited(1 << 20)) catch "";
+    const content = readConfigForEdit(io, arena, file) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the file exists but could not be read; the server log names the cause\"}");
+        return;
+    };
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
     s.beginObject() catch return;
@@ -9856,7 +9875,10 @@ fn handleConfigRawSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stre
         const bytes = if (std.mem.eql(u8, name, req.file))
             req.content
         else
-            cwd.readFileAlloc(io, name, arena, .limited(1 << 20)) catch "";
+            readConfigForEdit(io, arena, name) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the other config file could not be read, so the pair cannot be validated\"}");
+                return;
+            };
         const scratch_path = std.fmt.allocPrint(arena, "{s}/{s}", .{ check_dir_path, name }) catch return;
         atomic_write.writeFile(io, cwd, scratch_path, bytes) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not stage the candidate config\"}");
@@ -9910,8 +9932,10 @@ fn handleConfigTableSet(io: std.Io, gpa: std.mem.Allocator, body: []const u8, st
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"block must be a non-empty TOML table under 256KB\"}");
         return;
     }
-    const cwd = std.Io.Dir.cwd();
-    const current = cwd.readFileAlloc(io, "config.local.toml", arena, .limited(1 << 20)) catch "";
+    const current = readConfigForEdit(io, arena, "config.local.toml") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml could not be read, so the edit would have replaced it\"}");
+        return;
+    };
     const next = toml_edit.replaceTable(arena, current, req.block) catch {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"block must start with a [table.header] line\"}");
         return;
@@ -9947,8 +9971,10 @@ fn handleConfigTableRemove(io: std.Io, gpa: std.mem.Allocator, body: []const u8,
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"header must name a [table] to remove\"}");
         return;
     }
-    const cwd = std.Io.Dir.cwd();
-    const current = cwd.readFileAlloc(io, "config.local.toml", arena, .limited(1 << 20)) catch "";
+    const current = readConfigForEdit(io, arena, "config.local.toml") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"config.local.toml could not be read, so the removal would have replaced it\"}");
+        return;
+    };
     const header_line = std.fmt.allocPrint(arena, "[{s}]", .{req.header}) catch return;
     const next = toml_edit.removeTable(arena, current, header_line) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not edit config.local.toml\"}");
