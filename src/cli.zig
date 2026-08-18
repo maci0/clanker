@@ -2107,7 +2107,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .notify => try cmdNotify(init, opts),
         .chat => try cmdChat(init, opts),
         .stats => try cmdStats(init),
-        .phonebook => try phonebook.cmdPhonebook(init),
+        .phonebook => try cmdPhonebook(init),
         .serve => try cmdServe(init, opts),
         .repl => try repl.cmdReplVaxis(init, .{
             .provider = opts.provider,
@@ -6195,6 +6195,22 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
     } else {
         return error.BadSubcommand;
     }
+}
+
+/// `clanker phonebook`: every configured peer's agent card, scanned by the
+/// same `peers` guest the `/api/peers` route runs, rendered by the same
+/// `phonebook.render`. Dispatch lives here because loading a guest is the
+/// CLI's job (`toolJson`); `src/peers/` only renders.
+fn cmdPhonebook(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (!cfg.modules.peers) {
+        log.log(.error_, "peers module is disabled; set modules.peers = true in config.toml", .{});
+        return error.ModuleDisabled;
+    }
+    const raw = try toolJson(init.io, init.gpa, arena, &cfg, init.environ_map, "peers", "{\"action\":\"phonebook\"}");
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(init.io, try phonebook.render(arena, raw));
 }
 
 fn cmdStats(init: std.process.Init) !void {

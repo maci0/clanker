@@ -100,13 +100,7 @@ pub fn bestMetricOf(arena: std.mem.Allocator, raw: []const u8, direction: []cons
             .number_string => |str| std.fmt.parseFloat(f64, str) catch continue,
             else => continue,
         };
-        if (best == null) {
-            best = m;
-        } else if (std.mem.eql(u8, direction, "max")) {
-            if (m > best.?) best = m;
-        } else {
-            if (m < best.?) best = m;
-        }
+        if (best == null or isBetter(m, best.?, direction)) best = m;
     }
     return best;
 }
