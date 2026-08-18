@@ -176,6 +176,17 @@ fn doDiagnose(req: std.json.Value, out: *lib.Out) !void {
     if (blocked.len > 0) {
         try s.objectField("blocked_by");
         try s.write(blocked);
+        if (std.mem.eql(u8, blocked, "disabled")) {
+            try s.objectField("fix");
+            try s.beginObject();
+            try s.objectField("action");
+            try s.write("set_enabled");
+            try s.objectField("id");
+            try s.write(e.id);
+            try s.objectField("enabled");
+            try s.write(true);
+            try s.endObject();
+        }
     }
     try s.objectField("last_run");
     try s.write(e.last_run);
