@@ -113,15 +113,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     // Prefix title with [BUG] if it doesn't already have it
     var title_buf: [600]u8 = undefined;
-    const prefix_len: usize = 5; // "[BUG] "
-    const max_title = title_buf.len - prefix_len;
-    if (!std.ascii.startsWithIgnoreCase(title_raw, "[bug]") and title_raw.len > max_title)
-        return lib.fail(out, "title too long for the board card header");
     const title = blk: {
         if (std.ascii.startsWithIgnoreCase(title_raw, "[bug]")) {
             break :blk title_raw;
         }
-        break :blk std.fmt.bufPrint(&title_buf, "[BUG] {s}", .{title_raw}) catch title_raw;
+        const prefix_len: usize = 5; // "[BUG] "
+        const max_title = title_buf.len - prefix_len;
+        const t = if (title_raw.len > max_title) title_raw[0..max_title] else title_raw;
+        break :blk std.fmt.bufPrint(&title_buf, "[BUG] {s}", .{t}) catch title_raw;
     };
 
     // Build the kanban_add args as JSON
