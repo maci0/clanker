@@ -4867,23 +4867,63 @@ fn toolJson(
     tool_name: []const u8,
     input: []const u8,
 ) ![]const u8 {
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
-    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, &ctx) catch |err| {
-        if (err == error.UnknownTool) {
-            // Descriptor missing from tools_dir, not a missing .wasm rebuild.
-            const dirs = config.toolsDirDisplay(arena, cfg.agent.tools_dir) catch "configured tool directories";
-            log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, dirs });
-        } else {
-            log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
-        }
-        return error.ToolWasmMissing;
-    };
-    defer mod.deinit();
-    const raw = try mod.executeTool(if (input.len > 0) input else "{}");
-    defer gpa.free(raw);
-    return arena.dupe(u8, raw);
+    var sess = try ToolSession.open(io, gpa, arena, cfg, environ_map, tool_name);
+    defer sess.close();
+    return sess.call(input);
 }
+
+/// One registry load and one loaded guest, held open across many calls.
+///
+/// `toolJson` pays for both on every call: a walk of every `agent.tools_dir`
+/// that reads and parses each `*.tool.json` descriptor (118 in-tree), then a
+/// read and compile of the guest's wasm. A handler that calls a tool once does
+/// not care. A loop that calls it per item multiplies the whole cost by the
+/// item count — the knowledge folder sync reaches two calls for each of up to
+/// 200 files, so ~47k descriptor parses and 400 module compiles for one
+/// request. Open one session, call it per item, close it.
+const ToolSession = struct {
+    arena: std.mem.Allocator,
+    mod: *runtime.ToolModule,
+
+    fn open(
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        arena: std.mem.Allocator,
+        cfg: *const config.Config,
+        environ_map: *std.process.Environ.Map,
+        tool_name: []const u8,
+    ) !ToolSession {
+        var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+        // The sandbox borrows this for the module's whole life, which outlives
+        // this call, so it cannot be a stack local the way it was when load
+        // and execute sat in one function.
+        const ctx = try arena.create(client.Ctx);
+        ctx.* = .{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
+        const mod = runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, tool_name, ctx) catch |err| {
+            if (err == error.UnknownTool) {
+                // Descriptor missing from tools_dir, not a missing .wasm rebuild.
+                const dirs = config.toolsDirDisplay(arena, cfg.agent.tools_dir) catch "configured tool directories";
+                log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, dirs });
+            } else {
+                log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+            }
+            return error.ToolWasmMissing;
+        };
+        return .{ .arena = arena, .mod = mod };
+    }
+
+    fn close(self: ToolSession) void {
+        self.mod.deinit();
+    }
+
+    /// Runs the tool once; the result is arena-owned. `executeToolAlloc`
+    /// writes straight into the arena, so a caller holding the output for the
+    /// rest of the request does not also pay for the gpa copy `executeTool`
+    /// would make and then dupe.
+    fn call(self: ToolSession, input: []const u8) ![]const u8 {
+        return self.mod.executeToolAlloc(self.arena, if (input.len > 0) input else "{}");
+    }
+};
 
 /// Runs the sandboxed `peers` tool with `input` (a `chat_fanout` request body)
 /// and returns its raw JSON output (arena-owned). Injected into
@@ -13136,9 +13176,18 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
     const max_doc_bytes: usize = 500_000;
     const max_files: usize = 200;
 
+    // A sync is one `get`, up to two calls per file, and one delete per pruned
+    // document: a `toolJson` each would reload the whole registry and
+    // recompile the guest several hundred times for one request.
+    var kb = ToolSession.open(io, gpa, arena, cfg, environ_map, "knowledge") catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"knowledge tool unavailable\"}");
+        return;
+    };
+    defer kb.close();
+
     // What the collection holds now, so files upsert instead of duplicating.
     const get_input = std.fmt.allocPrint(arena, "{{\"action\":\"get\",\"id\":\"{s}\"}}", .{col_id}) catch return;
-    const col_raw = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", get_input) catch {
+    const col_raw = kb.call(get_input) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"knowledge tool unavailable\"}");
         return;
     };
@@ -13196,7 +13245,7 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         for (col.docs) |d| {
             if (!std.mem.eql(u8, d.name, name)) continue;
             const del = std.fmt.allocPrint(arena, "{{\"action\":\"delete_doc\",\"collection_id\":\"{s}\",\"doc_id\":\"{s}\"}}", .{ col_id, d.id }) catch return;
-            const del_out = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", del) catch {
+            const del_out = kb.call(del) catch {
                 upsert_ok = false;
                 break;
             };
@@ -13222,7 +13271,7 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         s.objectField("content") catch return;
         s.write(content) catch return;
         s.endObject() catch return;
-        const add_out = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", w.written()) catch {
+        const add_out = kb.call(w.written()) catch {
             skipped += 1;
             continue;
         };
@@ -13238,7 +13287,7 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         for (col.docs) |d| {
             if (!knowledgeDocIsOrphaned(listing_complete, d.name, &synced_exts, folder_names.items)) continue;
             const del = std.fmt.allocPrint(arena, "{{\"action\":\"delete_doc\",\"collection_id\":\"{s}\",\"doc_id\":\"{s}\"}}", .{ col_id, d.id }) catch return;
-            _ = toolJson(io, gpa, arena, cfg, environ_map, "knowledge", del) catch continue;
+            _ = kb.call(del) catch continue;
             removed += 1;
         }
     }
