@@ -147,17 +147,6 @@ pub fn runDue(
         var s = try store.open(io, gpa, arena, base);
         defer s.close();
         considered = s.entries.items.len;
-        // Recover entries stuck in "running" from a prior sweep that crashed
-        // between claim and status-update. We hold the exclusive run-due lock,
-        // so no concurrent sweep could legitimately have set this state.
-        var recovered = false;
-        for (s.entries.items) |*e| {
-            if (std.mem.eql(u8, e.last_status, "running")) {
-                e.last_status = "error";
-                e.failures += 1;
-                recovered = true;
-            }
-        }
         for (s.entries.items) |*e| {
             const due = dueAt(e.*, now) orelse continue;
             try claims.append(arena, .{ .entry = e.*, .due_at = due, .skipped = skippedSince(e.*, due, now) });
@@ -165,7 +154,7 @@ pub fn runDue(
             e.runs += 1;
             e.last_status = "running";
         }
-        if (claims.items.len > 0 or recovered) try s.save();
+        if (claims.items.len > 0) try s.save();
     }
     if (claims.items.len == 0) return .{ .considered = considered };
     log.log(.info, "schedule: firing {d} due entr{s} ({d} scheduled)", .{

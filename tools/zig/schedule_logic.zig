@@ -32,7 +32,6 @@ pub fn validId(id: []const u8) bool {
 /// never will: disabled, an unparseable spec, or a spec with no future match.
 pub fn nextRun(enabled: bool, cron_text: []const u8, last_run: i64, created: i64, tz_offset_minutes: i32) ?i64 {
     if (!enabled) return null;
-    if (cron_text.len > max_cron_spec_bytes) return null;
     const spec = cron.parse(cron_text) catch return null;
     const from = if (last_run > 0) last_run else created;
     return spec.nextAfter(from, tz_offset_minutes);
@@ -82,9 +81,6 @@ test "nextRun omits disabled, junk, and never-firing specs" {
     try std.testing.expectEqual(@as(?i64, null), nextRun(false, "* * * * *", 0, created, 0));
     try std.testing.expectEqual(@as(?i64, null), nextRun(true, "not a cron spec", 0, created, 0));
     try std.testing.expectEqual(@as(?i64, null), nextRun(true, "0 0 30 2 *", 0, created, 0));
-    // A pathologically long spec is rejected before tokenization.
-    const too_long = "*" ++ "x" ** (max_cron_spec_bytes + 1);
-    try std.testing.expectEqual(@as(?i64, null), nextRun(true, too_long, 0, created, 0));
     // last_run, not created, is the origin once the entry has fired.
     try std.testing.expectEqual(@as(?i64, created + 120), nextRun(true, "* * * * *", created + 60, created, 0));
 }
