@@ -89,7 +89,7 @@ The note places the candidates on two axes: topology (central store vs full repl
 
 - **What it is:** a shared relational server; every instance connects over the network; serve becomes a client, not the owner of truth.
 - **How it expresses the four shapes:** append logs = `INSERT` (MVCC, writers never block); documents = `UPDATE ... WHERE revision = $2` (row count 0 = lost the race); blobs = `bytea`/large objects/path into object storage; claims = `SELECT FOR UPDATE SKIP LOCKED` + `pg_advisory_xact_lock`.
-- **Maturity:** highest on the list; `pg.zig` is a native Zig 0.16 driver (no libc, no libpq, MIT), with pooling, prepared statements, `LISTEN/NOTIFY`, JSONB; TLS via OpenSSL is experimental.
+- **Maturity:** highest on the list; `pg.zig` is a native Zig driver for Zig 0.16.0 (MIT), with pooling, prepared statements, `LISTEN/NOTIFY`, JSONB; TLS via OpenSSL is explicitly experimental (repo re-read 2026-08-18 — the README makes no no-libc/no-libpq claim; "native" implies no libpq, and the TLS path links OpenSSL).
 - **Pros:** removes the `max_members` ceiling (no O(n²)); a host going down strands nothing (constraint 4 met directly); covers the state PRD 0011 leaves out; `SKIP LOCKED` gives the missing claim primitive; `psql` inspectability for a self-modifying system.
 - **Cons:** a server an operator must run (deployment becomes "a checkout plus a database"); for reliability it is a cluster, not a server (streaming replication + Patroni/repmgr), the strongest argument against J relative to the full-replication row and to option O; connection count needs PgBouncer or routing through serve (tier 1 does that); TLS experimental.
 - **Cost to adopt:** one server + HA tooling for any reliability-sensitive deployment; migration off JSONL.
@@ -99,8 +99,8 @@ The note places the candidates on two axes: topology (central store vs full repl
 ### O. Distributed SQL — CockroachDB, YugabyteDB (central, CP, resilient)
 
 - **What it is:** horizontally scalable, strongly consistent SQL, multi-node by design; YugabyteDB is PostgreSQL wire-compatible.
-- **Pros:** no separate HA tooling — availability from resilience, not failover; `pg.zig` may work against YugabyteDB unchanged (unverified; the note's cheapest high-value experiment).
-- **Cons:** heavier per node; a cluster to operate; licences not the plain OSS story (unverified).
+- **Pros:** no separate HA tooling — availability from resilience, not failover; YSQL "reuses the PostgreSQL query layer" per its own README (confirmed verbatim 2026-08-18), so `pg.zig` may work against it unchanged — running that experiment is still the note's cheapest high-value test and has not been done.
+- **Cons:** heavier per node; a cluster to operate; CockroachDB is source-available under the CockroachDB Software License, requiring a licence key outside limited non-production use, while YugabyteDB's core is Apache 2.0 — both confirmed at their LICENSE files 2026-08-18.
 - **Evidence:** [YugabyteDB resiliency vs PostgreSQL HA](https://www.yugabyte.com/blog/yugabytedb-resiliency-vs-postgresql-ha-solutions/) (vendor source), comparison read 2026-08-16.
 
 ### D. libSQL / Turso embedded replicas — local reads, forwarded writes (central primary + replicas, AP-ish)
@@ -115,7 +115,7 @@ The note places the candidates on two axes: topology (central store vs full repl
 - **What it is:** Raft-backed strongly consistent KV for cluster metadata (Kubernetes' store).
 - **Access:** no Zig client needed — the gRPC-gateway exposes the v3 API as JSON over HTTP (base64 values); clanker's HTTP client reaches it today.
 - **Pros:** `Txn` on `mod_revision` is the document-CAS shape; TTL leases are the claim shape (server-side expiry); watch replay is PRD 0011's `CHAT_SYNC` cursor.
-- **Cons (measured):** 1.5 MiB max request, ~8 GB suggested store, "not intended as a general-purpose database". Against this checkout's 38 sessions (max 1.75 MB, base64 inflating ~33%), sessions and logs do not belong in etcd today. Operational cost (quorum loss stops writes; <10 ms fsync; periodic defrag; odd-numbered cluster) is the highest after FoundationDB.
+- **Cons (measured):** 1.5 MiB max request, ~8 GB suggested store, "designed to handle small key value pairs typical for metadata" (limit page, verbatim 2026-08-18; the "not a general-purpose database" phrasing could not be found at source and is dropped). Against this checkout's sessions — 38 at the note's measurement, 56 on the 2026-08-18 re-measurement, max 1.75 MB unchanged, base64 inflating ~33% — sessions and logs do not belong in etcd today. Operational cost (quorum loss stops writes; <10 ms fsync; periodic defrag; odd-numbered cluster) is the highest after FoundationDB.
 - **Verdict from the note:** wrong as the backend, attractive as a coordination sidecar next to a bulk store — a two-store architecture.
 - **Evidence:** etcd gateway/limits/API docs; local `find state/sessions -printf '%s'` (read 2026-08-16).
 
@@ -123,7 +123,7 @@ The note places the candidates on two axes: topology (central store vs full repl
 
 - **What it is:** HashiCorp service discovery; Serf/memberlist gossip for membership, KV on Raft; multi-datacenter is first-class.
 - **Fit:** functionally close to etcd for our purposes, better multi-site story, heavier; the bulk-data objection is unchanged.
-- **Cons:** BSL licence since 2023 (unverified, and it matters).
+- **Cons:** BSL 1.1, confirmed at the LICENSE file 2026-08-18 — licensor now IBM after the acquisition, and each release reverts to MPL 2.0 four years after publication.
 - **Evidence:** HashiCorp gossip/Serf/Raft resource (read 2026-08-16).
 
 ### K. rqlite / dqlite — Raft-replicated SQLite, full copy on every node (full per host, CP)
@@ -136,8 +136,8 @@ The note places the candidates on two axes: topology (central store vs full repl
 ### L. Corrosion + cr-sqlite — gossip-replicated SQLite with multi-writer CRDTs (full per host, AP)
 
 - **What it is:** the note's "closest published match to a mesh where every host knows the full state." A daemon propagating SQLite state via the `cr-sqlite` CRDT extension; RESTful HTTP API, SQL subscriptions, QUIC transport, SWIM gossip. Every node accepts writes, always; conflicts resolve by CRDT semantics.
-- **Maturity:** Apache-2.0, ~1.8k stars; Fly.io runs it across 800+ nodes at p99 ~1 s; docs marked WIP; Rust daemon.
-- **Pros:** exactly the requirement — lose any host, survivors still have everything and keep accepting writes; HTTP API needs no client; proven at 800+ nodes; the empirical answer to "we outgrew a central store".
+- **Maturity:** Apache-2.0, ~1.8k stars; Fly.io runs it across its fleet — the blog says "thousands of high-powered servers", converging "in seconds" (re-read 2026-08-18; the 800+/p99 ~1 s figures trace only to the QCon talk, which was not reopened); docs marked WIP; Rust daemon.
+- **Pros:** exactly the requirement — lose any host, survivors still have everything and keep accepting writes; HTTP API needs no client; proven at Fly's fleet scale; the empirical answer to "we outgrew a central store".
 - **Cons:** a Rust daemon (second runtime; PRD 0011's "no second daemon" argues against it); docs WIP; CRDT convergence is not correctness (two agents moving one card to different lanes converge on *a* lane); 2.5× insert cost; blobs gossip badly.
 - **Cost to adopt:** deploy and operate a daemon; map the schema onto CRDT tables.
 - **Evidence:** [Corrosion repo](https://github.com/superfly/corrosion), [Fly blog](https://fly.io/blog/corrosion/), [cr-sqlite](https://github.com/vlcn-io/cr-sqlite) (read 2026-08-16).
@@ -167,14 +167,14 @@ The note places the candidates on two axes: topology (central store vs full repl
 ### E. NATS JetStream KV — distributed KV with watch, built on a log (per-stream replicas, tunable)
 
 - **What it is:** a KV store layered on JetStream streams, with revisions, history and `watch`.
-- **Maturity:** established, Apache-2.0; `nats-io/nats.zig` is the official Zig 0.16 client but explicitly pre-1.0 with a changing API; Object Store and client mTLS not built.
+- **Maturity:** established, Apache-2.0; `nats-io/nats.zig` is the official Zig 0.16 client but explicitly pre-1.0 with a changing API; Object Store and client mTLS not built, though server-authenticated TLS is supported (re-verified 2026-08-18).
 - **Pros:** multi-host with no `max_members` and no per-entity SPOF; `watch` gives push updates; streams give replay/history (good for `improvements.jsonl`/`autolearn.jsonl`); covers 3 of 4 shapes.
 - **Cons:** a server to run; pre-1.0 client in a project that pins two deps deliberately; no Object Store in the Zig client (blobs need a second mechanism); no ad-hoc queries/joins/`psql`.
 - **Evidence:** [nats.zig](https://github.com/nats-io/nats.zig), NATS KV docs, ADR-8 (read 2026-08-16).
 
 ### F2. FoundationDB — the most correct concurrency model, on the worst-fitting shape (sharded, CP)
 
-- **Ruled out by a measured number.** Values ≤ 100 KB, transactions ≤ 5 s. 19 of this checkout's 38 session transcripts already exceed 100 KB (median 95 KB, max 1.75 MB). Access is the heaviest (libfdb_c + FFI, no Zig binding). Not a candidate.
+- **Ruled out by a measured number.** Values ≤ 100 KB, transactions ≤ 5 s. 19 of this checkout's 38 session transcripts already exceeded 100 KB at the note's measurement (median 95 KB, max 1.75 MB); re-measured 2026-08-18: 19 of 56 still exceed it, max 1,753,954 bytes unchanged. Access is the heaviest (libfdb_c + FFI, no Zig binding). Not a candidate.
 
 ### C. SQLite / WAL — single host, not a cross-host answer
 
@@ -277,3 +277,11 @@ Ordered by what blocks a decision, most blocking first.
 ## Appendix
 
 - The note's tier-2 comparison table (topology × partition grid) and its candidate schema sketch live in the research note and are the reference for the migration once a backend is chosen.
+
+## Verification log — 2026-08-18
+
+Every load-bearing claim above was reopened at its original source in this pass — the repository, documentation page, or blog post each option cites — independently of the research note, and the local measurement was re-run. Confirmed verbatim at source: etcd 1.5 MiB / 2 GB / 8 GB limits, the JSON gRPC-gateway at /v3/* with base64 keys and values, Txn as an atomic If/Then/Else on version/create/mod/value, lease-TTL key deletion, and watch replay from a start revision; FoundationDB 10,000 B keys / 100,000 B values / 10,000,000 B transactions / 5 s duration; S3 If-None-Match create and If-Match ETag CAS; cr-sqlite MIT, crsql_as_crr, crsql_changes, 2.5x insert cost, build-against-a-release-tag advice; Marmot leaderless 2PC with ONE/QUORUM/ALL, HLC last-write-wins, anti-entropy, and its three stated limitations; rqlite Raft with an HTTP API; dqlite as an embeddable Raft C library used by LXD; Corrosion Apache-2.0 with cr-sqlite, SWIM (Foca), QUIC (Quinn), SQL subscriptions, docs WIP; pg.zig for Zig 0.16.0, MIT, pooling, LISTEN/NOTIFY, experimental OpenSSL TLS; nats.zig official, Zig 0.16+, Apache-2.0, JetStream and KV, pre-1.0; Consul BSL 1.1 with IBM as licensor; the CockroachDB Software License; YugabyteDB Apache 2.0 core reusing the PostgreSQL query layer; TigerBeetle Zig, VSR, static allocation, accounts-and-transfers schema.
+
+Corrected in place above after this pass: pg.zig no-libc/no-libpq (not stated at source), the etcd "not a general-purpose database" quote (not found at source), and Corrosion 800+ nodes / p99 ~1 s (the Fly blog says "thousands of high-powered servers" and "in seconds"; the numbers trace only to the QCon talk, which was not reopened).
+
+Not reopened in this pass, so still note-sourced: the Turso embedded-replica docs (option D), the NATS-alternatives comparison pages (option Q), and the SQLite-concurrency write-ups (option C). Still unverified: loro.dev/docs/performance (HTTP 403 again), and the pg.zig-against-YugabyteDB experiment (not run).
