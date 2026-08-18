@@ -127,27 +127,16 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
-        var removed: ?Entry = null;
+        var found = false;
         var i: usize = 0;
         while (i < loaded.entries.items.len) {
             if (std.mem.eql(u8, loaded.entries.items[i].id, id)) {
-                removed = loaded.entries.items[i];
                 _ = loaded.entries.orderedRemove(i);
+                found = true;
             } else i += 1;
         }
-        if (removed == null) return lib.fail(out, "no such entry");
-        if (try store(loaded)) {
-            var w = lib.writer(out);
-            var s = lib.json(&w);
-            try s.beginObject();
-            try s.objectField("ok");
-            try s.write(true);
-            try s.objectField("removed");
-            try writeEntry(&s, removed.?);
-            try s.endObject();
-            lib.commit(out, &w);
-            return;
-        }
+        if (!found) return lib.fail(out, "no such entry");
+        if (try store(loaded)) return out.writeAll("{\"ok\":true}");
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
@@ -252,9 +241,6 @@ fn writeEntry(s: *std.json.Stringify, e: Entry) !void {
         try s.objectField("next_run");
         try s.write(next);
     }
-    const status = logic.diagnose(e.enabled, e.cron, e.last_run, e.created, e.tz_offset_minutes);
-    try s.objectField("status");
-    try s.write(status);
     try s.endObject();
 }
 
