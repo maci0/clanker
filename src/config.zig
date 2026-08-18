@@ -5360,7 +5360,7 @@ fn documentsKey(text: []const u8, key: []const u8) bool {
             const rest = std.mem.trimStart(u8, line[key.len..], " \t");
             if (rest.len > 0 and rest[0] == '=') return true;
         }
-        // `[memory.chunk]`, `[[ttsr.rules]]`: the key names a table.
+        // `[memory.vector]`, `[[ttsr.rules]]`: the key names a table.
         if (std.mem.startsWith(u8, line, "[")) {
             if (std.mem.find(u8, line, key)) |at| {
                 const before = line[at - 1];

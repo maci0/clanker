@@ -116,28 +116,42 @@ fn roleLabel(role: Role) []const u8 {
 /// One `<style>` block, no external reference of any kind. System font stacks
 /// only: a webfont would be a network fetch on open, which is the property
 /// this export exists to avoid.
+///
+/// The vocabulary is the web UI's Control Cabinet, transcribed: RAL panel
+/// greys rather than a zinc web palette, 3px machined plate edges rather than
+/// SaaS card corners, engraved mono legend plates for every label, and IEC
+/// 60073 lamp colours for the role stripes -- blue for operator action (you),
+/// green for the healthy worker (assistant), amber for a reading coming back
+/// (tool result), panel grey for the frame itself (system). An export is the
+/// one artefact that leaves the machine, so it must still be recognisably
+/// this product with the filename removed. It used to be four invented
+/// pastels (including a violet the sheets deliberately alias to the accent)
+/// on #fbfbfa with 10px corners, which was any transcript exporter at all.
+/// Values are copied from themes/light.json and themes/dark.json; they are
+/// literals here because the export is self-contained by contract and cannot
+/// read the theme store.
 const style =
-    \\:root{color-scheme:light dark;--bg:#fbfbfa;--fg:#1a1a1a;--muted:#5c5c5c;--line:#e0e0dd;--card:#fff;--code:#f4f4f2}
-    \\@media (prefers-color-scheme:dark){:root{--bg:#16171a;--fg:#e6e6e6;--muted:#9a9a9a;--line:#2c2e33;--card:#1d1e22;--code:#101114}}
+    \\:root{color-scheme:light dark;--bg:#dcd9d1;--fg:#1b1c18;--muted:#4f534b;--line:#cdc9bf;--edge:#b9b5aa;--card:#eeebe4;--code:#d4d0c6;--act:#0b57d0;--ok:#117a3a;--warn:#b45309}
+    \\@media (prefers-color-scheme:dark){:root{--bg:#171916;--fg:#e8eae5;--muted:#a3aaa1;--line:#353934;--edge:#454a44;--card:#232622;--code:#121411;--act:#7aa7ff;--ok:#4ade80;--warn:#fbbf24}}
     \\*{box-sizing:border-box}
     \\body{margin:0;padding:2rem 1rem 4rem;background:var(--bg);color:var(--fg);font:16px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
     \\main{max-width:52rem;margin:0 auto}
     \\h1{font-size:1.4rem;margin:0 0 .35rem;word-break:break-word}
     \\dl.meta{display:grid;grid-template-columns:max-content 1fr;gap:.15rem .8rem;margin:0 0 2rem;color:var(--muted);font-size:.85rem}
-    \\dl.meta dt{font-weight:600}
-    \\dl.meta dd{margin:0;word-break:break-word}
-    \\section.msg{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.85rem 1rem;margin:0 0 .85rem}
-    \\section.msg > h2{font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 .5rem;font-weight:700}
-    \\section.msg.user{border-left:3px solid #4a7dbd}
-    \\section.msg.assistant{border-left:3px solid #4c9a72}
-    \\section.msg.system{border-left:3px solid #8a7fbb}
-    \\section.msg.tool{border-left:3px solid #b08442}
+    \\dl.meta dt{font:700 .7rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase}
+    \\dl.meta dd{margin:0;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem}
+    \\section.msg{background:var(--card);border:1px solid var(--edge);border-radius:3px;padding:.85rem 1rem;margin:0 0 .85rem;box-shadow:0 1px 2px rgba(24,29,26,.10)}
+    \\section.msg > h2{font:700 .7rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 .5rem}
+    \\section.msg.user{border-left:3px solid var(--act)}
+    \\section.msg.assistant{border-left:3px solid var(--ok)}
+    \\section.msg.system{border-left:3px solid var(--edge)}
+    \\section.msg.tool{border-left:3px solid var(--warn)}
     \\pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     \\.call{margin-top:.7rem;border-top:1px dashed var(--line);padding-top:.6rem}
-    \\.call h3{font-size:.8rem;margin:0 0 .35rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-    \\.call pre{background:var(--code);border-radius:6px;padding:.5rem .6rem}
+    \\.call h3{font:.75rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;margin:0 0 .35rem;color:var(--muted)}
+    \\.call pre{background:var(--code);border-radius:2px;padding:.5rem .6rem}
     \\.empty{color:var(--muted);font-style:italic}
-    \\footer{margin-top:2.5rem;padding-top:.8rem;border-top:1px solid var(--line);color:var(--muted);font-size:.8rem}
+    \\footer{margin-top:2.5rem;padding-top:.8rem;border-top:1px solid var(--line);color:var(--muted);font:.75rem/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em}
 ;
 
 /// Renders `s` as one complete HTML document. Caller owns the result.
