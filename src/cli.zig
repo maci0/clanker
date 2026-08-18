@@ -17674,11 +17674,16 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
     const html =
         \\<!doctype html><head><title>x</title></head>
         \\<link href="/webui/app.css">
+        \\<link rel="modulepreload" href="/webui/app.js">
         \\<script type="module" src="/webui/app.js"></script>
     ;
     const out = try withWebuiCacheUrls(arena, html, "deadbeef");
     try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.css") != null);
     try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.js") != null);
+    // A modulepreload link is rewritten like any other asset URL: if the head
+    // preloads the untagged URL while the script tag loads the tagged one, the
+    // browser fetches the same file twice.
+    try std.testing.expect(std.mem.find(u8, out, "modulepreload\" href=\"/webui/~deadbeef/app.js\"") != null);
     try std.testing.expect(std.mem.find(u8, out, "type=\"importmap\"") != null);
     try std.testing.expect(std.mem.find(u8, out, "src=\"/webui/~deadbeef/import-map.json\"") != null);
     try std.testing.expect(std.mem.find(u8, out, "href=\"/webui/app.css\"") == null);

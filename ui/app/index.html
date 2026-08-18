@@ -31,6 +31,15 @@
 <link rel="modulepreload" href="/webui/vendor/preact.module.js">
 <link rel="modulepreload" href="/webui/vendor/htm.module.js">
 <link rel="modulepreload" href="/webui/vendor/signals-core.module.js">
+<!-- The entry and its two largest static dependencies are the heaviest bytes
+     the page downloads, and their <script> tags sit at the far end of a 70 KB
+     document body. Preloading them here starts those fetches the moment the
+     head parses, in parallel with the rest of the HTML, instead of only after
+     the parser walks to the last script tag. The script tags below still load
+     the same URLs, so the browser reuses the preloaded response. -->
+<link rel="modulepreload" href="/webui/app.js">
+<link rel="modulepreload" href="/webui/core/ui.js">
+<link rel="modulepreload" href="/webui/core/utils.js">
 </head>
 <body>
 <!--

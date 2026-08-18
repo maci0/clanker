@@ -4962,9 +4962,15 @@ toolsBind({
 // ---- views: one section visible at a time -----------------------------
 
 var VIEWS = ["chat", "kanban", "runs", "fleet", "arena", "rooms", "models", "knowledge", "prompts", "tools", "system"];
+
 var arenaModulePromise = null;
 function loadArenaModule() {
-  if (!arenaModulePromise) arenaModulePromise = import("./features/arena.js");
+  if (!arenaModulePromise) {
+    arenaModulePromise = import("./features/arena.js").catch(function (err) {
+      arenaModulePromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
   return arenaModulePromise;
 }
 var fleetModulePromise = null;
@@ -4974,19 +4980,30 @@ function loadFleetModule() {
       fleet.setNavShowView(showView);
       fleet.setOpenRun(openRun);
       return fleet;
+    }, function (err) {
+      fleetModulePromise = null; // a failed chunk import must be retryable
+      throw err;
     });
   }
   return fleetModulePromise;
 }
 var todosModulePromise = null;
 function loadTodosModule() {
-  if (!todosModulePromise) todosModulePromise = import("./features/todos.js");
+  if (!todosModulePromise) {
+    todosModulePromise = import("./features/todos.js").catch(function (err) {
+      todosModulePromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
   return todosModulePromise;
 }
 /* The view modules below (board, goals, prompts, models)
    are loaded on first open, not at page load: together they are ~190 KB that
    a status-check-and-leave visit never executes. The promise is cached, so a
-   second open of the same view does not re-fetch. Module state these views
+   second open of the same view does not re-fetch — but only a *resolved*
+   promise is worth caching. A rejected import is dropped by each loader so
+   the next open (or a view's Try again) re-attempts the fetch; a dead chunk
+   otherwise poisoned the page for its lifetime. Module state these views
    share with app.js (the board card list, the goal list, the card modal key
    handler) is exposed through the module-scope vars here, which stay unset
    until the module has loaded; call sites that can run before then guard.
@@ -5000,6 +5017,9 @@ function loadBoardModule() {
     cardModalKeyHandler = m.cardModalKeyHandler;
     paletteRefs.board = m.board;
     return m;
+  }, function (err) {
+    boardModulePromise = null; // a failed chunk import must be retryable
+    throw err;
   });
   return boardModulePromise;
 }
@@ -5010,17 +5030,30 @@ function loadGoalsModule() {
     goalState = m.goalState;
     paletteRefs.goalState = m.goalState;
     return m;
+  }, function (err) {
+    goalsModulePromise = null; // a failed chunk import must be retryable
+    throw err;
   });
   return goalsModulePromise;
 }
 var promptsModulePromise = null;
 function loadPromptsModule() {
-  if (!promptsModulePromise) promptsModulePromise = import("./features/prompts.js");
+  if (!promptsModulePromise) {
+    promptsModulePromise = import("./features/prompts.js").catch(function (err) {
+      promptsModulePromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
   return promptsModulePromise;
 }
 var modelsModulePromise = null;
 function loadModelsModule() {
-  if (!modelsModulePromise) modelsModulePromise = import("./features/models.js");
+  if (!modelsModulePromise) {
+    modelsModulePromise = import("./features/models.js").catch(function (err) {
+      modelsModulePromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
   return modelsModulePromise;
 }
 /* The command palette indexes board cards and goals, both of which live in
@@ -5280,7 +5313,24 @@ function showView(name, focusPanel) {
       loading.then(function () {
         viewLoaded[name] = true;
         clearLoading(name);
-      }, function () { clearLoading(name); });
+      }, function (err) {
+        // A failed view load was a blank panel: the skeleton cleared and
+        // nothing said why, so a dead chunk (a dynamic import that 404'd, an
+        // API call that failed) looked identical to an empty-but-healthy view.
+        // Say what failed and offer to retry; `viewLoaded` stays false either
+        // way, so simply reopening the view still retries it too.
+        clearLoading(name);
+        var cid = VIEW_CONTAINERS[name];
+        var container = cid && document.getElementById(cid);
+        if (!container) return;
+        showLoadError(container, "Could not load the " + name + " view" + (err && err.message ? ": " + err.message : "") + ".", function () {
+          markLoading(name);
+          return viewLoaders[name]().then(function () {
+            viewLoaded[name] = true;
+            clearLoading(name);
+          });
+        });
+      });
     } else {
       viewLoaded[name] = true;
     }

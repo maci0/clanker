@@ -43,6 +43,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   provider reproduces the 0.1.0 behavior exactly. Specs (context, cost,
   capabilities) come from the models.dev snapshot.
 
+### Changed
+
+- `clanker serve` compiles the `webui` WASM guest once per process instead of
+  once per asset path. Every static asset used to load the whole tool registry
+  (~96 `*.tool.json` parses), read the ~1 MiB guest off disk and compile it
+  again; with 41 asset paths plus the index page, a first visit paid that ~42
+  times over as the browser followed `app.js`'s dynamic imports. Rendered
+  bodies were already cached, so a warm server is unaffected.
+- `clanker stats` and `GET /api/stats` fold `state/token_stats.jsonl` line by
+  line instead of materializing every record first. The log is capped at
+  32 MiB (~150k records) and the answer is a handful of rows, so the
+  intermediate array and its per-record group key were tens of megabytes of
+  arena held for the length of the request.
+- The improve loop's prompt blocks (`recentSummary`, `recentSummaries`,
+  `recentlyTouched`) parse only the tail of `state/improvements.jsonl` they
+  read. They went through a whole-file parse (16 MiB cap) into the run arena,
+  three times an iteration, and never freed a copy.
+
 ### Fixed
 
 - A goal loop resumed by `clanker serve` at startup now claims a steer slot,

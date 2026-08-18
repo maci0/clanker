@@ -287,6 +287,11 @@ pub fn build(b: *std.Build) void {
     const scroll_js_test = b.addSystemCommand(&.{ "node", "--test" });
     scroll_js_test.addFileArg(b.path("ui/app/core/scroll.test.mjs"));
     test_step.dependOn(&scroll_js_test.step);
+    // The critical-path preloads and the lazy-view failure path are contracts
+    // of the served HTML/JS; pin them against the embedded files.
+    const webui_load_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    webui_load_js_test.addFileArg(b.path("ui/app/webui-load.test.mjs"));
+    test_step.dependOn(&webui_load_js_test.step);
     // Operator vs Chat column widths live in the shipped stylesheet.
     const layout_js_test = b.addSystemCommand(&.{ "node", "--test" });
     layout_js_test.addFileArg(b.path("ui/app/core/layout.test.mjs"));
