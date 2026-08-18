@@ -1155,6 +1155,16 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/core/palette.js"></script>
 <script type="module" src="/webui/core/modelpicker.js"></script>
 <script type="module" src="/webui/core/usage.js"></script>
+<!-- These three carry no tag of their own until now, and app.js imports all
+     three statically, so the preload scanner could not see them: the browser
+     discovered them only after app.js (81 KB gz) had fully arrived and been
+     parsed, then spent another round trip fetching them before anything could
+     run. Listed here they are requested in the same wave as their siblings.
+     A tag is not a second download — the module map keys on the URL, which is
+     the same one app.js imports. -->
+<script type="module" src="/webui/core/slash.js"></script>
+<script type="module" src="/webui/core/run-metrics.js"></script>
+<script type="module" src="/webui/lib/runs-list.js"></script>
 <script type="module" src="/webui/lib/markdown.js"></script>
 <script type="module" src="/webui/lib/board.js"></script>
 <script type="module" src="/webui/app.js"></script>

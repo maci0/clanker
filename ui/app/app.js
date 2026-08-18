@@ -26,18 +26,10 @@ import { goalStatusLabel } from "./core/goals.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
-/* CSP blocks inline onload handlers, so PatternFly stays media=print until
-   this module runs. Flip to all as soon as the sheet is ready so first paint
-   skipped the 1.8MB decode but structure styles still arrive. Same for the
-   view-scoped views.css, which is render-blocking for nothing on first draw. */
-(function activateDeferredSheets() {
-  [document.querySelector('link[data-pf]'), document.querySelector('link[data-views]')].forEach(function (link) {
-    if (!link) return;
-    function arm() { link.media = "all"; }
-    if (link.sheet) arm();
-    else link.addEventListener("load", arm);
-  });
-})();
+/* The deferred stylesheets (PatternFly, views.css) are armed by
+   preact-boot.js, not here: this module evaluates only once its whole static
+   import graph has arrived, which is the wrong moment to be applying the
+   page's layout framework. */
 
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";

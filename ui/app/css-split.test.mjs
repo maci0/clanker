@@ -16,6 +16,7 @@ const html = readFileSync(join(here, "index.html"), "utf8");
 const appCss = readFileSync(join(here, "app.css"), "utf8");
 const viewsCss = readFileSync(join(here, "views.css"), "utf8");
 const appJs = readFileSync(join(here, "app.js"), "utf8");
+const bootJs = readFileSync(join(here, "preact-boot.js"), "utf8");
 
 // ---------- minimal HTML tree ----------
 const VOID = new Set(["link","meta","input","br","img","hr","source","wbr","col","area","base","embed","track"]);
@@ -253,9 +254,21 @@ test("views.css is loaded non-blocking with a no-JS fallback", function () {
     "index.html must keep a noscript fallback for views.css");
   assert.ok(html.includes('<link rel="stylesheet" href="/webui/app.css">'),
     "app.css stays the render-blocking sheet");
-  // app.js flips the async sheet to all once it is ready (CSP forbids inline onload).
-  assert.match(appJs, /link\[data-views\]/);
-  assert.match(appJs, /link\.media = "all"/);
+  // preact-boot.js flips the async sheets to all once they are ready (CSP
+  // forbids inline onload). It has to be preact-boot and not app.js: app.js
+  // evaluates only after its whole static import graph lands (~146 KB gz),
+  // which parked PatternFly \u2014 the page's layout framework \u2014 behind every
+  // module the page has, so the frame painted from app.css and then reflowed.
+  assert.match(bootJs, /link\[data-views\]/);
+  assert.match(bootJs, /link\[data-pf\]/);
+  assert.match(bootJs, /link\.media = "all"/);
+  assert.ok(!/link\[data-views\]/.test(appJs), "the sheet swap must not move back onto app.js's import graph");
+  // preact-boot.js is the first module script tag, so nothing else has to run
+  // first for the swap to happen.
+  const bootTag = html.indexOf('src="/webui/preact-boot.js"');
+  const firstTag = html.indexOf('<script type="module"');
+  assert.ok(bootTag > 0 && html.lastIndexOf("<script type=\"module\"", bootTag) === firstTag,
+    "preact-boot.js must stay the first module script tag");
 });
 
 test("no views.css selector styles an element the first paint shows", function () {
