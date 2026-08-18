@@ -76,6 +76,7 @@ fn actionList(out: *lib.Out) !void {
                 .enabled = logic.addonEnabled(state.enabled, state.disabled, name),
                 .has_css = hasCss(name),
                 .capabilities = m.capabilities,
+                .eager = m.eager,
             });
         }
     }
@@ -90,6 +91,7 @@ const Listed = struct {
     enabled: bool,
     has_css: bool,
     capabilities: []const []const u8 = &.{},
+    eager: bool = false,
 };
 
 fn hasCss(name: []const u8) bool {
@@ -125,6 +127,8 @@ fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
         try s.beginArray();
         for (a.capabilities) |c| try s.write(c);
         try s.endArray();
+        try s.objectField("eager");
+        try s.write(a.eager);
         try s.endObject();
     }
     try s.endArray();
@@ -142,6 +146,13 @@ const Manifest = struct {
     description: []const u8 = "",
     group: []const u8 = "Watch",
     capabilities: []const []const u8 = &.{},
+    /// True when the addon does work outside its own view (a persistent dock,
+    /// a live subscription) and so must run at page load. The default is false
+    /// because a view-only addon's `app.js` is dead weight until its tab is
+    /// opened: the page registers its tab from this manifest and fetches the
+    /// script on first open. Nine shipped addons at ~200 KB of script and CSS
+    /// used to load on every visit, chat-only ones included.
+    eager: bool = false,
 };
 
 fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {

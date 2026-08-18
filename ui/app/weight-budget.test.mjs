@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { gzipSync } from "node:zlib";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -11,8 +11,8 @@ import test from "node:test";
 // not public-mobile budgets — they exist to catch silent accretion, not to
 // squeeze the last byte. They pin the shipped files as embedded (the same
 // bytes ui/webui.zig compiles in and the serve layer gzips once per process),
-// and the eager JS set as the union of the page's script tags and
-// modulepreloads: everything a visit that never leaves Chat downloads.
+// and the eager JS set as the transitive static import closure of the page's
+// script tags: everything a visit that never leaves Chat downloads.
 //
 // When a number below drifts far enough to trip its budget, decide whether the
 // bytes are worth it (and raise the budget on purpose) rather than deleting
@@ -39,7 +39,37 @@ function resolveAsset(webPath) {
 const html = fileBytes("index.html").toString("utf8");
 const scriptSrcs = [...html.matchAll(/<script type="module" src="(\/webui\/[^"]+)">/g)].map((m) => m[1]);
 const preloads = [...html.matchAll(/<link rel="modulepreload" href="(\/webui\/[^"]+)">/g)].map((m) => m[1]);
-const eager = [...new Set([...scriptSrcs, ...preloads])];
+
+// The eager set is the *transitive static import closure* of the page's script
+// tags, not the tags themselves. A module reached only through `import ... from`
+// inside app.js is downloaded on exactly the same visits as one with its own
+// tag, so counting tags alone under-reports the wire weight and lets a new
+// static import of app.js land entirely outside this budget. `core/slash.js`,
+// `core/run-metrics.js` and `lib/runs-list.js` had done precisely that: 12.9 KB
+// raw / 4.5 KB gz and three requests that every chat-only visit paid for and no
+// test could see. Only `import ... from` is followed; a dynamic `import()` is
+// the deferral this budget exists to encourage.
+const static_import_re = /^\s*import\s[^;]*?from\s+"([^"]+)"/gm;
+
+function resolveSpecifier(fromWebPath, spec) {
+  if (!spec.startsWith(".")) return spec;
+  return posix.resolve(posix.dirname(fromWebPath), spec);
+}
+
+function importClosure(roots) {
+  const seen = new Set();
+  const stack = [...roots];
+  while (stack.length) {
+    const webPath = stack.pop();
+    if (seen.has(webPath)) continue;
+    seen.add(webPath);
+    const src = fileBytes(resolveAsset(webPath)).toString("utf8");
+    for (const m of src.matchAll(static_import_re)) stack.push(resolveSpecifier(webPath, m[1]));
+  }
+  return [...seen];
+}
+
+const eager = [...new Set([...importClosure(scriptSrcs), ...preloads])];
 
 const sizes = {};
 for (const src of eager) {
@@ -95,4 +125,31 @@ test("deferred vendor CSS stays inside its budget", function () {
   // visitor pays once the swap lands.
   const pfGz = gzKib(fileBytes(join("..", "vendor", "patternfly.min.css")));
   assert.ok(pfGz <= 80, `patternfly.min.css is ${pfGz.toFixed(1)}K gz; budget is 80K`);
+});
+
+test("web UI plugins stay off the load path unless they opt in", function () {
+  // An addon's tab, title and group come from its plugin.json, so the page can
+  // offer the addon without its code (`registerDeferredView` in
+  // core/plugins.js); app.js and app.css arrive when the tab is first opened.
+  // `eager: true` opts out, for an addon that does work outside its own view.
+  // It costs every visit, chat-only ones included, so it stays rare on purpose:
+  // this pins that it is a deliberate act, not a default that crept back.
+  const dir = join(here, "..", "plugins");
+  const names = readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+  let eagerGz = 0;
+  let deferredGz = 0;
+  const eagerNames = [];
+  for (const name of names) {
+    let manifest;
+    try { manifest = JSON.parse(readFileSync(join(dir, name, "plugin.json"), "utf8")); } catch { continue; }
+    let gz = 0;
+    for (const asset of ["app.js", "app.css"]) {
+      try { gz += gzKib(readFileSync(join(dir, name, asset))); } catch { /* optional */ }
+    }
+    if (manifest.eager) { eagerNames.push(name); eagerGz += gz; } else deferredGz += gz;
+  }
+  console.log(`   plugins deferred to first open: ${deferredGz.toFixed(1)}K gz`);
+  console.log(`   plugins loaded eagerly (${eagerNames.join(", ") || "none"}): ${eagerGz.toFixed(1)}K gz`);
+  assert.ok(eagerNames.length <= 1, `${eagerNames.length} plugins load on every visit (${eagerNames.join(", ")}); each one needs a reason to run outside its own view`);
+  assert.ok(eagerGz <= 8, `eager plugin weight is ${eagerGz.toFixed(1)}K gz; budget is 8K`);
 });

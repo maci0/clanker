@@ -7,6 +7,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- Web UI plugins load their code when their tab is first opened, not on every page load. An enabled addon's tab, title and group come from its `plugin.json` (already answered by `/api/webui/plugins`), so the page can offer it without downloading a byte of it; `app.js` and `app.css` arrive on first open, the same deferral the built-in feature views already had. Across the nine shipped addons that is 53.3 KB gzipped and 16 requests off every visit, chat-only ones included. An addon that does work outside its own view sets `"eager": true` in its `plugin.json` and keeps loading at startup; the music dock is the shipped case. A deferred script that fails to arrive leaves its tab in place showing the failure with a Retry, rather than an empty panel.
+
 - Tool descriptors are loaded once per process instead of once per call: `toolJson` (every CLI tool invocation and every HTTP API route under `clanker serve`) re-read and re-parsed all 118 `*.tool.json` manifests, ~180 KB of JSON and ~260 `openat` per request. A cache validated by a stat sweep serves them instead, so an added, removed, edited, or toggled plugin is still picked up without a restart.
 
 ### Fixed

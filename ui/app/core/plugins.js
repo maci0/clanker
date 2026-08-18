@@ -124,29 +124,157 @@ export function pluginApi(spec) {
   };
 }
 
+/* Every addon view's chrome: the panel, the rail tab, and the tablist wiring.
+   Built from name/title/group alone, which is all `/api/webui/plugins` answers
+   with, so a deferred addon gets a working tab before its script exists.
+   Returns the <section> the addon's `mount` is handed. */
+function makeViewShell(id, title, group) {
+  var panel = document.createElement("div");
+  panel.className = "view";
+  panel.id = "view-" + id;
+  panel.setAttribute("role", "tabpanel");
+  panel.setAttribute("aria-labelledby", "tab-" + id);
+  panel.tabIndex = -1;
+  panel.hidden = true;
+  var section = document.createElement("section");
+  panel.appendChild(section);
+  document.getElementById("main").appendChild(panel);
+  var tab = document.createElement("button");
+  tab.type = "button";
+  tab.className = "rail-tab";
+  tab.setAttribute("role", "tab");
+  tab.id = "tab-" + id;
+  tab.setAttribute("aria-controls", "view-" + id);
+  tab.setAttribute("aria-selected", "false");
+  tab.tabIndex = -1;
+  tab.setAttribute("data-view", id);
+  tab.textContent = title;
+  var rail = document.getElementById("rail");
+  var headings = rail ? rail.querySelectorAll(".rail-group") : [];
+  var placed = false;
+  for (var i = 0; i < headings.length; i++) {
+    if ((headings[i].textContent || "").trim() !== group) continue;
+    var host = headings[i].closest("details, section, nav") || headings[i].parentNode;
+    var list = host.querySelector(".pf-v6-c-nav__list");
+    if (list) {
+      var item = document.createElement("li");
+      item.className = "pf-v6-c-nav__item";
+      item.appendChild(tab);
+      list.appendChild(item);
+    } else {
+      host.appendChild(tab);
+    }
+    placed = true;
+    break;
+  }
+  if (!placed) {
+    var fallback = document.querySelector(".rail-nav");
+    if (fallback) fallback.appendChild(tab);
+  }
+  var tablist = document.querySelector(".rail-places[role='tablist']");
+  if (tablist && tab.id) {
+    var owns = (tablist.getAttribute("aria-owns") || "").split(/\s+/).filter(Boolean);
+    if (owns.indexOf(tab.id) === -1) {
+      owns.push(tab.id);
+      tablist.setAttribute("aria-owns", owns.join(" "));
+    }
+  }
+  _VIEWS.push(id);
+  _wireTab(tab, _VIEWS.length - 1);
+  return section;
+}
+
+/* Addons whose tab exists but whose script has not been fetched yet, keyed by
+   view id. `spec` is filled in when that script runs `clanker.registerView`. */
+var pluginShells = {};
+
+/* An enabled, non-eager addon: build its chrome now, fetch its code on first
+   open. A script that fails to arrive leaves the tab in place showing the
+   failure with a Retry, rather than an empty panel that looks like the addon
+   has nothing to say. */
+function registerDeferredView(meta) {
+  if (pluginShells[meta.name] || _VIEWS.indexOf(meta.name) !== -1) return;
+  var section = makeViewShell(meta.name, meta.title || meta.name, meta.group || "Watch");
+  var shell = { section: section, spec: null };
+  pluginShells[meta.name] = shell;
+  var mounted = false;
+  _viewLoaders[meta.name] = function () {
+    if (meta.has_css) loadPluginCss(meta.name);
+    return loadPluginScript(meta.name).then(function (ok) {
+      var spec = shell.spec;
+      if (!ok || !spec) {
+        mounted = false;
+        section.textContent = "";
+        showLoadError(section, "Could not load the " + (meta.title || meta.name) + " plugin.", function () {
+          pluginScripts[meta.name] = null;
+          return _viewLoaders[meta.name]();
+        });
+        return null;
+      }
+      if (!mounted) {
+        mounted = true;
+        section.textContent = "";
+        return spec.mount.call(spec, section, pluginApi(spec));
+      }
+      if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi(spec));
+      return null;
+    });
+  };
+}
+
+/* Inject one addon's app.js, once, and resolve when it has run (or failed).
+   Kept in a map so the deferred view loader and an eager boot cannot race two
+   <script> tags for the same addon. */
+var pluginScripts = {};
+
+function loadPluginScript(name) {
+  if (pluginScripts[name]) return pluginScripts[name];
+  pluginScripts[name] = new Promise(function (resolve) {
+    var existing = document.querySelector('script[data-plugin="' + name + '"]');
+    if (existing) { resolve(true); return; }
+    var s = document.createElement("script");
+    s.src = new URL("../plugins/" + encodeURIComponent(name) + "/app.js", import.meta.url).href;
+    s.setAttribute("data-plugin", name);
+    s.onload = function () { resolve(true); };
+    s.onerror = function () {
+      if (_el.webuiPluginsStatus) _el.webuiPluginsStatus.textContent = "Plugin " + name + " failed to load.";
+      resolve(false);
+    };
+    document.head.appendChild(s);
+  });
+  return pluginScripts[name];
+}
+
+function loadPluginCss(name) {
+  if (document.querySelector('link[data-plugin="' + name + '"]')) return;
+  var link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = new URL("../plugins/" + encodeURIComponent(name) + "/app.css", import.meta.url).href;
+  link.setAttribute("data-plugin", name);
+  document.head.appendChild(link);
+}
+
+/* An enabled addon's tab, panel and nav entry come from its manifest
+   (`/api/webui/plugins` already answers name/title/group/has_css), so the page
+   can offer the addon without downloading a byte of it. Its app.js and app.css
+   are fetched the first time its tab is opened, the same deferral the
+   first-party feature views get from `load<View>Module` in app.js.
+
+   `eager: true` in plugin.json opts out, for an addon that does work outside
+   its own view — the music dock is the shipped case. Everything else stays off
+   the wire until asked for: the nine shipped addons are ~200 KB of script and
+   CSS and ~18 requests that every visit, chat-only ones included, used to pay
+   for on load. */
 export function loadPluginAssets(list) {
   var pending = [];
   list.forEach(function (p) {
     if (!p.enabled) return;
-    if (p.has_css && !document.querySelector('link[data-plugin="' + p.name + '"]')) {
-      var link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = new URL("../plugins/" + encodeURIComponent(p.name) + "/app.css", import.meta.url).href;
-      link.setAttribute("data-plugin", p.name);
-      document.head.appendChild(link);
+    if (p.eager) {
+      if (p.has_css) loadPluginCss(p.name);
+      pending.push(loadPluginScript(p.name));
+      return;
     }
-    if (document.querySelector('script[data-plugin="' + p.name + '"]')) return;
-    pending.push(new Promise(function (resolve) {
-      var s = document.createElement("script");
-      s.src = new URL("../plugins/" + encodeURIComponent(p.name) + "/app.js", import.meta.url).href;
-      s.setAttribute("data-plugin", p.name);
-      s.onload = function () { resolve(true); };
-      s.onerror = function () {
-        _el.webuiPluginsStatus.textContent = "Plugin " + p.name + " failed to load.";
-        resolve(false);
-      };
-      document.head.appendChild(s);
-    }));
+    registerDeferredView(p);
   });
   return Promise.all(pending);
 }
@@ -251,59 +379,20 @@ export function bindPlugins(ctx) {
   window.clanker = {
     registerView: function (spec) {
       if (!spec || !spec.id || typeof spec.mount !== "function") return;
+      // The tab may already be on screen: a deferred addon's shell is built
+      // from its manifest and its script only runs once the tab is opened, so
+      // this call is the mount arriving, not a second view.
+      var shell = pluginShells[spec.id];
+      if (shell) {
+        shell.spec = spec;
+        pluginViews[spec.id] = { spec: spec, section: shell.section };
+        if (typeof spec.boot === "function") {
+          try { spec.boot(pluginApi(spec)); } catch (e) {}
+        }
+        return;
+      }
       if (_VIEWS.indexOf(spec.id) !== -1) return;
-      var group = spec.group || "Watch";
-      var panel = document.createElement("div");
-      panel.className = "view";
-      panel.id = "view-" + spec.id;
-      panel.setAttribute("role", "tabpanel");
-      panel.setAttribute("aria-labelledby", "tab-" + spec.id);
-      panel.tabIndex = -1;
-      panel.hidden = true;
-      var section = document.createElement("section");
-      panel.appendChild(section);
-      document.getElementById("main").appendChild(panel);
-      var tab = document.createElement("button");
-      tab.type = "button";
-      tab.className = "rail-tab";
-      tab.setAttribute("role", "tab");
-      tab.id = "tab-" + spec.id;
-      tab.setAttribute("aria-controls", "view-" + spec.id);
-      tab.setAttribute("aria-selected", "false");
-      tab.tabIndex = -1;
-      tab.setAttribute("data-view", spec.id);
-      tab.textContent = spec.title || spec.id;
-      var rail = document.getElementById("rail");
-      var headings = rail ? rail.querySelectorAll(".rail-group") : [];
-      var placed = false;
-      for (var i = 0; i < headings.length; i++) {
-        if ((headings[i].textContent || "").trim() !== group) continue;
-        var host = headings[i].closest("details, section, nav") || headings[i].parentNode;
-        var list = host.querySelector(".pf-v6-c-nav__list");
-        if (list) {
-          var item = document.createElement("li");
-          item.className = "pf-v6-c-nav__item";
-          item.appendChild(tab);
-          list.appendChild(item);
-        } else {
-          host.appendChild(tab);
-        }
-        placed = true;
-        break;
-      }
-      if (!placed) {
-        var fallback = document.querySelector(".rail-nav");
-        if (fallback) fallback.appendChild(tab);
-      }
-      var tablist = document.querySelector(".rail-places[role='tablist']");
-      if (tablist && tab.id) {
-        var owns = (tablist.getAttribute("aria-owns") || "").split(/\s+/).filter(Boolean);
-        if (owns.indexOf(tab.id) === -1) {
-          owns.push(tab.id);
-          tablist.setAttribute("aria-owns", owns.join(" "));
-        }
-      }
-      _VIEWS.push(spec.id);
+      var section = makeViewShell(spec.id, spec.title || spec.id, spec.group || "Watch");
       pluginViews[spec.id] = { spec: spec, section: section };
       var mounted = false;
       _viewLoaders[spec.id] = function () {
@@ -314,7 +403,6 @@ export function bindPlugins(ctx) {
         if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi(spec));
         return null;
       };
-      _wireTab(tab, _VIEWS.length - 1);
       if (typeof spec.boot === "function") {
         try { spec.boot(pluginApi(spec)); } catch (e) {}
       }

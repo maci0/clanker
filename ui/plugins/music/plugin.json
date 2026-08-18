@@ -1,7 +1,10 @@
 {
   "name": "music",
   "title": "Music",
-  "description": "Play local files or URLs. Dock stays up while the addon is on; turn it off in System → Web UI plugins.",
+  "description": "Play local files or URLs. Dock stays up while the addon is on; turn it off in System \u2192 Web UI plugins.",
   "group": "Work",
-  "capabilities": ["storage"]
+  "capabilities": [
+    "storage"
+  ],
+  "eager": true
 }
