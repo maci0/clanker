@@ -632,6 +632,33 @@ test "findModel matches a wire SKU and a slashed alias tail" {
     try std.testing.expect(findModel(p, "grok4.6-coding") == null);
 }
 
+test "findModelSpan answers the same models findModel does, without parsing the provider" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const index = indexProviders(arena, topLevelMembers(arena, sample));
+    const provider = findProviderSpan(arena, index, "xai", "", null).?;
+    const models_raw = modelsSpan(provider).?;
+
+    // The raw span is the model object itself, so `specs` reads it exactly as
+    // it reads the subtree the whole-provider parse used to produce.
+    const span = findModelSpan(models_raw, "grok-4.6").?;
+    const m = try std.json.parseFromSliceLeaky(std.json.Value, arena, span, .{});
+    const s = try specs(arena, m);
+    try std.testing.expectEqual(@as(u32, 500000), s.context_window.?);
+    try std.testing.expectEqualStrings("Grok 4.6", s.display.?);
+
+    // Same alias rule as findModel: the tail after the last slash, and no
+    // match for a name the catalog does not carry.
+    try std.testing.expect(findModelSpan(models_raw, "xai/grok-4.6") != null);
+    try std.testing.expect(findModelSpan(models_raw, "grok4.6-coding") == null);
+
+    // A provider member with no `models` object reads as "no models", not as
+    // a match on some other member.
+    try std.testing.expect(modelsSpan("{\"api\":\"https://example.invalid\"}") == null);
+}
+
 test "specs reads context, output, cost, display, and capabilities" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
