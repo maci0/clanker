@@ -285,16 +285,20 @@ clanker.registerView({
     });
 
     api.onLive(function (ev) {
-      if (!ev) return;
+      if (!ev || container.hidden) return;
       if (ev.t === "mesh" || ev.t === "talk") load();
     });
 
+    /* Both timers idle while the view is hidden: without the guard, opening
+       Mesh once left this polling /api/mesh/* every 4s for the life of the
+       tab, from a view nobody could see. api.onLive above still refreshes
+       instantly on mesh events, and refresh() covers re-entry. */
     poll = setInterval(function () {
-      if (state.busy) return;
+      if (container.hidden || state.busy) return;
       load();
     }, 4000);
     tick = setInterval(function () {
-      if (!state.pending.length) return;
+      if (container.hidden || !state.pending.length) return;
       draw();
     }, 1000);
 

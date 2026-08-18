@@ -16,15 +16,3 @@ export function createAnswerHead() {
   head.appendChild(label);
   return head;
 }
-
-/** @deprecated Use createAnswerHead. Kept so older imports keep resolving. */
-export function createAiAnswerHead() {
-  return createAnswerHead();
-}
-
-/** @deprecated Disclosure UI removed. */
-export var AI_ANSWER_LABEL = ANSWER_LABEL;
-export var AI_PRIVACY_NOTICE = "";
-export var AI_REVIEW_NOTICE = "";
-
-export function bindAiDisclosure() {}

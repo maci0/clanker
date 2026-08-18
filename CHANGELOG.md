@@ -17,6 +17,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   readouts that previously used off-scale 9px and 10px literals. Touch
   fields keep their 16px, which is an iOS zoom guard rather than a
   typographic choice.
+- `clanker serve` honors HTTP keep-alive on `GET /api/*` responses, the way
+  it already did for the web UI's assets. Every JSON fetch the page makes
+  (status, sessions, board, mesh map) used to close the connection and pay a
+  fresh TCP handshake on the next one; POSTs still close (the `/api/run`
+  stream ends by close), and `GET /api/events` still holds its own SSE
+  connection.
+- The web UI's Fleet mesh poll now stops when the view is left and re-arms
+  when it is reopened, matching the Rooms and Arena polls; the Mesh and
+  Office plugins' polls idle while their view is hidden instead of fetching
+  every few seconds for the life of the tab.
 
 ### Added
 

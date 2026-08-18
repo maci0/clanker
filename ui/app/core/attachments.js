@@ -12,8 +12,6 @@ export var max_video_frames = 4;
 export var max_video_bytes = 256 * 1024 * 1024;
 export var video_frame_width = 640;
 
-export function clearAttachments() { pendingImages.length = 0; }
-
 export function renderAttachments(els, iconFn, fmtBytesFn) {
   els.attachments.textContent = "";
   els.attachments.hidden = pendingImages.length === 0;

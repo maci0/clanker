@@ -488,6 +488,8 @@ function renderSimpleGraph(container, g) {
 var _refreshAll = null;
 
 export function refreshFleet() {
+  // Re-entering the view re-arms the mesh poll that stopFleet cleared.
+  startMeshTimer();
   if (_refreshAll) return Promise.resolve(_refreshAll());
   return Promise.resolve(null);
 }
@@ -604,6 +606,23 @@ function renderFloor(runs, roster){
 
 var _meshTimer = null;
 var _meshTopo = "";
+var _refreshMapFn = null;
+
+/* The mesh poll follows the view the way the rooms and arena polls do:
+   armed while Fleet is open, stopped by stopFleet when the operator leaves.
+   It only fetches while SSE is down, but a standing 2s timer on a view
+   nobody can see is exactly what the other views are not allowed to be. */
+function startMeshTimer() {
+  if (_meshTimer) clearInterval(_meshTimer);
+  _meshTimer = setInterval(function () {
+    if (liveOk()) return;
+    if (_refreshMapFn) _refreshMapFn();
+  }, 2000);
+}
+
+export function stopFleet() {
+  if (_meshTimer) { clearInterval(_meshTimer); _meshTimer = null; }
+}
 
 function meshPos(nodes, i, w, h) {
   if (i === 0) return { x: w / 2, y: h / 2 };
@@ -849,7 +868,7 @@ export function initFleet() {
     banner.addEventListener("click", navToMesh);
   }
   doRefresh();
-  if (_meshTimer) clearInterval(_meshTimer);
+  _refreshMapFn = refreshMap;
   if (!initFleet._liveBound) {
     initFleet._liveBound = true;
     onLive(function (ev) {
@@ -857,10 +876,7 @@ export function initFleet() {
       if (ev.t === "talk" || ev.t === "run" || ev.t === "mesh") refreshMap();
     });
   }
-  _meshTimer = setInterval(function () {
-    if (liveOk()) return;
-    refreshMap();
-  }, 2000);
+  startMeshTimer();
   window.clankerFleet = window.clankerFleet || {};
   window.clankerFleet.refresh = function () { return doRefresh(); };
 }

@@ -527,4 +527,3 @@ export function unmountArena3D() {
   S = null;
 }
 
-export function arena3dActive() { return !!S; }

@@ -7139,7 +7139,16 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_config_table_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/table/set");
         const is_config_table_remove = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/table/remove");
         const is_mcp_servers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mcp/servers");
-        if (is_webui and isWebuiRead(method) and cfg.modules.webui) {
+        // GETs are keep-alive eligible: the module graph on first load and the
+        // SPA's steady /api polling both come from one browser, and closing
+        // after every response made each fetch pay a fresh TCP handshake.
+        // POSTs keep closing (the /api/run stream ends by close), and
+        // GET /api/events opts back out below before it streams. The flag is
+        // only ever set here, after the request was fully read, so a reused
+        // connection never starts mid-body.
+        const keep_alive_eligible = (is_webui and isWebuiRead(method) and cfg.modules.webui) or
+            (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/"));
+        if (keep_alive_eligible) {
             const conn_val = headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
         }
@@ -15013,17 +15022,22 @@ fn connHeader() []const u8 {
 }
 
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
-    request_keep_alive = false;
+    // A HEAD answer still writes the body below; on a kept-alive connection
+    // those bytes would be read as the next response, so HEAD closes.
+    if (request_head) request_keep_alive = false;
     request_status = status;
     var hbuf: [4096]u8 = undefined;
     // nosniff on every response, not just the HTML one: these bodies carry peer
     // names, provider error text, and model output, and none of it should ever
     // be content-sniffed into markup.
+    // Keep-alive is honored, not forced closed: the flag is only ever true for
+    // a fully-read GET, where the framing (Content-Length above) lets the
+    // connection carry the SPA's next poll without a new TCP handshake.
     const request_id = log.getContext();
     const hdr = if (request_id.len > 0)
-        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nX-Request-ID: {s}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, request_id }) catch return
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nX-Request-ID: {s}\r\n{s}\r\n", .{ status, reason, body.len, request_id, connHeader() }) catch return
     else
-        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ status, reason, body.len, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, body);
 }
@@ -15115,7 +15129,7 @@ fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, acce
     const out = gzipped orelse body;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n", .{ out.len, encoding }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ out.len, encoding, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
 }

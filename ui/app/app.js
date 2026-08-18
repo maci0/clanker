@@ -5297,6 +5297,10 @@ function showView(name, focusPanel) {
   if (currentView === "arena" && name !== "arena" && arenaModulePromise) {
     arenaModulePromise.then(function (arena) { arena.stopArena(); });
   }
+  // The fleet mesh poll is the same shape: refreshFleet re-arms it on return.
+  if (currentView === "fleet" && name !== "fleet" && fleetModulePromise) {
+    fleetModulePromise.then(function (fleet) { fleet.stopFleet(); });
+  }
   currentView = name;
   saveView(name);
   VIEWS.forEach(function (v) {

@@ -1546,10 +1546,15 @@ clanker.registerView({
     }
     var raf = window.requestAnimationFrame(frame);
     api.onLive(function (ev) {
-      if (!ev || ev.t !== "chat") return;
+      if (!ev || ev.t !== "chat" || viewHidden()) return;
       poll().then(function () { dirty = true; });
     });
-    window.setInterval(function () { poll().then(function () { dirty = true; }); }, 3000);
+    // Idle while hidden, like the RAF loop and the janitor poll below:
+    // resume() re-polls on re-entry, so nothing is missed by skipping here.
+    window.setInterval(function () {
+      if (viewHidden()) return;
+      poll().then(function () { dirty = true; });
+    }, 3000);
     window.setInterval(checkAlarm, 5000);
     window.setInterval(function () {
       if (viewHidden()) return;

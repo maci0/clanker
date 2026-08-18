@@ -184,13 +184,6 @@ export function buildNodeBox(d, slowest, nodeW, opts) {
   return box;
 }
 
-export function extendSubagentRefs(built) {
-  // Slack / Trello habit: where node detail carries "[subagent run: sub-…]", make it clickable
-  // by normalizing the text — graph's detail/output already contains the literal; the panel
-  // below links it. No DOM here; app.js does the linking after layout.
-  return built;
-}
-
 export function layoutGraph(canvas, built, slowest, opts) {
   opts = opts || {};
   var onSelect = opts.onSelect || function () {};
