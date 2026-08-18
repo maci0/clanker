@@ -322,31 +322,24 @@ run/ask/steer command surface, and the three recorder write paths.
 
 ## Autolearn
 
-Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.
+Automatically observed from usage patterns in `state/autolearn.jsonl`; refresh with `clanker autolearn`.
 
-- [ ] Batch repository exploration to reduce redundant `read_file`/`repo_search` calls
-  Observed long sequences of back-to-back reads and searches, with runs reaching 9.5M–10.9M prompt tokens and over 12 minutes duration.
-- [ ] Enforce required arguments on `read_file` with schema-level validation instead of runtime failure
-  Observed `read_file` error "missing required field: path".
-- [ ] Expand sandbox `fs_prefixes` or pre-validate targets for `edit_file`, `list_files`, and `file_ops`
-  Observed sandbox refusals for `CHANGELOG.md`, `AGENTS.md`, and `.local`.
-- [ ] Improve `edit_file` patch flow to re-read exact file bytes before matching old text
-  Observed "the 'old' text does not appear in the file; read it again and copy the exact bytes" errors.
-- [ ] Pre-validate or broaden the `git` sandbox allowlist and surface allowed verbs before calls
-  Observed repeated `git` sandbox refusals plus denied tokens such as `--force` and `fetch`.
-- [ ] Broaden `gh` exec patterns or route commit lookup through allowed git/read tools
-  Observed `gh api ...` denied because only `gh pr create/merge/view/list` patterns are allowed.
-- [ ] Add retry, backoff, and timeout handling to `web_fetch`
-  Observed three failures with "fetching the page: the request did not complete".
-- [ ] Validate `reports` input before invocation: summary length, kind, and slug format
-  Observed reports errors for "summary is too long (maximum 500 bytes)" and invalid kind/slug format.
-- [ ] Remove or hide the unavailable `jobs` tool from the agent toolset
-  Observed `jobs` call error "jobs are not allowed here".
-- [ ] Make `repo_search` paginate or return actionable narrowing guidance instead of failing on large ranges
-  Observed `repo_search` error "too large for one call — ask for a smaller range or narrow the query".
-- [ ] Add a clearer error or fallback for `zig_std` symbol lookup
-  Observed `zig_std` failure "looking up the std symbol: not found".
-- [ ] Deduplicate concurrent identical tool calls issued at the same timestamp
-  Observed many simultaneous duplicate `git`, `reports`, and `repo_search` calls, causing redundant work.
-- [ ] Re-evaluate model defaults and context budgets: cap `deepseek-v4-pro` prompt size and deprioritize `qwen3.8-27b-tuned` after empty completions
-  Observed `deepseek-v4-pro` runs at 9.5M–10.9M prompt tokens with 37k–73k completions, while `qwen3.8-27b-tuned` returned 0 tokens.
+- [ ] Deduplicate identical tool calls within a turn — logs show simultaneous duplicate `repo_search` and `read_file` calls with the same timestamp, wasting tokens and latency.
+- [ ] Cap and plan read-only exploration — some runs issued hundreds of `read_file`/`repo_search` calls before the first edit, causing context bloat and long stalls.
+- [ ] Compress or summarize tool results — `deepseek-v4-pro` runs reached 9.5M and 10.9M prompt tokens (744s/1358s), indicating raw results are too large to re-prompt efficiently.
+- [ ] Guard against empty/no-op model runs — `qwen3.8-27b-tuned` had `prompt_tokens:0`/`completion_tokens:0` runs that still consumed 29s and 101s.
+- [ ] Validate `read_file` arguments before invocation — observed error `missing required field: path`.
+- [ ] Fix `edit_file` stale-match behavior — observed `the "old" text does not appear in the file; read it again and copy the exact bytes`; retry after re-reading or use line/context anchors.
+- [ ] Grant `edit_file` write access to intended docs — `CHANGELOG.md` and `AGENTS.md` were refused by the sandbox policy, blocking planned updates.
+- [ ] Fix sandbox paths for `file_ops` and `list_files` — observed refusals for `CHANGELOG.md` and `.local` from the same manifest policy.
+- [ ] Fix `git` sandbox/verb policy — observed repeated policy refusals, plus denied `worktree --force` and `fetch`; authorize safe read-only verbs or disable the tool.
+- [ ] Fix `repo_search` size validation — observed `running the search: too large for one call — ask for a smaller range or narrow the query`.
+- [ ] Add `reports` pre-submit validation — observed `summary is too long (maximum 500 bytes)` and invalid `kind`/slug-format errors.
+- [ ] Disable or hide `jobs` in unsupported contexts — observed `jobs are not allowed here`.
+- [ ] Expand the `gh` command allowlist — observed `gh api repos/maci0/clanker/commits/main --jq .sha` denied; only `gh pr *` patterns are allowed.
+- [ ] Add `web_fetch` retry/fallback handling — observed repeated `fetching the page: the request did not complete`.
+- [ ] Fix `zig_std` symbol lookup — observed `looking up the std symbol: not found`; ensure the tool points at the matching std version.
+- [ ] Re-evaluate default model `deepseek-v4-flash` — used in 25 run(s); tune its config or make it the default.
+- [ ] Re-evaluate default model `qwen3.8-27b-tuned` — used in 6 run(s), including zero-token no-ops; tune or gate before use.
+- [ ] Re-evaluate default model `deepseek-v4-pro` — used in 14 run(s) and produced the largest prompt contexts; add context/result limits if kept.
+- [ ] Re-evaluate default model `z-ai/glm-5.2` — used in 1 run(s); confirm whether it should remain in rotation.
