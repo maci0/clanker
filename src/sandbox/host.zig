@@ -52,9 +52,51 @@ pub const host_arena_cap = 64 * 1024;
 pub const scratch_cap = 64 * 1024;
 
 /// Error codes returned by ck_* host functions.
-/// Zig standard library directory (set at startup from build_options).
-/// Used by the zig_std tool to look up symbol signatures.
+/// Zig standard library directory, resolved by running `zig env`.
+///
+/// Read only by the `zig_std` tool and by the improve engine's std-symbol
+/// help, so it is resolved on first use rather than at startup: the lookup
+/// is a fork+exec of the Zig compiler, and paying it in `main` charged every
+/// `clanker` invocation (`--help`, `mcp`, `acp`, every CLI verb) for a path
+/// almost none of them read.
+///
+/// The answer lands in a static buffer, so there is no allocation to own and
+/// nothing to free at exit. `zig_lib_dir_mutex` guards the one-shot: sandbox
+/// host functions run on `clanker serve`'s worker threads, and the startup
+/// call used to be what kept concurrent readers off a half-written slice.
+var zig_lib_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+var zig_lib_dir_mutex: std.atomic.Mutex = .unlocked;
+var zig_lib_dir_resolved: bool = false;
 pub var zig_lib_dir: []const u8 = "";
+
+pub fn zigLibDir(io: std.Io) []const u8 {
+    while (!zig_lib_dir_mutex.tryLock()) std.Thread.yield() catch {};
+    defer zig_lib_dir_mutex.unlock();
+    if (zig_lib_dir_resolved) return zig_lib_dir;
+    zig_lib_dir_resolved = true;
+    // `page_allocator`: the captured output is freed here and the answer is
+    // copied into `zig_lib_dir_buf`, so no caller allocator has to outlive it.
+    const gpa = std.heap.page_allocator;
+    const argv = [_][]const u8{ "zig", "env" };
+    const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return zig_lib_dir;
+    defer gpa.free(res.stdout);
+    defer gpa.free(res.stderr);
+    // zig env prints Zig struct syntax: .lib_dir = "/path/to/lib"
+    var it = std.mem.splitScalar(u8, res.stdout, '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        const idx = std.mem.find(u8, trimmed, ".lib_dir =") orelse continue;
+        const rest = trimmed[idx + ".lib_dir =".len ..];
+        const after = std.mem.trimStart(u8, rest, " \t\"");
+        const end = std.mem.findScalar(u8, after, '"') orelse after.len;
+        const dir = after[0..end];
+        if (dir.len == 0 or dir.len > zig_lib_dir_buf.len) return zig_lib_dir;
+        @memcpy(zig_lib_dir_buf[0..dir.len], dir);
+        zig_lib_dir = zig_lib_dir_buf[0..dir.len];
+        return zig_lib_dir;
+    }
+    return zig_lib_dir;
+}
 
 pub const Err = struct {
     pub const ok: u32 = 0;
@@ -4208,14 +4250,15 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     if (!std.mem.eql(u8, h.sandbox.tool_self_name, "zig_std")) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
     const sym = sliceOf(bytes, sym_ptr, sym_len) orelse return Err.invalid;
-    if (sym.len == 0 or zig_lib_dir.len == 0) return Err.not_found;
+    const lib_dir = zigLibDir(h.sandbox.io);
+    if (sym.len == 0 or lib_dir.len == 0) return Err.not_found;
 
     // rg is on PATH for interactive use but not for the sandbox host, which
     // inherits a minimal environment; resolve it explicitly so the std_api
     // tool works in capability evals and sub-agents too. See std_api evaluation.
     const rg = resolveExecPath(h.sandbox.gpa, h.sandbox.io, h.sandbox.environ_map, "rg") orelse return Err.not_found;
     defer h.sandbox.gpa.free(rg);
-    const std_dir = std.fmt.allocPrint(h.sandbox.gpa, "{s}/std", .{zig_lib_dir}) catch return Err.invalid;
+    const std_dir = std.fmt.allocPrint(h.sandbox.gpa, "{s}/std", .{lib_dir}) catch return Err.invalid;
     defer h.sandbox.gpa.free(std_dir);
     const argv = [_][]const u8{ rg, "-n", "-F", "--max-count", "40", sym, std_dir };
     const res = std.process.run(h.sandbox.gpa, h.sandbox.io, .{ .argv = &argv }) catch return Err.invalid;

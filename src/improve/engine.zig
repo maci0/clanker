@@ -261,8 +261,7 @@ const SourceRef = struct { path: []const u8, line: usize, rest: []const u8 };
 /// The next `<path>:<line>:<col>:` reference into the standard library in a
 /// compiler message. Only std paths: the project's own files are already in
 /// the context the model was given.
-fn nextStdSourceRef(text: []const u8) ?SourceRef {
-    const lib = sandbox_host.zig_lib_dir;
+fn nextStdSourceRef(lib: []const u8, text: []const u8) ?SourceRef {
     if (lib.len == 0) return null;
     var rest = text;
     while (std.mem.find(u8, rest, lib)) |at| {
@@ -1835,7 +1834,11 @@ pub const Engine = struct {
     /// failed four attempts running on std.posix.SEEK. This is the same lookup
     /// the zig_std tool does, attached to the failure that needs it.
     fn stdSymbolHelp(self: *Engine, err_text: []const u8) []const u8 {
-        if (sandbox_host.zig_lib_dir.len == 0) return "";
+        // First read of the lib dir shells out to `zig env`; this path only
+        // runs when a patch failed to compile, which is why the lookup is
+        // lazy rather than paid at startup by every clanker invocation.
+        const lib_dir = sandbox_host.zigLibDir(self.ctx.io);
+        if (lib_dir.len == 0) return "";
         var out: std.ArrayList(u8) = .empty;
         var seen: [4][]const u8 = undefined;
         var seen_n: usize = 0;
@@ -1846,7 +1849,7 @@ pub const Engine = struct {
         // several same-named declarations is the relevant one.
         var notes = err_text;
         var shown: usize = 0;
-        while (nextStdSourceRef(notes)) |ref| {
+        while (nextStdSourceRef(lib_dir, notes)) |ref| {
             notes = ref.rest;
             if (shown == 3) break;
             const excerpt = self.readAround(ref.path, ref.line) orelse continue;
@@ -1906,7 +1909,7 @@ pub const Engine = struct {
 
     /// Up to 12 lines mentioning `sym` in the standard library source.
     fn stdGrep(self: *Engine, sym: []const u8) ?[]const u8 {
-        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zig_lib_dir}) catch return null;
+        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zigLibDir(self.ctx.io)}) catch return null;
         defer self.ctx.gpa.free(std_dir);
         const pattern = std.fmt.allocPrint(self.ctx.gpa, "(pub (fn|const|var) {s}\\b|\\b{s} *[:=])", .{ sym, sym }) catch return null;
         defer self.ctx.gpa.free(pattern);
@@ -4341,8 +4344,7 @@ test "a compile error about a std signature comes back with the declaration" {
 
     // Without a lib dir there is nothing to read, and saying so beats a
     // confusing empty result.
-    const saved = sandbox_host.zig_lib_dir;
-    defer sandbox_host.zig_lib_dir = saved;
+    const saved = sandbox_host.zigLibDir(ctx.io);
     if (saved.len == 0) return error.SkipZigTest;
 
     const err = try std.fmt.allocPrint(arena,

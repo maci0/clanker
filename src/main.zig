@@ -201,37 +201,16 @@ comptime {
     _ = @import("records/prd.zig");
 }
 
-/// Resolves the Zig standard library directory at startup (via `zig env`),
-/// used by the zig_std tool to look up symbol signatures.
-fn resolveZigLibDir(io: std.Io, gpa: std.mem.Allocator) void {
-    const argv = [_][]const u8{ "zig", "env" };
-    const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;
-    defer gpa.free(res.stdout);
-    defer gpa.free(res.stderr);
-    // zig env prints Zig struct syntax: .lib_dir = "/path/to/lib"
-    var it = std.mem.splitScalar(u8, res.stdout, '\n');
-    while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (std.mem.find(u8, trimmed, ".lib_dir =")) |idx| {
-            const rest = trimmed[idx + ".lib_dir =".len ..];
-            const after = std.mem.trimStart(u8, rest, " \t\"");
-            var end: usize = after.len;
-            if (std.mem.findScalar(u8, after, '"')) |q| end = q;
-            const dir = after[0..end];
-            if (dir.len > 0) host.zig_lib_dir = gpa.dupe(u8, dir) catch return;
-            return;
-        }
-    }
-}
-
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
-    resolveZigLibDir(init.io, gpa);
-    // Both live for the whole process, but freeing them keeps the debug
+    // The Zig lib dir is resolved on first use (`host.zigLibDir`), not here:
+    // it costs a fork+exec of the compiler and only `zig_std` and the improve
+    // engine's std-symbol help ever read it.
+    //
+    // These live for the whole process, but freeing them keeps the debug
     // allocator's leak report meaningful: a real leak should not hide behind a
     // known one.
     defer subprocess.deinitProcessRegistry();
-    defer if (host.zig_lib_dir.len > 0) gpa.free(host.zig_lib_dir);
     defer vertex_token.deinit(init.io, gpa);
     defer rate_limit.deinit(init.io, gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
