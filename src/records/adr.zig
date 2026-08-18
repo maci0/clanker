@@ -194,31 +194,8 @@ pub fn renderList(arena: std.mem.Allocator, raw_adrs: []const std.json.Value, ne
         return w.written();
     }
 
-    var status_width: usize = 8;
-    for (adrs) |r| {
-        if (r != .object) continue;
-        const s = json_util.strFieldOrEmpty(r.object, "status");
-        const n = if (s.len == 0) 1 else s.len;
-        if (n > status_width) status_width = @min(n, status_column_max);
-    }
-
     try w.writer.print("{d} ADR(s)\n\n", .{adrs.len});
-    for (adrs) |r| {
-        if (r != .object) continue;
-        const path = json_util.strFieldOrEmpty(r.object, "path");
-        const title = json_util.strFieldOrEmpty(r.object, "title");
-        // An unreadable ADR still gets a row: the path is what the reader
-        // needs in order to go look, and hiding it would make it invisible.
-        const raw_status = json_util.strFieldOrEmpty(r.object, "status");
-        const status = if (raw_status.len == 0) "?" else raw_status;
-        try w.writer.print("  {s}", .{utf8.cap(status, status_column_max)});
-        try w.writer.splatByteAll(' ', status_width -| status.len);
-        try w.writer.print("  {s}\n", .{path});
-        if (title.len > 0) {
-            try w.writer.splatByteAll(' ', status_width + 4);
-            try w.writer.print("{s}\n", .{utf8.cap(stripAdrPrefix(title), title_column_bytes)});
-        }
-    }
+    try common.renderStatusRows(&w.writer, adrs, 8, status_column_max, title_column_bytes, stripAdrPrefix);
 
     try w.writer.print("\nNEXT\n\n  next free number is {d:0>4}\n", .{next_number});
     try w.writer.writeAll("  clanker adr open <path>          read one in full\n");

@@ -221,31 +221,8 @@ pub fn renderList(arena: std.mem.Allocator, rfcs: []const std.json.Value, next_n
         return w.written();
     }
 
-    var status_width: usize = 6;
-    for (rfcs) |r| {
-        if (r != .object) continue;
-        const s = json_util.strFieldOrEmpty(r.object, "status");
-        const n = if (s.len == 0) 1 else s.len;
-        if (n > status_width) status_width = @min(n, status_column_max);
-    }
-
     try w.writer.print("{d} RFC(s)\n\n", .{rfcs.len});
-    for (rfcs) |r| {
-        if (r != .object) continue;
-        const path = json_util.strFieldOrEmpty(r.object, "path");
-        const title = json_util.strFieldOrEmpty(r.object, "title");
-        // An unreadable RFC still gets a row: the path is what the reader
-        // needs to go look, and hiding it would make it invisible.
-        const raw_status = json_util.strFieldOrEmpty(r.object, "status");
-        const status = if (raw_status.len == 0) "?" else raw_status;
-        try w.writer.print("  {s}", .{utf8.cap(status, status_column_max)});
-        try w.writer.splatByteAll(' ', status_width -| status.len);
-        try w.writer.print("  {s}\n", .{path});
-        if (title.len > 0) {
-            try w.writer.splatByteAll(' ', status_width + 4);
-            try w.writer.print("{s}\n", .{utf8.cap(title, title_column_bytes)});
-        }
-    }
+    try common.renderStatusRows(&w.writer, rfcs, 6, status_column_max, title_column_bytes, common.titleAsIs);
 
     try w.writer.print("\nNEXT\n\n  next free number is {d:0>4}\n", .{next_number});
     try w.writer.writeAll("  clanker rfc open <path>          read one in full\n");

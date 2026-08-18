@@ -412,6 +412,53 @@ pub fn byPath(_: void, a: std.json.Value, b: std.json.Value) bool {
     return std.mem.lessThan(u8, pa, pb);
 }
 
+/// The row block the numbered listings share: a status column padded to the
+/// widest status present (never below the store's own floor, never past
+/// `status_column_max`), then the path, then the title indented under it.
+///
+/// A record whose status is unreadable still gets a row: the path is what the
+/// reader needs in order to go look, and hiding it would make it invisible.
+///
+/// `titleText` is how a store drops the number its own titles repeat — ADR
+/// titles carry an "ADR 0001 — " prefix the path above the row already
+/// spells, RFC titles do not, so the transform is the caller's.
+pub fn renderStatusRows(
+    w: *std.Io.Writer,
+    records: []const std.json.Value,
+    min_status_width: usize,
+    status_column_max: usize,
+    title_column_bytes: usize,
+    titleText: *const fn ([]const u8) []const u8,
+) !void {
+    var status_width = min_status_width;
+    for (records) |r| {
+        if (r != .object) continue;
+        const s = json_util.strFieldOrEmpty(r.object, "status");
+        const n = if (s.len == 0) 1 else s.len;
+        if (n > status_width) status_width = @min(n, status_column_max);
+    }
+
+    for (records) |r| {
+        if (r != .object) continue;
+        const path = json_util.strFieldOrEmpty(r.object, "path");
+        const title = json_util.strFieldOrEmpty(r.object, "title");
+        const raw_status = json_util.strFieldOrEmpty(r.object, "status");
+        const status = if (raw_status.len == 0) "?" else raw_status;
+        try w.print("  {s}", .{utf8.cap(status, status_column_max)});
+        try w.splatByteAll(' ', status_width -| status.len);
+        try w.print("  {s}\n", .{path});
+        if (title.len > 0) {
+            try w.splatByteAll(' ', status_width + 4);
+            try w.print("{s}\n", .{utf8.cap(titleText(title), title_column_bytes)});
+        }
+    }
+}
+
+/// Title transform for a store whose titles carry no number of their own.
+pub fn titleAsIs(title: []const u8) []const u8 {
+    return title;
+}
+
 fn missingStatusArg(store: []const u8, usage: StatusUsage, what: []const u8) Error {
     usageError("{s} status needs {s}: clanker {s} status {s}", .{ store, what, store, usage.example });
     return Error.MissingArg;
