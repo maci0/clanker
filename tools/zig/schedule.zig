@@ -96,8 +96,10 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
         break :blk @trunc(n_f);
     };
     const now: i64 = @trunc(lib.nowSeconds());
+    if (!logic.parses(cron_text))
+        return lib.fail(out, "cron spec is not a valid five-field expression (expected: minute hour day-of-month month day-of-week)");
     if (logic.firstFire(cron_text, now, tz) == null)
-        return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
+        return lib.fail(out, "cron spec parses but never comes around (e.g. day 30 of February); check the date fields");
 
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
