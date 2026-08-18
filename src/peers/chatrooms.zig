@@ -290,20 +290,34 @@ pub fn readHistoryAsc(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, st
 /// Aggregate stats per room, newest-first by last activity.
 pub fn listRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config) ![]RoomInfo {
     const raw = readLog(base, io, arena, state_dir, cfg) catch return &[_]RoomInfo{};
+    // Folded line by line through a scratch arena rather than parsed into
+    // `arena`: the answer is one row per room, but the log holds up to
+    // `max_history` messages at `max_text_len` each (~5 MiB at the defaults),
+    // and every parsed message -- reaction arrays included -- used to stay
+    // live in a request-scoped arena until the request ended. Only a room's
+    // own strings are copied out, and only when they are the ones kept.
+    var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer scratch_state.deinit();
+    const scratch = scratch_state.allocator();
     var by_room: std.StringArrayHashMapUnmanaged(RoomInfo) = .empty;
     var lines = std.mem.splitScalar(u8, raw, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
-        const m = std.json.parseFromSliceLeaky(Message, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
+        defer _ = scratch_state.reset(.retain_capacity);
+        const m = std.json.parseFromSliceLeaky(Message, scratch, line, .{ .ignore_unknown_fields = true }) catch continue;
         const gop = try by_room.getOrPut(arena, m.room);
         if (!gop.found_existing) {
-            gop.value_ptr.* = .{ .room = m.room, .messages = 0 };
+            // `m.room` lives in `scratch`, which is about to be reset, but a
+            // room survives the loop and owns both the key and its copy.
+            const room = try arena.dupe(u8, m.room);
+            gop.key_ptr.* = room;
+            gop.value_ptr.* = .{ .room = room, .messages = 0 };
         }
         gop.value_ptr.messages += 1;
         if (m.ts >= gop.value_ptr.last_ts) {
             gop.value_ptr.last_ts = m.ts;
-            gop.value_ptr.last_from = m.from;
-            gop.value_ptr.last_text = utf8.cap(m.text, last_text_preview_bytes);
+            gop.value_ptr.last_from = try arena.dupe(u8, m.from);
+            gop.value_ptr.last_text = try arena.dupe(u8, utf8.cap(m.text, last_text_preview_bytes));
         }
     }
     // Enrich with room metadata (topic, pins)
