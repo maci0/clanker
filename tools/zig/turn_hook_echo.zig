@@ -1,7 +1,7 @@
 //! turn_hook_echo: demo `turn_hook: true` plugin — prints a line into the
 //! transcript after every REPL turn. Proves out the general REPL-behavior
-//! WASM plugin surface (registry.zig's `turn_hook` descriptor field, read by
-//! `runTurnHooks` in src/cli.zig), distinct from `statusline` (which only
+//! WASM plugin surface (registry.zig's `turn_hook` descriptor field,
+//! collected by `Registry.turnHookTools`), distinct from `statusline` (which only
 //! contributes a status-bar segment, not transcript content).
 //! Disabled by default, and (like every `internal: true` tool) exempt from
 //! the `/plugins` runtime toggle — try it by flipping `enabled` to `true` in

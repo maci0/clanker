@@ -2950,7 +2950,7 @@ fn renderConfiguredProviderModels(arena: std.mem.Allocator, provider: *const con
 /// is declared and never referenced -- see `llm/client.zig`'s `Abort`), so a
 /// host that resolves, accepts the connection and then says nothing blocks the
 /// calling thread forever. Two of this fetch's callers are `clanker serve`
-/// request handlers, and `handleCatalogSearch` reaches it while holding
+/// request handlers, and `handleCatalog` reaches it while holding
 /// `catalog_cache_mutex`: unbounded there, one wedged CDN connection takes the
 /// catalog away from every later request in the process, not just its own.
 /// The snapshot is a few MiB over a public CDN, so 30s is well past a healthy
@@ -12407,39 +12407,6 @@ test "forkSession mints an id that still passes validSessionId" {
     try std.testing.expect(session.validSessionId(forked));
 }
 
-fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) ![]const u8 {
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("sessions");
-    try s.beginArray();
-    for (list) |m| {
-        try s.beginObject();
-        try s.objectField("id");
-        try s.write(m.id);
-        try s.objectField("title");
-        try s.write(m.title);
-        try s.objectField("created");
-        try s.write(m.created);
-        try s.objectField("updated");
-        try s.write(m.updated);
-        try s.objectField("workspace");
-        try s.write(m.workspace);
-        try s.objectField("archived");
-        try s.write(m.archived);
-        try s.objectField("messages");
-        try s.write(m.messages);
-        try s.objectField("bytes");
-        try s.write(m.bytes);
-        try s.endObject();
-    }
-    try s.endArray();
-    try s.endObject();
-    return out.written();
-}
-
 /// Only the roles the transcript actually renders: system prompts are internal
 /// and tool-call plumbing is already shown by the run graph, so shipping them
 /// here would just be noise the UI has to filter again.
@@ -16820,21 +16787,6 @@ test "the browser's answer crosses threads to the waiting run" {
     try std.testing.expectEqualStrings("hold", answer);
 }
 
-test "sessionListJSON carries each conversation's byte weight" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const list = [_]session.SessionMeta{
-        .{ .id = "s1", .title = "one", .created = 1, .updated = 2, .messages = 2, .bytes = 13 },
-    };
-    const out = try sessionListJSON(arena, &list);
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{});
-    const first = parsed.object.get("sessions").?.array.items[0];
-    try std.testing.expectEqual(@as(i64, 13), first.object.get("bytes").?.integer);
-    try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
-}
-
 // --------------------------------------------------------- providers check --
 
 test "the sweep summary is one row per provider, with the default marked in the table" {
@@ -17002,7 +16954,7 @@ test "httpGetDeadline gives up on a silent host and names the timeout" {
     // accepts from, so the handshake and the request write both succeed and the
     // read then blocks forever. `loadModelsDev` and `GET /api/providers/models`
     // reach the network through this call from `clanker serve` worker threads,
-    // and `handleCatalogSearch` does so holding `catalog_cache_mutex`: without
+    // and `handleCatalog` does so holding `catalog_cache_mutex`: without
     // the ceiling one wedged connection keeps that lock for the life of the
     // process. `error.Timeout` rather than a collapsed null is what puts the
     // cause in the operator's log.

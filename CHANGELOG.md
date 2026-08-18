@@ -7,6 +7,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `bugreport` truncates an over-length title instead of letting it through whole. The `[BUG] ` prefix was budgeted as five bytes rather than six, so a title long enough to need trimming produced a formatted line one byte over the 600-byte buffer, and the fallback on that failure was the untruncated title. Titles now trim to fit the prefix, and shorter ones are unchanged.
+
 - `clanker <command> --help` names the record-store subcommands the parser
   actually accepts. `adr` and `prd` omitted `append` and `update` from their
   usage line, and `research` omitted `create`, while each command's own error

@@ -78,8 +78,8 @@ pub fn sortOldestFirst(items: []Listing) void {
     }.older);
 }
 
-/// Same object `sessionListJSON` used to emit, so the web picker keeps its
-/// contract when the HTTP handler relays the guest.
+/// The object `GET /api/sessions` answers with: one entry per conversation,
+/// the shape the web picker reads.
 pub fn writeJson(w: *std.Io.Writer, items: []const Listing) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();

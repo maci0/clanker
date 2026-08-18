@@ -1,7 +1,7 @@
 //! statusline_clock: demo `statusline: true` plugin — contributes the
 //! current wall-clock time as a status-bar segment. Proves out the WASM
 //! statusbar plugin surface (registry.zig's `statusline` descriptor field,
-//! read by `refreshStatusline`/`statuslineSegments` in src/cli.zig).
+//! collected by `Registry.statuslineTools`).
 //! Disabled by default so it doesn't clutter the status line unasked. It's
 //! `internal: true` (required for any statusline plugin — otherwise the LLM
 //! would see it as a callable tool), and internal tools are exempt from the
