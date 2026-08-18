@@ -234,6 +234,8 @@ fn writeEntry(s: *std.json.Stringify, e: Entry) !void {
     try s.write(e.cron);
     try s.objectField("task");
     try s.write(e.task);
+    try s.objectField("task_empty");
+    try s.write(std.mem.trim(u8, e.task, " \t\r\n").len == 0);
     if (e.provider) |p| {
         try s.objectField("provider");
         try s.write(p);
