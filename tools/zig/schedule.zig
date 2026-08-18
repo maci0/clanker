@@ -79,7 +79,11 @@ fn doSetEnabled(req: std.json.Value, out: *lib.Out) !void {
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
-        if (enabled and !e.enabled) e.last_run = now;
+        if (enabled and !e.enabled) {
+            if (logic.firstFire(e.cron, now, e.tz_offset_minutes) == null)
+                return lib.fail(out, "entry's cron spec never fires again; fix it before enabling");
+            e.last_run = now;
+        }
         e.enabled = enabled;
         if (try store(loaded)) return writeOne(out, e.*);
     }
