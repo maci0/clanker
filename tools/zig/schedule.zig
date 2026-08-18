@@ -58,8 +58,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "set_enabled")) return doSetEnabled(req, out);
     if (std.mem.eql(u8, action, "add")) return doAdd(req, out);
     if (std.mem.eql(u8, action, "remove")) return doRemove(req, out);
-    if (std.mem.eql(u8, action, "diagnose")) return doDiagnose(req, out);
-    return lib.fail(out, "action must be list, set_enabled, add, remove, or diagnose");
+    return lib.fail(out, "action must be list, set_enabled, add, or remove");
 }
 
 fn doList(out: *lib.Out) !void {
@@ -97,10 +96,8 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
         break :blk @trunc(n_f);
     };
     const now: i64 = @trunc(lib.nowSeconds());
-    if (!logic.parses(cron_text))
-        return lib.fail(out, "cron spec is not a valid five-field expression (expected: minute hour day-of-month month day-of-week)");
     if (logic.firstFire(cron_text, now, tz) == null)
-        return lib.fail(out, "cron spec parses but never comes around (e.g. day 30 of February); check the date fields");
+        return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
 
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
@@ -142,58 +139,6 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
         if (try store(loaded)) return out.writeAll("{\"ok\":true}");
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
-}
-
-fn doDiagnose(req: std.json.Value, out: *lib.Out) !void {
-    const id = lib.optStr(req, "id") orelse return lib.fail(out, "diagnose needs an id");
-    if (!logic.validId(id)) return lib.fail(out, "bad entry id");
-
-    var loaded = try load();
-    const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
-
-    const cron_ok = logic.parses(e.cron);
-    var blocked: []const u8 = "";
-    if (!e.enabled) {
-        blocked = "disabled";
-    } else if (!cron_ok) {
-        blocked = "invalid_cron";
-    } else {
-        const next = logic.nextRun(true, e.cron, e.last_run, e.created, e.tz_offset_minutes);
-        if (next == null) blocked = "never_fires";
-    }
-
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("id");
-    try s.write(e.id);
-    try s.objectField("enabled");
-    try s.write(e.enabled);
-    try s.objectField("cron_valid");
-    try s.write(cron_ok);
-    if (blocked.len > 0) {
-        try s.objectField("blocked_by");
-        try s.write(blocked);
-        if (std.mem.eql(u8, blocked, "disabled")) {
-            try s.objectField("fix");
-            try s.beginObject();
-            try s.objectField("action");
-            try s.write("set_enabled");
-            try s.objectField("id");
-            try s.write(e.id);
-            try s.objectField("enabled");
-            try s.write(true);
-            try s.endObject();
-        }
-    }
-    try s.objectField("last_run");
-    try s.write(e.last_run);
-    try s.objectField("last_status");
-    try s.write(e.last_status);
-    try s.endObject();
-    lib.commit(out, &w);
 }
 
 fn find(loaded: *Loaded, id: []const u8) ?*Entry {
