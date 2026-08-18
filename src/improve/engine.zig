@@ -27,6 +27,7 @@ const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const registry = @import("../toolhost/registry.zig");
+const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -2020,7 +2021,7 @@ pub const Engine = struct {
         if (match != .object) return;
         const verdict = match.object.get("verdict") orelse return;
         if (verdict != .object) return;
-        const headline = if (verdict.object.get("headline")) |h| (if (h == .string) h.string else "") else "";
+        const headline = json_util.strFieldOrEmpty(verdict.object, "headline");
         const winner = if (verdict.object.get("winner")) |w| (if (w == .integer) w.integer else -1) else -1;
 
         // Index 1 is the "reject this proposal" side, since "for"/"against" seed

@@ -57,6 +57,7 @@ const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
 const workflows_mod = @import("../agent/workflows.zig");
 const Agent = agent_loop.Agent;
+const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const syntax = @import("syntax.zig");
@@ -3346,7 +3347,7 @@ const Model = struct {
             if (k == .bool) ok = k.bool;
         }
         if (!ok) {
-            const raw_detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+            const raw_detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
             const detail = clean(self.arena, raw_detail) orelse "unknown";
             const extra = internalToolFailureHint(tool_name, detail);
             self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ display_name, detail, extra }) catch "error: internal tool failed", .dim = true }) catch {};

@@ -288,10 +288,7 @@ fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.V
     }
     const ok = parsed.object.get("ok");
     if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = if (parsed.object.get("error")) |e|
-            (if (e == .string) e.string else "the tool refused the request")
-        else
-            "the tool refused the request";
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
         if (std.mem.eql(u8, detail, "no such entry") or std.mem.eql(u8, detail, "bad entry id")) {
             log.log(.error_, "no scheduled entry; `clanker schedule list` shows them", .{});
             return store.Error.NoSuchEntry;

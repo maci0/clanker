@@ -7,6 +7,7 @@
 //! one host.
 
 const std = @import("std");
+const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
 
 pub const version = @import("build_options").version;
@@ -270,7 +271,7 @@ pub fn renderStatus(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const 
         if (item != .object) continue;
         const mid = strField(item.object, "id");
         const name = strField(item.object, "name");
-        const up = if (item.object.get("up")) |v| (v == .bool and v.bool) else false;
+        const up = json_util.boolFieldOrFalse(item.object, "up");
         const label = if (name.len > 0 and !std.mem.eql(u8, name, mid)) name else mid;
         try out.writer.print("  {s}", .{label});
         if (mid.len > 0 and !std.mem.eql(u8, label, mid)) try out.writer.print("  {s}", .{mid});

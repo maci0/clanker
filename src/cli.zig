@@ -5120,7 +5120,7 @@ fn toolText(
         if (k == .bool) ok = k.bool;
     }
     if (!ok) {
-        const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
         if (std.mem.eql(u8, detail, "no such run")) return error.ToolFailed;
         log.log(.error_, "{s}: {s}", .{ tool_name, detail });
         return error.ToolFailed;
@@ -6077,7 +6077,7 @@ fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
     if (result != .object) return error.ToolFailed;
     const ok = result.object.get("ok") orelse return error.ToolFailed;
     if (ok != .bool or !ok.bool) {
-        const detail = if (result.object.get("error")) |e| if (e == .string) e.string else "tool failed" else "tool failed";
+        const detail = json_util.strFieldOrNull(result.object, "error") orelse "tool failed";
         log.log(.error_, "write-goal: {s}", .{detail});
         return error.ToolFailed;
     }
@@ -6113,7 +6113,7 @@ fn cmdAddGoal(init: std.process.Init, opts: Options) !void {
     if (result != .object) return error.ToolFailed;
     const ok = result.object.get("ok") orelse return error.ToolFailed;
     if (ok != .bool or !ok.bool) {
-        const detail = if (result.object.get("error")) |e| if (e == .string) e.string else "tool failed" else "tool failed";
+        const detail = json_util.strFieldOrNull(result.object, "error") orelse "tool failed";
         log.log(.error_, "add-goal: {s}", .{detail});
         return error.ToolFailed;
     }
@@ -6381,9 +6381,9 @@ fn smartCommitPlan(
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch
         return error.ToolBadOutput;
     if (parsed != .object) return error.ToolBadOutput;
-    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    const ok = json_util.boolFieldOrFalse(parsed.object, "ok");
     if (!ok) {
-        const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "refused";
         log.log(.error_, "commit: {s}", .{detail});
         return error.ToolFailed;
     }
@@ -17324,13 +17324,13 @@ fn cmdArena(init: std.process.Init, opts: Options) !void {
         return error.ToolBadOutput;
     };
     if (parsed != .object) return error.ToolBadOutput;
-    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    const ok = json_util.boolFieldOrFalse(parsed.object, "ok");
     if (!ok) {
-        const msg = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        const msg = json_util.strFieldOrNull(parsed.object, "error") orelse "refused";
         log.log(.error_, "arena: {s}", .{msg});
         return error.ArenaRefused;
     }
-    const text = if (parsed.object.get("text")) |t| (if (t == .string) t.string else "") else "";
+    const text = json_util.strFieldOrEmpty(parsed.object, "text");
     try writeStdOut(io, text);
     if (text.len > 0 and text[text.len - 1] != '\n') try writeStdOut(io, "\n");
 }
@@ -17417,13 +17417,13 @@ fn cmdCompare(init: std.process.Init, opts: Options) !void {
         return error.ToolBadOutput;
     };
     if (parsed != .object) return error.ToolBadOutput;
-    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    const ok = json_util.boolFieldOrFalse(parsed.object, "ok");
     if (!ok) {
-        const msg = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        const msg = json_util.strFieldOrNull(parsed.object, "error") orelse "refused";
         log.log(.error_, "compare: {s}", .{msg});
         return error.CompareRefused;
     }
-    const text = if (parsed.object.get("text")) |t| (if (t == .string) t.string else "") else "";
+    const text = json_util.strFieldOrEmpty(parsed.object, "text");
     try writeStdOut(io, text);
     if (text.len > 0 and text[text.len - 1] != '\n') try writeStdOut(io, "\n");
 }
@@ -17552,9 +17552,9 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
         }
         for (list) |item| {
             if (item != .object) continue;
-            const name = if (item.object.get("name")) |n| (if (n == .string) n.string else "") else "";
-            const hint = if (item.object.get("arg_hint")) |h| (if (h == .string) h.string else "") else "";
-            const desc = if (item.object.get("description")) |d| (if (d == .string) d.string else "") else "";
+            const name = json_util.strFieldOrEmpty(item.object, "name");
+            const hint = json_util.strFieldOrEmpty(item.object, "arg_hint");
+            const desc = json_util.strFieldOrEmpty(item.object, "description");
             var buf: [1024]u8 = undefined;
             const line = if (hint.len > 0)
                 std.fmt.bufPrint(&buf, "{s} {s}: {s}\n", .{ name, hint, desc }) catch continue

@@ -119,10 +119,7 @@ pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: 
     }
     const ok = parsed.object.get("ok");
     if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = if (parsed.object.get("error")) |e|
-            (if (e == .string) e.string else "the tool refused the request")
-        else
-            "the tool refused the request";
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
         log.log(.error_, "{s}: {s}", .{ store, detail });
         return Error.ToolFailed;
     }

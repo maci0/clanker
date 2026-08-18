@@ -45,6 +45,14 @@ pub fn strFieldOrNull(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     return if (v == .string) v.string else null;
 }
 
+/// Tolerant bool field: missing or non-bool reads as false. The `"ok"` flag
+/// every tool answer carries is read this way — a reply that omits it, or
+/// spells it as anything but a bool, did not say the call succeeded.
+pub fn boolFieldOrFalse(obj: std.json.ObjectMap, key: []const u8) bool {
+    const v = obj.get(key) orelse return false;
+    return v == .bool and v.bool;
+}
+
 test "strField rejects missing and non-string values" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -105,4 +113,22 @@ test "strFieldOrEmpty and strFieldOrNull read tolerant string fields" {
     try std.testing.expect(strFieldOrNull(obj, "b") == null);
     try std.testing.expectEqualStrings("", strFieldOrEmpty(obj, "arr"));
     try std.testing.expect(strFieldOrNull(obj, "arr") == null);
+}
+
+test "boolFieldOrFalse reads true only from a bool true" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, arena, "{\"t\":true,\"f\":false,\"s\":\"true\",\"n\":1}", .{});
+    const obj = v.object;
+
+    try std.testing.expect(boolFieldOrFalse(obj, "t"));
+    try std.testing.expect(!boolFieldOrFalse(obj, "f"));
+
+    // A tool that spelled its flag as a string or a number did not say the
+    // call succeeded, and neither did one that left the field out.
+    try std.testing.expect(!boolFieldOrFalse(obj, "s"));
+    try std.testing.expect(!boolFieldOrFalse(obj, "n"));
+    try std.testing.expect(!boolFieldOrFalse(obj, "missing"));
 }
