@@ -548,6 +548,11 @@ pub const Agent = struct {
     /// Start Web UI chat runs isolated by default: no implicit active-goal
     /// steering and a private worktree. The checkbox can still opt a run out.
     isolated_webui: bool = false,
+
+    /// Whether `git_worktree_on` names `mode`.
+    pub fn worktreeOn(self: Agent, mode: WorktreeMode) bool {
+        return std.mem.indexOfScalar(WorktreeMode, self.git_worktree_on, mode) != null;
+    }
 };
 
 /// Persistent eval kernels (PRD 0016). Off by default. Python cells run
@@ -754,6 +759,12 @@ pub const Instance = struct {
     name: []const u8 = "",
     id: []const u8 = "",
 };
+
+/// Futurama-robot flavored, so a fresh instance reads like it just clocked in
+/// at the Robot Arms Conglomerate. Shared by `defaultInstName` here and
+/// `friendlyInstanceName` in cli.zig, so a bare fallback name and a name
+/// `clanker init` writes read as the same kind of thing.
+pub const instance_name_nouns = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
 
 /// What `clanker serve` binds, for deployments that cannot pass flags on the
 /// invocation (a systemd unit, a container image).
@@ -2025,11 +2036,7 @@ pub const Config = struct {
         seed ^= std.hash.Wyhash.hash(0, std.mem.asBytes(&seed));
         var prng = std.Random.DefaultPrng.init(seed);
         const n = prng.random().intRangeAtMost(u16, 100, 999);
-        // Futurama-robot flavored, matching friendlyInstanceName's word list
-        // in cli.zig (cmdInit) so a fresh instance and a bare fallback name
-        // both read as the same kind of thing.
-        const bots = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
-        const bot = bots[prng.random().intRangeAtMost(usize, 0, bots.len - 1)];
+        const bot = instance_name_nouns[prng.random().intRangeAtMost(usize, 0, instance_name_nouns.len - 1)];
         return std.fmt.allocPrint(arena, "clanker-{s}-{d}", .{ bot, n });
     }
 

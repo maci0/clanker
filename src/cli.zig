@@ -2346,11 +2346,10 @@ fn walkZig(io: std.Io, arena: std.mem.Allocator, list: *std.ArrayList([]const u8
 
 /// Memorable auto-generated instance names (adjective-noun), so multi-instance
 /// setups identify each other by names like "clanker-cobalt-otter" instead of
-/// opaque ids.
-// Futurama-robot flavored: a fresh instance reads like it just clocked in at
-// the Robot Arms Conglomerate, not a wildlife photo caption.
+/// opaque ids. The nouns are `config.instance_name_nouns`, shared with the
+/// bare fallback name.
 const name_adjectives = [_][]const u8{ "shiny", "rusty", "chrome", "cosmic", "atomic", "turbo", "neon", "quantum", "vintage", "bionic", "rogue", "sentient", "bootleg", "unlicensed", "reckless", "glitchy" };
-const name_nouns = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
+const name_nouns = config.instance_name_nouns;
 
 fn friendlyInstanceName(arena: std.mem.Allocator, io: std.Io) !struct { name: []const u8, id: []const u8 } {
     // Entropy comes from the Io seam (io.random), not the wall clock, so a
@@ -3686,7 +3685,7 @@ fn shouldIsolate(opts: Options, mode: config.WorktreeMode, cfg: *const config.Co
     // `git_worktree_on` names modes that isolate by default. A named mode
     // opts in regardless of `worktree`/`goal_worktree`; one left out (or an
     // empty list) keeps the historical default below.
-    if (containsMode(cfg.agent.git_worktree_on, mode)) return true;
+    if (cfg.agent.worktreeOn(mode)) return true;
     // An isolated CLI session is deliberately a compound default: it keeps
     // its changes private and (at the resolveRunTask call site) declines the
     // ambient active goal. Flags remain an escape hatch for either half.
@@ -3696,12 +3695,6 @@ fn shouldIsolate(opts: Options, mode: config.WorktreeMode, cfg: *const config.Co
     else
         cfg.agent.worktree;
     return isolateByDefault(opts, def);
-}
-
-/// Whether `m` is named in `modes` (the `[agent] git_worktree_on` list).
-fn containsMode(modes: []const config.WorktreeMode, m: config.WorktreeMode) bool {
-    for (modes) |x| if (x == m) return true;
-    return false;
 }
 
 test shouldIsolate {
@@ -14157,9 +14150,9 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     s.objectField("run_defaults") catch return;
     s.beginObject() catch return;
     s.objectField("webui_worktree") catch return;
-    s.write(cfg.agent.isolated_webui or containsMode(cfg.agent.git_worktree_on, .webui)) catch return;
+    s.write(cfg.agent.isolated_webui or cfg.agent.worktreeOn(.webui)) catch return;
     s.objectField("goal_worktree") catch return;
-    s.write(containsMode(cfg.agent.git_worktree_on, .goal)) catch return;
+    s.write(cfg.agent.worktreeOn(.goal)) catch return;
     s.endObject() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
@@ -14171,8 +14164,8 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
 /// normal chat.
 fn shouldWebuiIsolate(req: RunRequestBody, cfg: *const config.Config) bool {
     if (req.worktree) |v| return v;
-    if (cfg.agent.isolated_webui or containsMode(cfg.agent.git_worktree_on, .webui)) return true;
-    return req.goal.len > 0 and containsMode(cfg.agent.git_worktree_on, .goal);
+    if (cfg.agent.isolated_webui or cfg.agent.worktreeOn(.webui)) return true;
+    return req.goal.len > 0 and cfg.agent.worktreeOn(.goal);
 }
 
 test shouldWebuiIsolate {

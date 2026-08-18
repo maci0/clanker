@@ -77,11 +77,6 @@ const worktree_mod = @import("../improve/worktree.zig");
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
 const stream_tick_ms: u32 = 33;
 
-fn containsWorktreeMode(modes: []const config.WorktreeMode, wanted: config.WorktreeMode) bool {
-    for (modes) |mode| if (mode == wanted) return true;
-    return false;
-}
-
 /// Redraw cadence the mascot's `loop` mode runs at, ~20fps: one animation
 /// frame and one column of travel per tick, so it crosses a 100-column
 /// terminal in about five seconds. Slower than `stream_tick_ms` on purpose --
@@ -8060,7 +8055,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     var wt: ?worktree_mod.Worktree = null;
     defer if (wt) |*w| w.deinit(gpa);
     var harness_root: ?[]const u8 = null;
-    if (cfg.agent.isolated_tui or containsWorktreeMode(cfg.agent.git_worktree_on, .tui)) {
+    if (cfg.agent.isolated_tui or cfg.agent.worktreeOn(.tui)) {
         const root_z = try std.process.currentPathAlloc(io, gpa);
         defer gpa.free(root_z);
         const root = try arena.dupe(u8, root_z);
