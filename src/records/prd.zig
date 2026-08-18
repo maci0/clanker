@@ -158,36 +158,15 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try common.out(io, try common.updateRecord(arena, "prd", opts.arg1, opts.arg2, opts.arg3, tool));
 }
 
+const status_usage: common.StatusUsage = .{
+    .example = "docs/prds/<name>.md shipped \"src/foo.zig is the source of truth; exposed as clanker foo\"",
+    .path_arg = "a PRD path",
+    .status_arg = "a status: draft, in_progress or shipped",
+    .index_warning = "\nThe inventory row was not updated (the row is missing or the index\nchanged concurrently). Set its Status cell by hand in docs/prds/README.md\nso the index does not disagree with the record.\n",
+};
+
 fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const path = opts.arg1 orelse return missingStatusArg("a PRD path");
-    const wanted = opts.arg2 orelse return missingStatusArg("a status: draft, in_progress or shipped");
-    const note = opts.arg3 orelse "";
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "status" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "status", .value = .{ .text = wanted } },
-        .{ .name = "note", .value = .{ .text = note } },
-    });
-
-    const result = try common.callTool(arena, "prd", tool, input);
-    var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
-    try w.writer.print("{s} is now {s}\n", .{
-        json_util.strFieldOrEmpty(result.object, "path"),
-        json_util.strFieldOrEmpty(result.object, "status"),
-    });
-    const reminder = json_util.strFieldOrEmpty(result.object, "reminder");
-    if (reminder.len > 0) try w.writer.print("\n{s}\n", .{reminder});
-    if (!common.boolField(result, "indexed")) {
-        try w.writer.writeAll("\nThe inventory row was not updated (the row is missing or the index\nchanged concurrently). Set its Status cell by hand in docs/prds/README.md\nso the index does not disagree with the record.\n");
-    }
-    try common.out(io, w.written());
-}
-
-fn missingStatusArg(what: []const u8) Error {
-    log.log(.error_, "prd status needs {s}: clanker prd status docs/prds/<name>.md shipped \"src/foo.zig is the source of truth; exposed as clanker foo\"", .{what});
-    return Error.MissingArg;
+    try common.out(io, try common.setRecordStatus(arena, "prd", status_usage, opts.arg1, opts.arg2, opts.arg3, tool));
 }
 
 // ----------------------------------------------------------------- the tool --

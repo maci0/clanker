@@ -176,37 +176,15 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try common.out(io, try common.updateRecord(arena, "reports", opts.arg1, opts.arg2, opts.arg3, tool));
 }
 
+const status_usage: common.StatusUsage = .{
+    .example = "docs/reports/bugs/<name>.md resolved \"Fixed in <commit>; verified by <check>\"",
+    .path_arg = "a record path",
+    .status_arg = "a state: open, investigating, resolved, reopened or closed",
+    .index_warning = "\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/reports/README.md so\nthe index does not disagree with the record.\n",
+};
+
 fn setStatus(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const path = opts.arg1 orelse return missingStatusArg("a record path");
-    const wanted = opts.arg2 orelse return missingStatusArg("a state: open, investigating, resolved, reopened or closed");
-    // The tool requires a note for "resolved", but every state reads better
-    // with one, and asking here names the missing argument rather than
-    // spending a tool call to be told.
-    const note = opts.arg3 orelse "";
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "status" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "status", .value = .{ .text = wanted } },
-        .{ .name = "note", .value = .{ .text = note } },
-    });
-
-    const result = try common.callTool(arena, "reports", tool, input);
-    var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
-    try w.writer.print("{s} is now {s}\n", .{
-        json_util.strFieldOrEmpty(result.object, "path"),
-        json_util.strFieldOrEmpty(result.object, "status"),
-    });
-    if (!common.boolField(result, "indexed")) {
-        try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/reports/README.md so\nthe index does not disagree with the record.\n");
-    }
-    try common.out(io, w.written());
-}
-
-fn missingStatusArg(what: []const u8) Error {
-    log.log(.error_, "reports status needs {s}: clanker reports status docs/reports/bugs/<name>.md resolved \"Fixed in <commit>; verified by <check>\"", .{what});
-    return Error.MissingArg;
+    try common.out(io, try common.setRecordStatus(arena, "reports", status_usage, opts.arg1, opts.arg2, opts.arg3, tool));
 }
 
 // ----------------------------------------------------------------- the tool --

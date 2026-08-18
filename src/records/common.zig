@@ -296,6 +296,61 @@ pub fn updateRecord(
     return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
+/// What a store's `status` usage line and its inventory warning say. These
+/// four strings are the whole of what the five stores differ in; the request,
+/// the confirmation line and the inventory check are the same everywhere.
+pub const StatusUsage = struct {
+    /// The whole example command after `clanker <store> status `.
+    example: []const u8,
+    /// What the first and second arguments are called when one is missing.
+    path_arg: []const u8,
+    status_arg: []const u8,
+    /// Printed when the record moved but its inventory row did not.
+    index_warning: []const u8,
+};
+
+/// `<store> status <path> <state> [note]`.
+pub fn setRecordStatus(
+    arena: std.mem.Allocator,
+    store: []const u8,
+    usage: StatusUsage,
+    path_arg: ?[]const u8,
+    status_arg: ?[]const u8,
+    note_arg: ?[]const u8,
+    tool: Tool,
+) ![]const u8 {
+    // The tools require a note for some states, but every state reads better
+    // with one, and asking here names the missing argument rather than
+    // spending a tool call to be told.
+    const path = path_arg orelse return missingStatusArg(store, usage, usage.path_arg);
+    const wanted = status_arg orelse return missingStatusArg(store, usage, usage.status_arg);
+
+    const input = try request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "status" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "status", .value = .{ .text = wanted } },
+        .{ .name = "note", .value = .{ .text = note_arg orelse "" } },
+    });
+    const result = try callTool(arena, store, tool, input);
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    errdefer w.deinit();
+    try w.writer.print("{s} is now {s}\n", .{
+        json_util.strFieldOrEmpty(result.object, "path"),
+        json_util.strFieldOrEmpty(result.object, "status"),
+    });
+    // Only `prd` answers with a reminder today; the rest never set the field.
+    const reminder = json_util.strFieldOrEmpty(result.object, "reminder");
+    if (reminder.len > 0) try w.writer.print("\n{s}\n", .{reminder});
+    if (!boolField(result, "indexed")) try w.writer.writeAll(usage.index_warning);
+    return w.written();
+}
+
+fn missingStatusArg(store: []const u8, usage: StatusUsage, what: []const u8) Error {
+    log.log(.error_, "{s} status needs {s}: clanker {s} status {s}", .{ store, what, store, usage.example });
+    return Error.MissingArg;
+}
+
 // ----------------------------------------------------------------- tests --
 
 const testing = std.testing;

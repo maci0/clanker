@@ -187,34 +187,15 @@ fn missingRecommendArg(what: []const u8) Error {
     return Error.MissingArg;
 }
 
+const status_usage: common.StatusUsage = .{
+    .example = "docs/rfcs/<name>.md decided \"Chose option B; see the ADR\"",
+    .path_arg = "an RFC path",
+    .status_arg = "a status: draft, discussion, decided, deferred, withdrawn or superseded",
+    .index_warning = "\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/rfcs/README.md so\nthe index does not disagree with the record.\n",
+};
+
 fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    const path = opts.arg1 orelse return missingStatusArg("an RFC path");
-    const wanted = opts.arg2 orelse return missingStatusArg("a status: draft, discussion, decided, deferred, withdrawn or superseded");
-    const note = opts.arg3 orelse "";
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "status" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "status", .value = .{ .text = wanted } },
-        .{ .name = "note", .value = .{ .text = note } },
-    });
-
-    const result = try common.callTool(arena, "rfc", tool, input);
-    var w: std.Io.Writer.Allocating = .init(arena);
-    errdefer w.deinit();
-    try w.writer.print("{s} is now {s}\n", .{
-        json_util.strFieldOrEmpty(result.object, "path"),
-        json_util.strFieldOrEmpty(result.object, "status"),
-    });
-    if (!common.boolField(result, "indexed")) {
-        try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/rfcs/README.md so\nthe index does not disagree with the record.\n");
-    }
-    return try w.toOwnedSlice();
-}
-
-fn missingStatusArg(what: []const u8) Error {
-    log.log(.error_, "rfc status needs {s}: clanker rfc status docs/rfcs/<name>.md decided \"Chose option B; see the ADR\"", .{what});
-    return Error.MissingArg;
+    return common.setRecordStatus(arena, "rfc", status_usage, opts.arg1, opts.arg2, opts.arg3, tool);
 }
 
 // ----------------------------------------------------------------- the tool --

@@ -177,33 +177,15 @@ fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     return common.updateRecord(arena, "research", opts.arg1, opts.arg2, opts.arg3, tool);
 }
 
+const status_usage: common.StatusUsage = .{
+    .example = "docs/research/<name>.md current \"read on 2026-08-16\"",
+    .path_arg = "a note path",
+    .status_arg = "a state: draft, current, stale or superseded",
+    .index_warning = "\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/research/README.md so\nthe index does not disagree with the note.\n",
+};
+
 fn setStatus(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    const path = opts.arg1 orelse return missingStatusArg("a note path");
-    const wanted = opts.arg2 orelse return missingStatusArg("a state: draft, current, stale or superseded");
-
-    const input = try common.request(arena, &.{
-        .{ .name = "action", .value = .{ .text = "status" } },
-        .{ .name = "path", .value = .{ .text = path } },
-        .{ .name = "status", .value = .{ .text = wanted } },
-        .{ .name = "note", .value = .{ .text = opts.arg3 orelse "" } },
-    });
-    const result = try common.callTool(arena, "research", tool, input);
-
-    var w: std.Io.Writer.Allocating = .init(arena);
-    errdefer w.deinit();
-    try w.writer.print("{s} is now {s}\n", .{
-        json_util.strFieldOrEmpty(result.object, "path"),
-        json_util.strFieldOrEmpty(result.object, "status"),
-    });
-    if (!common.boolField(result, "indexed")) {
-        try w.writer.writeAll("\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/research/README.md so\nthe index does not disagree with the note.\n");
-    }
-    return try w.toOwnedSlice();
-}
-
-fn missingStatusArg(what: []const u8) Error {
-    log.log(.error_, "research status needs {s}: clanker research status docs/research/<name>.md current \"read on 2026-08-16\"", .{what});
-    return Error.MissingArg;
+    return common.setRecordStatus(arena, "research", status_usage, opts.arg1, opts.arg2, opts.arg3, tool);
 }
 
 // ----------------------------------------------------------------- the tool --
