@@ -1871,12 +1871,10 @@ function showCardDetail(id) {
   entries.forEach(function (e) {
     var item = document.createElement("div");
     item.className = "card-activity-item";
-    // Avatar
     var avatar = document.createElement("div");
     avatar.className = "card-activity-avatar";
     var whoName = e.who || "?";
     avatar.textContent = whoName.slice(0, 2).toUpperCase();
-    // Set a unique color based on name hash
     var nameHash = 0;
     for (var ci = 0; ci < whoName.length; ci++) nameHash = ((nameHash << 5) - nameHash + whoName.charCodeAt(ci)) | 0;
     // One stable tone per name, from the theme-aware chat-hue palette (in
@@ -1884,7 +1882,6 @@ function showCardDetail(id) {
     // light and dark alike. No literal hex or white-is-assumed text here.
     avatar.classList.add("avatar-tone-" + (Math.abs(nameHash) % 8));
     item.appendChild(avatar);
-    // Content
     var content = document.createElement("div");
     content.className = "card-activity-content";
     var line1 = document.createElement("div");
