@@ -45,6 +45,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A goal loop resumed by `clanker serve` at startup now claims a steer slot,
+  so it appears in `GET /api/goals`' `running` list and accepts steering.
+  It previously ran invisibly: the board drew the goal as idle while the
+  server spent its whole turn budget on it, and there was no way to steer it.
+- A goal loop's terminal outcome now clears its in-flight marker in a write
+  of its own, separate from the `active` compare-and-swap that moves the
+  status. Bundled together, a goal moved off `active` by hand mid-loop had
+  the whole patch refused and kept its in-flight marker forever, which would
+  silently auto-resume a loop nobody started once the goal was `active` again.
+
 - Each record store (`reports`, `research`, `rfc`, `adr`, `prd`) now states
   its status vocabulary once instead of twice. `prd` had already drifted:
   its listing recognised `Implemented` and `Partial`, which `prd status`

@@ -518,6 +518,9 @@ function runGoal(g, opts) {
       el.goalsStatus.textContent = "Goal run stopped.";
       moveGoalCard(g, "ready");
       logGoalRun(g, "stopped");
+      // A manual stop is a pause, not a crash: clear the durable `running`
+      // flag so `clanker serve` does not auto-resume it on restart.
+      postGoal({ id: g.id, running: false }, "Goal run stopped.");
       loadGoals();
       if (opts.onDone) opts.onDone("stopped");
     } else {

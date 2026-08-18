@@ -3534,7 +3534,33 @@ fn runningGoalsForResume(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
     return out.toOwnedSlice(arena);
 }
 
-/// Prepends a goal preamble to `task`. When `task` is empty, builds a default
+test "running goals are those left in flight, not fresh active goals" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data =
+        \\[
+        \\ {"id":"a","objective":"resume me","status":"active","running":true},
+        \\ {"id":"b","objective":"fresh","status":"active","running":false},
+        \\ {"id":"c","objective":"done","status":"review","running":true},
+        \\ {"id":"d","objective":"also resume","status":"active","running":true}
+        \\]
+    });
+    const running = try runningGoalsForResume(arena, io, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 2), running.len);
+    try std.testing.expectEqualStrings("a", running[0].id);
+    try std.testing.expectEqualStrings("d", running[1].id);
+}
 /// work order from the goal's objective and completion criterion so a web UI
 /// "Work on this" click (or a goal-only POST) can execute without inventing text.
 fn taskWithGoal(arena: std.mem.Allocator, task: []const u8, g: GoalContext) ![]const u8 {
@@ -8962,12 +8988,18 @@ fn recordGoalLoopOutcome(
     s.write(outcome.reason) catch return;
     s.objectField("goal_loop_turns") catch return;
     s.print("{d}", .{outcome.turns}) catch return;
-    s.objectField("running") catch return;
-    s.write(false) catch return;
     s.endObject() catch return;
     var what_buf: [96]u8 = undefined;
     const what = std.fmt.bufPrint(&what_buf, "goal '{s}' loop outcome", .{goal_id}) catch "goal loop outcome";
     callGoalUpdate(io, gpa, arena, cfg, environ_map, input.written(), what);
+    // The status move is conditional and the lifecycle flag is not, so they
+    // are two writes. Bundling `running: false` into the compare-and-swap
+    // above made a goal hand-moved off `active` mid-loop keep `running: true`
+    // forever: the patch is refused whole. That flag is inert until the goal
+    // is `active` again, and then it silently auto-resumes a loop nobody
+    // started — the very thing `add-goal`'s `running: false` default exists
+    // to prevent.
+    markGoalRunning(io, gpa, arena, cfg, environ_map, goal_id, false);
 }
 
 /// Persist the concrete worktree branch on the goal as soon as a run is
@@ -9054,6 +9086,15 @@ fn resumeGoal(
     };
     defer a.deinit();
     a.subagent_runner = if (run_cfg.modules.subagents) &subagent.runNested else null;
+    // `GET /api/goals`' `running` overlay is the steer registry, not the
+    // persisted flag, so a resumed loop that claims no slot is a goal the
+    // board draws as idle while the server spends its whole turn budget on
+    // it, and one the operator cannot steer. A resumed loop is the
+    // longest-running kind there is, so it registers like the streaming
+    // /api/run path does. No session id: a resumed run has no client
+    // transcript to point at, and `appendRunningGoals` reports that as "".
+    if (runRegister(g.id, "")) a.steer_fn = &steerPoll;
+    defer runRelease();
 
     const condition = if (g.completion_criterion.len > 0) g.completion_criterion else g.objective;
     const initial_task = goal_prompt.task(arena, g.objective) catch g.objective;
@@ -9141,6 +9182,27 @@ test "steer registry: a session-only (chat) run steers by session" {
     var w: std.Io.Writer = .fixed(&buf);
     appendRunningGoals(&w);
     try std.testing.expectEqualStrings("[]", buf[0..w.end]);
+}
+
+test "steer registry: a resumed goal run has no session and still shows as running" {
+    serve_gpa = std.testing.allocator;
+    defer serve_gpa = null;
+    // `resumeGoal` registers by goal id alone: a loop picked back up at serve
+    // startup has no client transcript to point at. It must still land in
+    // /api/goals' `running` overlay, or the board draws an idle goal while
+    // the server spends its whole turn budget on it.
+    try std.testing.expect(runRegister("g-resumed", ""));
+    defer runRelease();
+    var buf: [128]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    appendRunningGoals(&w);
+    try std.testing.expectEqualStrings("[{\"id\":\"g-resumed\",\"session\":\"\"}]", buf[0..w.end]);
+    // And it is steerable by that goal id, which is the other half of the slot.
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-resumed", "", "stop after this turn"));
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const got = steerPoll(arena_state.allocator()) orelse return error.TestExpectedSteer;
+    try std.testing.expectEqualStrings("stop after this turn", got);
 }
 
 /// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent
@@ -11148,6 +11210,10 @@ fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         s.objectField("worktree") catch return;
         s.write(w) catch return;
     }
+    if (req.running) |r| {
+        s.objectField("running") catch return;
+        s.write(r) catch return;
+    }
     if (req.remove) |r| {
         s.objectField("remove") catch return;
         s.write(r) catch return;
@@ -12849,6 +12915,9 @@ const GoalPost = struct {
     id: ?[]const u8 = null,
     status: ?[]const u8 = null,
     remove: ?bool = null,
+    /// Marks a goal loop in flight (true) or finished (false). Cleared when an
+    /// operator stops a run so the startup resume hook skips a manual pause.
+    running: ?bool = null,
     /// Optional per-goal iteration budget stored in state/goals.json and used
     /// as the default for runs of this goal. Clamped to 1..=1000 on write.
     max_iterations: ?u32 = null,
