@@ -4874,13 +4874,15 @@ fn toolJson(
 
 /// One registry load and one loaded guest, held open across many calls.
 ///
-/// `toolJson` pays for both on every call: a walk of every `agent.tools_dir`
-/// that reads and parses each `*.tool.json` descriptor (118 in-tree), then a
-/// read and compile of the guest's wasm. A handler that calls a tool once does
-/// not care. A loop that calls it per item multiplies the whole cost by the
-/// item count — the knowledge folder sync reaches two calls for each of up to
-/// 200 files, so ~47k descriptor parses and 400 module compiles for one
-/// request. Open one session, call it per item, close it.
+/// `toolJson` pays for both on every call. The registry half is cached
+/// process-wide (`Registry.loadCached`), so it costs a stat per descriptor
+/// rather than an open and a parse per descriptor; the wasm read and compile
+/// is not, because a loaded module owns mutable guest memory and cannot be
+/// shared between concurrent calls. A handler that calls a tool once does not
+/// care. A loop that calls it per item multiplies the compile by the item
+/// count — the knowledge folder sync reaches two calls for each of up to 200
+/// files, so 400 module compiles for one request. Open one session, call it
+/// per item, close it.
 const ToolSession = struct {
     arena: std.mem.Allocator,
     mod: *runtime.ToolModule,
@@ -4893,7 +4895,10 @@ const ToolSession = struct {
         environ_map: *std.process.Environ.Map,
         tool_name: []const u8,
     ) !ToolSession {
-        var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+        // Cached: the descriptors are read-only here (`loadNamedTool` takes a
+        // `*const Registry`), so this pays a stat per manifest instead of an
+        // open and a parse per manifest on every call.
+        var reg = try registry.Registry.loadCached(io, cfg.agent.tools_dir);
         // The sandbox borrows this for the module's whole life, which outlives
         // this call, so it cannot be a stack local the way it was when load
         // and execute sat in one function.
@@ -4940,7 +4945,10 @@ fn runPeersTool(
     cfg: *const config.Config,
     input: []const u8,
 ) anyerror![]u8 {
-    var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
+    // Read-only, and called once per outbound chat message per peer, so it
+    // takes the shared registry rather than re-parsing 118 descriptors per
+    // fan-out.
+    var reg = try registry.Registry.loadCached(io, cfg.agent.tools_dir);
     const mod = try runtime.loadNamedTool(gpa, io, arena, environ_map, cfg, &reg, "peers", null);
     defer mod.deinit();
     const raw = try mod.executeTool(input);

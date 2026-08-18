@@ -5,6 +5,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Tool descriptors are loaded once per process instead of once per call: `toolJson` (every CLI tool invocation and every HTTP API route under `clanker serve`) re-read and re-parsed all 118 `*.tool.json` manifests, ~180 KB of JSON and ~260 `openat` per request. A cache validated by a stat sweep serves them instead, so an added, removed, edited, or toggled plugin is still picked up without a restart.
+
 ### Fixed
 
 - The web UI's indicator lamps are one recipe again. The dome the sheet's

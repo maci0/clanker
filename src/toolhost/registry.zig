@@ -222,6 +222,126 @@ pub const Registry = struct {
         return reg;
     }
 
+    /// Process-lifetime cache in front of `load`, for callers that only read
+    /// the result.
+    ///
+    /// `load` opens and parses every `*.tool.json` under the tool directories
+    /// (118 in-tree, ~180 KB of JSON) plus the two state files. `toolJson`
+    /// calls it, so every CLI tool invocation and every HTTP API request under
+    /// `clanker serve` re-read and re-parsed all of it to answer one call:
+    /// ~260 `openat` and ~180 KB of JSON parsing per request, for data that
+    /// does not change between them. A descriptor is read-only once loaded, so
+    /// one copy serves every reader.
+    ///
+    /// Freshness is a stamp over each descriptor's name, size and mtime plus
+    /// the two `state/` overlay files, so an added, removed, edited, or
+    /// toggled plugin is picked up without a restart. A hit costs one `statx`
+    /// per descriptor and nothing else.
+    ///
+    /// Read-only: the returned tools point into the cache's own arena and are
+    /// shared with every other caller. A caller that rewrites them
+    /// (`rebaseWasmPaths`) must use `load` and own its copy.
+    pub fn loadCached(io: std.Io, tools_dirs: []const []const u8) !Registry {
+        const base = std.Io.Dir.cwd();
+        cacheLock();
+        defer cacheUnlock();
+
+        const stamp = cacheStamp(io, base, tools_dirs);
+        if (cache_slot) |slot| {
+            if (slot.stamp == stamp and sameDirs(slot.dirs, tools_dirs)) return slot.reg;
+        }
+
+        // ponytail: the superseded generation is leaked, not freed. Serve
+        // answers requests on connection threads and hands each one this
+        // registry by value, so freeing here would pull the descriptors out
+        // from under a request still rendering them. Invalidation happens on a
+        // plugin toggle or a rebuild, not per request, so the leak is bounded
+        // by how often those happen; reference-counting a generation is the
+        // upgrade path if that ever stops being true.
+        const holder = try cache_gpa.create(std.heap.ArenaAllocator);
+        holder.* = std.heap.ArenaAllocator.init(cache_gpa);
+        const arena = holder.allocator();
+        const reg = try load(io, arena, base, tools_dirs);
+        const dirs = try arena.alloc([]const u8, tools_dirs.len);
+        for (tools_dirs, 0..) |d, i| dirs[i] = try arena.dupe(u8, d);
+        cache_slot = .{ .stamp = stamp, .dirs = dirs, .reg = reg };
+        return reg;
+    }
+
+    /// Allocator behind the cache. The process-wide page allocator rather than
+    /// a caller's gpa: the cache outlives every request that fills it, so it
+    /// must not borrow an allocator a request owns.
+    const cache_gpa = std.heap.page_allocator;
+
+    const CacheSlot = struct {
+        stamp: u64,
+        dirs: []const []const u8,
+        reg: Registry,
+    };
+
+    var cache_slot: ?CacheSlot = null;
+    /// Spun rather than parked: the critical section is a stat sweep, and the
+    /// same shape `serve/live.zig` uses because a lock reached from connection
+    /// threads has no `std.Io` to hand.
+    var cache_mutex: std.atomic.Mutex = .unlocked;
+
+    fn cacheLock() void {
+        while (!cache_mutex.tryLock()) std.Thread.yield() catch {};
+    }
+
+    fn cacheUnlock() void {
+        cache_mutex.unlock();
+    }
+
+    fn sameDirs(a: []const []const u8, b: []const []const u8) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |x, y| {
+            if (!std.mem.eql(u8, x, y)) return false;
+        }
+        return true;
+    }
+
+    /// Cheap fingerprint of everything `load` would read: every descriptor's
+    /// name, size and mtime, plus the two `state/` overlays. Stat only, no
+    /// open and no parse, so a cache hit is ~118 syscalls instead of ~260
+    /// syscalls and 180 KB of JSON.
+    ///
+    /// A stat that fails folds in as a miss rather than being skipped, so a
+    /// descriptor appearing or vanishing still changes the stamp.
+    pub fn cacheStamp(io: std.Io, base: std.Io.Dir, tools_dirs: []const []const u8) u64 {
+        var h = std.hash.Wyhash.init(0x7A6B5C4D3E2F1009);
+        for (tools_dirs) |tools_dir| {
+            h.update(tools_dir);
+            var dir = base.openDir(io, tools_dir, .{ .iterate = true }) catch {
+                h.update("\x00missing");
+                continue;
+            };
+            defer dir.close(io);
+            var it = dir.iterate();
+            while (it.next(io) catch null) |entry| {
+                if (entry.kind != .file) continue;
+                if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+                h.update(entry.name);
+                const st = dir.statFile(io, entry.name, .{}) catch {
+                    h.update("\x00unstattable");
+                    continue;
+                };
+                h.update(std.mem.asBytes(&st.size));
+                h.update(std.mem.asBytes(&st.mtime));
+            }
+        }
+        for ([_][]const u8{ plugins_state_path, plugin_config_state_path }) |p| {
+            h.update(p);
+            const st = base.statFile(io, p, .{}) catch {
+                h.update("\x00absent");
+                continue;
+            };
+            h.update(std.mem.asBytes(&st.size));
+            h.update(std.mem.asBytes(&st.mtime));
+        }
+        return h.final();
+    }
+
     /// Where the module named by a descriptor's `wasm` key actually lives.
     ///
     /// Every path is read relative to the process's working directory, which
@@ -1359,4 +1479,42 @@ test "fuzz: no byte sequence crashes the descriptor parser" {
         }
     };
     try std.testing.fuzz({}, Ctx.one, .{});
+}
+
+test "the registry cache stamp changes when a descriptor is added, edited, or toggled" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = tmp.dir;
+    try dir.createDirPath(io, "tools");
+    try dir.createDirPath(io, "state");
+
+    const descriptor =
+        \\{"name":"calculator","description":"arith","wasm":"calculator.wasm",
+        \\ "input_schema":{"type":"object"}}
+    ;
+    try dir.writeFile(io, .{ .sub_path = "tools/calculator.tool.json", .data = descriptor });
+
+    const dirs = [_][]const u8{"tools"};
+    const first = Registry.cacheStamp(io, dir, &dirs);
+    // Re-stamping an untouched tree must hit, or the cache never serves.
+    try std.testing.expectEqual(first, Registry.cacheStamp(io, dir, &dirs));
+
+    // A second descriptor: the name and its stat both fold in.
+    try dir.writeFile(io, .{ .sub_path = "tools/echo.tool.json", .data = descriptor });
+    const with_echo = Registry.cacheStamp(io, dir, &dirs);
+    try std.testing.expect(with_echo != first);
+
+    // An in-place edit of an existing descriptor changes its size, which is
+    // what a directory mtime alone would have missed.
+    try dir.writeFile(io, .{ .sub_path = "tools/echo.tool.json", .data = descriptor ++ "\n" });
+    const edited = Registry.cacheStamp(io, dir, &dirs);
+    try std.testing.expect(edited != with_echo);
+
+    // `clanker plugins off` writes only this file; the stamp must see it.
+    try dir.writeFile(io, .{ .sub_path = plugins_state_path, .data = "{\"disabled\":[\"echo\"]}" });
+    try std.testing.expect(Registry.cacheStamp(io, dir, &dirs) != edited);
 }
