@@ -346,6 +346,15 @@ pub fn setRecordStatus(
     return w.written();
 }
 
+/// Sort predicate over record rows: by their `path` field, so a listing comes
+/// out in store order however the tool happened to walk the directory. A row
+/// that is not an object, or has no `path`, sorts first rather than erroring.
+pub fn byPath(_: void, a: std.json.Value, b: std.json.Value) bool {
+    const pa = if (a == .object) json_util.strFieldOrEmpty(a.object, "path") else "";
+    const pb = if (b == .object) json_util.strFieldOrEmpty(b.object, "path") else "";
+    return std.mem.lessThan(u8, pa, pb);
+}
+
 fn missingStatusArg(store: []const u8, usage: StatusUsage, what: []const u8) Error {
     log.log(.error_, "{s} status needs {s}: clanker {s} status {s}", .{ store, what, store, usage.example });
     return Error.MissingArg;

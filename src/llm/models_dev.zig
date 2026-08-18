@@ -67,7 +67,10 @@ fn hostOf(url: []const u8) ?[]const u8 {
     return if (host.len == 0) null else host;
 }
 
-fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
+/// Tolerant number field: integer, float, or a numeric string all read as
+/// f64; anything else (and an unparseable string) reads as null. models.dev
+/// spells prices and window sizes inconsistently across providers.
+pub fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
     const v = obj.get(key) orelse return null;
     return switch (v) {
         .integer => |i| @floatFromInt(i),

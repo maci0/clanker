@@ -39,6 +39,7 @@ pub const Message = struct {
     tool_calls: []const ToolCall = &.{},
 };
 
+/// Same cut as `src/util/utf8.zig` `cap`: never split a codepoint.
 fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
     if (s.len <= max_bytes) return s;
     var end = max_bytes;

@@ -188,7 +188,7 @@ pub fn renderList(arena: std.mem.Allocator, raw_prds: []const std.json.Value, ne
     // Sorting on the path sorts on the number, so each status group below
     // reads in the order the documents are numbered.
     const prds = try arena.dupe(std.json.Value, raw_prds);
-    std.mem.sort(std.json.Value, prds, {}, byPath);
+    std.mem.sort(std.json.Value, prds, {}, common.byPath);
 
     if (prds.len == 0) {
         try w.writer.writeAll("no PRDs yet.\n\n");
@@ -250,12 +250,6 @@ fn stripPrdPrefix(title: []const u8) []const u8 {
     const prefix = "PRD — ";
     if (std.mem.startsWith(u8, title, prefix)) return title[prefix.len..];
     return title;
-}
-
-fn byPath(_: void, a: std.json.Value, b: std.json.Value) bool {
-    const pa = if (a == .object) json_util.strFieldOrEmpty(a.object, "path") else "";
-    const pb = if (b == .object) json_util.strFieldOrEmpty(b.object, "path") else "";
-    return std.mem.lessThan(u8, pa, pb);
 }
 
 fn isKnownStatus(status: []const u8) bool {

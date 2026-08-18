@@ -183,7 +183,7 @@ pub fn renderList(arena: std.mem.Allocator, raw_adrs: []const std.json.Value, ne
     // A numbered store is read in number order, and the number leads the
     // filename, so sorting on the path is sorting on the number.
     const adrs = try arena.dupe(std.json.Value, raw_adrs);
-    std.mem.sort(std.json.Value, adrs, {}, byPath);
+    std.mem.sort(std.json.Value, adrs, {}, common.byPath);
 
     if (adrs.len == 0) {
         try w.writer.writeAll("no ADRs yet.\n\n");
@@ -223,12 +223,6 @@ pub fn renderList(arena: std.mem.Allocator, raw_adrs: []const std.json.Value, ne
     try w.writer.print("\nNEXT\n\n  next free number is {d:0>4}\n", .{next_number});
     try w.writer.writeAll("  clanker adr open <path>          read one in full\n");
     return w.written();
-}
-
-fn byPath(_: void, a: std.json.Value, b: std.json.Value) bool {
-    const pa = if (a == .object) json_util.strFieldOrEmpty(a.object, "path") else "";
-    const pb = if (b == .object) json_util.strFieldOrEmpty(b.object, "path") else "";
-    return std.mem.lessThan(u8, pa, pb);
 }
 
 /// Every ADR title in the store repeats its own number — "ADR 0001 — X", and

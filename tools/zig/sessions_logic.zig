@@ -4,6 +4,7 @@
 //! `format=json` answer, so the picker and the catalog share one listing.
 
 const std = @import("std");
+const utf8 = @import("utf8");
 
 pub const Listing = struct {
     id: []const u8,
@@ -139,7 +140,7 @@ pub fn writeText(alloc: std.mem.Allocator, items: []const Listing, now_s: i64) !
         while (col < id_w + 2) : (col += 1) try buf.append(alloc, ' ');
         const first_nl = std.mem.findScalar(u8, m.title, '\n') orelse m.title.len;
         const one_line = m.title[0..first_nl];
-        const title = capUtf8(one_line, 60);
+        const title = utf8.cap(one_line, 60);
         try buf.appendSlice(alloc, title);
         if (one_line.len > 60) try buf.appendSlice(alloc, "...");
         if (m.updated > 0) {
@@ -148,13 +149,6 @@ pub fn writeText(alloc: std.mem.Allocator, items: []const Listing, now_s: i64) !
         }
     }
     return buf.toOwnedSlice(alloc);
-}
-
-fn capUtf8(s: []const u8, max: usize) []const u8 {
-    if (s.len <= max) return s;
-    var end: usize = max;
-    while (end > 0 and s[end] & 0xC0 == 0x80) end -= 1;
-    return s[0..end];
 }
 
 test "listingFromPrefix reads counters in front of messages" {

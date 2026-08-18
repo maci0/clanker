@@ -140,17 +140,6 @@ pub fn queryMatches(query: []const u8, provider_id: []const u8, model_id: []cons
         std.ascii.findIgnoreCase(family, query) != null;
 }
 
-fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
-    const v = obj.get(key) orelse return null;
-    return switch (v) {
-        .integer => |i| @floatFromInt(i),
-        .float => |f| f,
-        .number_string => |s| std.fmt.parseFloat(f64, s) catch null,
-        .string => |s| std.fmt.parseFloat(f64, s) catch null,
-        else => null,
-    };
-}
-
 fn hitFrom(
     arena: std.mem.Allocator,
     provider_id: []const u8,
@@ -170,12 +159,12 @@ fn hitFrom(
     if (m != .object) return hit;
     if (fieldStr(m.object, "name")) |disp| hit.display = disp;
     if (m.object.get("limit")) |l| if (l == .object) {
-        if (jsonNum(l.object, "context")) |ctx| hit.context = @as(i64, @trunc(ctx));
-        if (jsonNum(l.object, "output")) |o| hit.output = @as(i64, @trunc(o));
+        if (models_dev.jsonNum(l.object, "context")) |ctx| hit.context = @as(i64, @trunc(ctx));
+        if (models_dev.jsonNum(l.object, "output")) |o| hit.output = @as(i64, @trunc(o));
     };
     if (m.object.get("cost")) |c| if (c == .object) {
-        if (jsonNum(c.object, "input")) |ci| hit.cost_in = ci;
-        if (jsonNum(c.object, "output")) |co| hit.cost_out = co;
+        if (models_dev.jsonNum(c.object, "input")) |ci| hit.cost_in = ci;
+        if (models_dev.jsonNum(c.object, "output")) |co| hit.cost_out = co;
     };
     if (m.object.get("reasoning")) |r| {
         if (r == .bool) hit.reasoning = r.bool;
