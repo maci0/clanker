@@ -57,6 +57,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   its bytes, instead of paying a substring search per line to discover that.
   Most files in a project-root walk hold no hit at all.
 
+- `clanker tools list` runs about twice as fast (842 ms -> 421 ms on the
+  in-tree 118 manifests). The `tools` guest asked `manifest_scan` for
+  `description`, `internal`, `category` and `transform` one key at a time,
+  and the last three sit after `input_schema`, so each call walked the whole
+  schema tree again. `manifest_scan.topLevelValues` answers all four in one
+  pass and stops as soon as the last one is filled. The listing is unchanged.
+- Syncing a knowledge collection from a folder
+  (`POST /api/knowledge/<id>/sync`) loads the tool registry and compiles the
+  `knowledge` guest once for the whole request instead of once per call. It
+  made up to two calls per file for up to 200 files plus one per pruned
+  document, and each of those re-read and re-parsed every `*.tool.json`
+  descriptor (~500 KB) and recompiled the guest.
+
 - `GET /webui/plugins/<name>/app.js|app.css` now sends an `ETag` and
   `Cache-Control: no-cache` instead of `no-store`. The bytes are still read
   from disk on every request, so an edited plugin is picked up as immediately

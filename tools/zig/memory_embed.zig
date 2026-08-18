@@ -61,3 +61,70 @@ test "maximum-length token pair cannot overflow the bigram" {
 test "zero dimensions are safe" {
     hashEmbedInto("anything", &.{});
 }
+
+// ------------------------------------------------------------------ ranking
+
+/// One scored search hit. `id` and `text` are whatever the caller copied for
+/// the hit; nothing here reads them.
+pub const Hit = struct {
+    id: []const u8 = "",
+    text: []const u8 = "",
+    score: f32 = 0,
+};
+
+/// The slot `score` takes in `ranked` (descending, `len` of `ranked.len` slots
+/// filled), or null when it cannot make the cut.
+///
+/// Asked *before* the caller copies the hit's id and text, so a candidate that
+/// will not be returned costs nothing. That is the point: the search used to
+/// dupe every chunk scoring above the threshold and sort at the end, which in
+/// a guest with a 1 MiB arena means the whole knowledge store, and the
+/// allocation failure that follows drops hits with no diagnostic. Only
+/// `ranked.len` of them can ever be returned.
+pub fn rankSlot(ranked: []const Hit, len: usize, score: f32) ?usize {
+    if (ranked.len == 0) return null;
+    if (len >= ranked.len and score <= ranked[ranked.len - 1].score) return null;
+    var i = @min(len, ranked.len - 1);
+    while (i > 0 and ranked[i - 1].score < score) i -= 1;
+    return i;
+}
+
+/// Writes `hit` at `slot` (from `rankSlot`), shifting the worse entries down
+/// and dropping the last one when the ranking is already full. Returns the new
+/// filled length.
+pub fn rankInsert(ranked: []Hit, len: usize, slot: usize, hit: Hit) usize {
+    const new_len = @min(len + 1, ranked.len);
+    var i = new_len - 1;
+    while (i > slot) : (i -= 1) ranked[i] = ranked[i - 1];
+    ranked[slot] = hit;
+    return new_len;
+}
+
+test "ranking keeps the best hits in descending order" {
+    var buf: [3]Hit = undefined;
+    var len: usize = 0;
+    for ([_]f32{ 0.1, 0.9, 0.5, 0.7, 0.2 }) |s| {
+        const slot = rankSlot(&buf, len, s) orelse continue;
+        len = rankInsert(&buf, len, slot, .{ .id = "x", .score = s });
+    }
+    try std.testing.expectEqual(@as(usize, 3), len);
+    try std.testing.expectEqual(@as(f32, 0.9), buf[0].score);
+    try std.testing.expectEqual(@as(f32, 0.7), buf[1].score);
+    try std.testing.expectEqual(@as(f32, 0.5), buf[2].score);
+}
+
+test "a full ranking rejects a score that cannot make the cut" {
+    var buf: [2]Hit = undefined;
+    var len: usize = 0;
+    for ([_]f32{ 0.8, 0.6 }) |s| {
+        len = rankInsert(&buf, len, rankSlot(&buf, len, s).?, .{ .score = s });
+    }
+    try std.testing.expect(rankSlot(&buf, len, 0.6) == null);
+    try std.testing.expect(rankSlot(&buf, len, 0.1) == null);
+    try std.testing.expectEqual(@as(usize, 1), rankSlot(&buf, len, 0.7).?);
+}
+
+test "a zero-capacity ranking accepts nothing" {
+    var buf: [0]Hit = undefined;
+    try std.testing.expect(rankSlot(&buf, 0, 1.0) == null);
+}

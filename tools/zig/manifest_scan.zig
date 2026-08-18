@@ -14,37 +14,64 @@ const std = @import("std");
 /// input is not an object. The span is exactly the value's bytes: a string
 /// span includes its quotes, an object/array span its braces/brackets.
 pub fn topLevelValue(raw: []const u8, key: []const u8) ?[]const u8 {
-    var i = std.mem.findScalar(u8, raw, '{') orelse return null;
+    var out: [1]?[]const u8 = .{null};
+    topLevelValues(raw, &.{key}, &out);
+    return out[0];
+}
+
+/// The same spans for several keys in one pass: `out[i]` is `keys[i]`'s span,
+/// or null when that key is absent. `out.len` must equal `keys.len`.
+///
+/// A caller wanting four fields used to call `topLevelValue` four times, and
+/// every key that sits after `input_schema` in the manifest (`category`,
+/// `internal`, `transform` all do) makes that call walk the whole schema tree
+/// to reach it. Three full reads of every manifest is where `clanker tools
+/// list` spent most of its runtime under wasm interpretation; this reads each
+/// manifest once and stops as soon as every key is answered.
+pub fn topLevelValues(raw: []const u8, keys: []const []const u8, out: []?[]const u8) void {
+    std.debug.assert(keys.len == out.len);
+    @memset(out, null);
+    if (keys.len == 0) return;
+    var remaining = keys.len;
+    var i = std.mem.findScalar(u8, raw, '{') orelse return;
     i += 1;
     var depth: usize = 1;
     var expecting_key = true;
-    var current_matches = false;
+    // Index into `keys` of the key the current value belongs to, or `keys.len`
+    // when this pair's key is not one we were asked for.
+    var current: usize = keys.len;
     while (i < raw.len) {
         const c = raw[i];
         switch (c) {
             ' ', '\t', '\r', '\n', ',', ':' => i += 1,
             '"' => {
-                const end = stringEnd(raw, i) orelse return null;
+                const end = stringEnd(raw, i) orelse return;
                 if (depth == 1 and expecting_key) {
-                    current_matches = keyEquals(raw[i + 1 .. end], key);
+                    current = matchKey(raw[i + 1 .. end], keys, out);
                     expecting_key = false;
                 } else if (depth == 1) {
-                    if (current_matches) return raw[i .. end + 1];
+                    if (take(out, current, raw[i .. end + 1])) {
+                        remaining -= 1;
+                        if (remaining == 0) return;
+                    }
                     expecting_key = true;
                 }
                 i = end + 1;
             },
             '{', '[' => {
-                const end = spanEnd(raw, i) orelse return null;
+                const end = spanEnd(raw, i) orelse return;
                 if (depth == 1 and !expecting_key) {
-                    if (current_matches) return raw[i .. end + 1];
+                    if (take(out, current, raw[i .. end + 1])) {
+                        remaining -= 1;
+                        if (remaining == 0) return;
+                    }
                     expecting_key = true;
                 }
                 i = end + 1;
             },
             '}' => {
                 depth -= 1;
-                if (depth == 0) return null;
+                if (depth == 0) return;
                 i += 1;
             },
             else => {
@@ -53,19 +80,44 @@ pub fn topLevelValue(raw: []const u8, key: []const u8) ?[]const u8 {
                 while (i < raw.len and raw[i] != ',' and raw[i] != '}' and raw[i] != ']' and
                     raw[i] != ' ' and raw[i] != '\t' and raw[i] != '\r' and raw[i] != '\n') i += 1;
                 if (depth == 1 and !expecting_key) {
-                    if (current_matches) return raw[start..i];
+                    if (take(out, current, raw[start..i])) {
+                        remaining -= 1;
+                        if (remaining == 0) return;
+                    }
                     expecting_key = true;
                 }
             },
         }
     }
-    return null;
+}
+
+/// Index of the first still-unanswered key equal to `raw_key`, or `keys.len`.
+/// A repeated top-level key keeps its first value, which is what asking one
+/// key at a time did.
+fn matchKey(raw_key: []const u8, keys: []const []const u8, out: []const ?[]const u8) usize {
+    for (keys, 0..) |k, idx| {
+        if (out[idx] == null and keyEquals(raw_key, k)) return idx;
+    }
+    return keys.len;
+}
+
+/// Records `span` for slot `idx`; true when that filled a slot that was empty.
+fn take(out: []?[]const u8, idx: usize, span: []const u8) bool {
+    if (idx >= out.len or out[idx] != null) return false;
+    out[idx] = span;
+    return true;
 }
 
 /// A top-level string field, JSON-decoded (escapes resolved). Allocates only
 /// when the value contains an escape; a clean string is a borrow of `raw`.
 pub fn topLevelString(alloc: std.mem.Allocator, raw: []const u8, key: []const u8) ?[]const u8 {
-    const span = topLevelValue(raw, key) orelse return null;
+    return decodeString(alloc, topLevelValue(raw, key) orelse return null);
+}
+
+/// The text of a string `span` from `topLevelValues`, escapes resolved, or
+/// null when the span is not a string. Allocates only when the value contains
+/// an escape; a clean string is a borrow of the span.
+pub fn decodeString(alloc: std.mem.Allocator, span: []const u8) ?[]const u8 {
     if (span.len < 2 or span[0] != '"') return null;
     const inner = span[1 .. span.len - 1];
     if (std.mem.findScalar(u8, inner, '\\') == null) return inner;
@@ -189,4 +241,29 @@ test "value with braces inside a string does not end the span early" {
     var arena = std.heap.ArenaAllocator.init(t.allocator);
     defer arena.deinit();
     try t.expectEqualStrings("web", topLevelString(arena.allocator(), raw, "category").?);
+}
+
+test "one pass answers several keys, and matches asking for each alone" {
+    const raw =
+        \\{"name":"x","description":"d","input_schema":{"properties":{"category":{"description":"nested"}}},"internal":true,"category":"web","transform":{"after":["y"]}}
+    ;
+    const keys = [_][]const u8{ "description", "internal", "category", "transform", "missing" };
+    var out: [keys.len]?[]const u8 = undefined;
+    topLevelValues(raw, &keys, &out);
+    for (keys, out) |k, span| {
+        try t.expectEqual(topLevelValue(raw, k) == null, span == null);
+        if (span) |s| try t.expectEqualStrings(topLevelValue(raw, k).?, s);
+    }
+    try t.expectEqualStrings("\"web\"", out[2].?);
+    try t.expectEqualStrings("{\"after\":[\"y\"]}", out[3].?);
+    try t.expect(out[4] == null);
+}
+
+test "duplicate top-level key keeps the first value" {
+    const raw =
+        \\{"category":"web","category":"code"}
+    ;
+    var out: [1]?[]const u8 = undefined;
+    topLevelValues(raw, &.{"category"}, &out);
+    try t.expectEqualStrings("\"web\"", out[0].?);
 }

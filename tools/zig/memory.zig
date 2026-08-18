@@ -11,19 +11,22 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 const default_dim: usize = 384;
+/// Ceiling on `top_k`: it sizes the ranking buffer, so an unbounded request
+/// value is an unbounded allocation.
+const max_top_k: usize = 100;
+/// Longest chunk excerpt a hit carries back.
+const max_hit_text: usize = 2000;
 
+/// Cosine similarity of two `hashEmbedInto` vectors. That function
+/// L2-normalizes everything it writes, so both norms are 1 and the dot product
+/// is the whole answer: recomputing them per chunk tripled the work of the
+/// search loop. A text with no tokens embeds to all zeros and still scores 0,
+/// which is what the norm-guarded form answered for it.
 fn cosine(a: []const f32, b: []const f32) f32 {
-    if (a.len != b.len or a.len == 0) return 0;
+    if (a.len != b.len) return 0;
     var dot: f64 = 0;
-    var na: f64 = 0;
-    var nb: f64 = 0;
-    for (a, b) |x, y| {
-        dot += @as(f64, x) * @as(f64, y);
-        na += @as(f64, x) * @as(f64, x);
-        nb += @as(f64, y) * @as(f64, y);
-    }
-    if (na == 0 or nb == 0) return 0;
-    return @as(f32, @floatCast(dot / (@sqrt(na) * @sqrt(nb))));
+    for (a, b) |x, y| dot += @as(f64, x) * @as(f64, y);
+    return @floatCast(dot);
 }
 
 fn keywordScore(query: []const u8, text: []const u8) f32 {
@@ -117,8 +120,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     if (std.mem.eql(u8, action, "embed")) {
         const dim_f: f64 = lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim));
-        const dim: usize = @trunc(dim_f);
-        const d = @min(@max(dim, 16), 1024);
+        const d: usize = @trunc(@min(@max(dim_f, 16), 1024));
         var w = lib.writer(out);
         var s = lib.json(&w);
         try s.beginObject();
@@ -171,22 +173,33 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try lib.fail(out, "search needs {\"query\": \"...\"}");
             return;
         }
+        // Clamped before the conversion, not after: `@trunc` with an integer
+        // destination is illegal behaviour on a negative float, so a request
+        // body of {"top_k":-1} used to take the guest down instead of being
+        // rejected as the nonsense it is. The upper bound is what the ranking
+        // buffer below is sized from.
         const top_k_f: f64 = lib.optNum(obj, "top_k") orelse 5;
-        const top_k: usize = @trunc(top_k_f);
+        const top_k: usize = @trunc(@min(@max(top_k_f, 0), @as(f64, max_top_k)));
         const threshold: f32 = @as(f32, @floatCast(lib.optNum(obj, "threshold") orelse 0));
         const mode = lib.optStr(obj, "mode") orelse "vector";
         if (!std.mem.eql(u8, mode, "vector") and !std.mem.eql(u8, mode, "keyword"))
             return lib.fail(out, "mode must be \"vector\" or \"keyword\"");
         const use_keyword = std.mem.eql(u8, mode, "keyword");
         const dim_f: f64 = lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim));
-        const dim: usize = @trunc(dim_f);
-        const d = @min(@max(dim, 16), 1024);
+        const d: usize = @trunc(@min(@max(dim_f, 16), 1024));
         var qvec: ?[]f32 = null;
+        // Scratch for the chunk being scored. Every chunk embeds to the same
+        // `d` floats, so one buffer serves the whole walk; allocating and
+        // freeing it per chunk was an allocator round-trip per record in the
+        // store for a buffer whose size never changes.
+        var cvec: ?[]f32 = null;
         if (!use_keyword) {
             qvec = try lib.alloc.alloc(f32, d);
             memory_embed.hashEmbedInto(query, qvec.?);
+            cvec = try lib.alloc.alloc(f32, d);
         }
         defer if (qvec) |v| lib.alloc.free(v);
+        defer if (cvec) |v| lib.alloc.free(v);
         var filter_ids: std.ArrayList([]const u8) = .empty;
         if (obj.object.get("collection_ids")) |v| {
             if (v == .array) for (v.array.items) |it| {
@@ -215,7 +228,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             return;
         };
         const parsed_list = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, listing, .{}) catch null;
-        var hits_all: std.ArrayList(struct { id: []const u8, text: []const u8, score: f32 }) = .empty;
+        // Only `top_k` hits can ever be returned, so only `top_k` are kept:
+        // duping every chunk above the threshold and sorting at the end grew
+        // with the size of the knowledge store, and the arena exhaustion that
+        // followed dropped hits through a bare `catch continue`.
+        const ranked = try lib.alloc.alloc(memory_embed.Hit, top_k);
+        defer lib.alloc.free(ranked);
+        var ranked_len: usize = 0;
         if (parsed_list) |pl| if (pl == .array) for (pl.array.items) |entry| {
             if (entry != .string) continue;
             const name: []const u8 = entry.string;
@@ -241,23 +260,19 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 const sc = if (use_keyword)
                     keywordScore(query, text_v.string)
                 else blk: {
-                    const vec = lib.alloc.alloc(f32, d) catch continue;
-                    defer lib.alloc.free(vec);
-                    memory_embed.hashEmbedInto(text_v.string, vec);
-                    break :blk cosine(qvec.?, vec);
+                    memory_embed.hashEmbedInto(text_v.string, cvec.?);
+                    break :blk cosine(qvec.?, cvec.?);
                 };
                 if (sc < threshold) continue;
+                const slot = memory_embed.rankSlot(ranked, ranked_len, sc) orelse continue;
                 const dup_id = lib.alloc.dupe(u8, chunk_id) catch continue;
-                const dup_text = lib.alloc.dupe(u8, text_v.string) catch continue;
-                hits_all.append(lib.alloc, .{ .id = dup_id, .text = dup_text, .score = sc }) catch continue;
+                // The reply truncates to `max_hit_text` anyway, so copying the
+                // rest of a chunk only to throw it away is arena the search
+                // does not have.
+                const dup_text = lib.alloc.dupe(u8, text_v.string[0..@min(text_v.string.len, max_hit_text)]) catch continue;
+                ranked_len = memory_embed.rankInsert(ranked, ranked_len, slot, .{ .id = dup_id, .text = dup_text, .score = sc });
             }
         };
-        std.mem.sort(@TypeOf(hits_all.items[0]), hits_all.items, {}, struct {
-            fn gt(_: void, a: @TypeOf(hits_all.items[0]), b: @TypeOf(hits_all.items[0])) bool {
-                return a.score > b.score;
-            }
-        }.gt);
-        if (hits_all.items.len > top_k) hits_all.shrinkRetainingCapacity(top_k);
         var w = lib.writer(out);
         var s = lib.json(&w);
         try s.beginObject();
@@ -267,14 +282,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.write(query);
         try s.objectField("hits");
         try s.beginArray();
-        for (hits_all.items) |h| {
+        for (ranked[0..ranked_len]) |h| {
             try s.beginObject();
             try s.objectField("chunk_id");
             try s.write(h.id);
             try s.objectField("score");
             try s.write(h.score);
             try s.objectField("text");
-            try s.write(h.text[0..@min(h.text.len, 2000)]);
+            try s.write(h.text);
             try s.endObject();
         }
         try s.endArray();

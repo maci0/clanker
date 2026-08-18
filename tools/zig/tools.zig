@@ -161,11 +161,17 @@ fn describeAt(tools_dir: []const u8, file_name: []const u8) Meta {
     var path_buf: [512]u8 = undefined;
     const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ tools_dir, file_name }) catch return .{};
     const raw = lib.fsRead(path) catch return .{};
+    // One pass for all four. `category`, `internal` and `transform` all sit
+    // after `input_schema` in a manifest, so a scan per field walked the whole
+    // schema tree three extra times per file.
+    const keys = [_][]const u8{ "description", "internal", "category", "transform" };
+    var spans: [keys.len]?[]const u8 = undefined;
+    scan.topLevelValues(raw, &keys, &spans);
     var meta = Meta{};
-    if (scan.topLevelString(lib.alloc, raw, "description")) |d| meta.description = d;
-    if (scan.topLevelIsTrue(raw, "internal")) meta.plugin = true;
-    if (scan.topLevelString(lib.alloc, raw, "category")) |c| meta.category = c;
-    if (scan.topLevelPresent(raw, "transform")) {
+    if (spans[0]) |d| meta.description = scan.decodeString(lib.alloc, d) orelse "";
+    if (spans[1]) |v| meta.plugin = std.mem.eql(u8, v, "true");
+    if (spans[2]) |c| meta.category = scan.decodeString(lib.alloc, c) orelse "";
+    if (spans[3] != null) {
         meta.plugin = true;
         if (meta.category.len == 0) meta.category = "transform";
     }
