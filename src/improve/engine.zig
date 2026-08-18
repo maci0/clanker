@@ -910,7 +910,7 @@ pub const Engine = struct {
             return .failed;
         }
 
-        // ---- 5. gate ----
+        // ---- 6. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
         var gate_timer = GateTimer.start(self.ctx.io);
         const cache_args = self.sharedCacheArgs();
@@ -1145,7 +1145,7 @@ pub const Engine = struct {
             log.log(.info, "capability evals: PASS", .{});
         }
 
-        // ---- 6. promote ----
+        // ---- 7. promote ----
         log.log(.info, "gates green, promoting {d} file(s)", .{proposal.changes.len});
         const files = proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{};
         try self.hist.snapshot(id, files);

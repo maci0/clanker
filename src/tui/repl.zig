@@ -480,7 +480,7 @@ fn tuiGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror
     const self = loop_ctx.model;
     const prompt = try goal_loop.evaluatorTask(self.arena, loop_ctx.condition, answer);
     const messages = [_]types.Message{
-        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
+        .{ .role = .system, .content = goal_loop.evaluator_system_prompt },
         .{ .role = .user, .content = prompt },
     };
     var err_detail: ?[]const u8 = null;

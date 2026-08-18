@@ -4752,21 +4752,33 @@ fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
     return content;
 }
 
-fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
-    // goal_loop.run boxed this CliGoalLoopContext as Callbacks.context.
-    const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
-    const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
+/// One evaluator turn. The CLI and server adapters box different contexts but
+/// ask the identical question, so the call lives here once.
+fn goalLoopEvaluate(
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    condition: []const u8,
+    answer: []const u8,
+) anyerror!goal_loop.Decision {
+    const prompt = try goal_loop.evaluatorTask(arena, condition, answer);
     const messages = [_]types.Message{
-        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
+        .{ .role = .system, .content = goal_loop.evaluator_system_prompt },
         .{ .role = .user, .content = prompt },
     };
     var err_detail: ?[]const u8 = null;
-    const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
-        .provider = loop_ctx.provider,
+    const resp = try client.chat(ctx, arena, .{
+        .provider = provider,
         .messages = &messages,
         .max_tokens = goal_loop.evaluator_max_tokens,
     }, &err_detail);
-    return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
+    return goal_loop.parseDecision(arena, resp.message.content orelse "");
+}
+
+fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    // goal_loop.run boxed this CliGoalLoopContext as Callbacks.context.
+    const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
+    return goalLoopEvaluate(loop_ctx.ctx, loop_ctx.arena, loop_ctx.provider, loop_ctx.condition, answer);
 }
 
 fn cliGoalLoopDecision(_: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
@@ -4801,18 +4813,7 @@ fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror
 fn serverGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
     // goal_loop.run boxed this ServerGoalLoopContext as Callbacks.context.
     const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
-    const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
-    const messages = [_]types.Message{
-        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
-        .{ .role = .user, .content = prompt },
-    };
-    var err_detail: ?[]const u8 = null;
-    const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
-        .provider = loop_ctx.provider,
-        .messages = &messages,
-        .max_tokens = goal_loop.evaluator_max_tokens,
-    }, &err_detail);
-    return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
+    return goalLoopEvaluate(loop_ctx.ctx, loop_ctx.arena, loop_ctx.provider, loop_ctx.condition, answer);
 }
 
 fn serverGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
