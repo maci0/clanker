@@ -5822,6 +5822,13 @@ const Model = struct {
                             writeRowAt(surface, row, &col, preset_matches[idx].description, .{ .dim = true });
                         }
                     },
+                    .theme => {
+                        // A twelve-block palette swatch after the name, so the
+                        // live preview is not the only colour on screen: each
+                        // row shows its full palette before it is applied.
+                        writeRowAt(surface, row, &col, "  ", style);
+                        _ = writeThemePalette(surface, row, &col, theme_matches[idx]);
+                    },
                     .model => {
                         const c = model_matches[idx];
                         if (std.mem.eql(u8, c.provider, self.provider.name) and std.mem.eql(u8, c.model, self.provider.default_model))
