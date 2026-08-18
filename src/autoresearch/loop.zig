@@ -188,7 +188,18 @@ pub const Loop = struct {
         defer ctx_buf.deinit(gpa);
         for (opts.targets) |targ| {
             if (std.mem.findScalar(u8, targ, '*') != null) continue;
-            const content = std.Io.Dir.cwd().readFileAlloc(io, targ, gpa, .limited(64 * 1024)) catch continue;
+            const maybe_content = std.Io.Dir.cwd().readFileAlloc(io, targ, gpa, .limited(64 * 1024)) catch |err| blk: {
+                // A file the patch is expected to create has nothing to show
+                // the model; that is not an error. Any other failure would
+                // otherwise vanish from the model context without a trace,
+                // and a run whose targets all fail this way would propose
+                // against nothing and end with "no metric recorded" and no
+                // hint why.
+                if (err != error.FileNotFound)
+                    log.log(.warn, "autoresearch: target {s} could not be read ({s}); leaving it out of the model context", .{ targ, @errorName(err) });
+                break :blk null;
+            };
+            const content = maybe_content orelse continue;
             defer gpa.free(content);
             try ctx_buf.appendSlice(gpa, "\n--- ");
             try ctx_buf.appendSlice(gpa, targ);
@@ -278,19 +289,31 @@ pub const Loop = struct {
             .stderr_tail = ledger.tail(harness_res.stderr, ledger.output_tail_bytes),
         });
         if (improved) {
-            best.* = harness_res.metric;
+            // `best` must not advance until every target's staged content is
+            // back in the tree. Promoting it first made a failed write-back
+            // claim a gain the working tree never received: the next
+            // iteration compared against a phantom value and the final report
+            // reported a "best" that was never applied.
+            var all_applied = true;
             for (proposal.changes) |ch| {
                 const staged = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ staging_path, ch.file });
                 defer gpa.free(staged);
                 const content = std.Io.Dir.cwd().readFileAlloc(io, staged, gpa, .limited(1 << 20)) catch |err| {
                     log.log(.error_, "autoresearch: new best for {s} not applied, staged copy unreadable: {s}", .{ ch.file, @errorName(err) });
+                    all_applied = false;
                     continue;
                 };
                 defer gpa.free(content);
                 atomic_write.writeFile(io, std.Io.Dir.cwd(), ch.file, content) catch |err| {
                     log.log(.error_, "autoresearch: new best for {s} not written back: {s}", .{ ch.file, @errorName(err) });
+                    all_applied = false;
                 };
             }
+            if (!all_applied) {
+                log.log(.error_, "autoresearch: best {s} = {d} not promoted to the tree; keeping previous best", .{ opts.metric_name, harness_res.metric.? });
+                return false;
+            }
+            best.* = harness_res.metric;
             const best_path = try std.fmt.allocPrint(gpa, "{s}/best", .{run_dir_path});
             defer gpa.free(best_path);
             try std.Io.Dir.cwd().createDirPath(io, best_path);

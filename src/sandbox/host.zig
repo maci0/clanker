@@ -5516,12 +5516,19 @@ fn isSecretDotenv(sub_path: []const u8) bool {
 /// the same grant list against a named root's remainder.
 fn fsPrefixAllows(prefixes: []const []const u8, sub_path: []const u8) bool {
     for (prefixes) |p| {
+        // An empty entry names nothing, so it authorizes nothing -- the same
+        // rule an empty list follows. It used to fall through to the boundary
+        // check below, where `startsWith(sub_path, "")` is always true and the
+        // `p.len == 0` arm returned true for every path: one stray "" in a
+        // descriptor silently granted the whole sandbox root. `manifest.zig`
+        // skips empty entries when validating, so nothing warned either.
+        if (p.len == 0) continue;
         if (std.mem.eql(u8, p, ".") or std.mem.eql(u8, p, "./")) return true;
         if (std.mem.startsWith(u8, sub_path, p)) {
             // The match must end at a path boundary: a bare prefix ("notes")
             // authorizes the directory itself and paths beneath it, but never
             // a sibling that merely shares the leading bytes ("notes2/x").
-            if (p.len == 0 or p[p.len - 1] == '/' or sub_path.len == p.len or sub_path[p.len] == '/') return true;
+            if (p[p.len - 1] == '/' or sub_path.len == p.len or sub_path[p.len] == '/') return true;
         }
         // A prefix of "state/runs/" also authorizes "state/runs" itself,
         // otherwise a tool allowed to read inside a directory cannot list the
@@ -7171,6 +7178,16 @@ test "a tool with no declared prefixes reaches no file at all" {
     const inside = try safeJoin(&sb, "state/notes.md");
     std.testing.allocator.free(inside);
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "src/main.zig"));
+
+    // An empty entry is the empty list one level down: it names nothing, so
+    // it grants nothing. It used to satisfy the boundary check for every path
+    // and hand the tool the whole root, and manifest validation skips empty
+    // entries, so the descriptor that carried one looked clean.
+    const stray_empty = [_][]const u8{ "", "state" };
+    sb.fs_prefixes = &stray_empty;
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "src/main.zig"));
+    const still_state = try safeJoin(&sb, "state/notes.md");
+    std.testing.allocator.free(still_state);
 
     // "." is how a tool asks for the whole tree, and still cannot escape it.
     const everything = [_][]const u8{"."};

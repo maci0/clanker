@@ -487,7 +487,14 @@ fn checkPolicy(v: *Validator, obj: json.ObjectMap) !void {
 
     if (arrayOf(obj, "fs_prefixes")) |prefixes| {
         for (prefixes) |item| {
-            if (item != .string or item.string.len == 0) continue;
+            if (item != .string) continue;
+            if (item.string.len == 0) {
+                // Silently skipping it left the author with a grant list that
+                // validated clean and an entry naming nothing. Write "." to
+                // ask for the whole root, or drop the entry.
+                try v.add(.err, "fs_prefixes", "an empty prefix names nothing and grants nothing; write \".\" for the whole sandbox root or remove the entry");
+                continue;
+            }
             const p = item.string;
             if (p[0] == '/') {
                 try v.addFmt(.err, "fs_prefixes", "\"{s}\" is absolute; prefixes are relative to the sandbox root", .{p});
