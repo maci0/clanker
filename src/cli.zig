@@ -7252,7 +7252,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const keep_alive_eligible = (is_webui and isWebuiRead(method) and cfg.modules.webui) or
             (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/"));
         if (keep_alive_eligible) {
-            const conn_val = headerValue(headers_raw, "connection") orelse "";
+            const conn_val = proxy.headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
         }
         if (is_webui and !cfg.modules.webui) {
@@ -15158,22 +15158,8 @@ fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     raw_http.writeAllFd(stream.socket.handle, out);
 }
 
-/// True when the request's Accept-Encoding lists gzip. Scoped to that header's
-/// own line so a request target that happens to contain "gzip" cannot flip it.
-/// The (trimmed) value of the first header line named `name`, matched
-/// case-insensitively on the header name only.
-fn headerValue(headers_raw: []const u8, name: []const u8) ?[]const u8 {
-    var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
-    while (lines.next()) |line| {
-        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
-        if (!std.ascii.eqlIgnoreCase(line[0..colon], name)) continue;
-        return std.mem.trim(u8, line[colon + 1 ..], " ");
-    }
-    return null;
-}
-
 fn requestCorrelationId(headers_raw: []const u8) ?[]const u8 {
-    const value = headerValue(headers_raw, "x-request-id") orelse return null;
+    const value = proxy.headerValue(headers_raw, "x-request-id") orelse return null;
     if (value.len == 0 or value.len > 128) return null;
     for (value) |c| {
         if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == ':')) return null;
@@ -15268,7 +15254,7 @@ fn allowedAuthority(value: []const u8, port: u16, serve_as_hosts: []const []cons
 /// origins alone meant a LAN browser reaching a `--host 0.0.0.0` server could
 /// load the page and then have every POST from it refused as cross-origin.
 fn crossOriginRequest(headers_raw: []const u8, port: u16, serve_as_hosts: []const []const u8) bool {
-    const origin = headerValue(headers_raw, "origin") orelse return false;
+    const origin = proxy.headerValue(headers_raw, "origin") orelse return false;
     const authority = if (std.mem.startsWith(u8, origin, "http://"))
         origin["http://".len..]
     else if (std.mem.startsWith(u8, origin, "https://"))
@@ -15421,6 +15407,8 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
     try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173/evil\r\n", 4173, none));
 }
 
+/// True when the request's Accept-Encoding lists gzip. Scoped to that header's
+/// own line so a request target that happens to contain "gzip" cannot flip it.
 fn acceptsGzip(headers_raw: []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
@@ -15502,7 +15490,7 @@ test "fuzz: header parsing never panics on bytes straight off the socket" {
             const len = smith.slice(&buf);
             const headers_raw = buf[0..len];
             const allow: []const []const u8 = &.{"clanker.lan"};
-            _ = headerValue(headers_raw, "origin");
+            _ = proxy.headerValue(headers_raw, "origin");
             _ = crossOriginRequest(headers_raw, 4173, allow);
             _ = unexpectedHost(headers_raw, 4173, allow);
             _ = acceptsGzip(headers_raw);
