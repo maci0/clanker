@@ -50,8 +50,10 @@ const inventory_end = "<!-- inventory:adr:end -->";
 /// arena degrades into a listing instead of an error.
 const max_listed_reads: usize = 60;
 
-/// The statuses an ADR carries. One word each, unlike a PRD's, so
-/// `doc.statusWord` reads them directly.
+/// The statuses an ADR carries. One word each, unlike a PRD's, but read
+/// through `doc.statusFrom` all the same: `statusWord` cuts at the first
+/// separator, so a Status line written `**Accepted.**` reads as `**Accepted`.
+/// Matching the vocabulary makes the decoration irrelevant.
 const statuses = [_][]const u8{ "Accepted", "Superseded", "Deprecated", "Proposed" };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {

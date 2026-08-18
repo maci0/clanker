@@ -618,6 +618,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- An empty string in a descriptor's `fs_prefixes` no longer grants a tool
+  every file under the sandbox root. `fsPrefixAllows` matched `""` against
+  every path and its `p.len == 0` boundary arm returned "allowed", so one
+  stray entry was the whole root — the same defect an empty *list* was fixed
+  for. Empty entries are now skipped (no authority), and
+  `clanker plugins validate` reports one as an error instead of silently
+  passing over it; write `"."` to ask for the whole root.
 - A config file that exists and cannot be read is no longer an empty one.
   `GET /api/config/raw` returned an empty editor with `ok:true`, and
   `POST /api/config/table/set` / `.../remove` spliced their table into `""`

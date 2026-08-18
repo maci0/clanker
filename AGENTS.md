@@ -1,10 +1,10 @@
 # clanker — project conventions
 
-clanker is a self-improving AI agent harness in **Zig 0.16.0**. Tools run as sandboxed WASM (zwasm); it improves its own source via a gated loop. Follow these conventions.
+clanker is a self-improving AI agent harness in **Zig 0.16.0**; tools run as sandboxed WASM (zwasm) and it improves its own source via a gated loop.
 
 ## Build & test
 
-- `zig build` — build harness for host (musl on Linux). Cross-compile: `-Dtarget=x86_64-linux-musl`.
+- `zig build` — build the host (musl on Linux). Cross-compile: `-Dtarget=x86_64-linux-musl`.
 - `zig build tools` — compile `tools/zig/*.zig` → `zig-out/tools/*.wasm`.
 - `zig build test` — unit + integration tests; must pass before any change. Tests live in `test` blocks. New `src/` modules must be referenced from `comptime` in `src/main.zig` or tests don't run. Pure `tools/zig/` helpers (no guest ABI) go in `host_tested_helpers` in `build.zig`; WASM guests can't run `test` blocks.
 - `zig build e2e` — black-box E2E against mock LLM server. Not part of `zig build test`; run separately.
@@ -50,7 +50,7 @@ Write failing test first, beside shipped function (`test` in `src/`, `host_teste
 
 ## Everything is a plugin
 
-Design pressure: whatever can be drop-in unit with declared surface, is one. Tools are guests + manifest; providers one vtable file + registry row; web UI views dirs under `ui/plugins/`; skills, prompts, themes, slash-command catalogs are data. Most units are sandboxed WASM, so plugin boundary doubles as security boundary. Before hardcoding capability, ask its plugin shape — sections below are that question for specific surfaces.
+Whatever can be a drop-in unit with a declared surface is one. Tools are guests + manifest; providers one vtable file + registry row; web UI views dirs under `ui/plugins/`; skills, prompts, themes, slash-command catalogs are data. Most units are sandboxed WASM, so plugin boundary doubles as security boundary. Before hardcoding capability, ask its plugin shape — sections below are that question for specific surfaces.
 
 ## WASM by default
 
@@ -89,7 +89,7 @@ Each iteration plans before patching: one model call lists candidates (`src/impr
 
 ## Living document
 
-This file and `docs/prompts/*-review.md` are living docs. When a turn surfaces a caveat/quirk/failure worth remembering (build gotcha, sandbox edge, non-obvious gate firing), fold it into whichever file it belongs to before turn ends. One slice per turn: smallest true addition, not rewrite. When fewer words already say same thing, tighten instead of appending: edit stale sentence down to what still holds.
+This file and `docs/prompts/*-review.md` are living docs. When a turn surfaces a caveat/quirk/failure worth remembering (build gotcha, sandbox edge, non-obvious gate firing), fold it into whichever file it belongs to before turn ends. One slice per turn: smallest true addition, not rewrite. When fewer words say the same thing, tighten instead of appending: trim to what still holds.
 
 Before diagnosing failure, search [docs/reports/](docs/reports/) and [docs/runbooks/](docs/runbooks/) (`reports` tool `search` covers both; same via `clanker reports`). Reuse matching record's reproduction; don't treat resolved write-up as substitute for verifying current tree. If nothing covers it, `create` investigation, then bug report + runbook once recovery confirmed. A basic verb clanker lacks is `create missing-tool` — the tool inserts `missing-clanker-tool-` into the filename itself; never hand-name one as a plain investigation. Re-open after compare-and-swap conflict. Records start `## TL;DR`. Move records with `status` action, not by hand: every store keeps second copy of status in README inventory, only `status` (`clanker reports status`, `clanker research status`, `clanker rfc status`) writes both. `create` sets inventory copy once and never again — how every record in `docs/reports/` once read `Open` months after being fixed. Rename a report/runbook with `clanker reports rename <path> <new-slug>`, never `git mv`: the inventory link follows in the same call, the `missing-clanker-tool-` marker survives, and the reply lists in-store references still naming the old record. The other four stores lack rename (board-tracked).
 
