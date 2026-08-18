@@ -96,6 +96,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The `memory` tool's `search` no longer collapses under a large knowledge
+  store. It duped every chunk scoring above the threshold into the guest's
+  1 MiB arena and sorted at the end, although only `top_k` of them can ever
+  be returned; once the arena ran out, the remaining hits were dropped
+  through a bare `catch` with nothing said. It now keeps only the best
+  `top_k` and copies a chunk's text only when it makes the cut. Scoring one
+  chunk no longer allocates and frees an embedding buffer per record, and
+  the similarity is a plain dot product (`hashEmbedInto` L2-normalizes every
+  vector it writes, so the two norms it recomputed per chunk were both 1).
+- `memory` `search` rejects a negative `top_k` or `dim` instead of taking the
+  guest down: both were converted from the request's float straight to a
+  `usize`, which is illegal behaviour on a negative value, and `top_k` was
+  clamped nowhere at all so it also sized an unbounded allocation.
+- `GET /api/files` caps a directory listing at 2000 entries and reports
+  `truncated`. It statted, copied and serialized every name a directory held,
+  so browsing to `.zig-cache/o` or `node_modules` in the Files view spent
+  thousands of syscalls building a response no one could read; the view now
+  says the folder holds more instead of presenting the first page as all of
+  it.
+
 - A goal loop resumed by `clanker serve` at startup now claims a steer slot,
   so it appears in `GET /api/goals`' `running` list and accepts steering.
   It previously ran invisibly: the board drew the goal as idle while the

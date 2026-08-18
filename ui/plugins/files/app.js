@@ -499,7 +499,9 @@ clanker.registerView({
           refreshSort();
           renderEntries();
           var vis = allEntries.filter(function(e){ return !e.name.startsWith("."); }).length;
-          api.status(vis+(vis===1?" item.":" items."));
+          // A capped listing is not the whole folder: saying "2000 items" for
+          // a directory holding far more reads as complete when it is not.
+          api.status(vis+(vis===1?" item":" items")+(d.truncated ? " (first "+(d.entry_cap||vis)+" — folder holds more)." : "."));
         })
         .catch(function(err) {
           if (mine !== generation) return;

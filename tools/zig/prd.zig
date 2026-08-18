@@ -328,7 +328,7 @@ fn list(out: *lib.Out) !void {
             // A PRD is long and only its header is needed here. Reading the
             // whole tree would exhaust the arena on the store that has the
             // largest documents in it.
-            const raw = lib.fsReadRange(path, 0, 4096) catch {
+            const raw = lib.fsReadRange(path, 0, doc.header_read_bytes) catch {
                 unread += 1;
                 try rows.append(lib.alloc, .{ .path = path, .title = "", .status = "" });
                 continue;

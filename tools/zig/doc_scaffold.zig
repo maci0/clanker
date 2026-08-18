@@ -122,6 +122,14 @@ pub fn nextNumber(names: []const []const u8) u32 {
     return highest + 1;
 }
 
+/// How much of a record a listing has to read. `documentTitle` wants the `# `
+/// line and `statusFrom` the `## Status` section, both of which sit in the
+/// first few lines of every record in every store. Reading the whole document
+/// instead costs a 1 MiB host-arena read plus a guest copy apiece, which is
+/// what makes a listing over a store of long records run the guest arena out
+/// and drop its later rows.
+pub const header_read_bytes: usize = 4096;
+
 /// README.md and TEMPLATE.md are scaffolding, not documents: they must never
 /// appear in a listing, an inventory, or a "which one should I read" answer.
 pub fn isDocFile(name: []const u8) bool {
@@ -1452,4 +1460,23 @@ test "intersectHits reports a line matched by two terms once" {
     , .{});
     const hits = try intersectHits(alloc, &.{ both, both });
     try std.testing.expectEqual(@as(usize, 1), hits.array.items.len);
+}
+
+test "a header-length prefix answers title and status for a template-shaped record" {
+    // What `header_read_bytes` buys: a listing reads this much of a record
+    // instead of all of it, so the store's arena cost is bounded by the row
+    // count rather than by how long the records happen to be. The prefix is
+    // only sound while the `# ` line and the `## Status` section stay inside
+    // it, which is what a template-shaped record puts there and what this
+    // pins.
+    const body = "Body paragraph that runs well past the header window.\n" ** 400;
+    const full = "# 0001: A decision\n\n## Status\n\nAccepted — 2026-08-18.\n\n## Context\n\n" ++ body;
+    try std.testing.expect(full.len > header_read_bytes);
+
+    const prefix = full[0..header_read_bytes];
+    const vocabulary = [_][]const u8{ "Accepted", "Superseded", "Deprecated", "Proposed" };
+    try std.testing.expectEqualStrings(documentTitle(full), documentTitle(prefix));
+    try std.testing.expectEqualStrings(statusFrom(full, &vocabulary), statusFrom(prefix, &vocabulary));
+    try std.testing.expectEqualStrings("0001: A decision", documentTitle(prefix));
+    try std.testing.expectEqualStrings("Accepted", statusFrom(prefix, &vocabulary));
 }

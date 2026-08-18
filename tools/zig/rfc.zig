@@ -443,8 +443,10 @@ fn list(out: *lib.Out) !void {
                 continue;
             }
             // The index can drift; the document is the truth about its own
-            // status, so it is read rather than trusted.
-            const raw = lib.fsRead(path) catch {
+            // status, so it is read rather than trusted -- but only its header
+            // is: title and status both live in the first few lines, and a
+            // whole-document read per row is what exhausts the guest arena.
+            const raw = lib.fsReadRange(path, 0, doc.header_read_bytes) catch {
                 unread += 1;
                 try rows.append(lib.alloc, .{ .path = path, .title = "", .status = "" });
                 continue;

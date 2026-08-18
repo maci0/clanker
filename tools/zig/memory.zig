@@ -45,21 +45,11 @@ fn keywordScore(query: []const u8, text: []const u8) f32 {
         } else {
             if (qlen >= 2) {
                 total += 1;
-                const tok = qbuf[0..qlen];
-                var ti: usize = 0;
-                while (ti + tok.len <= text.len) : (ti += 1) {
-                    var match = true;
-                    for (tok, 0..) |tc, j| {
-                        if (std.ascii.toLower(text[ti + j]) != tc) {
-                            match = false;
-                            break;
-                        }
-                    }
-                    if (match) {
-                        hits += 1;
-                        break;
-                    }
-                }
+                // `indexOfIgnoreCase` is the same case-folded substring search
+                // the hand-rolled double loop did, minus the per-position
+                // restart: keyword mode runs it once per query token per chunk
+                // over the whole store.
+                if (std.ascii.indexOfIgnoreCase(text, qbuf[0..qlen]) != null) hits += 1;
             }
             qlen = 0;
         }

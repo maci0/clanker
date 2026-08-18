@@ -11688,6 +11688,10 @@ const workspace_cap = 1 << 16;
 /// (`state/goals.json`, notification logs, etc.) rather than inventing a new
 /// number for this one call site.
 const file_preview_cap = 1 << 20;
+/// Entries one `GET /api/files` directory listing carries. Each one costs a
+/// stat, an arena copy and a JSON object, so the listing is capped rather than
+/// growing with whatever the directory happens to hold.
+const dir_listing_cap: usize = 2000;
 
 /// `GET /api/files?path=<rel>`, list one directory inside the current
 /// workspace, or, when `path` names a file rather than a directory, that
@@ -11794,8 +11798,18 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
 
     const Ent = struct { name: []const u8, is_dir: bool, size: u64, mtime: i64 };
     var list: std.ArrayList(Ent) = .empty;
+    var truncated_listing = false;
     var dit = dir.iterate();
     while (dit.next(io) catch null) |entry| {
+        // One stat and one arena copy per entry, so an unbounded directory is
+        // an unbounded response: `.zig-cache/o` and `node_modules` are both
+        // reachable from the workspace root and both hold thousands of names.
+        // Stopping at the cap bounds the syscalls, the arena and the payload;
+        // `truncated` is what tells the page the folder holds more.
+        if (list.items.len >= dir_listing_cap) {
+            truncated_listing = true;
+            break;
+        }
         const st = dir.statFile(io, entry.name, .{}) catch continue;
         const is_dir = entry.kind == .directory;
         const mtime: i64 = std.math.cast(i64, @divTrunc(st.mtime.nanoseconds, @as(i96, std.time.ns_per_s))) orelse 0;
@@ -11821,6 +11835,10 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
         s.endObject() catch return;
     }
     s.endArray() catch return;
+    s.objectField("truncated") catch return;
+    s.write(truncated_listing) catch return;
+    s.objectField("entry_cap") catch return;
+    s.print("{d}", .{dir_listing_cap}) catch return;
     s.endObject() catch return;
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
