@@ -318,6 +318,12 @@ const State = struct {
     removed: bool = false,
 
     subtasks: std.ArrayListUnmanaged(SubtaskState) = .empty,
+    /// `subtask id -> index into subtasks`. The fold below reaches for a
+    /// checklist item once per `subtask_*` message, and the list scan this
+    /// replaces made that O(items) apiece: a card whose checklist was built
+    /// and toggled item by item cost O(items^2) string compares, all of them
+    /// in the wasm interpreter, on every board read.
+    subtask_ix: std.StringHashMapUnmanaged(u32) = .empty,
     deps: std.ArrayListUnmanaged(DepState) = .empty,
     log: std.ArrayListUnmanaged(LogEntry) = .empty,
     prompt_tokens: u64 = 0,
@@ -326,11 +332,13 @@ const State = struct {
     runs: std.ArrayListUnmanaged([]const u8) = .empty,
 
     fn subtask(self: *State, arena: std.mem.Allocator, id: []const u8, text: []const u8, parent: []const u8) !*SubtaskState {
-        for (self.subtasks.items) |*s| {
-            if (std.mem.eql(u8, s.id, id)) return s;
-        }
+        if (self.subtask_ix.get(id)) |ix| return &self.subtasks.items[ix];
+        const ix: u32 = @intCast(self.subtasks.items.len);
         try self.subtasks.append(arena, .{ .id = id, .text = text, .parent = parent });
-        return &self.subtasks.items[self.subtasks.items.len - 1];
+        // Indexed after the append, so a failed append cannot leave the map
+        // pointing at a slot that does not exist.
+        try self.subtask_ix.put(arena, id, ix);
+        return &self.subtasks.items[ix];
     }
 
     fn dep(self: *State, arena: std.mem.Allocator, on: []const u8) !*DepState {
@@ -628,6 +636,16 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         const c = kv.value_ptr;
         if (c.removed) continue;
 
+        // The ids a checklist edge may point at, built once per card. The
+        // membership test below used to rescan every subtask per edge, so a
+        // card with a large checklist cost O(items^2 * edges) string compares
+        // in the wasm interpreter for what is one lookup per edge.
+        var live_subs: std.StringHashMapUnmanaged(void) = .empty;
+        for (c.subtasks.items) |s| {
+            if (s.removed or s.text.len == 0) continue;
+            try live_subs.put(arena, s.id, {});
+        }
+
         var subs: std.ArrayListUnmanaged(Subtask) = .empty;
         for (c.subtasks.items) |s| {
             // A subtask only toggled or removed, never added, has no text and
@@ -636,10 +654,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             var sub_deps: std.ArrayListUnmanaged([]const u8) = .empty;
             for (s.deps.items) |d| {
                 if (d.off) continue;
-                for (c.subtasks.items) |target| {
-                    if (!target.removed and target.text.len > 0 and std.mem.eql(u8, target.id, d.on))
-                        try sub_deps.append(arena, d.on);
-                }
+                if (live_subs.contains(d.on)) try sub_deps.append(arena, d.on);
             }
             try subs.append(arena, .{ .id = s.id, .text = s.text, .done = s.done, .parent = s.parent, .depends_on = sub_deps.items });
         }
@@ -1213,6 +1228,78 @@ test "checklist items nest and carry independent dependency edges" {
     try std.testing.expectEqualStrings("child", folded[0].subtasks[2].parent);
     try std.testing.expectEqual(@as(usize, 1), folded[0].subtasks[2].depends_on.len);
     try std.testing.expectEqualStrings("root", folded[0].subtasks[2].depends_on[0]);
+}
+
+test "a large checklist folds by id lookup, keeping one edge per live target" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // 200 items, each depending on the one before it, plus one removed item
+    // that a live edge still points at. Both the per-action item lookup and
+    // the projection's edge filter used to scan the whole checklist, so this
+    // shape cost O(items^2) string compares inside the wasm interpreter; the
+    // assertions below are what those scans were computing.
+    const n = 200;
+    var messages: std.ArrayListUnmanaged(Message) = .empty;
+    try messages.append(arena, msg("m1", "x", 100, try encodeAdd(arena, "long list")));
+    for (0..n) |i| {
+        const id = try std.fmt.allocPrint(arena, "s{d}", .{i});
+        try messages.append(arena, msg(id, "x", @intCast(200 + i), try encode(arena, .{
+            .action = "subtask_add",
+            .todo = "m1",
+            .subtask = id,
+            .text = id,
+        })));
+    }
+    for (1..n) |i| {
+        const id = try std.fmt.allocPrint(arena, "s{d}", .{i});
+        const on = try std.fmt.allocPrint(arena, "s{d}", .{i - 1});
+        try messages.append(arena, msg(try std.fmt.allocPrint(arena, "e{d}", .{i}), "x", @intCast(1000 + i), try encode(arena, .{
+            .action = "subtask_depend",
+            .todo = "m1",
+            .subtask = id,
+            .on = on,
+        })));
+    }
+    // A re-add of an existing id must not grow the list, and an edge onto a
+    // removed item must not survive the projection.
+    try messages.append(arena, msg("dup", "x", 2000, try encode(arena, .{
+        .action = "subtask_add",
+        .todo = "m1",
+        .subtask = "s0",
+        .text = "s0 again",
+    })));
+    try messages.append(arena, msg("gone", "x", 2001, try encode(arena, .{
+        .action = "subtask_add",
+        .todo = "m1",
+        .subtask = "ghost",
+        .text = "ghost",
+    })));
+    try messages.append(arena, msg("edge-ghost", "x", 2002, try encode(arena, .{
+        .action = "subtask_depend",
+        .todo = "m1",
+        .subtask = "s5",
+        .on = "ghost",
+    })));
+    try messages.append(arena, msg("rm", "x", 2003, try encode(arena, .{
+        .action = "subtask_remove",
+        .todo = "m1",
+        .subtask = "ghost",
+    })));
+
+    const folded = try derive(arena, messages.items);
+    try std.testing.expectEqual(@as(usize, 1), folded.len);
+    const card = folded[0];
+    try std.testing.expectEqual(@as(usize, n + 1), card.subtasks.len);
+    try std.testing.expectEqualStrings("s0", card.subtasks[0].id);
+    try std.testing.expectEqual(@as(usize, 0), card.subtasks[0].depends_on.len);
+    // Every later item keeps exactly its one live predecessor edge, listed once.
+    for (1..n) |i| {
+        try std.testing.expectEqual(@as(usize, 1), card.subtasks[i].depends_on.len);
+        const want = try std.fmt.allocPrint(arena, "s{d}", .{i - 1});
+        try std.testing.expectEqualStrings(want, card.subtasks[i].depends_on[0]);
+    }
 }
 
 test "done requires every checklist node and dependency cycles are detectable" {
