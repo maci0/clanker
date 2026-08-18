@@ -322,34 +322,24 @@ run/ask/steer command surface, and the three recorder write paths.
 
 ## Autolearn
 
-Automatically observed from usage patterns (`state/autolearn.jsonl`, last 7 days). Refresh with `clanker autolearn`.
+Automatically observed from usage patterns in `state/autolearn.jsonl`; refresh with `clanker autolearn`.
 
-- [ ] Optimize the highest-traffic tools: `read_file`, `repo_search`, and `git`.  
-  These tools dominate the observed tool calls and drive most long-running sessions; prioritize their correctness, caching, and error recovery.
-
-- [ ] Harden `file_ops` argument validation.  
-  Repeated calls failed with `move and copy need "to": the destination path`, so require/emit the destination before invoking move/copy.
-
-- [ ] Align sandbox `fs_prefixes` with files the harness is asked to touch.  
-  `file_ops`, `list_files`, and `edit_file` were refused for `CHANGELOG.md`, `.local/TODO.md`, `.local`, and `zig-out/gate-failure.txt`; add these to the tool manifest or stop trying to access them.
-
-- [ ] Allow git in the tool sandbox manifest.  
-  Git failed with `running git: refused by this tool's sandbox policy ... exec_allow`; whitelist required git subcommands so read-only repo checks do not fail.
-
-- [ ] Validate `read_file` calls before dispatch.  
-  Observed `missing required field: path` and `path is outside the sandbox`; guard against empty paths and only call with sandbox-visible paths.
-
-- [ ] Add a fallback for `zig_std` symbol lookup.  
-  One lookup failed with `looking up the std symbol: not found`; retry with a narrower query or fall back to repo/stdlib search.
-
-- [ ] Auto-narrow oversized `repo_search` queries.  
-  A query failed with `running the search: too large for one call — ask for a smaller range or narrow the query`; split or constrain large searches automatically.
-
-- [ ] Re-evaluate `deepseek-v4-flash` as the default tool-work model.  
-  It was used in 24 observed runs and powers most tool calls; tune temperature, max tokens, and cost or confirm it should stay default.
-
-- [ ] Set prompt/token budgets for `deepseek-v4-pro`.  
-  Observed pro runs reached 6.6M+ prompt tokens, 95k completion tokens, and up to ~25 minutes; route routine tool calls to flash and cap long-context pro sessions.
-
-- [ ] Limit `qwen3.8-27b-tuned` to tool-free tasks or enable tool calling.  
-  Its observed run returned no tools (`tools: []`) and took 41 seconds, indicating it is not currently suitable for tool-required turns.
+- [ ] Deduplicate identical tool calls within a turn — logs show simultaneous duplicate `repo_search` and `read_file` calls with the same timestamp, wasting tokens and latency.
+- [ ] Cap and plan read-only exploration — some runs issued hundreds of `read_file`/`repo_search` calls before the first edit, causing context bloat and long stalls.
+- [ ] Compress or summarize tool results — `deepseek-v4-pro` runs reached 9.5M and 10.9M prompt tokens (744s/1358s), indicating raw results are too large to re-prompt efficiently.
+- [ ] Guard against empty/no-op model runs — `qwen3.8-27b-tuned` had `prompt_tokens:0`/`completion_tokens:0` runs that still consumed 29s and 101s.
+- [ ] Validate `read_file` arguments before invocation — observed error `missing required field: path`.
+- [ ] Fix `edit_file` stale-match behavior — observed `the "old" text does not appear in the file; read it again and copy the exact bytes`; retry after re-reading or use line/context anchors.
+- [ ] Grant `edit_file` write access to intended docs — `CHANGELOG.md` and `AGENTS.md` were refused by the sandbox policy, blocking planned updates.
+- [ ] Fix sandbox paths for `file_ops` and `list_files` — observed refusals for `CHANGELOG.md` and `.local` from the same manifest policy.
+- [ ] Fix `git` sandbox/verb policy — observed repeated policy refusals, plus denied `worktree --force` and `fetch`; authorize safe read-only verbs or disable the tool.
+- [ ] Fix `repo_search` size validation — observed `running the search: too large for one call — ask for a smaller range or narrow the query`.
+- [ ] Add `reports` pre-submit validation — observed `summary is too long (maximum 500 bytes)` and invalid `kind`/slug-format errors.
+- [ ] Disable or hide `jobs` in unsupported contexts — observed `jobs are not allowed here`.
+- [ ] Expand the `gh` command allowlist — observed `gh api repos/maci0/clanker/commits/main --jq .sha` denied; only `gh pr *` patterns are allowed.
+- [ ] Add `web_fetch` retry/fallback handling — observed repeated `fetching the page: the request did not complete`.
+- [ ] Fix `zig_std` symbol lookup — observed `looking up the std symbol: not found`; ensure the tool points at the matching std version.
+- [ ] Re-evaluate default model `deepseek-v4-flash` — used in 25 run(s); tune its config or make it the default.
+- [ ] Re-evaluate default model `qwen3.8-27b-tuned` — used in 6 run(s), including zero-token no-ops; tune or gate before use.
+- [ ] Re-evaluate default model `deepseek-v4-pro` — used in 14 run(s) and produced the largest prompt contexts; add context/result limits if kept.
+- [ ] Re-evaluate default model `z-ai/glm-5.2` — used in 1 run(s); confirm whether it should remain in rotation.
