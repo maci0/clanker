@@ -64,6 +64,13 @@ pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
     return spec.nextAfter(now, tz_offset_minutes);
 }
 
+/// True when the spec tokenizes into a valid cron expression. Lets callers
+/// distinguish a malformed spec from one that parses but never fires.
+pub fn parses(cron_text: []const u8) bool {
+    _ = cron.parse(cron_text) catch return false;
+    return true;
+}
+
 test "validId matches the session-id alphabet" {
     try std.testing.expect(validId("sch-1"));
     try std.testing.expect(validId("nightly"));
