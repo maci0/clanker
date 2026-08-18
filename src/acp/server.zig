@@ -97,7 +97,7 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
     if (cwd.len == 0 or cwd[0] != '/') {
         return responseError(alloc, id, -32602, "cwd must be an absolute path");
     }
-    if (cwd.len == 1 and cwd[0] == '/') {} else if (std.mem.findScalar(u8, cwd, 0) != null) {
+    if (std.mem.findScalar(u8, cwd, 0) != null) {
         return responseError(alloc, id, -32602, "cwd does not exist");
     }
     conn.session_counter += 1;
