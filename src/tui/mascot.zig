@@ -406,10 +406,6 @@ pub const State = struct {
         return n;
     }
 
-    fn step(self: *State) void {
-        self.stepN(1);
-    }
-
     fn stepN(self: *State, n: u32) void {
         self.frame = @intCast((@as(u32, self.frame) + n) % frame_count);
     }
