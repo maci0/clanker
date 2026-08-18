@@ -632,11 +632,11 @@ pub const Engine = struct {
             .{ .role = .user, .content = user_prompt },
         };
         var err_detail: ?[]const u8 = null;
-        const resp = client.chat(self.ctx, self.arena, .{
+        const resp = client.chatWithDeadline(self.ctx, self.arena, .{
             .provider = self.provider,
             .messages = &messages,
             .max_tokens = opts.response_tokens,
-        }, &err_detail) catch |err| {
+        }, &err_detail, self.cfg.agent.request_timeout_ms) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.ProposalRequestFailed;
@@ -1320,13 +1320,13 @@ pub const Engine = struct {
         };
 
         var err_detail: ?[]const u8 = null;
-        const resp = client.chat(self.ctx, self.arena, .{
+        const resp = client.chatWithDeadline(self.ctx, self.arena, .{
             .provider = self.provider,
             .messages = &messages,
             // An idea list is a few hundred tokens; the full patch budget
             // only invites the model to write the patches here too.
             .max_tokens = @min(opts.response_tokens, 4096),
-        }, &err_detail) catch |err| {
+        }, &err_detail, self.cfg.agent.request_timeout_ms) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.warn, "plan request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.PlanRequestFailed;
