@@ -2,5 +2,15 @@
 description = "Research-only: file reads and web search, no writes"
 system_prompt_append = "You are in research-only preset: read and search freely, but do not write files, run mutating commands, or delegate writes. If a write is truly needed, explain what you would do and ask the operator to switch presets."
 
-tools_deny = ["edit_file", "write_ask", "patch_apply", "exec", "subagent", "swarm", "kanban_*", "todo_*", "goal_*", "compare", "arena"]
+# The deny list is the preset's hard guarantee of "no writes". It covers
+# every agent-callable tool in tools/manifests/ that can write repository
+# content or run mutating commands — anything with exec_allow or repo-wide
+# fs_prefixes — plus the delegation/runner tools (subagent, swarm, run_plan,
+# chain) and the state-mutation families (kanban_*, todo_*, goal_*). A tool
+# whose fs grant is its own read-only state or cache (gh_read, reasoning,
+# schedule, learnings, skills, the record stores) stays available. Keep this
+# list in sync when a manifest adds a write-capable tool; run_plan/chain are
+# denied because their ck_tool steps re-enter denied tools with the callee's
+# own grants, bypassing this list.
+tools_deny = ["edit_file", "write_ask", "patch_apply", "exec", "subagent", "swarm", "kanban_*", "todo_*", "goal_*", "compare", "arena", "file_ops", "smart_commit", "git", "gh", "jobs", "opencv", "zig_test", "gate", "rewind", "kernel", "debug", "run_plan", "chain", "note_write", "note_forget", "skill_edit", "webui_addon", "memory", "workflows", "autoresearch"]
 tools_allow = []

@@ -2670,6 +2670,27 @@ pub const Agent = struct {
         return resp.hash;
     }
 
+    /// The deterministic gates a `ck_tool` nested call must pass: the same
+    /// preset deny list and plan-mode refusal the loop applies to top-level
+    /// calls above. Wired into the sandbox so a tool-calling tool (chain,
+    /// run_plan) cannot re-enter a denied tool with the callee's own grants.
+    /// The interactive confirm channel is deliberately absent: the runner
+    /// itself was approved as a batch, and asking per nested step would
+    /// interleave a human into a synchronous chain.
+    fn toolPolicy(self: *Agent) host.ToolPolicy {
+        const S = struct {
+            fn check(ctx: *anyopaque, name: []const u8) bool {
+                const self: *Agent = @ptrCast(@alignCast(ctx));
+                if (self.preset) |preset| if (!preset_mod.allowed(preset.*, name)) return false;
+                if (self.plan_mode) {
+                    if (self.reg.get(name)) |t| if (t.enabled and t.needsConfirm()) return false;
+                }
+                return true;
+            }
+        };
+        return .{ .ctx = self, .call = S.check };
+    }
+
     fn executeTool(self: *Agent, tc: types.ToolCall) ![]const u8 {
         const tool = self.reg.get(tc.name) orelse {
             log.log(.warn, "agent called unknown tool '{s}'", .{tc.name});
@@ -3471,6 +3492,7 @@ const ToolWorker = struct {
             // two execution paths disagreed about the same tool's settings.
             .config_json = try host.toolConfigFor(arena_state.allocator(), self.tool, self.cfg),
             .fuel = self.tool.fuel,
+            .tool_policy = self.toolPolicy(),
         };
 
         log.log(.debug, "running tool '{s}' in sandbox args_bytes={d}", .{ self.tool.name, self.arguments.len });

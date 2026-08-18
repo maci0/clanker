@@ -150,6 +150,15 @@ pub const SubagentRunner = *const fn (
     parent_run_id: []const u8,
 ) anyerror![]const u8;
 
+/// Decides whether a `ck_tool` nested call may run a named tool, when the
+/// harness wires one in. Same ctx/call shape as [[ParentAsk]]; the loop
+/// supplies its preset + plan-mode gates so a tool-calling tool cannot
+/// re-enter a denied tool under the callee's own grants.
+pub const ToolPolicy = struct {
+    ctx: *anyopaque,
+    call: *const fn (ctx: *anyopaque, tool_name: []const u8) bool,
+};
+
 /// Per-tool sandbox policy, owned by the harness.
 pub const Sandbox = struct {
     gpa: std.mem.Allocator,
@@ -261,6 +270,13 @@ pub const Sandbox = struct {
     tool_self_name: []const u8 = "",
     tool_registry: ?*const registry.Registry = null,
     tool_call_depth: u8 = 0,
+    /// Whether `ck_tool` may run a named tool. Null = no check (host tools,
+    /// tests). The agent loop wires this to the same policy it applies to
+    /// top-level calls (preset deny list, plan mode), so a tool-calling tool
+    /// (chain, run_plan) cannot re-enter a denied tool with the callee's own
+    /// grants. Deterministic gates only: the interactive confirm channel
+    /// stays a top-level-batch concern, where the runner itself was approved.
+    tool_policy: ?ToolPolicy = null,
     /// A nested run's private todo list (src/agent/private_todos.zig), wired
     /// only by subagent.runNested. When set, todo_* ops that name no "room"
     /// operate on it instead of a shared room list; null for top-level agents.
@@ -4268,6 +4284,9 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const target = reg.get(tool_name) orelse return Err.not_found;
     if (!target.enabled) return Err.not_found;
     if (target.internal) return Err.not_found;
+    if (h.sandbox.tool_policy) |pol| {
+        if (!pol.call(pol.ctx, tool_name)) return Err.denied;
+    }
     var args_json: []const u8 = "{}";
     if (v.object.get("args")) |av| {
         if (av == .string) {
