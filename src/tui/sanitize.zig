@@ -25,7 +25,21 @@ pub fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
     var start: usize = 0;
     var i: usize = 0;
     while (i < bytes.len) {
-        if (isControl(bytes[i])) {
+        if (bytes[i] == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5D) {
+            // OSC sequence: ESC ] … (BEL | ST); consume the whole thing.
+            if (i > start) w.writeAll(bytes[start..i]) catch {};
+            var j = i + 2;
+            while (j < bytes.len) {
+                if (bytes[j] == 0x07) break;
+                if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5C) {
+                    j += 2;
+                    break;
+                }
+                j += 1;
+            }
+            i = j;
+            start = i;
+        } else if (isControl(bytes[i])) {
             if (i > start) w.writeAll(bytes[start..i]) catch {};
             i += 1;
             start = i;
@@ -47,6 +61,7 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
     var i: usize = 0;
     while (i < bytes.len) : (i += 1) {
         if (isControl(bytes[i]) or
+            (bytes[i] == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5D) or
             (bytes[i] == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F))
         {
             var out: std.ArrayList(u8) = .empty;
@@ -54,7 +69,18 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
             try out.ensureTotalCapacity(gpa, bytes.len);
             var j: usize = 0;
             while (j < bytes.len) {
-                if (isControl(bytes[j])) {
+                if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5D) {
+                    var k = j + 2;
+                    while (k < bytes.len) {
+                        if (bytes[k] == 0x07) break;
+                        if (bytes[k] == 0x1B and k + 1 < bytes.len and bytes[k + 1] == 0x5C) {
+                            k += 2;
+                            break;
+                        }
+                        k += 1;
+                    }
+                    j = k;
+                } else if (isControl(bytes[j])) {
                     j += 1;
                 } else if (bytes[j] == 0xC2 and j + 1 < bytes.len and bytes[j + 1] >= 0x80 and bytes[j + 1] <= 0x9F) {
                     j += 2;
@@ -106,4 +132,25 @@ test "sanitizeAlloc strips controls and allocates a copy" {
     const result = try sanitizeAlloc(std.testing.allocator, dirty);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("abc", result);
+}
+
+test "writeSanitized strips OSC sequences (BEL-terminated)" {
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    writeSanitized(&w, "before\x1b]38;2;255;0;0\x07after");
+    try std.testing.expectEqualStrings("beforeafter", buf[0..w.end]);
+}
+
+test "writeSanitized strips OSC sequences (ST-terminated)" {
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    writeSanitized(&w, "before\x1b]0;1\x1b\\after");
+    try std.testing.expectEqualStrings("beforeafter", buf[0..w.end]);
+}
+
+test "sanitizeAlloc strips OSC sequences" {
+    const dirty = "a\x1b]38;5;9\x07b";
+    const result = try sanitizeAlloc(std.testing.allocator, dirty);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("ab", result);
 }
