@@ -280,10 +280,15 @@ test "clanker commit --yes refuses to auto-apply a degraded fallback plan" {
     var result = try harness.run(gpa, io, tmp.dir, &.{ "commit", "--yes" });
     defer result.deinit(gpa);
 
-    // The verb fails loudly instead of writing the fallback plan.
+    // The verb fails loudly instead of writing the fallback plan. The
+    // refusal is an operator-facing diagnostic, so it lands on stderr
+    // (`printUsageError`, the util/diag.zig convention; 757d61f9 moved it
+    // there from stdout) while the degraded plan's note stays on stdout
+    // with the preview.
     if (result.ok()) std.debug.print("degraded plan was auto-applied.\nstdout: {s}\n", .{result.stdout});
     try std.testing.expect(!result.ok());
-    try std.testing.expect(std.mem.find(u8, result.stdout, "degraded") != null);
+    try std.testing.expect(std.mem.find(u8, result.stderr, "degraded") != null);
+    try std.testing.expect(std.mem.find(u8, result.stdout, "fell back to one generic commit") != null);
 
     // And nothing was committed: the log is unchanged and the file is still
     // staged for whoever retries.
