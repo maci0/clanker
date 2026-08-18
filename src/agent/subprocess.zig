@@ -103,7 +103,7 @@ pub const Registry = struct {
     /// is not included. Blocks until a line arrives or the pipe closes.
     pub fn readStdoutLine(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8) ![]u8 {
         while (true) {
-            if (self.takeLine(arena, session_id, kind)) |line| return line;
+            if (try self.takeLine(arena, session_id, kind)) |line| return line;
             var tmp: [4096]u8 = undefined;
             const n = try self.readStdoutInto(session_id, kind, &tmp);
             if (n == 0) return error.KernelExited;
@@ -114,7 +114,7 @@ pub const Registry = struct {
     /// Reads up to `max` bytes from leftover or the pipe. Blocks until at
     /// least one byte or EOF. Used by DAP framing, which is not line-oriented.
     pub fn readStdout(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8, max: usize) ![]u8 {
-        if (self.takeLeftover(arena, session_id, kind, max)) |got| return got;
+        if (try self.takeLeftover(arena, session_id, kind, max)) |got| return got;
         var tmp: [4096]u8 = undefined;
         const n = try self.readStdoutInto(session_id, kind, tmp[0..@min(max, tmp.len)]);
         if (n == 0) return error.KernelExited;
@@ -145,25 +145,25 @@ pub const Registry = struct {
         };
     }
 
-    fn takeLine(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8) ?[]u8 {
+    fn takeLine(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8) !?[]u8 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const h = self.findLocked(session_id, kind) orelse return null;
         const nl = std.mem.findScalar(u8, h.leftover.items, '\n') orelse return null;
-        const line = arena.dupe(u8, std.mem.trimEnd(u8, h.leftover.items[0..nl], "\r")) catch return null;
+        const line = arena.dupe(u8, std.mem.trimEnd(u8, h.leftover.items[0..nl], "\r")) catch |err| return err;
         const rest = h.leftover.items[nl + 1 ..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
         h.leftover.shrinkRetainingCapacity(rest.len);
         return line;
     }
 
-    fn takeLeftover(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8, max: usize) ?[]u8 {
+    fn takeLeftover(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8, max: usize) !?[]u8 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const h = self.findLocked(session_id, kind) orelse return null;
         if (h.leftover.items.len == 0) return null;
         const n = @min(h.leftover.items.len, max);
-        const out = arena.dupe(u8, h.leftover.items[0..n]) catch return null;
+        const out = arena.dupe(u8, h.leftover.items[0..n]) catch |err| return err;
         const rest = h.leftover.items[n..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
         h.leftover.shrinkRetainingCapacity(rest.len);
