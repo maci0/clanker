@@ -2953,18 +2953,13 @@ pub const Config = struct {
 // tests
 // ---------------------------------------------------------------------------
 
-test "agent.global_instructions_file parses and defaults empty" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const arena = env.arena();
-
-    const dir = env.tmp.dir;
-
-    const io = env.io();
-
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
+/// Writes the minimum config a `Config.load` test needs, with `agent_keys`
+/// spliced under `[agent]`. The provider and model stanzas are required for the
+/// load to succeed and are the same in every such test, so repeating them at
+/// each call site only buries the one line the test is about.
+fn writeAgentConfig(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, agent_keys: []const u8) !void {
+    var buf: [1024]u8 = undefined;
+    const data = try std.fmt.bufPrint(&buf,
         \\default_provider = "ollama"
         \\
         \\[providers.ollama]
@@ -2974,10 +2969,24 @@ test "agent.global_instructions_file parses and defaults empty" {
         \\provider = "ollama"
         \\
         \\[agent]
-        \\global_instructions_file = "/home/op/.agents/AGENTS.md"
+        \\{s}
         \\
-        ,
-    });
+    , .{agent_keys});
+    try dir.writeFile(io, .{ .sub_path = sub_path, .data = data });
+}
+
+test "agent.global_instructions_file parses and defaults empty" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const dir = env.tmp.dir;
+
+    const io = env.io();
+
+    try writeAgentConfig(io, dir, "config.toml",
+        \\global_instructions_file = "/home/op/.agents/AGENTS.md"
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("/home/op/.agents/AGENTS.md", cfg.agent.global_instructions_file);
     try std.testing.expectEqualStrings("", (Agent{}).global_instructions_file);
@@ -3384,22 +3393,9 @@ test "confirm_writes parses its three values and rejects anything else" {
 
     const io = env.io();
 
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "config.toml",
         \\confirm_writes = "browser"
-        \\
-        ,
-    });
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(ConfirmWrites.browser, cfg.agent.confirm_writes);
 
@@ -3408,22 +3404,9 @@ test "confirm_writes parses its three values and rejects anything else" {
 
     // A typo must fail the load, not silently run without the gate the
     // config asked for.
-    try dir.writeFile(io, .{
-        .sub_path = "bad.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "bad.toml",
         \\confirm_writes = "sometimes"
-        \\
-        ,
-    });
+    );
     try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
@@ -3436,23 +3419,10 @@ test "worktree and goal_worktree parse and default to auto" {
 
     const io = env.io();
 
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "config.toml",
         \\worktree = "yes"
         \\goal_worktree = "no"
-        \\
-        ,
-    });
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(WorktreeDefault.yes, cfg.agent.worktree);
     try std.testing.expectEqual(WorktreeDefault.no, cfg.agent.goal_worktree);
@@ -3462,22 +3432,9 @@ test "worktree and goal_worktree parse and default to auto" {
     try std.testing.expectEqual(WorktreeDefault.auto, (Agent{}).goal_worktree);
 
     // A typo must fail the load rather than silently isolate differently.
-    try dir.writeFile(io, .{
-        .sub_path = "bad.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "bad.toml",
         \\worktree = "sometimes"
-        \\
-        ,
-    });
+    );
     try std.testing.expectError(error.WorktreeDefaultInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
@@ -3490,25 +3447,12 @@ test "agent.git_worktree_on and isolated defaults parse" {
 
     const io = env.io();
 
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "config.toml",
         \\git_worktree_on = ["goal", "webui"]
         \\isolated_cli = true
         \\isolated_tui = false
         \\isolated_webui = true
-        \\
-        ,
-    });
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualSlices(WorktreeMode, &.{ .goal, .webui }, cfg.agent.git_worktree_on);
     try std.testing.expect(cfg.agent.isolated_cli);
@@ -3520,22 +3464,9 @@ test "agent.git_worktree_on and isolated defaults parse" {
     try std.testing.expect(!(Agent{}).isolated_cli);
 
     // An unknown mode fails the load rather than being silently ignored.
-    try dir.writeFile(io, .{
-        .sub_path = "bad.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "bad.toml",
         \\git_worktree_on = ["goal", "nope"]
-        \\
-        ,
-    });
+    );
     try std.testing.expectError(error.WorktreeModeInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
