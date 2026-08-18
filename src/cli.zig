@@ -9238,6 +9238,79 @@ fn webuiMissingWasmError() []const u8 {
 /// Renders one of the page's files through the webui tool. Returns the body,
 /// or responds with the failure and returns null: the caller only has to
 /// decide how a successful body is sent.
+/// The compiled `webui` guest, built once for the process.
+///
+/// Every render used to load the whole tool registry (~96 `*.tool.json`
+/// parses), read the 1.1 MB module off disk and compile it again. There are 41
+/// asset paths plus the index page, and a first visit pulls most of them in one
+/// burst as the browser follows app.js's dynamic imports, so that cost was paid
+/// ~42 times over for a module whose bytes never change while the server runs.
+///
+/// The instance owns one linear memory and is not reentrant, so `mutex` covers
+/// both the build and every `executeTool`. Serializing costs nothing past the
+/// first load: each asset's body is kept in its `RenderCache`, so a warm
+/// server never reaches this at all.
+const WebuiGuest = struct {
+    mutex: std.Io.Mutex = .init,
+    built: bool = false,
+    mod: ?*runtime.ToolModule = null,
+    /// Owns the registry and the sandbox the module borrows from, so both
+    /// outlive the request that happened to build them.
+    arena: ?std.heap.ArenaAllocator = null,
+
+    const BuildError = error{ RegistryUnavailable, ToolMissing, WasmUnreadable, WasmLoadFailed };
+};
+var webui_guest: WebuiGuest = .{};
+
+/// Builds the guest on first call and hands back the same module after.
+/// Caller must hold `webui_guest.mutex`.
+fn webuiGuestModule(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+) WebuiGuest.BuildError!*runtime.ToolModule {
+    if (webui_guest.built) return webui_guest.mod orelse error.WasmLoadFailed;
+    // A failed build is remembered too: retrying a missing `zig build tools`
+    // once per asset path only multiplies the same error by 42.
+    webui_guest.built = true;
+
+    webui_guest.arena = std.heap.ArenaAllocator.init(gpa);
+    const arena = webui_guest.arena.?.allocator();
+
+    const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
+        log.log(.error_, "renderWebui: registry load failed: {s}", .{@errorName(err)});
+        return error.RegistryUnavailable;
+    };
+    const tool = reg.get("webui") orelse return error.ToolMissing;
+    // Embedded page assets (HTML/CSS/JS) push the guest past 1 MiB; keep headroom
+    // aligned with the sandbox self-test in runtime.zig (8 MiB).
+    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(8 << 20)) catch |err| {
+        log.log(.error_, "renderWebui: wasm read failed: {s}", .{@errorName(err)});
+        return error.WasmUnreadable;
+    };
+    defer gpa.free(wasm_bytes);
+
+    // Heap-allocated, not a stack local: the module borrows this for its whole
+    // life, which is now the process's rather than one request's.
+    const sb = arena.create(host.Sandbox) catch return error.WasmLoadFailed;
+    sb.* = .{
+        .gpa = gpa,
+        .io = io,
+        .root_dir = cfg.agent.sandbox_root,
+        .shared_root = cfg.agent.shared_root,
+        .network_allow = tool.network_allow,
+        .environ_map = environ_map,
+        .fuel = tool.fuel,
+    };
+    const mod = runtime.ToolModule.load(gpa, io, sb, wasm_bytes) catch |err| {
+        log.log(.error_, "renderWebui: wasm load failed: {s}", .{@errorName(err)});
+        return error.WasmLoadFailed;
+    };
+    webui_guest.mod = mod;
+    return mod;
+}
+
 fn renderWebui(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -9247,43 +9320,31 @@ fn renderWebui(
     path: []const u8,
     stream: std.Io.net.Stream,
 ) ?[]const u8 {
-    const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
-        log.log(.error_, "renderWebui path={s}: registry load failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
-        return null;
-    };
-    const tool = reg.get("webui") orelse {
-        const body = webuiMissingRegistryError(arena, cfg.agent.tools_dir) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui tool not found in registry\"}");
-            return null;
-        };
-        respond(stream, 500, "Internal Server Error", body);
-        return null;
-    };
-    // Embedded page assets (HTML/CSS/JS) push the guest past 1 MiB; keep headroom
-    // aligned with the sandbox self-test in runtime.zig (8 MiB).
-    const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(8 << 20)) catch |err| {
-        log.log(.error_, "renderWebui path={s}: wasm read failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", webuiMissingWasmError());
-        return null;
-    };
-    defer gpa.free(wasm_bytes);
+    webui_guest.mutex.lockUncancelable(io);
+    defer webui_guest.mutex.unlock(io);
 
-    var sb = host.Sandbox{
-        .gpa = gpa,
-        .io = io,
-        .root_dir = cfg.agent.sandbox_root,
-        .shared_root = cfg.agent.shared_root,
-        .network_allow = tool.network_allow,
-        .environ_map = environ_map,
-        .fuel = tool.fuel,
+    const mod = webuiGuestModule(io, gpa, cfg, environ_map) catch |err| switch (err) {
+        error.RegistryUnavailable => {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tools registry unavailable\"}");
+            return null;
+        },
+        error.ToolMissing => {
+            const body = webuiMissingRegistryError(arena, cfg.agent.tools_dir) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui tool not found in registry\"}");
+                return null;
+            };
+            respond(stream, 500, "Internal Server Error", body);
+            return null;
+        },
+        error.WasmUnreadable => {
+            respond(stream, 500, "Internal Server Error", webuiMissingWasmError());
+            return null;
+        },
+        error.WasmLoadFailed => {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui load failed\"}");
+            return null;
+        },
     };
-    const mod = runtime.ToolModule.load(gpa, io, &sb, wasm_bytes) catch |err| {
-        log.log(.error_, "renderWebui path={s}: wasm load failed: {s}", .{ path, @errorName(err) });
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui load failed\"}");
-        return null;
-    };
-    defer mod.deinit();
 
     // The path is one of this server's own route literals, never anything a
     // request supplied, so it needs no escaping to sit inside this JSON.

@@ -463,9 +463,44 @@ pub const History = struct {
     };
 
     fn loadAll(self: *History, arena: std.mem.Allocator) ![]Entry {
-        var out: std.ArrayList(Entry) = .empty;
         const raw = self.base.readFileAlloc(self.io, self.logPath(), arena, .limited(1 << 24)) catch return &.{};
+        return parseEntries(arena, raw);
+    }
 
+    /// The newest `max_entries` records, oldest first.
+    ///
+    /// Callers that only ever look at `entries[len - max_entries ..]` used to
+    /// go through `loadAll`, which parses the whole log (16 MiB cap, ~1.5 KiB
+    /// a record) into the run arena that is never freed. Three of them run per
+    /// improve iteration, so a long run parsed the same megabytes dozens of
+    /// times and kept every copy. Slicing the raw bytes to the last
+    /// `max_entries` lines first makes the parse proportional to what the
+    /// caller reads instead of to the log's whole history.
+    fn loadTail(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]Entry {
+        if (max_entries == 0) return &.{};
+        const raw = self.base.readFileAlloc(self.io, self.logPath(), arena, .limited(1 << 24)) catch return &.{};
+        return parseEntries(arena, tailLines(raw, max_entries));
+    }
+
+    /// The suffix of `raw` holding its last `max_lines` non-empty lines.
+    fn tailLines(raw: []const u8, max_lines: usize) []const u8 {
+        var end = raw.len;
+        var found: usize = 0;
+        while (end > 0) {
+            var start = end;
+            while (start > 0 and raw[start - 1] != '\n') start -= 1;
+            if (end > start) {
+                found += 1;
+                if (found == max_lines) return raw[start..];
+            }
+            if (start == 0) break;
+            end = start - 1;
+        }
+        return raw;
+    }
+
+    fn parseEntries(arena: std.mem.Allocator, raw: []const u8) ![]Entry {
+        var out: std.ArrayList(Entry) = .empty;
         var lines = std.mem.splitScalar(u8, raw, '\n');
         while (lines.next()) |line| {
             if (line.len == 0) continue;
@@ -532,7 +567,7 @@ pub const History = struct {
     /// changes invalidates the cache block it sits in. Keeping them out of the
     /// stable bulk is what lets the bulk survive from one run to the next.
     pub fn recentlyTouched(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const []const u8 {
-        const entries = try self.loadAll(arena);
+        const entries = try self.loadTail(arena, max_entries);
         if (entries.len == 0) return &.{};
         const start = if (entries.len > max_entries) entries.len - max_entries else 0;
 
@@ -560,7 +595,7 @@ pub const History = struct {
     /// work already promoted got proposed again as a no-op that passed every
     /// gate because it changed nothing that mattered.
     pub fn recentSummary(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const u8 {
-        const entries = try self.loadAll(arena);
+        const entries = try self.loadTail(arena, max_entries);
         if (entries.len == 0) return "";
         const start = if (entries.len > max_entries) entries.len - max_entries else 0;
 
@@ -605,7 +640,7 @@ pub const History = struct {
     /// these: an accepted summary means the idea is already done, a rejected
     /// one that it was tried and refused, either way not worth an iteration.
     pub fn recentSummaries(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]const []const u8 {
-        const entries = try self.loadAll(arena);
+        const entries = try self.loadTail(arena, max_entries);
         if (entries.len == 0) return &.{};
         const start = if (entries.len > max_entries) entries.len - max_entries else 0;
 
@@ -916,6 +951,18 @@ test "recentlyTouched deduplicates files from the recent window and recentSummar
         try std.testing.expectEqualStrings("three", summaries[1]);
         try std.testing.expectEqualStrings("four", summaries[2]);
     }
+}
+
+test "tailLines keeps the last N records and never loses one to a missing trailing newline" {
+    const three = "a\nb\nc\n";
+    try std.testing.expectEqualStrings("c\n", History.tailLines(three, 1));
+    try std.testing.expectEqualStrings("b\nc\n", History.tailLines(three, 2));
+    try std.testing.expectEqualStrings(three, History.tailLines(three, 3));
+    // Fewer lines than asked for: the whole log, not a truncated tail.
+    try std.testing.expectEqualStrings(three, History.tailLines(three, 99));
+    // A log still being appended to has no trailing newline on its last line.
+    try std.testing.expectEqualStrings("c", History.tailLines("a\nb\nc", 1));
+    try std.testing.expectEqualStrings("", History.tailLines("", 5));
 }
 
 test "the class of an accepted change is recorded, rendered, and counted as a streak" {

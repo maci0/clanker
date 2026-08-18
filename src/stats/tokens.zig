@@ -218,16 +218,41 @@ pub fn loadAll(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
 }
 
 /// Groups records by (provider, model), newest-first by total tokens.
+///
+/// Folds the log line by line rather than through `parseRecords`: the log is
+/// capped at 32 MiB (~150k records) and the answer is a handful of rows, so
+/// materializing every record plus a per-record group key first cost tens of
+/// megabytes of arena that is only freed when the request ends. Each line is
+/// parsed into a scratch arena that resets immediately; only a group's first
+/// sighting copies its names into `arena`.
 pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Stat {
-    _ = gpa;
     const path = subPath(arena, state_dir) catch return &.{};
-    const recs = try parseRecords(base, io, arena, path);
+    const raw = base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + read_slack_bytes)) catch |err| {
+        if (err != error.FileNotFound) log.log(.warn, "[stats] read of {s} failed: {s}", .{ path, @errorName(err) });
+        return &.{};
+    };
+    defer gpa.free(raw);
+
+    var scratch_state = std.heap.ArenaAllocator.init(gpa);
+    defer scratch_state.deinit();
+    const scratch = scratch_state.allocator();
+
     var by_key: std.StringArrayHashMapUnmanaged(Stat) = .empty;
-    for (recs) |r| {
-        const key = std.fmt.allocPrint(arena, "{s}/{s}", .{ r.provider, r.model }) catch continue;
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        defer _ = scratch_state.reset(.retain_capacity);
+        const r = std.json.parseFromSliceLeaky(Record, scratch, line, .{ .ignore_unknown_fields = true }) catch continue;
+        const key = std.fmt.allocPrint(scratch, "{s}/{s}", .{ r.provider, r.model }) catch continue;
         const gop = try by_key.getOrPut(arena, key);
         if (!gop.found_existing) {
-            gop.value_ptr.* = .{ .provider = r.provider, .model = r.model };
+            // The key and both names live in `scratch`, which is about to be
+            // reset; a group survives the loop, so it owns copies.
+            gop.key_ptr.* = try arena.dupe(u8, key);
+            gop.value_ptr.* = .{
+                .provider = try arena.dupe(u8, r.provider),
+                .model = try arena.dupe(u8, r.model),
+            };
         }
         gop.value_ptr.calls += 1;
         gop.value_ptr.prompt_tokens += r.prompt_tokens;
