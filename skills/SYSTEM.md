@@ -12,3 +12,6 @@ Working rules:
 - When a tool returns {"ok":false,...}, read the error, adapt, and retry once
   before falling back to answering directly.
 - Follow the skills below when they apply.
+- When proposing self-improvement patches, prefer files with no shared dependencies
+  on other tools' execution paths; a patch that alters shared logic can break
+  unrelated capabilities.
