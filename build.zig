@@ -297,6 +297,11 @@ pub fn build(b: *std.Build) void {
     const css_split_js_test = b.addSystemCommand(&.{ "node", "--test" });
     css_split_js_test.addFileArg(b.path("ui/app/css-split.test.mjs"));
     test_step.dependOn(&css_split_js_test.step);
+    // What a visitor actually downloads, and what it is allowed to grow to.
+    // These numbers are the regression record for the critical path.
+    const weight_budget_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    weight_budget_js_test.addFileArg(b.path("ui/app/weight-budget.test.mjs"));
+    test_step.dependOn(&weight_budget_js_test.step);
     // Operator vs Chat column widths live in the shipped stylesheet.
     const layout_js_test = b.addSystemCommand(&.{ "node", "--test" });
     layout_js_test.addFileArg(b.path("ui/app/core/layout.test.mjs"));

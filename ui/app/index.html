@@ -1123,8 +1123,8 @@ lamps carry further). The seven named palettes ride the same tokens.
 <!-- Order matters and is guaranteed: module scripts execute in document order
      once parsing is done. preact-boot puts Preact/htm/signals on window for
      the plugin API; first-party modules import core/ui.js directly.
-     The feature views (features/board.js, goals, prompts, todos, models)
-     are deliberately NOT <script> tags here: each is
+     The feature views (features/board.js, goals, knowledge, prompts, todos,
+     models, arena, fleet) are deliberately NOT <script> tags here: each is
      dynamically imported by app.js the first time its view is opened, so a
      visit that never leaves chat downloads none of them. Schedule, Search,
      and Compare are disk plugins under ui/plugins/. -->
@@ -1155,7 +1155,6 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/lib/markdown.js"></script>
 <script type="module" src="/webui/lib/graph.js"></script>
 <script type="module" src="/webui/lib/board.js"></script>
-<script type="module" src="/webui/features/knowledge.js"></script>
 <script type="module" src="/webui/app.js"></script>
 </body>
 </html>

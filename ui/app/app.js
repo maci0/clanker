@@ -25,7 +25,6 @@ import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } fro
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
 import { renderTools as toolsRenderTools, showToolDetail as toolsShowDetail, toggleTool as toolsToggle, loadTools as toolsLoadTools, loadWorkflows as toolsLoadWorkflows, loadSkills as toolsLoadSkills, bindTools as toolsBind } from "./core/tools.js";
 import { goalStatusLabel } from "./core/goals.js";
-import { selectedKnowledge as kbSelected, loadKnowledge as kbLoad, bindKnowledge as kbBind } from "./features/knowledge.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
@@ -5058,6 +5057,25 @@ function loadModelsModule() {
   }
   return modelsModulePromise;
 }
+var knowledgeModulePromise = null;
+/* The Knowledge view is lazy like every other feature view, but its selected
+   collections are read by the run composer (the `knowledge:` field of each
+   /api/run body) and written by the #mention autocomplete — both of which can
+   happen without the view ever opening. This copy initializes from the same
+   localStorage key the module uses; when the module loads it re-reads that
+   key and we adopt its array, so the view's checkboxes and the composer keep
+   one live array instead of two that drift. */
+var kbSelected = (function () { try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch (_) { } return []; })();
+function loadKnowledgeModule() {
+  if (!knowledgeModulePromise) knowledgeModulePromise = import("./features/knowledge.js").then(function (m) {
+    kbSelected = m.selectedKnowledge;
+    return m;
+  }, function (err) {
+    knowledgeModulePromise = null; // a failed chunk import must be retryable
+    throw err;
+  });
+  return knowledgeModulePromise;
+}
 /* The command palette indexes board cards and goals, both of which live in
    lazy modules. The refs start as empty stand-ins and are swapped for the
    real module state the first time the board view loads — before any
@@ -5128,7 +5146,12 @@ var viewLoaders = {
     bindOnce("models", function () { loadModelsModule().then(function (m) { m.bindModels(); }); });
     return loadModelsModule().then(function (m) { return m.loadModelsView(); });
   },
-  knowledge: function(){ return kbLoad(); },
+  knowledge: function () {
+    return loadKnowledgeModule().then(function (m) {
+      bindOnce("knowledge", function () { m.bindKnowledge(); });
+      return m.loadKnowledge();
+    });
+  },
   prompts: function () {
     bindOnce("prompts", function () { loadPromptsModule().then(function (m) { m.bindPrompts(); }); });
     return Promise.all([loadPromptsModule().then(function (m) { return m.loadPromptsView(); }), toolsLoadWorkflows(), toolsLoadSkills()]);
@@ -5349,7 +5372,7 @@ function showView(name, focusPanel) {
     if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
     else pendingRunId = deepRun;
   }
-  if (pendingKnowledgeId && viewLoaded.knowledge) kbLoad();
+  if (pendingKnowledgeId && viewLoaded.knowledge) loadKnowledgeModule().then(function (m) { m.loadKnowledge(); }).catch(function () {});
   if (pendingBoardCard) {
     // need board loaded first — defer until after viewLoaders[board] would have fired, then poll
     var tries = 0;
@@ -6161,8 +6184,6 @@ document.addEventListener("keydown", function (e) {
   if (cardModalKeyHandler && cardModalKeyHandler(e)) return;
   if (paletteKeyHandle(e, { el: el, finishTextPrompt: finishTextPrompt, setRailOpen: setRailOpen })) return;
 });
-
-try { kbBind(); } catch(_){}
 
 // Settings surface wires the same header affordances (single source of truth)
 try {
