@@ -137,7 +137,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     // Call kanban_add via ck_tool
     const result = lib.toolCall("kanban_add", args_buf.items) catch |err| {
-        return lib.failErr(out, err, "posting the bug to the board");
+        var w = lib.writer(out);
+        var s = lib.json(&w);
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(false);
+        try s.objectField("error");
+        try s.write(@errorName(err));
+        try s.objectField("body");
+        try s.write(body_buf.items);
+        try s.endObject();
+        lib.commit(out, &w);
+        return;
     };
 
     // Forward the kanban_add response — it contains ok, board, and the new card id
