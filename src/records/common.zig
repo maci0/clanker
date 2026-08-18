@@ -93,6 +93,17 @@ pub fn request(arena: std.mem.Allocator, fields: []const Field) ![]const u8 {
     return w.written();
 }
 
+/// A usage mistake is an interactive diagnostic, not a runtime log. It gets
+/// the same `error: ...` shape on stderr that `cli.printUsageError` gives
+/// every other command, rather than the timestamped `[ERROR] ts_ms=...`
+/// record `log.log` writes: `clanker reports bogus` and `clanker preset bogus`
+/// are the same mistake and used to be answered in two different formats.
+/// The caller still returns `BadSubcommand`/`MissingArg`, which is what makes
+/// the exit status 2.
+pub fn usageError(comptime fmt: []const u8, args: anytype) void {
+    std.debug.print("error: " ++ fmt ++ "\n", args);
+}
+
 /// Runs the store's tool and returns its parsed answer, or `ToolFailed` with
 /// the reason already logged. `store` is the command's own name, which is what
 /// prefixes the log line.
@@ -222,7 +233,7 @@ pub fn openRecord(
     tool: Tool,
 ) ![]const u8 {
     const path = path_arg orelse {
-        log.log(.error_, "{s} open needs a path: clanker {s} open {s}", .{ store, store, example_path });
+        usageError("{s} open needs a path: clanker {s} open {s}", .{ store, store, example_path });
         return Error.MissingArg;
     };
     const input = try request(arena, &.{
@@ -247,11 +258,11 @@ pub fn appendRecord(
     tool: Tool,
 ) ![]const u8 {
     const path = path_arg orelse {
-        log.log(.error_, "{s} append needs a path and markdown content: clanker {s} append {s}", .{ store, store, example });
+        usageError("{s} append needs a path and markdown content: clanker {s} append {s}", .{ store, store, example });
         return Error.MissingArg;
     };
     const content = content_arg orelse {
-        log.log(.error_, "{s} append needs the markdown to add after the path", .{store});
+        usageError("{s} append needs the markdown to add after the path", .{store});
         return Error.MissingArg;
     };
     const input = try request(arena, &.{
@@ -275,15 +286,15 @@ pub fn updateRecord(
     tool: Tool,
 ) ![]const u8 {
     const path = path_arg orelse {
-        log.log(.error_, "{s} update needs a path, the exact old text, and its replacement", .{store});
+        usageError("{s} update needs a path, the exact old text, and its replacement", .{store});
         return Error.MissingArg;
     };
     const old = old_arg orelse {
-        log.log(.error_, "{s} update needs the exact current text to replace; copy it from `clanker {s} open {s}`", .{ store, store, path });
+        usageError("{s} update needs the exact current text to replace; copy it from `clanker {s} open {s}`", .{ store, store, path });
         return Error.MissingArg;
     };
     const new = new_arg orelse {
-        log.log(.error_, "{s} update needs replacement text after the old text (\"\" removes it)", .{store});
+        usageError("{s} update needs replacement text after the old text (\"\" removes it)", .{store});
         return Error.MissingArg;
     };
     const input = try request(arena, &.{
@@ -356,7 +367,7 @@ pub fn byPath(_: void, a: std.json.Value, b: std.json.Value) bool {
 }
 
 fn missingStatusArg(store: []const u8, usage: StatusUsage, what: []const u8) Error {
-    log.log(.error_, "{s} status needs {s}: clanker {s} status {s}", .{ store, what, store, usage.example });
+    usageError("{s} status needs {s}: clanker {s} status {s}", .{ store, what, store, usage.example });
     return Error.MissingArg;
 }
 

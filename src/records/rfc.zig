@@ -13,7 +13,6 @@
 //! the number to claim never has to be counted by hand.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
@@ -65,7 +64,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "recommend")) return recommend(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
-    log.log(.error_, "unknown rfc subcommand '{s}' (expected list, search, open, checklist, create, append, update, recommend or status)", .{sub});
+    common.usageError("unknown rfc subcommand '{s}' (expected list, search, open, checklist, create, append, update, recommend or status)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -78,7 +77,7 @@ fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
 
 fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const query = opts.arg1 orelse {
-        log.log(.error_, "rfc search needs a query: clanker rfc search \"http client\"", .{});
+        common.usageError("rfc search needs a query: clanker rfc search \"http client\"", .{});
         return Error.MissingArg;
     };
 
@@ -138,7 +137,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "rfc create needs {s}: clanker rfc create \"HTTP client for the proxy\" \"The proxy needs one client and the choice is not recorded\"", .{what});
+    common.usageError("rfc create needs {s}: clanker rfc create \"HTTP client for the proxy\" \"The proxy needs one client and the choice is not recorded\"", .{what});
     return Error.MissingArg;
 }
 
@@ -159,11 +158,11 @@ fn recommend(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const rationale = opts.arg4 orelse "";
 
     const confidence = std.fmt.parseInt(u8, std.mem.trim(u8, confidence_text, " \t"), 10) catch {
-        log.log(.error_, "rfc recommend needs a whole-number confidence from 0 to 10, not '{s}'", .{confidence_text});
+        common.usageError("rfc recommend needs a whole-number confidence from 0 to 10, not '{s}'", .{confidence_text});
         return Error.MissingArg;
     };
     if (confidence > 10) {
-        log.log(.error_, "rfc recommend confidence is 0 to 10, not {d}", .{confidence});
+        common.usageError("rfc recommend confidence is 0 to 10, not {d}", .{confidence});
         return Error.MissingArg;
     }
 
@@ -183,7 +182,7 @@ fn recommend(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingRecommendArg(what: []const u8) Error {
-    log.log(.error_, "rfc recommend needs {s}: clanker rfc recommend docs/rfcs/<name>.md \"Adopt option B\" 7 \"Why, and what would move it\"", .{what});
+    common.usageError("rfc recommend needs {s}: clanker rfc recommend docs/rfcs/<name>.md \"Adopt option B\" 7 \"Why, and what would move it\"", .{what});
     return Error.MissingArg;
 }
 

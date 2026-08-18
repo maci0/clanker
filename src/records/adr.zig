@@ -13,7 +13,6 @@
 //! finding it at all.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
@@ -59,7 +58,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
 
-    log.log(.error_, "unknown adr subcommand '{s}' (expected list, search, open, create, append, update or status)", .{sub});
+    common.usageError("unknown adr subcommand '{s}' (expected list, search, open, create, append, update or status)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -72,7 +71,7 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const query = opts.arg1 orelse {
-        log.log(.error_, "adr search needs a query: clanker adr search \"provider vtable\"", .{});
+        common.usageError("adr search needs a query: clanker adr search \"provider vtable\"", .{});
         return Error.MissingArg;
     };
 
@@ -142,7 +141,7 @@ pub fn renderCreated(arena: std.mem.Allocator, path: []const u8, rfc: []const u8
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "adr create needs {s}: clanker adr create \"<decision as the choice made>\" \"<context>\" \"<decision>\" \"<consequences>\" [rfc path]", .{what});
+    common.usageError("adr create needs {s}: clanker adr create \"<decision as the choice made>\" \"<context>\" \"<decision>\" \"<consequences>\" [rfc path]", .{what});
     return Error.MissingArg;
 }
 

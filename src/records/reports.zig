@@ -13,7 +13,6 @@
 //! this file is.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 
@@ -63,7 +62,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "rename")) return rename(io, arena, opts, tool);
 
-    log.log(.error_, "unknown reports subcommand '{s}' (expected list, search, open, create, append, update, status or rename)", .{sub});
+    common.usageError("unknown reports subcommand '{s}' (expected list, search, open, create, append, update, status or rename)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -78,7 +77,7 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const query = opts.arg1 orelse {
-        log.log(.error_, "reports search needs a query: clanker reports search \"worktree symlink\"", .{});
+        common.usageError("reports search needs a query: clanker reports search \"worktree symlink\"", .{});
         return Error.MissingArg;
     };
     const kind = opts.kind orelse "all";
@@ -129,11 +128,11 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 
 fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const path = opts.arg1 orelse {
-        log.log(.error_, "reports rename needs a path and the new filename stem: clanker reports rename docs/reports/bugs/<name>.md <new-slug>", .{});
+        common.usageError("reports rename needs a path and the new filename stem: clanker reports rename docs/reports/bugs/<name>.md <new-slug>", .{});
         return Error.MissingArg;
     };
     const slug = opts.arg2 orelse {
-        log.log(.error_, "reports rename needs the new filename stem after the path (report slugs start YYYY-MM-DD-)", .{});
+        common.usageError("reports rename needs the new filename stem after the path (report slugs start YYYY-MM-DD-)", .{});
         return Error.MissingArg;
     };
 
@@ -164,7 +163,7 @@ fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "reports create needs {s}: clanker reports create investigation 2026-08-16-worktree-symlink \"Worktree setup rejects a symlink\" \"TL;DR of what was seen\"", .{what});
+    common.usageError("reports create needs {s}: clanker reports create investigation 2026-08-16-worktree-symlink \"Worktree setup rejects a symlink\" \"TL;DR of what was seen\"", .{what});
     return Error.MissingArg;
 }
 

@@ -21,7 +21,6 @@
 //! where a snippet is most likely to be mistaken for a finding.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 const reports_cmd = @import("reports.zig");
@@ -75,7 +74,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "update")) return update(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
-    log.log(.error_, "unknown research subcommand '{s}' (expected list, plan, sweep, search, open, create, append, update or status)", .{sub});
+    common.usageError("unknown research subcommand '{s}' (expected list, plan, sweep, search, open, create, append, update or status)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -88,7 +87,7 @@ fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
 
 fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const query = opts.arg1 orelse {
-        log.log(.error_, "research search needs a query: clanker research search \"embedded kv\"", .{});
+        common.usageError("research search needs a query: clanker research search \"embedded kv\"", .{});
         return Error.MissingArg;
     };
 
@@ -108,7 +107,7 @@ fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 
 fn plan(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const topic = opts.arg1 orelse {
-        log.log(.error_, "research plan needs a topic: clanker research plan \"embedded key-value stores\" \"which one fits a single-writer sidecar?\"", .{});
+        common.usageError("research plan needs a topic: clanker research plan \"embedded key-value stores\" \"which one fits a single-writer sidecar?\"", .{});
         return Error.MissingArg;
     };
     const input = try common.request(arena, &.{
@@ -123,7 +122,7 @@ fn plan(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 
 fn sweep(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const topic = opts.arg1 orelse {
-        log.log(.error_, "research sweep needs a topic: clanker research sweep \"embedded key-value stores\" deep", .{});
+        common.usageError("research sweep needs a topic: clanker research sweep \"embedded key-value stores\" deep", .{});
         return Error.MissingArg;
     };
     const input = try common.request(arena, &.{
@@ -165,7 +164,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "research create needs {s}: clanker research create embedded-kv \"Embedded key-value stores\" \"Which one fits a single-writer sidecar?\"", .{what});
+    common.usageError("research create needs {s}: clanker research create embedded-kv \"Embedded key-value stores\" \"Which one fits a single-writer sidecar?\"", .{what});
     return Error.MissingArg;
 }
 

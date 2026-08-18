@@ -12,7 +12,6 @@
 //! find them.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
@@ -60,7 +59,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
 
-    log.log(.error_, "unknown prd subcommand '{s}' (expected list, search, open, checklist, create, append, update or status)", .{sub});
+    common.usageError("unknown prd subcommand '{s}' (expected list, search, open, checklist, create, append, update or status)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -73,7 +72,7 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const query = opts.arg1 orelse {
-        log.log(.error_, "prd search needs a query: clanker prd search \"kanban board\"", .{});
+        common.usageError("prd search needs a query: clanker prd search \"kanban board\"", .{});
         return Error.MissingArg;
     };
 
@@ -146,7 +145,7 @@ pub fn renderCreated(arena: std.mem.Allocator, path: []const u8, status: []const
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "prd create needs {s}: clanker prd create \"Scheduled runs\" \"<what breaks without it>\" \"1. ...\" [draft|in_progress|shipped]", .{what});
+    common.usageError("prd create needs {s}: clanker prd create \"Scheduled runs\" \"<what breaks without it>\" \"1. ...\" [draft|in_progress|shipped]", .{what});
     return Error.MissingArg;
 }
 

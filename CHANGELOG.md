@@ -27,6 +27,38 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker sessions` listed nothing and exited 1 with "query must be at least 3
+  characters". The listing reaches the `sessions` guest through the CLI's
+  generic passthrough, which always sends `{"args":"<argv tail>"}` — empty for
+  a bare `clanker sessions` — and the guest read that empty string as a search
+  query. A blank `q`/`args` is no query now; the three-character floor still
+  applies to a query the caller actually typed.
+
+- `clanker session search <2-char query>` printed its complaint on stdout and
+  exited 0, so a script could not tell a rejected query from a search that
+  matched nothing, and read the diagnostic as a result row. It is a usage error
+  on stderr with exit 2, like every other rejected invocation.
+
+- Every `clanker preset` failure exited 0: an unknown subcommand, a missing
+  name, an invalid name, a preset that does not exist and one that already
+  exists all printed `error: ...` and then reported success. Usage mistakes
+  exit 2 and the two not-found cases exit 1, matching `clanker workflow`.
+
+- `clanker help --help` wrote the command list to stderr while every other
+  spelling of `--help` writes it to stdout, so that one form could not be
+  piped into a pager.
+
+- `NO_COLOR=` (present but empty) suppressed colour in `clanker run` output and
+  the `clanker serve` banner while the REPL kept its theme. https://no-color.org
+  says present *and non-empty*; one predicate (`src/util/no_color.zig`) now
+  answers for all three.
+
+- The five record stores (`reports`, `research`, `rfc`, `adr`, `prd`) reported
+  usage mistakes as timestamped `[ERROR] ts_ms=... ` log records rather than the
+  `error: ...` diagnostic every other command prints, so `clanker reports bogus`
+  and `clanker preset bogus` — the same mistake — came back in two formats.
+  Tool failures stay log records; they are runtime events, not usage.
+
 - The web UI's elevation is a token again. Three rungs of shadow existed but
   only two had names, so a plate seated on the backplane was retyped as a
   literal at sixteen sites in five recipes (`0 1px 2px`/`3px`/`4px` between
