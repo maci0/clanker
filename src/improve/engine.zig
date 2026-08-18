@@ -1837,7 +1837,7 @@ pub const Engine = struct {
         // First read of the lib dir shells out to `zig env`; this path only
         // runs when a patch failed to compile, which is why the lookup is
         // lazy rather than paid at startup by every clanker invocation.
-        const lib_dir = sandbox_host.zigLibDir(self.ctx.io);
+        const lib_dir = sandbox_host.zigLibDir(self.ctx.io, self.ctx.environ_map);
         if (lib_dir.len == 0) return "";
         var out: std.ArrayList(u8) = .empty;
         var seen: [4][]const u8 = undefined;
@@ -1909,7 +1909,7 @@ pub const Engine = struct {
 
     /// Up to 12 lines mentioning `sym` in the standard library source.
     fn stdGrep(self: *Engine, sym: []const u8) ?[]const u8 {
-        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zigLibDir(self.ctx.io)}) catch return null;
+        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zigLibDir(self.ctx.io, self.ctx.environ_map)}) catch return null;
         defer self.ctx.gpa.free(std_dir);
         const pattern = std.fmt.allocPrint(self.ctx.gpa, "(pub (fn|const|var) {s}\\b|\\b{s} *[:=])", .{ sym, sym }) catch return null;
         defer self.ctx.gpa.free(pattern);
@@ -4344,7 +4344,7 @@ test "a compile error about a std signature comes back with the declaration" {
 
     // Without a lib dir there is nothing to read, and saying so beats a
     // confusing empty result.
-    const saved = sandbox_host.zigLibDir(ctx.io);
+    const saved = sandbox_host.zigLibDir(ctx.io, ctx.environ_map);
     if (saved.len == 0) return error.SkipZigTest;
 
     const err = try std.fmt.allocPrint(arena,
