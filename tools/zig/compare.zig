@@ -123,7 +123,6 @@ fn newId(prompt: []const u8) ![]const u8 {
 
 // -------------------------------------------------------------- config view
 
-const HarnessProvider = lib.HarnessProvider;
 const HarnessConfig = lib.HarnessConfig;
 
 fn harness() HarnessConfig {

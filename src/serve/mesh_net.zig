@@ -260,9 +260,6 @@ pub fn parseHostPort(s: []const u8) !struct { host: []const u8, port: u16 } {
     return .{ .host = s[0..colon], .port = std.fmt.parseInt(u16, s[colon + 1 ..], 10) catch return error.BadAddress };
 }
 
-const JoinFields = struct { id: []const u8 = "", name: []const u8 = "" };
-const ChatFields = struct { room: []const u8 = "", from: []const u8 = "", text: []const u8 = "", id: []const u8 = "", ts: i64 = 0 };
-
 fn payloadObj(arena: std.mem.Allocator, raw: []const u8) !std.json.ObjectMap {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{});
     const obj = switch (parsed) {

@@ -244,7 +244,7 @@ fn harvestShas(arena: std.mem.Allocator, refs: *std.ArrayList([]const u8), text:
         var p = rest[at + marker.len ..];
         while (true) {
             var n: usize = 0;
-            while (n < p.len and isHexChar(p[n])) n += 1;
+            while (n < p.len and std.ascii.isHex(p[n])) n += 1;
             if (n < 7) break;
             try refs.append(arena, p[0..n]);
             p = p[n..];
@@ -255,13 +255,9 @@ fn harvestShas(arena: std.mem.Allocator, refs: *std.ArrayList([]const u8), text:
     }
 }
 
-fn isHexChar(ch: u8) bool {
-    return (ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f') or (ch >= 'A' and ch <= 'F');
-}
-
 fn isHexRun(s: []const u8) bool {
     for (s) |ch| {
-        if (!isHexChar(ch)) return false;
+        if (!std.ascii.isHex(ch)) return false;
     }
     return true;
 }

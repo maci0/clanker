@@ -179,10 +179,10 @@ pub fn writeDisabledJson(arena: std.mem.Allocator, disabled: []const []const u8)
 
 pub fn matchesQuery(query: []const u8, name: []const u8, title: []const u8, description: []const u8, body: []const u8) bool {
     if (query.len == 0) return true;
-    return containsIgnoreCase(name, query) or
-        containsIgnoreCase(title, query) or
-        containsIgnoreCase(description, query) or
-        containsIgnoreCase(body, query);
+    return std.ascii.findIgnoreCase(name, query) != null or
+        std.ascii.findIgnoreCase(title, query) != null or
+        std.ascii.findIgnoreCase(description, query) != null or
+        std.ascii.findIgnoreCase(body, query) != null;
 }
 
 pub fn nameLessThan(_: void, a: []const u8, b: []const u8) bool {
@@ -195,24 +195,6 @@ pub fn clipTo(s: []const u8, max: usize) []const u8 {
     var end = max;
     while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
     return s[0..end];
-}
-
-fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
-    if (needle.len == 0) return true;
-    if (hay.len < needle.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= hay.len) : (i += 1) {
-        if (eqlIgnoreCase(hay[i .. i + needle.len], needle)) return true;
-    }
-    return false;
-}
-
-fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
-    if (a.len != b.len) return false;
-    for (a, b) |x, y| {
-        if (std.ascii.toLower(x) != std.ascii.toLower(y)) return false;
-    }
-    return true;
 }
 
 test "isSkillFile matches the prompt's discovery" {

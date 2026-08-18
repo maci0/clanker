@@ -1022,18 +1022,6 @@ function detailSection(parent, title) {
   return box;
 }
 
-function fieldRow(parent, label, control) {
-  var row = document.createElement("div");
-  row.className = "detail-row";
-  var l = document.createElement("label");
-  l.textContent = label;
-  l.htmlFor = control.id;
-  row.appendChild(l);
-  row.appendChild(control);
-  parent.appendChild(row);
-  return row;
-}
-
 function input(id, type, value, placeholder) {
   var i = document.createElement("input");
   i.type = type;

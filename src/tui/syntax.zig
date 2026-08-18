@@ -170,8 +170,6 @@ fn inList(list: []const []const u8, word: []const u8) bool {
     return false;
 }
 
-const strippedControl = sanitize.isControl;
-
 /// Mutable highlighter state carried across `highlightLine` calls: whether
 /// we are inside an unterminated string or block comment. `lang` is chosen
 /// once per fenced block from the fence's language tag.

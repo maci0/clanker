@@ -924,9 +924,9 @@ fn aliasOf(cfg: *const config.Config, name: []const u8) ?[]const u8 {
 }
 
 fn claudeSizeKey(name: []const u8) ?[]const u8 {
-    if (containsIgnoreCase(name, "haiku")) return "haiku";
-    if (containsIgnoreCase(name, "sonnet")) return "sonnet";
-    if (containsIgnoreCase(name, "opus")) return "opus";
+    if (std.ascii.findIgnoreCase(name, "haiku") != null) return "haiku";
+    if (std.ascii.findIgnoreCase(name, "sonnet") != null) return "sonnet";
+    if (std.ascii.findIgnoreCase(name, "opus") != null) return "opus";
     return null;
 }
 
@@ -940,15 +940,6 @@ fn claudeSizeFallback(cfg: *const config.Config, family: ?Family, name: []const 
         if (try composite(cfg, family, dest)) |r| return r;
     }
     return uniqueProvider(cfg, family) catch null;
-}
-
-fn containsIgnoreCase(hay: []const u8, needle: []const u8) bool {
-    if (needle.len > hay.len) return false;
-    var i: usize = 0;
-    while (i + needle.len <= hay.len) : (i += 1) {
-        if (std.ascii.eqlIgnoreCase(hay[i..][0..needle.len], needle)) return true;
-    }
-    return false;
 }
 
 fn uniqueProvider(cfg: *const config.Config, family: ?Family) LookupError!Resolved {

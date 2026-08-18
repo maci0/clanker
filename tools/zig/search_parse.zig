@@ -102,14 +102,6 @@ fn extractAttr(comptime name: []const u8, tag: []const u8) ?[]const u8 {
     return tag[v..e];
 }
 
-fn trim(s: []const u8) []const u8 {
-    var a: usize = 0;
-    while (a < s.len and (s[a] == ' ' or s[a] == '\t' or s[a] == '\n' or s[a] == '\r')) a += 1;
-    var b = s.len;
-    while (b > a and (s[b - 1] == ' ' or s[b - 1] == '\t' or s[b - 1] == '\n' or s[b - 1] == '\r')) b -= 1;
-    return s[a..b];
-}
-
 /// Parses DuckDuckGo Lite HTML. Result rows are located by their
 /// `rel="nofollow"` title anchors; the snippet is the nearest following
 /// `result-snippet` cell. Malformed rows are skipped. Returns the number of
@@ -125,7 +117,7 @@ pub fn parseDdgLite(html: []const u8, out: []WebResult, max: usize) usize {
         if (tag_end < nf) break;
 
         const href = extractAttr("href", html[a_open..tag_end]) orelse "";
-        const title = trim(std.mem.trim(u8, html[tag_end + 1 .. indexOfPos(html, tag_end, "</a>") orelse tag_end], " "));
+        const title = std.mem.trim(u8, html[tag_end + 1 .. indexOfPos(html, tag_end, "</a>") orelse tag_end], " \t\n\r");
 
         // Snippet: nearest result-snippet cell after the title within the row.
         var snippet: []const u8 = "";

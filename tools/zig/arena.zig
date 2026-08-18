@@ -166,9 +166,6 @@ fn labelFor(i: usize, n: usize, provider: []const u8) []const u8 {
 
 // ------------------------------------------------------------- judge picking
 
-const HarnessProvider = lib.HarnessProvider;
-const HarnessConfig = lib.HarnessConfig;
-
 /// Resolves a combatant's provider to the name a judge has to differ from: an
 /// unset provider is the configured default, and a judge sharing that is not a
 /// third party.
