@@ -1449,9 +1449,14 @@ pub fn commandName(c: Command) []const u8 {
 
 /// The whole command list, grouped. Rendered from `specs` so a new command
 /// cannot be added without appearing here.
+///
+/// Its only caller is the help path (`printCommandHelp` for a command with no
+/// spec of its own, i.e. `clanker help --help`), so this is requested output:
+/// stdout, the same stream `clanker --help` uses. It used to go to stderr,
+/// which made that one spelling of --help the only one a pipe could not read.
 fn printUsage(io: std.Io) void {
     var buf: [8192]u8 = undefined;
-    writeStdErr(io, renderUsage(&buf)) catch {};
+    writeStdOut(io, renderUsage(&buf)) catch {};
 }
 
 pub fn printUsageHint(io: std.Io) void {

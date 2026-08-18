@@ -118,6 +118,11 @@ fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
     list.append(lib.alloc, .{ .id = id, .title = title, .content = content, .created = t, .updated = t }) catch return lib.fail(out, "alloc");
     saveAll(list.items) catch return lib.fail(out, "save failed");
 
+    try okId(out, id);
+}
+
+// Create and update answer alike: the id the caller now holds.
+fn okId(out: *lib.Out, id: []const u8) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -149,15 +154,7 @@ fn actionUpdate(obj: std.json.Value, out: *lib.Out) !void {
     if (!found) return lib.fail(out, "no such prompt");
     saveAll(all) catch return lib.fail(out, "save failed");
 
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("id");
-    try s.write(id);
-    try s.endObject();
-    lib.commit(out, &w);
+    try okId(out, id);
 }
 
 fn actionDelete(obj: std.json.Value, out: *lib.Out) !void {
