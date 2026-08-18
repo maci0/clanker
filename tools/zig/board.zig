@@ -446,7 +446,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const card = cards.get(list, req.id).?;
         if (!cards.hasSubtask(card, sid) or !cards.hasSubtask(card, on))
             return lib.fail(out, "checklist dependency must name two items on this card");
-        if (!(req.off orelse false) and cards.checklistReaches(card, on, sid, 0))
+        if (!(req.off orelse false) and try cards.checklistReaches(lib.alloc, card, on, sid))
             return lib.fail(out, "checklist dependency would create a cycle");
         break :blk .{ .action = "subtask_depend", .todo = req.id, .subtask = sid, .on = on, .off = req.off orelse false };
     } else if (std.mem.eql(u8, op, "depend_add") or std.mem.eql(u8, op, "depend_remove")) blk: {

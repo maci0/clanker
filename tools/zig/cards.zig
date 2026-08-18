@@ -767,13 +767,46 @@ pub fn checklistComplete(card: *const Card) bool {
 
 /// Whether following `from`'s depends_on edges can reach `sought`. Used to
 /// refuse a new edge that would close a cycle.
-pub fn checklistReaches(card: *const Card, from: []const u8, sought: []const u8, depth: usize) bool {
+///
+/// Iterative, with a visited slot per item. The recursive walk this replaces
+/// re-entered a node once per distinct path leading to it, so a checklist
+/// where items share dependencies -- k diamonds chained, which an operator
+/// builds by hand with 2k `subtask_depend` calls -- cost 2^k walks. Every
+/// `subtask_depend` runs this in the wasm interpreter, so the guest simply
+/// stopped answering. Visiting each item once makes it O(items * edges).
+pub fn checklistReaches(
+    alloc: std.mem.Allocator,
+    card: *const Card,
+    from: []const u8,
+    sought: []const u8,
+) !bool {
     if (std.mem.eql(u8, from, sought)) return true;
-    if (depth >= card.subtasks.len) return false;
-    for (card.subtasks) |sub| {
-        if (!std.mem.eql(u8, sub.id, from)) continue;
-        for (sub.depends_on) |next| {
-            if (checklistReaches(card, next, sought, depth + 1)) return true;
+    const n = card.subtasks.len;
+    if (n == 0) return false;
+    const visited = try alloc.alloc(bool, n);
+    defer alloc.free(visited);
+    @memset(visited, false);
+    // Each item is pushed at most once (the push is what sets `visited`), so
+    // one slot per item is the whole stack this walk can ever need.
+    const stack = try alloc.alloc(usize, n);
+    defer alloc.free(stack);
+    var top: usize = 0;
+    for (card.subtasks, 0..) |sub, i| {
+        if (visited[i] or !std.mem.eql(u8, sub.id, from)) continue;
+        visited[i] = true;
+        stack[top] = i;
+        top += 1;
+    }
+    while (top > 0) {
+        top -= 1;
+        for (card.subtasks[stack[top]].depends_on) |next| {
+            if (std.mem.eql(u8, next, sought)) return true;
+            for (card.subtasks, 0..) |sub, j| {
+                if (visited[j] or !std.mem.eql(u8, sub.id, next)) continue;
+                visited[j] = true;
+                stack[top] = j;
+                top += 1;
+            }
         }
     }
     return false;
@@ -1189,10 +1222,48 @@ test "done requires every checklist node and dependency cycles are detectable" {
     };
     const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
     try std.testing.expect(!checklistComplete(&card));
-    try std.testing.expect(checklistReaches(&card, "a", "b", 0));
-    try std.testing.expect(!checklistReaches(&card, "b", "a", 0));
+    try std.testing.expect(try checklistReaches(t_alloc, &card, "a", "b"));
+    try std.testing.expect(!try checklistReaches(t_alloc, &card, "b", "a"));
     try std.testing.expect(!checklistItemReady(&card, "a"));
     try std.testing.expect(checklistItemReady(&card, "b"));
+}
+
+test "checklistReaches walks a diamond chain instead of every path through it" {
+    // Item i depends on both i+1 and i+2: 2^(n/2) distinct paths from the
+    // head to the tail, and the recursive walk took all of them. 60 levels is
+    // unreachable that way and instant with a visited set. The assertion that
+    // matters is that this test terminates at all.
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const n = 60;
+    var subs: std.ArrayListUnmanaged(Subtask) = .empty;
+    for (0..n) |i| {
+        var deps: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (i + 1 < n) try deps.append(arena, try std.fmt.allocPrint(arena, "s{d}", .{i + 1}));
+        if (i + 2 < n) try deps.append(arena, try std.fmt.allocPrint(arena, "s{d}", .{i + 2}));
+        try subs.append(arena, .{
+            .id = try std.fmt.allocPrint(arena, "s{d}", .{i}),
+            .text = "item",
+            .depends_on = deps.items,
+        });
+    }
+    const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = subs.items };
+    try std.testing.expect(try checklistReaches(t_alloc, &card, "s0", "s59"));
+    try std.testing.expect(!try checklistReaches(t_alloc, &card, "s59", "s0"));
+}
+
+test "checklistReaches terminates on a dependency graph that is already cyclic" {
+    // The old walk leaned on a depth counter for this; the visited set is
+    // what stops it now, and a pre-existing cycle is reachable through a
+    // hand-edited room log.
+    const subs = [_]Subtask{
+        .{ .id = "a", .text = "a", .depends_on = &.{"b"} },
+        .{ .id = "b", .text = "b", .depends_on = &.{"a"} },
+    };
+    const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
+    try std.testing.expect(try checklistReaches(t_alloc, &card, "a", "b"));
+    try std.testing.expect(!try checklistReaches(t_alloc, &card, "a", "missing"));
 }
 
 test "hasSubtask names only items actually on the card" {
