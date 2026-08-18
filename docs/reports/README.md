@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [zig_std returns not-found: zigLibDir runs zig env without the live environment](bugs/2026-08-19-zig-std-missing-environ-map.md) — Resolved
+
 - [improve-self hangs when a provider goes quiet: proposal/plan LLM calls have no deadline](bugs/2026-08-18-improve-engine-llm-calls-have-no-deadline.md) — Resolved
 
 - [improve-self staging tests fail on peers.notifications unreadable-log test](bugs/2026-08-18-improve-self-notifications-test-assertion.md) — Resolved

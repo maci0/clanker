@@ -69,7 +69,7 @@ var zig_lib_dir_mutex: std.atomic.Mutex = .unlocked;
 var zig_lib_dir_resolved: bool = false;
 pub var zig_lib_dir: []const u8 = "";
 
-pub fn zigLibDir(io: std.Io) []const u8 {
+pub fn zigLibDir(io: std.Io, environ_map: *std.process.Environ.Map) []const u8 {
     while (!zig_lib_dir_mutex.tryLock()) std.Thread.yield() catch {};
     defer zig_lib_dir_mutex.unlock();
     if (zig_lib_dir_resolved) return zig_lib_dir;
@@ -78,7 +78,11 @@ pub fn zigLibDir(io: std.Io) []const u8 {
     // copied into `zig_lib_dir_buf`, so no caller allocator has to outlive it.
     const gpa = std.heap.page_allocator;
     const argv = [_][]const u8{ "zig", "env" };
-    const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return zig_lib_dir;
+    // Without an explicit `.environ_map` the child inherits the Io instance's
+    // stale memoized environment (no HOME), and `zig env` then fails with
+    // "unable to resolve zig cache directory: AppDataDirUnavailable" even
+    // though HOME is set in the live process env. Same fix ckExec applies.
+    const res = std.process.run(gpa, io, .{ .argv = &argv, .environ_map = environ_map }) catch return zig_lib_dir;
     defer gpa.free(res.stdout);
     defer gpa.free(res.stderr);
     // zig env prints Zig struct syntax: .lib_dir = "/path/to/lib"
@@ -4250,7 +4254,7 @@ pub fn ckStdApi(caller: *zwasm.Caller, sym_ptr: u32, sym_len: u32) u32 {
     if (!std.mem.eql(u8, h.sandbox.tool_self_name, "zig_std")) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
     const sym = sliceOf(bytes, sym_ptr, sym_len) orelse return Err.invalid;
-    const lib_dir = zigLibDir(h.sandbox.io);
+    const lib_dir = zigLibDir(h.sandbox.io, h.sandbox.environ_map);
     if (sym.len == 0 or lib_dir.len == 0) return Err.not_found;
 
     // rg is on PATH for interactive use but not for the sandbox host, which
