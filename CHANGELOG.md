@@ -7,6 +7,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI's indicator lamps are one recipe again. The dome the sheet's
+  header calls "one boldness, spent in one place" had been retyped by hand at
+  five call sites and had drifted to two highlight opacities, three glow
+  radii, and a Health-plugin variant that mixed against `--paper` with no glow
+  at all; the Arena's lamp had given up and become a flat dot in an amber
+  (`#e5b54a`) that belonged to no palette. The dome is now `--lamp-dome` /
+  `--lamp-ring` / `--lamp-glow`, coloured by `color:` at the element, and
+  every lamp reads it. `ui/app/design-tokens.test.mjs` fails on a retype.
+- Spacing in the web UI names its token. 155 declarations across `app.css`,
+  `views.css` and the Health plugin spelled a rung of the scale as its number
+  (`gap: 0.4rem` for `var(--space-2)`), so a change to the scale would have
+  reached only two thirds of the places that meant it. Rendering is
+  unchanged; the values are identical. Optical values between rungs stay
+  literals, and `ui/app/design-tokens.test.mjs` pins the difference.
+- The favicon is painted from the cabinet palette. The mark draws the
+  identity's own shapes (panel plate, machined bezel, lit lamp, legend plate)
+  but did it in GitHub-dark's chrome: a `#0d1117` plate and a `#555c67` slate
+  bezel, both cool against the warm RAL greys, beside a lamp green that was
+  already the `--ok` token. `ui/app/core/layout.test.mjs` now checks every
+  colour in the mark against the palette the sheet declares, the same guard
+  that purged the borrowed palette from the code wells.
+
 - The web UI's Models view announces each panel's outcome on its own status
   line (`#models-status`, `#models-live-status`, `#models-catalog-status`)
   and writes failures too. One shared `aria-live` line was only ever written

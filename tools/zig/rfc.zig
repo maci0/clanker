@@ -463,7 +463,7 @@ fn append(obj: std.json.Value, out: *lib.Out) !void {
         error.Mismatch => return lib.fail(out, "the RFC changed while appending; open it again and retry against the current text"),
         else => return lib.failErr(out, err, "appending to the RFC"),
     };
-    return mutationResult(out, "append", path);
+    return records_grep.mutationResult(out, "append", path);
 }
 
 fn update(obj: std.json.Value, out: *lib.Out) !void {
@@ -489,7 +489,7 @@ fn update(obj: std.json.Value, out: *lib.Out) !void {
         error.Mismatch => return lib.fail(out, "the RFC changed while updating; open it again and retry against the current text"),
         else => return lib.failErr(out, err, "updating the RFC"),
     };
-    return mutationResult(out, "update", path);
+    return records_grep.mutationResult(out, "update", path);
 }
 
 /// Writes the Recommendation section as a whole. The confidence is a required,
@@ -622,18 +622,4 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
 /// back off an RFC cannot drift apart.
 fn labelFor(wanted: []const u8) ?[]const u8 {
     return doc.labelFrom(wanted, &statuses);
-}
-
-fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("action");
-    try s.write(action);
-    try s.objectField("path");
-    try s.write(path);
-    try s.endObject();
-    lib.commit(out, &w);
 }

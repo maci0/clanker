@@ -97,3 +97,35 @@ test("Rooms log fills the pane instead of a leftover 24rem box", function () {
   assert.match(body, /flex:\s*1/);
   assert.doesNotMatch(body, /max-height:\s*24rem/);
 });
+
+// The favicon is the identity in 32 pixels: a panel plate, a machined bezel,
+// a lit lamp dome, a legend plate. It was drawn from the cabinet's shapes but
+// painted in GitHub-dark's chrome (#0d1117 plate, #555c67 slate bezel) beside
+// a green that was already the --ok token, so the one asset that carries the
+// mark used two greys the palette does not contain and that run cool against
+// its warm RAL family. The code wells were purged of the same borrowed
+// palette; this pins the mark to it too.
+test("the favicon mark is painted from the cabinet palette", function () {
+  const html = readFileSync(join(here, "..", "index.html"), "utf8");
+  const icon = /<link rel="icon" href="([^"]+)"/.exec(html);
+  assert.ok(icon, "missing favicon");
+  const svg = decodeURIComponent(icon[1]);
+  assert.doesNotMatch(svg, GITHUB_DARK_WELL, "the mark must not carry GitHub-dark chrome");
+
+  // Every fill and stroke in the mark is a colour the sheet declares, so the
+  // mark cannot drift away from the palette one hex at a time.
+  const root = css.match(/:root\s*\{([\s\S]*?)\n\}/)[1];
+  const dark = css.match(/:root:not\(\[data-theme\]\)\s*\{([\s\S]*?)\n  \}/);
+  const declared = new Set(
+    [...root.matchAll(/#[0-9a-fA-F]{6}\b/g), ...(dark ? dark[1].matchAll(/#[0-9a-fA-F]{6}\b/g) : [])]
+      .map((m) => m[0].toLowerCase()),
+  );
+  // The dome's specular highlight; the same white the --lamp-dome token uses.
+  declared.add("#ffffff");
+  // A warm grey between --border and --fg-muted: the engraved bezel and
+  // legend plate, which need to read against the plate at 16px.
+  declared.add("#5c625b");
+  for (const m of svg.matchAll(/#[0-9a-fA-F]{6}\b/g)) {
+    assert.ok(declared.has(m[0].toLowerCase()), `mark uses ${m[0]}, which the palette does not declare`);
+  }
+});

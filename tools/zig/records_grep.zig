@@ -203,3 +203,20 @@ pub fn nextRecord(out: *lib.Out, dir: []const u8, slug: []const u8) !?NextRecord
         .path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}-{s}.md", .{ dir, number_text, slug }),
     };
 }
+
+/// The `{"ok":true,"action":...,"path":...}` reply every record store returns
+/// from a write. All five stores answered in exactly this shape from their own
+/// copy of this function; one copy keeps the wire contract single-sourced.
+pub fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write(action);
+    try s.objectField("path");
+    try s.write(path);
+    try s.endObject();
+    lib.commit(out, &w);
+}

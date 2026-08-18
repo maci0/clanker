@@ -205,7 +205,7 @@ fn append(obj: std.json.Value, out: *lib.Out) !void {
         error.Mismatch => return lib.fail(out, "the record changed while appending; open it again and retry against the current text"),
         else => return lib.failErr(out, err, "appending to the report or runbook"),
     };
-    return mutationResult(out, "append", path);
+    return records_grep.mutationResult(out, "append", path);
 }
 
 /// Replace one exact piece of a report or runbook. Requiring a unique old value
@@ -237,7 +237,7 @@ fn update(obj: std.json.Value, out: *lib.Out) !void {
         error.Mismatch => return lib.fail(out, "the record changed while updating; open it again and retry against the current text"),
         else => return lib.failErr(out, err, "updating the report or runbook"),
     };
-    return mutationResult(out, "update", path);
+    return records_grep.mutationResult(out, "update", path);
 }
 
 /// Moves a record through its lifecycle: the `## Status` line and the index
@@ -488,20 +488,6 @@ fn setInventoryStatus(kind: []const u8, link: []const u8, label: []const u8) !bo
     defer updated.deinit();
     if (!try doc.setInventoryStatus(&updated.writer, idx.text, start_marker, end_marker, link, label)) return false;
     return records_grep.writeIndex(reports_dir ++ "/README.md", idx, updated.written());
-}
-
-fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("action");
-    try s.write(action);
-    try s.objectField("path");
-    try s.write(path);
-    try s.endObject();
-    lib.commit(out, &w);
 }
 
 const Target = struct {

@@ -31,7 +31,7 @@
   font-size: var(--step--1);
 }
 .files-crumb {
-  padding: 0.1rem 0.25rem;
+  padding: 0.1rem var(--space-1);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;

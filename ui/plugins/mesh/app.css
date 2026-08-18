@@ -49,8 +49,8 @@
 
 .mesh-member-id { font-size: var(--step-0); }
 
-.mesh-up[data-state="ok"] { color: var(--ok, #2fae4d); }
-.mesh-up[data-state="down"] { color: var(--danger, #d33); }
+.mesh-up[data-state="ok"] { color: var(--ok); }
+.mesh-up[data-state="down"] { color: var(--danger); }
 
 .mesh-join-form {
   display: flex;

@@ -96,6 +96,72 @@ test("the scale the sheets reference is the scale app.css declares", () => {
 // they sit next to come from RAL. These tests pin both halves: the hue is a
 // token, and the ink paired with it is legible.
 
+// Spacing is the axis with the most drift, because unlike a radius a stray
+// `gap: 0.4rem` is not merely off-scale — it is a rung of the scale, spelled
+// as a number. 154 of them had been retyped that way across the two sheets,
+// so the rhythm was a coincidence rather than a system and a change to
+// --space-2 would have reached a third of the places that meant it.
+//
+// Only the exact matches are pinned. An optical value that lands between
+// rungs (a 1px hairline, a -0.4rem nudge, a 1.15rem lamp offset) is a real
+// decision and stays a literal; what cannot stay is a token's own value
+// written out longhand.
+const SPACE_STEPS = {
+  "0.25rem": "--space-1", "0.4rem": "--space-2", "0.6rem": "--space-3",
+  "0.9rem": "--space-4", "1.4rem": "--space-5", "2.2rem": "--space-6", "3.4rem": "--space-7",
+};
+
+test("spacing that lands on a rung of the scale is written as the token", () => {
+  const props = "gap|row-gap|column-gap|padding|margin";
+  const re = new RegExp(`(^|[;{\\s])(?:${props})(?:-(?:top|right|bottom|left|block|inline))?\\s*:\\s*([^;}]+)`, "g");
+  const strays = [];
+  for (const [name, css] of sheets()) {
+    for (const m of css.matchAll(re)) {
+      for (const part of m[2].split(/[\s(,]+/)) {
+        const token = SPACE_STEPS[part];
+        // A negative offset has no token; it is a nudge off the rhythm.
+        if (!token || /-$/.test(m[2].slice(0, m[2].indexOf(part)))) continue;
+        strays.push(`${name}:${css.slice(0, m.index).split("\n").length}  ${part} is var(${token})`);
+      }
+    }
+  }
+  assert.deepEqual(strays, [], `spacing on the scale must name its token:\n${strays.join("\n")}`);
+});
+
+test("the space scale the sheets reference is the scale app.css declares", () => {
+  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  for (const token of Object.values(SPACE_STEPS)) {
+    assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
+  }
+});
+
+// The lamp is the one boldness the sheet's header says it spends, and it was
+// the axis with no token at all: the dome was retyped by hand at five call
+// sites and had already drifted to two highlight opacities (0.8 vs 0.85),
+// three glow radii (none/6px/7px), and a health-plugin variant that mixed
+// against --paper with no glow. A sixth lamp — the arena's — gave up and
+// became a flat dot in an amber (#e5b54a) that belonged to no palette. A
+// signature that every new instance retypes is not a signature.
+
+test("the lamp dome is a token, never retyped", () => {
+  const strays = [];
+  for (const [name, css] of sheets()) {
+    // Blank out the token's own declaration; every dome left is a retype.
+    const rest = css.replace(/--lamp-dome\s*:[^;]*;/g, "");
+    for (const m of rest.matchAll(/radial-gradient\(\s*circle at 35% 30%/g)) {
+      strays.push(`${name}:${rest.slice(0, m.index).split("\n").length}  hand-typed lamp dome (use var(--lamp-dome))`);
+    }
+  }
+  assert.deepEqual(strays, [], `the lamp dome is --lamp-dome:\n${strays.join("\n")}`);
+});
+
+test("the lamp tokens the sheets reference are declared", () => {
+  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  for (const token of ["--lamp-dome", "--lamp-ring", "--lamp-glow"]) {
+    assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
+  }
+});
+
 const CARD_HUES = ["green", "yellow", "orange", "red", "purple", "blue", "sky", "pink", "lime", "black"];
 
 test("card colours are --card-* tokens, never literals", () => {
