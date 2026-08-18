@@ -15,6 +15,7 @@ pub const max_log_records: usize = 20;
 pub const TaskError = error{
     TaskEmpty,
     TaskTooLong,
+    InvalidContent,
 };
 
 /// Same alphabet `session.validSessionId` uses: schedule ids are typed into
@@ -40,6 +41,9 @@ pub fn nextRun(enabled: bool, cron_text: []const u8, last_run: i64, created: i64
 pub fn validateTask(task: []const u8) TaskError![]const u8 {
     const trimmed = std.mem.trim(u8, task, " \t\r\n");
     if (trimmed.len == 0) return TaskError.TaskEmpty;
+    for (trimmed) |b| {
+        if (b == 0) return TaskError.InvalidContent;
+    }
     if (trimmed.len > max_task_bytes) return TaskError.TaskTooLong;
     return trimmed;
 }
@@ -90,6 +94,8 @@ test "validateTask trims, refuses empty, and caps length" {
     try std.testing.expectError(TaskError.TaskEmpty, validateTask("   "));
     const huge = "x" ** (max_task_bytes + 1);
     try std.testing.expectError(TaskError.TaskTooLong, validateTask(huge));
+    const null_byte = [_]u8{ 'a', 0, 'b' };
+    try std.testing.expectError(TaskError.InvalidContent, validateTask(&null_byte));
 }
 
 test "ids are sequential and never reuse a removed one" {

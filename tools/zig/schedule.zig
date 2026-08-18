@@ -90,6 +90,7 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
     const task = logic.validateTask(task_raw) catch |err| return lib.fail(out, switch (err) {
         error.TaskEmpty => "the task is empty",
         error.TaskTooLong => "the task is too long to schedule",
+        error.InvalidContent => "the task contains invalid bytes",
     });
     const tz: i32 = blk: {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
