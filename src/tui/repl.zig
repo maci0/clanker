@@ -3739,7 +3739,12 @@ const Model = struct {
         if (attach_len > 0) {
             var parts: std.ArrayList(types.ImagePart) = .empty;
             for (self.pending_attach_paths.items) |apath| {
-                const buf = std.Io.Dir.cwd().readFileAlloc(self.io, apath, self.arena, .limited(4 * 1024 * 1024 + 1)) catch continue;
+                // Raw bytes are gpa-owned and freed here: only the base64 is
+                // sent, so keeping the original in the session arena held a
+                // second full copy of every attachment for the rest of the
+                // session (up to 4 MiB apiece, on top of the ~1.33x encoding).
+                const buf = std.Io.Dir.cwd().readFileAlloc(self.io, apath, self.gpa, .limited(4 * 1024 * 1024 + 1)) catch continue;
+                defer self.gpa.free(buf);
                 if (buf.len == 0 or buf.len > 4 * 1024 * 1024) continue;
                 const mime = if (std.mem.endsWith(u8, apath, ".png")) "image/png" else if (std.mem.endsWith(u8, apath, ".jpg") or std.mem.endsWith(u8, apath, ".jpeg")) "image/jpeg" else if (std.mem.endsWith(u8, apath, ".webp")) "image/webp" else "image/png";
                 const enc = std.base64.standard.Encoder;

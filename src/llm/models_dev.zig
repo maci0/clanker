@@ -408,6 +408,30 @@ pub fn findProvider(
 
 /// A catalog model matching `model_name`: exact key, then the part after the
 /// last `/` (OpenRouter-style ids against a vendor's own table).
+/// The raw span of a provider's `models` object, or null when the provider
+/// member is not an object or carries none.
+pub fn modelsSpan(provider_span: []const u8) ?[]const u8 {
+    return memberSpan(provider_span, "models");
+}
+
+/// The raw span of one model inside a `models` object span: exact id first,
+/// then the segment after the last `/`, matching `findModel`'s rule.
+///
+/// Raw so the caller parses one model instead of the provider. A provider's
+/// span is the bulk of the snapshot for the aggregators (OpenRouter alone is
+/// hundreds of models, and `models` is nearly all of the member's bytes), and
+/// `Config.load` reads the specs of the handful of models the config actually
+/// names. Parsing the whole provider into a `std.json.Value` tree to look up
+/// two of them allocated the entire subtree per configured provider on every
+/// CLI invocation; scanning for the member costs one pass and no allocation.
+pub fn findModelSpan(models_raw: []const u8, model_name: []const u8) ?[]const u8 {
+    if (memberSpan(models_raw, model_name)) |span| return span;
+    if (std.mem.findScalarLast(u8, model_name, '/')) |slash| {
+        return memberSpan(models_raw, model_name[slash + 1 ..]);
+    }
+    return null;
+}
+
 pub fn findModel(provider_entry: std.json.Value, model_name: []const u8) ?std.json.Value {
     if (provider_entry != .object) return null;
     const models_v = provider_entry.object.get("models") orelse return null;

@@ -510,23 +510,38 @@ pub const Agent = struct {
         return out.written();
     }
 
+    /// Rebuilds the system prompt and installs it only when its text changed.
+    ///
+    /// Everything the build reads -- the prompt file, every skill file, the
+    /// learnings file, the workflow catalog, the tool catalog -- is assembled
+    /// in a scratch arena that is released on return, and only the finished
+    /// text is copied into the run arena, and only when it differs from the
+    /// prompt already installed. This runs once per `run()`, so in a REPL
+    /// session it runs once per turn; building straight into `self.arena`
+    /// meant every turn added the whole prompt *and* all of that intermediate
+    /// file content to an arena nothing frees until the session ends, on the
+    /// overwhelmingly common turn where the prompt did not change at all.
     fn refreshSystemPrompt(self: *Agent, messages: *std.ArrayList(types.Message)) void {
+        var scratch_state = std.heap.ArenaAllocator.init(self.ctx.gpa);
+        defer scratch_state.deinit();
+        const scratch = scratch_state.allocator();
+
         const home = self.ctx.environ_map.get("HOME") orelse "";
-        const global_path = (system_prompt.resolveGlobalInstructionsPath(self.arena, home, self.cfg.agent.global_instructions_file) catch null) orelse "";
+        const global_path = (system_prompt.resolveGlobalInstructionsPath(scratch, home, self.cfg.agent.global_instructions_file) catch null) orelse "";
         const workflows_mod = @import("workflows.zig");
         const wf_catalog = blk: {
             if (self.cfg.agent.workflows_dir.len == 0) break :blk "";
-            const wfs = workflows_mod.loadAllMerged(self.arena, self.ctx.io, self.cfg.agent.workflows_dir) catch break :blk "";
-            break :blk workflows_mod.catalogText(self.arena, wfs) catch "";
+            const wfs = workflows_mod.loadAllMerged(scratch, self.ctx.io, self.cfg.agent.workflows_dir) catch break :blk "";
+            break :blk workflows_mod.catalogText(scratch, wfs) catch "";
         };
-        const base_prompt = system_prompt.build(self.arena, self.ctx.io, .{
+        const base_prompt = system_prompt.build(scratch, self.ctx.io, .{
             .system_prompt_file = self.cfg.agent.system_prompt_file,
             .skills_dir = self.cfg.agent.skills_dir,
             .learnings_file = self.cfg.agent.learnings_file,
             .instance_name = self.instance_name,
             .instance_id = self.instance_id,
             .peers = self.peer_names,
-            .catalog = if (self.catalog_mode) (self.reg.catalogText(self.arena, &self.revealed) catch "") else "",
+            .catalog = if (self.catalog_mode) (self.reg.catalogText(scratch, &self.revealed) catch "") else "",
             .workflows_catalog = wf_catalog,
             .global_instructions_file = global_path,
             .home = home,
@@ -535,14 +550,19 @@ pub const Agent = struct {
             log.log(.warn, "refreshSystemPrompt: system_prompt.build failed: {s}", .{@errorName(err)});
             return;
         };
-        const session_hook_suffix = if (self.session_start_context.len > 0) std.fmt.allocPrint(self.arena, "\n\n[SessionStart hook context]\n{s}", .{self.session_start_context}) catch "" else "";
-        const prompt_text = std.fmt.allocPrint(self.arena, "{s}{s}{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "", if (self.research_mode) research_mode_suffix else "", session_hook_suffix }) catch |err| {
+        const session_hook_suffix = if (self.session_start_context.len > 0) std.fmt.allocPrint(scratch, "\n\n[SessionStart hook context]\n{s}", .{self.session_start_context}) catch "" else "";
+        const draft = std.fmt.allocPrint(scratch, "{s}{s}{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "", if (self.research_mode) research_mode_suffix else "", session_hook_suffix }) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
         // Only update when the content actually changed, to avoid needless
-        // arena churn on turns where nothing was learned.
-        if (std.mem.eql(u8, prompt_text, self.system_prompt_text)) return;
+        // arena churn on turns where nothing was learned. The draft lives in
+        // the scratch arena, so an unchanged turn costs the run arena nothing.
+        if (std.mem.eql(u8, draft, self.system_prompt_text)) return;
+        const prompt_text = self.arena.dupe(u8, draft) catch |err| {
+            log.log(.warn, "refreshSystemPrompt: dupe failed: {s}", .{@errorName(err)});
+            return;
+        };
         self.system_prompt_text = prompt_text;
         // Patch the leading system message in the conversation transcript so
         // the LLM sees the refreshed prompt without a full rebuild.

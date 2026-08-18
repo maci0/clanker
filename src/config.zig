@@ -1741,13 +1741,21 @@ pub const Config = struct {
         while (it.next()) |pkv| {
             const p = pkv.value_ptr;
             const span = models_dev.findProviderSpan(arena, index, p.name, p.base_url, p.api_key_env) orelse continue;
-            const cat_p = std.json.parseFromSliceLeaky(std.json.Value, arena, span, .{ .ignore_unknown_fields = true }) catch continue;
+            // Scanned, not parsed. The matched provider's `models` object is
+            // nearly all of its bytes -- for an aggregator like OpenRouter
+            // that is hundreds of models -- and a config names two or three
+            // of them. Parsing the provider into a `std.json.Value` tree
+            // materialised the whole subtree on every `Config.load`; only the
+            // configured models' spans reach `std.json` now.
+            const models_raw = models_dev.modelsSpan(span) orelse continue;
             var mit = p.models.iterator();
             while (mit.next()) |mkv| {
                 const key = mkv.key_ptr.*;
                 const m = mkv.value_ptr;
                 const sku = m.wireName(key);
-                const cat_m = models_dev.findModel(cat_p, sku) orelse models_dev.findModel(cat_p, key) orelse continue;
+                const model_span = models_dev.findModelSpan(models_raw, sku) orelse
+                    models_dev.findModelSpan(models_raw, key) orelse continue;
+                const cat_m = std.json.parseFromSliceLeaky(std.json.Value, arena, model_span, .{ .ignore_unknown_fields = true }) catch continue;
                 const spec = models_dev.specs(arena, cat_m) catch continue;
                 if (!m.context_window_set) {
                     if (spec.context_window) |c| m.context_window = c;
