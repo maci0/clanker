@@ -5,12 +5,12 @@ fails.
 
 ## Quick start
 
-Select the improve-self model, the escalation model and the repair harness from
-menus, then run:
-
 ```bash
 ./run.sh
 ```
+
+That starts three menus, in order: improve-self model, escalation model, repair
+harness. The loop starts after those choices.
 
 The committed menus are a starting point.  
 To give them what is available locally - a specific repair harness and its flags, an escalation model, the
