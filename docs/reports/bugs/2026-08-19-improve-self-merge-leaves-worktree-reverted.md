@@ -70,3 +70,14 @@ Both were needed — restoring only the index left the working tree file still m
 ## Follow-up
 
 The improve engine's merge-back needs to guarantee the main checkout's working tree and index are reset to the new HEAD after a fast-forward, not just the ref. Until root-caused, treat a post-promotion `improve-self` run as needing a `git status`/`git diff HEAD` sanity check before any automated commit pass touches the checkout — a blind "commit as is" immediately after a promotion can silently revert it.
+## Second occurrence (confirmed pattern)
+
+Reproduced again on the very next promoted run: imp-1787083378744109070 ("Correct the stale `zig build tools` comment..."), fast-forwarded main to 1a7fca35. Same shape exactly:
+
+- `git status -sb` after the run exited: `ahead 1`, `M  build.zig` staged.
+- `git diff --cached build.zig` was the *exact inverse* of the promoted commit's diff — reverting the corrected comment back to the stale one.
+- Working tree file (not just index) held the reverted content, confirmed via grep before/after restore.
+
+Both occurrences promoted a small `test_only`/comment-only change whose capability evals needed a retry ("capability evals: N case(s) failed; retrying only those" -> "PASS on retry") before going green. That retry step is now the strongest lead for where the stale worktree/index state leaks back into the main checkout — worth checking whether the retry path re-applies the *original* (pre-fix) staged copy for its second attempt and that copy is what ends up synced into main after promotion, rather than the version that actually passed.
+
+Fixed the same way: `git restore --staged` then `git restore --source=HEAD --worktree`. Both fixes verified with a clean `zig build test` (exit 0) before pushing.
