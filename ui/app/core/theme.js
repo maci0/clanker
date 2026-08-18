@@ -154,6 +154,13 @@ function renderList(current) {
     row.setAttribute("data-theme", name);
     row.setAttribute("aria-selected", name === current ? "true" : "false");
     if (name === current) row.classList.add("is-current");
+    var rec = CATALOG[name];
+    if (rec && rec.tokens && rec.tokens["--bg"]) {
+      var swatch = document.createElement("span");
+      swatch.style.cssText = "display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-right:6px";
+      swatch.style.background = rec.tokens["--bg"];
+      row.appendChild(swatch);
+    }
     var label = document.createElement("span");
     label.className = "model-picker__option-label";
     label.textContent = name;
