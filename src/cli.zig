@@ -7260,7 +7260,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_webui_plugins) {
             handleWebuiPlugins(io, gpa, cfg, environ_map, method, body, stream);
         } else if (is_webui_plugin_asset) {
-            handleWebuiPluginAsset(io, gpa, cfg, environ_map, path, acceptsGzip(headers_raw), stream);
+            handleWebuiPluginAsset(io, gpa, cfg, environ_map, path, headers_raw, stream);
         } else if (is_webui_theme_asset) {
             handleWebuiThemeAsset(io, gpa, path, acceptsGzip(headers_raw), stream);
         } else if (is_webui_command_asset) {
@@ -10871,7 +10871,7 @@ fn handleWebuiPlugins(
 /// embedded: a plugin can be dropped in without rebuilding clanker, which is
 /// the point of it being a plugin. Only an enabled plugin's assets are served,
 /// so turning one off actually stops its code reaching the browser.
-fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, target: []const u8, headers_raw: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -10912,19 +10912,38 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
+    // Hashed from the bytes just read off disk, so an edited plugin gets a new
+    // ETag on the very next request: freshness is still "whatever is on disk
+    // now", but an unchanged one costs a 304 instead of its whole body. This
+    // used to send `no-store`, which made every reload re-download every
+    // enabled plugin's app.js/app.css in full (~200 KB across the shipped
+    // set) and re-gzip them server-side.
+    var etag_buf: [16]u8 = undefined;
+    const etag = etagFor(&etag_buf, bytes);
+    // `no-cache` is "you may keep it, but ask before using it" — the
+    // revalidation the ETag above answers. It is not `no-store`.
+    const cache_control = "no-cache";
+    if (ifNoneMatchHits(headers_raw, etag)) {
+        request_status = 304;
+        var hbuf304: [256]u8 = undefined;
+        const hdr304 = std.fmt.bufPrint(&hbuf304, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\n{s}\r\n", .{ etag, cache_control, connHeader() }) catch return;
+        raw_http.writeAllFd(stream.socket.handle, hdr304);
+        return;
+    }
+
     // Re-read from disk on every request (see the comment above), so there is
     // nothing stable to key a compression cache on. Compressed fresh each
     // time instead, same as respondCompressible, and skipped below a
     // packet's worth where gzip's overhead would outweigh the saving. sprites.png
     // is already compressed, so gzipping it again would only cost CPU.
     const is_image = std.mem.eql(u8, content_type, "image/png");
-    const worth_it = accepts_gzip and !is_image and bytes.len >= 1024;
+    const worth_it = acceptsGzip(headers_raw) and !is_image and bytes.len >= 1024;
     const gzipped = if (worth_it) gzipAlloc(arena, bytes, .default) else null;
     const out = gzipped orelse bytes;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
     request_status = 200;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, connHeader() }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, cache_control, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
 }

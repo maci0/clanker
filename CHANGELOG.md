@@ -45,6 +45,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `GET /webui/plugins/<name>/app.js|app.css` now sends an `ETag` and
+  `Cache-Control: no-cache` instead of `no-store`. The bytes are still read
+  from disk on every request, so an edited plugin is picked up as immediately
+  as before, but an unchanged one is answered with a `304 Not Modified`
+  instead of its whole body. Every page load used to re-download and
+  re-gzip each enabled plugin's assets in full (~200 KB across the shipped
+  set of ten).
+
 - `clanker serve` compiles the `webui` WASM guest once per process instead of
   once per asset path. Every static asset used to load the whole tool registry
   (~96 `*.tool.json` parses), read the ~1 MiB guest off disk and compile it
