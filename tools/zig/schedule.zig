@@ -90,7 +90,6 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
     const task = logic.validateTask(task_raw) catch |err| return lib.fail(out, switch (err) {
         error.TaskEmpty => "the task is empty",
         error.TaskTooLong => "the task is too long to schedule",
-        error.InvalidContent => "the task contains invalid bytes",
     });
     const tz: i32 = blk: {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
@@ -158,7 +157,8 @@ fn load() !Loaded {
     result.seen_hash = try lib.hash(raw);
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return result;
-    const parsed = try std.json.parseFromSliceLeaky([]Entry, lib.alloc, trimmed, .{ .ignore_unknown_fields = true });
+    const parsed = std.json.parseFromSliceLeaky([]Entry, lib.alloc, trimmed, .{ .ignore_unknown_fields = true }) catch
+        return result;
     try result.entries.appendSlice(lib.alloc, parsed);
     return result;
 }
