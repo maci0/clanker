@@ -56,6 +56,19 @@ pub fn nextId(arena: std.mem.Allocator, ids: []const []const u8) ![]const u8 {
     return std.fmt.allocPrint(arena, "sch-{d}", .{highest + 1});
 }
 
+/// Why an entry is not firing, for callers that need to know without parsing
+/// cron syntax themselves: disabled by toggle, malformed spec, or a spec that
+/// parses but has no future match.
+pub const Status = enum(u8) { active, disabled, invalid_cron, never_fires };
+
+pub fn diagnose(enabled: bool, cron_text: []const u8, last_run: i64, created: i64, tz_offset_minutes: i32) Status {
+    if (!enabled) return .disabled;
+    const spec = cron.parse(cron_text) catch return .invalid_cron;
+    const from = if (last_run > 0) last_run else created;
+    _ = spec.nextAfter(from, tz_offset_minutes) orelse return .never_fires;
+    return .active;
+}
+
 /// A spec that parses but can never match (`0 0 30 2 *`) is refused at add
 /// time rather than sitting in the list looking scheduled.
 pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
@@ -104,6 +117,14 @@ test "ids are sequential and never reuse a removed one" {
     try std.testing.expectEqualStrings("sch-3", try nextId(arena, &gap));
     const named = [_][]const u8{"nightly"};
     try std.testing.expectEqualStrings("sch-1", try nextId(arena, &named));
+}
+
+test "diagnose distinguishes disabled, invalid, and never-firing" {
+    const now = cron.epochFromCivil(2026, 8, 13, 12, 0, 0);
+    try std.testing.expectEqual(@as(Status, .disabled), diagnose(false, "* * * * *", 0, now, 0));
+    try std.testing.expectEqual(@as(Status, .invalid_cron), diagnose(true, "not a cron spec", 0, now, 0));
+    try std.testing.expectEqual(@as(Status, .never_fires), diagnose(true, "0 0 30 2 *", 0, now, 0));
+    try std.testing.expectEqual(@as(Status, .active), diagnose(true, "* * * * *", 0, now, 0));
 }
 
 test "firstFire refuses a spec that never comes around" {
