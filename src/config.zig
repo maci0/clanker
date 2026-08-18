@@ -1632,7 +1632,7 @@ pub const Config = struct {
         var it = cfg.providers.iterator();
         while (it.next()) |pkv| {
             const p = pkv.value_ptr;
-            const span = models_dev.findProviderSpan(index, p.name, p.base_url, p.api_key_env) orelse continue;
+            const span = models_dev.findProviderSpan(arena, index, p.name, p.base_url, p.api_key_env) orelse continue;
             const cat_p = std.json.parseFromSliceLeaky(std.json.Value, arena, span, .{ .ignore_unknown_fields = true }) catch continue;
             var mit = p.models.iterator();
             while (mit.next()) |mkv| {
