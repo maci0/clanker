@@ -261,6 +261,13 @@ pub const Options = struct {
     /// `prune --yes`: actually delete. Absent, it only reports, because a
     /// recursive delete is not undoable.
     apply: bool = false,
+    /// `commit --all`: hand smart_commit scope "all" instead of the default
+    /// "staged", so it groups every tracked change rather than only the index.
+    /// The two scopes commit different copies of a file -- "staged" builds each
+    /// group in the index so a hunk-narrowed index lands exactly as staged,
+    /// "all" commits by pathspec and so takes the worktree copy -- which is
+    /// why the choice is the operator's and not a heuristic.
+    commit_all: bool = false,
     verbose: bool = false,
     /// `--quiet`/`-q`: the other end of `--verbose`. Progress logging is on at
     /// `info` by default, so a scripted `clanker run` gets `[INFO] ... [exec]`
@@ -550,6 +557,7 @@ const bool_flags = [_]BoolFlag{
     .{ .spelling = "--dry-run", .field = "dry_run", .value = true, .flag = .dry_run },
     .{ .spelling = "--no-worktree", .field = "no_worktree", .value = true, .flag = .worktree },
     .{ .spelling = "--yes", .field = "apply", .value = true, .flag = .yes },
+    .{ .spelling = "--all", .field = "commit_all", .value = true, .flag = .commit_all },
     .{ .spelling = "--tasks", .field = "eval_tasks_only", .value = true, .flag = .tasks },
     .{ .spelling = "--proxy", .field = "proxy", .value = true, .flag = .proxy },
     .{ .spelling = "--no-proxy", .field = "proxy", .value = false, .flag = .proxy },
@@ -1801,6 +1809,7 @@ const Flag = enum {
     compare_reveal,
     schedule_tz,
     reports_kind,
+    commit_all,
     profile,
     dump_config,
     preset,
@@ -1855,6 +1864,7 @@ const Flag = enum {
             .compare_reveal => "--reveal",
             .schedule_tz => "--tz-offset",
             .reports_kind => "--kind",
+            .commit_all => "--all",
             .profile => "--profile",
             .dump_config => "--dump-config",
             .preset => "--preset",
@@ -1915,6 +1925,7 @@ const Flag = enum {
             .compare_reveal => "print the label-to-model key even with no verdict",
             .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
             .reports_kind => "narrow a reports search: all, report, or runbook",
+            .commit_all => "group every tracked change, not just what is staged",
             .profile => "use a named config profile from profiles/<name>.toml",
             .dump_config => "print the merged config and exit",
             .preset => "run with a preset from presets/<name>.toml",
@@ -1985,12 +1996,12 @@ const Spec = struct {
 /// everywhere and so are not listed per command.
 const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
-    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft." },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that." },
+    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking" },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
     .{ .command = .add_goal, .usage = "add-goal \"<objective>\" [\"<completion criterion>\"]", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It creates a goal-card and writes the\ngoals.json index, and prints the id, but never starts work. The criterion\nis optional: the goal loop drafts a measurable one on its first turn. Run\nit later with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
-    .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
+    .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
     .{ .command = .serve, .usage = "serve [options]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as, .proxy, .proxy_port }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n--proxy                mount an OpenAI/Anthropic compatibility proxy at\n                       /proxy/v1 on this socket. Off by default. --no-proxy\n                       forces it off even if the file enabled it.\n--proxy-port <port>    optional dedicated proxy listener. When it differs\n                       from --webui-port, /v1 lives at the root on that port\n                       and /api/* is not mounted there.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name. The optional second\nlistener is --proxy-port, not a rename of --webui-port.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as, proxy, proxy_port\n  CLANKER_HOST, CLANKER_WEBUI_PORT, CLANKER_PROXY_PORT\n  --host, --webui-port, --serve-as, --proxy, --no-proxy, --proxy-port\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Without --proxy the process still opens exactly\none socket. --proxy keeps that true and mounts /proxy/v1 on it. A distinct\n--proxy-port is the only way a second socket is opened. Configured\n[[peers]] are outbound URLs this process connects to, never anything it\nlistens on." },
@@ -2028,7 +2039,7 @@ const specs = [_]Spec{
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
-    .{ .command = .commit, .usage = "commit [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups staged (or all) files,\nvalidates conventional commit messages, then asks before committing.\n\nThe confirmation is a terminal prompt, so a script must pass --yes:\nwith stdin redirected clanker refuses rather than reading the empty\nanswer as a no and exiting 0.\n\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
+    .{ .command = .commit, .usage = "commit [--all] [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .commit_all, .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups the changed files, validates\nconventional commit messages, then asks before committing.\n\nThe default scope is the index: each group is committed from what is\nstaged, so an index narrowed to one session's hunks lands exactly as\nstaged and anything else stays unstaged. --all widens it to every\ntracked change and commits by pathspec, which takes the worktree copy.\n\nThe confirmation is a terminal prompt, so a script must pass --yes:\nwith stdin redirected clanker refuses rather than reading the empty\nanswer as a no and exiting 0.\n\n--all       group every tracked change, not just what is staged\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
 };
 
 fn specFor(cmd: Command) ?*const Spec {
@@ -2045,6 +2056,45 @@ fn commandAccepts(cmd: Command, flag: Flag) bool {
         if (f == flag) return true;
     }
     return false;
+}
+
+/// True when `text` names `spelling` as a whole option, not as the prefix of a
+/// longer one: `--proxy` must not be counted as documented because
+/// `--proxy-port` happens to be, and the same for `--for`/`--for-provider` and
+/// `--mascot`/`--mascot-size`.
+fn documentsFlagSpelling(text: []const u8, spelling: []const u8) bool {
+    var rest = text;
+    while (std.mem.find(u8, rest, spelling)) |i| {
+        const after = rest[i + spelling.len ..];
+        const next: u8 = if (after.len == 0) ' ' else after[0];
+        if (!std.ascii.isAlphanumeric(next) and next != '-') return true;
+        rest = rest[i + spelling.len ..];
+    }
+    return false;
+}
+
+test "every flag a command accepts is named in that command's --help" {
+    // `commandAccepts` reads `spec.flags`, but `clanker <cmd> --help` prints
+    // the hand-written `spec.detail`, so the two drift silently: a flag added
+    // to `flags` alone is accepted by the parser and invisible to the operator
+    // (`goal` took --provider/--model/--reasoning-effort and documented none
+    // of them, `repl` took --preset and --mascot-speed the same way). Nothing
+    // else compares the two, so pin it here.
+    for (&specs) |*s| {
+        for (s.flags) |f| {
+            // The global four are listed once by the shared footer
+            // ("Also accepted everywhere: ..."), not per command.
+            if (f.global()) continue;
+            const spelling = primaryFlagName(f);
+            if (documentsFlagSpelling(s.detail, spelling)) continue;
+            if (documentsFlagSpelling(s.usage, spelling)) continue;
+            std.debug.print(
+                "`clanker {s}` accepts {s} but its help text never mentions it\n",
+                .{ commandName(s.command), spelling },
+            );
+            return error.UndocumentedFlag;
+        }
+    }
 }
 
 pub fn run(init: std.process.Init, opts: Options) !void {
@@ -6333,7 +6383,8 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // defaults -- dry_run true. The write below was a second dry run
     // reporting success. toolText also demands a `text` field, which
     // smart_commit does not emit, so the verb could not succeed at all.
-    const preview = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, true, null);
+    const scope: []const u8 = if (opts.commit_all) "all" else "staged";
+    const preview = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, true, scope, null);
     try writeStdOut(io, preview.text);
     if (dry) return;
     // Nothing to write, and nothing to confirm: the preview already said so.
@@ -6378,7 +6429,7 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // second answer -- a truncated reply turned an approved
     // `fix(smart_commit): ...` plan into one `chore: update working tree`
     // commit (docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md).
-    const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false, preview.commits);
+    const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false, scope, preview.commits);
     try writeStdOut(io, done.text);
 }
 
@@ -6406,14 +6457,18 @@ fn smartCommitPlan(
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     dry_run: bool,
+    scope: []const u8,
     plan: ?[]const commit_logic.Commit,
 ) !CommitPlan {
+    // The preview and the write must name the same scope: they group and
+    // commit different copies of a file ("staged" builds each group in the
+    // index, "all" commits by pathspec and takes the worktree), so a write
+    // that silently fell back to "staged" would land something other than the
+    // plan that was confirmed.
     const body = if (plan) |p|
-        try commitBody(arena, dry_run, p)
-    else if (dry_run)
-        "{\"dry_run\":true,\"scope\":\"staged\"}"
+        try commitBody(arena, dry_run, scope, p)
     else
-        "{\"dry_run\":false,\"scope\":\"staged\"}";
+        try std.fmt.allocPrint(arena, "{{\"dry_run\":{},\"scope\":\"{s}\"}}", .{ dry_run, scope });
     const raw = try toolJson(io, gpa, arena, cfg, environ_map, "smart_commit", body);
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch
         return error.ToolBadOutput;
@@ -6473,7 +6528,7 @@ fn smartCommitPlan(
 }
 
 /// A `smart_commit` request body carrying a plan to write as-is.
-fn commitBody(arena: std.mem.Allocator, dry_run: bool, plan: []const commit_logic.Commit) ![]const u8 {
+fn commitBody(arena: std.mem.Allocator, dry_run: bool, scope: []const u8, plan: []const commit_logic.Commit) ![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
     var w = std.Io.Writer.Allocating.fromArrayList(arena, &buf);
     var s: std.json.Stringify = .{ .writer = &w.writer };
@@ -6481,7 +6536,7 @@ fn commitBody(arena: std.mem.Allocator, dry_run: bool, plan: []const commit_logi
     try s.objectField("dry_run");
     try s.write(dry_run);
     try s.objectField("scope");
-    try s.write("staged");
+    try s.write(scope);
     try s.objectField("commits");
     try s.beginArray();
     for (plan) |c| {
