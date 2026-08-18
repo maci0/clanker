@@ -87,3 +87,72 @@ test("the scale the sheets reference is the scale app.css declares", () => {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
 });
+
+// The card cover/label palette is the third axis that drifts, and it drifted
+// furthest: one hue was spelled out as a raw hex in four separate rule blocks
+// (cover, label, swatch, detail header), which is how cover green (#0a7a2e)
+// and label green (#22a24a) ended up being different greens for the same
+// card. The values were a web palette borrowed wholesale; the panel greys
+// they sit next to come from RAL. These tests pin both halves: the hue is a
+// token, and the ink paired with it is legible.
+
+const CARD_HUES = ["green", "yellow", "orange", "red", "purple", "blue", "sky", "pink", "lime", "black"];
+
+test("card colours are --card-* tokens, never literals", () => {
+  const strays = [];
+  for (const [name, css] of sheets()) {
+    // Any rule keyed on a card colour must reach for the token.
+    for (const m of css.matchAll(/\[data-color="([a-z]+)"\][^{]*\{([^}]*)\}/g)) {
+      const [, hue, body] = m;
+      if (!CARD_HUES.includes(hue)) continue;
+      const hex = body.match(/#[0-9a-fA-F]{3,8}\b/);
+      if (!hex) continue;
+      const line = css.slice(0, m.index).split("\n").length;
+      strays.push(`${name}:${line}  [data-color="${hue}"] uses ${hex[0]} (use var(--card-${hue}))`);
+    }
+  }
+  assert.deepEqual(strays, [], `card colours must be tokens:\n${strays.join("\n")}`);
+});
+
+test("every card hue is declared once and carries legible ink", () => {
+  const appCss = readFileSync(join(here, "app.css"), "utf8");
+
+  const hex = (token) => {
+    const m = appCss.match(new RegExp(`\\n\\s*${token}\\s*:\\s*(#[0-9a-fA-F]{6})\\s*;`));
+    assert.ok(m, `${token} is not declared as a plain hex in :root`);
+    return m[1];
+  };
+  const luminance = (h) => {
+    const parts = [1, 3, 5]
+      .map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  const inks = { "var(--card-ink-on-dark)": hex("--card-ink-on-dark"), "var(--card-ink-on-light)": hex("--card-ink-on-light") };
+  for (const hue of CARD_HUES) {
+    const bg = hex(`--card-${hue}`);
+    const inkRef = appCss.match(new RegExp(`\\n\\s*--card-${hue}-ink\\s*:\\s*([^;]+);`));
+    assert.ok(inkRef, `--card-${hue}-ink is not declared`);
+    const fg = inks[inkRef[1].trim()];
+    assert.ok(fg, `--card-${hue}-ink must point at one of the two ink tokens, got ${inkRef[1].trim()}`);
+    // These carry small bold label text, so hold a margin over the 4.5 AA line
+    // rather than sitting on it; the palette this replaced cleared 5.48 worst.
+    const ratio = contrast(bg, fg);
+    assert.ok(ratio >= 5.5, `--card-${hue} (${bg}) on its ink (${fg}) is only ${ratio.toFixed(2)}:1, want >= 5.5`);
+  }
+});
+
+test("card hues stay theme-constant", () => {
+  // A card's colour must mean the same thing in either theme, so unlike the
+  // chat hues these are declared once and never redefined in a dark block.
+  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  for (const hue of CARD_HUES) {
+    const count = [...appCss.matchAll(new RegExp(`\\n\\s*--card-${hue}\\s*:`, "g"))].length;
+    assert.equal(count, 1, `--card-${hue} is declared ${count} times; it must be theme-constant`);
+  }
+});

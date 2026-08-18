@@ -58,6 +58,41 @@
   --chat-hue-6: #9333ea;
   --chat-hue-7: #3f6212;
 
+  /* Card cover/label hues. Theme-constant on purpose: a card's colour must
+     mean the same thing whichever theme the browser picked, so these are the
+     one set the dark blocks below do NOT redefine.
+
+     The values are RAL Classic enamels, the same vocabulary the panel greys
+     come from — signal red, traffic blue, signal violet — not a web palette.
+     Each carries its own ink, picked by measured contrast rather than per
+     rule: every pair here is >= 5.5:1, so a label is legible on either
+     theme. Covers, labels, swatches and the detail header all read these,
+     which is what keeps one hue one value; they used to be four literal
+     sets that had already drifted apart (cover green #0a7a2e vs label
+     green #22a24a). */
+  --card-green: #2c6b34;   /* RAL 6002 leaf green */
+  --card-yellow: #c19a00;  /* RAL 1004 golden yellow */
+  --card-orange: #a84c19;  /* RAL 2001 red orange */
+  --card-red: #a72920;     /* RAL 3001 signal red */
+  --card-purple: #6c4a86;  /* RAL 4008 signal violet */
+  --card-blue: #1d5c9e;    /* RAL 5017 traffic blue */
+  --card-sky: #1f6389;     /* RAL 5012 light blue */
+  --card-pink: #ab3d74;    /* RAL 4003 heather violet */
+  --card-lime: #68a83f;    /* RAL 6018 yellow green */
+  --card-black: #2b2b2c;   /* RAL 9004 signal black */
+  --card-ink-on-dark: #ffffff;
+  --card-ink-on-light: #12140f;
+  --card-green-ink: var(--card-ink-on-dark);
+  --card-yellow-ink: var(--card-ink-on-light);
+  --card-orange-ink: var(--card-ink-on-dark);
+  --card-red-ink: var(--card-ink-on-dark);
+  --card-purple-ink: var(--card-ink-on-dark);
+  --card-blue-ink: var(--card-ink-on-dark);
+  --card-sky-ink: var(--card-ink-on-dark);
+  --card-pink-ink: var(--card-ink-on-dark);
+  --card-lime-ink: var(--card-ink-on-light);
+  --card-black-ink: var(--card-ink-on-dark);
+
   /* Prose in the text face; every measurement and every legend plate in
      mono, because a panel's engraving is fixed-pitch and its readings align. */
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -2663,7 +2698,7 @@ h2#session-title {
   width: 28px; height: 28px; border: none; border-radius: var(--radius-pill);
   background: var(--surface); color: var(--fg-muted); cursor: pointer;
   display: grid; place-items: center; font-size: var(--step-0);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+  box-shadow: var(--lift);
   opacity: 0; transition: opacity 120ms ease, background 120ms ease;
 }
 .card-quick-edit-btn:hover { background: var(--surface-2); color: var(--fg); }
@@ -2674,22 +2709,20 @@ h2#session-title {
 .card-in-list { font-size: var(--step-0); color: var(--fg-muted); margin-top: 2px; }
 .card-in-list-name { color: var(--fg); cursor: pointer; text-decoration: underline dotted; }
 
-/* Trello-style card cover: colored strip at top. The cover/label palette is
-   deliberately theme-constant (like Trello's own label colors): saturated
-   mid-tones carrying white text, legible on light and dark alike, so a
-   card's color means the same thing whichever theme a browser picked. */
+/* Card cover: colour strip along the plate's top edge. The hue and its ink
+   are the --card-* tokens in :root; nothing here spells a colour out. */
 .card-cover { height: 4px; border-radius: var(--radius) var(--radius) 0 0; margin: 0; background: var(--rule); flex-shrink: 0; }
 .card-cover[data-priority="high"] { background: var(--danger); height: 4px; }
 .card-cover[data-priority="low"] { background: var(--surface-2); height: 3px; }
 .card-cover[data-color] { height: 40px; border-radius: var(--radius) var(--radius) 0 0; }
-.card-cover[data-color="green"] { background: #0a7a2e; }
-.card-cover[data-color="yellow"] { background: #9a7a0a; }
-.card-cover[data-color="orange"] { background: #c45a0a; }
-.card-cover[data-color="red"] { background: #c41212; }
-.card-cover[data-color="purple"] { background: #6b2fb8; }
-.card-cover[data-color="blue"] { background: #0b5ab8; }
-.card-cover[data-color="sky"] { background: #2a8ecc; }
-.card-cover[data-color="pink"] { background: #c23a7a; }
+.card-cover[data-color="green"] { background: var(--card-green); }
+.card-cover[data-color="yellow"] { background: var(--card-yellow); }
+.card-cover[data-color="orange"] { background: var(--card-orange); }
+.card-cover[data-color="red"] { background: var(--card-red); }
+.card-cover[data-color="purple"] { background: var(--card-purple); }
+.card-cover[data-color="blue"] { background: var(--card-blue); }
+.card-cover[data-color="sky"] { background: var(--card-sky); }
+.card-cover[data-color="pink"] { background: var(--card-pink); }
 .card-cover-img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: var(--radius) var(--radius) 0 0; }
 .card-cover--img { height: auto; background: transparent; }
 
@@ -2710,16 +2743,16 @@ h2#session-title {
   padding: 0.15rem 0.55rem;
   border-radius: var(--radius-lg);
 }
-.card-label[data-color="green"] { background: #22a24a; color: #111; }
-.card-label[data-color="yellow"] { background: #c9a50a; color: #111; }
-.card-label[data-color="orange"] { background: #e07a1a; color: #111; }
-.card-label[data-color="red"] { background: #c62828; color: #fff; }
-.card-label[data-color="purple"] { background: #6a3db8; color: #fff; }
-.card-label[data-color="blue"] { background: #3d8af0; color: #111; }
-.card-label[data-color="sky"] { background: #5ab5e8; color: #111; }
-.card-label[data-color="pink"] { background: #e85a9a; color: #111; }
-.card-label[data-color="lime"] { background: #6ab82f; color: #111; }
-.card-label[data-color="black"] { background: #2a2a2a; color: #fff; }
+.card-label[data-color="green"] { background: var(--card-green); color: var(--card-green-ink); }
+.card-label[data-color="yellow"] { background: var(--card-yellow); color: var(--card-yellow-ink); }
+.card-label[data-color="orange"] { background: var(--card-orange); color: var(--card-orange-ink); }
+.card-label[data-color="red"] { background: var(--card-red); color: var(--card-red-ink); }
+.card-label[data-color="purple"] { background: var(--card-purple); color: var(--card-purple-ink); }
+.card-label[data-color="blue"] { background: var(--card-blue); color: var(--card-blue-ink); }
+.card-label[data-color="sky"] { background: var(--card-sky); color: var(--card-sky-ink); }
+.card-label[data-color="pink"] { background: var(--card-pink); color: var(--card-pink-ink); }
+.card-label[data-color="lime"] { background: var(--card-lime); color: var(--card-lime-ink); }
+.card-label[data-color="black"] { background: var(--card-black); color: var(--card-black-ink); }
 
 /* Cover color picker in card detail */
 .cover-color-picker {
@@ -2733,14 +2766,14 @@ h2#session-title {
 .cover-color-swatch:hover { border-color: var(--fg); }
 .cover-color-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cover-color-swatch[data-selected="true"] { border-color: var(--fg); box-shadow: 0 0 0 2px var(--surface); }
-.cover-color-swatch[data-color="green"] { background: #0a7a2e; }
-.cover-color-swatch[data-color="yellow"] { background: #9a7a0a; }
-.cover-color-swatch[data-color="orange"] { background: #c45a0a; }
-.cover-color-swatch[data-color="red"] { background: #c41212; }
-.cover-color-swatch[data-color="purple"] { background: #6b2fb8; }
-.cover-color-swatch[data-color="blue"] { background: #0b5ab8; }
-.cover-color-swatch[data-color="sky"] { background: #2a8ecc; }
-.cover-color-swatch[data-color="pink"] { background: #c23a7a; }
+.cover-color-swatch[data-color="green"] { background: var(--card-green); }
+.cover-color-swatch[data-color="yellow"] { background: var(--card-yellow); }
+.cover-color-swatch[data-color="orange"] { background: var(--card-orange); }
+.cover-color-swatch[data-color="red"] { background: var(--card-red); }
+.cover-color-swatch[data-color="purple"] { background: var(--card-purple); }
+.cover-color-swatch[data-color="blue"] { background: var(--card-blue); }
+.cover-color-swatch[data-color="sky"] { background: var(--card-sky); }
+.cover-color-swatch[data-color="pink"] { background: var(--card-pink); }
 .cover-color-swatch[data-color="none"] { background: var(--surface-2); border: 1px dashed var(--rule); }
 
 .card-title { overflow-wrap: anywhere; line-height: 1.35; font-weight: 500; }
@@ -2774,7 +2807,7 @@ h2#session-title {
   cursor: pointer; position: relative;
 }
 .card-member:first-child { margin-left: 0; }
-.card-member:hover { transform: translateY(-2px); z-index: 2; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+.card-member:hover { transform: translateY(-2px); z-index: 2; box-shadow: var(--lift); }
 /* Starred card indicator */
 .card[data-starred="true"]::after {
   content: ""; position: absolute; bottom: 5px; right: 6px;
@@ -2788,7 +2821,7 @@ h2#session-title {
   position: absolute; top: 2px; right: 2px;
   display: none; gap: 2px; z-index: 3;
   background: var(--surface); border-radius: var(--radius-lg); padding: 2px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid var(--rule);
+  box-shadow: var(--lift); border: 1px solid var(--rule);
 }
 .card:hover .card-quick-actions, .card:focus-within .card-quick-actions { display: flex; }
 .card-quick-actions button {
@@ -2808,11 +2841,14 @@ h2#session-title {
 .card-progress-bar > span { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-pill); }
 .card-progress-bar[data-done="true"] > span { background: var(--ok-fill); }
 
-/* Drag ghost styling */
+/* Drag ghost: a plate lifted off the backplane, so it rises straight and
+   throws the high lift. It used to tilt 3deg and grow 4% behind a hand-rolled
+   halo, which is the drag animation every board ships and the one thing a
+   machined plate cannot do. Height is carried by --lift-high alone. */
 .card.board-drag-ghost {
   position: fixed; pointer-events: none; z-index: 9999;
-  transform: rotate(3deg) scale(1.04); opacity: 0.92;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.1);
+  opacity: 0.92;
+  box-shadow: var(--lift-high);
   max-width: 20rem; transition: none;
 }
 
@@ -2831,14 +2867,14 @@ h2#session-title {
   background-size: cover; background-position: center;
   position: relative;
 }
-.card-detail-cover[data-color="green"] { background: #0a7a2e; min-height: 116px; }
-.card-detail-cover[data-color="yellow"] { background: #9a7a0a; min-height: 116px; }
-.card-detail-cover[data-color="orange"] { background: #c45a0a; min-height: 116px; }
-.card-detail-cover[data-color="red"] { background: #c41212; min-height: 116px; }
-.card-detail-cover[data-color="purple"] { background: #6b2fb8; min-height: 116px; }
-.card-detail-cover[data-color="blue"] { background: #0b5ab8; min-height: 116px; }
-.card-detail-cover[data-color="sky"] { background: #2a8ecc; min-height: 116px; }
-.card-detail-cover[data-color="pink"] { background: #c23a7a; min-height: 116px; }
+.card-detail-cover[data-color="green"] { background: var(--card-green); min-height: 116px; }
+.card-detail-cover[data-color="yellow"] { background: var(--card-yellow); min-height: 116px; }
+.card-detail-cover[data-color="orange"] { background: var(--card-orange); min-height: 116px; }
+.card-detail-cover[data-color="red"] { background: var(--card-red); min-height: 116px; }
+.card-detail-cover[data-color="purple"] { background: var(--card-purple); min-height: 116px; }
+.card-detail-cover[data-color="blue"] { background: var(--card-blue); min-height: 116px; }
+.card-detail-cover[data-color="sky"] { background: var(--card-sky); min-height: 116px; }
+.card-detail-cover[data-color="pink"] { background: var(--card-pink); min-height: 116px; }
 .card-detail-cover-btn {
   border: none; background: rgba(0,0,0,0.55); color: #fff; border-radius: var(--radius-lg);
   padding: 0.3rem 0.7rem; font-size: var(--step--1); cursor: pointer; font-weight: 500;
@@ -2948,16 +2984,16 @@ h2#session-title {
 .label-picker-item:hover { border-color: var(--fg); }
 .label-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .label-picker-item[data-selected="true"] { border-color: var(--fg); box-shadow: inset 0 0 0 2px var(--surface); }
-.label-picker-item[data-color="green"] { background: #22a24a; }
-.label-picker-item[data-color="yellow"] { background: #c9a50a; }
-.label-picker-item[data-color="orange"] { background: #e07a1a; }
-.label-picker-item[data-color="red"] { background: #c62828; }
-.label-picker-item[data-color="purple"] { background: #6a3db8; }
-.label-picker-item[data-color="blue"] { background: #3d8af0; }
-.label-picker-item[data-color="sky"] { background: #5ab5e8; }
-.label-picker-item[data-color="pink"] { background: #e85a9a; }
-.label-picker-item[data-color="lime"] { background: #6ab82f; }
-.label-picker-item[data-color="black"] { background: #2a2a2a; }
+.label-picker-item[data-color="green"] { background: var(--card-green); }
+.label-picker-item[data-color="yellow"] { background: var(--card-yellow); }
+.label-picker-item[data-color="orange"] { background: var(--card-orange); }
+.label-picker-item[data-color="red"] { background: var(--card-red); }
+.label-picker-item[data-color="purple"] { background: var(--card-purple); }
+.label-picker-item[data-color="blue"] { background: var(--card-blue); }
+.label-picker-item[data-color="sky"] { background: var(--card-sky); }
+.label-picker-item[data-color="pink"] { background: var(--card-pink); }
+.label-picker-item[data-color="lime"] { background: var(--card-lime); }
+.label-picker-item[data-color="black"] { background: var(--card-black); }
 
 /* Card detail save button — Trello green accent */
 .card-detail-save-btn {

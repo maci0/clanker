@@ -7,6 +7,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker rfc search` no longer answers with hits from `docs/rfcs/README.md`
+  and `docs/rfcs/TEMPLATE.md`. The inventory lists every RFC by title, so a
+  real match came back with an index line stapled to it; `adr search` and
+  `prd search` already dropped those and the three now share one filter.
 - The web UI's corner radii and type sizes now all come from the design
   tokens `app.css` declares, so the Control Cabinet's machined edges hold
   across every view. The chat composer (24px) and your own chat bubbles
@@ -17,6 +21,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   readouts that previously used off-scale 9px and 10px literals. Touch
   fields keep their 16px, which is an iOS zoom guard rather than a
   typographic choice.
+- The Kanban card cover and label colours are now tokens in the same
+  vocabulary as the rest of the cabinet. They were a borrowed web palette
+  spelled out as raw hex in four separate rule blocks, which had already
+  drifted apart: cover green was `#0a7a2e` while label green was `#22a24a`,
+  two greens for one card colour. Each hue is now a single `--card-*` token
+  drawn from RAL Classic enamels (signal red, traffic blue, signal violet)
+  beside the RAL panel greys, with a paired ink token chosen by measured
+  contrast rather than per rule. The hues stay theme-constant, so a card's
+  colour still means the same thing in either theme, and every label pair
+  clears 5.5:1 (the palette it replaced bottomed out at 5.48:1).
+- A dragged Kanban card lifts straight off the backplane instead of tilting
+  3° and scaling up behind a hand-rolled shadow, and the card's hover
+  overlays (quick actions, quick-edit, member avatars) throw the declared
+  `--lift` rather than four separately invented ones.
 - `clanker serve` honors HTTP keep-alive on `GET /api/*` responses, the way
   it already did for the web UI's assets. Every JSON fetch the page makes
   (status, sessions, board, mesh map) used to close the connection and pay a
@@ -35,6 +53,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `font-size` that is not one of the declared tokens. An off-scale literal
   reads as no bug at all, so nothing used to catch the sheets drifting back
   toward the rounded-card default one declaration at a time.
+- `ui/app/design-tokens.test.mjs` also pins the card colour palette: a rule
+  keyed on `[data-color="…"]` must reach for a `--card-*` token, each hue
+  must be declared exactly once (they are theme-constant by design), and
+  each must pair with an ink token it clears 5.5:1 against. Radius and type
+  were already pinned; colour was the axis with nothing watching it.
 - `clanker gate` runs a `test-root-coverage` gate: every file under `src/`
   with a top-level `test` block must be referenced from the comptime import
   block in `src/main.zig`. Zig 0.16 runs test blocks only in the root file,
