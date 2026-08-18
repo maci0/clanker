@@ -404,30 +404,3 @@ test "renderChecklist prints the question to ask under each requirement" {
     try testing.expect(std.mem.find(u8, text, "the decision as a question") != null);
     try testing.expect(std.mem.find(u8, text, "ask: What exactly is being decided?") != null);
 }
-
-test "callTool reports the tool's own refusal sentence" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const Canned = struct {
-        payload: []const u8,
-        fn call(ctx: *anyopaque, _: []const u8) anyerror![]const u8 {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.payload;
-        }
-    };
-    var canned: Canned = .{ .payload = "{\"ok\":false,\"error\":\"path must be below docs/rfcs/\"}" };
-    const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
-    try testing.expectError(Error.ToolFailed, common.callTool(arena, "rfc", tool, "{}"));
-}
-
-test "unsignedField refuses a negative count instead of wrapping it" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const v = try parseValue(arena, "{\"next_number\":-1,\"good\":7}");
-    try testing.expectEqual(@as(u64, 0), common.unsignedField(v, "next_number"));
-    try testing.expectEqual(@as(u64, 7), common.unsignedField(v, "good"));
-}

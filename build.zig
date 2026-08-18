@@ -6,6 +6,32 @@ const build_zon = @import("build.zig.zon");
 // and `zig build test` runs their tests on the host target instead.
 const host_tested_helpers = [_][]const u8{ "advisor_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "doc_scaffold", "feedback_logic", "flat_json", "gh_url", "goal_store", "graph_listing", "hashline", "kernel_magic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "model_reply", "model_stats_logic", "patch_logic", "providers_logic", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic" };
 
+/// The `tools/zig` helpers the host links directly, so the CLI and the guest
+/// that shares a file run the same source rather than two copies of it.
+const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic" };
+
+/// `base` plus one module per linked helper. Unlike the wasm guests and the
+/// `host_tested_helpers` test modules below, these get no `utf8` import:
+/// `src/main.zig` imports `util/utf8.zig` into `root`, and a file may belong
+/// to only one module, so a helper linked here carries its own cap.
+fn linkedHelperImports(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    base: []const std.Build.Module.Import,
+) []const std.Build.Module.Import {
+    const imports = b.allocator.alloc(std.Build.Module.Import, base.len + linked_helpers.len) catch @panic("OOM");
+    @memcpy(imports[0..base.len], base);
+    for (linked_helpers, imports[base.len..]) |stem, *slot| {
+        slot.* = .{ .name = stem, .module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
+            .target = target,
+            .optimize = optimize,
+        }) };
+    }
+    return imports;
+}
+
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
@@ -94,68 +120,13 @@ pub fn build(b: *std.Build) void {
             // symbols and omit zig_exe so shipped artifacts do not encode the
             // build host.
             .strip = optimize != .Debug,
-            .imports = &.{
+            .imports = linkedHelperImports(b, exe_target, optimize, &.{
                 .{ .name = "zwasm", .module = zwasm_mod },
                 .{ .name = "build_options", .module = build_options.createModule() },
                 .{ .name = "vaxis", .module = vaxis_mod },
                 .{ .name = "toml", .module = toml_mod },
                 .{ .name = "vendor", .module = ui_vendor_mod },
-                .{ .name = "skills_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/skills_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "schedule_cron", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/schedule_cron.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "cas_lock_record", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/cas_lock_record.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "commit_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/commit_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "thinking_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/thinking_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "llm_budget", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/llm_budget.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "advisor_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/advisor_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "autoresearch_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/autoresearch_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "providers_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/providers_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "workflows_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/workflows_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-                .{ .name = "spill_logic", .module = b.createModule(.{
-                    .root_source_file = b.path("tools/zig/spill_logic.zig"),
-                    .target = exe_target,
-                    .optimize = optimize,
-                }) },
-            },
+            }),
         }),
     });
     b.installArtifact(exe);
@@ -209,68 +180,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = test_target,
         .optimize = optimize,
-        .imports = &.{
+        .imports = linkedHelperImports(b, test_target, optimize, &.{
             .{ .name = "zwasm", .module = zwasm_mod },
             .{ .name = "build_options", .module = build_options.createModule() },
             .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
             .{ .name = "toml", .module = toml_test_mod },
             .{ .name = "vendor", .module = ui_vendor_test_mod },
-            .{ .name = "skills_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/skills_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "schedule_cron", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/schedule_cron.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "cas_lock_record", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/cas_lock_record.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "commit_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/commit_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "thinking_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/thinking_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "llm_budget", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/llm_budget.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "advisor_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/advisor_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "autoresearch_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/autoresearch_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "providers_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/providers_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "workflows_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/workflows_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-            .{ .name = "spill_logic", .module = b.createModule(.{
-                .root_source_file = b.path("tools/zig/spill_logic.zig"),
-                .target = test_target,
-                .optimize = optimize,
-            }) },
-        },
+        }),
     });
     // The committed config.toml, for the config.zig test that checks it still
     // documents every key the loader accepts. Test-only on purpose: the

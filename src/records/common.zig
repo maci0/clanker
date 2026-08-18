@@ -486,4 +486,9 @@ test "callTool names the store in its refusal" {
     const parsed = try callTool(arena_state.allocator(), "adr", .{ .ctx = &fine, .call = Canned.call }, "{}");
     try testing.expectEqual(@as(u64, 7), unsignedField(parsed, "next_number"));
     try testing.expectEqual(@as(u64, 0), unsignedField(parsed, "missing"));
+
+    // A negative count reads as absent rather than wrapping through @intCast.
+    var negative: Canned = .{ .answer = "{\"ok\":true,\"next_number\":-1}" };
+    const wrapped = try callTool(arena_state.allocator(), "adr", .{ .ctx = &negative, .call = Canned.call }, "{}");
+    try testing.expectEqual(@as(u64, 0), unsignedField(wrapped, "next_number"));
 }

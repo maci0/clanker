@@ -438,30 +438,3 @@ test "renderCreated reports an inventory that could not be updated" {
     try testing.expect(std.mem.find(u8, text, "inventory was not updated") != null);
     try testing.expect(std.mem.find(u8, text, "docs/adrs/README.md") != null);
 }
-
-test "callTool reports the tool's own refusal sentence" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const Canned = struct {
-        payload: []const u8,
-        fn call(ctx: *anyopaque, _: []const u8) anyerror![]const u8 {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.payload;
-        }
-    };
-    var canned: Canned = .{ .payload = "{\"ok\":false,\"error\":\"a superseded ADR needs a note naming what supersedes it\"}" };
-    const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
-    try testing.expectError(Error.ToolFailed, common.callTool(arena, "adr", tool, "{}"));
-}
-
-test "unsignedField refuses a negative count instead of wrapping it" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const v = try parseValue(arena, "{\"next_number\":-1,\"good\":7}");
-    try testing.expectEqual(@as(u64, 0), common.unsignedField(v, "next_number"));
-    try testing.expectEqual(@as(u64, 7), common.unsignedField(v, "good"));
-}
