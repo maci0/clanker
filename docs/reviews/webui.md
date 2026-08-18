@@ -1441,6 +1441,34 @@ no longer has to stop at the module boundary. `serve --webui-port 41998`, then:
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` — 163/163
 steps, 773/775 tests (2 skipped, the expected worktree pair).
 
+## Each Models panel announces on its own status line (2026-08-18)
+
+`#models-status` was one `aria-live` line shared by three independent panels
+(Configured, Live, Discover), and only successes wrote it. So a live listing
+that failed left the last panel's success text standing — a screen reader kept
+hearing "12 catalog matches." after "List models" had just errored, and never
+heard about the error at all (failures painted a visible Try again but wrote
+no announcement).
+
+### What changed
+
+- **`index.html`** — two new `sr-only` polite live regions, one under the Live
+  output (`#models-live-status`) and one under the Discover output
+  (`#models-catalog-status`). The existing `#models-status` stays for the
+  Configured table, the snippet panel and the config writes.
+- **`features/models.js`** — `status(msg, panel)` routes through
+  `modelsStatusId(panel)` (exported pure, so the mapping is pinned by a test).
+  Live listing and Discover successes land on their own lines, and the
+  failure paths now write too: "Could not list models: …", "Catalog search
+  failed: …", "Catalog refresh failed: …", and the empty-result cases.
+
+### Verified
+
+`node --test ui/app/features/models.test.mjs` — 13 pass: the three-way id
+mapping, all three live regions present in the served page, and each failure
+path writing its panel's line. The pre-existing 11 assertions on this view
+still pass unchanged.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
@@ -1449,10 +1477,6 @@ steps, 773/775 tests (2 skipped, the expected worktree pair).
   limit — so a snippet from there would ship exactly the missing-`max_tokens`
   footgun the catalog snippet was built to close. It needs a way to ask for, or
   default, an output cap before it is worth offering.
-- `#models-status` is one `aria-live` line shared by three independent panels
-  (Configured, Live, Discover) and is only ever written on success, so a stale
-  "12 catalog matches." survives a failed live listing. Each panel wants its own
-  line, or the writes want a panel tag.
 - `core/tools.js: buildToolConfig` types its inputs off `typeof current`, so a
   key in `config_editable` that is absent from `config` is typed `"undefined"`
   and saved back as a string — a numeric setting silently becomes `""` the first
