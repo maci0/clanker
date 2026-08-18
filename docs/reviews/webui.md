@@ -1469,6 +1469,46 @@ mapping, all three live regions present in the served page, and each failure
 path writing its panel's line. The pre-existing 11 assertions on this view
 still pass unchanged.
 
+## Tool settings fields are typed by the manifest, not the saved value (2026-08-18)
+
+The Tools list's per-plugin settings panel (`core/tools.js: buildToolConfig`)
+typed each input off `typeof current`. Two ways for that to be wrong, both
+sticky:
+
+- A `config_editable` key with no value in the effective config yet was typed
+  `"undefined"`, drew a text field, and `saveToolConfig`'s fallback branch
+  saved whatever was typed as a **string** — a numeric setting silently became
+  a string the first time it was set from the page.
+- The type followed the value even when the value was already wrong: an
+  override hand-edited into `state/plugin_config.json` as `"9"` where `9`
+  belongs re-derived `"string"` on every visit, so the page itself could never
+  heal it.
+
+### What changed
+
+- **`tools/zig/plugins.zig: listStructured`** — the `json` listing now carries
+  `config_types` beside `config`: each editable key's type name (`number`,
+  `boolean`, `string`), read off the **descriptor's shipped default** — never
+  the override, which is exactly the value that can be wrong. A default a
+  single form field cannot hold (object, array, null) declares nothing, as
+  does a key with no default — the manifest validator already warns on that
+  shape ("nothing for an override to replace").
+- **`core/tools.js: configFieldKind`** — the declared type wins; `typeof
+  current` stays as the fallback for a third-party manifest that ships no
+  default. Exported pure, so the node test drives the shipped rule.
+
+### Verified
+
+- `ui/app/core/tools.test.mjs` (new, wired into `zig build test`): declared
+  type beats an absent value and a poisoned override; `typeof` fallback holds
+  when nothing is declared; `buildToolConfig` routes both `input.type` and
+  `dataset.kind` through `configFieldKind`.
+- `src/sandbox/runtime.zig`: the real `plugins.wasm` over a fixture manifest
+  (number/string/boolean/object defaults, one `ghost` key with no default) and
+  a poisoned `state/plugin_config.json` override — the effective config
+  reports the override as saved (`"9"`), `config_types` still says `number`,
+  and neither `shape` nor `ghost` declares a type.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
@@ -1477,11 +1517,6 @@ still pass unchanged.
   limit — so a snippet from there would ship exactly the missing-`max_tokens`
   footgun the catalog snippet was built to close. It needs a way to ask for, or
   default, an output cap before it is worth offering.
-- `core/tools.js: buildToolConfig` types its inputs off `typeof current`, so a
-  key in `config_editable` that is absent from `config` is typed `"undefined"`
-  and saved back as a string — a numeric setting silently becomes `""` the first
-  time it is set from the page. The fix wants the manifest to say the type
-  rather than the current value implying it.
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
 - Resolve the pre-existing axe items logged in the sweep entry (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — they sit in the concurrent agent's board/run-compare/workspace surface.

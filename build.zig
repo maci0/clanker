@@ -351,6 +351,11 @@ pub fn build(b: *std.Build) void {
     const models_js_test = b.addSystemCommand(&.{ "node", "--test" });
     models_js_test.addFileArg(b.path("ui/app/features/models.test.mjs"));
     test_step.dependOn(&models_js_test.step);
+    // Settings fields are typed by the descriptor's declared config_types,
+    // not by typeof on whatever value happens to be saved.
+    const tools_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    tools_js_test.addFileArg(b.path("ui/app/core/tools.test.mjs"));
+    test_step.dependOn(&tools_js_test.step);
     const compare_js_test = b.addSystemCommand(&.{ "node", "--test" });
     compare_js_test.addFileArg(b.path("ui/plugins/compare/compare.test.mjs"));
     test_step.dependOn(&compare_js_test.step);

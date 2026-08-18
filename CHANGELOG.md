@@ -109,6 +109,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   so a module missing from that list compiles and its tests never run while
   `zig build test` stays green.
 
+### Fixed
+
+- The web UI's tool settings panel types each field from the descriptor's
+  declared default (`config_types` in `GET /api/plugins`, read off the
+  manifest's `config`) instead of `typeof` on the current value. A
+  `config_editable` key with no saved value yet was typed `"undefined"` and
+  saved back as a string — a numeric setting silently became a string the
+  first time it was set from the page — and an override hand-edited to the
+  wrong type kept that wrong type on every later save.
+
 ### Breaking
 
 - The committed `config.toml` renames the Moonshot provider table
