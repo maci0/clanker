@@ -61,13 +61,13 @@ const markdown = @embedFile("app/lib/markdown.js");
 const graph = @embedFile("app/lib/graph.js");
 const board = @embedFile("app/lib/board.js");
 const runs_list = @embedFile("app/lib/runs-list.js");
+const runs_view = @embedFile("app/features/runs.js");
 
 /// Bytes this asset occupies once JSON-encoded into the response envelope.
 /// Matches std.json's default (escape_unicode = false): bytes 0x20-0x21,
 /// 0x23-0x5B and 0x5D-0xFF pass through, `"` `\` and the seven short control
 /// escapes take two bytes, every other control byte becomes \u00xx.
 fn encodedLen(comptime asset: []const u8) usize {
-    @setEvalBranchQuota(4 * asset.len);
     var encoded: usize = 2; // the enclosing quotes
     for (asset) |c| encoded += switch (c) {
         '"', '\\', 0x08, 0x0C, '\n', '\r', '\t' => 2,
@@ -84,7 +84,16 @@ fn encodedLen(comptime asset: []const u8) usize {
 // checked on its own, because each is sent in its own response.
 comptime {
     const overhead = "{\"ok\":true,\"content_type\":\"text/javascript; charset=utf-8\",\"body\":}".len;
-    for ([_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list }, [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js" }) |asset, name| {
+    // One quota for the whole sweep. @setEvalBranchQuota is a ceiling on the
+    // branches this entire comptime evaluation may spend, not a per-call
+    // budget, so sizing it off one asset runs out once the assets together
+    // exceed it — which is what adding a view used to do to the build.
+    const assets = [_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
+    const names = [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
+    var total: usize = 0;
+    for (assets) |a| total += a.len;
+    @setEvalBranchQuota(4 * total);
+    for (assets, names) |asset, name| {
         const envelope = overhead + encodedLen(asset);
         if (envelope > lib.out_cap) @compileError(std.fmt.comptimePrint(
             "webui/{s} JSON-encodes to {d} bytes, over lib.zig's out_cap of {d}. Shrink it or raise out_cap.",
@@ -135,6 +144,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/lib/graph.js")) return .{ .body = graph, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/board.js")) return .{ .body = board, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/lib/runs-list.js")) return .{ .body = runs_list, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/features/runs.js")) return .{ .body = runs_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/fleet.js")) return .{ .body = fleet, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/arena.js")) return .{ .body = arena_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/arena3d.js")) return .{ .body = arena3d_view, .content_type = "text/javascript; charset=utf-8" };
