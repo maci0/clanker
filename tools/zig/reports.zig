@@ -462,14 +462,13 @@ fn labelFor(wanted: []const u8) ?[]const u8 {
 }
 
 fn setInventoryStatus(kind: []const u8, link: []const u8, label: []const u8) !bool {
-    const idx = try records_grep.readIndex(reports_dir ++ "/README.md");
-    const start_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind});
-    const end_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind});
-
-    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
-    defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, idx.text, start_marker, end_marker, link, label)) return false;
-    return records_grep.writeIndex(reports_dir ++ "/README.md", idx, updated.written());
+    return records_grep.setIndexStatus(
+        reports_dir ++ "/README.md",
+        try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind}),
+        try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind}),
+        link,
+        label,
+    );
 }
 
 const Target = struct {

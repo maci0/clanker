@@ -153,6 +153,24 @@ pub fn writeIndex(path: []const u8, index: Index, updated: []const u8) !bool {
     return true;
 }
 
+/// Rewrites one inventory row's status in place, compare-and-swap against the
+/// index as read. Every store keeps a second copy of a record's status in its
+/// README, and only the `status` action writes both; the stores differ only in
+/// which markers bound the inventory, so the read-modify-write lives here once.
+pub fn setIndexStatus(
+    index_path: []const u8,
+    start_marker: []const u8,
+    end_marker: []const u8,
+    link: []const u8,
+    label: []const u8,
+) !bool {
+    const idx = try readIndex(index_path);
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    if (!try doc.setInventoryStatus(&updated.writer, idx.text, start_marker, end_marker, link, label)) return false;
+    return writeIndex(index_path, idx, updated.written());
+}
+
 /// `grepAll` narrowed to the store's records: a missing or unreadable store is
 /// an empty result, not an error, and non-record files are dropped.
 ///

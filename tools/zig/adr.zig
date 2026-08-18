@@ -220,12 +220,7 @@ fn addToInventory(entry: []const u8) !bool {
 /// record's status carries the index with it — an index only `create` writes
 /// is wrong from the first status change onwards.
 fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
-    const idx = try records_grep.readIndex(index_path);
-
-    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
-    defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, idx.text, inventory_start, inventory_end, link, label)) return false;
-    return records_grep.writeIndex(index_path, idx, updated.written());
+    return records_grep.setIndexStatus(index_path, inventory_start, inventory_end, link, label);
 }
 
 // -------------------------------------------------------------------- reads

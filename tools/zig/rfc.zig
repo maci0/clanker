@@ -362,12 +362,7 @@ fn addToInventory(entry: []const u8) !bool {
 /// write it, so every RFC stayed `Draft` in the inventory however often its
 /// own Status line moved; the status action carries the index with it.
 fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
-    const idx = try records_grep.readIndex(index_path);
-
-    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
-    defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, idx.text, inventory_start, inventory_end, link, label)) return false;
-    return records_grep.writeIndex(index_path, idx, updated.written());
+    return records_grep.setIndexStatus(index_path, inventory_start, inventory_end, link, label);
 }
 
 /// Paths of every research note that exists, for a `create` that linked none.
