@@ -243,6 +243,11 @@ pub fn build(b: *std.Build) void {
     const labels_js_test = b.addSystemCommand(&.{ "node", "--test" });
     labels_js_test.addFileArg(b.path("ui/app/core/labels.test.mjs"));
     test_step.dependOn(&labels_js_test.step);
+    // The provider-availability contract: rows marked usable:false stay
+    // listed as inventory but never reach the chat picker's set.
+    const utils_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    utils_js_test.addFileArg(b.path("ui/app/core/utils.test.mjs"));
+    test_step.dependOn(&utils_js_test.step);
     const files_js_test = b.addSystemCommand(&.{ "node", "--test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);

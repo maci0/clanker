@@ -18,6 +18,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   export help, so the other half of the command was reachable only from the
   top-level list.
 
+- The web UI's chat model picker and fallback-provider select only offer
+  providers this serve process can actually call, judged by the same gate the
+  TUI `/model` picker applies (`providers.unusableReason`: the offline
+  credential check plus a TCP probe for explicit loopback endpoints). Each
+  row of `GET /api/providers` now carries `usable` and, when false, `reason`;
+  the row itself stays in the payload, so the Models view still lists a
+  configured-but-unkeyed provider as inventory, dimmed and named "not
+  callable" with the server's reason. A stale `localStorage` selection
+  naming a now-uncallable provider/model falls back to the configured
+  default instead of staying selected. `POST /api/run` refuses (400, with
+  the reason) a request that explicitly names a provider the process cannot
+  call, rather than starting a run the fallback chain would serve under a
+  different name.
+
+- A recorded run's graph names the provider that actually served it. The
+  provider was stamped at run start and never rewritten when the fallback
+  chain switched providers mid-run, so a run served entirely by a fallback
+  finished looking like the requested provider while `state/token_stats.jsonl`
+  named the real one. The `/api/run` reply (and the stream's `done` event)
+  also carry `served_by`, and a streaming run that switched providers says so
+  in a status line.
+
 - Every `clanker` invocation no longer forks `zig env` at startup. The Zig standard-library path it resolves is read by exactly two cold paths (the `zig_std` tool, and the improve engine's std-symbol help for a patch that failed to compile), so `sandbox/host.zig` resolves it on first use and caches it in a static buffer instead. `--help`, `mcp`, `acp` and every CLI verb were each paying a fork+exec of the compiler for a path they never read. `clanker sessions` drops from 10.1 ms to 7.9 ms and `clanker stats` from 12.0 ms to 9.5 ms (ReleaseFast, hyperfine, 30 runs), with system time roughly halved.
 
 - Completed background jobs (`ck_job`, so `jobs` start-and-forget execs and background subagents) are dropped once 64 finished ones are retained. The two tables were process-global and never trimmed, so a long-lived `clanker serve` held every background subagent's task and result text for the life of the process, and every `wait`/`kill`/`list` scanned the whole accumulation. `list` and `wait` still answer for anything running and for the newest 64 completed jobs; older completed ids now read as not-found. A job a `wait` is currently holding is never reaped out from under it.

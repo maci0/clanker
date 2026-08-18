@@ -1,7 +1,7 @@
 // Models view — what the configured providers offer, a provider's live
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
-import { readJson, fmtInt, fmtBytes } from "../core/utils.js";
+import { readJson, fmtInt, fmtBytes, providerUnusableReason } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 
 function askConfirm(message, opts) {
@@ -334,6 +334,11 @@ function loadConfigured() {
       // behind one toggle row.
       var rowMeta = [];
       (d.providers || []).forEach(function (prov) {
+        // Inventory, deliberately unfiltered: a configured-but-unkeyed
+        // provider stays listed here (the chat picker is what hides it).
+        // Its rows are dimmed below and the notice under the table names
+        // the server's reason.
+        var uncallableReason = providerUnusableReason(prov);
         if (providerSel) {
           var opt = document.createElement("option");
           opt.value = prov.name;
@@ -363,7 +368,7 @@ function loadConfigured() {
               groupToggle(m.display || sku, variants.length, groupKey),
               "", "", "", "", "", ""
             ]);
-            rowMeta.push({ group: groupKey, head: true });
+            rowMeta.push({ group: groupKey, head: true, uncallable: uncallableReason });
           }
           rows.push([
             prov.name,
@@ -375,7 +380,9 @@ function loadConfigured() {
             m.name === prov.default_model ? "default" : "",
             editButton(entry)
           ]);
-          rowMeta.push(variants.length > 1 ? { group: groupKey, variant: true } : null);
+          rowMeta.push(variants.length > 1
+            ? { group: groupKey, variant: true, uncallable: uncallableReason }
+            : (uncallableReason ? { uncallable: uncallableReason } : null));
         });
       });
       // Before the early return below: a config with providers but no declared
@@ -398,8 +405,19 @@ function loadConfigured() {
         box.appendChild(none);
         return;
       }
+      // Providers this serve process cannot call, named with the server's
+      // reason — the same wording idea as `clanker providers check` printing
+      // "not configured". Their model rows stay in the table (inventory),
+      // dimmed; only the chat picker hides them.
+      var uncallable = (d.providers || []).filter(function (p) { return p && p.usable === false; });
+      if (uncallable.length) {
+        box.appendChild(empty("Not callable from this server: " + uncallable.map(function (p) {
+          return p.name + " — " + providerUnusableReason(p);
+        }).join("; ") + ". Still listed below; the chat picker hides them."));
+      }
       box.appendChild(table(["provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
-      // Fold pass: hide variant rows behind their group's toggle row.
+      // Fold pass: hide variant rows behind their group's toggle row, and
+      // dim the rows of a provider the server marked not callable.
       var trs = box.querySelectorAll("tbody tr");
       trs.forEach(function (tr, i) {
         var meta = rowMeta[i];
@@ -407,6 +425,10 @@ function loadConfigured() {
           tr.hidden = true;
           tr.className = "models-variant-row";
           tr.setAttribute("data-group", meta.group);
+        }
+        if (meta && meta.uncallable) {
+          tr.classList.add("models-uncallable-row");
+          tr.title = "Not callable from this server: " + meta.uncallable;
         }
       });
     })

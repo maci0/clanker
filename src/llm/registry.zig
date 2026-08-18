@@ -87,6 +87,31 @@ pub fn unconfiguredReason(
     return null;
 }
 
+/// Why this provider cannot be called from this process right now, or null
+/// when it can be attempted. This is the whole availability gate in one
+/// place: the offline credential check (`unconfiguredReason`) plus, when an
+/// `io` is supplied and the base_url is an explicit loopback endpoint, one
+/// TCP connect (`loopbackAlive`). The TUI `/model` picker, the web UI's
+/// `GET /api/providers` annotation and the `/api/run` refusal all call this
+/// one function, so no surface can drift to a second notion of "usable".
+/// Availability is per process by construction: the answer is this process's
+/// environ plus which loopback ports answer on this machine.
+pub fn unusableReason(
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    p: *const config.Provider,
+    io: ?std.Io,
+) ?[]const u8 {
+    if (unconfiguredReason(arena, environ_map, p)) |reason| return reason;
+    if (io) |the_io| {
+        if (loopbackEndpoint(p.base_url)) |lb| {
+            if (!loopbackAlive(the_io, lb.port))
+                return std.fmt.allocPrint(arena, "nothing is listening on 127.0.0.1:{d}", .{lb.port}) catch "loopback endpoint is not listening";
+        }
+    }
+    return null;
+}
+
 /// Host/port of an explicit loopback `base_url` (`127.0.0.1` or `localhost`
 /// with a literal port), null for anything else. Only loopback endpoints are
 /// probe candidates: a remote provider's reachability is not knowable without
@@ -150,6 +175,41 @@ test "loopbackAlive distinguishes a listening loopback port from a refused one" 
     try std.testing.expect(loopbackAlive(io, port));
     server.deinit(io);
     try std.testing.expect(!loopbackAlive(io, port));
+}
+
+test "unusableReason combines the credential gate with the loopback probe" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("SET_KEY", "x");
+
+    // Credential half, no io: a missing key names the env var, a present one
+    // passes, exactly as unconfiguredReason answers.
+    var missing = config.Provider{ .name = "remote", .base_url = "https://x", .default_model = "m" };
+    missing.api_key_env = "UNSET_KEY";
+    try std.testing.expect(std.mem.find(u8, unusableReason(arena, &env, &missing, null).?, "UNSET_KEY") != null);
+    var keyed = missing;
+    keyed.api_key_env = "SET_KEY";
+    try std.testing.expectEqual(@as(?[]const u8, null), unusableReason(arena, &env, &keyed, null));
+
+    // Loopback half: a keyless local provider passes the credential gate in
+    // every case, and the probe separates a listening port from a dead one.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    const port = server.socket.address.getPort();
+    const url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/v1", .{port});
+    var local = config.Provider{ .name = "local", .base_url = url, .default_model = "m" };
+    try std.testing.expectEqual(@as(?[]const u8, null), unusableReason(arena, &env, &local, io));
+    server.deinit(io);
+    const dead = unusableReason(arena, &env, &local, io).?;
+    try std.testing.expect(std.mem.find(u8, dead, "not") != null and std.mem.find(u8, dead, "listening") != null);
+    // Without an io the probe is skipped and the dead endpoint still passes.
+    try std.testing.expectEqual(@as(?[]const u8, null), unusableReason(arena, &env, &local, null));
 }
 
 test "every configurable kind resolves to its own provider" {

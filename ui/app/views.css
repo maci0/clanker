@@ -984,6 +984,10 @@
 
 .models-variant-row[hidden] { display: none; }
 
+/* A provider this serve process cannot call: kept in the inventory table,
+   visibly not offered — the notice above the table carries the reason. */
+.models-uncallable-row { opacity: 0.55; }
+
 .models-snippet-note {
   margin: var(--space-2) 0 0;
   font-size: var(--step-0);
