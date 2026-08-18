@@ -49,6 +49,9 @@ pub const known_keys = [_][]const u8{
     // falls back to `description` when a manifest omits it, so an unmigrated
     // manifest is valid, just more expensive per turn.
     "llm_description",
+    // Binding usage rules, injected into the system prompt's "## Tool
+    // guidance" section and echoed by `load_tools`. Optional.
+    "prompt_guidance",
     "wasm",
     "input_schema",
     "parameters",
@@ -874,6 +877,19 @@ test "a key that does nothing is a warning that says why" {
     try testing.expect(hasFinding(rep, .warn, "tool_allow")); // no tool_call
     try testing.expect(hasFinding(rep, .warn, "statusline")); // not internal
     try testing.expect(hasFinding(rep, .warn, "config_editable")); // key absent from config
+}
+
+test "prompt_guidance is a known key the validator accepts" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rep = try reportFor(arena,
+        \\{ "name": "rfc", "description": "d", "wasm": "r.wasm", "input_schema": {"type":"object"},
+        \\  "prompt_guidance": "open the cited source, never the note" }
+    );
+    try testing.expect(rep.ok());
+    try testing.expect(!hasFinding(rep, .warn, "prompt_guidance"));
 }
 
 test "the schema is checked against what a provider will accept" {

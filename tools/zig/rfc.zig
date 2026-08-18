@@ -206,7 +206,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     const references = if (research_path.len > 0)
         try std.fmt.allocPrint(
             lib.alloc,
-            "- Research: [{s}](../research/{s}) — read {s}. Its claims are unverified here until each one is checked against its own source.\n",
+            "- Research: [{s}](../research/{s}) — read {s}. Its claims are unverified here until each is checked against the source it cites (the URL, repository, or file — the note itself is not the source).\n",
             .{
                 if (research_title.len > 0) research_title else research_path,
                 research_path[research_dir.len + 1 ..],
@@ -295,7 +295,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("next");
     try s.beginArray();
     if (seeded) {
-        try s.write("The seeded options are unverified stubs from the research note. Re-check each claim against its own source before writing it into the body, and delete the stubs that do not survive.");
+        try s.write("The seeded options are unverified stubs from the research note. For each claim, open the source the note cites for it (web_fetch, gh_read, read_file) — re-reading the note itself verifies nothing — then rewrite the stub in this RFC's terms or delete it.");
     } else {
         try s.write("Fill the options: at least two real candidates, the status quo, and one out-of-the-box option (something already here, a primitive, or not doing it).");
     }
@@ -309,7 +309,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
 
 fn renderSeededOptions(w: *std.Io.Writer, options: []const []const u8, research_path: []const u8) !void {
     try w.print(
-        "\nSeeded from [{s}]({s}). Every line below is a claim carried over unverified:\ncheck it against its own source, then rewrite it in this RFC's terms or delete it.\n",
+        "\nSeeded from [{s}]({s}). Every line below is a claim carried over unverified:\nopen the source it cites (not the research note) before keeping it, then rewrite\nit in this RFC's terms or delete it.\n",
         .{ research_path, relativeToRfcs(research_path) },
     );
     for (options) |option| {
