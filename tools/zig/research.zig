@@ -879,18 +879,12 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
 }
 
 fn addToInventory(entry: []const u8) !bool {
-    const raw = try lib.fsRead(index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(index_path);
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    if (!try doc.insertInventory(&updated.writer, index, inventory_start, inventory_end, entry)) return false;
-    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    if (!try doc.insertInventory(&updated.writer, idx.text, inventory_start, inventory_end, entry)) return false;
+    return records_grep.writeIndex(index_path, idx, updated.written());
 }
 
 fn list(out: *lib.Out) !void {
@@ -1050,7 +1044,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     // write. Leaving the index behind is what made every note read `Draft`
     // forever, so the status change carries it; a CAS miss is reported rather
     // than overwriting a concurrent edit to the index.
-    const indexed = setInventoryStatus(basename(path), label) catch false;
+    const indexed = setInventoryStatus(std.fs.path.basename(path), label) catch false;
 
     var w = lib.writer(out);
     var s = lib.json(&w);
@@ -1073,26 +1067,13 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     lib.commit(out, &w);
 }
 
-/// The inventory links a note by file name, since every note sits directly in
-/// `docs/research/`.
-fn basename(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
-    return path[slash + 1 ..];
-}
-
 fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
-    const raw = try lib.fsRead(index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(index_path);
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, index, inventory_start, inventory_end, link, label)) return false;
-    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    if (!try doc.setInventoryStatus(&updated.writer, idx.text, inventory_start, inventory_end, link, label)) return false;
+    return records_grep.writeIndex(index_path, idx, updated.written());
 }
 
 /// The display spelling of an accepted status, or null when it is not one.

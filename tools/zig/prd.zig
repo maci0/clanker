@@ -49,10 +49,6 @@ const template_path = dir ++ "/TEMPLATE.md";
 const inventory_start = "<!-- inventory:prd:start -->";
 const inventory_end = "<!-- inventory:prd:end -->";
 
-/// Reading every PRD in `list` is bounded so a directory that grew past the
-/// arena degrades into a listing instead of an error.
-const max_listed_reads: usize = 60;
-
 /// The statuses a PRD carries, longest phrase first so a line containing "In
 /// progress" is not matched as something shorter that happens to sit inside
 /// it. `docs/prds/README.md` documents the first three; the rest are wordings
@@ -179,19 +175,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     if (!doc.isSlug(slug))
         return lib.fail(out, "slug must be lowercase letters, digits and hyphens (no leading or trailing hyphen)");
 
-    const raw_names = lib.fsList(dir) catch "[]";
-    const listing = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw_names, .{}) catch
-        return lib.fail(out, "could not read the docs/prds listing");
-    var names: std.ArrayList([]const u8) = .empty;
-    if (listing == .array) {
-        for (listing.array.items) |item| {
-            if (item != .string) continue;
-            try names.append(lib.alloc, try lib.alloc.dupe(u8, item.string));
-        }
-    }
-    const number = doc.nextNumber(names.items);
-    const number_text = try std.fmt.allocPrint(lib.alloc, "{d:0>4}", .{number});
-    const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}-{s}.md", .{ dir, number_text, slug });
+    const next = try records_grep.nextRecord(out, dir, slug) orelse return;
 
     const raw_template = lib.fsRead(template_path) catch |err| switch (err) {
         error.NotFound => return lib.fail(out, "docs/prds/TEMPLATE.md is missing; restore it before creating a PRD"),
@@ -211,7 +195,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     var rendered: std.Io.Writer.Allocating = .init(lib.alloc);
     defer rendered.deinit();
     try doc.fillTemplate(&rendered.writer, template, &.{
-        .{ .name = "number", .value = number_text },
+        .{ .name = "number", .value = next.number_text },
         .{ .name = "title", .value = title },
         .{ .name = "date", .value = date },
         .{ .name = "status", .value = status_line },
@@ -219,7 +203,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
         .{ .name = "goals", .value = goals },
     });
 
-    lib.fsWriteIf(path, "", rendered.written()) catch |err| switch (err) {
+    lib.fsWriteIf(next.path, "", rendered.written()) catch |err| switch (err) {
         error.Mismatch => return lib.fail(out, "a PRD already exists at that path; list first and open it instead"),
         else => return lib.failErr(out, err, "creating the PRD"),
     };
@@ -227,7 +211,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     const row = try std.fmt.allocPrint(
         lib.alloc,
         "| [{s}]({s}-{s}.md) | {s} | {s} | {s} |",
-        .{ number_text, number_text, slug, title, status_label, notes },
+        .{ next.number_text, next.number_text, slug, title, status_label, notes },
     );
     const indexed = addToInventory(row) catch false;
 
@@ -239,9 +223,9 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("created");
     try s.write(true);
     try s.objectField("path");
-    try s.write(path);
+    try s.write(next.path);
     try s.objectField("number");
-    try s.write(@as(u64, number));
+    try s.write(@as(u64, next.number));
     try s.objectField("status");
     try s.write(status_label);
     try s.objectField("indexed");
@@ -265,119 +249,30 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
 /// The PRD index is a table, not a list, so the row helpers are the ones that
 /// apply. A new row lands at the bottom: numbered documents read upwards.
 fn addToInventory(row: []const u8) !bool {
-    const raw = try lib.fsRead(index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(index_path);
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    if (!try doc.insertInventoryRow(&updated.writer, index, inventory_start, inventory_end, row)) return false;
-    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    if (!try doc.insertInventoryRow(&updated.writer, idx.text, inventory_start, inventory_end, row)) return false;
+    return records_grep.writeIndex(index_path, idx, updated.written());
 }
 
 /// Rewrites only the status cell, leaving the Notes column alone — the note is
 /// a human's summary of where the PRD stands and a status change is not a
 /// reason to lose it.
 fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
-    const raw = try lib.fsRead(index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(index_path);
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    if (!try doc.setInventoryRowStatus(&updated.writer, index, inventory_start, inventory_end, link, label)) return false;
-    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
-}
-
-/// The inventory links a PRD by file name; every PRD sits directly in
-/// `docs/prds/`.
-fn basename(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
-    return path[slash + 1 ..];
+    if (!try doc.setInventoryRowStatus(&updated.writer, idx.text, inventory_start, inventory_end, link, label)) return false;
+    return records_grep.writeIndex(index_path, idx, updated.written());
 }
 
 // -------------------------------------------------------------------- reads
 
 fn list(out: *lib.Out) !void {
-    const raw_names = lib.fsList(dir) catch "[]";
-    const listing = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw_names, .{}) catch
-        return lib.fail(out, "could not read the docs/prds listing");
-
-    const Row = struct { path: []const u8, title: []const u8, status: []const u8 };
-    var rows: std.ArrayList(Row) = .empty;
-    var unread: usize = 0;
-    if (listing == .array) {
-        for (listing.array.items) |item| {
-            if (item != .string) continue;
-            if (!doc.isDocFile(item.string)) continue;
-            const name = try lib.alloc.dupe(u8, item.string);
-            const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, name });
-            if (rows.items.len >= max_listed_reads) {
-                unread += 1;
-                try rows.append(lib.alloc, .{ .path = path, .title = "", .status = "" });
-                continue;
-            }
-            // A PRD is long and only its header is needed here. Reading the
-            // whole tree would exhaust the arena on the store that has the
-            // largest documents in it.
-            const raw = lib.fsReadRange(path, 0, doc.header_read_bytes) catch {
-                unread += 1;
-                try rows.append(lib.alloc, .{ .path = path, .title = "", .status = "" });
-                continue;
-            };
-            const text = try lib.alloc.dupe(u8, raw);
-            try rows.append(lib.alloc, .{
-                .path = path,
-                .title = doc.documentTitle(text),
-                .status = doc.statusFrom(text, &statuses),
-            });
-        }
-    }
-
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("prds");
-    try s.beginArray();
-    for (rows.items) |row| {
-        try s.beginObject();
-        try s.objectField("path");
-        try s.write(row.path);
-        try s.objectField("title");
-        try s.write(row.title);
-        try s.objectField("status");
-        try s.write(row.status);
-        try s.endObject();
-    }
-    try s.endArray();
-    if (unread > 0) {
-        try s.objectField("unread");
-        try s.write(@as(u64, unread));
-        try s.objectField("note");
-        try s.write("some PRDs were listed without reading their status; open them individually");
-    }
-    try s.objectField("next_number");
-    try s.write(@as(u64, blk: {
-        var names: std.ArrayList([]const u8) = .empty;
-        if (listing == .array) {
-            for (listing.array.items) |item| {
-                if (item == .string) try names.append(lib.alloc, item.string);
-            }
-        }
-        break :blk doc.nextNumber(names.items);
-    }));
-    try s.endObject();
-    lib.commit(out, &w);
+    return records_grep.listNumbered(out, dir, "prds", "PRDs", &statuses);
 }
 
 fn open(obj: std.json.Value, out: *lib.Out) !void {
@@ -412,8 +307,8 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "search needs a non-empty query");
     if (query.len > 240) return lib.fail(out, "query is too long (maximum 240 bytes)");
 
-    const prds = try grepDir(dir, query);
-    const adrs = try grepDir(adr_dir, query);
+    const prds = try records_grep.grepRecords(dir, query);
+    const adrs = try records_grep.grepRecords(adr_dir, query);
 
     var w = lib.writer(out);
     var s = lib.json(&w);
@@ -430,26 +325,6 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
     try s.write("An ADR match is a decision that constrains this feature's design; read it before specifying around it.");
     try s.endObject();
     lib.commit(out, &w);
-}
-
-/// The index lists every record by title, so an unfiltered grep answers one
-/// real hit with an inventory row stapled to it. `isDocPath` drops those and
-/// the template: neither is a record, and neither is what a searcher meant.
-fn grepDir(where: []const u8, query: []const u8) !std.json.Value {
-    const parsed = records_grep.grepAll(where, query) catch |err| switch (err) {
-        error.NotFound, error.IoError => return .{ .array = std.json.Array.init(lib.alloc) },
-        else => return err,
-    };
-    if (parsed != .array) return .{ .array = std.json.Array.init(lib.alloc) };
-
-    var kept = std.json.Array.init(lib.alloc);
-    for (parsed.array.items) |hit| {
-        if (hit != .object) continue;
-        const file = hit.object.get("file") orelse continue;
-        if (file != .string or !doc.isDocPath(file.string)) continue;
-        try kept.append(hit);
-    }
-    return .{ .array = kept };
 }
 
 // ---------------------------------------------------------------- mutations
@@ -536,7 +411,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
 
     // PRD and index are separate files, so this cannot be one atomic write. A
     // CAS miss leaves the PRD correct and names the row to reconcile.
-    const indexed = setInventoryStatus(basename(path), label) catch false;
+    const indexed = setInventoryStatus(std.fs.path.basename(path), label) catch false;
 
     var w = lib.writer(out);
     var s = lib.json(&w);

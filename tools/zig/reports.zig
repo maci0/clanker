@@ -425,18 +425,12 @@ fn rename(obj: std.json.Value, out: *lib.Out) !void {
 /// record's link: links are store-relative with one directory level and a
 /// `.md` suffix, so no link is a substring of a different one.
 fn renameInventoryLink(index_path: []const u8, old_link: []const u8, new_link: []const u8) !bool {
-    const raw = try lib.fsRead(index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
-    if (std.mem.find(u8, index, old_link) == null) return false;
-    const size = std.mem.replacementSize(u8, index, old_link, new_link);
+    const idx = try records_grep.readIndex(index_path);
+    if (std.mem.find(u8, idx.text, old_link) == null) return false;
+    const size = std.mem.replacementSize(u8, idx.text, old_link, new_link);
     const updated = try lib.alloc.alloc(u8, size);
-    _ = std.mem.replace(u8, index, old_link, new_link, updated);
-    lib.fsWriteIf(index_path, expected, updated) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    _ = std.mem.replace(u8, idx.text, old_link, new_link, updated);
+    return records_grep.writeIndex(index_path, idx, updated);
 }
 
 /// Append to `refs` each file under `root` whose text still contains
@@ -486,20 +480,14 @@ fn labelFor(wanted: []const u8) ?[]const u8 {
 }
 
 fn setInventoryStatus(kind: []const u8, link: []const u8, label: []const u8) !bool {
-    const raw = try lib.fsRead(reports_dir ++ "/README.md");
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(reports_dir ++ "/README.md");
     const start_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind});
     const end_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind});
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, index, start_marker, end_marker, link, label)) return false;
-    lib.fsWriteIf(reports_dir ++ "/README.md", expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    if (!try doc.setInventoryStatus(&updated.writer, idx.text, start_marker, end_marker, link, label)) return false;
+    return records_grep.writeIndex(reports_dir ++ "/README.md", idx, updated.written());
 }
 
 fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {
@@ -588,33 +576,27 @@ fn renderScaffold(w: *std.Io.Writer, kind: []const u8, title: []const u8, summar
 }
 
 fn addToInventory(kind: []const u8, target: Target, title: []const u8) !bool {
-    const raw = try lib.fsRead(target.index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(target.index_path);
     const marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind});
     const end_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind});
-    const start = std.mem.find(u8, index, marker) orelse return false;
+    const start = std.mem.find(u8, idx.text, marker) orelse return false;
     const content_start = start + marker.len;
-    const rel_end = std.mem.find(u8, index[content_start..], end_marker) orelse return false;
+    const rel_end = std.mem.find(u8, idx.text[content_start..], end_marker) orelse return false;
     const end = content_start + rel_end;
-    const previous = std.mem.trim(u8, index[content_start..end], " \t\r\n");
+    const previous = std.mem.trim(u8, idx.text[content_start..end], " \t\r\n");
     const empty_marker = if (std.mem.eql(u8, kind, "runbook")) "No runbooks yet." else "No reports yet.";
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    try updated.writer.writeAll(index[0..content_start]);
+    try updated.writer.writeAll(idx.text[0..content_start]);
     try updated.writer.print("\n- [{s}]({s}) — {s}\n", .{ title, target.index_link, if (std.mem.eql(u8, kind, "investigation")) "Investigating" else if (std.mem.eql(u8, kind, "bug")) "Open" else "Current" });
     if (previous.len > 0 and !std.mem.startsWith(u8, previous, empty_marker)) {
         try updated.writer.writeByte('\n');
         try updated.writer.writeAll(previous);
         try updated.writer.writeByte('\n');
     }
-    try updated.writer.writeAll(index[end..]);
-    lib.fsWriteIf(target.index_path, expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    try updated.writer.writeAll(idx.text[end..]);
+    return records_grep.writeIndex(target.index_path, idx, updated.written());
 }
 
 fn isAllowedPath(path: []const u8) bool {

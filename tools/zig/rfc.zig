@@ -44,10 +44,6 @@ const template_path = dir ++ "/TEMPLATE.md";
 const inventory_start = "<!-- inventory:rfc:start -->";
 const inventory_end = "<!-- inventory:rfc:end -->";
 
-/// Reading every RFC in `list` is bounded so a directory that grew past the
-/// arena degrades into a listing instead of an error.
-const max_listed_reads: usize = 60;
-
 /// The statuses an RFC carries, stated once: `labelFor` renders from this and
 /// `list`/`open` read a Status line against it. All one word, but read through
 /// `doc.statusFrom` all the same, because `statusWord` cuts at the first
@@ -196,19 +192,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
         }
     }
 
-    const raw_names = lib.fsList(dir) catch "[]";
-    const listing = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw_names, .{}) catch
-        return lib.fail(out, "could not read the docs/rfcs listing");
-    var names: std.ArrayList([]const u8) = .empty;
-    if (listing == .array) {
-        for (listing.array.items) |item| {
-            if (item != .string) continue;
-            try names.append(lib.alloc, try lib.alloc.dupe(u8, item.string));
-        }
-    }
-    const number = doc.nextNumber(names.items);
-    const number_text = try std.fmt.allocPrint(lib.alloc, "{d:0>4}", .{number});
-    const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}-{s}.md", .{ dir, number_text, slug });
+    const next = try records_grep.nextRecord(out, dir, slug) orelse return;
 
     const raw_template = lib.fsRead(template_path) catch |err| switch (err) {
         error.NotFound => return lib.fail(out, "docs/rfcs/TEMPLATE.md is missing; restore it before creating an RFC"),
@@ -235,7 +219,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     var rendered: std.Io.Writer.Allocating = .init(lib.alloc);
     defer rendered.deinit();
     try doc.fillTemplate(&rendered.writer, template, &.{
-        .{ .name = "number", .value = number_text },
+        .{ .name = "number", .value = next.number_text },
         .{ .name = "title", .value = title },
         .{ .name = "date", .value = date },
         .{ .name = "status", .value = "Draft" },
@@ -258,7 +242,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
         break :blk try lib.alloc.dupe(u8, replaced.written());
     } else try lib.alloc.dupe(u8, rendered.written());
 
-    lib.fsWriteIf(path, "", text) catch |err| switch (err) {
+    lib.fsWriteIf(next.path, "", text) catch |err| switch (err) {
         error.Mismatch => return lib.fail(out, "an RFC already exists at that path; list first and open it instead"),
         else => return lib.failErr(out, err, "creating the RFC"),
     };
@@ -266,7 +250,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     const entry = try std.fmt.allocPrint(
         lib.alloc,
         "- [RFC {s} — {s}]({s}-{s}.md) — Draft",
-        .{ number_text, title, number_text, slug },
+        .{ next.number_text, title, next.number_text, slug },
     );
     const indexed = addToInventory(entry) catch false;
 
@@ -278,9 +262,9 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("created");
     try s.write(true);
     try s.objectField("path");
-    try s.write(path);
+    try s.write(next.path);
     try s.objectField("number");
-    try s.write(@as(u64, number));
+    try s.write(@as(u64, next.number));
     try s.objectField("indexed");
     try s.write(indexed);
     try s.objectField("options_seeded");
@@ -366,36 +350,24 @@ fn relativeToRfcs(path: []const u8) []const u8 {
 // --------------------------------------------------------------- inventory
 
 fn addToInventory(entry: []const u8) !bool {
-    const raw = try lib.fsRead(index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(index_path);
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    if (!try doc.insertInventory(&updated.writer, index, inventory_start, inventory_end, entry)) return false;
-    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    if (!try doc.insertInventory(&updated.writer, idx.text, inventory_start, inventory_end, entry)) return false;
+    return records_grep.writeIndex(index_path, idx, updated.written());
 }
 
 /// The index carries its own copy of the status word. Only `create` used to
 /// write it, so every RFC stayed `Draft` in the inventory however often its
 /// own Status line moved; the status action carries the index with it.
 fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
-    const raw = try lib.fsRead(index_path);
-    const index = try lib.alloc.dupe(u8, raw);
-    const expected = try lib.alloc.dupe(u8, try lib.hash(index));
+    const idx = try records_grep.readIndex(index_path);
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, index, inventory_start, inventory_end, link, label)) return false;
-    lib.fsWriteIf(index_path, expected, updated.written()) catch |err| switch (err) {
-        error.Mismatch => return false,
-        else => return err,
-    };
-    return true;
+    if (!try doc.setInventoryStatus(&updated.writer, idx.text, inventory_start, inventory_end, link, label)) return false;
+    return records_grep.writeIndex(index_path, idx, updated.written());
 }
 
 /// Paths of every research note that exists, for a `create` that linked none.
@@ -414,88 +386,10 @@ fn researchNotes() ![]const []const u8 {
     return paths.items;
 }
 
-/// The inventory links an RFC by file name; every RFC sits directly in
-/// `docs/rfcs/`.
-fn basename(path: []const u8) []const u8 {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return path;
-    return path[slash + 1 ..];
-}
-
 // -------------------------------------------------------------------- reads
 
 fn list(out: *lib.Out) !void {
-    const raw_names = lib.fsList(dir) catch "[]";
-    const listing = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw_names, .{}) catch
-        return lib.fail(out, "could not read the docs/rfcs listing");
-
-    const Row = struct { path: []const u8, title: []const u8, status: []const u8 };
-    var rows: std.ArrayList(Row) = .empty;
-    var unread: usize = 0;
-    if (listing == .array) {
-        for (listing.array.items) |item| {
-            if (item != .string) continue;
-            if (!doc.isDocFile(item.string)) continue;
-            const name = try lib.alloc.dupe(u8, item.string);
-            const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, name });
-            if (rows.items.len >= max_listed_reads) {
-                unread += 1;
-                try rows.append(lib.alloc, .{ .path = path, .title = "", .status = "" });
-                continue;
-            }
-            // The index can drift; the document is the truth about its own
-            // status, so it is read rather than trusted -- but only its header
-            // is: title and status both live in the first few lines, and a
-            // whole-document read per row is what exhausts the guest arena.
-            const raw = lib.fsReadRange(path, 0, doc.header_read_bytes) catch {
-                unread += 1;
-                try rows.append(lib.alloc, .{ .path = path, .title = "", .status = "" });
-                continue;
-            };
-            const text = try lib.alloc.dupe(u8, raw);
-            try rows.append(lib.alloc, .{
-                .path = path,
-                .title = doc.documentTitle(text),
-                .status = doc.statusFrom(text, &statuses),
-            });
-        }
-    }
-
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("rfcs");
-    try s.beginArray();
-    for (rows.items) |row| {
-        try s.beginObject();
-        try s.objectField("path");
-        try s.write(row.path);
-        try s.objectField("title");
-        try s.write(row.title);
-        try s.objectField("status");
-        try s.write(row.status);
-        try s.endObject();
-    }
-    try s.endArray();
-    if (unread > 0) {
-        try s.objectField("unread");
-        try s.write(@as(u64, unread));
-        try s.objectField("note");
-        try s.write("some RFCs were listed without reading their status; open them individually");
-    }
-    try s.objectField("next_number");
-    try s.write(@as(u64, blk: {
-        var names: std.ArrayList([]const u8) = .empty;
-        if (listing == .array) {
-            for (listing.array.items) |item| {
-                if (item == .string) try names.append(lib.alloc, item.string);
-            }
-        }
-        break :blk doc.nextNumber(names.items);
-    }));
-    try s.endObject();
-    lib.commit(out, &w);
+    return records_grep.listNumbered(out, dir, "rfcs", "RFCs", &statuses);
 }
 
 fn open(obj: std.json.Value, out: *lib.Out) !void {
@@ -530,8 +424,8 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "search needs a non-empty query");
     if (query.len > 240) return lib.fail(out, "query is too long (maximum 240 bytes)");
 
-    const rfcs = try grepDir(dir, query);
-    const adrs = try grepDir(adr_dir, query);
+    const rfcs = try records_grep.grepRecords(dir, query);
+    const adrs = try records_grep.grepRecords(adr_dir, query);
 
     var w = lib.writer(out);
     var s = lib.json(&w);
@@ -548,14 +442,6 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
     try s.write("An ADR match means the decision may already be made; read it before opening an RFC that re-litigates it.");
     try s.endObject();
     lib.commit(out, &w);
-}
-
-fn grepDir(where: []const u8, query: []const u8) !std.json.Value {
-    return records_grep.grepAll(where, query) catch |err| switch (err) {
-        error.NotFound => .{ .array = std.json.Array.init(lib.alloc) },
-        error.IoError => .{ .array = std.json.Array.init(lib.alloc) },
-        else => return err,
-    };
 }
 
 // ---------------------------------------------------------------- mutations
@@ -709,7 +595,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
 
     // RFC and index are separate files, so this cannot be one atomic write. A
     // CAS miss leaves the RFC correct and names the line to reconcile.
-    const indexed = setInventoryStatus(basename(path), label) catch false;
+    const indexed = setInventoryStatus(std.fs.path.basename(path), label) catch false;
 
     var w = lib.writer(out);
     var s = lib.json(&w);
