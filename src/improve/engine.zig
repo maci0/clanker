@@ -4144,133 +4144,65 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     try std.testing.expect(try engine.brokenInvariant(staged, &elsewhere) == null);
 }
 
+/// Stage `file` holding only the invariant needles recorded for it, confirm
+/// `brokenInvariant` passes over it, then replace `drop` with `with` and
+/// confirm `drop` is the needle it names. The three tests below differ only
+/// in those three strings.
+fn expectInvariantCaught(file: []const u8, drop: []const u8, with: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged = tmp.dir;
+    try staged.createDirPath(io, std.fs.path.dirname(file).?);
+
+    var keeps: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        if (!std.mem.eql(u8, inv.file, file)) continue;
+        try keeps.appendSlice(arena, inv.needle);
+        try keeps.appendSlice(arena, "\n");
+    }
+    try staged.writeFile(io, .{ .sub_path = file, .data = keeps.items });
+    const changes = [_]proposal_mod.Change{.{ .file = file, .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
+
+    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, drop, with);
+    try staged.writeFile(io, .{ .sub_path = file, .data = gutted });
+    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings(drop, bad.needle);
+}
+
 test "a patch that guts a gate implementation in checks.zig is rejected too" {
     // checks.zig is deliberately outside the protected surface, so a
     // proposal can legitimately touch it -- but not by deleting the exit
-    // code check every gate shares.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var engine = Engine{
-        .ctx = &ctx,
-        .arena = arena,
-        .provider = undefined,
-        .cfg = undefined,
-        .hist = undefined,
-        .instructions = "",
-    };
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
-    try staged.createDirPath(io, "src/gate");
-
-    var keeps: std.ArrayList(u8) = .empty;
-    for (gate_invariants) |inv| {
-        if (!std.mem.eql(u8, inv.file, "src/gate/checks.zig")) continue;
-        try keeps.appendSlice(arena, inv.needle);
-        try keeps.appendSlice(arena, "\n");
-    }
-    try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = keeps.items });
-    const changes = [_]proposal_mod.Change{.{ .file = "src/gate/checks.zig", .old = "", .new = "" }};
-    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
-
-    // Drop the exit-code check -- the shared piece that decides pass/fail
-    // for build, test, and tools gates alike -- and it is caught.
-    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, ".exited => |c| c == 0,", "");
-    try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = gutted });
-    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
-    try std.testing.expectEqualStrings(".exited => |c| c == 0,", bad.needle);
+    // code check every gate shares, which decides pass/fail for build, test
+    // and tools gates alike.
+    try expectInvariantCaught("src/gate/checks.zig", ".exited => |c| c == 0,", "");
 }
 
 test "a patch that bypasses merge-back CAS is rejected" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var engine = Engine{
-        .ctx = &ctx,
-        .arena = arena,
-        .provider = undefined,
-        .cfg = undefined,
-        .hist = undefined,
-        .instructions = "",
-    };
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
-    try staged.createDirPath(io, "src/improve");
-
-    var keeps: std.ArrayList(u8) = .empty;
-    for (gate_invariants) |inv| {
-        if (!std.mem.eql(u8, inv.file, "src/improve/worktree.zig")) continue;
-        try keeps.appendSlice(arena, inv.needle);
-        try keeps.appendSlice(arena, "\n");
-    }
-    try staged.writeFile(io, .{ .sub_path = "src/improve/worktree.zig", .data = keeps.items });
-    const changes = [_]proposal_mod.Change{.{ .file = "src/improve/worktree.zig", .old = "", .new = "" }};
-    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
-
-    const cas_call = "updateRefCas(gpa, io, self.base_branch, commit, base_sha)";
-    const bypassed = try std.mem.replaceOwned(u8, arena, keeps.items, cas_call, "");
-    try staged.writeFile(io, .{ .sub_path = "src/improve/worktree.zig", .data = bypassed });
-    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
-    try std.testing.expectEqualStrings(cas_call, bad.needle);
+    try expectInvariantCaught("src/improve/worktree.zig", "updateRefCas(gpa, io, self.base_branch, commit, base_sha)", "");
 }
 
 test "a patch that flips improve defaults in src/config.zig is rejected" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var engine = Engine{
-        .ctx = &ctx,
-        .arena = arena,
-        .provider = undefined,
-        .cfg = undefined,
-        .hist = undefined,
-        .instructions = "",
-    };
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
-    try staged.createDirPath(io, "src");
-
-    var keeps: std.ArrayList(u8) = .empty;
-    for (gate_invariants) |inv| {
-        if (!std.mem.eql(u8, inv.file, "src/config.zig")) continue;
-        try keeps.appendSlice(arena, inv.needle);
-        try keeps.appendSlice(arena, "\n");
-    }
-    try staged.writeFile(io, .{ .sub_path = "src/config.zig", .data = keeps.items });
-    const changes = [_]proposal_mod.Change{.{ .file = "src/config.zig", .old = "", .new = "" }};
-    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
-
-    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, "capability_gate: bool = true", "capability_gate: bool = false");
-    try staged.writeFile(io, .{ .sub_path = "src/config.zig", .data = gutted });
-    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
-    try std.testing.expectEqualStrings("capability_gate: bool = true", bad.needle);
+    try expectInvariantCaught("src/config.zig", "capability_gate: bool = true", "capability_gate: bool = false");
 }
 
 test "uncoveredCapabilityTasks fails closed on empty eval output" {
