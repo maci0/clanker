@@ -25,7 +25,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 - Tool descriptors are loaded once per process instead of once per call: `toolJson` (every CLI tool invocation and every HTTP API route under `clanker serve`) re-read and re-parsed all 118 `*.tool.json` manifests, ~180 KB of JSON and ~260 `openat` per request. A cache validated by a stat sweep serves them instead, so an added, removed, edited, or toggled plugin is still picked up without a restart.
 
+### Added
+
+- `clanker commit --all` groups every tracked change instead of only what is
+  staged. The `smart_commit` guest has always taken both scopes and the two
+  commit different copies of a file (`staged` builds each group in the index,
+  so a hunk-narrowed index lands exactly as staged; `all` commits by pathspec
+  and so takes the worktree copy), but the CLI hardcoded `staged` while its
+  own `--help` said it grouped "staged (or all) files". The preview and the
+  write are given the same scope, so the plan that is confirmed is the plan
+  that lands.
+
 ### Fixed
+
+- `clanker goal --help`, `clanker autoresearch --help` and `clanker repl
+  --help` name every flag their command accepts. `goal` took `--provider`,
+  `--model` and `--reasoning-effort` and documented none of them,
+  `autoresearch` took `--provider`/`--model`, and `repl` took `--preset` and
+  `--mascot-speed`; the parser reads a spec's `flags` list while `--help`
+  prints its hand-written `detail`, so the two drifted with nothing comparing
+  them. A test now fails on any flag a command accepts without documenting.
 
 - `clanker-proxy` exits 2 on a bad invocation instead of 0. A missing `--host`
   value, an unparseable `--port`, and an unrecognized flag all printed the

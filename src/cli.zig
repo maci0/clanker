@@ -6552,6 +6552,29 @@ fn commitBody(arena: std.mem.Allocator, dry_run: bool, scope: []const u8, plan: 
     return w.written();
 }
 
+test "commit --all reaches smart_commit as scope \"all\", and is the default's opposite" {
+    // The scope decides which copy of a file is committed, so a flag that
+    // parsed but never reached the guest would quietly commit the index while
+    // the operator asked for the worktree.
+    const all = try parse(&.{ "clanker", "commit", "--all" }, null);
+    try std.testing.expect(all.commit_all);
+    const staged = try parse(&.{ "clanker", "commit" }, null);
+    try std.testing.expect(!staged.commit_all);
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const plan = [_]commit_logic.Commit{.{ .message = "fix: x", .files = &.{"a.zig"} }};
+    try std.testing.expect(std.mem.containsAtLeast(u8, try commitBody(a, false, "all", &plan), 1, "\"scope\":\"all\""));
+    try std.testing.expect(std.mem.containsAtLeast(u8, try commitBody(a, false, "staged", &plan), 1, "\"scope\":\"staged\""));
+
+    // --all belongs to `commit` only: `run --all` would otherwise be accepted
+    // and ignored.
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "run", "--all", "t" }, &diag));
+    try std.testing.expectEqualStrings("--all", diag);
+}
+
 fn cmdGit(init: std.process.Init, opts: Options) !void {
     _ = opts;
     // Convenience passthrough (unrestricted, this is the user's own shell).

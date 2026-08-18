@@ -227,7 +227,7 @@ Adding one is one file, one registry row, one `ProviderKind` tag — never a new
 | Undo an applied improvement | `clanker revert <id>` |
 | Fold recent runs into the ROADMAP | `clanker autolearn` |
 | git in the repo root | `clanker git <args...>` |
-| Group the working tree into commits | `clanker commit [--yes] [--dry-run]` |
+| Group the working tree into commits | `clanker commit [--all] [--yes] [--dry-run]` |
 
 `clanker commit` is not `git commit`: it groups a staged (or `--all`) diff
 into conventional commits, validates the messages, and topo-sorts them on a
