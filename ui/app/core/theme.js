@@ -117,6 +117,21 @@ function ensurePicker() {
       e.preventDefault();
       closePicker();
       if (_anchor && _anchor.focus) _anchor.focus();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      var opts = _list.querySelectorAll("button[data-theme]");
+      if (!opts.length) return;
+      var idx = -1;
+      for (var i = 0; i < opts.length; i++) {
+        if (opts[i] === document.activeElement) { idx = i; break; }
+      }
+      e.preventDefault();
+      if (e.key === "ArrowDown") {
+        var next = idx < 0 ? 0 : Math.min(idx + 1, opts.length - 1);
+        opts[next].focus();
+      } else {
+        var prev = idx <= 0 ? opts.length - 1 : idx - 1;
+        opts[prev].focus();
+      }
     }
   });
   window.addEventListener("resize", function () {
