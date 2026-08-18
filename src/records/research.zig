@@ -51,6 +51,10 @@ pub const Tool = common.Tool;
 /// anyway.
 const snippet_bytes: usize = 96;
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "plan", "sweep", "search", "open", "create", "append", "update", "status" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     try common.out(init.io, try run(init.arena.allocator(), opts, tool));
 }
@@ -71,8 +75,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "update")) return update(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
-    common.usageError("unknown research subcommand '{s}' (expected list, plan, sweep, search, open, create, append, update or status)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("research", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --

@@ -1104,6 +1104,102 @@ pub const Config = struct {
         return p;
     }
 
+    /// `--dump-config`, as JSON.
+    ///
+    /// `{any}` on a `Config` is Zig's struct-literal debug form: a
+    /// `[]const u8` prints as a list of byte integers, a hash map prints as
+    /// its internal `.bytes = u8@7fdfe1466150` pointer, and the whole config
+    /// lands on one unbroken line. That is unreadable by a person, unparsable
+    /// by a script, and it puts host addresses on stdout, so the one flag
+    /// whose whole job is "show me what you actually loaded" answered in the
+    /// one shape nothing can use.
+    pub fn writeJson(self: *const Config, w: *std.Io.Writer) !void {
+        var s = std.json.Stringify{ .writer = w, .options = .{ .whitespace = .indent_2 } };
+        try writeJsonValue(&s, self.*);
+        try w.writeByte('\n');
+    }
+
+    /// True for a field that records *how the config was parsed* rather than
+    /// what it says: `agent_present` is "did the file have an `[agent]`
+    /// table", `agent_fields` is "which of its keys were set". Both matter to
+    /// the merge, neither is a setting, and together they are most of the
+    /// struct.
+    fn isParseBookkeeping(comptime name: []const u8) bool {
+        return std.mem.endsWith(u8, name, "_present") or std.mem.endsWith(u8, name, "_fields");
+    }
+
+    fn writeJsonValue(s: *std.json.Stringify, value: anytype) !void {
+        const T = @TypeOf(value);
+        switch (@typeInfo(T)) {
+            .optional => {
+                if (value) |inner| try writeJsonValue(s, inner) else try s.write(null);
+            },
+            .pointer => |ptr| {
+                // A `[]const u8` is a string; every other slice is a list.
+                if (ptr.size != .slice or ptr.child == u8) return s.write(value);
+                try s.beginArray();
+                for (value) |item| try writeJsonValue(s, item);
+                try s.endArray();
+            },
+            .@"struct" => |st| {
+                // `std.StringArrayHashMapUnmanaged` is the shape `providers`,
+                // `mcp_servers` and `models` take; it is a JSON object keyed
+                // by its own keys, not a struct of internal buffers.
+                if (@hasDecl(T, "getEntry") and @hasField(T, "entries")) {
+                    try s.beginObject();
+                    var it = value.iterator();
+                    while (it.next()) |kv| {
+                        try s.objectField(kv.key_ptr.*);
+                        try writeJsonValue(s, kv.value_ptr.*);
+                    }
+                    return s.endObject();
+                }
+                try s.beginObject();
+                inline for (st.fields) |f| {
+                    if (comptime !isParseBookkeeping(f.name)) {
+                        try s.objectField(f.name);
+                        try writeJsonValue(s, @field(value, f.name));
+                    }
+                }
+                try s.endObject();
+            },
+            else => try s.write(value),
+        }
+    }
+
+    test "writeJson renders the merged config as parsable JSON, not Zig debug syntax" {
+        const gpa = std.testing.allocator;
+        var cfg: Config = .{ .default_provider = "deepseek" };
+        try cfg.providers.put(gpa, "deepseek", .{
+            .name = "deepseek",
+            .base_url = "https://api.deepseek.com",
+            .api_key_env = "DEEPSEEK_API_KEY",
+            .default_model = "deepseek-chat",
+        });
+        defer cfg.providers.deinit(gpa);
+
+        var out: std.Io.Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        try cfg.writeJson(&out.writer);
+
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), out.written(), .{});
+
+        // A string is a string, not a list of byte integers.
+        try std.testing.expectEqualStrings("deepseek", parsed.object.get("default_provider").?.string);
+        // A hash map is an object keyed by its own keys, not an internal
+        // buffer pointer.
+        const row = parsed.object.get("providers").?.object.get("deepseek").?.object;
+        try std.testing.expectEqualStrings("https://api.deepseek.com", row.get("base_url").?.string);
+        try std.testing.expectEqualStrings("openai_compat", row.get("kind").?.string);
+        // Parse bookkeeping is not configuration and stays out.
+        try std.testing.expect(parsed.object.get("agent_present") == null);
+        try std.testing.expect(parsed.object.get("agent_fields") == null);
+        // No `u8@...` host address anywhere in the dump.
+        try std.testing.expect(std.mem.find(u8, out.written(), "u8@") == null);
+    }
+
     /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
     /// `dir`. All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {

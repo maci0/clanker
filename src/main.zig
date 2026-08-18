@@ -330,10 +330,16 @@ pub fn main(init: std.process.Init) !void {
             break :blk config.Config.loadWithProfile(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml", p) catch null;
         } else config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
         if (merged) |c| {
-            var buf: [65536]u8 = undefined;
-            var w: std.Io.Writer = .fixed(&buf);
-            w.print("{any}\n", .{c}) catch |err| log.log(.warn, "config dump truncated ({s}); output is incomplete", .{@errorName(err)});
-            cli.writeStdOut(init.io, w.buffered()) catch {};
+            // Allocating, not a fixed buffer: the merged config of a machine
+            // with a dozen providers is well past any stack-sized dump, and a
+            // config dump that silently stops halfway is worse than none.
+            var out: std.Io.Writer.Allocating = .init(arena);
+            if (c.writeJson(&out.writer)) {
+                cli.writeStdOut(init.io, out.written()) catch {};
+            } else |err| {
+                cli.printUsageError(init.io, "could not render the config as JSON ({s})", .{@errorName(err)});
+                std.process.exit(1);
+            }
         } else {
             cli.printUsageError(init.io, "could not load configuration; check config.toml syntax or run `clanker setup` to create one", .{});
             std.process.exit(1);

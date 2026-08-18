@@ -106,6 +106,46 @@ pub fn usageError(comptime fmt: []const u8, args: anytype) void {
     diag.errorLine(fmt, args);
 }
 
+/// The accepted subcommands of one record store, spelled once.
+///
+/// Each store used to carry the list three times — the dispatch chain, the
+/// "expected ..." refusal, and the `usage:` line of its spec in `cli.zig` —
+/// and they drifted: `research` and `rfc` both grew `append` and `update`
+/// while their usage lines went on naming the shorter, older set, so
+/// `clanker rfc --help` refused to admit to a subcommand the parser accepted.
+/// The store now declares `subcommands` once and both the refusal and the
+/// spec's usage line are pinned to it (`record store usage lines name every
+/// accepted subcommand` in `cli.zig`).
+pub fn badSubcommand(
+    comptime store: []const u8,
+    comptime subcommands: []const []const u8,
+    sub: []const u8,
+) Error {
+    usageError(
+        "unknown " ++ store ++ " subcommand '{s}' (expected " ++ englishList(subcommands) ++ ")",
+        .{sub},
+    );
+    return Error.BadSubcommand;
+}
+
+/// `{"a", "b", "c"}` as `a, b or c`, at compile time.
+fn englishList(comptime items: []const []const u8) []const u8 {
+    comptime {
+        var prose: []const u8 = "";
+        for (items, 0..) |item, i| {
+            if (i > 0) prose = prose ++ (if (i + 1 == items.len) " or " else ", ");
+            prose = prose ++ item;
+        }
+        return prose;
+    }
+}
+
+test "englishList reads as prose for one, two and many" {
+    try std.testing.expectEqualStrings("list", comptime englishList(&.{"list"}));
+    try std.testing.expectEqualStrings("list or open", comptime englishList(&.{ "list", "open" }));
+    try std.testing.expectEqualStrings("list, open or status", comptime englishList(&.{ "list", "open", "status" }));
+}
+
 /// Runs the store's tool and returns its parsed answer, or `ToolFailed` with
 /// the reason already on stderr. `store` is the command's own name, which is
 /// what prefixes the message.

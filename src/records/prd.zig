@@ -45,6 +45,10 @@ const title_column_bytes: usize = 62;
 /// with thirty Shipped rows.
 const status_order = [_][]const u8{ "Draft", "In progress", "Partial", "Implemented", "Shipped" };
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "status" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -59,8 +63,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
 
-    common.usageError("unknown prd subcommand '{s}' (expected list, search, open, checklist, create, append, update or status)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("prd", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --
