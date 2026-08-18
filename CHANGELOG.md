@@ -618,6 +618,30 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A config file that exists and cannot be read is no longer an empty one.
+  `GET /api/config/raw` returned an empty editor with `ok:true`, and
+  `POST /api/config/table/set` / `.../remove` spliced their table into `""`
+  and wrote that back, so one unreadable read replaced the operator's whole
+  `config.local.toml` with a single table while reporting success. Only a
+  genuinely absent file reads as empty now; every other failure answers 500
+  and names the cause in the server log.
+- `state/notifications.jsonl` likewise: the append is a read-modify-write of
+  the whole log, and a read that failed for any reason other than the file
+  being absent rewrote the ledger down to the one record being stored,
+  dropping the delivery-id dedupe history with it. `POST /api/notify` now
+  answers 500 instead.
+- `clanker autoresearch` no longer overwrites a target file with just the
+  patch fragment. A file that exists but cannot be read (past the 1 MiB cap,
+  permissions, I/O) was staged as absent, so an append-shaped change built
+  the staged copy from the fragment alone and a run that improved the metric
+  wrote that fragment back over the real file. The proposal is refused
+  instead.
+- `clanker serve --proxy` no longer ends a truncated stream with a terminal
+  event. A mid-stream read failure was silently swallowed and the synthetic
+  `data: [DONE]` (or Anthropic terminal event) still went out, so the client
+  read a cut-off answer as a complete one. Mid-stream failures are now logged
+  with the provider and byte count, and the terminal event is withheld.
+
 - `state/goals.json` joins the stores above: a file that exists and cannot be
   read back is no longer an empty goal list. `clanker run --goal <id>` used to
   report the goal not found (and `POST /api/run` answered 404) when the store

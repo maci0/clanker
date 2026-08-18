@@ -231,7 +231,18 @@ pub const Loop = struct {
         // "old" against; a target that does not exist yet is left unseeded,
         // which is only valid for an append (old == "").
         for (proposal.changes) |ch| {
-            const orig = std.Io.Dir.cwd().readFileAlloc(io, ch.file, gpa, .limited(1 << 20)) catch null;
+            // Only a genuinely absent file may go unseeded. Any other read
+            // failure (past the cap, permissions, I/O) must not read as
+            // "does not exist yet": patch_apply would then build the file
+            // from the fragment alone, and a run that improved the metric
+            // writes that fragment back over the real one.
+            const orig = std.Io.Dir.cwd().readFileAlloc(io, ch.file, gpa, .limited(1 << 20)) catch |err| switch (err) {
+                error.FileNotFound => null,
+                else => {
+                    log.log(.warn, "autoresearch: {s} could not be read ({s}); refusing the proposal rather than staging it empty", .{ ch.file, @errorName(err) });
+                    return false;
+                },
+            };
             defer if (orig) |o| gpa.free(o);
             if (orig == null and ch.old.len > 0) {
                 log.log(.warn, "patch old not found in {s}", .{ch.file});

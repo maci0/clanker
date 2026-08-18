@@ -125,7 +125,7 @@ test "an unreadable log is an error, not an empty one" {
     try ensure_dir.ensureDir(tmp.dir, io, "state");
     try ensure_dir.ensureDir(tmp.dir, io, path);
 
-    try std.testing.expectError(error.FileNotFound, store(io, std.testing.allocator, tmp.dir, .{
+    try std.testing.expectError(error.IsDir, store(io, std.testing.allocator, tmp.dir, .{
         .from = "peer",
         .kind = "message",
         .topic = "",

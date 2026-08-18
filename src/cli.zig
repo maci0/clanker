@@ -9804,14 +9804,37 @@ fn configRawAllowed(name: []const u8) bool {
 /// `""`, because the callers splice into these bytes and then write the
 /// splice back: an unreadable config would be silently replaced by the one
 /// table being edited, with the response still reporting success.
-fn readConfigForEdit(io: std.Io, arena: std.mem.Allocator, name: []const u8) ![]const u8 {
-    return std.Io.Dir.cwd().readFileAlloc(io, name, arena, .limited(1 << 20)) catch |err| switch (err) {
+fn readConfigForEditIn(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, name: []const u8) ![]const u8 {
+    return base.readFileAlloc(io, name, arena, .limited(1 << 20)) catch |err| switch (err) {
         error.FileNotFound => "",
         else => {
             log.log(.error_, "{s} could not be read: {s}", .{ name, @errorName(err) });
             return error.ConfigFileUnreadable;
         },
     };
+}
+
+fn readConfigForEdit(io: std.Io, arena: std.mem.Allocator, name: []const u8) ![]const u8 {
+    return readConfigForEditIn(io, arena, std.Io.Dir.cwd(), name);
+}
+
+test "a config file that cannot be read is an error, never an empty edit base" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Absent is an empty file: that is what a first-time edit sees.
+    try std.testing.expectEqualStrings("", try readConfigForEditIn(io, arena, tmp.dir, "config.local.toml"));
+
+    // Present but unreadable is not. Callers splice into these bytes and
+    // write the splice back, so "" here silently replaces the whole config.
+    try tmp.dir.createDirPath(io, "config.local.toml");
+    try std.testing.expectError(error.ConfigFileUnreadable, readConfigForEditIn(io, arena, tmp.dir, "config.local.toml"));
 }
 
 /// `GET /api/config/raw?file=<name>` — the file's current bytes, for the

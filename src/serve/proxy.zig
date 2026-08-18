@@ -397,11 +397,21 @@ fn pipe(
         const reader = response.reader(&transfer);
         var total: usize = 0;
         while (true) {
-            const nread = reader.readSliceShort(&buf) catch break;
+            // The head is already on the wire, so a mid-stream failure cannot
+            // become a status code any more. Log which one it was: to the
+            // client this is indistinguishable from an upstream that simply
+            // stopped, and nothing else on this path records the cause.
+            const nread = reader.readSliceShort(&buf) catch |err| {
+                log.log(.warn, "proxy: upstream stream from provider {s} failed after {d} bytes ({s}); the client's stream is truncated", .{ provider.name, total, @errorName(err) });
+                break;
+            };
             if (nread == 0) break;
             watch.markByte();
             total += nread;
-            if (total > raw_http.max_body_bytes) break;
+            if (total > raw_http.max_body_bytes) {
+                log.log(.warn, "proxy: upstream stream from provider {s} exceeded {d} bytes and was cut short", .{ provider.name, raw_http.max_body_bytes });
+                break;
+            }
             raw_http.writeAllFd(ctx.stream.socket.handle, buf[0..nread]);
         }
         return status;
@@ -475,16 +485,33 @@ fn xcodeStream(
     var buf: [client.http_scratch_buf_bytes]u8 = undefined;
     var total: usize = 0;
     var at_eof = false;
+    // Set by any exit that is not "the upstream finished". The terminal event
+    // this function synthesizes below says the answer is complete, so emitting
+    // it after a failed read would hand the client a truncated answer dressed
+    // as a whole one.
+    var truncated = false;
     while (true) {
-        const nread = reader.readSliceShort(&buf) catch break;
+        const nread = reader.readSliceShort(&buf) catch |err| {
+            log.log(.warn, "proxy: upstream stream from provider {s} failed after {d} bytes ({s}); the client's stream is truncated", .{ provider.name, total, @errorName(err) });
+            truncated = true;
+            break;
+        };
         if (nread == 0) {
             if (sse.items.len > 0) sse.appendSlice(ctx.gpa, "\n\n") catch {};
             at_eof = true;
         } else {
             watch.markByte();
             total += nread;
-            if (total > raw_http.max_body_bytes) break;
-            sse.appendSlice(ctx.gpa, buf[0..nread]) catch break;
+            if (total > raw_http.max_body_bytes) {
+                log.log(.warn, "proxy: upstream stream from provider {s} exceeded {d} bytes and was cut short", .{ provider.name, raw_http.max_body_bytes });
+                truncated = true;
+                break;
+            }
+            sse.appendSlice(ctx.gpa, buf[0..nread]) catch |err| {
+                log.log(.warn, "proxy: buffering the upstream stream from provider {s} failed ({s}); the client's stream is truncated", .{ provider.name, @errorName(err) });
+                truncated = true;
+                break;
+            };
         }
         while (std.mem.find(u8, sse.items, "\n\n")) |frame_end| {
             const frame = sse.items[0..frame_end];
@@ -515,6 +542,7 @@ fn xcodeStream(
         }
         if (at_eof) break;
     }
+    if (truncated) return;
     if (family == .openai) {
         if (try openai_st.writeEvent(ctx.gpa, .{ .done = true })) |line| {
             defer ctx.gpa.free(line);

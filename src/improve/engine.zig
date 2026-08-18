@@ -2588,7 +2588,15 @@ pub const Engine = struct {
         // Neither is in the modifiable surface, so nothing can be promoted
         // back out of them.
         for (staging_runtime_files) |f| {
-            copyTreeInto(self.ctx.io, self.ctx.gpa, dir, f, staging) catch {};
+            // Absent is the normal case (a checkout need not have either).
+            // Anything else is not: the capability gate then runs a staged
+            // binary with no provider and fails every proposal on missing
+            // credentials, which reads as the model's fault. Say which file
+            // and why, so the log names the real cause.
+            copyTreeInto(self.ctx.io, self.ctx.gpa, dir, f, staging) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => log.log(.warn, "improve: runtime file '{s}' not staged ({s}); the capability gate will run without it", .{ f, @errorName(err) }),
+            };
         }
     }
 
