@@ -207,6 +207,8 @@ fn runChecks(
     // record tools fail with a confusing path error rather than a clear signal.
     if (!dirExists(io, "docs")) {
         rep.line(.warn, "docs/", "missing; record tools cannot scaffold new entries");
+    } else if (!fileExists(io, "docs/TEMPLATE.md") and !fileExists(io, "docs/README.md")) {
+        rep.line(.warn, "docs templates", "no TEMPLATE.md or README.md found; record scaffolding will fail with an opaque path error");
     }
 
     rep.section("tools");
