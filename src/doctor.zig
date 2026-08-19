@@ -211,6 +211,12 @@ fn runChecks(
             if (broad_grant) "grants unrestricted filesystem access to every tool" else if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
         );
     }
+    // sandbox_follow_symlinks lets a link inside a granted prefix reach its
+    // target outside the sandbox; surface that at startup rather than letting it
+    // silently weaken the boundary.
+    if (cfg.agent.sandbox_follow_symlinks) {
+        rep.line(.warn, "sandbox_follow_symlinks", "enabled: symlinks inside granted prefixes escape the sandbox");
+    }
     rep.line(
         if (fileExists(io, cfg.agent.system_prompt_file)) .ok else .warn,
         "system prompt",
