@@ -218,21 +218,119 @@ pub fn loadAll(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     return parseRecords(base, io, arena, path);
 }
 
+/// One stat-validated cache entry for `aggregate`.
+///
+/// The log is capped at 32 MiB (~150k records), and every stats surface
+/// (`clanker stats`, `/api/stats`, `ck_stats` from the model_stats guest)
+/// lands here. Between appends the file is unchanged, so the second and later
+/// calls re-read and re-parse up to 32 MiB for a handful of rows they already
+/// produced. The cache is validated by the file's stat (inode + size + mtime):
+/// appends change size, and a trim's atomic rename changes the inode, so a
+/// stat match is a sound "nothing changed" answer. One entry, replaced (old
+/// freed) on any change -- the same page-allocator-owned, stat-validated shape
+/// as the wasm cache in src/sandbox/runtime.zig. The returned `[]Stat` is
+/// process-stable, so callers must not free it (none do: ckStats consumes it
+/// into a fresh arena immediately).
+const AggregateCache = struct {
+    const gpa = std.heap.page_allocator;
+
+    const Entry = struct {
+        path: []const u8,
+        inode: u64,
+        size: u64,
+        mtime_ns: i96,
+        stats: []Stat,
+    };
+
+    var mutex: std.atomic.Mutex = .unlocked;
+    var entry: ?Entry = null;
+
+    /// Spin on the raw mutex: the critical section is one stat-field compare,
+    /// so a parked thread would cost more than it saves (same shape as the
+    /// live bus's Spin in src/serve/live.zig).
+    fn lock() void {
+        while (!mutex.tryLock()) std.Thread.yield() catch {};
+    }
+
+    fn get(path: []const u8, st: FileStat) ?[]Stat {
+        lock();
+        defer mutex.unlock();
+        const e = entry orelse return null;
+        if (e.inode != @as(u64, @intCast(st.inode))) return null;
+        if (e.size != st.size) return null;
+        if (e.mtime_ns != st.mtime.nanoseconds) return null;
+        if (!std.mem.eql(u8, e.path, path)) return null;
+        return e.stats;
+    }
+
+    fn store(path: []const u8, st: FileStat, stats: []Stat) void {
+        lock();
+        defer mutex.unlock();
+        if (entry) |old| {
+            for (old.stats) |s| {
+                gpa.free(s.provider);
+                gpa.free(s.model);
+            }
+            gpa.free(old.stats);
+            gpa.free(old.path);
+        }
+        const owned_path = gpa.dupe(u8, path) catch {
+            for (stats) |s| {
+                gpa.free(s.provider);
+                gpa.free(s.model);
+            }
+            gpa.free(stats);
+            return;
+        };
+        entry = .{
+            .path = owned_path,
+            .inode = @as(u64, @intCast(st.inode)),
+            .size = st.size,
+            .mtime_ns = st.mtime.nanoseconds,
+            .stats = stats,
+        };
+    }
+};
+
+const FileStat = std.Io.File.Stat;
+
 /// Groups records by (provider, model), newest-first by total tokens.
 ///
-/// Folds the log line by line rather than through `parseRecords`: the log is
-/// capped at 32 MiB (~150k records) and the answer is a handful of rows, so
-/// materializing every record plus a per-record group key first cost tens of
-/// megabytes of arena that is only freed when the request ends. Each line is
-/// parsed into a scratch arena that resets immediately; only a group's first
-/// sighting copies its names into `arena`.
+/// The result is cache-owned (see `AggregateCache`): page_allocator memory
+/// that is valid for the life of the process and replaced only when the log
+/// changes. Folding the log line by line rather than through `parseRecords`
+/// keeps the per-line parse in a scratch arena that resets immediately; only
+/// a group's first sighting copies its names into the cache allocator.
 pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8) ![]Stat {
     const path = subPath(arena, state_dir) catch return &.{};
+    const st = base.statFile(io, path, .{}) catch |err| {
+        // Missing is the ordinary case (nothing has run yet) and stays quiet.
+        // Anything else -- unreadable, or past the cap plus its slack -- would
+        // otherwise report zero usage as if the harness had never run.
+        if (err != error.FileNotFound) log.log(.warn, "[stats] read of {s} failed: {s}", .{ path, @errorName(err) });
+        return &.{};
+    };
+    if (AggregateCache.get(path, st)) |cached| return cached;
+    const stats = try aggregateFold(base, io, gpa, path);
+    AggregateCache.store(path, st, stats);
+    return stats;
+}
+
+/// The read + fold half of `aggregate`, allocating the group rows from the
+/// cache's allocator so the public function can hand back process-stable
+/// memory. Never caches a failed read: the caller stores only on success.
+/// The map-key dupes are not reclaimed on cache replacement (bounded: a few
+/// dozen short strings per log change, like the wasm cache's documented
+/// superseded-generation leak); the row names in `out` are freed by
+/// `AggregateCache.store`.
+fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]Stat {
     const raw = base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + read_slack_bytes)) catch |err| {
         if (err != error.FileNotFound) log.log(.warn, "[stats] read of {s} failed: {s}", .{ path, @errorName(err) });
         return &.{};
     };
     defer gpa.free(raw);
+
+    const alloc = AggregateCache.gpa;
 
     var scratch_state = std.heap.ArenaAllocator.init(gpa);
     defer scratch_state.deinit();
@@ -245,14 +343,15 @@ pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
         defer _ = scratch_state.reset(.retain_capacity);
         const r = std.json.parseFromSliceLeaky(Record, scratch, line, .{ .ignore_unknown_fields = true }) catch continue;
         const key = std.fmt.allocPrint(scratch, "{s}/{s}", .{ r.provider, r.model }) catch continue;
-        const gop = try by_key.getOrPut(arena, key);
+        const gop = try by_key.getOrPut(alloc, key);
         if (!gop.found_existing) {
             // The key and both names live in `scratch`, which is about to be
-            // reset; a group survives the loop, so it owns copies.
-            gop.key_ptr.* = try arena.dupe(u8, key);
+            // reset; a group survives the loop, so it owns copies in the
+            // cache allocator (freed when the cache entry is replaced).
+            gop.key_ptr.* = try alloc.dupe(u8, key);
             gop.value_ptr.* = .{
-                .provider = try arena.dupe(u8, r.provider),
-                .model = try arena.dupe(u8, r.model),
+                .provider = try alloc.dupe(u8, r.provider),
+                .model = try alloc.dupe(u8, r.model),
             };
         }
         gop.value_ptr.calls += 1;
@@ -271,13 +370,14 @@ pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
             if (std.mem.eql(u8, level, "xhigh")) gop.value_ptr.thinking_xhigh += 1;
         };
     }
-    const out = try arena.alloc(Stat, by_key.count());
+    const out = try alloc.alloc(Stat, by_key.count());
     var idx: usize = 0;
     var it = by_key.iterator();
     while (it.next()) |kv| {
         out[idx] = kv.value_ptr.*;
         idx += 1;
     }
+    by_key.deinit(alloc);
     std.mem.sort(Stat, out, {}, struct {
         fn lessThan(_: void, a: Stat, b: Stat) bool {
             return a.total_tokens > b.total_tokens;
@@ -645,8 +745,52 @@ test "thinking metadata aggregates into CLI and API distributions" {
     try std.testing.expectEqual(@as(i64, 1), dist.get("xhigh").?.integer);
 }
 
-test "concurrent appends all survive" {
-    // The offset used to come from a stat taken before the file was opened, so
+test "an unchanged log aggregates from cache; an append invalidates it" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
+        .ts = 1,
+        .provider = "kimi-k3",
+        .model = "kimi-k3",
+        .prompt_tokens = 100,
+        .completion_tokens = 20,
+        .total_tokens = 120,
+        .cache_hit = 80,
+        .cache_miss = 20,
+        .cost = 0.01,
+        .duration_ms = 100,
+    });
+
+    // A repeat read of an unchanged log returns the same cache entry, not a
+    // freshly parsed one (same pointer: the log was not re-read).
+    const first = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(u64, 1), first[0].calls);
+    const second = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expect(first.ptr == second.ptr);
+
+    // An append changes the file's size, so the next aggregate must see it.
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
+        .ts = 2,
+        .provider = "kimi-k3",
+        .model = "kimi-k3",
+        .prompt_tokens = 200,
+        .completion_tokens = 30,
+        .total_tokens = 230,
+        .cache_hit = 200,
+        .cache_miss = 30,
+        .cost = 0.02,
+        .duration_ms = 90,
+    });
+    const third = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(u64, 2), third[0].calls);
+    try std.testing.expectEqual(@as(u64, 300), third[0].prompt_tokens);
+    try std.testing.expectEqual(@as(u64, 350), third[0].total_tokens);
+}
+
+test "concurrent appends all survive" { // The offset used to come from a stat taken before the file was opened, so
     // two writers racing between the stat and the write landed on the same
     // offset and one record replaced the other. The file stayed valid JSONL,
     // just missing a line, which is why nothing ever noticed.
