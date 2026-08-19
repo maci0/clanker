@@ -19,6 +19,18 @@ const log = @import("util/log.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const llm_registry = @import("llm/registry.zig");
+const build_options = @import("build_options");
+const plat_os: []const u8 = switch (@import("builtin").os.tag) {
+    .linux => "linux",
+    .macos => "macos",
+    .windows => "windows",
+    else => "other",
+};
+const plat_arch: []const u8 = switch (@import("builtin").cpu.arch) {
+    .x86_64 => "x86_64",
+    .aarch64 => "aarch64",
+    else => "other",
+};
 
 const Status = enum {
     ok,
@@ -244,7 +256,7 @@ pub fn cmdDoctor(init: std.process.Init) !void {
 
     var out = std.Io.File.stdout().writer(io, &.{});
     var rep = Report{ .w = &out.interface };
-    rep.w.writeAll("clanker doctor\n") catch {};
+    rep.w.print("clanker doctor {s} ({s}/{s})\n", .{ build_options.version, plat_os, plat_arch }) catch {};
 
     try runChecks(io, arena, init.environ_map, &rep);
 
