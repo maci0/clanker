@@ -1,7 +1,7 @@
 // Models view — what the configured providers offer, a provider's live
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
-import { readJson, fmtInt, fmtBytes, providerUnusableReason } from "../core/utils.js";
+import { readJson, fmtInt, fmtBytes, providerUnusableReason, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 
 function askConfirm(message, opts) {
@@ -842,7 +842,7 @@ export function bindModels() {
   }
   syncCatalogBtn();
   var refresh = document.getElementById("models-refresh");
-  if (refresh) refresh.addEventListener("click", function () { loadModelsView(); });
+  wireRefresh(refresh, loadModelsView);
   var copy = document.getElementById("models-snippet-copy");
   if (copy) copy.addEventListener("click", copySnippet);
   var save = document.getElementById("models-snippet-save");

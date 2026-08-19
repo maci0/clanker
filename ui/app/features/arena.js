@@ -9,7 +9,7 @@
 //
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
-import { readJson, peerColor, themeToken, cssColorAlpha } from "../core/utils.js";
+import { readJson, peerColor, themeToken, cssColorAlpha, wireRefresh } from "../core/utils.js";
 import { showLoadError } from "../core/ui.js";
 import { reducedMotion } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
@@ -789,7 +789,7 @@ function renderHpGraph(m) {
 
 export function bindArena() {
   var refresh = byId("arena-refresh");
-  if (refresh) refresh.addEventListener("click", function () { loadArenaView(); });
+  wireRefresh(refresh, loadArenaView);
   var t3d = byId("arena-3d-toggle");
   if (t3d) t3d.addEventListener("click", toggle3d);
   syncStageMode();

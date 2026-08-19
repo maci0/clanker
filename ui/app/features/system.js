@@ -4,7 +4,7 @@
    downloaded 12.5 KB raw it never ran and paid for a GET /api/config/raw
    and a GET /api/mcp/servers it never read. They load with the System view now,
    like every other feature view. */
-import { readJson } from "../core/utils.js";
+import { readJson, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 import { uiConfirm, showLoadError } from "../core/ui.js";
 
@@ -307,7 +307,7 @@ function bindMcpServers() {
   var transportSel = f("mcp-edit-transport");
   if (transportSel) transportSel.addEventListener("change", syncMcpTransportFields);
   var refreshBtn = f("mcp-refresh");
-  if (refreshBtn) refreshBtn.addEventListener("click", load);
+  wireRefresh(refreshBtn, load);
   f("mcp-edit-save").addEventListener("click", save);
   f("mcp-edit-remove").addEventListener("click", removeServer);
   f("mcp-edit-close").addEventListener("click", function () { host.hidden = true; });

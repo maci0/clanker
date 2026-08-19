@@ -168,11 +168,33 @@ const max_attempts = 3;
 var llm_requests_total = std.atomic.Value(u64).init(0);
 var llm_errors_total = std.atomic.Value(u64).init(0);
 var llm_retries_total = std.atomic.Value(u64).init(0);
+/// A lapsed deadline, counted apart from `llm_errors_total` because it is the
+/// one provider failure retrying against the same endpoint cannot fix: the
+/// call produced no error to classify, it produced nothing at all. A rising
+/// share of these against a flat error count is a provider going quiet rather
+/// than refusing, and the two want opposite responses.
+var llm_timeouts_total = std.atomic.Value(u64).init(0);
+/// Duration of every completed LLM call, successes and failures alike. The
+/// per-call number already reaches `token_stats.jsonl`; without the aggregate
+/// here, "is the provider slow?" has no answer that does not mean parsing a
+/// log file. Buckets are seconds-scale on purpose -- an LLM call is nothing
+/// like the millisecond-scale HTTP request the other histogram measures.
+var llm_latency_ms_sum = std.atomic.Value(u64).init(0);
+var llm_latency_le_1s = std.atomic.Value(u64).init(0);
+var llm_latency_le_5s = std.atomic.Value(u64).init(0);
+var llm_latency_le_15s = std.atomic.Value(u64).init(0);
+var llm_latency_le_60s = std.atomic.Value(u64).init(0);
 
 pub const LlmMetrics = struct {
     requests_total: u64,
     errors_total: u64,
     retries_total: u64,
+    timeouts_total: u64,
+    latency_ms_sum: u64,
+    latency_le_1s: u64,
+    latency_le_5s: u64,
+    latency_le_15s: u64,
+    latency_le_60s: u64,
 };
 
 pub fn snapshotMetrics() LlmMetrics {
@@ -180,7 +202,27 @@ pub fn snapshotMetrics() LlmMetrics {
         .requests_total = llm_requests_total.load(.monotonic),
         .errors_total = llm_errors_total.load(.monotonic),
         .retries_total = llm_retries_total.load(.monotonic),
+        .timeouts_total = llm_timeouts_total.load(.monotonic),
+        .latency_ms_sum = llm_latency_ms_sum.load(.monotonic),
+        .latency_le_1s = llm_latency_le_1s.load(.monotonic),
+        .latency_le_5s = llm_latency_le_5s.load(.monotonic),
+        .latency_le_15s = llm_latency_le_15s.load(.monotonic),
+        .latency_le_60s = llm_latency_le_60s.load(.monotonic),
     };
+}
+
+/// Cumulative buckets, so each is "at most this long" and the count above
+/// `le_60s` is `requests_total` minus it.
+fn noteLatency(duration_ms: u64) void {
+    _ = llm_latency_ms_sum.fetchAdd(duration_ms, .monotonic);
+    if (duration_ms <= 1_000) _ = llm_latency_le_1s.fetchAdd(1, .monotonic);
+    if (duration_ms <= 5_000) _ = llm_latency_le_5s.fetchAdd(1, .monotonic);
+    if (duration_ms <= 15_000) _ = llm_latency_le_15s.fetchAdd(1, .monotonic);
+    if (duration_ms <= 60_000) _ = llm_latency_le_60s.fetchAdd(1, .monotonic);
+}
+
+fn noteTimeout() void {
+    _ = llm_timeouts_total.fetchAdd(1, .monotonic);
 }
 
 fn noteRequest() void {
@@ -407,6 +449,7 @@ pub fn chatWithTimeout(
                     };
                 }
                 _ = future.cancel(ctx.io) catch {};
+                noteTimeout();
                 return error.Timeout;
             },
             error.Canceled => {
@@ -651,7 +694,10 @@ fn underDeadline(
     watch.done.set(ctx.io);
     future.await(ctx.io);
 
-    if (watch.fired.load(.acquire)) return error.Timeout;
+    if (watch.fired.load(.acquire)) {
+        noteTimeout();
+        return error.Timeout;
+    }
     return result;
 }
 
@@ -680,6 +726,11 @@ pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
 /// caller supplies `duration_ms`; 0 means "unknown" (chat() times the whole
 /// call via `llm_t0` where the retry loop hides the true duration).
 fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Provider, usage: ?types.Usage, duration_ms: u64) void {
+    // Ahead of every guard below: latency is a RED signal, not a token-stats
+    // detail, so turning `modules.token_stats` off must not also blind the
+    // operator to how long the provider is taking. Same reason it sits before
+    // the empty-usage return -- a call that reported no tokens still took time.
+    noteLatency(duration_ms);
     const cfg = ctx.cfg orelse return;
     if (!cfg.modules.token_stats) return;
     const u = usage orelse return;
@@ -718,6 +769,8 @@ fn recordFailure(
     err_name: []const u8,
     duration_ms: u64,
 ) void {
+    // Before the guards, for the reason given in `recordUsage`.
+    noteLatency(duration_ms);
     const cfg = ctx.cfg orelse return;
     if (!cfg.modules.token_stats) return;
 

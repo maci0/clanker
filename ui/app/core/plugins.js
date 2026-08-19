@@ -4,7 +4,7 @@ import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from ".
 import { boardTimeline } from "../lib/board.js";
 import { onLive } from "./stream.js";
 import { icon } from "./icons.js";
-import { searchFoldFind } from "./utils.js";
+import { searchFoldFind, wireRefresh } from "./utils.js";
 
 export var pluginViews = {};
 
@@ -408,8 +408,5 @@ export function bindPlugins(ctx) {
       }
     }
   };
-  if (_el.webuiPluginsRefresh && !_el.webuiPluginsRefresh._bound) {
-    _el.webuiPluginsRefresh._bound = true;
-    _el.webuiPluginsRefresh.addEventListener("click", function () { loadWebuiPlugins(); });
-  }
+  wireRefresh(_el.webuiPluginsRefresh, loadWebuiPlugins);
 }

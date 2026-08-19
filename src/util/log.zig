@@ -101,3 +101,28 @@ pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
     defer _ = std.c.pthread_mutex_unlock(&log_mutex);
     std.debug.print("{s}", .{buf[0..w.end]});
 }
+
+/// The panic path's log line, formatted like every other record but written
+/// without taking `log_mutex`.
+///
+/// A panic can land on a thread that is already inside `log`, holding that
+/// mutex; taking it again would deadlock and turn a crash into a hang, which
+/// is strictly worse to operate. Interleaving with a concurrent log line is
+/// the accepted cost, and the process is about to die anyway. The level
+/// threshold is deliberately not consulted either: a crash is reportable at
+/// any configured level.
+pub fn logPanic(msg: []const u8) void {
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    w.print("[ERROR] ts_ms={d}", .{unixMilliseconds()}) catch {};
+    if (context.len > 0) w.print(" request_id={s}", .{context}) catch {};
+    w.print(" panic: {s}", .{msg}) catch {};
+    for (buf[0..w.end]) |*byte| {
+        if (byte.* == '\n' or byte.* == '\r') byte.* = ' ';
+    }
+    w.writeByte('\n') catch {
+        buf[buf.len - 1] = '\n';
+        w.end = buf.len;
+    };
+    std.debug.print("{s}", .{buf[0..w.end]});
+}

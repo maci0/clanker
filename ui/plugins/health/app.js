@@ -183,7 +183,7 @@ clanker.registerView({
       return box;
     }
 
-    function drawTiles(http, llm, tools, schedule, at) {
+    function drawTiles(http, llm, tools, schedule, jobs, at) {
       var total = num(http.requests_total);
       var errors = num(http.errors_total);
       var inFlight = num(http.in_flight);
@@ -195,6 +195,11 @@ clanker.registerView({
       var toolsErrors = num(tools && tools.errors_total);
       var schedTotal = num(schedule && schedule.fires_total);
       var schedErrors = num(schedule && schedule.errors_total);
+      var llmTimeouts = num(llm && llm.timeouts_total);
+      var jobStarts = num(jobs && jobs.starts_total);
+      var jobDone = num(jobs && jobs.completions_total);
+      var jobErrors = num(jobs && jobs.errors_total);
+      var jobActive = num(jobs && jobs.active);
 
       var reqRate = rateOf(prev ? num(prev.http.requests_total) : null, total, prev ? prev.at : null, at);
       var errRate = rateOf(prev ? num(prev.http.errors_total) : null, errors, prev ? prev.at : null, at);
@@ -205,10 +210,14 @@ clanker.registerView({
       var schedRate = rateOf(prev && prev.schedule ? num(prev.schedule.fires_total) : null, schedTotal, prev ? prev.at : null, at);
       var schedErrRate = rateOf(prev && prev.schedule ? num(prev.schedule.errors_total) : null, schedErrors, prev ? prev.at : null, at);
       var mean = total > 0 ? num(http.latency_ms_sum) / total : null;
+      // Successes and failures alike, so this is "what a call costs", not
+      // "what a good call costs".
+      var llmMean = llmTotal > 0 ? num(llm.latency_ms_sum) / llmTotal : null;
       var errShare = pct(errors, total);
       var llmErrShare = pct(llmErrors, llmTotal);
       var toolsErrShare = pct(toolsErrors, toolsTotal);
       var schedErrShare = pct(schedErrors, schedTotal);
+      var jobErrShare = pct(jobErrors, jobDone);
       var st = loadState(inFlight, limit);
 
       tiles.textContent = "";
@@ -237,6 +246,17 @@ clanker.registerView({
         llmErrors + " of " + llmTotal + " (" + fmtPct(llmErrShare) + ")",
         errorState(llmErrors, llmErrShare)));
       tiles.appendChild(tile(
+        "Mean LLM call", fmtMs(llmMean),
+        llmTotal > 0 ? "over " + llmTotal + " calls" : "nothing called yet",
+        null));
+      tiles.appendChild(tile(
+        // Apart from LLM errors on purpose: a lapsed deadline is a provider
+        // that went quiet rather than one that refused, and retrying the same
+        // endpoint is the one thing that cannot fix it.
+        "LLM timeouts", String(llmTimeouts),
+        llmTimeouts ? "provider went quiet" : "none",
+        llmTimeouts ? "warn" : null));
+      tiles.appendChild(tile(
         "Tool calls", fmtRate(toolsRate.rate),
         rateNote(toolsRate, toolsTotal), null));
       tiles.appendChild(tile(
@@ -250,6 +270,16 @@ clanker.registerView({
         "Schedule errors", fmtRate(schedErrRate.rate),
         schedErrors + " of " + schedTotal + " (" + fmtPct(schedErrShare) + ")",
         errorState(schedErrors, schedErrShare)));
+      tiles.appendChild(tile(
+        // A gauge, not a rate: background jobs are start-and-forget, so this
+        // reading standing still while `starts_total` climbs is the signal
+        // that something started and never finished.
+        "Jobs running", String(jobActive),
+        jobStarts + " started, " + jobDone + " finished", null));
+      tiles.appendChild(tile(
+        "Job errors", String(jobErrors),
+        jobErrors + " of " + jobDone + " (" + fmtPct(jobErrShare) + ")",
+        errorState(jobErrors, jobErrShare)));
 
       state.textContent = st.word === "unknown"
         ? "connection limit unknown"
@@ -339,16 +369,18 @@ clanker.registerView({
       var llm = (d && d.llm) || {};
       var tools = (d && d.tools) || {};
       var schedule = (d && d.schedule) || {};
+      var jobs = (d && d.jobs) || {};
       var at = Date.now();
-      drawTiles(http, llm, tools, schedule, at);
+      drawTiles(http, llm, tools, schedule, jobs, at);
       drawBands(http);
-      prev = { at: at, http: http, llm: llm, tools: tools, schedule: schedule };
+      prev = { at: at, http: http, llm: llm, tools: tools, schedule: schedule, jobs: jobs };
       api.status("Health: " + num(http.requests_total) + " requests served, " +
         num(http.errors_total) + " errors, " +
         num(llm.requests_total) + " LLM calls, " +
         num(llm.errors_total) + " LLM errors, " +
         num(tools.requests_total) + " tool calls, " +
-        num(schedule.fires_total) + " scheduled runs.");
+        num(schedule.fires_total) + " scheduled runs, " +
+        num(jobs.active) + " background jobs running.");
       return http;
     }
 

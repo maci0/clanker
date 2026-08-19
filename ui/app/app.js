@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max } from "./core/utils.js";
+import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -3709,6 +3709,8 @@ bind(el.usage, usageState, function (rows) {
   return usageRenderTable(rows, modelLabel, fmtInt, fmtCost, UI, T);
 });
 
+wireRefresh(el.usageRefresh, function () { return loadUsage(); });
+
 function loadUsage() {
   return fetch("/api/stats")
     .then(readJson)
@@ -3845,6 +3847,16 @@ function loadGoalsModule() {
   });
   return goalsModulePromise;
 }
+/* Both live inside views whose module is already loaded by the time the button
+   can be pressed (Tools is its own view; Goal activity is a fold in Kanban), so
+   the lazy import here only ever resolves an existing promise. */
+wireRefresh(el.goalsRefresh, function () {
+  return loadGoalsModule().then(function (gm) { return gm.loadGoals(); });
+});
+wireRefresh(el.toolsRefresh, function () {
+  return loadToolsModule().then(function (m) { return m.loadTools(); });
+});
+
 var promptsModulePromise = null;
 function loadPromptsModule() {
   if (!promptsModulePromise) {
@@ -4859,7 +4871,7 @@ function loadLogList() { return logsLoadLogList(el, readJson, fmtBytes); }
 function loadLog(name) { return logsLoadLog(name, el, readJson, fmtBytes); }
 
 el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
-el.logsRefresh.addEventListener("click", function () { loadLogList(); });
+wireRefresh(el.logsRefresh, loadLogList);
 
 // Phase 5 progress streaming — reuses /api/run event channel shape via fetch + reader.
 // History + revert are read from state/history and improve loop artifacts where available.
@@ -4868,8 +4880,9 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
   var stopBtn=document.getElementById("progress-stop");
   function append(t){ if(!progEl) return; progEl.textContent += t; progEl.scrollTop=progEl.scrollHeight; }
   function renderHistory(){
-    if(!progHist) return;
-    Promise.all([
+    if(!progHist) return Promise.resolve();
+    // Returned so the Refresh button can stay disabled until both fetches land.
+    return Promise.all([
       fetch("/api/runs").then(function(r){ return r.json().then(function(d){ var txt=d.text||""; try{ return txt?JSON.parse(txt): (Array.isArray(d)?d:(d.runs||[])); }catch(_){ return []; } }); }).catch(function(){ return []; }),
       fetch("/api/providers").then(function(r){ return r.json(); }).catch(function(){ return null; })
     ]).then(function(vals){
@@ -4956,7 +4969,7 @@ el.logsRefresh.addEventListener("click", function () { loadLogList(); });
   wire("progress-providers", { task:"check providers: for each configured provider/model report reachable/missing auth/rate-limited", stream:true, session: (typeof sessionId!=="undefined"?sessionId:"progress"), max_iterations:1000 });
   if(stopBtn) stopBtn.addEventListener("click", function(){ if(progCtrl) try{progCtrl.abort();}catch(_){} });
   var histBtn=document.getElementById("progress-history-refresh");
-  if(histBtn) histBtn.addEventListener("click", renderHistory);
+  wireRefresh(histBtn, renderHistory);
   renderHistory();
 })();
 

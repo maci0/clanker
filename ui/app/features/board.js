@@ -4,7 +4,7 @@
 // goal side of the card<->goal mirroring lives in ./goals.js. bindBoard()
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
-import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip } from "../core/utils.js";
+import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip, wireRefresh } from "../core/utils.js";
 import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
@@ -1938,21 +1938,6 @@ function showCardDetail(id) {
   try { setTimeout(function(){ bodyIn.focus(); }, 0); } catch(_){}
 }
 
-
-
-/* Refresh buttons that do not disable can be fired twice and say nothing while
-   they work; five of the seven already did this. */
-function wireRefresh(button, load) {
-  button.addEventListener("click", function () {
-    button.disabled = true;
-    var done = load();
-    if (done && typeof done.then === "function") {
-      done.then(function () { button.disabled = false; }, function () { button.disabled = false; });
-    } else {
-      button.disabled = false;
-    }
-  });
-}
 
 
 /* The card modal's keyboard contract, called first from app.js's document

@@ -13,6 +13,62 @@
 const std = @import("std");
 const session = @import("../agent/session.zig");
 const subprocess = @import("../agent/subprocess.zig");
+const log = @import("../util/log.zig");
+
+/// Process-local counters for background jobs. `ck_job` is start-and-forget,
+/// so without these a job that dies leaves no trace anywhere: nobody is
+/// obliged to call `wait`, and `reapDone` drops the row once it is old. No
+/// per-job, per-session, or per-argv labels -- those live in the correlated
+/// log lines below, keeping cardinality bounded the way the HTTP, tool, and
+/// schedule counters already do.
+var job_starts_total = std.atomic.Value(u64).init(0);
+var job_completions_total = std.atomic.Value(u64).init(0);
+var job_errors_total = std.atomic.Value(u64).init(0);
+/// Gauge, not a counter: started minus finished. Saturation and stuck-job
+/// signal, so it must go down again, which is why it is not derived from the
+/// two totals above.
+var jobs_active = std.atomic.Value(u64).init(0);
+
+pub const JobMetrics = struct {
+    starts_total: u64,
+    completions_total: u64,
+    errors_total: u64,
+    active: u64,
+};
+
+pub fn snapshotJobMetrics() JobMetrics {
+    return .{
+        .starts_total = job_starts_total.load(.monotonic),
+        .completions_total = job_completions_total.load(.monotonic),
+        .errors_total = job_errors_total.load(.monotonic),
+        .active = jobs_active.load(.monotonic),
+    };
+}
+
+/// The log context of whoever started a job, copied at start.
+///
+/// `log`'s correlation context is threadlocal and does not cross
+/// `std.Thread.spawn`, so a waiter thread reading it would report the empty
+/// string and the job's completion would be uncorrelatable with the request
+/// or run that asked for it. Stored inline rather than allocated so the start
+/// path's allocation-failure unwinding stays as it is.
+const Origin = struct {
+    buf: [32]u8 = undefined,
+    len: u8 = 0,
+
+    fn capture() Origin {
+        var o: Origin = .{};
+        const ctx = log.getContext();
+        const n = @min(ctx.len, o.buf.len);
+        @memcpy(o.buf[0..n], ctx[0..n]);
+        o.len = @intCast(n);
+        return o;
+    }
+
+    fn slice(self: *const Origin) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
 
 const SpinMutex = struct {
     raw: std.atomic.Mutex = .unlocked,
@@ -30,6 +86,7 @@ pub const SubJob = struct {
     id: []const u8,
     session_id: []const u8,
     task: []const u8,
+    origin: Origin = .{},
     result: ?[]const u8 = null,
     err_name: ?[]const u8 = null,
     done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
@@ -44,6 +101,7 @@ const ExecJob = struct {
     session_id: []const u8,
     child: std.process.Child,
     pid: std.posix.pid_t,
+    origin: Origin = .{},
     term: ?std.process.Child.Term = null,
     done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     thread: ?std.Thread = null,
@@ -75,12 +133,46 @@ pub fn makeId(now_ns: u64, buf: []u8) []const u8 {
 }
 
 fn waitExecThread(job: *ExecJob, io: std.Io, reg: *subprocess.Registry) void {
-    const term = job.child.wait(io) catch {
+    // This thread carries the starter's correlation id, not its own: see
+    // `Origin`. Set it once so every line below is attributable even though
+    // nothing here runs on the request thread.
+    log.setContext(job.origin.slice());
+    defer log.clearContext();
+    const term = job.child.wait(io) catch |err| {
+        // Reaping failed, so the job's exit status is now unknowable. This
+        // used to return silently, leaving a job that reads `done` with no
+        // term and a `wait` that answers a bare "wait failed" -- with nothing
+        // anywhere naming the reason.
+        _ = job_errors_total.fetchAdd(1, .monotonic);
+        _ = job_completions_total.fetchAdd(1, .monotonic);
+        _ = jobs_active.fetchSub(1, .monotonic);
+        log.log(.warn, "job reap failed job={s} session={s} pid={d} err={s}", .{
+            job.id, job.session_id, job.pid, @errorName(err),
+        });
         job.done.store(true, .release);
         reg.forget(job.session_id, job.id);
         return;
     };
     job.term = term;
+    const fields = termFields(term);
+    _ = job_completions_total.fetchAdd(1, .monotonic);
+    _ = jobs_active.fetchSub(1, .monotonic);
+    if (fields.exit) |code| {
+        if (code == 0) {
+            log.log(.debug, "job exited job={s} session={s} pid={d} exit=0", .{ job.id, job.session_id, job.pid });
+        } else {
+            _ = job_errors_total.fetchAdd(1, .monotonic);
+            log.log(.warn, "job exited nonzero job={s} session={s} pid={d} exit={d}", .{
+                job.id, job.session_id, job.pid, code,
+            });
+        }
+    } else {
+        // Signalled: `kill` does this deliberately at session end, but so
+        // does an OOM kill, and the two are indistinguishable from the row
+        // alone. Count it as an error so a run of them is visible.
+        _ = job_errors_total.fetchAdd(1, .monotonic);
+        log.log(.warn, "job signaled job={s} session={s} pid={d}", .{ job.id, job.session_id, job.pid });
+    }
     job.done.store(true, .release);
     reg.forget(job.session_id, job.id);
 }
@@ -203,6 +295,7 @@ pub fn startExec(
         .session_id = sid_owned,
         .child = child,
         .pid = pid,
+        .origin = Origin.capture(),
     };
     job.thread = std.Thread.spawn(.{}, waitExecThread, .{ job, io, reg }) catch {
         job.child.kill(io);
@@ -226,6 +319,13 @@ pub fn startExec(
             return error.InvalidArg;
         };
     }
+    _ = job_starts_total.fetchAdd(1, .monotonic);
+    _ = jobs_active.fetchAdd(1, .monotonic);
+    // argv[0] only: the rest can carry paths and prompt text, and the full
+    // command is already recoverable from the run graph.
+    log.log(.info, "job started kind=exec job={s} session={s} pid={d} cmd={s}", .{
+        kind, sid, pid, argv[0],
+    });
     return try gpa.dupe(u8, kind);
 }
 
@@ -284,10 +384,14 @@ pub fn registerSub(gpa: std.mem.Allocator, id: []const u8, session_id: []const u
         .id = try gpa.dupe(u8, id),
         .session_id = try gpa.dupe(u8, session_id),
         .task = try gpa.dupe(u8, task),
+        .origin = Origin.capture(),
         .thread = thread,
     };
     reapDone(SubJob, &subs, gpa);
     try subs.append(gpa, job);
+    _ = job_starts_total.fetchAdd(1, .monotonic);
+    _ = jobs_active.fetchAdd(1, .monotonic);
+    log.log(.info, "job started kind=subagent job={s} session={s}", .{ id, session_id });
 }
 
 pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) void {
@@ -299,8 +403,31 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) voi
         if (result) |r| j.result = gpa.dupe(u8, r) catch null;
         if (err_name) |e| j.err_name = gpa.dupe(u8, e) catch null;
         j.done.store(true, .release);
+        _ = job_completions_total.fetchAdd(1, .monotonic);
+        _ = jobs_active.fetchSub(1, .monotonic);
+        // A background subagent's failure reaches nobody unless the model
+        // happens to call `wait` on it, and it is under no obligation to.
+        // This is the only place the error name is guaranteed to be seen.
+        log.setContext(j.origin.slice());
+        defer log.clearContext();
+        if (err_name) |e| {
+            _ = job_errors_total.fetchAdd(1, .monotonic);
+            log.log(.warn, "job failed kind=subagent job={s} session={s} err={s}", .{ id, j.session_id, e });
+        } else {
+            log.log(.debug, "job finished kind=subagent job={s} session={s} bytes={d}", .{
+                id, j.session_id, if (result) |r| r.len else 0,
+            });
+        }
         return;
     }
+    // No row for this id. The thread is spawned before `registerSub` runs, so
+    // a subagent that finishes first lands here: its result is dropped and the
+    // row it is about to create will read `running` for the life of the
+    // process, never reaped and never decrementing `jobs_active`. Silent
+    // before; the drifting gauge and this line are what make it visible.
+    log.log(.warn, "job completion has no registered row job={s} result_dropped={}", .{
+        id, result != null or err_name != null,
+    });
 }
 
 pub fn waitSub(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
@@ -493,4 +620,33 @@ test "completed background jobs are reaped past the retention cap" {
     // yet (a sweep runs at the *next* registration), hence the +1.
     try std.testing.expect(subs.items.len <= max_retained_done + 1);
     try std.testing.expect(subs.items.len > 0);
+}
+
+test "Origin.capture copies the starter's log context and bounds it" {
+    log.clearContext();
+    try std.testing.expectEqualStrings("", Origin.capture().slice());
+
+    log.setContext("http-42");
+    defer log.clearContext();
+    try std.testing.expectEqualStrings("http-42", Origin.capture().slice());
+
+    // A context longer than the inline buffer is truncated, never overflowed.
+    const long = "run-" ++ ("9" ** 64);
+    log.setContext(long);
+    const capped = Origin.capture();
+    try std.testing.expectEqual(@as(usize, 32), capped.slice().len);
+    try std.testing.expectEqualStrings(long[0..32], capped.slice());
+}
+
+test "snapshotJobMetrics reports the live counters" {
+    const before = snapshotJobMetrics();
+    _ = job_starts_total.fetchAdd(1, .monotonic);
+    _ = jobs_active.fetchAdd(1, .monotonic);
+    defer {
+        _ = job_starts_total.fetchSub(1, .monotonic);
+        _ = jobs_active.fetchSub(1, .monotonic);
+    }
+    const after = snapshotJobMetrics();
+    try std.testing.expectEqual(before.starts_total + 1, after.starts_total);
+    try std.testing.expectEqual(before.active + 1, after.active);
 }

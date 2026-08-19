@@ -75,6 +75,7 @@ const adr_cmd = @import("records/adr.zig");
 const prd_cmd = @import("records/prd.zig");
 const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
+const jobs = @import("sandbox/jobs.zig");
 const schedule_store = @import("schedule/store.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
@@ -8196,7 +8197,8 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
     const llm = client.snapshotMetrics();
     const tools = agent.snapshotToolMetrics();
     const schedule = schedule_runner.snapshotScheduleMetrics();
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}}}}", .{
+    const job = jobs.snapshotJobMetrics();
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -8210,11 +8212,50 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         llm.requests_total,
         llm.errors_total,
         llm.retries_total,
+        llm.timeouts_total,
+        llm.latency_ms_sum,
+        llm.latency_le_1s,
+        llm.latency_le_5s,
+        llm.latency_le_15s,
+        llm.latency_le_60s,
         tools.requests_total,
         tools.errors_total,
         schedule.fires_total,
         schedule.errors_total,
+        job.starts_total,
+        job.completions_total,
+        job.errors_total,
+        job.active,
     }) catch null;
+}
+
+test "metricsSnapshot stays parseable and reports background job counters" {
+    var buf: [2048]u8 = undefined;
+    // A null here is the buffer overflowing: /api/metrics answers 500 and the
+    // live bus publishes nothing, so every counter goes dark at once.
+    const body = metricsSnapshot(&buf) orelse return error.SnapshotTruncated;
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
+    defer parsed.deinit();
+    for ([_][]const u8{ "http", "llm", "tools", "schedule", "jobs" }) |group| {
+        try std.testing.expect(parsed.value.object.get(group) != null);
+    }
+    const jobs_obj = (parsed.value.object.get("jobs").?).object;
+    for ([_][]const u8{ "starts_total", "completions_total", "errors_total", "active" }) |field| {
+        const v = jobs_obj.get(field) orelse return error.MissingJobField;
+        try std.testing.expect(v == .integer);
+    }
+    // A timeout is the one provider failure a retry cannot fix, and latency is
+    // the only signal that separates "slow" from "down": both must reach the
+    // endpoint, not just token_stats.jsonl.
+    const llm_obj = (parsed.value.object.get("llm").?).object;
+    for ([_][]const u8{ "requests_total", "errors_total", "retries_total", "timeouts_total", "latency_ms_sum" }) |field| {
+        const v = llm_obj.get(field) orelse return error.MissingLlmField;
+        try std.testing.expect(v == .integer);
+    }
+    const llm_buckets = (llm_obj.get("latency_buckets") orelse return error.MissingLlmBuckets).object;
+    for ([_][]const u8{ "le_1000", "le_5000", "le_15000", "le_60000" }) |field| {
+        try std.testing.expect(llm_buckets.get(field) != null);
+    }
 }
 
 fn publishMetricsSnapshot() void {

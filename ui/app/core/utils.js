@@ -312,3 +312,23 @@ export function providerUnusableReason(p) {
   if (!p || p.usable !== false) return "";
   return p.reason || "not configured";
 }
+
+/* Every view's header carries a Refresh button, and they were wired a dozen
+   different ways: some disabled while the fetch ran, most said nothing at all,
+   and three (Goal activity, Tools, Usage) had no listener behind them at all —
+   a press that looked like a press and did nothing. One helper so a press
+   always reads as one: the button goes disabled for as long as the load takes,
+   then comes back. `load` may return a promise or nothing. Idempotent per
+   button, because several views re-run their bind on every open. */
+export function wireRefresh(button, load) {
+  if (!button || button._refreshBound) return;
+  button._refreshBound = true;
+  button.addEventListener("click", function () {
+    button.disabled = true;
+    var done;
+    try { done = load(); } catch (_) { done = null; }
+    var free = function () { button.disabled = false; };
+    if (done && typeof done.then === "function") done.then(free, free);
+    else free();
+  });
+}

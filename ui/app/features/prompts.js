@@ -1,6 +1,6 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 import { uiConfirm, toast, showLoadError } from "../core/ui.js";
-import { readJson } from "../core/utils.js";
+import { readJson, wireRefresh } from "../core/utils.js";
 import { copyText } from "../core/vendor.js";
 
 export function loadPromptsView() {
@@ -183,6 +183,6 @@ export function bindPrompts(){
       .then(function(){ if(titleEl) titleEl.value=""; if(contentEl) contentEl.value=""; loadPromptsView(); refreshLocalPrompts(); })
       .catch(function(e){ toast(e.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
-  if(refreshBtn) refreshBtn.addEventListener("click",function(){ loadPromptsView(); });
+  wireRefresh(refreshBtn, loadPromptsView);
   if(filterEl) filterEl.addEventListener("input",applyPromptFilter);
 }
