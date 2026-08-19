@@ -411,8 +411,16 @@ fn fileExistsIn(io: std.Io, dir: std.Io.Dir, rel: []const u8) bool {
     return true;
 }
 
+/// The engine may hand changed paths with a leading "./" (walkers and
+/// git-diff paths differ here). The config/git-manifest guards compare
+/// exact paths, so a "./config.toml" spelling would silently bypass them.
+fn trimDotSlash(path: []const u8) []const u8 {
+    return if (std.mem.startsWith(u8, path, "./")) path[2..] else path;
+}
+
 fn isLoadedConfigToml(path: []const u8) bool {
-    return std.mem.eql(u8, path, "config.toml") or std.mem.eql(u8, path, "config.local.toml");
+    const p = trimDotSlash(path);
+    return std.mem.eql(u8, p, "config.toml") or std.mem.eql(u8, p, "config.local.toml");
 }
 
 test "toolDescriptorGate rejects duplicate names and missing wasm" {
@@ -961,7 +969,7 @@ pub fn gitDenyGuardGate(
 ) GateResult {
     if (files.len != new_texts.len) return .{ .ok = false, .label = "git-deny-guard", .detail = "mismatched files/new_text count" };
     for (files, new_texts) |f, new| {
-        if (std.mem.eql(u8, f, "tools/manifests/git.tool.json")) {
+        if (std.mem.eql(u8, trimDotSlash(f), "tools/manifests/git.tool.json")) {
             return .{ .ok = false, .label = "git-deny-guard", .detail = "proposals must not modify the git tool manifest" };
         }
         // TOML is the canonical (and only loaded) config format; the guard
@@ -1159,6 +1167,21 @@ test "gitDenyGuardGate rejects changes to the git tool manifest" {
     try std.testing.expectEqualStrings("proposals must not modify the git tool manifest", result.detail);
 }
 
+test "gitDenyGuardGate normalizes a leading ./ on guarded paths" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"./tools/manifests/git.tool.json"};
+    const new_texts = [_][]const u8{"{}"};
+    const result = gitDenyGuardGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result.label);
+
+    const files2 = [_][]const u8{"./config.toml"};
+    const new_texts2 = [_][]const u8{"git_remote_ops = true"};
+    const result2 = gitDenyGuardGate(gpa, &files2, &new_texts2);
+    try std.testing.expect(!result2.ok);
+    try std.testing.expectEqualStrings("git-deny-guard", result2.label);
+}
+
 test "gitDenyGuardGate catches a fragment without the [agent] header" {
     const gpa = std.testing.allocator;
     const files = [_][]const u8{"config.toml"};
@@ -1250,7 +1273,7 @@ pub fn configWeakeningGate(
         // that assigns the disabled value is the same weakening as the TOML
         // form; the full-file check (required defaults still present) lives
         // in configSourceWeakeningGate and is run against the staged file.
-        if (std.mem.eql(u8, f, "src/config.zig")) {
+        if (std.mem.eql(u8, trimDotSlash(f), "src/config.zig")) {
             if (forbiddenImproveDefault(new)) |detail|
                 return .{ .ok = false, .label = "config-weakening", .detail = detail };
             continue;
@@ -1501,6 +1524,21 @@ test "configWeakeningGate rejects flipping improve defaults in src/config.zig" {
     const harmless = [_][]const u8{"fn parseImprove(arena: std.mem.Allocator, v: json.Value) !Improve {"};
     const result3 = configWeakeningGate(gpa, &files, &harmless);
     try std.testing.expect(result3.ok);
+}
+
+test "configWeakeningGate normalizes a leading ./ on guarded paths" {
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"./src/config.zig"};
+    const new_texts = [_][]const u8{"capability_gate: bool = false"};
+    const result = configWeakeningGate(gpa, &files, &new_texts);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("config-weakening", result.label);
+
+    const files2 = [_][]const u8{"./config.toml"};
+    const new_texts2 = [_][]const u8{"capability_gate = false"};
+    const result2 = configWeakeningGate(gpa, &files2, &new_texts2);
+    try std.testing.expect(!result2.ok);
+    try std.testing.expectEqualStrings("config-weakening", result2.label);
 }
 
 test "the live src/config.zig passes configSourceWeakeningGate" {
