@@ -234,8 +234,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 - Completed background jobs (`ck_job`, so `jobs` start-and-forget execs and background subagents) are dropped once 64 finished ones are retained. The two tables were process-global and never trimmed, so a long-lived `clanker serve` held every background subagent's task and result text for the life of the process, and every `wait`/`kill`/`list` scanned the whole accumulation. `list` and `wait` still answer for anything running and for the newest 64 completed jobs; older completed ids now read as not-found. A job a `wait` is currently holding is never reaped out from under it.
 
-- `[memory.chunk]`, `[memory.embedding]` and `[memory.vector] backend` are gone. Nothing had read them since the native `src/memory/` layer was replaced by the sandboxed `memory` tool: chunk size, overlap, strategy and the embedder are inputs to a `memory` tool call, and only the builtin hash+cosine path exists. They parsed into fields nobody read, and the reference documented them as settings. `[memory]` now carries `backend`, `vector.top_k` and `vector.threshold`, all three read; setting one of the removed keys is reported as an unknown key instead of being silently ignored.
-
 - Every `clanker` invocation loaded its configuration twice. The startup dotenv probe wants one flag, `[modules] dotenv`, but `Config.loadQuiet` ran the same load as the command behind it, including `applyCatalogSpecs`: a 3.8 MB read of `state/models-dev.json` and a byte walk of the whole thing to find the spans of configured providers. The catalog fills nothing outside `[models]`, so the probe skips it now and the snapshot is read and walked once per process instead of twice. `clanker sessions` drops from 66.9 ms to 45.9 ms (Debug build, hyperfine, 20 runs).
 
 - `findProviderSpan` no longer re-derives each catalog member's `api` URL and `env` array on every call. It is called once per configured provider, and each call sub-scanned every member of the snapshot for those two fields and re-parsed each `env` array, so a config naming providers models.dev does not know by id walked the snapshot once per provider. `models_dev.indexProviders` extracts them once for the whole provider loop; the match rule and its answer are unchanged.
@@ -632,6 +630,37 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   One `default_model` + `[models."<provider>/<old-model>"]` pair per
   provider reproduces the 0.1.0 behavior exactly. Specs (context, cost,
   capabilities) come from the models.dev snapshot.
+- `[memory.chunk]`, `[memory.embedding]` and `[memory.vector] backend` are
+  gone: nothing reads them since the native `src/memory/` layer was replaced
+  by the sandboxed `memory` tool, and the reference documented them as
+  settings. `[memory]` now carries `backend`, `vector.top_k` and
+  `vector.threshold`, all three read; setting one of the removed keys is
+  reported as an unknown key instead of being silently ignored. Migration:
+  delete the removed tables and pass chunk size, overlap, strategy and the
+  embedder to the `memory` tool call instead:
+
+  ```toml
+  # before — delete these tables
+  [memory.chunk]
+  size = 800
+  overlap = 120
+  strategy = "markdown"
+
+  [memory.embedding]
+  provider = ""
+  model = ""
+
+  [memory.vector]
+  backend = "builtin"
+
+  # after — only the read keys remain
+  [memory]
+  backend = "hybrid"
+
+  [memory.vector]
+  top_k = 5
+  threshold = 0.35
+  ```
 
 ### Changed
 
