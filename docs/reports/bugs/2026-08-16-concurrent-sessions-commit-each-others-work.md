@@ -4,11 +4,11 @@
 
 - **What failed:** Five Claude sessions shared one checkout with no lock on the working tree. Explicit-path staging was not enough, because the paths themselves belonged to other sessions: one commit swept up another session's unfinished guests, a stash briefly held three sessions' work at once, and an aborted rebase left the tree holding upstream content. Nothing was lost, but only because each session still had its edits on disk or in a backup.
 - **Impact:** No work was lost, and the ten commits on origin/main are correct. The cost was three sessions blocked for roughly twenty minutes, one deleted file that had to be recovered from an out-of-repo backup, a partly-completed feature published in a state its own README advertises but the binary does not implement, and an integration that took an aborted rebase plus a merge to land.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-19. clanker commit's write path now serializes per checkout via a non-blocking flock on state/commit.lock (src/cli.zig acquireCommitLock, tested); recovery procedure preserved in the concurrent-sessions runbook, which covers the raw-git writers no process-local lock can reach
 
 ## Status
 
-Open.
+Resolved on 2026-08-19. clanker commit's write path now serializes per checkout via a non-blocking flock on state/commit.lock (src/cli.zig acquireCommitLock, tested); recovery procedure preserved in the concurrent-sessions runbook, which covers the raw-git writers no process-local lock can reach
 
 ## Symptom and impact
 
@@ -234,3 +234,7 @@ other sessions' in-progress work. `git status --porcelain` was byte-identical
 before and after.
 
 Use this whenever the alternative is stashing someone else's work.
+
+## Enforcement (2026-08-19)
+
+The follow-up's open question — whether an agent should take a lock before writing the index — is now decided by implementation for the clanker-mediated path: `clanker commit`'s writing form holds a non-blocking exclusive flock on `state/commit.lock` across plan, confirm and write (`acquireCommitLock` in src/cli.zig, the same kernel-held pattern `schedule run-due` uses), and a second writer is refused with the lock named rather than raced. A dry run takes no lock. Covered by the cli test 'the commit lock refuses a second holder without waiting'; the runbook gained a matching section. Raw `git` writers — the form the original incident's sessions used — cannot be locked from inside this process; for them the runbook's coordination procedure remains the control, which is why this record's scope note matters: the convention is now enforced exactly where clanker is the writer.

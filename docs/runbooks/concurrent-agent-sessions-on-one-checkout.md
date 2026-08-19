@@ -461,3 +461,20 @@ session's, so every agent's stash is authored by the same person and the
 metadata cannot say whose it is. Creation time against session start times is
 what rules sessions out. Ask the live sessions and get the operator's decision
 before dropping one you did not create.
+
+## Enforcement since 2026-08-19: the clanker commit lock
+
+The writing form of `clanker commit` now takes a non-blocking exclusive
+flock on `state/commit.lock` for the whole plan-confirm-write window (the
+same kernel-held lock `clanker schedule run-due` uses, so it is released
+whenever the holder dies and is never stale). A second `clanker commit` on
+the same checkout is refused with the lock named:
+
+```
+refusing to commit: another clanker commit in this checkout holds state/commit.lock; let it finish and rerun
+```
+
+That refusal is the mechanism working — wait for the other session's commit
+to finish and rerun; never delete the lock file. This covers only the
+clanker-mediated commit path. Sessions writing with raw `git` are outside
+it, and everything else in this runbook still applies to them.

@@ -6331,6 +6331,21 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     const dry = opts.dry_run;
+    // Held across plan, confirm and write: the plan is only valid against the
+    // index it was read from, and a second writer racing this window is how
+    // sessions sharing one checkout committed each other's work. A dry run
+    // reads only and takes no lock.
+    var commit_lock: ?std.Io.File = null;
+    defer if (commit_lock) |f| f.close(io);
+    if (!dry) {
+        commit_lock = acquireCommitLock(io, std.Io.Dir.cwd(), cfg.agent.state_dir, arena) catch |err| switch (err) {
+            error.WouldBlock => {
+                printUsageError(io, "refusing to commit: another clanker commit in this checkout holds {s}/commit.lock; let it finish and rerun", .{cfg.agent.state_dir});
+                std.process.exit(1);
+            },
+            else => return err,
+        };
+    }
     // The preview is a dry run either way: --dry-run only decides whether we
     // stop after showing it. The real commit below is the one that writes.
     //
@@ -6388,6 +6403,44 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // commit (docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md).
     const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false, scope, preview.commits);
     try writeStdOut(io, done.text);
+}
+
+/// Serializes the writing form of `clanker commit` per checkout, with the
+/// same kernel-held non-blocking flock `schedule run-due` takes: released
+/// whenever the holding process dies, so it is never stale and needs no
+/// liveness probe, and `WouldBlock` refuses the second writer with a reason
+/// instead of queueing it behind an interactive confirm prompt. Five sessions
+/// on one checkout committing and stashing each other's work is the incident
+/// that turned this from convention into enforcement
+/// (docs/reports/bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md);
+/// this lock covers the clanker-mediated commit path — raw `git` writers
+/// remain the runbook's problem, since nothing in this process can flock them.
+fn acquireCommitLock(io: std.Io, base: std.Io.Dir, state_dir: []const u8, arena: std.mem.Allocator) !std.Io.File {
+    ensure_dir.ensureDir(base, io, state_dir) catch {};
+    const path = try std.fmt.allocPrint(arena, "{s}/commit.lock", .{state_dir});
+    return file_lock.createFileRetry(io, base, path, .{
+        .truncate = false,
+        .lock = .exclusive,
+        .lock_nonblocking = true,
+    });
+}
+
+test "the commit lock refuses a second holder without waiting" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const first = try acquireCommitLock(io, tmp.dir, "state", arena);
+    defer first.close(io);
+    // A second open is a second open file description, so the exclusive
+    // flock conflicts even inside one process — which is exactly the case a
+    // second agent session is.
+    try std.testing.expectError(error.WouldBlock, acquireCommitLock(io, tmp.dir, "state", arena));
 }
 
 /// One `smart_commit` call: the rendered plan, and the plan itself so a later

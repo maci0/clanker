@@ -164,7 +164,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [reports status updates the Status section but not the TL;DR](bugs/2026-08-16-reports-status-leaves-the-tldr-saying-open.md) — Resolved
 
-- [Five agent sessions on one checkout committed and stashed each other's work](bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md) — Open
+- [Five agent sessions on one checkout committed and stashed each other's work](bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md) — Resolved
 
 - [clanker commit always fails: smart_commit returns no text field](bugs/2026-08-16-clanker-commit-tool-output-has-no-text-field.md) — Resolved
 
