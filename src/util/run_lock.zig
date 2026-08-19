@@ -66,7 +66,15 @@ pub fn acquire(
 }
 
 fn tryCreate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, path: []const u8) !?Lock {
-    var file = dir.createFile(io, path, .{ .exclusive = true }) catch |err| switch (err) {
+    // The exclusive flock is held from create until the close below, i.e.
+    // across the pid write. O_EXCL create only succeeds on a file that did
+    // not exist, so the flock never contends at open; its job is to tell a
+    // concurrent `readOwner` that the pid is not there yet. Without it the
+    // file is visible to other processes the instant O_EXCL returns, and a
+    // second acquirer could read the empty file, decide the lock was stale,
+    // delete it and create its own — two improve-self runs in one tree,
+    // which is the corruption this lock exists to prevent.
+    var file = dir.createFile(io, path, .{ .exclusive = true, .lock = .exclusive }) catch |err| switch (err) {
         error.PathAlreadyExists => return null,
         else => return err,
     };
@@ -88,10 +96,19 @@ fn tryCreate(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, path: []const 
     return .{ .dir = dir, .io = io, .path = path, .held = true };
 }
 
-fn readOwner(io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, path: []const u8) ?u32 {
-    const data = dir.readFileAlloc(io, path, gpa, .limited(64)) catch return null;
-    defer gpa.free(data);
-    const trimmed = std.mem.trim(u8, data, " \t\r\n");
+fn readOwner(io: std.Io, _: std.mem.Allocator, dir: std.Io.Dir, path: []const u8) ?u32 {
+    // The open takes a blocking exclusive flock, matching the flock the
+    // creator holds across its pid write in `tryCreate`. A read that raced
+    // the create used to see the empty file between O_EXCL and the write,
+    // and `acquire` then deleted a lock that was being taken right then;
+    // now the open waits for the creator to finish writing (or to die,
+    // which releases the flock) and only then reads, so an unreadable owner
+    // is genuinely stale, never mid-write.
+    var file = dir.openFile(io, path, .{ .lock = .exclusive }) catch return null;
+    defer file.close(io);
+    var buf: [64]u8 = undefined;
+    const n = file.readPositionalAll(io, &buf, 0) catch return null;
+    const trimmed = std.mem.trim(u8, buf[0..n], " \t\r\n");
     return std.fmt.parseInt(u32, trimmed, 10) catch null;
 }
 
@@ -165,6 +182,56 @@ test "a lock left by a dead process is taken over" {
     var again = try acquire(io, std.testing.allocator, tmp.dir, "run.lock", &holder);
     try std.testing.expect(again.held);
     again.release();
+}
+
+test "a lock being written by a live process is waited for, not stolen" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // The creator's race window, reproduced: the file exists (O_EXCL create)
+    // but the pid has not been written yet, and the creator holds the
+    // exclusive flock across the window, the way tryCreate now does.
+    var creator = try tmp.dir.createFile(io, "run.lock", .{ .exclusive = true, .lock = .exclusive });
+
+    const Outcome = struct {
+        err: ?anyerror = null,
+        lock: ?Lock = null,
+    };
+    const Worker = struct {
+        fn run(self: *Outcome, w_io: std.Io, gpa: std.mem.Allocator, dir: std.Io.Dir, holder: *?u32) void {
+            if (acquire(w_io, gpa, dir, "run.lock", holder)) |lock| {
+                self.lock = lock;
+            } else |err| {
+                self.err = err;
+            }
+        }
+    };
+    var outcome: Outcome = .{};
+    var holder: ?u32 = null;
+    const th = try std.Thread.spawn(.{}, Worker.run, .{ &outcome, io, std.testing.allocator, tmp.dir, &holder });
+
+    // Give the second acquirer every chance to read while the file is still
+    // empty (it blocks on the creator's flock instead), then complete the
+    // pid write the creator was in the middle of.
+    var scratch: [32]u8 = undefined;
+    var w = creator.writer(io, &scratch);
+    var pid_data: [32]u8 = undefined;
+    try w.interface.writeAll(try std.fmt.bufPrint(&pid_data, "{d}\n", .{selfPid()}));
+    try w.interface.flush();
+    creator.close(io);
+
+    th.join();
+    // The second acquirer saw a live owner and reported Busy with its pid —
+    // it must not have deleted the lock and acquired it itself.
+    const got = outcome.err orelse return error.TestExpectedBusy;
+    try std.testing.expectEqual(@as(anyerror, error.Busy), got);
+    try std.testing.expect(outcome.lock == null);
+    try std.testing.expectEqual(selfPid(), holder orelse 0);
+    try std.testing.expect((tmp.dir.statFile(io, "run.lock", .{}) catch null) != null);
 }
 
 test "a live process is reported alive and a dead one is not" {
