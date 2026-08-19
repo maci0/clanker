@@ -98,7 +98,7 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
         return responseError(alloc, id, -32602, "cwd must be an absolute path");
     }
     if (std.mem.findScalar(u8, cwd, 0) != null) {
-        return responseError(alloc, id, -32602, "cwd does not exist");
+        return responseError(alloc, id, -32602, "cwd contains a NUL byte; pass the path without embedded NULs");
     }
     conn.session_counter += 1;
     const sid = try std.fmt.allocPrint(arena, "acp-{d}", .{conn.session_counter});
