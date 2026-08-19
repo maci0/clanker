@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-08-18.
+Discussion — 2026-08-19. Options R/S/T folded in from research Draft 5 and the recommendation revised to option T's staged path at 7/10 (2026-08-19); open for comment — the blocking product questions are 1 and 2.
 
 An RFC is a *request for comment*: it presents the options and a recommendation
 so a decision can be made, and it is not itself the decision record. When it is
@@ -12,7 +12,7 @@ reversal supersedes that ADR; this file keeps the reasoning that produced it.
 
 ## Overview
 
-Decide which backend, concurrency-control mechanism and access path clanker should use so that runs isolated in git worktrees, and instances running on different servers in a network, can read and write shared agent state concurrently without copying state directories. The research note in docs/research/decentralized-state-store.md surveys 17 candidates across two independent axes — an access path (tier 1: how a sandboxed guest reaches state at all) and a topology/consistency choice (tier 2: where state lives and who resolves concurrency across N servers) — and records evidence for each without picking. This RFC is the decision that follows.
+Decide which backend, concurrency-control mechanism and access path clanker should use so that runs isolated in git worktrees, and instances running on different servers in a network, can read and write shared agent state concurrently without copying state directories. The research note in docs/research/decentralized-state-store.md surveys the field — 17 candidates at Draft 4, plus the distributed-ledger family (R) and the spine options (S, T) added in Draft 5, 2026-08-19 — across two independent axes — an access path (tier 1: how a sandboxed guest reaches state at all) and a topology/consistency choice (tier 2: where state lives and who resolves concurrency across N servers) — and records evidence for each without picking. This RFC is the decision that follows.
 
 **Decision to make.** Which backend, concurrency-control mechanism and access path do we adopt so worktree-isolated runs and mesh peers on different servers read and write shared agent state concurrently without copying state directories?
 
@@ -55,7 +55,7 @@ Cross-host, PRD 0011 gives sessions a per-entity "home" with read-only replicas 
 
 ## Options considered
 
-The note's 17 candidates split into two tiers that are independent decisions. Options A and B are tier 1 (the access path); the rest are tier 2 (where state lives), placed on the topology × partition grid the note names. The status quo and one out-of-the-box option ("narrow the requirement") are added explicitly. Several candidates are ruled out on measured numbers; those verdicts are carried over with their evidence.
+The note's candidates split into two tiers that are independent decisions (17 at Draft 4; R, S and T added in Draft 5, 2026-08-19). Options A and B are tier 1 (the access path); the rest are tier 2 (where state lives), placed on the topology × partition grid the note names. The status quo and one out-of-the-box option ("narrow the requirement") are added explicitly. Several candidates are ruled out on measured numbers; those verdicts are carried over with their evidence.
 
 ### Tier 1 — the access path
 
@@ -194,6 +194,30 @@ The note places the candidates on two axes: topology (central store vs full repl
 
 - Redpanda/Kafka are better at streaming and cover one shape; Redis Streams covers documents + events but persistence/clustering unverified. None displaces NATS for the combination (streams + KV CAS + TTLs + watch + one server + one Zig client).
 
+### R. Distributed ledgers — CometBFT, Fabric, immudb, p2p logs (family, mostly ruled out)
+
+- **What it is:** the blockchain/DLT family, decomposed by the note (Draft 5, 2026-08-19) into its parts — replicated log, consensus total order, deterministic fold, tamper evidence, BFT — rather than adopted whole. Clanker already has the log and the fold in-tree (ADR 0001's board, PRD 0011's per-owner logs).
+- **Verdicts carried from the note:** BFT buys nothing here — every node runs the same self-modifying binary under one operator, so the realistic bad writer is a correlated fault BFT cannot absorb. Fabric's CA/MSP identity machinery answers inter-organization distrust the fleet does not have, and with Raft ordering its guarantee collapses to what rqlite/dqlite (K) offer without the PKI. immudb is BUSL 1.1 with asynchronous read-only replicas pulling from a primary and no documented failover — a central tamper-evident store, failing driver 4 the way single-node Postgres does. The p2p log family (Hypercore/Autobase, OrbitDB) is AP full replication in JavaScript — a Node daemon per host, and Autobase may retroactively reorder previously seen events. The category itself is contracting: Amazon retired QLDB 2025-07-31 (pointing at Aurora, conceding lost cryptographic verifiability); Trillian is in maintenance mode.
+- **What survives:** total order — already available from the Raft rows without BFT — and tamper evidence, which is a hash chain addable to any backend here for one hash per record (open question 14).
+- **Evidence:** research note option R; every cited claim fetched at source 2026-08-19.
+
+### S. TigerBeetle as an event spine — counts and hashes, bodies elsewhere (central replicated service, CP)
+
+- **What it is:** repurpose accounts/transfers — accounts per (instance, stream, provider@model), one transfer per appended event, `amount` = tokens/bytes/records, `user_data_128` = a 128-bit content hash. A `Transfer` is fixed-width integers with no payload field, immutable and undeletable, so event *bodies* cannot live in TigerBeetle under any mapping; the store degrades, usefully, to a replicated, totally ordered, immutable index beside a bulk store.
+- **Fit:** the two-store split is TigerBeetle's own prescribed OLGP pairing ("works alongside your general purpose database"; names/metadata there, transfers and balances in TigerBeetle), and account balances become the aggregates `clanker stats` currently computes by scanning JSONL. Topology: clanker hosts are *clients* of a separate cluster — six replicas recommended, membership static, size fixed at creation — so this is a central replicated service, not full-state-per-host.
+- **Pros:** the strongest ordering + immutability combination surveyed for the event spine; operationally the simplest cluster in the note; Zig reference code.
+- **Cons:** holds none of the four shapes' bodies (a spine, not a store — composes, never stands alone); static membership; **no official Zig client** (.NET, Go, Java, Node.js, Python, Ruby, Rust) — the C `tb_client` boundary is unverified for a musl Zig 0.16 build (open question 15).
+- **Evidence:** TigerBeetle Transfer reference, clients, system-architecture and deploying docs, all fetched 2026-08-19 (research note option S).
+
+### T. A clanker-native replicated spine — fan-out over the mesh, staged (full per host, AP for streams)
+
+- **What it is:** the note's build-it-ourselves row promoted and scoped (option T, on the operator's stated direction 2026-08-19: a Zig-native store that grows and scales naturally with the mesh, without a large upfront resource, setup or maintenance cost). The decomposition that makes it small: clanker's data is mostly **single-writer by construction** — the home-instance rule gives every session, run and log stream exactly one writing host — and a single-writer, self-ordered stream replicates with *no consensus at all*: reliable fan-out plus id-dedup, which `src/peers/chatrooms.zig` `fanOut` already does for chat messages.
+- **The staged growth path:** (0) one host — the status quo plus tier 1; (1) 2–32 members — generalize `fanOut` from chat messages to state streams, nothing new to run, joins stay PRD 0011 admission; (2) measured contention — owner leases plus the existing CAS on the ~16 KB contended-document subset, still no consensus; (3) past the 32-member cap — the first stage needing a real engine decision, and the first where the surveyed products earn their weight. Setup cost at every stage below 3 is "run clanker".
+- **Pros:** meets driver 4 for followed streams (a down host strands only its own unsynced tail); no new daemon, dependency or operator setup; in-tree and improvable by the loop; TigerBeetle's discipline — fixed-width spine records, deterministic fold, bounded allocation — as blueprint, but not its storage engine, whose simplicity depends on the fixed schema.
+- **Cons:** clanker owns delivery, retention and backfill semantics — the category of work most likely to be subtly wrong; no external community hardening; cross-host queries need building; inherits the 32-member ceiling until stage 3.
+- **Relation to option I:** T is option I extended, not a rival — the same topology and ownership rule, applied to the streams PRD 0011 leaves unreplicated (improvements, token stats, autolearn, learnings), which removes I's largest gap without new machinery.
+- **Evidence:** research note option T; `src/peers/chatrooms.zig` (`fanOut`); PRD 0011 (home-instance rule, `max_members`, non-goals); TigerBeetle design docs as under S. Design reasoning, not measurement.
+
 ### Status quo — do nothing
 
 - **What it is:** keep the JSON/JSONL files, the symlink + `shared_root` pair for worktrees, and per-host `state/` with no cross-host pooling.
@@ -215,6 +239,7 @@ The note places the candidates on two axes: topology (central store vs full repl
 - **If J/O:** a server and (for J) HA tooling must be stood up and a migration started; the two experiments (pg.zig vs YugabyteDB, unix-socket transport) are cheap and settle the central-store column.
 - **If L/M:** a daemon (Rust for L, or Marmot) must be deployed and operated; schema mapping onto CRDT/HLC tables starts.
 - **If status quo:** nothing changes; the worktree breakage recurs and the fleet keeps not pooling.
+- **If T:** stage 1 is a generalization of an existing mechanism (`fanOut` over state streams behind `ck_state`), so it can land behind tier 1 with no new infrastructure; the spike is one stream (`improvements.jsonl`) replicated between two instances.
 
 ### Medium term (3–12 months)
 
@@ -222,24 +247,26 @@ The note places the candidates on two axes: topology (central store vs full repl
 - **If J:** bulk state, claims and logs consolidate on one store; the open questions are `pg.zig` at thousands of connections, TLS maturity, and the migration path off JSONL.
 - **If the AP row (L/M):** every host holds full state and keeps writing through partitions; the costs are the daemon (L), out-of-order rows (M), and CRDT "converge, not correct" semantics on card/goal edits.
 - **If status quo:** at a handful of hosts the mesh's 32-member ceiling and per-entity SPOF begin to bind; above it, `home_unreachable` strands work and the unreplicated logs fragment.
+- **If T:** the streams PRD 0011 leaves unreplicated pool across 2–32 members with nothing new to operate; the external-backend decision is deferred to a measured trigger (contention on the document subset, or the 32-member cap) instead of being made up front.
 
 ### Long term (12+ months)
 
 - **If A + one store (J or O):** a self-modifying fleet with inspectable, queried state and collective learning; the dependency is an operator-run database, and the point of no return is the migrated data format.
 - **If full-replication AP (L/M):** the fleet meets "no agent blocked by a host being down" directly, at the cost of owning a daemon and CRDT/HLC conflict semantics, with blob state living elsewhere.
 - **If status quo:** survivable at two hosts; at a hundred the question this RFC exists to prevent becomes the daily failure mode.
+- **If T:** a fleet that outgrows the 32-member cap faces the deferred stage-3 engine decision with real usage data rather than guesses; the risk carried until then is owning delivery, retention and backfill semantics in-tree.
 
 ## Recommendation
 
-**Recommended option:** Phased. Tier 1 now: option A — a `ck_state` host channel to the local serve (the house pattern applied to state). Tier 2: do not lock a backend yet. Adopt the "narrow the requirement" staging — coordination subset first (goals, cards, claims/leases), sessions and blobs local with lazy replication, append-only logs later — and default that first shared backend to PostgreSQL unless the product answer to "should an isolated agent keep working" selects the AP row, in which case verify Corrosion first.
+**Recommended option:** Phased: tier 1 now — option A, the ck_state channel to serve. Tier 2: adopt option T's staged growth path as the default — generalize the existing fan-out to state streams for 2–32 members, add owner leases plus the existing CAS on the ~16 KB contended-document subset when contention is measured — and defer the external-backend decision (J by default; O or L per the product answers to questions 1 and 2) to stage 3, past the 32-member cap.
 
-**Confidence:** 6/10
+**Confidence:** 7/10
 
-**Why this confidence.** Raises: `pg.zig` working against YugabyteDB unchanged (natively-distributed SQL with no failover machinery); the operator's answer to "stall vs keep working" (selects the CP vs AP row); `nats.zig` reaching 1.0 or `pg.zig`'s TLS leaving experimental (removes the two named maturity gaps on the leaders). Sinks: an operator who will not run a server (collapses tier 2 to option I or do-nothing); a decision that the mesh stays small (option I becomes sufficient); a measured contention problem on one host (makes tier 1 urgent and could force B as a stopgap before A lands).
+**Why this confidence.** Raises: a green stage-1 spike (the fan-out generalization delivering and backfilling one stream correctly between two instances); the operator's answers to questions 1 and 2 confirming a small mesh with keep-working semantics, which is exactly T's AP-for-streams row; `tb_client` linking cleanly from Zig 0.16 (question 15), which would add option S as a cheap integrity spine over T's streams. Sinks: a failed stage-1 spike (delivery/backfill semantics prove subtly wrong — pushes tier 2 back toward J); a measured contention problem before stage 1 lands (forces B as a stopgap or J earlier); a decision that the fleet must exceed 32 members soon (skips straight to stage 3, where J/O/L compete on their own terms and T's deferral buys nothing).
 
-**Rationale.** Tier 1 has no real competition: A beats B because B neither fixes the breakage (it still routes through `safeJoinSecure`) nor has any cross-host story, while A removes the fragile mechanism, makes tier 2 swappable behind serve, and is already PRD 0011's locked pattern for a neighbouring problem. Tier 2 is staged rather than picked because the note found no single winner — its two blocking open questions (stall vs keep working; whether the mesh is meant to reach fleet scale) are product decisions that select the row, not the candidate. "Narrow the requirement" is the note's strongest move and makes one-store-by-default safe to start; PostgreSQL is that default because it is the only single candidate covering all four data shapes with a native Zig client (`pg.zig`) and the missing claim primitive (`SKIP LOCKED`), and its one real cost — single-node SPOF — is already answered by HA tooling or by option O.
+**Rationale.** Tier 1 is unchanged and uncontested: A removes the shared_root fragility and makes tier 2 swappable. Tier 2 moves from 'stage onto PostgreSQL by default' to 'stage onto the in-tree spine by default' because option T dissolves the previous recommendation's biggest sink — an operator who will not run a server — and the operator has stated exactly that preference (2026-08-19): a Zig-native store that grows with the mesh without upfront resource, setup or maintenance cost. The move costs little because clanker's data is mostly single-writer by construction (home-instance rule), so stages 0-2 need no consensus and no new process; tier 1 keeps the backend swappable, so deferring stage 3 loses no optionality and arrives with usage data instead of guesses. Confidence rises 6 to 7: the previous sinks (operator will not run a server; mesh stays small) now select this path instead of breaking it. What holds it at 7: T's cost is owning delivery, retention and backfill semantics — the subtly-wrong category — and the stage-1 spike has not been run; a failed spike or a measured contention problem before stage 1 lands would push tier 2 back toward J.
 
-**Reversibility.** Tier 1 (A) is a seam, not a store: once guests call `ck_state` instead of writing paths, that access path is committed — but that is exactly what makes tier 2 swappable, since the backend behind serve can change without touching a guest. Tier 2 is the reversible part: starting with PostgreSQL and later moving to a full-replication AP store (Corrosion/Marmot) is a migration, not a rewrite, because tier 1 decouples them. The point of no return is the migrated data format: once data leaves the JSON/JSONL files into tables, backing out is the expensive step, so the staging order (coordination subset first) should be followed before any bulk migration.
+**Reversibility.** Tier 1 (A) is unchanged from the previous recommendation: a seam, not a store — committed once guests call `ck_state` instead of writing paths, and exactly what keeps tier 2 swappable. Option T's stages are individually reversible while data stays in the existing file formats: stage 1 replicates streams without changing what a stream is, so backing out is stopping the fan-out and deleting replicas; stage 2 reuses the CAS that already exists. The point of no return is unchanged in kind but moved in time: it is still the migrated data format, and it now sits at stage 3 behind a measured trigger instead of at the front of the adoption.
 
 ## Open questions
 
@@ -256,20 +283,23 @@ Ordered by what blocks a decision, most blocking first.
 9. **Claims/leases worth a second store?** etcd expresses it natively but only as a sidecar; the default is one store until measurement says otherwise.
 10. **Should `state/` be a git repository?** Not searched; per-agent branches with explicit merges is a well-understood model.
 11. **Hand-written LWW-register + OR-set for goal/card edits?** A refinement on whichever backend wins.
-12. **Could `cr-sqlite` be used without Corrosion?** The extension plus clanker's own gossip — no second daemon, no Rust; entirely unexplored.
+12. **Could `cr-sqlite` be used without Corrosion?** The extension plus clanker's own gossip — no second daemon, no Rust; now scoped as one concrete engine choice for option T's stage 3 / contended-document slice.
 13. **Is Marmot production-ready?** Its repo was fetched 2026-08-16 (v2 architecture, HLC conflict model and stated limitations verified there — the discussion-thread description of v1 was corrected then), but v2 is a young rewrite: 2PC write-path behaviour at the stated agent counts, out-of-order sync on ordered logs, and the missing Zig/gRPC client are unassessed.
+14. **Is a hash chain over the shared append logs worth one hash per record?** The one distributed-ledger property with a clanker-specific argument (the improve ledger's prefix has already been silently rewritten once); addable to any backend, including today's flat files, with no consensus and no daemon. Cheap to spike.
+15. **Does TigerBeetle's C `tb_client` link into a musl Zig 0.16 build?** Gates option S; there is no official Zig client. One afternoon, like question 3.
 
 ## Next steps / action items
 
 - [ ] Accept tier 1: implement `ck_state` and answer "what does `clanker run` do without serve" (open question 5).
 - [ ] Run the two cheap experiments: pg.zig against YugabyteDB (question 3) and the unix-socket transport spike (question 7).
 - [ ] Put the two product questions (1 and 2) to the operator via ask_user; the answers select the tier-2 row.
-- [ ] Adopt "narrow the requirement" staging regardless of which tier-2 backend wins.
+- [ ] Adopt "narrow the requirement" staging regardless of which tier-2 backend wins; option T is that staging expressed in-tree.
+- [ ] Run option T's stage-1 spike: replicate one stream (`improvements.jsonl`) between two instances by generalizing `chatrooms.fanOut`, behind `ck_state`; measure delivery and backfill.
 - [ ] Write the ADR once the decision is made.
 
 ## References
 
-- Research: [Research — Decentralized state store for isolated worktrees and mesh peers](../research/decentralized-state-store.md) — read 2026-08-18; the source for every claim here.
+- Research: [Research — Decentralized state store for isolated worktrees and mesh peers](../research/decentralized-state-store.md) — read 2026-08-18, re-read 2026-08-19 at Draft 5 (options R, S, T added); the source for every claim here.
 - [RFC 0008 — How an agent claims a shared resource before writing it](../rfcs/0008-claims-on-shared-resources.md) — defers "which store holds bulk state" here.
 - [PRD 0011 — clanker mesh](../prds/0011-clanker-mesh.md) — the in-tree mesh candidate and tier-1 precedent.
 - External sources are cited per option above (pg.zig, etcd, NATS, Corrosion, cr-sqlite, Marmot, FoundationDB, TigerBeetle).
@@ -285,3 +315,15 @@ Every load-bearing claim above was reopened at its original source in this pass 
 Corrected in place above after this pass: pg.zig no-libc/no-libpq (not stated at source), the etcd "not a general-purpose database" quote (not found at source), and Corrosion 800+ nodes / p99 ~1 s (the Fly blog says "thousands of high-powered servers" and "in seconds"; the numbers trace only to the QCon talk, which was not reopened).
 
 Not reopened in this pass, so still note-sourced: the Turso embedded-replica docs (option D), the NATS-alternatives comparison pages (option Q), and the SQLite-concurrency write-ups (option C). Still unverified: loro.dev/docs/performance (HTTP 403 again), and the pg.zig-against-YugabyteDB experiment (not run).
+## Verification addendum — 2026-08-19
+
+Options R, S and T are carried from the research note's Draft 5, whose cited
+sources were fetched at source that day: CometBFT repo; Fabric ordering-service
+docs; immudb repo and replication docs; Autobase (Pears) docs; OrbitDB repo;
+Trillian repo; TigerBeetle Transfer reference, clients, system-architecture
+and deploying docs. The QLDB retirement rests on press coverage (InfoQ); AWS's
+own page was not fetched. None of these was independently re-reopened in the
+RFC pass — they carry the note's freshness. The recommendation change in this
+pass replaced the 2026-08-18 PostgreSQL-default staging; the previous text is
+in git history, and the two experiments it named (questions 3 and 7) remain
+next steps.
