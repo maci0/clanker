@@ -245,14 +245,14 @@ so on every add, and `schedule --help` gives the crontab line:
 
 ## Known issues
 
-- A run that ends in `error.MaxIterationsExceeded` or
-  `error.SessionTokenBudgetExceeded` calls `std.process.exit(1)` inside
-  `cmdRun` (`src/cli.zig`), so it takes the whole sweep down with it: the
-  outcome of the entry that hit the cap is never recorded, and entries after
-  it in the same sweep never run. Their windows are not lost — nothing claimed
-  them — so the next `run-due` picks them up. The fix belongs in `cmdRun`,
-  which should return the error rather than exiting when it is not the
-  outermost command.
+- (Fixed) A run that ended in `error.MaxIterationsExceeded` or
+  `error.SessionTokenBudgetExceeded` — or any other run error — used to call
+  `std.process.exit(1)` inside `cmdRun` (`src/cli.zig`), taking the whole
+  sweep down with it: the outcome of the entry that hit the cap was never
+  recorded, and entries after it in the same sweep never ran. `ScheduleFire`
+  now sets `Options.nested_run`, and `cmdRun`'s error paths return the error
+  instead of exiting when it is set, so the runner records `ok:false` with
+  the error name and the sweep continues.
 
 ## Failure modes
 
@@ -269,7 +269,7 @@ so on every add, and `schedule --help` gives the crontab line:
 | Machine asleep across many windows | One fire, `skipped` counted in the ledger (capped at 500), schedule resumes on the normal grid |
 | Ledger over 4 MiB | Trimmed oldest-first on a line boundary |
 | An entry disabled while its run is in flight | The disable survives; the outcome is still recorded |
-| The run hits `MaxIterationsExceeded` | `cmdRun` exits the process, which ends the sweep. Later entries in that sweep are not fired and will be picked up next invocation — see Known issues |
+| The run hits `MaxIterationsExceeded` | The unfinished-run report is still printed, then the error is handed back to the runner: recorded `ok:false` with the error name, and the sweep continues to the next entry |
 | Web UI `POST /api/schedule/<id>` for an unknown id | `404` with `{"ok":false,"error":"no such entry"}` |
 | Web UI enable/disable of a non-slug id | `400` with `{"ok":false,"error":"bad entry id"}` |
 
@@ -294,7 +294,10 @@ so on every add, and `schedule --help` gives the crontab line:
   fired manually, fired by `run-due`, confirmed no re-fire, confirmed the
   ledger)
 - [x] `zig build`, `zig build tools`, `zig build test` green
-- [ ] A `MaxIterationsExceeded` run does not end the sweep (see Known issues)
+- [x] A capped run does not end the sweep (see Known issues; verified live
+  through the same fixed path via `SessionTokenBudgetExceeded`: the capped
+  entry recorded `ok:false` with the error name, the following due entry
+  still fired in the same sweep, and `run-due` still exited non-zero)
 - [ ] Optional per-entry `goal` field (string id or null) in `state/schedule.json`,
   with `--goal` on `add`, visible in `schedule list` and the Schedule web UI
   (see Design decisions)

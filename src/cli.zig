@@ -264,6 +264,14 @@ pub const Options = struct {
     /// (ScheduleFire) -- and the reason isolation can default on without the
     /// surprises it would cause for a typed `clanker run`.
     unattended: bool = false,
+    /// This run is one entry in a `schedule run-due` sweep, not the process's
+    /// only job. cmdRun's error paths normally `std.process.exit(1)` so the
+    /// last line a person sees carries the enriched detail; mid-sweep that
+    /// exit took the remaining due entries down with it and the ledger never
+    /// recorded this entry's outcome. Set by ScheduleFire, never a flag: when
+    /// set, cmdRun returns the error and the runner records ok:false and
+    /// moves on to the next entry.
+    nested_run: bool = false,
     /// `prune --yes`: actually delete. Absent, it only reports, because a
     /// recursive delete is not undoable.
     apply: bool = false,
@@ -2279,6 +2287,10 @@ const ScheduleFire = struct {
         // a branch, which is how these are read anyway. `--no-worktree` on the
         // schedule entry still turns it off.
         run_opts.unattended = true;
+        // A capped or failed entry is this entry's outcome, not the sweep's:
+        // cmdRun must hand the error back so the runner can record it in the
+        // ledger and fire the remaining due entries.
+        run_opts.nested_run = true;
         run_opts.schedule_sub = null;
         run_opts.schedule_arg1 = null;
         run_opts.schedule_arg2 = null;
@@ -4200,6 +4212,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         }) catch |err| {
             const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
             log.log(.error_, "goal loop stopped: {s}", .{detail});
+            if (opts.nested_run) return err;
             // The timestamped log line above is for log consumers; the last
             // line a person sees must carry the same detail. Returning the
             // error makes main.zig print only the bare error name, which
@@ -4222,12 +4235,14 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             switch (err) {
                 error.MaxIterationsExceeded, error.SessionTokenBudgetExceeded, error.CompactionStalled => {
                     try reportUnfinishedRun(&out_w, &messages, &a, err);
+                    if (opts.nested_run) return err;
                     std.process.exit(1);
                 },
                 else => {},
             }
             const detail = enrichRunError(arena, provider.name, false, err_detail orelse @errorName(err));
             log.log(.error_, "{s}", .{detail});
+            if (opts.nested_run) return err;
             // Same as the goal loop above: fall through and main.zig prints
             // only "error: ApiError". Exit here with the enriched detail as
             // the final human line so the provider, the reason, and the
