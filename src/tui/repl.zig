@@ -2757,11 +2757,21 @@ const Model = struct {
 
     /// Index into `self.folds` of the fold whose region begins at `line_idx`,
     /// or null.
+    ///
+    /// `folds` is appended in session order (`maybeFoldReply` runs once per
+    /// finished turn and each reply starts after every earlier one), so it
+    /// stays sorted ascending by `start` and `start` never mutates after the
+    /// append (only `expanded` does). The linear scan this replaced ran once
+    /// per drawn line per frame — O(visible rows × folds) on every keystroke
+    /// and animation tick, which is a long session's quadratic draw. Starts
+    /// are unique, so an exact-match binary search is correct.
     fn foldIndexAtStart(self: *const Model, line_idx: usize) ?usize {
-        for (self.folds.items, 0..) |f, k| {
-            if (f.start == line_idx) return k;
-        }
-        return null;
+        const S = struct {
+            fn cmp(context: usize, f: Fold) std.math.Order {
+                return std.math.order(context, f.start);
+            }
+        };
+        return std.sort.binarySearch(Fold, self.folds.items, line_idx, S.cmp);
     }
 
     /// The `▸ N lines` / `▾` header standing in for a collapsed reply. Arena
@@ -6041,7 +6051,18 @@ fn tailWindow(
         const i = start - 1;
         var rows: usize = lineRows(lines[i].text, width);
         var block_start = i;
-        for (folds) |f| {
+        // The fold whose region contains `i`, if any. `folds` is sorted by
+        // `start` (see `foldIndexAtStart`), so the candidate is the last fold
+        // that starts at or before `i`, checked for containment; the scan of
+        // every fold per candidate line this replaced made `tailWindow`
+        // O(scrolled rows × folds) per frame.
+        const idx = std.sort.upperBound(Fold, folds, i, struct {
+            fn cmp(context: usize, f: Fold) std.math.Order {
+                return std.math.order(context, f.start);
+            }
+        }.cmp);
+        if (idx > 0) {
+            const f = folds[idx - 1];
             if (i >= f.start and i < f.start + f.count) {
                 const shown = foldShownLines(f);
                 // A fully open fold renders per-line (the draw loop falls
@@ -6052,22 +6073,21 @@ fn tailWindow(
                 // screen-taller reply could not be scrolled through.
                 if (shown >= f.count) {
                     if (i == f.start) rows += 1;
-                    break;
+                } else {
+                    // Collapsed or animating, drawn rows differ from line rows,
+                    // so the block stays atomic: header row plus exactly the
+                    // lines the draw loop will render, counted the same way it
+                    // counts them (`foldShownLines`, clamped to the visible
+                    // window). `f.start < view_end` here because
+                    // `i == start - 1 >= f.start` and `start <= view_end`, so
+                    // the clamped range never starts past `lines.len`.
+                    rows = 1;
+                    const body_end = @min(f.start + shown, view_end);
+                    for (lines[f.start..body_end]) |l| {
+                        rows += lineRows(l.text, width);
+                    }
+                    block_start = f.start;
                 }
-                // Collapsed or animating, drawn rows differ from line rows,
-                // so the block stays atomic: header row plus exactly the
-                // lines the draw loop will render, counted the same way it
-                // counts them (`foldShownLines`, clamped to the visible
-                // window). `f.start < view_end` here because
-                // `i == start - 1 >= f.start` and `start <= view_end`, so
-                // the clamped range never starts past `lines.len`.
-                rows = 1;
-                const body_end = @min(f.start + shown, view_end);
-                for (lines[f.start..body_end]) |l| {
-                    rows += lineRows(l.text, width);
-                }
-                block_start = f.start;
-                break;
             }
         }
         if (used + rows > avail_rows and used > 0) break;
