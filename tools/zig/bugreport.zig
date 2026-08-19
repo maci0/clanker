@@ -41,6 +41,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (desc.len > 0) component = inferComponent(desc);
     }
     const room = lib.optStr(parsed, "room");
+    if (room) |r| {
+        if (r.len == 0) return lib.fail(out, "room must be non-empty and match [a-zA-Z0-9_-]+");
+        for (r) |c| {
+            const ok = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_' or c == '-';
+            if (!ok) return lib.fail(out, "room must match [a-zA-Z0-9_-]+");
+        }
+    }
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
     const repro_lang = lib.optStr(parsed, "repro_lang") orelse "sh";
