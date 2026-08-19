@@ -71,7 +71,15 @@ for entry in state:state agents:.agents local:.local; do
         printf '%s\n' "$source is not a directory" >&2
         exit 1
     }
-    rsync_args=(-a --exclude='*.lock')
+    # Exclude transient locks (they die with their process; a restored tree
+    # must not carry stale ones) and the improve loop's staging copies under
+    # `state/staging/`: each `imp-*` dir is a checkout copy with its build
+    # artifacts (zig-out, zig-pkg), regenerable on the next improve run and
+    # useless in a snapshot. They dominate the snapshot size (gigabytes vs.
+    # tens of megabytes of real store) and inflate restore time, so they are
+    # excluded the same way `.clanker-worktrees/` is by design. The pattern is
+    # anchored at the transfer root so only the top-level `staging/` matches.
+    rsync_args=(-a --exclude='*.lock' --exclude='/staging/')
     if [ -d "$latest/$name" ]; then
         rsync_args+=(--link-dest="$latest/$name")
     fi

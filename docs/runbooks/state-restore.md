@@ -28,7 +28,9 @@ newest snapshot. Restore is a copy-out of one snapshot — never an edit of
   `autolearn.jsonl`), goals, board, plugins, chat history, logs — plus
   checkout-local `.local/` and `.agents/` when they exist. `*.lock` files are
   excluded by design; flock locks die with their process, so a restored tree
-  never carries stale locks.
+  never carries stale locks. `state/staging/` (the improve loop's checkout
+  copies with build artifacts) is excluded too: regenerable, and it would
+  dominate snapshot size and restore time.
 - Not covered: the checkout itself (`docs/` records, source — they live in
   git), `config.local.toml`, `.env`, and provider credentials. Those are
   machine-local and are restore *inputs*, not outputs: recreate them from
@@ -36,15 +38,20 @@ newest snapshot. Restore is a copy-out of one snapshot — never an edit of
   same providers.
 - Not covered by design: `.clanker-worktrees/` (ephemeral improve staging;
   merged work lands in git and `state/improvements.jsonl`).
+- Failure-domain boundary: snapshots live under the same storage root as
+  `state` (a sibling `backups/`), so they die with that volume. This posture
+  recovers a store that was deleted or corrupted while its volume survived; a
+  loss of the storage-root volume itself takes the snapshots too and is not
+  recoverable from these backups.
 
 **RPO / RTO.** RPO is at most 30 minutes (timer interval), and `latest` is
 never more than one interval behind a running backup. Because retention
 (default `CLANKER_BACKUP_RETENTION_DAYS` = 30) keeps every snapshot, a
 point-in-time restore can go back up to the retention window — the realistic
 recovery for logical corruption, where the newest snapshot is the one you do
-*not* want. RTO is unmeasured: no restore drill has been run. Time a drill on
-the target size before an incident; on a local disk this is dominated by the
-copy of `state/`.
+*not* want. RTO is measured by `scripts/verify-backup.sh`, which restores a
+snapshot to a scratch dir and reports the copy time; until a drill has been
+run on the target size, treat RTO as unmeasured.
 
 A snapshot is crash-consistent, not transactional: `rsync -a` copies each file
 as it is read, so a `.jsonl` tail caught mid-append may carry a torn last line.
@@ -56,7 +63,9 @@ rather than assuming.
 Decide which disaster you are in, because it picks the snapshot:
 
 1. **Instance/disk loss or deletion:** `state` is gone or empty. Use the
-   newest snapshot.
+   newest snapshot. If the *volume* that held `state` is gone, the snapshots
+   (a sibling `backups/` on the same volume) are gone too — nothing in this
+   runbook can recover that; fall back to any copy you keep elsewhere.
 2. **Logical corruption or bad deploy:** bad code wrote bad data for a while.
    Pick the newest snapshot *before* the corruption started. Snapshot names
    are UTC ISO timestamps and sort chronologically; `ls -lt
@@ -99,8 +108,10 @@ this runbook can manufacture a snapshot that does not exist.
    rsync -a --delete "$SNAP/agents/" "$storage_root/.agents/" 2>/dev/null || true
    ```
    `--delete` makes the target match the snapshot exactly, dropping files the
-   corruption added. Skip `--delete` when the goal is to *recover* files into
-   a store that was only partially lost — prefer keeping whatever survived.
+   corruption added. That also drops a live `state/staging/` if one exists —
+   expected and harmless, since snapshots never carry it (regenerable improve
+   staging). Skip `--delete` when the goal is to *recover* files into a
+   store that was only partially lost — prefer keeping whatever survived.
    Run as the same user clanker runs as, so ownership and mode stay intact.
 3. Recreate anything the snapshot does not carry: `config.local.toml`, `.env`
    (or re-export the provider keys), and re-link any `state`/`.local`/`.agents`
@@ -124,8 +135,10 @@ this runbook can manufacture a snapshot that does not exist.
 - `readlink -f <storage_root>/backups/latest` points at a snapshot newer than
   the restore time, and `systemctl --user is-failed
   clanker-state-backup.service` prints nothing.
-- A restore is only proven by a drill. Until one has been run, treat RTO as
-  unknown and the procedure above as exercised-on-paper only.
+- A restore is only proven by a drill. `scripts/verify-backup.sh` is the
+  drill: it restores a snapshot into a scratch directory, compares every
+  entry byte-for-byte, and reports the copy time. Run it before this
+  procedure and log its output as the drill artifact.
 
 ## Escalate or follow up
 
@@ -141,11 +154,12 @@ this runbook can manufacture a snapshot that does not exist.
 ## References
 
 - Code: `scripts/backup-state.sh`, `scripts/install-state-backup.sh`,
+  `scripts/verify-backup.sh`,
   `scripts/systemd/clanker-state-backup.{service,timer}`
 - Docs: `scripts/README.md` (State backup),
   [state-backups-not-running.md](state-backups-not-running.md)
 - Layout: `state/` is one of the checkout-wide shared roots
   (`src/improve/worktree.zig`); stores under it are listed in
   `docs/README.md`
-- Last verified: never — this runbook has not been exercised by a restore
-  drill
+- Last verified: never by a full manual restore; run
+  `scripts/verify-backup.sh` as the first drill
