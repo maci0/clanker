@@ -61,8 +61,10 @@ chatrooms.jsonl
 tools/grammars/*.so
 .playwright-mcp/
 
-# Runtime lock for the self-improvement review loop.
+# Runtime lock for the review loop (github.com/maci0/gauntlet, formerly
+# review-prompts and named review-loop.py; .review-loop.lock is its old name).
 .review-loop.lock
+.gauntlet.lock
 
 # Sidecar locks the sandbox's compare-and-swap write (fs_write_if) creates next
 # to the file it rewrites. Left in place on purpose — unlinking would race a
