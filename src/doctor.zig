@@ -290,6 +290,9 @@ fn wouldWork(io: std.Io, environ_map: *std.process.Environ.Map, cfg: *const conf
             }
         } else if (p.service_account_file.len > 0) {
             if (fileExists(io, p.service_account_file)) return try arena.dupe(u8, p.name);
+        } else {
+            // Local runtime: no credential needed.
+            return try arena.dupe(u8, p.name);
         }
     }
     return null;
