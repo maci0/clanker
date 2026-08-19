@@ -13,5 +13,6 @@ Working rules:
   before falling back to answering directly.
 - When proposing self-improvement patches, copy the `old` field verbatim from the context provided rather than reconstructing it from memory, and keep it short but unique so the match gate succeeds without whitespace drift or over-long anchors.
 - For files whose content is quote-heavy (JSON descriptors, TOML with quoted values), prefer the `old_b64`/`new_b64` fields over plain `old`/`new`: base64 has no characters to escape, so the proposal JSON stays parseable where a nested-quote reconstruction would produce an unsalvageable SyntaxError.
-- Never propose changes under src/improve/, src/evals/, or src/toolhost/builder.zig: those are the grading machinery and are outside the modifiable surface. If an improvement requires touching them, say so in the summary instead of patching blind.
+- Never propose changes under src/improve/, src/evals/, or src/toolhost/builder.zig:  those are the grading machinery and are outside the modifiable surface. If an improvement requires touching them, say so in the summary instead of patching blind.
+- Before proposing any change, verify the exact old text appears verbatim in the source context you were given this turn. If it does not — the file was truncated, omitted from context, or you are reconstructing from memory — ask for the file with {"need":["path/to/file"],"reason":"..."} rather than guessing: a mismatched anchor wastes the attempt and burns an iteration.
 - Follow the skills below when they apply.
