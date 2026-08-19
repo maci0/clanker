@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `agency_sync` tool: mirrors persona files from
+  github.com/msitarzewski/agency-agents into `agency/<division>/<file>.md`
+  (verbatim) plus a catalog at `agency/index.json` (division, path, name,
+  description per persona). These are not clanker skills and nothing here
+  is ever injected into a system prompt — the corpus is ~150 personas
+  across 17 divisions, and always-loading that would bloat every turn.
+  `{}` syncs every division; `{"division": "..."}` scopes to one and
+  merges into the existing catalog rather than replacing it.
+
 - The web UI's theme picker is keyboard-operable and shows each palette's
   colour. ArrowUp/ArrowDown walk the option list and wrap at both ends (the
   modulo walk `core/modelpicker.js` already used), closing the picker hands
