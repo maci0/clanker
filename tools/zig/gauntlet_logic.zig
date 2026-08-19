@@ -1,8 +1,8 @@
-//! Pure helpers for review_loop: which review ran last, which comes next in
+//! Pure helpers for gauntlet: which review ran last, which comes next in
 //! rotation, and the state.json shape recording it. Reuses
 //! agency_sync_logic.mdFileNames for GitHub directory listings -- same
 //! contents-API shape, no reason to parse it twice. No host I/O, so
-//! `zig build test` runs it; the `review_loop` guest does the HTTP fetches,
+//! `zig build test` runs it; the `gauntlet` guest does the HTTP fetches,
 //! reads, and writes around these functions.
 
 const std = @import("std");

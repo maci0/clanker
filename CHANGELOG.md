@@ -7,13 +7,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
-- `review_loop` tool: cycles through review prompts from two sources —
+- `gauntlet` tool: cycles through review prompts from two sources —
   this project's own `docs/prompts/*-review.md`, and a local mirror of
-  github.com/maci0/review-prompts' `prompts/*-review.md` — entirely
+  github.com/maci0/gauntlet's `prompts/*-review.md` — entirely
   inside clanker, replacing that repo's `review-loop.py` as the driver.
   `{"action":"sync"}` mirrors the external repo; `{"action":"list"}`
   returns the merged, deduplicated rotation; `{"action":"next"}` advances
-  `state/review_loop.json` and returns the next prompt's text (a
+  `state/gauntlet_state.json` and returns the next prompt's text (a
   project-specific review always wins the resolve over a same-named
   generic one); `{"action":"current"}` reads the same without advancing.
   The tool only picks; running the returned prompt is a plain `clanker

@@ -1,16 +1,16 @@
-//! review_loop: cycles through review prompts from two sources -- this
+//! gauntlet: cycles through review prompts from two sources -- this
 //! project's own docs/prompts/*-review.md, and a local mirror of
-//! github.com/maci0/review-prompts' prompts/*-review.md -- entirely inside
-//! clanker's own agent loop, replacing that repo's review-loop.py as the
-//! driver. Nothing here shells out to Python, or to any AI CLI besides
-//! clanker itself.
+//! github.com/maci0/gauntlet's prompts/*-review.md -- entirely inside
+//! clanker's own agent loop, replacing that repo's own review-loop.py as
+//! the driver. Nothing here shells out to Python, or to any AI CLI
+//! besides clanker itself.
 //!
 //! Actions:
-//!   sync              mirror review-prompts' prompts/*-review.md into
-//!                     state/review-prompts/ (verbatim)
+//!   sync              mirror gauntlet's prompts/*-review.md into
+//!                     state/gauntlet/ (verbatim)
 //!   list              the merged, sorted rotation: local + synced stems
-//!   next              advance state/review_loop.json to the next stem in
-//!                     rotation and return its {name, source, prompt}
+//!   next              advance state/gauntlet_state.json to the next stem
+//!                     in rotation and return its {name, source, prompt}
 //!   current           the current stem and its prompt, without advancing
 //!
 //! `next`/`current` return the raw prompt text; running it is the caller's
@@ -22,16 +22,20 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const agency = @import("agency_sync_logic.zig");
-const logic = @import("review_loop_logic.zig");
+const logic = @import("gauntlet_logic.zig");
 
-const repo = "maci0/review-prompts";
-const raw_base = "https://raw.githubusercontent.com/" ++ repo ++ "/main/prompts/";
-const api_base = "https://api.github.com/repos/" ++ repo ++ "/contents/prompts";
-const gh_headers = "{\"User-Agent\":\"clanker-review-loop\",\"Accept\":\"application/vnd.github+json\"}";
+const repo = "maci0/gauntlet";
+// The prompts moved to src/gauntlet/prompts/ when the repo was reorganized
+// into an installable Python package (pyproject.toml, src/, tests/) around
+// the same time it was renamed from review-prompts.
+const prompts_path = "src/gauntlet/prompts";
+const raw_base = "https://raw.githubusercontent.com/" ++ repo ++ "/main/" ++ prompts_path ++ "/";
+const api_base = "https://api.github.com/repos/" ++ repo ++ "/contents/" ++ prompts_path;
+const gh_headers = "{\"User-Agent\":\"clanker-gauntlet\",\"Accept\":\"application/vnd.github+json\"}";
 
 const local_dir = "docs/prompts";
-const synced_dir = "state/review-prompts";
-const state_path = "state/review_loop.json";
+const synced_dir = "state/gauntlet";
+const state_path = "state/gauntlet_state.json";
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -60,7 +64,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
 fn doSync(arena: std.mem.Allocator, out: *lib.Out) !void {
     const listing_json = lib.httpGetHdr(api_base, gh_headers) catch |err|
-        return lib.failErr(out, err, "listing review-prompts' prompts/ directory");
+        return lib.failErr(out, err, "listing gauntlet's prompts/ directory");
     const files = agency.mdFileNames(arena, listing_json) catch &.{};
     var synced: usize = 0;
     var errors: std.ArrayList([]const u8) = .empty;
@@ -130,7 +134,7 @@ fn doList(arena: std.mem.Allocator, out: *lib.Out) !void {
 
 fn doPick(arena: std.mem.Allocator, out: *lib.Out, advance: bool) !void {
     const names = try rotation(arena);
-    if (names.len == 0) return lib.fail(out, "no reviews found in docs/prompts/ or the synced state/review-prompts/ -- run action:sync first, or add a *-review.md file");
+    if (names.len == 0) return lib.fail(out, "no reviews found in docs/prompts/ or the synced state/gauntlet/ -- run action:sync first, or add a *-review.md file");
 
     const state_raw = lib.fsRead(state_path) catch "";
     const state = logic.parseState(arena, state_raw);
@@ -152,7 +156,7 @@ fn doPick(arena: std.mem.Allocator, out: *lib.Out, advance: bool) !void {
     if (advance) {
         const next_state = try logic.buildState(arena, stem);
         lib.fsWrite(state_path, next_state) catch |err|
-            return lib.failErr(out, err, "saving review_loop state");
+            return lib.failErr(out, err, "saving gauntlet state");
     }
 
     var w = lib.writer(out);
