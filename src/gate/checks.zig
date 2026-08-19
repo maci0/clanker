@@ -614,7 +614,7 @@ test "autoFormatAndCheck short-circuits when there is nothing to format" {
 pub fn duplicateFileGate(files: []const []const u8) GateResult {
     for (files, 0..) |f, i| {
         for (files[i + 1 ..]) |g| {
-            if (std.mem.eql(u8, f, g)) {
+            if (std.mem.eql(u8, trimDotSlash(f), trimDotSlash(g))) {
                 return .{ .ok = false, .label = "duplicate-file", .detail = f };
             }
         }
@@ -636,6 +636,14 @@ test "duplicateFileGate rejects repeated files and accepts distinct ones" {
 
     const single = duplicateFileGate(&.{"src/x.zig"});
     try std.testing.expect(single.ok);
+
+    const dotted = duplicateFileGate(&.{ "./src/a.zig", "src/a.zig" });
+    try std.testing.expect(!dotted.ok);
+    try std.testing.expectEqualStrings("duplicate-file", dotted.label);
+    try std.testing.expectEqualStrings("./src/a.zig", dotted.detail);
+
+    const dotted_distinct = duplicateFileGate(&.{ "./src/a.zig", "src/b.zig" });
+    try std.testing.expect(dotted_distinct.ok);
 }
 
 /// Validates that a set of proposed changes are semantically meaningful:
