@@ -28,13 +28,14 @@ import re
 import sys
 import uuid
 from pathlib import Path
+from typing import NoReturn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CDX_VERSION = "1.5"
 
 
-def die(msg: str) -> "NoReturn":
+def die(msg: str) -> NoReturn:
     print(f"sbom: {msg}", file=sys.stderr)
     sys.exit(1)
 

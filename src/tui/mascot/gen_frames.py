@@ -31,7 +31,7 @@ import re
 import sys
 from collections import namedtuple
 
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageEnhance
 
 # One baked size. `cols` x `rows` cells; one terminal row is two stacked
 # pixels, so the sample grid is cols x rows*2.
