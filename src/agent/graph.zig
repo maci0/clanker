@@ -108,6 +108,7 @@ pub const Graph = struct {
         if (self.nodes.items.len > 0) {
             const last = &self.nodes.items[self.nodes.items.len - 1];
             if (last.kind == node.kind and std.mem.eql(u8, last.label, node.label) and
+                std.mem.eql(u8, last.arguments, node.arguments) and
                 last.ok == node.ok and node.kind != .final)
             {
                 last.repeats += 1;
@@ -306,4 +307,17 @@ test "total tokens aggregate across nodes, collapsed repeats count once per call
     defer g3.deinit(gpa);
     try std.testing.expectEqual(@as(u64, 0), g3.totalPromptTokens());
     try std.testing.expectEqual(@as(u64, 0), g3.totalCompletionTokens());
+}
+
+test "same label with different arguments is not collapsed" {
+    const gpa = std.testing.allocator;
+    var g = Graph{ .run_id = "run-args", .task = "t", .provider = "p", .started_at = 0 };
+    defer g.deinit(gpa);
+
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "read_file", .arguments = "{\"path\":\"a.zig\"}" });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "read_file", .arguments = "{\"path\":\"b.zig\"}" });
+    try std.testing.expectEqual(@as(usize, 2), g.nodes.items.len);
+    try std.testing.expectEqualStrings("{\"path\":\"a.zig\"}", g.nodes.items[0].arguments);
+    try std.testing.expectEqualStrings("{\"path\":\"b.zig\"}", g.nodes.items[1].arguments);
+    try std.testing.expectEqual(@as(u32, 1), g.nodes.items[1].repeats);
 }
