@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [schedule list rendered rows after the first as garbage from a freed buffer](bugs/2026-08-19-schedule-list-second-row-garbled.md) — Resolved
+
 - [A throwing plugin mount broke the tab switch instead of showing a tab error](bugs/2026-08-19-webui-plugin-mount-throw-breaks-tab-switch.md) — Resolved
 
 - [Corrupt state/webui_plugins.json was swallowed silently](bugs/2026-08-19-webui-plugin-state-corruption-silent.md) — Resolved
@@ -205,6 +207,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [zig build test crashed once with an ISCONN panic in the peers connect path](investigations/2026-08-19-peers-connect-isconn-panic.md) — Investigating
+
 - [google-vertex-anthropic returns HTTP 400 on every request, blocking improve-self](investigations/2026-08-19-vertex-anthropic-400.md) — Resolved
 
 - [zig build test intermittently hangs forever in the bounded-chat abort test](investigations/2026-08-18-bounded-chat-abort-test-hangs.md) — Resolved

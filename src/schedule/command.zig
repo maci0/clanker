@@ -305,8 +305,13 @@ fn parseEntries(arena: std.mem.Allocator, result: std.json.Value) ![]store.Entry
     var out_list: std.ArrayList(store.Entry) = .empty;
     for (v.array.items) |item| {
         if (item != .object) continue;
+        // No deinit on this buffer: the leaky parse below aliases its bytes
+        // for every string field that needs no unescaping, so freeing it back
+        // to the arena let the next row's buffer (and renderList's writer)
+        // overwrite id/cron/task in place — `schedule list` printed header
+        // fragments and a spurious "(bad spec)" for rows after the first.
+        // The arena reclaims it with everything else at the end of the call.
         var buf: std.Io.Writer.Allocating = .init(arena);
-        defer buf.deinit();
         var s = std.json.Stringify{ .writer = &buf.writer, .options = .{ .emit_null_optional_fields = false } };
         s.write(item) catch continue;
         const e = std.json.parseFromSliceLeaky(store.Entry, arena, buf.written(), .{ .ignore_unknown_fields = true }) catch continue;
@@ -321,8 +326,9 @@ fn parseLog(arena: std.mem.Allocator, result: std.json.Value) ![]store.Record {
     var out_list: std.ArrayList(store.Record) = .empty;
     for (v.array.items) |item| {
         if (item != .object) continue;
+        // Same aliasing contract as parseEntries above: the parsed Record
+        // borrows this buffer, so it must stay allocated.
         var buf: std.Io.Writer.Allocating = .init(arena);
-        defer buf.deinit();
         var s = std.json.Stringify{ .writer = &buf.writer, .options = .{ .emit_null_optional_fields = false } };
         s.write(item) catch continue;
         const r = std.json.parseFromSliceLeaky(store.Record, arena, buf.written(), .{ .ignore_unknown_fields = true }) catch continue;
@@ -496,4 +502,40 @@ test "list and remove go through the schedule guest" {
     try testing.expect(std.mem.find(u8, fake.last, "remove") != null);
 
     try testing.expectError(store.Error.NoSuchEntry, callTool(arena, tool, "{\"action\":\"remove\",\"id\":\"missing\"}"));
+}
+
+test "parsed entries survive later arena allocations" {
+    // The regression this pins: parseEntries stringified each entry into an
+    // arena buffer, parsed leaky (string fields alias the buffer), then
+    // deinit'd the buffer back to the arena. The next allocation — the next
+    // row's buffer, renderList's writer — reused those bytes, so every row
+    // after the first printed header fragments and "(bad spec)" for a valid
+    // cron. Two valid entries, then deliberate arena churn, then the strings
+    // must still read back intact.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const raw =
+        "{\"ok\":true,\"entries\":[" ++
+        "{\"id\":\"sch-1\",\"cron\":\"* * * * *\",\"task\":\"first task\",\"enabled\":true,\"created\":100,\"last_run\":0,\"last_status\":\"\",\"runs\":0,\"failures\":0,\"tz_offset_minutes\":0}," ++
+        "{\"id\":\"sch-2\",\"cron\":\"*/5 * * * *\",\"task\":\"second task\",\"enabled\":true,\"created\":101,\"last_run\":0,\"last_status\":\"\",\"runs\":0,\"failures\":0,\"tz_offset_minutes\":0}]}";
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{});
+    const entries = try parseEntries(arena, parsed);
+    try testing.expectEqual(@as(usize, 2), entries.len);
+
+    // Churn the arena the way renderList does, so any freed-and-reused
+    // buffer is actually overwritten rather than luckily preserved.
+    var w: std.Io.Writer.Allocating = .init(arena);
+    try w.writer.splatByteAll('X', 4096);
+
+    try testing.expectEqualStrings("sch-1", entries[0].id);
+    try testing.expectEqualStrings("* * * * *", entries[0].cron);
+    try testing.expectEqualStrings("first task", entries[0].task);
+    try testing.expectEqualStrings("sch-2", entries[1].id);
+    try testing.expectEqualStrings("*/5 * * * *", entries[1].cron);
+    try testing.expectEqualStrings("second task", entries[1].task);
+
+    const table = try renderList(arena, entries, cron.epochFromCivil(2026, 8, 19, 12, 0, 0));
+    try testing.expect(std.mem.find(u8, table, "(bad spec)") == null);
 }
