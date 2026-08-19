@@ -85,7 +85,50 @@ pub fn renderText(alloc: std.mem.Allocator, stats: []const Stat, totals: Stat) !
             totals.thinking_distribution.xhigh,
         });
     }
+    if (try deadProviderNote(alloc, stats)) |note| try text.appendSlice(alloc, note);
     return text.toOwnedSlice(alloc);
+}
+
+/// The footer naming providers that answered nothing, or null when every
+/// provider served at least one call.
+///
+/// "Is the provider down?" is the question the failure records exist to
+/// answer (they are why `state/token_stats.jsonl` logs `ok:false` at all),
+/// and the `fail` column only answers it for a reader who compares it
+/// against `calls` by eye, one row at a time, at the far right of a
+/// ten-column table. `clanker doctor` closes its report by naming the
+/// recovery verb for what it flagged; this table closes the same way for the
+/// rows where nothing got through. Rows are keyed provider+model, so the
+/// names are deduplicated: a provider is dead only when every one of its
+/// models is.
+fn deadProviderNote(alloc: std.mem.Allocator, stats: []const Stat) !?[]const u8 {
+    var dead: std.ArrayList([]const u8) = .empty;
+    for (stats) |stat| {
+        // A provider with one working model is not down, so a live row
+        // retracts a name an earlier dead row added.
+        if (stat.calls == 0) continue;
+        const all_failed = stat.error_calls == stat.calls;
+        for (dead.items, 0..) |name, i| {
+            if (!std.mem.eql(u8, name, stat.provider)) continue;
+            if (!all_failed) _ = dead.orderedRemove(i);
+            break;
+        } else if (all_failed) try dead.append(alloc, stat.provider);
+    }
+    if (dead.items.len == 0) return null;
+
+    var note: std.ArrayList(u8) = .empty;
+    try note.appendSlice(alloc, "\nevery call to ");
+    for (dead.items, 0..) |name, i| {
+        if (i > 0) try note.appendSlice(alloc, ", ");
+        try note.appendSlice(alloc, name);
+    }
+    try note.appendSlice(alloc, " failed and returned no tokens; run `clanker providers check");
+    if (dead.items.len == 1) {
+        try note.appendSlice(alloc, " ");
+        try note.appendSlice(alloc, dead.items[0]);
+    }
+    try note.appendSlice(alloc, "` to see why.\n");
+    return try note.toOwnedSlice(alloc);
 }
 
 fn appendRow(
@@ -135,6 +178,46 @@ fn compactCount(alloc: std.mem.Allocator, value: u64) ![]const u8 {
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "a provider whose every call failed is named with the recovery verb" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rows = [_]Stat{
+        .{ .provider = "deepseek", .model = "deepseek-v4-pro", .calls = 3, .total_tokens = 900, .ok_calls = 3 },
+        .{ .provider = "vertex", .model = "claude-opus-5@default", .calls = 11, .error_calls = 11 },
+    };
+    const text = try renderText(arena, &rows, .{ .calls = 14, .total_tokens = 900, .error_calls = 11 });
+    try std.testing.expect(std.mem.find(u8, text, "every call to vertex failed") != null);
+    try std.testing.expect(std.mem.find(u8, text, "`clanker providers check vertex`") != null);
+    // A provider that served anything is not down, however many calls failed.
+    try std.testing.expect(std.mem.find(u8, text, "deepseek failed") == null);
+}
+
+test "a provider is down only when every one of its models is" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The dead row comes first so the live one has to retract the name.
+    const rows = [_]Stat{
+        .{ .provider = "vertex", .model = "opus", .calls = 4, .error_calls = 4 },
+        .{ .provider = "vertex", .model = "sonnet", .calls = 2, .total_tokens = 40, .ok_calls = 2 },
+    };
+    const text = try renderText(arena, &rows, .{ .calls = 6, .total_tokens = 40, .error_calls = 4 });
+    try std.testing.expect(std.mem.find(u8, text, "every call to") == null);
+
+    // Two dead providers share one line and the check verb drops its
+    // argument, because `providers check` takes at most one name.
+    const both = [_]Stat{
+        .{ .provider = "vertex", .model = "opus", .calls = 4, .error_calls = 4 },
+        .{ .provider = "openai", .model = "gpt", .calls = 1, .error_calls = 1 },
+    };
+    const two = try renderText(arena, &both, .{ .calls = 5, .error_calls = 5 });
+    try std.testing.expect(std.mem.find(u8, two, "every call to vertex, openai failed") != null);
+    try std.testing.expect(std.mem.find(u8, two, "`clanker providers check`") != null);
+}
 
 test "empty stats name the empty case" {
     // The empty case returns a string literal, not an allocation, so it is
