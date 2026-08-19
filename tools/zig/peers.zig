@@ -147,7 +147,7 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
 
     var delivery = req;
     if (delivery.id.len == 0) {
-        const now_bits: u64 = @bitCast(lib.nowSeconds());
+        const now_bits: u64 = @trunc(lib.nowSeconds());
         const content_hash = std.hash.Wyhash.hash(0, req.message);
         delivery.id = try std.fmt.allocPrint(alloc, "{x}-{x}", .{ now_bits, content_hash });
     }
@@ -266,7 +266,7 @@ fn chatFanout(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req:
     const ts = if (req.ts > 0) req.ts else @as(i64, @trunc(lib.nowSeconds()));
     var generated_id: []const u8 = req.id;
     if (generated_id.len == 0) {
-        const now_bits: u64 = @bitCast(@as(i64, @trunc(lib.nowSeconds())));
+        const now_bits: u64 = @trunc(lib.nowSeconds());
         var h = std.hash.Wyhash.init(0);
         h.update(req.room);
         h.update(req.text);

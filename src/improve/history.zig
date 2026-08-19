@@ -533,8 +533,10 @@ pub const History = struct {
                 switch (cv) {
                     .array => |arr| for (arr.items) |item| switch (item) {
                         .string => |sv| try fps.append(arena, std.fmt.parseInt(u64, sv, 16) catch continue),
-                        // Entries written before fingerprints were hex.
-                        .integer => |n| try fps.append(arena, @bitCast(n)),
+                        // Entries written before fingerprints were hex. Those
+                        // integers were positive u64 fingerprints, so the
+                        // numeric conversion is exact and safety-checked.
+                        .integer => |n| try fps.append(arena, @intCast(@max(0, n))),
                         else => {},
                     },
                     else => {},

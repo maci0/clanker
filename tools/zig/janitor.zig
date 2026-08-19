@@ -204,7 +204,7 @@ fn collectAgedSpills(a: std.mem.Allocator, state_dir: []const u8, out: *std.Arra
     const sessions = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
     if (sessions != .array) return;
 
-    const now_ms: i64 = @intFromFloat(lib.nowSeconds() * 1000.0);
+    const now_ms: i64 = @trunc(lib.nowSeconds() * 1000.0);
     for (sessions.array.items) |entry| {
         if (entry != .string) continue;
         var session = entry.string;
@@ -256,7 +256,7 @@ fn collectAgedLocks(a: std.mem.Allocator, state_dir: []const u8, out: *std.Array
     const names = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
     if (names != .array) return;
 
-    const now_ms: i64 = @intFromFloat(lib.nowSeconds() * 1000.0);
+    const now_ms: i64 = @trunc(lib.nowSeconds() * 1000.0);
     for (names.array.items) |item| {
         if (item != .string) continue;
         const name = item.string;
