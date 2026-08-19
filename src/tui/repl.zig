@@ -202,6 +202,19 @@ var bridge_tool_lines: std.ArrayList([]const u8) = .empty;
 /// run thread (the same seam POST /api/steer uses for the web). Filled by the
 /// render thread's composer-as-steer-box; freed by tuiSteerPoll as it drains.
 var bridge_steer: std.ArrayListUnmanaged([]u8) = .empty;
+/// `.error_` log records emitted while the alt screen is up (the LLM
+/// client's "request to 'x' failed" lines, sandbox refusals) previously
+/// wrote straight to stderr and painted over the frame the draw loop had
+/// just written, even on turns the fallback chain then recovered. They are
+/// routed here by `logSinkWrite` and drained into the transcript as dim
+/// lines under the bridge lock, so the record reaches the operator without
+/// tearing the screen. bridge_gpa-owned; drained (and freed) by
+/// `drainLogLines`. `bridge_log_mutex` guards the list alone: `drainLogLines`
+/// runs with `bridge_mutex` already held (finishTurn, the draw loop), so a
+/// separate lock keeps a log record emitted from inside a bridge-mutex
+/// section from deadlocking on a non-recursive mutex.
+var bridge_log_lines: std.ArrayListUnmanaged([]const u8) = .empty;
+var bridge_log_mutex: std.c.pthread_mutex_t = .{};
 var bridge_stop_flag: std.atomic.Value(bool) = .init(false);
 /// Published only after runThreadMain has finished all deferred Agent cleanup.
 /// The UI thread consumes this and joins the worker before making the model
@@ -309,6 +322,41 @@ fn onUsage(stats: agent_loop.RunStats) void {
 fn clearBridgeSteer() void {
     for (bridge_steer.items) |m| bridge_gpa.free(m);
     bridge_steer.clearRetainingCapacity();
+}
+
+/// `log.Sink.write` for the REPL: buffers one record for the transcript
+/// instead of letting it reach stderr. Runs on whatever thread logged (the
+/// run thread, an HTTP poll), so it takes the log buffer's own lock and
+/// never touches `bridge_mutex`; drainers hold that.
+fn logSinkWrite(ctx: *const anyopaque, line: []const u8) void {
+    _ = ctx;
+    var body = line;
+    if (body.len > 0 and body[body.len - 1] == '\n') body = body[0 .. body.len - 1];
+    if (body.len == 0) return;
+    // The record is one physical line, but its content (a provider error
+    // string, an exec refusal) is untrusted, so control-strip like every
+    // other tool-sourced transcript line (CWE-150).
+    const safe = clean(bridge_gpa, body) orelse return;
+    _ = std.c.pthread_mutex_lock(&bridge_log_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
+    bridge_log_lines.append(bridge_gpa, safe) catch bridge_gpa.free(safe);
+}
+
+/// Moves buffered log records into the transcript as dim lines. Caller
+/// holds `bridge_mutex`: the render-thread draw loop drains every frame and
+/// the run thread's finishTurn drains at turn end, so a record emitted
+/// between turns (an idle-time diagnostic from a background poll) still
+/// reaches the screen.
+fn drainLogLines(self: *Model) void {
+    _ = std.c.pthread_mutex_lock(&bridge_log_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
+    if (bridge_log_lines.items.len == 0) return;
+    for (bridge_log_lines.items) |l| {
+        const copy = self.arena.dupe(u8, l) catch l;
+        self.lines.append(self.arena, .{ .text = copy, .dim = true }) catch {};
+        if (copy.ptr != l.ptr) bridge_gpa.free(l);
+    }
+    bridge_log_lines.clearRetainingCapacity();
 }
 
 /// Agent.steer_fn for the REPL: pops the next steering message the user typed
@@ -2608,6 +2656,9 @@ const Model = struct {
     fn finishTurn(self: *Model, final_text: []const u8, turn: ?stats_mod.TurnStats) void {
         bridge_mutex.lockUncancelable(bridge_io);
         defer bridge_mutex.unlock(bridge_io);
+        // Log records emitted while the turn was in flight land before the
+        // tool lines, in arrival order.
+        drainLogLines(self);
         // Tool lines are allocated from bridge_gpa by the worker callbacks;
         // the transcript owns arena copies so the originals can be freed
         // here instead of living (and leaking) for the process lifetime.
@@ -5221,6 +5272,10 @@ const Model = struct {
         // without the lock is a torn read against a concurrent append/resize.
         bridge_mutex.lockUncancelable(bridge_io);
         defer bridge_mutex.unlock(bridge_io);
+        // Idle-time log records (background polls, mesh chatter) are drained
+        // here, before the read loop takes a snapshot of self.lines, so the
+        // append cannot reallocate the backing storage mid-iteration.
+        drainLogLines(self);
         const streaming = bridge_streaming;
         const stream_snapshot = ctx.arena.dupe(u8, bridge_stream_buf.items) catch "";
         var tool_snap: [64]u8 = undefined;
@@ -8319,6 +8374,14 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // operator is not left believing they are protected". Config parse
     // warnings and a failed session mint were being dropped the same way.
     log.setLevel(.error_);
+
+    // An `.error_` record would still write straight to stderr from here on
+    // (the LLM client logs retry exhaustion at error level even when the
+    // fallback chain then recovers), painting `[ERROR] ts_ms=...` over the
+    // frame the draw loop just wrote. Route records into the transcript as
+    // dim lines instead; the draw loop and finishTurn drain them.
+    log.setSink(.{ .ctx = model, .write = logSinkWrite });
+    defer log.setSink(null);
 
     // Save on every exit path: app.run returns for /quit and for Ctrl-C while
     // idle alike, so persisting here (rather than in submit) is what makes the

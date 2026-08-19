@@ -2812,6 +2812,17 @@ fn writeDefaultProviderRecovery(w: *std.Io.Writer, rows: []const CheckRow) !void
     }
 }
 
+/// `log.Sink.write` that discards the record. `providers check` installs it
+/// for the sweep so a failing probe's `[WARN]/[ERROR] ts_ms=...` records do
+/// not interleave with the human report, which already names each provider's
+/// outcome (and the tail names doctor as the next step).
+var drop_sink_ctx: u8 = 0;
+fn dropSink(ctx: *const anyopaque, line: []const u8) void {
+    std.debug.print("DROPSINK-CALLED\n", .{});
+    _ = ctx;
+    _ = line;
+}
+
 fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, opts.providers_sub, "models")) {
         return cmdProvidersModels(init, opts);
@@ -2830,6 +2841,18 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     const arena = init.arena.allocator();
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map };
+
+    // The probe reaches the LLM client, which logs every retry failure as a
+    // `[WARN]/[ERROR] ts_ms=...` record on stderr; those would interleave
+    // with the report lines below in a timestamped machinery voice, and the
+    // report already carries each provider's outcome. Drop the records for
+    // the sweep unless the operator asked for verbose logs.
+    std.debug.print("VERBOSE={}\n", .{opts.verbose});
+    if (!opts.verbose) {
+        log.setSink(.{ .ctx = &drop_sink_ctx, .write = dropSink });
+        log.log(.error_, "TEST-MAIN-THREAD", .{});
+        defer log.setSink(null);
+    }
 
     if (cfg.default_provider_from) |from|
         std.debug.print("default provider: {s} (from {s})\n", .{ cfg.default_provider, from })

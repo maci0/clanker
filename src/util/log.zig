@@ -43,6 +43,25 @@ var log_mutex: std.c.pthread_mutex_t = .{};
 /// bodies, credentials, or other user-controlled data here.
 threadlocal var context: []const u8 = "";
 
+/// Optional alternate destination for log records, replacing the stderr
+/// write. The REPL installs one so `.error_` records emitted while the alt
+/// screen is up land in the transcript as dim lines instead of painting raw
+/// `[ERROR] ts_ms=...` text over the UI; `providers check` installs a drop
+/// sink so a failing probe's records do not interleave with its report.
+/// `write` runs on the logging thread (any thread may log), so the callback
+/// must be safe to call from any thread. It receives one already-formatted
+/// record, newline-terminated, with `\n`/`\r` already collapsed to spaces.
+pub const Sink = struct {
+    ctx: *const anyopaque,
+    write: *const fn (ctx: *const anyopaque, line: []const u8) void,
+};
+
+var sink: ?Sink = null;
+
+pub fn setSink(s: ?Sink) void {
+    sink = s;
+}
+
 pub fn setLevel(l: Level) void {
     current_level.store(@intFromEnum(l), .release);
 }
@@ -97,6 +116,14 @@ pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
         buf[buf.len - 1] = '\n';
         w.end = buf.len;
     };
+    var tid_marker: u8 = 0;
+    std.debug.print("LOG-THREAD {x} sink={any}\n", .{ @intFromPtr(&tid_marker), sink != null });
+    if (sink) |s| {
+        std.debug.print("SINK-CAPTURE\n", .{});
+        s.write(s.ctx, buf[0..w.end]);
+        return;
+    }
+    std.debug.print("LOG-STDERR path (sink null)\n", .{});
     _ = std.c.pthread_mutex_lock(&log_mutex);
     defer _ = std.c.pthread_mutex_unlock(&log_mutex);
     std.debug.print("{s}", .{buf[0..w.end]});
