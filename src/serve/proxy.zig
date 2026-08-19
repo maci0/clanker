@@ -1013,9 +1013,10 @@ fn collectModels(cfg: *const config.Config, family: Family, arena: std.mem.Alloc
     var it = cfg.providers.iterator();
     while (it.next()) |kv| {
         const p = kv.value_ptr;
+        if (!speaks(p.kind, family)) continue;
         var mit = p.models.iterator();
         while (mit.next()) |m| {
-            const id = try advertisedAlloc(arena, cfg, null, kv.key_ptr.*, m.key_ptr.*);
+            const id = try advertisedAlloc(arena, cfg, family, kv.key_ptr.*, m.key_ptr.*);
             const display = m.value_ptr.display orelse m.key_ptr.*;
             try writeOneModel(s, family, id, kv.key_ptr.*, display);
         }
@@ -1040,13 +1041,13 @@ fn advertisedAlloc(arena: std.mem.Allocator, cfg: *const config.Config, family: 
 }
 
 fn findAdvertised(cfg: *const config.Config, family: Family, arena: std.mem.Allocator, want: []const u8) ?Listed {
-    _ = family;
     var it = cfg.providers.iterator();
     while (it.next()) |kv| {
         const p = kv.value_ptr;
+        if (!speaks(p.kind, family)) continue;
         var mit = p.models.iterator();
         while (mit.next()) |m| {
-            const id = advertisedAlloc(arena, cfg, null, kv.key_ptr.*, m.key_ptr.*) catch continue;
+            const id = advertisedAlloc(arena, cfg, family, kv.key_ptr.*, m.key_ptr.*) catch continue;
             if (std.mem.eql(u8, id, want) or std.mem.eql(u8, m.key_ptr.*, want)) {
                 return .{ .id = id, .owned_by = kv.key_ptr.*, .display = m.value_ptr.display orelse m.key_ptr.* };
             }
@@ -1438,4 +1439,24 @@ test "sseFrameEnd finds both LF and CRLF frame separators" {
     try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\n\nrest"));
     try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\r\n\r\nrest"));
     try std.testing.expect(sseFrameEnd("abc\r\n") == null);
+}
+
+test "models list and get are scoped to the route family" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "kimi-k3", try config.Provider.single(arena, "kimi-k3", "http://x/v1", .openai_compat, "kimi-k3", .{}));
+    try cfg.providers.put(arena, "anthropic", try config.Provider.single(arena, "anthropic", "https://api.anthropic.com", .anthropic, "claude-sonnet-4-20250514", .{ .display = "Claude Sonnet 4" }));
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    try collectModels(&cfg, .openai, arena, &s);
+    try std.testing.expect(std.mem.find(u8, out.written(), "kimi-k3") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "claude-sonnet-4-20250514") == null);
+
+    try std.testing.expect(findAdvertised(&cfg, .openai, arena, "kimi-k3") != null);
+    try std.testing.expect(findAdvertised(&cfg, .anthropic, arena, "claude-sonnet-4-20250514") != null);
+    try std.testing.expect(findAdvertised(&cfg, .openai, arena, "claude-sonnet-4-20250514") == null);
+    try std.testing.expect(findAdvertised(&cfg, .anthropic, arena, "kimi-k3") == null);
 }
