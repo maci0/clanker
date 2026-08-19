@@ -77,10 +77,15 @@ pub const args_preview_cap: usize = 400;
 const recent_tail_messages: usize = 6;
 const original_request_prefix = "[original user request; preserve this task]\n";
 const original_request_anchor_cap: usize = 4096;
+/// Total size `localSummary`'s extractive fallback is allowed to reach, so it
+/// cannot itself blow the context it is shrinking.
+const local_summary_max_bytes: usize = 4000;
 /// Room the summary that replaces the compacted middle is allowed to take:
-/// `localSummary`'s 4000-byte cap plus the preserved original-request anchor.
-/// Counted as immovable, because compaction writes it back every time.
-const compaction_summary_reserve_tokens: usize = (4000 + original_request_anchor_cap) / 4;
+/// `localSummary`'s cap plus the preserved original-request anchor. Counted as
+/// immovable, because compaction writes it back every time. Derived from
+/// `local_summary_max_bytes` rather than repeating it, so raising the cap
+/// cannot silently leave the floor reserving less than the summary needs.
+const compaction_summary_reserve_tokens: usize = (local_summary_max_bytes + original_request_anchor_cap) / 4;
 /// Headroom above the immovable floor, as a fraction of it, that a raised
 /// threshold leaves for the conversation. Without it a run compacts down to the
 /// floor and is immediately over the threshold again.
@@ -1683,7 +1688,7 @@ pub const Agent = struct {
         buf.appendSlice(self.ctx.gpa, hdr) catch return null;
 
         // Cap the total summary size so it does not itself blow the context.
-        const max_summary: usize = 4000;
+        const max_summary = local_summary_max_bytes;
         const content_preview_chars = 200;
         const tool_result_preview_chars = 150;
         const args_preview_chars = 120;
