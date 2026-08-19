@@ -8370,7 +8370,8 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
     const tools = agent.snapshotToolMetrics();
     const schedule = schedule_runner.snapshotScheduleMetrics();
     const job = jobs.snapshotJobMetrics();
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}}}}", .{
+    const live_bus = live.snapshotMetrics();
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -8381,6 +8382,8 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         http_latency_le_100ms.load(.monotonic),
         http_latency_le_1s.load(.monotonic),
         http_latency_le_10s.load(.monotonic),
+        live_bus.subscribers,
+        live_bus.dropped_total,
         llm.requests_total,
         llm.errors_total,
         llm.retries_total,
@@ -8408,8 +8411,13 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     const body = metricsSnapshot(&buf) orelse return error.SnapshotTruncated;
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
     defer parsed.deinit();
-    for ([_][]const u8{ "http", "llm", "tools", "schedule", "jobs" }) |group| {
+    for ([_][]const u8{ "http", "live", "llm", "tools", "schedule", "jobs" }) |group| {
         try std.testing.expect(parsed.value.object.get(group) != null);
+    }
+    const live_obj = (parsed.value.object.get("live").?).object;
+    for ([_][]const u8{ "subscribers", "dropped_total" }) |field| {
+        const v = live_obj.get(field) orelse return error.MissingLiveField;
+        try std.testing.expect(v == .integer);
     }
     const jobs_obj = (parsed.value.object.get("jobs").?).object;
     for ([_][]const u8{ "starts_total", "completions_total", "errors_total", "active" }) |field| {
@@ -15094,6 +15102,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .on_decision = serverGoalLoopDecision,
             }) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
+                const failed_ms: i64 = @divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+                // The HTTP status was already sent as 200 when the stream
+                // opened, so a stream-level failure never reaches the generic
+                // completion log (which only reports >= 400): without this line
+                // the run's failure would count as a success in the metrics
+                // and appear nowhere in the serve log.
+                log.log(.error_, "run failed duration_ms={d} phase=goal_loop: {s}", .{ failed_ms, detail });
                 writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
                 return;
             };
@@ -15103,6 +15118,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         } else blk: {
             const resp = a.run(&messages, final_task, &err_detail) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
+                const failed_ms: i64 = @divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+                log.log(.error_, "run failed duration_ms={d} phase=agent: {s}", .{ failed_ms, detail });
                 writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
                 return;
             };
@@ -15156,11 +15173,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .ttft_ms_total = a.stats.total_ttft_ms,
             .ttft_samples = a.stats.ttft_samples,
         });
+        log.log(.info, "run complete provider={s} duration_ms={d} prompt_tokens={d} completion_tokens={d}", .{ a.provider.name, ms, a.stats.total_prompt_tokens, a.stats.total_completion_tokens });
         return;
     }
 
     var answers: std.ArrayList(u8) = .empty;
     var loop_outcome: ?goal_loop.Outcome = null;
+    const t0 = std.Io.Timestamp.now(io, .awake);
     const content = if (starts_goal_loop) blk: {
         var loop_ctx = ServerGoalLoopContext{
             .a = &a,
@@ -15226,6 +15245,8 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     s.objectField("served_by") catch return;
     s.write(a.provider.name) catch return;
     s.endObject() catch return;
+    const elapsed_ms: i64 = @divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+    log.log(.info, "run complete provider={s} duration_ms={d} prompt_tokens={d} completion_tokens={d}", .{ a.provider.name, elapsed_ms, a.stats.total_prompt_tokens, a.stats.total_completion_tokens });
     respond(stream, 200, "OK", rbuf[0..w.end]);
 }
 

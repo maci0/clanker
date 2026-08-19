@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const log = @import("../util/log.zig");
 const raw_http = @import("../util/raw_http.zig");
 
 pub const Topic = enum { chat, mesh, arena, run, metrics, plugin };
@@ -22,6 +23,11 @@ const Slot = struct {
     head: u16 = 0,
     tail: u16 = 0,
     dropped: u32 = 0,
+    /// Whether the falling-behind warning has already fired for this
+    /// subscriber's current backlog episode, so a stuck consumer warns once
+    /// instead of once per dropped event. Reset by `take` when the queue
+    /// drains, so a subscriber that falls behind again warns again.
+    drop_warned: bool = false,
 };
 
 const Event = struct {
@@ -105,12 +111,20 @@ pub fn publish(topic: Topic, json: []const u8) void {
     const bit = topicBit(topic);
     mutex.lock();
     defer mutex.unlock();
-    for (&slots) |*slot| {
+    for (&slots, 0..) |*slot, i| {
         if (!slot.used) continue;
         if (slot.mask & bit == 0) continue;
         if (qLen(slot) >= queue_cap) {
             slot.head +%= 1;
             slot.dropped += 1;
+            // A dropped event is data loss for the subscriber: the web UI
+            // misses a chat line or a run update with no error anywhere. One
+            // warn per falling-behind episode, not one per dropped event, so a
+            // wedged consumer cannot flood the log.
+            if (!slot.drop_warned) {
+                slot.drop_warned = true;
+                log.log(.warn, "live bus: subscriber {d} fell behind; {d} queued event(s) dropped so far (topic={s})", .{ i, slot.dropped, @tagName(topic) });
+            }
         }
         const idx = slot.tail % queue_cap;
         slot.q[idx].topic = topic;
@@ -125,6 +139,28 @@ pub const Taken = struct {
     json: []const u8,
 };
 
+pub const LiveMetrics = struct {
+    subscribers: u32,
+    dropped_total: u64,
+};
+
+/// Subscriber count and cumulative dropped events, for `/api/metrics`. A
+/// rising `dropped_total` against a stable subscriber count is a consumer
+/// that cannot keep up with the bus; the per-episode warn in `publish` names
+/// which subscriber slot is falling behind.
+pub fn snapshotMetrics() LiveMetrics {
+    mutex.lock();
+    defer mutex.unlock();
+    var subscribers: u32 = 0;
+    var dropped: u64 = 0;
+    for (&slots) |*slot| {
+        if (!slot.used) continue;
+        subscribers += 1;
+        dropped += slot.dropped;
+    }
+    return .{ .subscribers = subscribers, .dropped_total = dropped };
+}
+
 pub fn take(id: usize, buf: *[event_cap]u8) ?Taken {
     if (id >= max_subs) return null;
     mutex.lock();
@@ -134,6 +170,9 @@ pub fn take(id: usize, buf: *[event_cap]u8) ?Taken {
     const ev = slot.q[slot.head % queue_cap];
     slot.head +%= 1;
     @memcpy(buf[0..ev.len], ev.bytes[0..ev.len]);
+    // The backlog is clear again: re-arm the drop warning so the next
+    // falling-behind episode reports once more instead of staying silent.
+    if (qLen(slot) == 0) slot.drop_warned = false;
     return .{ .topic = ev.topic, .json = buf[0..ev.len] };
 }
 
@@ -301,6 +340,11 @@ test "subscribe publish take, overflow drops oldest" {
     }
     const got = take(a, &buf) orelse return error.MissingAfterDrop;
     try std.testing.expect(std.mem.find(u8, got.json, "\"n\":") != null);
+    // The burst overflowed the queue: the drop counter that `/api/metrics`
+    // reports must reflect it. (>= rather than == because other tests may
+    // hold subscribers on the shared bus.)
+    const snap = snapshotMetrics();
+    try std.testing.expect(snap.dropped_total >= 3);
 }
 
 test "parseTopics empty is all, unknown names ignored" {
