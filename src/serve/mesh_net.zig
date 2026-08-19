@@ -339,8 +339,15 @@ fn readLoop(rt: *Runtime, stream: std.Io.net.Stream) void {
     var tmp: [4096]u8 = undefined;
     while (!rt.stop.load(.monotonic)) {
         // Residual posix: raw TCP mesh socket pump, same hand-rolled socket
-        // family as the HTTP server.
-        const n = std.posix.read(fd, &tmp) catch break;
+        // family as the HTTP server. The join handshake leaves SO_RCVTIMEO at
+        // 10s, so a WouldBlock here is the idle deadline expiring, not a dead
+        // peer: treat it as a wakeup and keep the member connected.
+        const n = std.posix.read(fd, &tmp) catch |err| {
+            switch (err) {
+                error.WouldBlock => continue,
+                else => break,
+            }
+        };
         if (n == 0) break;
         acc.appendSlice(rt.gpa, tmp[0..n]) catch break;
         if (!drainFrames(rt, &acc)) break;
