@@ -45,6 +45,18 @@ pub fn build(b: *std.Build) void {
     _ = std.SemanticVersion.parse(build_zon.version) catch
         @panic("build.zig.zon .version must be valid SemVer");
 
+    // Zig 0.16 only: `minimum_zig_version` in build.zig.zon is a floor, so a
+    // 0.15 or 0.17 toolchain would otherwise reach the compile and fail with a
+    // wall of std-API errors. Name the requirement before the build starts.
+    const zig_version = @import("builtin").zig_version;
+    if (zig_version.major != 0 or zig_version.minor != 16) {
+        std.debug.print(
+            "clanker requires Zig 0.16.x (found {d}.{d}.{d}); build.zig.zon's minimum_zig_version pins the CI release\n",
+            .{ zig_version.major, zig_version.minor, zig_version.patch },
+        );
+        std.process.exit(1);
+    }
+
     // Single source of truth for the version clanker reports (`--version`,
     // the `clanker/<version>` user agent): build.zig.zon's `.version` field,
     // piped through as a build option so it can never drift from a
@@ -164,6 +176,14 @@ pub fn build(b: *std.Build) void {
     proxy_step.dependOn(&b.addInstallArtifact(proxy_exe, .{}).step);
 
     // ------------------------------------------------------------------ tests
+    // Run one test instead of the whole suite: the full run (Zig + the node
+    // --test suites) is minutes, so a contributor iterating on one `test`
+    // block needs a tight loop. The filter is a substring match applied at
+    // compile time (Zig 0.16's `zig test --test-filter`), so the test binary
+    // only registers matching tests. The node --test suites still run; for a
+    // JS-only loop run `node --test <file>` directly.
+    const test_filter = b.option([]const u8, "test-filter", "run only Zig unit tests whose name contains this substring (a filter matching nothing passes with 0 tests)") orelse "";
+    const test_filters: []const []const u8 = if (test_filter.len > 0) &.{test_filter} else &.{};
     // Tests run on the host's own architecture, so `zig build test` works on any
     // dev machine rather than only an x86_64 linux one. Deliberately not
     // `exe_target`: a `-Dtarget=` cross-compile would produce a test binary the
@@ -198,7 +218,7 @@ pub fn build(b: *std.Build) void {
     // exe to serve one test would ship it to every user.
     test_mod.addAnonymousImport("config_toml", .{ .root_source_file = b.path("config.toml") });
 
-    const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true });
+    const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true, .filters = test_filters });
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
@@ -329,7 +349,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "utf8", .module = helper_utf8_mod },
             },
         });
-        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod })).step);
+        test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod, .filters = test_filters })).step);
     }
     // The sandbox tests load zig-out/tools/*.wasm, which is build output and
     // therefore absent from a fresh checkout: `zig build test` failed there

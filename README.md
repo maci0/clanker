@@ -67,6 +67,22 @@ zig build test
 git config core.hooksPath .githooks
 ```
 
+`zig build test` is the full suite (Zig + JS) and takes minutes, so the edit
+loop has a single-test path: `zig build test -Dtest-filter="<substring>"`
+compiles the Zig binary with only the matching tests registered (a filter
+that matches nothing passes with 0 tests; the JS suites still run). For a
+JS-only loop, run one suite directly, e.g. `node --test ui/app/core/scroll.test.mjs`.
+
+`clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
+but CI also runs shellcheck, a Python syntax check, the SBOM generation, and
+the AssemblyScript rebuild-and-diff. `scripts/verify.sh` mirrors every CI
+step locally, so the full pre-push verification is one command instead of a
+list of steps that live only in the CI workflow:
+
+```sh
+scripts/verify.sh
+```
+
 Set the API key env var for your chosen provider (see [config.toml](config.toml)), then:
 
 ```sh
