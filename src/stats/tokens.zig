@@ -263,24 +263,31 @@ const AggregateCache = struct {
         return e.stats;
     }
 
-    fn store(path: []const u8, st: FileStat, stats: []Stat) void {
+    /// Stores `stats` for `(path, st)` and returns the slice callers may hand
+    /// out. When an entry for the same version is already present, the first
+    /// store wins and this call's freshly computed copy -- which nothing else
+    /// holds -- is freed instead. Two threads can miss on the same file version
+    /// at once (both fold before either stores), and the second store used to
+    /// replace and free the first's stats while the first's caller was still
+    /// reading them. A different version replaces the old entry as before, and
+    /// an allocation failure leaves the cache empty with the caller owning what
+    /// it computed.
+    fn store(path: []const u8, st: FileStat, stats: []Stat) []Stat {
         lock();
         defer mutex.unlock();
         if (entry) |old| {
-            for (old.stats) |s| {
-                gpa.free(s.provider);
-                gpa.free(s.model);
+            const same_version = old.inode == @as(u64, @intCast(st.inode)) and
+                old.size == st.size and
+                old.mtime_ns == st.mtime.nanoseconds and
+                std.mem.eql(u8, old.path, path);
+            if (same_version) {
+                freeStats(stats);
+                return old.stats;
             }
-            gpa.free(old.stats);
-            gpa.free(old.path);
+            freeEntry(old);
         }
         const owned_path = gpa.dupe(u8, path) catch {
-            for (stats) |s| {
-                gpa.free(s.provider);
-                gpa.free(s.model);
-            }
-            gpa.free(stats);
-            return;
+            return stats;
         };
         entry = .{
             .path = owned_path,
@@ -289,6 +296,20 @@ const AggregateCache = struct {
             .mtime_ns = st.mtime.nanoseconds,
             .stats = stats,
         };
+        return stats;
+    }
+
+    fn freeStats(stats: []Stat) void {
+        for (stats) |s| {
+            gpa.free(s.provider);
+            gpa.free(s.model);
+        }
+        gpa.free(stats);
+    }
+
+    fn freeEntry(e: Entry) void {
+        freeStats(e.stats);
+        gpa.free(e.path);
     }
 };
 
@@ -312,8 +333,7 @@ pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     };
     if (AggregateCache.get(path, st)) |cached| return cached;
     const stats = try aggregateFold(base, io, gpa, path);
-    AggregateCache.store(path, st, stats);
-    return stats;
+    return AggregateCache.store(path, st, stats);
 }
 
 /// The read + fold half of `aggregate`, allocating the group rows from the
@@ -788,6 +808,110 @@ test "an unchanged log aggregates from cache; an append invalidates it" {
     try std.testing.expectEqual(@as(u64, 2), third[0].calls);
     try std.testing.expectEqual(@as(u64, 300), third[0].prompt_tokens);
     try std.testing.expectEqual(@as(u64, 350), third[0].total_tokens);
+}
+
+test "a store for a version already cached keeps the first entry" {
+    // Deterministic half of the concurrent-miss race: two calls that miss on
+    // the same file version both fold and both store, and the loser must free
+    // only its own copy -- the second store used to replace and free the
+    // first's stats while its caller was still reading them.
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "log", .data = "" });
+    const st = try tmp.dir.statFile(io, "log", .{});
+
+    const gpa = AggregateCache.gpa;
+    const a = try gpa.alloc(Stat, 1);
+    a[0] = .{ .provider = try gpa.dupe(u8, "p-a"), .model = try gpa.dupe(u8, "m-a") };
+    try std.testing.expect((AggregateCache.store("log", st, a)).ptr == a.ptr);
+
+    // Same path and version: the first entry wins; this copy is freed.
+    const b = try gpa.alloc(Stat, 1);
+    b[0] = .{ .provider = try gpa.dupe(u8, "p-b"), .model = try gpa.dupe(u8, "m-b") };
+    const stored_b = AggregateCache.store("log", st, b);
+    try std.testing.expect(stored_b.ptr == a.ptr);
+    try std.testing.expect(stored_b.ptr != b.ptr);
+
+    // Same version, different path: a different entry, so this replaces.
+    const c = try gpa.alloc(Stat, 1);
+    c[0] = .{ .provider = try gpa.dupe(u8, "p-c"), .model = try gpa.dupe(u8, "m-c") };
+    const stored_c = AggregateCache.store("other", st, c);
+    try std.testing.expect(stored_c.ptr == c.ptr);
+
+    // Different version (mtime moved): replaces the old entry.
+    var st2 = st;
+    st2.mtime.nanoseconds += 1;
+    const d = try gpa.alloc(Stat, 1);
+    d[0] = .{ .provider = try gpa.dupe(u8, "p-d"), .model = try gpa.dupe(u8, "m-d") };
+    const stored_d = AggregateCache.store("log", st2, d);
+    try std.testing.expect(stored_d.ptr == d.ptr);
+}
+
+test "concurrent aggregates on one log version share one cache entry" {
+    // The real race: every reader misses together (the log is unchanged
+    // between their stat and their fold), so each folds and each stores. All
+    // must come back holding the same live slice -- with the old store, a
+    // later store freed an earlier reader's stats while it was still reading
+    // them.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "state");
+    var seed_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer seed_arena.deinit();
+    append(tmp.dir, io, std.testing.allocator, seed_arena.allocator(), "state", .{
+        .ts = 1,
+        .provider = "kimi-k3",
+        .model = "kimi-k3",
+        .prompt_tokens = 100,
+        .completion_tokens = 20,
+        .total_tokens = 120,
+        .cache_hit = 80,
+        .cache_miss = 20,
+        .cost = 0.01,
+        .duration_ms = 100,
+    });
+
+    const readers = 8;
+    const Worker = struct {
+        dir: std.Io.Dir,
+        io: std.Io,
+        gpa: std.mem.Allocator,
+        result: ?[]Stat = null,
+
+        fn run(self: *@This()) void {
+            var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+            defer arena_state.deinit();
+            self.result = aggregate(self.dir, self.io, self.gpa, arena_state.allocator(), "state") catch null;
+        }
+    };
+
+    var workers: [readers]Worker = undefined;
+    var threads: [readers]std.Thread = undefined;
+    for (&workers, 0..) |*w, i| {
+        w.* = .{ .dir = tmp.dir, .io = io, .gpa = std.testing.allocator };
+        threads[i] = try std.Thread.spawn(.{}, Worker.run, .{w});
+    }
+    for (&threads) |*t| t.join();
+
+    // Every reader must hold the same live slice (the first store won) and
+    // each must still be readable -- the use-after-free that used to happen
+    // when a later store freed an earlier reader's stats.
+    var first: ?[*]Stat = null;
+    for (&workers) |*w| {
+        const r = w.result orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(usize, 1), r.len);
+        try std.testing.expectEqualStrings("kimi-k3", r[0].provider);
+        if (first) |fp| {
+            try std.testing.expect(fp == r.ptr);
+        } else {
+            first = r.ptr;
+        }
+    }
 }
 
 test "concurrent appends all survive" { // The offset used to come from a stat taken before the file was opened, so
