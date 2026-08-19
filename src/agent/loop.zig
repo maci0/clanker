@@ -2276,10 +2276,6 @@ pub const Agent = struct {
         for (calls) |tc| {
             const tool = self.reg.get(tc.name) orelse continue;
             if (!tool.enabled) continue;
-            const wasm_bytes = self.wasmBytes(tool) catch |err| {
-                log.log(.warn, "tool '{s}': cannot pre-load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
-                continue;
-            };
             // Pre-compile the primary tool module so executeTool (sequential
             // path) finds it already in self.modules and skips recompilation.
             // Parallel-eligible tools never read self.modules, their worker
@@ -2287,44 +2283,46 @@ pub const Agent = struct {
             // same tool name appears more than once in a batch, the duplicate
             // hits the sequential fallback (executeTool / executeToolOnWorker)
             // which DOES read self.modules; pre-compiling here avoids a
-            // redundant recompilation on that path.
-            // Pre-compile every tool module unconditionally: even parallel-
-            // eligible tools benefit when the same tool name appears in a
-            // later iteration's batch (sequential fallback for duplicates)
-            // or when no_parallel_tools flips mid-session. The compiled
-            // module is immutable and reused by executeTool's cache lookup,
-            // eliminating redundant WASM parse+validate on repeat calls.
-            if (!self.modules.contains(tc.name)) {
-                const sbp = self.sandboxPtrFor(tool) catch continue;
-                const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
-                    log.log(.warn, "tool '{s}': pre-compile failed: {s}", .{ tc.name, @errorName(err) });
-                    continue;
-                };
-                self.modules.put(self.arena, tc.name, m) catch |err| {
-                    m.deinit();
-                    log.log(.warn, "tool '{s}': cache insert failed: {s}", .{ tc.name, @errorName(err) });
-                    continue;
-                };
-            }
+            // redundant recompilation on that path. Every tool module is
+            // pre-compiled unconditionally (see precompileModule): even
+            // parallel-eligible tools benefit when the same tool name appears
+            // in a later iteration's batch, or when no_parallel_tools flips
+            // mid-session, and the wasm bytes are warmed for the worker path
+            // whether or not the module was already compiled.
+            self.precompileModule(tc.name, tool);
             const phases = [_]registry.Transform.Phase{ .before, .after };
             for (phases) |phase| {
                 const chain = self.reg.transformsFor(self.arena, tc.name, phase) catch continue;
                 for (chain) |t| {
                     const cache_key = std.fmt.allocPrint(self.arena, "transform:{s}", .{t.name}) catch continue;
-                    if (self.modules.contains(cache_key)) continue;
-                    const tbytes = self.wasmBytes(t) catch continue;
-                    const tsbp = self.sandboxPtrFor(t) catch continue;
-                    const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, tsbp, tbytes) catch |err| {
-                        log.log(.warn, "transform '{s}': pre-compile failed: {s}", .{ t.name, @errorName(err) });
-                        continue;
-                    };
-                    self.modules.put(self.arena, cache_key, m) catch {
-                        m.deinit();
-                        continue;
-                    };
+                    self.precompileModule(cache_key, t);
                 }
             }
         }
+    }
+
+    /// Compiles one module into `self.modules` under `cache_key` when it is
+    /// not there yet, warming the wasm-byte cache either way (a compiled
+    /// module is immutable and reused by executeTool's cache lookup, and the
+    /// bytes are what a parallel worker loads a fresh module from). Warm
+    /// path: failures are logged and left for the execution path to surface,
+    /// the way runTransform lazily recompiles on a cache miss and runChain
+    /// skips a transform that fails to load.
+    fn precompileModule(self: *Agent, cache_key: []const u8, tool: *const registry.Tool) void {
+        const wasm_bytes = self.wasmBytes(tool) catch |err| {
+            log.log(.warn, "cannot pre-load {s} ({s}): {s}", .{ tool.name, tool.wasm, @errorName(err) });
+            return;
+        };
+        if (self.modules.contains(cache_key)) return;
+        const sbp = self.sandboxPtrFor(tool) catch return;
+        const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
+            log.log(.warn, "pre-compile of {s} failed: {s}", .{ tool.name, @errorName(err) });
+            return;
+        };
+        self.modules.put(self.arena, cache_key, m) catch |err| {
+            m.deinit();
+            log.log(.warn, "cache insert of {s} failed: {s}", .{ tool.name, @errorName(err) });
+        };
     }
 
     /// Runs a single tool call in the WASM sandbox; returns arena-owned JSON.
