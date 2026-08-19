@@ -100,6 +100,12 @@ fn runChecks(
     rep.section("config");
     if (!fileExists(io, "config.toml")) {
         rep.line(.fail, "config.toml", "missing; run `clanker setup`");
+        // Even without config, surface whether tools were ever built so the
+        // user knows which half of the problem to tackle first.
+        if (dirExists(io, "zig-out/tools"))
+            rep.line(.ok, "zig-out/tools/", "present (tools were previously built)")
+        else
+            rep.line(.warn, "zig-out/tools/", "absent; `zig build tools` has not been run");
         return;
     }
     rep.line(.ok, "config.toml", "");
