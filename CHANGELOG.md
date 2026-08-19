@@ -301,6 +301,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker rfc recommend` (and the `rfc` tool's `recommend` action) keeps an
+  RFC's existing **Why this confidence** and **Reversibility** paragraphs when
+  the caller does not pass `moves_confidence`/`reversibility`, instead of
+  overwriting them with the template placeholders. The CLI verb passes
+  neither, so every CLI recommend on a filled-in RFC silently destroyed
+  operator-written reasoning
+  (docs/reports/bugs/2026-08-19-rfc-recommend-replaces-fields-it-was-not-given.md).
 - The web UI's Skills list (under Tools and Prompts) renders again when at
   least one skill exists. The row-building callback in
   `core/tools.js: loadSkills` shadowed the `#skills` container variable with

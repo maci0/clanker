@@ -80,7 +80,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [rfc recommend replaces existing Why-this-confidence and Reversibility text with template placeholders](bugs/2026-08-19-rfc-recommend-replaces-fields-it-was-not-given.md) — Open
+- [rfc recommend replaces existing Why-this-confidence and Reversibility text with template placeholders](bugs/2026-08-19-rfc-recommend-replaces-fields-it-was-not-given.md) — Resolved
 
 - [research sweep's web backend returns only unrelated pages](bugs/2026-08-19-research-sweep-web-backend-returns-unrelated-results.md) — Open
 
