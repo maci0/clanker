@@ -449,7 +449,8 @@ fn appendInner(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
     try out_list.appendSlice(gpa, line);
     try out_list.append(gpa, '\n');
     try trimLog(gpa, arena, &out_list, max);
-    try atomic_write.writeFile(io, base, path, out_list.items);
+    // Owner-only: the chat log holds room messages between peers.
+    try atomic_write.writeFilePerms(io, base, path, out_list.items, atomic_write.private_file);
 }
 
 fn jsonlLineCount(raw: []const u8) usize {
@@ -590,7 +591,7 @@ fn rewriteLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     var out = std.ArrayList(u8).empty;
     defer out.deinit(gpa);
     for (messages) |m| try serialiseMessage(m, &out, gpa);
-    try atomic_write.writeFile(io, base, path, out.items);
+    try atomic_write.writeFilePerms(io, base, path, out.items, atomic_write.private_file);
 }
 
 /// Toggle a reaction on a message. Returns true if the reaction was added,
@@ -756,7 +757,7 @@ fn saveMeta(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem
     var w: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
     try s.write(meta);
-    try atomic_write.writeFile(io, base, path, w.written());
+    try atomic_write.writeFilePerms(io, base, path, w.written(), atomic_write.private_file);
     _ = gpa;
 }
 
@@ -1154,7 +1155,7 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     for (unsub.items) |r| try s.write(r);
     try s.endArray();
     try s.endObject();
-    try atomic_write.writeFile(io, base, path, buf[0..w.end]);
+    try atomic_write.writeFilePerms(io, base, path, buf[0..w.end], atomic_write.private_file);
     log.log(.info, "chat: subscribed to '{s}' = {any}", .{ room, on });
 }
 
@@ -1225,7 +1226,7 @@ pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_d
     s.write(Cursor{ .id = msg.id, .ts = msg.ts }) catch return;
     w.writeByte('\n') catch return;
     const body = buf[0..w.end];
-    atomic_write.writeFile(io, base, path, body) catch return;
+    atomic_write.writeFilePerms(io, base, path, body, atomic_write.private_file) catch return;
 }
 
 // ------------------------------------------------------------------ helpers --

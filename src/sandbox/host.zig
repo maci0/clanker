@@ -19,6 +19,7 @@ const registry = @import("../toolhost/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
 const private_todos_mod = @import("../agent/private_todos.zig");
 const file_lock = @import("../util/file_lock.zig");
+const atomic_write = @import("../util/atomic_write.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
 const glob = @import("../util/glob.zig");
@@ -3480,7 +3481,17 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
     // Open for appending, creating the file if it doesn't exist: one
     // syscall instead of open-fail-then-writeFile (truncate=false never
     // clobbers existing content).
-    return appendLocked(h.sandbox.io, std.Io.Dir.cwd(), full, data);
+    return appendLocked(h.sandbox.io, std.Io.Dir.cwd(), full, data, stateWritePermissions(h.sandbox.state_dir, sub_path));
+}
+
+/// Owner-only (0600) permissions for guest writes under the harness's state
+/// dir: those are the personal-data stores (spilled conversation text,
+/// notifications, per-session state). A tool authoring a project file keeps
+/// the default mode, so this never changes the visibility of non-state files.
+fn stateWritePermissions(state_dir: []const u8, rel: []const u8) std.Io.File.Permissions {
+    const under_state = state_dir.len > 0 and std.mem.startsWith(u8, rel, state_dir) and
+        (rel.len == state_dir.len or rel[state_dir.len] == '/');
+    return if (under_state) atomic_write.private_file else .default_file;
 }
 
 /// Appends `data` to `rel`, creating it when absent.
@@ -3489,11 +3500,11 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
 /// in parallel here, so two of them appending to one file both read the same
 /// end and the second write lands on top of the first. The lock makes the pair
 /// atomic between cooperating writers.
-pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8) u32 {
+pub fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8, permissions: std.Io.File.Permissions) u32 {
     // Through the retrying create: racing creates of a not-yet-existing log
     // spuriously fail ENOENT on macOS, and mapping that to Err.invalid here
     // silently dropped the append (file_lock.createFileRetry has the story).
-    var file = file_lock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive }) catch |err| switch (err) {
+    var file = file_lock.createFileRetry(io, base, rel, .{ .truncate = false, .lock = .exclusive, .permissions = permissions }) catch |err| switch (err) {
         error.NoSpaceLeft => return Err.too_large,
         else => return Err.invalid,
     };
@@ -3517,7 +3528,7 @@ fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8
     if (std.mem.findScalarLast(u8, full, '/')) |slash| {
         if (slash > 0) std.Io.Dir.cwd().createDirPath(h.sandbox.io, full[0..slash]) catch {};
     }
-    std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full, .data = data }) catch |err| switch (err) {
+    std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full, .data = data, .flags = .{ .permissions = stateWritePermissions(h.sandbox.state_dir, sub_path) } }) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };
@@ -3600,7 +3611,7 @@ fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_
     }
 
     // Write (replace) the file.
-    base.writeFile(sb.io, .{ .sub_path = full, .data = data }) catch |err| switch (err) {
+    base.writeFile(sb.io, .{ .sub_path = full, .data = data, .flags = .{ .permissions = stateWritePermissions(sb.state_dir, sub_path) } }) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };
@@ -7203,7 +7214,7 @@ test "parallel appends to one file all land" {
         fn run(self: *@This()) void {
             var i: usize = 0;
             while (i < per_writer) : (i += 1) {
-                _ = appendLocked(self.io, self.dir, "log.txt", line);
+                _ = appendLocked(self.io, self.dir, "log.txt", line, .default_file);
             }
         }
     };

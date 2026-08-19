@@ -154,7 +154,7 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // The lock makes the read-size-then-write pair atomic between cooperating
     // writers, and the size is taken from the locked handle rather than from
     // before it.
-    const file = base.createFile(io, path, .{ .truncate = false, .lock = .exclusive }) catch |err| {
+    const file = base.createFile(io, path, .{ .truncate = false, .lock = .exclusive, .permissions = atomic_write.private_file }) catch |err| {
         log.log(.warn, "[stats] open failed: {s}", .{@errorName(err)});
         return;
     };
@@ -185,7 +185,7 @@ fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.
         try out.appendSlice(gpa, ln);
         try out.append(gpa, '\n');
     }
-    try atomic_write.writeFile(io, base, path, out.items);
+    try atomic_write.writeFilePerms(io, base, path, out.items, atomic_write.private_file);
 }
 
 // -------------------------------------------------------------- aggregation --

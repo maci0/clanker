@@ -135,7 +135,9 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     // Atomic: a reader (including this same process resuming after a
     // hot-reload restart) must never observe a session file truncated
     // mid-write.
-    try atomic_write.writeFile(io, base, path, out.written());
+    // Owner-only: the transcript holds the user's prompts and model replies;
+    // the default mode left it world-readable for any other local user.
+    try atomic_write.writeFilePerms(io, base, path, out.written(), atomic_write.private_file);
 }
 
 const StoredToolCall = struct {

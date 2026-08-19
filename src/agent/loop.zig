@@ -18,6 +18,7 @@ const chatrooms = @import("../peers/chatrooms.zig");
 const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const append_line = @import("../util/append_line.zig");
+const atomic_write = @import("../util/atomic_write.zig");
 const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const tool_out = @import("../util/tool_out.zig");
@@ -1380,7 +1381,7 @@ pub const Agent = struct {
             };
         } else |_| {}
 
-        const file = base.createFile(io, reasoning_path, .{ .truncate = false }) catch |err| {
+        const file = base.createFile(io, reasoning_path, .{ .truncate = false, .permissions = atomic_write.private_file }) catch |err| {
             log.log(.warn, "recordReasoning: failed to open {s}: {s}", .{ reasoning_path, @errorName(err) });
             return;
         };

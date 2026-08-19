@@ -6,12 +6,33 @@
 
 const std = @import("std");
 
+/// Owner-only (0600) permissions for state stores that hold conversation or
+/// user content. Session transcripts, spilled conversation text, chatroom
+/// logs, notifications, and reasoning traces are rewritten whole through this
+/// module; with the default `.default_file` (0666 & ~umask) they landed on
+/// disk world-readable, so any other local user on a shared machine could
+/// read every saved conversation.
+pub const private_file: std.Io.File.Permissions = @enumFromInt(@as(std.posix.mode_t, 0o600));
+
 /// Writes `data` to `sub_path` under `dir` via a temp file + atomic rename
 /// (`Dir.createFileAtomic`), so a process death mid-write leaves the old
 /// file intact instead of a truncated one. `make_path` creates missing
 /// parent directories first, matching plain `Dir.writeFile`'s behavior when
 /// callers already `createDirPath` before writing.
+///
+/// Writes with the default permissions; personal-data stores call
+/// `writeFilePerms` with `atomic_write.private_file` instead.
 pub fn writeFile(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, data: []const u8) !void {
+    return writeFilePerms(io, dir, sub_path, data, .default_file);
+}
+
+/// `writeFile` with an explicit creation mode for the destination.
+///
+/// `permissions` sets the mode of the file at creation; pass
+/// `atomic_write.private_file` for stores holding personal data. The temp
+/// file is created with the requested permissions on every write, so a
+/// rewrite of an existing path re-applies the mode.
+pub fn writeFilePerms(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, data: []const u8, permissions: std.Io.File.Permissions) !void {
     // Write through a symlinked destination rather than onto the link. The
     // atomic part is a rename, and a rename lands on the *link itself*, so a
     // linked path is silently replaced by a private regular file and every
@@ -43,7 +64,7 @@ pub fn writeFile(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, data: []cons
         else => return err,
     };
 
-    var af = try dir.createFileAtomic(io, target, .{ .replace = true, .make_path = true });
+    var af = try dir.createFileAtomic(io, target, .{ .replace = true, .make_path = true, .permissions = permissions });
     defer af.deinit(io);
     try af.file.writeStreamingAll(io, data);
     try af.replace(io);
@@ -175,4 +196,29 @@ test "writeFile creates missing parent directories" {
     const got = try tmp.dir.readFileAlloc(io, "nested/deep/file.txt", allocator, .limited(1 << 10));
     defer allocator.free(got);
     try std.testing.expectEqualStrings("hi", got);
+}
+
+test "private_file permissions make the store owner-only and a rewrite keeps them" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try writeFilePerms(io, tmp.dir, "transcript.json", "first", private_file);
+    const st1 = try tmp.dir.statFile(io, "transcript.json", .{});
+    // statFile reports the full st_mode, type bits included; mask to the
+    // permission bits before comparing.
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st1.permissions)) & 0o777);
+
+    // A whole-file rewrite goes through a fresh temp file + rename, so the
+    // requested mode must be re-applied on every write, not just creation.
+    try writeFilePerms(io, tmp.dir, "transcript.json", "second, longer than first", private_file);
+    const st2 = try tmp.dir.statFile(io, "transcript.json", .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st2.permissions)) & 0o777);
+    const got = try tmp.dir.readFileAlloc(io, "transcript.json", allocator, .limited(1 << 10));
+    defer allocator.free(got);
+    try std.testing.expectEqualStrings("second, longer than first", got);
 }

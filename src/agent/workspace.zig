@@ -179,7 +179,9 @@ pub fn save(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, list: []cons
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .whitespace = .indent_2, .emit_null_optional_fields = false } };
     try s.write(list);
     try enc.writer.writeByte('\n');
-    try atomic_write.writeFile(io, base, store_path, enc.written());
+    // Owner-only: the store maps projects to their saved conversation ids,
+    // which other local users have no reason to read.
+    try atomic_write.writeFilePerms(io, base, store_path, enc.written(), atomic_write.private_file);
 }
 
 /// Turns a typed path into an absolute real path that names a directory.
