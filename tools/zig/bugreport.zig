@@ -92,7 +92,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.objectField("title");
         try s.write(title);
         try s.objectField("body");
-        try s.write(body_buf.items);
+        if (body_buf.items.len > 32768) {
+            const marker = "\u{2026}[truncated]";
+            const capped = utf8.cap(body_buf.items, 32768 - marker.len);
+            var tmp: std.ArrayList(u8) = .empty;
+            defer tmp.deinit(lib.alloc);
+            try tmp.appendSlice(lib.alloc, capped);
+            try tmp.appendSlice(lib.alloc, marker);
+            try s.write(tmp.items);
+        } else {
+            try s.write(body_buf.items);
+        }
         try s.objectField("column");
         try s.write("backlog");
         try s.objectField("priority");
