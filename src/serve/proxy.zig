@@ -1182,10 +1182,17 @@ fn writeEnvelope(ctx: Ctx, status: u16, code: ?[]const u8, message: []const u8) 
     return status;
 }
 
+fn methodNotAllowedBody(family: Family) []const u8 {
+    return switch (family) {
+        .openai => "{\"error\":{\"message\":\"Method not allowed\",\"type\":\"invalid_request_error\",\"code\":\"method_not_allowed\"}}",
+        .anthropic => "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Method not allowed\"}}",
+    };
+}
+
 fn writeAllow(ctx: Ctx, status: u16, allow: []const u8) u16 {
     var hbuf: [512]u8 = undefined;
     const request_id = log.getContext();
-    const body = "{\"error\":{\"message\":\"Method not allowed\",\"type\":\"invalid_request_error\",\"code\":\"method_not_allowed\"}}";
+    const body = methodNotAllowedBody(familyOf(ctx.path, ctx.headers_raw));
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} Method Not Allowed\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nAllow: {s}\r\nX-Content-Type-Options: nosniff\r\nX-Request-ID: {s}\r\nConnection: close\r\n\r\n", .{
         status,
         body.len,
@@ -1543,6 +1550,17 @@ test "correlation ids are safe for logs and response headers" {
     try std.testing.expectEqualStrings("edge-17:abc", correlationId("GET / HTTP/1.1\r\nX-Request-ID: edge-17:abc\r\n").?);
     try std.testing.expect(correlationId("GET / HTTP/1.1\r\nX-Request-ID: bad value\r\n") == null);
     try std.testing.expect(correlationId("GET / HTTP/1.1\r\nX-Request-ID: bad\rvalue\r\n") == null);
+}
+
+test "405 method-not-allowed body follows the request family" {
+    try std.testing.expectEqualStrings(
+        "{\"error\":{\"message\":\"Method not allowed\",\"type\":\"invalid_request_error\",\"code\":\"method_not_allowed\"}}",
+        methodNotAllowedBody(.openai),
+    );
+    try std.testing.expectEqualStrings(
+        "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Method not allowed\"}}",
+        methodNotAllowedBody(.anthropic),
+    );
 }
 
 test "standalone request metrics count RED signals with bounded buckets" {
