@@ -566,16 +566,11 @@ pub fn receive(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
 
 /// Serialise a Message into the JSONL buffer.
 fn serialiseMessage(m: Message, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
-    var line_buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&line_buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
-    s.beginObject() catch return error.TooLarge;
-    inline for (@typeInfo(Message).@"struct".fields) |f| {
-        s.objectField(f.name) catch return error.TooLarge;
-        s.write(@field(m, f.name)) catch return error.TooLarge;
-    }
-    s.endObject() catch return error.TooLarge;
-    try out.appendSlice(gpa, line_buf[0..w.end]);
+    var w: std.Io.Writer.Allocating = .init(gpa);
+    defer w.deinit();
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.write(m);
+    try out.appendSlice(gpa, w.written());
     try out.append(gpa, '\n');
 }
 
@@ -1909,4 +1904,31 @@ test "pins stay bounded and a missing meta file is not an error" {
     // Oldest dropped, newest kept.
     try std.testing.expectEqualStrings("m5", pins[0]);
     try std.testing.expectEqualStrings(try std.fmt.allocPrint(arena, "m{d}", .{max_pins_per_room + 4}), pins[pins.len - 1]);
+}
+
+test "serialiseMessage scales past the former 64 KiB stack buffer" {
+    const gpa = std.testing.allocator;
+    const reaction_count: usize = 4000;
+    const reactions = try gpa.alloc(Reaction, reaction_count);
+    defer gpa.free(reactions);
+    for (reactions) |*r| {
+        r.* = .{ .emoji = "👍", .from = "peer" };
+    }
+
+    const msg = Message{
+        .room = "dev",
+        .from = "tester",
+        .text = "x",
+        .ts = 1,
+        .id = "m1",
+        .reactions = reactions,
+    };
+    var out = std.ArrayList(u8).empty;
+    defer out.deinit(gpa);
+    try serialiseMessage(msg, &out, gpa);
+    try std.testing.expect(out.items.len > 64 * 1024);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, out.items[0 .. out.items.len - 1], .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(usize, reaction_count), parsed.value.object.get("reactions").?.array.items.len);
 }
