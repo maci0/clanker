@@ -157,6 +157,7 @@ comptime {
     _ = @import("util/toml_bridge.zig");
     _ = @import("util/toml_edit.zig");
     _ = @import("util/tool_out.zig");
+    _ = @import("util/fs_skip.zig");
     _ = @import("util/glob.zig");
     _ = @import("util/utf8.zig");
     _ = @import("agent/auto_learn.zig");

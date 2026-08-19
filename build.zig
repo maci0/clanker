@@ -359,6 +359,13 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The list_files guest walks the same tree ck_fs_find does, so it skips the
+    // same cache and vendor directories from the host's table, not a copy.
+    const tool_fs_skip_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/fs_skip.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
 
     var threaded = std.Io.Threaded.init(b.allocator, .{});
     defer threaded.deinit();
@@ -395,6 +402,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "utf8", .module = tool_utf8_mod },
                     .{ .name = "glob", .module = tool_glob_mod },
+                    .{ .name = "fs_skip", .module = tool_fs_skip_mod },
                 },
             }),
         });

@@ -882,6 +882,68 @@ fn sleepRetry(io: std.Io, attempt: u32, provider_name: []const u8, http_status: 
     try std.Io.sleep(io, .{ .nanoseconds = @intCast(delay) }, .awake);
 }
 
+/// The one `err_detail` shape for an HTTP >= 400 reply, shared by the
+/// non-streaming and streaming paths: the provider's parsed error message when
+/// its codec recognises the body, else the bare status — but never silence.
+/// When no codec recognises the body, a capped, whitespace-flattened snippet
+/// goes to the log at warn: a failing provider whose one explanatory line is
+/// dropped on the floor cannot be diagnosed, which is how google-vertex's
+/// every-request 400 stayed unroot-caused for a day
+/// (docs/reports/investigations/2026-08-19-vertex-anthropic-400.md). The
+/// caller-facing string still never carries raw body bytes.
+fn httpErrorDetail(
+    arena: std.mem.Allocator,
+    impl: *const providers.Provider,
+    provider_name: []const u8,
+    status_code: u16,
+    body: []const u8,
+) ![]const u8 {
+    if (impl.parseErrorDetail(arena, body)) |msg| {
+        const capped = redact.forCaller(arena, msg) catch msg[0..@min(msg.len, redact.max_caller_detail_len)];
+        return std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ status_code, capped });
+    }
+    const trimmed = std.mem.trim(u8, body, " \t\r\n");
+    // Valid UTF-8 only: a compressed or binary body capped mid-byte would put
+    // garbage on the operator's terminal, and says nothing anyway.
+    if (trimmed.len != 0 and std.unicode.utf8ValidateSlice(trimmed[0..@min(trimmed.len, redact.max_log_detail_len)])) {
+        var snippet_buf: [redact.max_log_detail_len]u8 = undefined;
+        log.log(.warn, "provider '{s}' returned HTTP {d} with a body no codec recognised ({d} bytes): {s}", .{
+            provider_name, status_code, body.len, redact.forLog(&snippet_buf, trimmed),
+        });
+    }
+    return std.fmt.allocPrint(arena, "HTTP {d}", .{status_code});
+}
+
+test "httpErrorDetail keeps the parsed message and never the raw body" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const impl = providers.forKind(.vertex_anthropic);
+
+    // The array-wrapped Google envelope is the one Vertex rawPredict answers
+    // with; before the vertex kinds learned it, this exact shape reached the
+    // operator as a bare "HTTP 400".
+    const google_array =
+        \\[{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}]
+    ;
+    try std.testing.expectEqualStrings(
+        "HTTP 400: INVALID_ARGUMENT: Request contains an invalid argument.",
+        try httpErrorDetail(arena, impl, "google-vertex-anthropic", 400, google_array),
+    );
+
+    // Unrecognised body: the caller string stays the bare status.
+    try std.testing.expectEqualStrings(
+        "HTTP 502",
+        try httpErrorDetail(arena, impl, "google-vertex-anthropic", 502, "<html>bad gateway</html>"),
+    );
+
+    // Empty body: nothing to log, bare status.
+    try std.testing.expectEqualStrings(
+        "HTTP 500",
+        try httpErrorDetail(arena, impl, "google-vertex-anthropic", 500, ""),
+    );
+}
+
 fn doFetch(
     ctx: *Ctx,
     client: *std.http.Client,
@@ -919,12 +981,7 @@ fn doFetch(
     const response: []const u8 = resp_buf[0..w.end];
 
     if (@intFromEnum(result.status) >= 400) {
-        if (impl.parseErrorDetail(arena, response)) |msg| {
-            const capped = redact.forCaller(arena, msg) catch msg[0..@min(msg.len, redact.max_caller_detail_len)];
-            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(result.status), capped });
-        } else {
-            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(result.status)});
-        }
+        err_detail.* = try httpErrorDetail(arena, impl, provider.name, @intFromEnum(result.status), response);
         var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
         log.log(.debug, "provider '{s}' returned {s}", .{ provider.name, redact.forLog(&log_detail_buf, err_detail.*.?) });
     }
@@ -1064,12 +1121,7 @@ pub fn chatStream(
         // Provider error bodies can echo prompts or upstream credentials.
         // Extract only the provider's documented error message, matching the
         // non-streaming path, and never surface the complete raw body.
-        if (impl.parseErrorDetail(arena, err_body.items)) |msg| {
-            const capped = redact.forCaller(arena, msg) catch msg[0..@min(msg.len, redact.max_caller_detail_len)];
-            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ @intFromEnum(response.head.status), capped });
-        } else {
-            err_detail.* = try std.fmt.allocPrint(arena, "HTTP {d}", .{@intFromEnum(response.head.status)});
-        }
+        err_detail.* = try httpErrorDetail(arena, impl, provider.name, @intFromEnum(response.head.status), err_body.items);
         var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
         log.log(.error_, "provider '{s}' stream returned {s}", .{ provider.name, redact.forLog(&log_detail_buf, err_detail.*.?) });
         noteError();

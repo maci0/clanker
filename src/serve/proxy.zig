@@ -464,6 +464,12 @@ fn pipe(
     return status;
 }
 
+fn sseFrameEnd(buf: []const u8) ?usize {
+    const lf = std.mem.find(u8, buf, "\n\n") orelse return std.mem.find(u8, buf, "\r\n\r\n");
+    const crlf = std.mem.find(u8, buf, "\r\n\r\n") orelse return lf;
+    return @min(lf, crlf);
+}
+
 fn xcodeStream(
     ctx: Ctx,
     family: Family,
@@ -513,7 +519,8 @@ fn xcodeStream(
                 break;
             };
         }
-        while (std.mem.find(u8, sse.items, "\n\n")) |frame_end| {
+        while (sseFrameEnd(sse.items)) |frame_end| {
+            const delim_len: usize = if (std.mem.startsWith(u8, sse.items[frame_end..], "\r\n\r\n")) 4 else 2;
             const frame = sse.items[0..frame_end];
             payloads.clearRetainingCapacity();
             xcode.ssePayloads(frame, &payloads, ctx.gpa) catch {};
@@ -536,7 +543,7 @@ fn xcodeStream(
                 }
                 if (ev.done) return;
             }
-            const rest = sse.items[frame_end + 2 ..];
+            const rest = sse.items[frame_end + delim_len ..];
             std.mem.copyForwards(u8, sse.items[0..rest.len], rest);
             sse.items.len = rest.len;
         }
@@ -1419,4 +1426,11 @@ test "upstreamUrl keeps embeddings, count_tokens, and files off the chat path" {
     const msgs = try upstreamUrl(gpa, &anth, anth_impl, "/v1/messages", "", false, false);
     defer gpa.free(msgs);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages", msgs);
+}
+test "sseFrameEnd finds both LF and CRLF frame separators" {
+    try std.testing.expectEqual(@as(?usize, 0), sseFrameEnd("\n\nrest"));
+    try std.testing.expectEqual(@as(?usize, 0), sseFrameEnd("\r\n\r\nrest"));
+    try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\n\nrest"));
+    try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\r\n\r\nrest"));
+    try std.testing.expect(sseFrameEnd("abc\r\n") == null);
 }

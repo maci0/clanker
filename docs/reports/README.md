@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Vertex error bodies reach the operator as a bare HTTP status: the Google error envelope is parsed by no codec and unrecognised bodies are discarded](bugs/2026-08-19-vertex-error-bodies-discarded.md) — Resolved
+
 - [A lapsed chat deadline can wedge the caller forever: the abort fires once and cancel cannot rescue a blocked read](bugs/2026-08-19-bounded-chat-one-shot-abort-wedges.md) — Resolved
 
 - [rfc recommend replaces existing Why-this-confidence and Reversibility text with template placeholders](bugs/2026-08-19-rfc-recommend-replaces-fields-it-was-not-given.md) — Resolved

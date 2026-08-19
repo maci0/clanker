@@ -11,6 +11,9 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+// The same skip table the host's ck_fs_find walk uses, so the two answer the
+// same about a tree rather than drifting apart.
+const fs_skip = @import("fs_skip");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -119,7 +122,7 @@ fn walk(
         // The same directories the host's name search skips: a recursive
         // listing of the project should not be mostly build output and copies
         // of itself.
-        if (is_dir and recursive and skipDir(name)) continue;
+        if (is_dir and recursive and fs_skip.skipDir(name)) continue;
 
         if (is_dir) {
             if (entries.items.len >= max) {
@@ -137,13 +140,6 @@ fn walk(
         }
         try entries.append(alloc, full);
     }
-}
-
-fn skipDir(name: []const u8) bool {
-    for ([_][]const u8{ ".git", ".zig-cache", ".venv", ".cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history", "__pycache__" }) |d| {
-        if (std.mem.eql(u8, name, d)) return true;
-    }
-    return false;
 }
 
 const str = lib.strFieldRequired;

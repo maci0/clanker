@@ -25,6 +25,11 @@ const lib = @import("lib.zig");
 // wasm guest's own test blocks never run).
 const draft = @import("write_goal_logic.zig");
 
+/// The documented ceiling on `max_questions`: the input schema says 1..4, and
+/// a request above it is clamped rather than refused. Untyped so it reads as
+/// both the float default and the integer clamp below.
+const max_questions = 4;
+
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
@@ -33,9 +38,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const v = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const intent = lib.str(v, "intent") catch return lib.fail(out, "missing required string field: intent");
     const max_q: usize = blk: {
-        const n = lib.optNum(v, "max_questions") orelse 4.0;
+        const n = lib.optNum(v, "max_questions") orelse @as(f64, max_questions);
         const m: u32 = @trunc(n);
-        break :blk if (m > 4) 4 else m;
+        break :blk @min(m, max_questions);
     };
     const to_parent = lib.optBool(v, "parent", false);
 

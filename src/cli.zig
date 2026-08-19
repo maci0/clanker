@@ -73,6 +73,7 @@ const research_cmd = @import("records/research.zig");
 const rfc_cmd = @import("records/rfc.zig");
 const adr_cmd = @import("records/adr.zig");
 const prd_cmd = @import("records/prd.zig");
+const records_common = @import("records/common.zig");
 const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const jobs = @import("sandbox/jobs.zig");
@@ -5637,130 +5638,42 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
     }
 }
 
-/// Binds `toolJson` to the `adr` guest, the way `ReportsTool` binds the
-/// `reports` one.
-const AdrTool = struct {
-    init: std.process.Init,
-    cfg: *const config.Config,
+/// Binds `toolJson` to one record-store guest, so `src/records/*.zig` can call
+/// the tool without importing the sandbox. The five stores differ only by which
+/// guest they name, so the binding is one comptime-parameterised type rather
+/// than five hand-copied ones; every store's `Tool` is `records/common.Tool`.
+fn RecordTool(comptime guest: []const u8) type {
+    return struct {
+        init: std.process.Init,
+        cfg: *const config.Config,
 
-    fn tool(self: *AdrTool) adr_cmd.Tool {
-        return .{ .ctx = self, .call = call };
-    }
+        const Self = @This();
 
-    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
-        // tool() boxed this AdrTool as Tool.ctx.
-        const self: *AdrTool = @ptrCast(@alignCast(ctx));
-        return toolJson(
-            self.init.io,
-            self.init.gpa,
-            self.init.arena.allocator(),
-            self.cfg,
-            self.init.environ_map,
-            "adr",
-            input,
-        );
-    }
-};
+        fn tool(self: *Self) records_common.Tool {
+            return .{ .ctx = self, .call = call };
+        }
 
-/// Binds `toolJson` to the `prd` guest, the way `ReportsTool` binds the
-/// `reports` one.
-const PrdTool = struct {
-    init: std.process.Init,
-    cfg: *const config.Config,
+        fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+            // tool() boxed this Self as Tool.ctx.
+            const self: *Self = @ptrCast(@alignCast(ctx));
+            return toolJson(
+                self.init.io,
+                self.init.gpa,
+                self.init.arena.allocator(),
+                self.cfg,
+                self.init.environ_map,
+                guest,
+                input,
+            );
+        }
+    };
+}
 
-    fn tool(self: *PrdTool) prd_cmd.Tool {
-        return .{ .ctx = self, .call = call };
-    }
-
-    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
-        // tool() boxed this PrdTool as Tool.ctx.
-        const self: *PrdTool = @ptrCast(@alignCast(ctx));
-        return toolJson(
-            self.init.io,
-            self.init.gpa,
-            self.init.arena.allocator(),
-            self.cfg,
-            self.init.environ_map,
-            "prd",
-            input,
-        );
-    }
-};
-
-/// Binds `toolJson` to the `rfc` guest, the way `ReportsTool` binds the
-/// `reports` one.
-const RfcTool = struct {
-    init: std.process.Init,
-    cfg: *const config.Config,
-
-    fn tool(self: *RfcTool) rfc_cmd.Tool {
-        return .{ .ctx = self, .call = call };
-    }
-
-    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
-        // tool() boxed this RfcTool as Tool.ctx.
-        const self: *RfcTool = @ptrCast(@alignCast(ctx));
-        return toolJson(
-            self.init.io,
-            self.init.gpa,
-            self.init.arena.allocator(),
-            self.cfg,
-            self.init.environ_map,
-            "rfc",
-            input,
-        );
-    }
-};
-
-/// Binds `toolJson` to the `research` guest, the way `ReportsTool` binds the
-/// `reports` one.
-const ResearchTool = struct {
-    init: std.process.Init,
-    cfg: *const config.Config,
-
-    fn tool(self: *ResearchTool) research_cmd.Tool {
-        return .{ .ctx = self, .call = call };
-    }
-
-    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
-        // tool() boxed this ResearchTool as Tool.ctx.
-        const self: *ResearchTool = @ptrCast(@alignCast(ctx));
-        return toolJson(
-            self.init.io,
-            self.init.gpa,
-            self.init.arena.allocator(),
-            self.cfg,
-            self.init.environ_map,
-            "research",
-            input,
-        );
-    }
-};
-
-/// Binds `toolJson` to the `reports` guest, so `src/records/reports.zig` can
-/// call the tool without importing the sandbox.
-const ReportsTool = struct {
-    init: std.process.Init,
-    cfg: *const config.Config,
-
-    fn tool(self: *ReportsTool) reports_cmd.Tool {
-        return .{ .ctx = self, .call = call };
-    }
-
-    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
-        // tool() boxed this ReportsTool as Tool.ctx.
-        const self: *ReportsTool = @ptrCast(@alignCast(ctx));
-        return toolJson(
-            self.init.io,
-            self.init.gpa,
-            self.init.arena.allocator(),
-            self.cfg,
-            self.init.environ_map,
-            "reports",
-            input,
-        );
-    }
-};
+const AdrTool = RecordTool("adr");
+const PrdTool = RecordTool("prd");
+const RfcTool = RecordTool("rfc");
+const ResearchTool = RecordTool("research");
+const ReportsTool = RecordTool("reports");
 
 /// Toggle responses are otherwise ordinary rendered tool text. Keeping the
 /// failure marker explicit lets the interactive REPL render it inline while

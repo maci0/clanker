@@ -22,6 +22,7 @@ const file_lock = @import("../util/file_lock.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
 const glob = @import("../util/glob.zig");
+const fs_skip = @import("../util/fs_skip.zig");
 const token_stats = @import("../stats/tokens.zig");
 const build_options = @import("build_options");
 const zwasm = @import("zwasm");
@@ -3003,18 +3004,6 @@ pub fn ckFsFind(caller: *zwasm.Caller, dir_ptr: u32, dir_len: u32, pat_ptr: u32,
 const fs_find_max_depth: u32 = 12;
 const fs_find_max_results: u32 = 200;
 
-/// Directories a name search should never descend into. Without this, a search
-/// of the project answers mostly with copies of it: build caches, vendored
-/// dependencies, and the staging trees the improvement engine leaves behind.
-const fs_skip_dirs = [_][]const u8{ ".git", ".zig-cache", ".venv", ".cache", "zig-out", "zig-pkg", "node_modules", "vendor", "staging", "history", "__pycache__" };
-
-fn skipDir(name: []const u8) bool {
-    for (fs_skip_dirs) |d| {
-        if (std.mem.eql(u8, name, d)) return true;
-    }
-    return false;
-}
-
 fn joinRel(gpa: std.mem.Allocator, prefix: []const u8, name: []const u8) ![]u8 {
     return std.fmt.allocPrint(gpa, "{s}{s}{s}", .{
         prefix,
@@ -3031,7 +3020,7 @@ fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []co
         if (count.* >= fs_find_max_results) return;
         if (entry.name.len == 0) continue;
         if (entry.kind == .directory) {
-            if (skipDir(entry.name)) continue;
+            if (fs_skip.skipDir(entry.name)) continue;
             const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
             defer h.sandbox.gpa.free(rel);
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
@@ -3088,7 +3077,7 @@ fn fsGrepRecurse(
             // megabytes of zig-pkg, zig-out, node_modules, and history
             // copies before it ever reaches source.
             if (entry.name[0] == '.') continue;
-            if (skipDir(entry.name)) continue;
+            if (fs_skip.skipDir(entry.name)) continue;
             const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
             defer h.sandbox.gpa.free(rel);
             var sub = dir.openDir(h.sandbox.io, entry.name, .{ .iterate = true }) catch continue;
@@ -5847,21 +5836,6 @@ test "argDenied matches operator tokens anywhere, word tokens only at boundaries
     try std.testing.expect(argDenied("gc", "gc"));
     try std.testing.expect(argDenied("-force", "-f"));
     try std.testing.expect(argDenied("--force", "--force"));
-}
-
-test "skipDir names the cache and vendor trees a project-root walk must not enter" {
-    try std.testing.expect(skipDir("node_modules"));
-    try std.testing.expect(skipDir("zig-pkg"));
-    try std.testing.expect(skipDir("zig-out"));
-    try std.testing.expect(skipDir("vendor"));
-    try std.testing.expect(skipDir("staging"));
-    try std.testing.expect(skipDir("history"));
-    try std.testing.expect(skipDir(".zig-cache"));
-    try std.testing.expect(skipDir(".venv"));
-    try std.testing.expect(skipDir(".cache"));
-    try std.testing.expect(skipDir("__pycache__"));
-    try std.testing.expect(!skipDir("src"));
-    try std.testing.expect(!skipDir("tools"));
 }
 
 test "skipGrepName skips binary artifacts and leaves source names alone" {
