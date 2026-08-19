@@ -464,6 +464,12 @@ pattern = "invalid"
 inject = "Re-check your available tool schemas before retrying. Verify the exact parameter names and types each tool expects."
 max_fires = 1
 
+[[ttsr.rules]]
+name = "zig-compile-error"
+pattern = "error:*expected"
+inject = "That is a Zig compile error. Read the full diagnostic, identify the syntax or type issue it names, and correct the source before retrying."
+max_fires = 1
+
 # Persistent eval kernels: a long-lived subprocess an eval can talk to instead
 # of paying process startup per case. Off by default and worth leaving off
 # unless you need it -- a kernel is unsandboxed, with the host's own ambient
