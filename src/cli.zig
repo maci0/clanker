@@ -7667,33 +7667,58 @@ test "fuzz: chat message body never crashes the parse/validate path" {
     try std.testing.fuzz({}, Ctx.one, .{});
 }
 
+const ChatMessagesQuery = struct { room: []const u8 = "", after: ?i64 = null };
+
+/// `GET /api/chat/messages` query — `room` (required) and `after` (optional
+/// unix seconds). Split out of the handler so the parsing is testable.
+///
+/// The room is percent-decoded, not taken raw: a direct-message room is named
+/// `dm:<a>|<b>`, and both of those characters have to travel percent-encoded
+/// through the query string. Comparing the encoded form against the stored
+/// name matched nothing.
+///
+/// `after` is validated rather than silently clamped to 0: a mistyped
+/// timestamp would otherwise return the newest page, indistinguishable from a
+/// client that asked for everything since the epoch.
+fn parseChatMessagesQuery(arena: std.mem.Allocator, target: []const u8) !ChatMessagesQuery {
+    var q = ChatMessagesQuery{};
+    if (std.mem.findScalar(u8, target, '?')) |mark| {
+        var params = std.mem.splitScalar(u8, target[mark + 1 ..], '&');
+        while (params.next()) |pair| {
+            if (std.mem.findScalar(u8, pair, '=')) |eq| {
+                const k = pair[0..eq];
+                const v = pair[eq + 1 ..];
+                if (std.mem.eql(u8, k, "room")) q.room = percentDecode(arena, v) catch v;
+                if (std.mem.eql(u8, k, "after")) q.after = std.fmt.parseInt(i64, v, 10) catch return error.BadAfter;
+            }
+        }
+    }
+    return q;
+}
+
 /// GET /api/chat/messages?room=dev&after=123, room history (newest first).
 fn handleChatMessages(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, target: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var room: []const u8 = "";
-    var after: i64 = 0;
-    if (std.mem.findScalar(u8, target, '?')) |q| {
-        var params = std.mem.splitScalar(u8, target[q + 1 ..], '&');
-        while (params.next()) |pair| {
-            if (std.mem.findScalar(u8, pair, '=')) |eq| {
-                const k = pair[0..eq];
-                const v = pair[eq + 1 ..];
-                // Decoded, not taken raw: a direct-message room is named
-                // `dm:<a>|<b>`, and both of those characters have to travel
-                // percent-encoded through the query string. Comparing the
-                // encoded form against the stored name matched nothing.
-                if (std.mem.eql(u8, k, "room")) room = percentDecode(arena, v) catch v;
-                if (std.mem.eql(u8, k, "after")) after = std.fmt.parseInt(i64, v, 10) catch 0;
-            }
-        }
+    // A path suffix is not an endpoint: `/api/chat/messages/<extra>` is
+    // refused like `/api/runs/<extra>` is, not silently ignored.
+    const rest = requestPath(target)["/api/chat/messages".len..];
+    if (rest.len != 0) {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such endpoint\"}");
+        return;
     }
+    const q = parseChatMessagesQuery(arena, target) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad after\"}");
+        return;
+    };
+    const room = q.room;
     if (room.len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
         return;
     }
+    const after = q.after orelse 0;
     const msgs = chatrooms.readHistory(std.Io.Dir.cwd(), io, arena, cfg.agent.state_dir, cfg, room, after, 50) catch |err| {
         log.log(.error_, "GET /api/chat/messages room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"history read failed\"}");
@@ -7766,6 +7791,27 @@ fn writeChatMessagesJson(w: *std.Io.Writer, msgs: []const chatrooms.Message) !vo
     }
     try s.endArray();
     try s.endObject();
+}
+
+test "chat messages query decodes the room and validates after" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const ok = try parseChatMessagesQuery(arena, "/api/chat/messages?room=dev&after=123");
+    try std.testing.expectEqualStrings("dev", ok.room);
+    try std.testing.expectEqual(@as(i64, 123), ok.after.?);
+    // `after` is optional: absent stays absent, an empty value is still
+    // unparseable and refused.
+    try std.testing.expect((try parseChatMessagesQuery(arena, "/api/chat/messages?room=dev")).after == null);
+    try std.testing.expectError(error.BadAfter, parseChatMessagesQuery(arena, "/api/chat/messages?room=dev&after=abc"));
+    try std.testing.expectError(error.BadAfter, parseChatMessagesQuery(arena, "/api/chat/messages?room=dev&after="));
+    try std.testing.expectError(error.BadAfter, parseChatMessagesQuery(arena, "/api/chat/messages?room=dev&after=1.5"));
+    // A direct-message room name travels percent-encoded and must come back
+    // decoded, or the stored name never matches.
+    const dm = try parseChatMessagesQuery(arena, "/api/chat/messages?room=dm%3Aa%7Cb&after=0");
+    try std.testing.expectEqualStrings("dm:a|b", dm.room);
+    try std.testing.expectEqual(@as(i64, 0), dm.after.?);
 }
 
 test "a full page of full-length messages serializes whole" {
@@ -10568,7 +10614,7 @@ fn handleConfigStatus(stream: std.Io.net.Stream) void {
     var body_buf: [768]u8 = undefined;
     const body = std.fmt.bufPrint(&body_buf, "{{\"ok\":{},\"error\":\"{s}\",\"checked_ts_ms\":{d}}}", .{ ok, std.fmt.bufPrint(&buf, "{s}", .{err_text}) catch "", ts }) catch {
         _ = std.c.pthread_mutex_unlock(&config_check_mutex);
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false}");
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not render config status\"}");
         return;
     };
     _ = std.c.pthread_mutex_unlock(&config_check_mutex);
