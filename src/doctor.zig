@@ -265,20 +265,23 @@ fn runChecks(
         ));
     }
 
-    // An empty-string entry in exec_pattern_allow or repl_exec_allow would
-    // wildcard-match every command (or be silently ignored), weakening the
-    // exec permission boundary. Surface it as a warning rather than letting
-    // it pass unnoticed.
+    // A zero-length array means no command can ever execute; an empty-string
+    // entry within a non-empty array wildcard-matches every command. Both
+    // weaken the exec permission boundary and are surfaced distinctly.
     inline for (.{
         .{ "exec_pattern_allow", cfg.agent.exec_pattern_allow },
         .{ "repl_exec_allow", cfg.agent.repl_exec_allow },
     }) |pair| {
-        var empty_count: usize = 0;
-        for (pair[1]) |p| {
-            if (p.len == 0) empty_count += 1;
-        }
-        if (empty_count > 0) {
-            rep.line(.warn, pair[0], try std.fmt.allocPrint(arena, "{d} empty-string entr{s} weaken the exec boundary", .{ empty_count, if (empty_count == 1) "y" else "ies" }));
+        if (pair[1].len == 0) {
+            rep.line(.fail, pair[0], "zero-length array: no command can ever execute");
+        } else {
+            var empty_count: usize = 0;
+            for (pair[1]) |p| {
+                if (p.len == 0) empty_count += 1;
+            }
+            if (empty_count > 0) {
+                rep.line(.warn, pair[0], try std.fmt.allocPrint(arena, "{d} empty-string entr{s} weaken the exec boundary", .{ empty_count, if (empty_count == 1) "y" else "ies" }));
+            }
         }
     }
 }
