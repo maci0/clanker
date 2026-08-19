@@ -18,17 +18,20 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Same pinned environment for every job. The fixed epoch keeps timestamps in
+# build artifacts and the release SBOM (generated only in release-publish,
+# which previously ran without it and emitted a live timestamp) from varying
+# with the calendar day the CI job ran.
+env:
+  NO_COLOR: "1"
+  LC_ALL: C
+  TZ: UTC
+  SOURCE_DATE_EPOCH: "1704067200"
+
 jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      NO_COLOR: "1"
-      LC_ALL: C
-      TZ: UTC
-      # Fixed epoch so release and debug timestamps in artifacts do not vary
-      # with the calendar day the CI job ran.
-      SOURCE_DATE_EPOCH: "1704067200"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,13 +95,6 @@ jobs:
   verify-macos:
     runs-on: macos-15
     timeout-minutes: 30
-    env:
-      NO_COLOR: "1"
-      LC_ALL: C
-      TZ: UTC
-      # Fixed epoch so release and debug timestamps in artifacts do not vary
-      # with the calendar day the CI job ran.
-      SOURCE_DATE_EPOCH: "1704067200"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -149,11 +145,6 @@ jobs:
             runnable: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    env:
-      NO_COLOR: "1"
-      LC_ALL: C
-      TZ: UTC
-      SOURCE_DATE_EPOCH: "1704067200"
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
