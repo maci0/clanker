@@ -305,9 +305,27 @@ fn loadState() State {
         // files+music on while the guest saw them off, and the first enable
         // then wrote a list without them. One owner, one seed.
         if (err == error.NotFound) return .{ .enabled = &logic.default_enabled };
+        warnBadState("could not be read", err);
         return .{};
     };
-    return std.json.parseFromSliceLeaky(State, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch .{};
+    return std.json.parseFromSliceLeaky(State, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch |err| {
+        // A corrupt file must not pass for "every plugin off": that reads as
+        // a deliberate setting and gets debugged in the browser. Falling back
+        // to empty is still right — the next successful toggle rewrites a
+        // clean file — but the fallback has to be announced.
+        warnBadState("failed to parse", err);
+        return .{};
+    };
+}
+
+fn warnBadState(what: []const u8, err: anyerror) void {
+    var buf: [192]u8 = undefined;
+    const msg = std.fmt.bufPrint(
+        &buf,
+        "{s} {s} ({s}); treating it as an empty enabled-list until the next toggle rewrites it",
+        .{ state_path, what, @errorName(err) },
+    ) catch state_path;
+    lib.log(2, msg);
 }
 
 fn setEnabled(name: []const u8, on: bool) !void {
