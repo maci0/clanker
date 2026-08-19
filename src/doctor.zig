@@ -218,7 +218,12 @@ fn runChecks(
             if (first_missing.len == 0) first_missing = entry.value_ptr.wasm;
         }
     }
-    rep.line(.ok, "manifests", try std.fmt.allocPrint(arena, "{d} registered", .{reg.tools.count()}));
+    const tool_count = reg.tools.count();
+    rep.line(
+        if (tool_count > 0) .ok else .fail,
+        "manifests",
+        try std.fmt.allocPrint(arena, "{d} registered", .{tool_count}),
+    );
     if (missing == 0) {
         rep.line(.ok, "compiled modules", "every tool has its .wasm");
     } else {
