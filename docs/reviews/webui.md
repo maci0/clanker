@@ -1441,6 +1441,39 @@ no longer has to stop at the module boundary. `serve --webui-port 41998`, then:
 Gate: `zig build`, `zig build tools`, `zig build test --summary all` — 163/163
 steps, 773/775 tests (2 skipped, the expected worktree pair).
 
+## The Skills list renders again (2026-08-18)
+
+The Skills panel under the tool rows has been dead for anyone with at least
+one file under `skills/`: it always showed "Could not load skills." with a
+Try again button that reran the identical failure. Only an empty skills list
+ever drew.
+
+The cause is one shadowed variable in `core/tools.js: loadSkills`. The
+function reads the container as `var box = document.getElementById("skills")`,
+and the per-skill callback then declared its checkbox as
+`var box = document.createElement("input")`. The closing
+`box.appendChild(card)` — meant to land the finished card in the container —
+appended it into its own checkbox instead. That is a hierarchy cycle (the
+checkbox is already a child of the card), which the DOM refuses with
+`HierarchyRequestError`; the throw landed in the fetch chain's `.catch`, whose
+message is the load-error one, so a rendering bug spent its whole life
+dressed as a network failure.
+
+### What changed
+
+- The checkbox is `check` now; `box` names only the container, and the card
+  lands in it. Nothing else moved.
+
+### Verified
+
+- `ui/app/core/skills.test.mjs` (new, wired into `zig build test`): drives the
+  **shipped** `loadSkills` source over `lib/dom-stub.mjs` with a stubbed
+  fetch. Control run first: against the unfixed code the non-empty case fails
+  (zero cards reach the container); with the fix, two skills render two
+  `.skill-card`s in `#skills`, each checkbox inside its card and empty, the
+  status line reads "2 skills.", and the error branch stays untouched. The
+  empty-list state still renders its own message.
+
 ## Each Models panel announces on its own status line (2026-08-18)
 
 `#models-status` was one `aria-live` line shared by three independent panels

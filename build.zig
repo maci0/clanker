@@ -293,6 +293,11 @@ pub fn build(b: *std.Build) void {
     const arena_js_test = b.addSystemCommand(&.{ "node", "--test" });
     arena_js_test.addFileArg(b.path("ui/app/features/arena.test.mjs"));
     test_step.dependOn(&arena_js_test.step);
+    // The Skills panel renders its cards into the container; the shipped
+    // loadSkills is driven over the DOM stub.
+    const skills_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    skills_js_test.addFileArg(b.path("ui/app/core/skills.test.mjs"));
+    test_step.dependOn(&skills_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under

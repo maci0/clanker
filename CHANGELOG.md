@@ -293,7 +293,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   already the `--ok` token. `ui/app/core/layout.test.mjs` now checks every
   colour in the mark against the palette the sheet declares, the same guard
   that purged the borrowed palette from the code wells.
-
 - The web UI's Models view announces each panel's outcome on its own status
   line (`#models-status`, `#models-live-status`, `#models-catalog-status`)
   and writes failures too. One shared `aria-live` line was only ever written
@@ -302,6 +301,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI's Skills list (under Tools and Prompts) renders again when at
+  least one skill exists. The row-building callback in
+  `core/tools.js: loadSkills` shadowed the `#skills` container variable with
+  the row's own checkbox, so every card was appended into its checkbox — a
+  DOM hierarchy cycle the browser refuses — and the whole panel fell into its
+  error branch, showing "Could not load skills." with a Try again that reran
+  the same failure. Only an empty skills list ever displayed.
 - `clanker write-goal` (and the TUI `/write-goal` and the `goal_write` tool)
   no longer pastes the whole intent into every field its keywords cover: a
   rich intent used to come back with the objective, criterion, proof and
