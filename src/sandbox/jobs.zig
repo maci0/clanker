@@ -410,10 +410,18 @@ pub fn registerSub(gpa: std.mem.Allocator, id: []const u8, session_id: []const u
     log.log(.info, "job started kind=subagent job={s} session={s}", .{ id, session_id });
 }
 
-pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) void {
+/// Marks a background subagent's row done and stores its result. Returns
+/// whether a row for `id` was found.
+///
+/// A true return is also the ownership signal for the caller: the row is
+/// visible under `mu` only after `registerSub`'s copies of `id` and `task`
+/// (both made under the same lock before the append) are complete, so the
+/// caller may free its originals. A false return leaves ownership with the
+/// caller, because `registerSub` may still be about to copy them.
+pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) bool {
     mu.lock();
     defer mu.unlock();
-    const gpa = gpa_ref orelse return;
+    const gpa = gpa_ref orelse return false;
     for (subs.items) |j| {
         if (!std.mem.eql(u8, j.id, id)) continue;
         if (result) |r| j.result = gpa.dupe(u8, r) catch null;
@@ -434,7 +442,7 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) voi
                 id, j.session_id, if (result) |r| r.len else 0,
             });
         }
-        return;
+        return true;
     }
     // No row for this id. The thread is spawned before `registerSub` runs, so
     // a subagent that finishes first lands here: its result is dropped and the
@@ -444,6 +452,7 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) voi
     log.log(.warn, "job completion has no registered row job={s} result_dropped={}", .{
         id, result != null or err_name != null,
     });
+    return false;
 }
 
 pub fn waitSub(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
@@ -630,7 +639,9 @@ test "completed background jobs are reaped past the retention cap" {
             fn run() void {}
         }.run, .{});
         try registerSub(gpa, id, "sess-reap", "task text", th);
-        finishSub(id, "result text", null);
+        // The row exists by now, so the completion is attached and the
+        // caller is told it may free its originals.
+        try std.testing.expect(finishSub(id, "result text", null));
     }
 
     mu.lock();
@@ -655,6 +666,21 @@ test "Origin.capture copies the starter's log context and bounds it" {
     const capped = Origin.capture();
     try std.testing.expectEqual(@as(usize, 32), capped.slice().len);
     try std.testing.expectEqualStrings(long[0..32], capped.slice());
+}
+
+test "finishSub reports whether a row was registered" {
+    const gpa = std.testing.allocator;
+    defer testingClear(gpa);
+    var id_buf: [16]u8 = undefined;
+    const id = makeId(1, &id_buf);
+    const th = try std.Thread.spawn(.{}, struct {
+        fn run() void {}
+    }.run, .{});
+    try registerSub(gpa, id, "sess-flag", "task text", th);
+    // With gpa_ref set and a row registered, a completion for a *different*
+    // id reports false so its caller keeps its memory.
+    try std.testing.expect(!finishSub("0000000000000000", "late result", null));
+    try std.testing.expect(finishSub(id, "result text", null));
 }
 
 test "snapshotJobMetrics reports the live counters" {

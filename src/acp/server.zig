@@ -8,6 +8,14 @@ const log = @import("../util/log.zig");
 
 pub const protocol_version: u32 = 1;
 const max_line = 1 << 20;
+/// Bound on concurrently live sessions. ACP v1 names no `session/delete`
+/// here, so `session/new` is the only lifecycle: every call permanently adds
+/// a key to `sessions` and `prompt_busy`. Without a cap, a long-lived
+/// `clanker acp` process grew without bound as a client minted sessions;
+/// past it, `session/new` is refused with a server error rather than
+/// growing. Same bounded-table shape as `live.max_subs` and
+/// `jobs.max_retained_done`.
+const max_sessions: u32 = 256;
 
 const Request = struct {
     jsonrpc: ?[]const u8 = null,
@@ -101,10 +109,21 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
     if (std.mem.findScalar(u8, cwd, 0) != null) {
         return responseError(alloc, id, -32602, "cwd contains a NUL byte; pass the path without embedded NULs");
     }
+    // Mint point: refusing here keeps the table bounded. The session never
+    // had a removal path, so this check is the only thing between a long
+    // stdio session and unbounded growth.
+    if (conn.sessions.count() >= max_sessions) {
+        return responseError(alloc, id, -32603, "session limit reached");
+    }
     conn.session_counter += 1;
     const sid = try std.fmt.allocPrint(arena, "acp-{d}", .{conn.session_counter});
     const owned = try alloc.dupe(u8, sid);
-    try conn.sessions.put(alloc, owned, {});
+    {
+        // If the first put fails, the key is still ours to free; once it is
+        // in the map the map owns it, so the errdefer must not outlive the put.
+        errdefer alloc.free(owned);
+        try conn.sessions.put(alloc, owned, {});
+    }
     try conn.prompt_busy.put(alloc, owned, false);
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
@@ -264,6 +283,9 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator) !void {
     var stdin_file = std.Io.File.stdin();
     var reader = stdin_file.reader(io, read_buf);
     var conn = Connection{};
+    // The session map is the one thing in this struct that outlives a
+    // request; free it when the stdio session ends.
+    defer conn.deinit(gpa);
     while (true) {
         const raw = reader.interface.takeDelimiter('\n') catch |err| switch (err) {
             error.StreamTooLong => {
@@ -353,4 +375,31 @@ test "ACP session/new validates cwd and mints a sessionId" {
     );
     defer std.testing.allocator.free(bad);
     try std.testing.expect(std.mem.find(u8, bad, "\"code\":-32602") != null);
+}
+
+test "ACP session/new is refused past the session cap" {
+    var conn = Connection{};
+    defer conn.deinit(std.testing.allocator);
+    const init = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+    );
+    defer std.testing.allocator.free(init);
+
+    // Fill the table to the cap; each session must be minted successfully.
+    var i: u32 = 0;
+    while (i < max_sessions) : (i += 1) {
+        const params = try std.fmt.allocPrint(std.testing.allocator, "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"session/new\",\"params\":{{\"cwd\":\"/tmp\"}}}}", .{i + 2});
+        defer std.testing.allocator.free(params);
+        const out = try conn.handleLine(std.testing.allocator, params);
+        defer std.testing.allocator.free(out);
+        try std.testing.expect(std.mem.find(u8, out, "\"sessionId\"") != null);
+    }
+    // One past the cap is refused, not minted: the table stays bounded in a
+    // long-lived stdio process whose protocol has no session removal path.
+    const over = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":999,"method":"session/new","params":{"cwd":"/tmp"}}
+    );
+    defer std.testing.allocator.free(over);
+    try std.testing.expect(std.mem.find(u8, over, "\"session limit reached\"") != null);
+    try std.testing.expectEqual(@as(usize, max_sessions), conn.sessions.count());
 }
