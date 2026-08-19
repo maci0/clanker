@@ -172,6 +172,7 @@ pub const Worktree = struct {
                     log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
                     self.advanceCreatedFrom(gpa, branch_sha);
                     self.resyncLocalBranch(gpa, io, branch_sha);
+                    self.resyncBaseCheckout(gpa, io, base_sha);
                     self.merged = true;
                     return;
                 }
@@ -192,6 +193,7 @@ pub const Worktree = struct {
                 log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
                 self.advanceCreatedFrom(gpa, commit);
                 self.resyncLocalBranch(gpa, io, commit);
+                self.resyncBaseCheckout(gpa, io, base_sha);
                 self.merged = true;
                 return;
             }
@@ -249,7 +251,85 @@ pub const Worktree = struct {
         };
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
     }
+
+    /// After the base branch's ref moves, the checkout that has it checked
+    /// out — usually the one improve-self was invoked from — still holds the
+    /// pre-promotion index and files, so `git status` there presents the
+    /// promotion's exact inverse as a staged change. Committing that state
+    /// as-is has already deleted promoted work from origin once (124d592e,
+    /// report 2026-08-19-improve-self-merge-leaves-worktree-reverted).
+    ///
+    /// Resync it only when its index and files are both byte-identical to the
+    /// pre-merge base commit, so real work-in-progress is never destroyed;
+    /// otherwise name the checkout and warn against committing the inverse.
+    /// The reset is deliberately bare (`reset --hard`, no sha): HEAD already
+    /// points at the moved branch ref, and a no-argument reset can never move
+    /// the ref itself, so a concurrent commit that advances the branch
+    /// between the CAS and here is not rewound.
+    fn resyncBaseCheckout(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, old_sha: []const u8) void {
+        const listing = run1(gpa, io, &.{ "git", "-C", self.path, "worktree", "list", "--porcelain" }) catch return;
+        defer gpa.free(listing);
+        const checkout = checkoutOf(listing, self.base_branch) orelse return;
+        if (std.mem.eql(u8, checkout, self.path)) return;
+        if (!matchesCommit(gpa, io, checkout, old_sha)) {
+            log.log(.warn, "improve-self: {s} has {s} checked out with its own local changes, so its files were left showing pre-promotion content. Do not commit that diff — it reverts the promotion. Once your own work is committed or stashed, run: git -C {s} reset --hard", .{ checkout, self.base_branch, checkout });
+            return;
+        }
+        const argv = [_][]const u8{ "git", "-C", checkout, "reset", "--hard" };
+        const res = std.process.run(gpa, io, .{ .argv = &argv }) catch |err| {
+            log.log(.warn, "improve-self: could not resync {s} after merge-back: {s}", .{ checkout, @errorName(err) });
+            return;
+        };
+        defer gpa.free(res.stdout);
+        defer gpa.free(res.stderr);
+        const ok = switch (res.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        if (ok)
+            log.log(.info, "improve-self: resynced {s} to the promoted {s}", .{ checkout, self.base_branch })
+        else
+            log.log(.warn, "improve-self: git reset --hard in {s} after merge-back failed: {s}", .{ checkout, res.stderr });
+    }
 };
+
+/// Path of the checkout that has `branch` checked out, from
+/// `git worktree list --porcelain` output. Pure so it is testable without a
+/// repository. A branch can be checked out in at most one worktree; it may
+/// also be checked out nowhere (a detached or bare invocation), which is null
+/// rather than an error.
+fn checkoutOf(porcelain: []const u8, branch: []const u8) ?[]const u8 {
+    var path: ?[]const u8 = null;
+    var lines = std.mem.splitScalar(u8, porcelain, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "worktree ")) {
+            path = line["worktree ".len..];
+        } else if (std.mem.startsWith(u8, line, "branch refs/heads/")) {
+            if (std.mem.eql(u8, line["branch refs/heads/".len..], branch)) return path;
+        }
+    }
+    return null;
+}
+
+/// Whether `repo`'s index and working tree are both byte-identical to
+/// `sha`'s tree. Untracked files are ignored on purpose: `reset --hard`
+/// leaves them alone, so they are not at risk.
+fn matchesCommit(gpa: std.mem.Allocator, io: std.Io, repo: []const u8, sha: []const u8) bool {
+    return gitQuiet(gpa, io, &.{ "git", "-C", repo, "diff", "--cached", "--quiet", sha, "--" }) and
+        gitQuiet(gpa, io, &.{ "git", "-C", repo, "diff", "--quiet", sha, "--" });
+}
+
+/// True only on a clean zero exit; any failure to run reads as "does not
+/// match", which fails safe into the warn-and-leave-it path.
+fn gitQuiet(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) bool {
+    const res = std.process.run(gpa, io, .{ .argv = argv }) catch return false;
+    defer gpa.free(res.stdout);
+    defer gpa.free(res.stderr);
+    return switch (res.term) {
+        .exited => |c| c == 0,
+        else => false,
+    };
+}
 
 /// Sanitized instance identity for a branch name, so two instances sharing one
 /// checkout with distinct worktrees cannot generate the same branch (RFC 0001
@@ -473,6 +553,85 @@ test "a branch holding no commits the base lacks is not stranded work" {
     // Once the base carries it, it is no longer stranded.
     try gitOk(gpa, io, root, &.{ "update-ref", "refs/heads/main", "topic" });
     try std.testing.expect(!wt.hasStrandedCommits(gpa, io));
+}
+
+test "checkoutOf finds the one worktree holding a branch" {
+    const porcelain =
+        "worktree /home/u/clanker\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\n" ++
+        "worktree /home/u/clanker/.clanker-worktrees/42\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/clanker/improve-self-42\n\n" ++
+        "worktree /home/u/scratch\nHEAD 3333333333333333333333333333333333333333\ndetached\n";
+    try std.testing.expectEqualStrings("/home/u/clanker", checkoutOf(porcelain, "main").?);
+    try std.testing.expectEqualStrings(
+        "/home/u/clanker/.clanker-worktrees/42",
+        checkoutOf(porcelain, "clanker/improve-self-42").?,
+    );
+    // A prefix of a held branch is not that branch, and a branch checked out
+    // nowhere is null, not the detached entry.
+    try std.testing.expect(checkoutOf(porcelain, "clanker/improve-self-4") == null);
+    try std.testing.expect(checkoutOf(porcelain, "topic") == null);
+}
+
+test "mergeBack's resync reaches the invoking checkout only when it is clean" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(io, &root_buf)];
+
+    // A real primary checkout on main plus a linked worktree on the improve
+    // branch: the question is what a ref move leaves behind in the checkout
+    // that was NOT the one merging, and a stub cannot answer it.
+    try gitOk(gpa, io, root, &.{ "init", "-q", "-b", "main" });
+    try gitOk(gpa, io, root, &.{ "config", "user.email", "t@example.invalid" });
+    try gitOk(gpa, io, root, &.{ "config", "user.name", "test" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "code.txt", .data = "before\n" });
+    try gitOk(gpa, io, root, &.{ "add", "code.txt" });
+    try gitOk(gpa, io, root, &.{ "commit", "-qm", "seed" });
+    const old_sha = try run1(gpa, io, &.{ "git", "-C", root, "rev-parse", "HEAD" });
+    defer gpa.free(old_sha);
+
+    const wt_path = try std.fmt.allocPrint(gpa, "{s}/improve-wt", .{root});
+    defer gpa.free(wt_path);
+    try gitOk(gpa, io, root, &.{ "worktree", "add", "-q", "-b", "improve", wt_path });
+    var wt_dir = try std.Io.Dir.cwd().openDir(io, wt_path, .{});
+    defer wt_dir.close(io);
+    try wt_dir.writeFile(io, .{ .sub_path = "code.txt", .data = "after\n" });
+    try gitOk(gpa, io, wt_path, &.{ "commit", "-aqm", "promoted" });
+    const new_sha = try run1(gpa, io, &.{ "git", "-C", wt_path, "rev-parse", "HEAD" });
+    defer gpa.free(new_sha);
+
+    var wt: Worktree = .{
+        .path = wt_path,
+        .branch = "improve",
+        .base_branch = "main",
+        .created_from = "",
+    };
+
+    // The fast-forward as mergeBack performs it: the shared ref moves, no
+    // checkout is touched. The primary now shows the promotion's inverse.
+    try gitOk(gpa, io, root, &.{ "update-ref", "refs/heads/main", new_sha });
+    wt.resyncBaseCheckout(gpa, io, old_sha);
+    const synced = try tmp.dir.readFileAlloc(io, "code.txt", gpa, .limited(1 << 10));
+    defer gpa.free(synced);
+    try std.testing.expectEqualStrings("after\n", synced);
+    // -uno: the linked worktree lives inside the primary as an untracked
+    // directory, which is layout noise; the claim is that no *tracked* file
+    // disagrees with the moved ref any more.
+    const clean = try run1(gpa, io, &.{ "git", "-C", root, "status", "--porcelain", "-uno" });
+    defer gpa.free(clean);
+    try std.testing.expectEqualStrings("", clean);
+
+    // With real work in progress in the primary, the resync must refuse:
+    // move the ref back and dirty the checkout, then resync again.
+    try gitOk(gpa, io, root, &.{ "reset", "-q", "--hard", old_sha });
+    try gitOk(gpa, io, root, &.{ "update-ref", "refs/heads/main", new_sha });
+    try tmp.dir.writeFile(io, .{ .sub_path = "code.txt", .data = "operator work\n" });
+    wt.resyncBaseCheckout(gpa, io, old_sha);
+    const kept = try tmp.dir.readFileAlloc(io, "code.txt", gpa, .limited(1 << 10));
+    defer gpa.free(kept);
+    try std.testing.expectEqualStrings("operator work\n", kept);
 }
 
 /// Runs one git command in `repo` and fails the test unless it exits 0.
