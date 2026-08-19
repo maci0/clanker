@@ -252,6 +252,11 @@ pub fn build(b: *std.Build) void {
     const utils_js_test = b.addSystemCommand(&.{ "node", "--test" });
     utils_js_test.addFileArg(b.path("ui/app/core/utils.test.mjs"));
     test_step.dependOn(&utils_js_test.step);
+    // Every Refresh button in the page reaches a handler that gives busy
+    // feedback: three shipped with no listener at all.
+    const refresh_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    refresh_js_test.addFileArg(b.path("ui/app/core/refresh.test.mjs"));
+    test_step.dependOn(&refresh_js_test.step);
     const files_js_test = b.addSystemCommand(&.{ "node", "--test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);

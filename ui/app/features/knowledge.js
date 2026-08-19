@@ -1,6 +1,6 @@
 // Knowledge view — single-user. Collections of documents.
 import { uiConfirm, uiPrompt, toast, showLoadError } from "../core/ui.js";
-import { readJson, fmtBytes } from "../core/utils.js";
+import { readJson, fmtBytes, wireRefresh } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
 function ensureBadge(){
@@ -294,7 +294,7 @@ export function bindKnowledge(){
       .then(function(){ if(titleInput) titleInput.value=""; if(descInput) descInput.value=""; loadKnowledge(); })
       .catch(function(err){ toast(err.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
-  if(refreshBtn) refreshBtn.addEventListener("click",function(){ loadKnowledge(); });
+  wireRefresh(refreshBtn, loadKnowledge);
   function doSearch(){
     var q=searchInput?searchInput.value.trim():"";
     var status=document.getElementById("knowledge-status");

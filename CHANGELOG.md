@@ -335,6 +335,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI's Goal activity, Tools and Usage panels have working Refresh
+  buttons. All three shipped with an id and a slot in the element map but no
+  listener anywhere behind them, so a press did nothing and looked exactly
+  like a press on one of the fifteen that worked. Every Refresh button in the
+  page now goes through one `wireRefresh` helper in `ui/app/core/utils.js`
+  that disables the button for as long as the load takes and restores it on
+  success or failure, replacing a dozen hand-rolled wirings of which half
+  gave no busy feedback at all. `ui/app/core/refresh.test.mjs` walks the
+  shipped HTML for every Refresh control and the shipped JS for how it is
+  wired, so a new view cannot add a fourth dead button.
+
 - After `clanker improve-self` promotes a change, the checkout the command
   was invoked from no longer sits on the promotion's inverse diff.
   `mergeBack` fast-forwards the shared branch ref and used to resync only
