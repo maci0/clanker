@@ -277,7 +277,7 @@ pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: R
 /// skipped rather than failing the read: one bad line must not hide the rest
 /// of the history.
 pub fn readRecords(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, limit: usize) ![]Record {
-    const raw = base.readFileAlloc(io, ledger_path, arena, .limited(max_ledger_bytes)) catch return &.{};
+    const raw = base.readFileAlloc(io, ledger_path, arena, .limited(2 * max_ledger_bytes)) catch return &.{};
     var all: std.ArrayList(Record) = .empty;
     var it = std.mem.splitScalar(u8, raw, '\n');
     while (it.next()) |line| {
