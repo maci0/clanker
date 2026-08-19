@@ -11,7 +11,7 @@
 // than being re-derived here. Everything else is imported directly, which is
 // what takes `lib/runs-list.js` off the eager path with this module.
 import { fmtInt, fmtMs, escapeHtml, readJson } from "../core/utils.js";
-import { skeletonRows } from "../core/ui.js";
+import { skeletonRows, upgradePfButton, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { loadD3, copyText, scrollTo } from "../core/vendor.js";
 import { runLabel } from "../core/labels.js";

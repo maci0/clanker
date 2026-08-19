@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -96,4 +96,119 @@ test("a plugin's mount or refresh throw is contained to its own panel", function
     (plugins.match(/runPluginHook\(section,/g) || []).length >= 4,
     "both loaders guard both mount and refresh"
   );
+});
+
+test("every named static import resolves to an export of its module", function () {
+  // Lazy view modules were split out of app.js with their imports trimmed to
+  // what each actually uses, and two of them called helpers they no longer
+  // imported: system.js's empty MCP list threw ReferenceError on upgradePfButton
+  // before appending its "Add server" button, and runs.js's node detail and
+  // graph controls all threw on upgradePfButton/showLoadError. Nothing ran the
+  // modules at build time (the guest embeds the JS as bytes), so the break
+  // shipped. Static import/export resolution is the cheapest pin that catches
+  // the class: a name a module binds from another module must be exported there.
+  const dirs = ["core", "lib", "features"];
+  const modules = [];
+  for (const dir of dirs) {
+    const base = join(here, dir);
+    for (const entry of readdirSync(base)) {
+      if (!entry.endsWith(".js")) continue;
+      modules.push({ file: join(base, entry), rel: dir + "/" + entry });
+    }
+  }
+  const exportNames = new Map();
+  for (const m of modules) {
+    const names = new Set();
+    const src = readFileSync(m.file, "utf8");
+    for (const mm of src.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) names.add(mm[1]);
+    for (const mm of src.matchAll(/export\s+(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/g)) names.add(mm[1]);
+    for (const mm of src.matchAll(/export\s*\{([^}]*)\}/g)) {
+      for (const name of mm[1].split(",")) {
+        const n = name.trim().split(/\s+as\s+/).pop().trim();
+        if (n) names.add(n);
+      }
+    }
+    exportNames.set(m.file, names);
+  }
+  const resolved = new Map();
+  function targetFile(fromFile, spec) {
+    const key = fromFile + "|" + spec;
+    if (resolved.has(key)) return resolved.get(key);
+    const base = dirname(fromFile);
+    const target = join(base, spec);
+    const hit = modules.find((m) => m.file === target);
+    resolved.set(key, hit ? hit.file : null);
+    return hit ? hit.file : null;
+  }
+  let checked = 0;
+  for (const m of modules) {
+    const src = readFileSync(m.file, "utf8");
+    for (const mm of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*["'](\.\.?\/[^"']+)["']/g)) {
+      const target = targetFile(m.file, mm[2]);
+      assert.ok(target, `${m.rel} imports "${mm[2]}" which is not a sibling module file`);
+      const exports_ = exportNames.get(target);
+      for (const name of mm[1].split(",")) {
+        const exported = name.trim().split(/\s+as\s+/)[0].trim();
+        if (!exported) continue;
+        checked++;
+        assert.ok(
+          exports_.has(exported),
+          `${m.rel} imports ${name.trim()} from ${mm[2]}, but that module does not export ${exported}`
+        );
+      }
+    }
+  }
+  assert.ok(checked >= 20, `static import resolution covered ${checked} imported names`);
+});
+
+test("shared UI helpers are called only where they are imported or defined", function () {
+  // The link-time check above only proves imports resolve; it cannot see a
+  // module *calling* a helper it never imported, which is not a link error —
+  // it is a ReferenceError at the first call site, after the view rendered
+  // partway. Both shipped breaks were exactly that shape: system.js called
+  // upgradePfButton while rendering the empty MCP list, runs.js called
+  // upgradePfButton/showLoadError in every node-detail and graph control. Pin
+  // the shared helper names against each module's imports and local
+  // declarations, so a view that stops importing one and keeps calling it
+  // fails here instead of in the browser.
+  const helperSources = ["core/ui.js", "core/utils.js", "core/vendor.js", "core/icons.js"];
+  const helpers = new Set();
+  for (const rel of helperSources) {
+    const src = readFileSync(join(here, rel), "utf8");
+    for (const mm of src.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) helpers.add(mm[1]);
+    for (const mm of src.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) helpers.add(mm[1]);
+  }
+  const dirs = ["core", "lib", "features"];
+  for (const dir of dirs) {
+    for (const entry of readdirSync(join(here, dir))) {
+      if (!entry.endsWith(".js")) continue;
+      const file = join(here, dir, entry);
+      const raw = readFileSync(file, "utf8");
+      const src = raw
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/\/\/[^\n]*/g, " ")
+        .replace(/"(?:\\.|[^"\\])*"/g, '""')
+        .replace(/`(?:\\.|[^`\\])*`/g, "``");
+      const imported = new Set();
+      for (const mm of raw.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']\.\.?\/[^"']+["']/g)) {
+        for (const name of mm[1].split(",")) imported.add(name.trim().split(/\s+as\s+/)[1] || name.trim().split(/\s+as\s+/)[0]);
+      }
+      const defined = new Set();
+      for (const mm of src.matchAll(/(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g)) defined.add(mm[1]);
+      for (const mm of src.matchAll(/(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) defined.add(mm[1]);
+      for (const mm of src.matchAll(/(?:function\s+[A-Za-z_$][\w$]*\s*\(|function\s*\(|\([^)]*\)\s*=>)\s*([^)]*)/g)) {
+        for (const p of mm[1].split(",")) {
+          const t = p.trim().split(/\s*=\s*/)[0].trim();
+          if (/^[A-Za-z_$][\w$]*$/.test(t)) defined.add(t);
+        }
+      }
+      for (const h of helpers) {
+        if (imported.has(h) || defined.has(h)) continue;
+        const calls = [...src.matchAll(new RegExp(`(?<![\\w$.])${h}\\s*\\(`, "g"))];
+        if (calls.length) {
+          assert.fail(`${dir}/${entry} calls ${h}( without importing or defining it`);
+        }
+      }
+    }
+  }
 });

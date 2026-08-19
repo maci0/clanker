@@ -6,7 +6,7 @@
    like every other feature view. */
 import { readJson, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
-import { uiConfirm, showLoadError } from "../core/ui.js";
+import { uiConfirm, showLoadError, upgradePfButton } from "../core/ui.js";
 
 /* ---- config editor (System view) ----------------------------------------
    Raw TOML editing with validate-before-write: POST /api/config/raw refuses
