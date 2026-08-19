@@ -36,6 +36,9 @@ pub fn tail(text: []const u8, keep: usize) []const u8 {
 /// Renders one ledger line, the exact shape the loop used to write natively:
 ///   {"iter":N,"ts":N,"summary":"...","ok":true,"metric":1.0,"metric_name":"x",
 ///    "duration_ms":N,"detail":"..."[,"stdout_tail":"..."][,"stderr_tail":"..."]}
+/// `ts` is an epoch-seconds instant (the same unit every other persisted
+/// timestamp in the harness uses), while `duration_ms` is an elapsed-time
+/// span in milliseconds; the two are never compared.
 pub fn entryLine(arena: std.mem.Allocator, entry: Entry) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     defer out.deinit();

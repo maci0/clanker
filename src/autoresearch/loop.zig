@@ -258,7 +258,7 @@ pub const Loop = struct {
         const improved = if (harness_res.metric) |m| ledger.isBetter(m, best.*, opts.direction) else false;
         try self.appendLedgerEntry(run_id, .{
             .iter = iter,
-            .ts = @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000))),
+            .ts = @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000))),
             .summary = proposal.summary,
             .ok = harness_res.ok and harness_res.metric != null,
             .metric = harness_res.metric,

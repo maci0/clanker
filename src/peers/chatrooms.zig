@@ -828,6 +828,12 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
 /// shared table below is guarded by a mutex and every read/write happens
 /// inside it.
 ///
+/// The window is elapsed time, so it is measured on the monotonic clock
+/// (`.awake`), not the wall clock: an NTP step or manual clock change must not
+/// collapse a down peer's backoff to zero (hammering it) or stretch it by the
+/// jump (starving it). The table is process-lifetime state and never crosses a
+/// process or machine boundary, so a monotonic basis is safe here.
+///
 /// The table is process-lifetime state with one slot per configured peer, so
 /// it is a fixed-size static array rather than a heap list. Two things follow
 /// from that, and both were bugs while it was an `ArrayList`: nothing has to
@@ -869,7 +875,7 @@ fn inCooldown(io: std.Io, name: []const u8) bool {
     defer cooldown_mutex.unlock(io);
     const c = cooldownSlot(name) orelse return false;
     if (c.down_since_ns == 0) return false;
-    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
     return now >= c.down_since_ns and now - c.down_since_ns < cooldownWindow(c.fail_count);
 }
 
@@ -1038,7 +1044,7 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, environ_
         return;
     }
 
-    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
     for (reply.results) |r| {
         if (r.ok) {
             // A completed delivery clears any cooldown; a peer that had been
@@ -1727,7 +1733,7 @@ test "down-peer backoff grows, caps, and recovers on success" {
     resetCooldowns(io);
     defer resetCooldowns(io);
 
-    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
     try std.testing.expect(!inCooldown(io, "down-peer"));
     try std.testing.expectEqual(@as(i64, 5), recordFailure(io, "down-peer", now));
     try std.testing.expect(inCooldown(io, "down-peer"));
@@ -1753,7 +1759,7 @@ test "a cooldown outlives the arena the peer name was parsed into" {
     resetCooldowns(io);
     defer resetCooldowns(io);
 
-    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
     {
         var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena_state.deinit();
@@ -1781,7 +1787,7 @@ test "the cooldown table refuses what it cannot hold instead of truncating" {
     resetCooldowns(io);
     defer resetCooldowns(io);
 
-    const now = std.Io.Timestamp.now(io, .real).nanoseconds;
+    const now = std.Io.Timestamp.now(io, .awake).nanoseconds;
     const too_long = "p" ** (max_cooldown_name + 1);
     try std.testing.expectEqual(@as(i64, 0), recordFailure(io, too_long, now));
     try std.testing.expect(!inCooldown(io, too_long));

@@ -2648,21 +2648,24 @@ fn stagedConfigGateTexts(
 /// excerpt handed back freed memory: a gate whose output fitted in the budget
 /// segfaulted the improve run while collecting the reasons a proposal was
 /// rejected. Copying a string under 1500 bytes is not worth the aliasing.
-/// Wall-clock per gate phase, logged so the gate's cost profile is measurable
+/// Per gate phase, logged so the gate's cost profile is measurable
 /// from any run log. Measured on a live run before this existed: the whole
 /// gate cycle was ~85% of a 7-8 minute iteration, with nothing saying which
 /// phase (staging build vs the LLM-driven capability evals) actually costs
 /// what -- speeding the gate up starts with knowing that split.
+/// The phase times are elapsed durations, so they are read on the monotonic
+/// clock (`.awake`): an NTP step or manual clock change mid-gate must not log
+/// a negative or absurd phase duration.
 const GateTimer = struct {
     io: std.Io,
     last: i96,
 
     fn start(io: std.Io) GateTimer {
-        return .{ .io = io, .last = std.Io.Timestamp.now(io, .real).nanoseconds };
+        return .{ .io = io, .last = std.Io.Timestamp.now(io, .awake).nanoseconds };
     }
 
     fn lap(self: *GateTimer, name: []const u8) void {
-        const now = std.Io.Timestamp.now(self.io, .real).nanoseconds;
+        const now = std.Io.Timestamp.now(self.io, .awake).nanoseconds;
         log.log(.info, "gate timing: {s} {d}ms", .{ name, @divTrunc(now - self.last, std.time.ns_per_ms) });
         self.last = now;
     }

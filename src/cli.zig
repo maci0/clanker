@@ -8394,7 +8394,7 @@ test "metricsSnapshot stays parseable and reports background job counters" {
 }
 
 fn publishMetricsSnapshot(io: std.Io) void {
-    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .awake).nanoseconds, std.time.ns_per_ms));
     const prev = last_metrics_pub_ms.load(.monotonic);
     if (now - prev < 1000) return;
     if (last_metrics_pub_ms.cmpxchgStrong(prev, now, .monotonic, .monotonic) != null) return;
