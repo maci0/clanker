@@ -1,0 +1,26 @@
+{
+  "name": "notifications",
+  "description": "Host-internal: persist a notification received via POST /api/notify into state/notifications.jsonl. {\"store\":{from,kind,topic,payload,ts,id}} appends one line, deduplicated by delivery id and trimmed at the 1 MiB ceiling. Never model-callable: notifications arrive from peers over HTTP, not from the agent loop.",
+  "wasm": "zig-out/tools/notifications.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "store": {
+        "type": "object",
+        "description": "The notification record to append (fields: from, kind, topic, payload, ts, id)",
+        "properties": {
+          "from": { "type": "string" },
+          "kind": { "type": "string" },
+          "topic": { "type": "string" },
+          "payload": { "type": "object" },
+          "ts": { "type": "integer" },
+          "id": { "type": "string", "description": "Delivery id; a redelivery with an id already in the log is dropped" }
+        }
+      }
+    }
+  },
+  "fs_prefixes": ["state/notifications.jsonl"],
+  "network_allow": [],
+  "internal": true,
+  "category": "harness"
+}

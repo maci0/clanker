@@ -48,7 +48,6 @@ const tui_transcript = @import("tui/transcript.zig");
 const tui_stats = @import("tui/turn_stats.zig");
 const repl = @import("tui/repl.zig");
 const chatrooms = @import("peers/chatrooms.zig");
-const notifications = @import("peers/notifications.zig");
 const phonebook = @import("peers/phonebook.zig");
 const mesh = @import("peers/mesh.zig");
 const mesh_cmd = @import("peers/command.zig");
@@ -7490,7 +7489,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         {
             handleSessions(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify")) {
-            handleNotify(io, gpa, body, stream);
+            handleNotify(io, gpa, cfg, environ_map, body, stream);
         } else if (is_chat_message) {
             handleChatMessage(io, gpa, cfg, body, stream);
         } else if (is_chat_messages) {
@@ -7614,27 +7613,46 @@ const A2ARequest = struct {
     params: ?std.json.Value = null,
 };
 
-fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
+/// POST /api/notify: a peer clanker delivering a notification. The store is
+/// the `notifications` WASM tool (state/notifications.jsonl); this route
+/// validates the body, relays it, and maps the reply, like `/api/schedule`.
+fn handleNotify(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, body: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = jsonBody(NotifyRequestBody, arena, body, stream) orelse return;
-    const from = parsed.from orelse "";
-    const kind = parsed.kind orelse "";
-    const topic = parsed.topic orelse "";
-    const ts = parsed.ts orelse 0;
-    const payload = parsed.payload orelse .null;
-    // Seconds since epoch, matching the `ts` field cmdNotify sends and the
-    // units used for session created/updated timestamps elsewhere.
-    const received_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    const record = notifications.Record{ .from = from, .kind = kind, .topic = topic, .payload = payload, .ts = ts, .received_at = received_at, .id = parsed.id };
-    notifications.store(io, gpa, std.Io.Dir.cwd(), record) catch |err| {
-        log.log(.error_, "POST /api/notify: {s}", .{@errorName(err)});
+    const tool_input = notifyRouteToToolInput(arena, body) orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"malformed request\"}");
+        return;
+    };
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "notifications", tool_input) catch {
+        log.log(.error_, "POST /api/notify: notifications tool unavailable", .{});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"notify failed\"}");
         return;
     };
-    respond(stream, 200, "OK", "{\"ok\":true}");
+    respondTool(stream, result);
+}
+
+/// POST /api/notify body -> guest input `{"store": <body>}`. The body is
+/// parsed here so a malformed one answers 400 before any tool dispatch; the
+/// guest stamps `received_at` itself and ignores unknown fields.
+fn notifyRouteToToolInput(arena: std.mem.Allocator, body: []const u8) ?[]const u8 {
+    const parsed = std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch return null;
+    _ = parsed;
+    return std.fmt.allocPrint(arena, "{{\"store\":{s}}}", .{body}) catch null;
+}
+
+test "notify route wraps the body as the guest's store input" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const input = notifyRouteToToolInput(arena, "{\"from\":\"peer\",\"kind\":\"message\",\"payload\":{\"text\":\"hi\"},\"ts\":1,\"id\":\"d-1\"}").?;
+    try std.testing.expectEqualStrings("{\"store\":{\"from\":\"peer\",\"kind\":\"message\",\"payload\":{\"text\":\"hi\"},\"ts\":1,\"id\":\"d-1\"}}", input);
+    // Malformed JSON is refused, not relayed.
+    try std.testing.expect(notifyRouteToToolInput(arena, "not json") == null);
+    // A bare array is not a notify record.
+    try std.testing.expect(notifyRouteToToolInput(arena, "[1,2]") == null);
 }
 
 const ChatMessageBody = struct {

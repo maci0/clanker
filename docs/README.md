@@ -636,6 +636,7 @@ Internal tools, never offered to the model:
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
 | `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
 | `janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
+| `notifications` | `state/notifications.jsonl` | The durable inbox behind `POST /api/notify`: append one notification, deduped by delivery id, trimmed at the 1 MiB ceiling. Never model-callable |
 | `knowledge` | `state/` | Knowledge collections behind `/api/knowledge`: list, create, delete, add or search documents |
 | `prompts` | `state/` | Saved prompt templates behind `/api/prompts` |
 | `session_export` | `state/` | Render one saved session as a self-contained HTML transcript (`clanker session export`) |
