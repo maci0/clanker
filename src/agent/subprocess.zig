@@ -428,3 +428,11 @@ test "adopt a live process, write/read a line, SIGTERM on session end" {
     // A second terminate is a no-op, not a crash on a stale pid.
     reg.terminateSession("live-1");
 }
+
+test "register refuses an empty kind" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = Registry.init(std.testing.allocator, threaded.io());
+    defer reg.deinit();
+    try std.testing.expectError(error.EmptyKind, reg.register("sess-1", "", 42));
+}
