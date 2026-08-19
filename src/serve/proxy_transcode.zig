@@ -461,7 +461,7 @@ fn writeOpenaiUsage(s: *json.Stringify, u: types.Usage) !void {
     try s.objectField("completion_tokens");
     try s.write(u.completion_tokens);
     try s.objectField("total_tokens");
-    try s.write(if (u.total_tokens > 0) u.total_tokens else u.prompt_tokens + u.completion_tokens);
+    try s.write(if (u.total_tokens > 0) u.total_tokens else u.prompt_tokens +| u.completion_tokens);
     try s.endObject();
 }
 
@@ -966,4 +966,15 @@ test "AnthropicStream emits message_start, text deltas, and message_stop" {
     defer gpa.free(b);
     try std.testing.expect(std.mem.find(u8, b, "event: message_stop") != null);
     try std.testing.expect(try st.writeEvent(gpa, .{ .done = true }) == null);
+}
+
+test "openaiCompletion saturates total_tokens instead of overflowing" {
+    const gpa = std.testing.allocator;
+    const body = try openaiCompletion(gpa, "m", .{
+        .message = .{ .role = .assistant, .content = "" },
+        .finish_reason = "stop",
+        .usage = .{ .prompt_tokens = std.math.maxInt(u32) - 1, .completion_tokens = 2, .total_tokens = 0 },
+    });
+    defer gpa.free(body);
+    try std.testing.expect(std.mem.find(u8, body, "4294967295") != null);
 }
