@@ -63,6 +63,10 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
             };
             if (mins < 0) return lib.fail(out, "in_minutes must not be negative");
             if (mins > std.math.maxInt(i64) / 60) return lib.fail(out, "in_minutes is too large");
+            // The guard above bounds the product, but `now + mins*60` can
+            // still overflow when the product sits within `now` of maxInt,
+            // which would store a wrapped (negative) fire time.
+            if (now > 0 and mins > @divFloor(std.math.maxInt(i64) - now, 60)) return lib.fail(out, "in_minutes is too large");
             break :blk now + mins * 60;
         }
         if (obj.get("at")) |v| {
@@ -70,6 +74,13 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
                 .integer => |i| i,
                 else => return lib.fail(out, "at must be an integer epoch-seconds timestamp"),
             };
+            // `fire - now` is printed in the reply and `now - ts` is the basis
+            // of done's advance; both are i64. Reject an `at` whose difference
+            // from now cannot be represented (only reachable beyond ~292
+            // billion years from the epoch, where the sign-aware bounds below
+            // are the only ones that cannot themselves overflow).
+            if (at < 0 and now > 0 and at < std.math.minInt(i64) + now) return lib.fail(out, "at is too far from now");
+            if (at > 0 and now <= 0 and at > std.math.maxInt(i64) + now) return lib.fail(out, "at is too far from now");
             break :blk at;
         }
         return lib.fail(out, "set needs in_minutes or at");
@@ -171,9 +182,21 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
             if (std.mem.eql(u8, a.id, id)) {
                 found = true;
                 if (a.every > 0) {
-                    const step: i64 = if (a.every > std.math.maxInt(i64) / 60) 60 else a.every * 60;
-                    const behind = @max(now - a.ts, 0);
-                    a.ts += (@divTrunc(behind, step) + 1) * step;
+                    // The store file is plain JSON a hand edit can corrupt, so
+                    // `every` and `ts` may be any i64. The advance below is
+                    // computed with saturating operators: an extreme stored
+                    // value must not overflow the guest's arithmetic and trap
+                    // it. A wrap used to be able to put the next fire in the
+                    // past, making the alarm permanently due.
+                    const step: i64 = @max(60, @min(a.every, std.math.maxInt(i64) / 60) * 60);
+                    const behind: i64 = if (a.ts >= now) 0 else if (now >= 0 and a.ts < now - std.math.maxInt(i64)) std.math.maxInt(i64) else now - a.ts;
+                    const slots = @divTrunc(behind, step) +| 1;
+                    const advance = slots *| step;
+                    // For valid data the advance already lands strictly after
+                    // `now`; the clamp only rescues the saturated case (a
+                    // corrupt ts so old that `behind` pinned at maxInt), which
+                    // would otherwise stay due forever.
+                    a.ts = @max(a.ts +| advance, now +| step);
                     next_ts = a.ts;
                 } else {
                     _ = loaded.alarms.orderedRemove(i);

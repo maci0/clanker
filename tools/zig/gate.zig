@@ -83,7 +83,11 @@ fn failureWindow(res: []const u8) []const u8 {
         i = line_end + 1;
     }
 
-    var from = first orelse @max(0, res.len - fallback_tail);
+    // `res.len - fallback_tail` would underflow when the failed gate produced
+    // less output than the tail window (a killed `zig` can emit nothing at
+    // all), and @max clamps after the subtraction, not before. Reorder so the
+    // subtraction never underflows: a short transcript opens at 0.
+    var from = first orelse (@max(fallback_tail, res.len) - fallback_tail);
     // Trim a leading run of unrelated log lines so the slice opens on the error.
     if (first != null) {
         var line_start = from;

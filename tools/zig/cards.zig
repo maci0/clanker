@@ -608,7 +608,15 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             c.prompt_tokens +|= act.prompt_tokens orelse 0;
             c.completion_tokens +|= act.completion_tokens orelse 0;
             if (act.cost) |v| {
-                if (std.math.isFinite(v) and v >= 0) c.cost += v;
+                // Same saturation as the token sums above: each term is
+                // individually checked finite, but the running sum can still
+                // overflow to +inf (two ~1.7e308 costs), which serializes as
+                // the invalid JSON token `inf` and breaks the next read of
+                // the board. Clamp the sum at the largest finite f64.
+                if (std.math.isFinite(v) and v >= 0) {
+                    const sum = c.cost + v;
+                    c.cost = if (std.math.isFinite(sum)) sum else std.math.floatMax(f64);
+                }
             }
             if (act.run) |run| {
                 if (run.len > 0) {
@@ -1381,6 +1389,35 @@ test "usage cannot be made to wrap or go negative" {
     const cards = try derive(arena, &msgs);
     try std.testing.expectEqual(big, cards[0].usage.prompt_tokens);
     try std.testing.expectEqual(@as(f64, 0), cards[0].usage.cost);
+}
+
+test "usage cost sum saturates instead of overflowing to inf" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Two finite ~1.7e308 costs overflow the f64 sum to +inf, which would
+    // serialize as the invalid JSON token `inf` and break the next board
+    // read; the fold must clamp at the largest finite f64 like the token
+    // sums saturate.
+    const huge = 1.7e308;
+    const msgs = [_]Message{
+        msg("m1", "x", 100, try encodeAdd(arena, "task")),
+        msg("u1", "x", 101, try encode(arena, .{ .action = "usage", .todo = "m1", .cost = huge })),
+        msg("u2", "x", 102, try encode(arena, .{ .action = "usage", .todo = "m1", .cost = huge })),
+    };
+    const cards = try derive(arena, &msgs);
+    try std.testing.expect(std.math.isFinite(cards[0].usage.cost));
+    try std.testing.expectEqual(std.math.floatMax(f64), cards[0].usage.cost);
+
+    // Ordinary costs still add exactly; the clamp never engages.
+    const small = [_]Message{
+        msg("m2", "x", 200, try encodeAdd(arena, "cheap")),
+        msg("u1", "x", 201, try encode(arena, .{ .action = "usage", .todo = "m2", .cost = 0.5 })),
+        msg("u2", "x", 202, try encode(arena, .{ .action = "usage", .todo = "m2", .cost = 1.25 })),
+    };
+    const cheap = try derive(arena, &small);
+    try std.testing.expectEqual(@as(f64, 1.75), cheap[0].usage.cost);
 }
 
 test "delete is a tombstone that converges from either order" {
