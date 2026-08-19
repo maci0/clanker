@@ -202,10 +202,13 @@ fn runChecks(
         .{ "sandbox_root", cfg.agent.sandbox_root },
     }) |pair| {
         const present = dirExists(io, pair[1]);
+        // A sandbox root of "/" or "" grants every tool unrestricted filesystem
+        // access; surface that as a warning rather than silently reporting OK.
+        const broad_grant = std.mem.eql(u8, pair[0], "sandbox_root") and (std.mem.eql(u8, pair[1], "/") or pair[1].len == 0);
         rep.line(
-            if (present) .ok else .fail,
+            if (broad_grant) .warn else if (present) .ok else .fail,
             pair[0],
-            if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
+            if (broad_grant) "grants unrestricted filesystem access to every tool" else if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
         );
     }
     rep.line(
