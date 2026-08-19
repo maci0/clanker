@@ -192,13 +192,13 @@ existing docs:
 
 ## Known issues
 
-- **`src/sandbox/host.zig:209-210` still carries a stale `exec_allow` comment.**
-  The field comment reads "Empty falls back to the harness default set below"
+- **(Fixed) `src/sandbox/host.zig` carried a stale `exec_allow` comment.**
+  The field comment read "Empty falls back to the harness default set below"
   while `host.execAllowed` in the same file allows nothing for an empty list
   (pinned by the test "a tool may run only the commands its manifest names").
-  Docs and `registry.zig` were corrected in Bugs fixed above; this surviving
-  code comment is the remaining drift. Fix belongs on those two lines in
-  `host.zig`, not a fourth doc pass.
+  Docs and `registry.zig` were corrected in Bugs fixed above; the surviving
+  code comment now states the empty-allows-nothing contract too, closing the
+  last copy of the drift.
 - **`plugins new` refuses colliding files, not colliding registered tool ids.**
   Failure modes below state the contract: a name that already identifies a
   registered tool is refused before write. Today `pluginsNew` only

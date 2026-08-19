@@ -294,8 +294,10 @@ pub const Sandbox = struct {
     /// The tool descriptor's `config` object, serialized. Returned verbatim by
     /// `ck_config` so a plugin can read its own settings.
     config_json: []const u8 = "{}",
-    /// Commands allowed through ck_exec for this tool. Empty falls back to the
-    /// harness default set below.
+    /// Commands allowed through ck_exec for this tool. Empty allows nothing:
+    /// there is no fallback set, and `execAllowed` refuses every command for
+    /// an empty list (pinned by "a tool may run only the commands its
+    /// manifest names").
     exec_allow: []const []const u8 = &.{},
     /// Whether the `git` tool may run the PR-lifecycle verbs it otherwise
     /// cannot: `push`, `merge`, `checkout`. From cfg.agent.git_remote_ops; the
