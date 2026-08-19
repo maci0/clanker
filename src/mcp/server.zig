@@ -160,10 +160,22 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
         writeResponse(io, out_buf[0..w.end]);
         return;
     };
-    if (req.method) |m| {
-        // Notifications (initialized, cancelled, ...) never get a response.
-        if (std.mem.startsWith(u8, m, "notifications/")) return;
-    }
+    const method_name = req.method orelse {
+        var err_buf: [512]u8 = undefined;
+        var err_w: std.Io.Writer = .fixed(&err_buf);
+        var err_s = json.Stringify{ .writer = &err_w, .options = .{ .emit_null_optional_fields = false } };
+        try err_s.beginObject();
+        try err_s.objectField("jsonrpc");
+        try err_s.write("2.0");
+        try err_s.objectField("id");
+        try err_s.write(req.id orelse .null);
+        try respondError(&err_s, -32600, "Invalid Request");
+        try err_s.endObject();
+        writeResponse(io, err_buf[0..err_w.end]);
+        return;
+    };
+    // Notifications (initialized, cancelled, ...) never get a response.
+    if (std.mem.startsWith(u8, method_name, "notifications/")) return;
 
     var out_buf: [max_line]u8 = undefined;
     var w: std.Io.Writer = .fixed(&out_buf);
@@ -176,8 +188,8 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
     try s.objectField("result");
     try s.beginObject();
 
-    if (req.method) |m| {
-        const method = methods.get(m) orelse {
+    {
+        const method = methods.get(method_name) orelse {
             // Unknown method: a JSON-RPC response must not contain both
             // "result" and "error". Discard the half-written result object
             // and restart the buffer with a proper error response.
