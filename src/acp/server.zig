@@ -139,7 +139,7 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     const prompt_val = obj.get("prompt") orelse return responseError(alloc, id, -32602, "session/prompt requires prompt");
     const prompt_text = (try promptText(arena, prompt_val)) orelse
         return responseError(alloc, id, -32602, "session/prompt requires prompt");
-    _ = prompt_text;
+    const prompt_len: u32 = if (prompt_text.len > std.math.maxInt(u32)) std.math.maxInt(u32) else @intCast(prompt_text.len);
     // v1 stub: report end_turn without running the model; real Agent wiring lands next
     // turn once sessions own an Agent + cwd. This already satisfies the ACP shape
     // (sessionId must exist, no concurrent prompt) and is testable without a provider.
@@ -153,6 +153,8 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     try s.beginObject();
     try s.objectField("stopReason");
     try s.write("end_turn");
+    try s.objectField("promptLength");
+    try s.write(prompt_len);
     try s.endObject();
     try s.endObject();
     return out.toOwnedSlice();
