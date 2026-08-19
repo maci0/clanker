@@ -211,6 +211,12 @@ pub fn parseGoogleErrorMessage(arena: std.mem.Allocator, body: []const u8) ?[]co
         for (arr) |entry| {
             if (entry.@"error" != null) break :blk entry;
         }
+        // Array-wrapped flat errors: [{"message":"...","status":"PERMISSION_DENIED"}]
+        const FlatEl = struct { message: []const u8 = "", status: []const u8 = "" };
+        const flat_arr = json.parseFromSliceLeaky([]FlatEl, arena, trimmed, .{ .ignore_unknown_fields = true }) catch return null;
+        for (flat_arr) |f| {
+            if (f.message.len > 0 or f.status.len > 0) break :blk GoogleError{ .@"error" = .{ .message = f.message, .status = f.status } };
+        }
         return null;
     } else json.parseFromSliceLeaky(GoogleError, arena, trimmed, .{ .ignore_unknown_fields = true }) catch return null;
     if (parsed.@"error") |e| {
