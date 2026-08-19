@@ -322,24 +322,27 @@ run/ask/steer command surface, and the three recorder write paths.
 
 ## Autolearn
 
-Automatically observed from usage patterns in `state/autolearn.jsonl`; refresh with `clanker autolearn`.
+Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days). Refresh with `clanker autolearn`.
 
-- [ ] Deduplicate identical tool calls within a turn — logs show simultaneous duplicate `repo_search` and `read_file` calls with the same timestamp, wasting tokens and latency.
-- [ ] Cap and plan read-only exploration — some runs issued hundreds of `read_file`/`repo_search` calls before the first edit, causing context bloat and long stalls.
-- [ ] Compress or summarize tool results — `deepseek-v4-pro` runs reached 9.5M and 10.9M prompt tokens (744s/1358s), indicating raw results are too large to re-prompt efficiently.
-- [ ] Guard against empty/no-op model runs — `qwen3.8-27b-tuned` had `prompt_tokens:0`/`completion_tokens:0` runs that still consumed 29s and 101s.
-- [ ] Validate `read_file` arguments before invocation — observed error `missing required field: path`.
-- [ ] Fix `edit_file` stale-match behavior — observed `the "old" text does not appear in the file; read it again and copy the exact bytes`; retry after re-reading or use line/context anchors.
-- [ ] Grant `edit_file` write access to intended docs — `CHANGELOG.md` and `AGENTS.md` were refused by the sandbox policy, blocking planned updates.
-- [ ] Fix sandbox paths for `file_ops` and `list_files` — observed refusals for `CHANGELOG.md` and `.local` from the same manifest policy.
-- [ ] Fix `git` sandbox/verb policy — observed repeated policy refusals, plus denied `worktree --force` and `fetch`; authorize safe read-only verbs or disable the tool.
-- [ ] Fix `repo_search` size validation — observed `running the search: too large for one call — ask for a smaller range or narrow the query`.
-- [ ] Add `reports` pre-submit validation — observed `summary is too long (maximum 500 bytes)` and invalid `kind`/slug-format errors.
-- [ ] Disable or hide `jobs` in unsupported contexts — observed `jobs are not allowed here`.
-- [ ] Expand the `gh` command allowlist — observed `gh api repos/maci0/clanker/commits/main --jq .sha` denied; only `gh pr *` patterns are allowed.
-- [ ] Add `web_fetch` retry/fallback handling — observed repeated `fetching the page: the request did not complete`.
-- [ ] Fix `zig_std` symbol lookup — observed `looking up the std symbol: not found`; ensure the tool points at the matching std version.
-- [ ] Re-evaluate default model `deepseek-v4-flash` — used in 25 run(s); tune its config or make it the default.
-- [ ] Re-evaluate default model `qwen3.8-27b-tuned` — used in 6 run(s), including zero-token no-ops; tune or gate before use.
-- [ ] Re-evaluate default model `deepseek-v4-pro` — used in 14 run(s) and produced the largest prompt contexts; add context/result limits if kept.
-- [ ] Re-evaluate default model `z-ai/glm-5.2` — used in 1 run(s); confirm whether it should remain in rotation.
+- Optimize the most-used tools: read_file,repo_search,list_files (usage tracked in state/autolearn.jsonl).
+- Fix 'read_file' tool errors (6 failure(s), last: no such file)
+- Fix 'gate' tool errors (4 failure(s), last: test failed)
+- Fix 'test_file' tool errors (5 failure(s), last: )
+- Fix 'file_ops' tool errors (19 failure(s), last: scripts/README.md: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow))
+- Fix 'repo_search' tool errors (4 failure(s), last: running the search: too large for one call — ask for a smaller range or narrow the query)
+- Fix 'edit_file' tool errors (13 failure(s), last: scripts/verify-goal.sh: refused by this tool's sandbox policy — its manifest has to allow the path (fs_prefixes), the command (exec_allow) or the host (network_allow))
+- Fix 'jobs' tool errors (3 failure(s), last: jobs are not allowed here)
+- Fix 'kernel' tool errors (1 failure(s), last: kernel is disabled (kernel.enabled = false); enable it in config.toml to run Python/JS cells)
+- Fix 'subagent' tool errors (1 failure(s), last: spawning the sub-agent: IoError)
+- Fix 'zig_std' tool errors (6 failure(s), last: looking up the std symbol: not found)
+- Fix 'git' tool errors (5 failure(s), last: git 'push' is refused by the sandbox (denied token 'push'). Allowed: status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree. Remote/history-rewriting verbs need a human at a real )
+- Fix 'web_fetch' tool errors (2 failure(s), last: fetching the page: the request did not complete)
+- Re-evaluate default model: 'claude-opus-4-6' used in 5 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'deepseek-v4-flash' used in 1 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'kimi-k3' used in 1 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'z-ai/glm-5.2' used in 1 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'glm-5.2' used in 3 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'claude-opus-5@default' used in 12 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'deepseek-v4-pro' used in 18 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'muse-spark-1.2' used in 4 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+
