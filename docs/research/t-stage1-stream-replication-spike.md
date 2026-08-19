@@ -168,7 +168,11 @@ first raise/sink.
 **Where results go:** appended to this note under Results, with the commands
 that produced each number; then RFC 0019's recommendation section is
 revisited. A green spike makes stage 1 a feature: write its PRD then, not
-before.
+before. Per the operator's packaging direction (2026-08-19), the productized
+spine is founded as a standalone, publicly released Zig project offering
+clanker an embeddable library and/or a service API — see option T's Packaging
+paragraph in [the state-store note](decentralized-state-store.md); the spike
+code itself stays throwaway in clanker's tree either way.
 
 ## Results
 
