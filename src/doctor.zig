@@ -50,6 +50,7 @@ const Report = struct {
     w: *std.Io.Writer,
     failures: usize = 0,
     warnings: usize = 0,
+    default_provider: []const u8 = "",
 
     fn line(self: *Report, status: Status, label: []const u8, detail: []const u8) void {
         switch (status) {
@@ -133,6 +134,7 @@ fn runChecks(
         return;
     };
     rep.line(.ok, "config parses", "");
+    rep.default_provider = cfg.default_provider;
 
     // A default_provider naming nothing is refused at load, so reaching here
     // means it resolves; the useful thing left to say is which one it is, and
@@ -330,8 +332,8 @@ pub fn cmdDoctor(init: std.process.Init) !void {
     // Compact diagnostic line designed for copy-paste into bug reports and
     // support threads: version, platform, and outcome in one string.
     rep.w.print(
-        "diagnostic: clanker/{s} {s}/{s} failures={d} warnings={d}\n",
-        .{ build_options.version, plat_os, plat_arch, rep.failures, rep.warnings },
+        "diagnostic: clanker/{s} {s}/{s} provider={s} failures={d} warnings={d}\n",
+        .{ build_options.version, plat_os, plat_arch, rep.default_provider, rep.failures, rep.warnings },
     ) catch {};
     out.interface.flush() catch {};
     // A non-zero exit lets `clanker doctor` guard a script or a CI step.
