@@ -619,9 +619,11 @@ fn flattenEval(arena: std.mem.Allocator, sess: *Session, body: []const u8) ![]u8
 
 fn writeEvents(s: *std.json.Stringify, events: []const []const u8) !void {
     try s.beginArray();
-    for (events) |e| {
-        // Events are raw JSON objects; write as a string so the array stays valid.
-        try s.write(e);
+    for (events, 0..) |e, i| {
+        if (i != 0) try s.writer.*.writeByte(',');
+        // Events are raw JSON objects; embed them directly, matching renderResult,
+        // so the events array carries objects, never double-encoded strings.
+        if (e.len > 0 and e[0] == '{') try s.writer.*.writeAll(e) else try s.writer.*.writeAll("null");
     }
     try s.endArray();
 }
@@ -935,4 +937,14 @@ test "pending breakpoints are freed on deinit and on re-queue" {
     // Re-queue replaces the earlier pending breakpoints without leaking them.
     const requeued = try sess.setBreakpoints(std.testing.allocator, "src/debug/dap.zig", lines[0..], null, null);
     try std.testing.expect(std.mem.find(u8, requeued, "\"queued\":true") != null);
+}
+
+test "writeEvents embeds raw event objects instead of stringifying them" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try writeEvents(&s, &.{"{\"seq\":2,\"type\":\"event\",\"event\":\"stopped\"}"});
+    try std.testing.expectEqualStrings("[{\"seq\":2,\"type\":\"event\",\"event\":\"stopped\"}]", out.written());
 }
