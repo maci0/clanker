@@ -7,6 +7,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The `UnknownProvider` hint no longer claims the name is missing from
+  `config.toml`: providers merge from `config.toml` + `config.local.toml`,
+  so a provider defined only locally made the old wording a false lead —
+  it sent the vertex HTTP 400 re-evaluation to the wrong file. The hint
+  now names the merged config.
+
 - `DELETE /api/sessions/<id>` now deletes the conversation's spills and its
   exported transcript, not only `state/sessions/<id>.json`.
 
