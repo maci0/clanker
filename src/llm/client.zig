@@ -256,6 +256,11 @@ fn appendStreamBytes(list: *std.ArrayList(u8), gpa: std.mem.Allocator, bytes: []
 
 const FetchOutcome = struct {
     status: std.http.Status,
+    /// Parsed `Retry-After` (integer seconds, capped) if the response carried
+    /// one, so the non-streaming retry loop can honor it like `chatStream`
+    /// does instead of sleeping the fixed backoff on a rate limit the server
+    /// already priced.
+    retry_after_ns: ?u64 = null,
     /// Response body (gpa-owned).
     body: []u8,
 };
@@ -312,7 +317,12 @@ pub fn chat(
         };
         if (isRetryable(outcome.status) and attempt < max_attempts and !abortWasTriggered(ctx)) {
             noteRetry();
-            const delay = retryDelayNs(ctx.io, attempt);
+            // The provider priced the wait in `Retry-After` (capped in
+            // `parseRetryAfterNs`); fall back to the fixed backoff only when
+            // the header is absent. Sleeping the fixed backoff through a
+            // `Retry-After: 0` "retry now" makes a brief rate limit look like
+            // a stall and stretches every retry storm.
+            const delay = outcome.retry_after_ns orelse retryDelayNs(ctx.io, attempt);
             log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{ @intFromEnum(outcome.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts });
             ctx.gpa.free(outcome.body);
             // A cancellation during the backoff sleep must abort the retry,
@@ -964,32 +974,69 @@ fn doFetch(
     var extra: providers.ExtraHeaders = undefined;
     const extra_len = impl.authHeaders(cred, &headers, &extra);
 
-    const result = client.fetch(.{
-        .location = .{ .url = url },
-        .method = .POST,
-        .payload = body,
+    // Not `client.fetch`: that helper returns only the status and discards
+    // the response head, so the retry loop could never see a `Retry-After`
+    // header. Mirror its mechanics (request/send/receiveHead/read body) with
+    // the head kept alive long enough to parse the header, exactly like the
+    // streaming path in `chatStream` does.
+    const uri = std.Uri.parse(url) catch return error.InvalidUrl;
+
+    var req = client.request(.POST, uri, .{
+        .redirect_behavior = .unhandled,
         .headers = headers,
         .extra_headers = extra[0..extra_len],
-        .response_writer = &w,
     }) catch |err| {
-        // The retry loop in chat() owns the operator-visible log line so a
-        // transient blip is one warn and a terminal failure is one error,
-        // not a debug line that vanishes at the default level.
+        err_detail.* = std.fmt.allocPrint(arena, "couldn't reach '{s}' ({s})", .{ provider.name, @errorName(err) }) catch null;
+        return err;
+    };
+    defer req.deinit();
+
+    req.transfer_encoding = .{ .content_length = body.len };
+    sendStreamBody(&req, body) catch |err| {
         err_detail.* = std.fmt.allocPrint(arena, "couldn't reach '{s}' ({s})", .{ provider.name, @errorName(err) }) catch null;
         return err;
     };
 
-    const response: []const u8 = resp_buf[0..w.end];
+    var redirect_buffer: [http_scratch_buf_bytes]u8 = undefined;
+    var response = req.receiveHead(&redirect_buffer) catch |err| {
+        err_detail.* = std.fmt.allocPrint(arena, "couldn't reach '{s}' ({s})", .{ provider.name, @errorName(err) }) catch null;
+        return err;
+    };
 
-    if (@intFromEnum(result.status) >= 400) {
-        err_detail.* = try httpErrorDetail(arena, impl, provider.name, @intFromEnum(result.status), response);
+    // Read the header before the body read initializes the response stream:
+    // that call invalidates the head's string slices, and the retry decision
+    // happens only after the body has been consumed.
+    const retry_after_ns: ?u64 = if (headerValueIgnoreCase(response.head, "retry-after")) |v| parseRetryAfterNs(v) else null;
+    const status = response.head.status;
+
+    // The client advertises gzip and providers compress bodies too, so the
+    // raw reader would hand back binary. Decompress exactly as `fetch` does
+    // (a no-op on identity-encoded bodies).
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .zstd => try ctx.gpa.alloc(u8, std.compress.zstd.default_window_len),
+        .deflate, .gzip => try ctx.gpa.alloc(u8, std.compress.flate.max_window_len),
+        .compress => return error.UnsupportedCompressionMethod,
+    };
+    defer if (decompress_buffer.len > 0) ctx.gpa.free(decompress_buffer);
+    var transfer_buffer: [64]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+    _ = reader.streamRemaining(&w) catch |err| switch (err) {
+        error.ReadFailed => return response.bodyErr().?,
+        else => |e| return e,
+    };
+
+    if (@intFromEnum(status) >= 400) {
+        err_detail.* = try httpErrorDetail(arena, impl, provider.name, @intFromEnum(status), resp_buf[0..w.end]);
         var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
         log.log(.debug, "provider '{s}' returned {s}", .{ provider.name, redact.forLog(&log_detail_buf, err_detail.*.?) });
     }
 
     return .{
-        .status = result.status,
-        .body = try ctx.gpa.dupe(u8, response),
+        .status = status,
+        .retry_after_ns = retry_after_ns,
+        .body = try ctx.gpa.dupe(u8, resp_buf[0..w.end]),
     };
 }
 
@@ -2107,4 +2154,50 @@ test "chat retries a 503 and gives up after its same-provider attempts" {
     // times and then surfaced the error instead of falling through.
     try std.testing.expectEqual(@as(usize, 3), mock.captured.items.len);
     try std.testing.expect(err_detail != null);
+}
+
+test "chat honors Retry-After on a 429 and retries immediately" {
+    // The non-streaming retry loop used to sleep the fixed backoff through a
+    // rate limit the server had already priced. With `Retry-After: 0` the
+    // retry must fire at once; the fixed path would have slept at least a
+    // second, which is what the elapsed-time bound below distinguishes.
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .openai_after_429);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "mock-429-ra", base_url, .openai_compat, "mock", .{ .max_tokens = 64 });
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var err_detail: ?[]const u8 = null;
+
+    const t0 = std.Io.Timestamp.now(io, .awake);
+    const resp = try chat(&ctx, arena, .{
+        .provider = &provider,
+        .messages = &messages,
+    }, &err_detail);
+    const elapsed_ns = t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
+    const elapsed_ms = @divTrunc(elapsed_ns, std.time.ns_per_ms);
+
+    try std.testing.expectEqualStrings("Hello from the mock", resp.message.content orelse "");
+    try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
+    // Retry-After: 0 means "retry now". The fixed backoff for the first
+    // attempt is 1s + jitter, so a correctly honored header completes well
+    // under the bound and a regression back to the fixed backoff fails it.
+    try std.testing.expect(elapsed_ms < 800);
 }

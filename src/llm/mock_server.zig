@@ -24,6 +24,10 @@ pub const Mode = enum {
     /// First response is 429 with Retry-After: 0; later responses are the
     /// OpenAI SSE stream. Exercises `chatStream`'s same-provider retry.
     openai_stream_after_429,
+    /// First response is 429 with Retry-After: 0; later responses are a
+    /// plain OpenAI chat completion. Exercises `chat`'s same-provider retry
+    /// honoring the header on the non-streaming path.
+    openai_after_429,
     /// Reads the request and deliberately never sends a response. Timeout
     /// tests stop the server after the client has aborted its socket.
     stall,
@@ -198,6 +202,16 @@ pub const MockServer = struct {
             raw_http.writeAllFd(stream.socket.handle, limited);
             return;
         }
+        if (self.mode == .openai_after_429 and n == 0) {
+            const limited =
+                \\{"error":{"message":"rate limited","type":"rate_limit_error"}}
+            ;
+            var lbuf: [4096]u8 = undefined;
+            const lhdr = std.fmt.bufPrint(&lbuf, "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nRetry-After: 0\r\nConnection: close\r\n\r\n", .{limited.len}) catch return;
+            raw_http.writeAllFd(stream.socket.handle, lhdr);
+            raw_http.writeAllFd(stream.socket.handle, limited);
+            return;
+        }
         const pair = switch (self.mode) {
             .openai_stream, .openai_stream_after_429 => .{
                 \\data: {"id":"chatcmpl-mock2","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello "},"finish_reason":null}]}
@@ -212,6 +226,13 @@ pub const MockServer = struct {
                 @as(u16, 200),
                 @as([]const u8, "OK"),
                 @as([]const u8, "text/event-stream"),
+            },
+            .openai_after_429 => .{
+                \\{"id":"chatcmpl-mock4","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hello from the mock"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":5,"total_tokens":10}}
+                ,
+                @as(u16, 200),
+                @as([]const u8, "OK"),
+                @as([]const u8, "application/json"),
             },
             .anthropic_text => .{
                 \\{"id":"msg_mock","type":"message","role":"assistant","model":"mock","content":[{"type":"text","text":"Hello from Anthropic-mock"}],"stop_reason":"end_turn","usage":{"input_tokens":7,"output_tokens":6}}
