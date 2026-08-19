@@ -30,6 +30,37 @@ export function initRuns(ctx) {
   showView = ctx.showView;
   viewLoaded = ctx.viewLoaded;
   parseRunsHash = ctx.parseRunsHash;
+
+  /* The listbox's rows all carry tabindex=-1, so Tab lands on the container
+     and stops there — no option is reachable. The adjacent native <select>
+     covers the flow, but a listbox whose options only answer to the mouse is
+     dead weight for a keyboard user, so arrows/Home/End move the selection
+     here instead. Each move is the same act as clicking a row (selection
+     through the select, graph load, row highlight), and loadRun's "Loading
+     run …" status write announces it. */
+  if (el.runList) {
+    el.runList.addEventListener("keydown", function (e) {
+      var rows = el.runList.querySelectorAll(".run-row");
+      if (!rows.length) return;
+      var idx = 0;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].getAttribute("aria-selected") === "true") { idx = i; break; }
+      }
+      if (e.key === "Home") {
+        idx = 0;
+      } else if (e.key === "End") {
+        idx = rows.length - 1;
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        idx = (idx + (e.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length;
+      } else {
+        return;
+      }
+      e.preventDefault();
+      var row = rows[idx];
+      selectRunFromList(row.dataset.runId);
+      row.focus();
+    });
+  }
 }
 
 // ---- runs: pick a recorded run, draw its execution graph ----------------

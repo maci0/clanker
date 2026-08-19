@@ -350,9 +350,12 @@ const Usage = struct {
     /// reporting different numbers for the same request.
     fn prompt(self: Usage) api.PromptUsage {
         return .{
-            .tokens = self.input_tokens + self.cache_read_input_tokens + self.cache_creation_input_tokens,
+            // Saturating: each field is a u32 from the wire and the sum of all
+            // three can exceed the type; a wrapped prompt total would land in
+            // the stored stats log.
+            .tokens = self.input_tokens +| self.cache_read_input_tokens +| self.cache_creation_input_tokens,
             .cache_hit_tokens = self.cache_read_input_tokens,
-            .cache_miss_tokens = self.input_tokens + self.cache_creation_input_tokens,
+            .cache_miss_tokens = self.input_tokens +| self.cache_creation_input_tokens,
         };
     }
 

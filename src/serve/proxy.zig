@@ -782,14 +782,18 @@ fn usageFromValue(v: json.Value) ?types.Usage {
         const cache_read = jsonU32(obj.get("cache_read_input_tokens")) orelse 0;
         const cache_create = jsonU32(obj.get("cache_creation_input_tokens")) orelse 0;
         const output = jsonU32(obj.get("output_tokens")) orelse 0;
-        u.prompt_tokens = input + cache_read + cache_create;
+        // Each field is clamped to u32 by jsonU32, but their sums can exceed
+        // it. Saturating adds keep an upstream reporting absurd counts from
+        // wrapping to a small total in the stored stats (or panicking the
+        // request handler in a Debug build).
+        u.prompt_tokens = input +| cache_read +| cache_create;
         u.completion_tokens = output;
         u.prompt_cache_hit_tokens = cache_read;
-        u.prompt_cache_miss_tokens = input + cache_create;
-        u.total_tokens = u.prompt_tokens + u.completion_tokens;
+        u.prompt_cache_miss_tokens = input +| cache_create;
+        u.total_tokens = u.prompt_tokens +| u.completion_tokens;
         return u;
     }
-    if (u.total_tokens == 0) u.total_tokens = u.prompt_tokens + u.completion_tokens;
+    if (u.total_tokens == 0) u.total_tokens = u.prompt_tokens +| u.completion_tokens;
     if (u.prompt_cache_miss_tokens == 0 and u.prompt_tokens >= u.prompt_cache_hit_tokens)
         u.prompt_cache_miss_tokens = u.prompt_tokens - u.prompt_cache_hit_tokens;
     if (u.prompt_tokens == 0 and u.completion_tokens == 0 and u.total_tokens == 0) return null;
@@ -1441,6 +1445,29 @@ test "sseFrameEnd finds both LF and CRLF frame separators" {
     try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\n\nrest"));
     try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\r\n\r\nrest"));
     try std.testing.expect(sseFrameEnd("abc\r\n") == null);
+}
+
+test "usageFromValue saturates sums instead of wrapping huge upstream counts" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // Each field is within u32, but the sums are not: a misbehaving upstream
+    // reporting 3G input + 2G cached must not wrap to a small total in the
+    // stored stats (or panic the request handler in a Debug build).
+    const body = "{\"usage\":{\"input_tokens\":3000000000,\"cache_read_input_tokens\":2000000000,\"output_tokens\":1000000000}}";
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+    const u = (usageFromValue(parsed.object.get("usage").?)).?;
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), u.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 3_000_000_000), u.prompt_cache_miss_tokens);
+    try std.testing.expectEqual(@as(u32, 1_000_000_000), u.completion_tokens);
+    try std.testing.expectEqual(@as(u32, std.math.maxInt(u32)), u.total_tokens);
+    // Normal values are unchanged by the saturating arithmetic.
+    const plain_body = "{\"usage\":{\"input_tokens\":100,\"cache_read_input_tokens\":20,\"cache_creation_input_tokens\":5,\"output_tokens\":30}}";
+    const plain_parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, plain_body, .{});
+    const p = (usageFromValue(plain_parsed.object.get("usage").?)).?;
+    try std.testing.expectEqual(@as(u32, 125), p.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 105), p.prompt_cache_miss_tokens);
+    try std.testing.expectEqual(@as(u32, 155), p.total_tokens);
 }
 
 test "models list and get are scoped to the route family" {

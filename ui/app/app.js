@@ -3533,8 +3533,18 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
 var CHAT_EMOJI_PICKER_SET = ["👍","❤️","🎉","🔥","👀","✅","😀","😂","😅","😊","🙌","🙏","👏","💯","🚀","⚠️","❌","🤔","😢","👋","🎯","💡","✨","🐛"];
 if (el.chatEmojiBtn && el.chatEmojiPicker) {
   if (!el.chatEmojiBtn.querySelector("svg")) uiAdd(el.chatEmojiBtn, icon("smile", 16));
-  el.chatEmojiBtn.addEventListener("click", function () {
-    if (!el.chatEmojiPicker.hidden) { el.chatEmojiPicker.hidden = true; return; }
+  /* Expanded state travels with visibility: the toggle is a button, so a
+     screen reader needs aria-expanded to know a popup is open, and Esc must
+     close it the way it closes every other popup on the page. Focus follows
+     the open/close: into the first emoji on open, back to the trigger on
+     Esc. */
+  function closeEmojiPicker(returnFocus) {
+    if (el.chatEmojiPicker.hidden) return;
+    el.chatEmojiPicker.hidden = true;
+    el.chatEmojiBtn.setAttribute("aria-expanded", "false");
+    if (returnFocus && el.chatEmojiPicker.contains(document.activeElement)) el.chatEmojiBtn.focus();
+  }
+  function openEmojiPicker() {
     el.chatEmojiPicker.textContent = "";
     CHAT_EMOJI_PICKER_SET.forEach(function (emoji) {
       var b = document.createElement("button");
@@ -3547,17 +3557,36 @@ if (el.chatEmojiBtn && el.chatEmojiPicker) {
         el.chatText.value = el.chatText.value.slice(0, start) + emoji + el.chatText.value.slice(end);
         el.chatText.focus();
         el.chatText.selectionStart = el.chatText.selectionEnd = start + emoji.length;
-        el.chatEmojiPicker.hidden = true;
+        closeEmojiPicker(false);
         syncChatSend();
       });
       el.chatEmojiPicker.appendChild(b);
     });
     el.chatEmojiPicker.hidden = false;
+    el.chatEmojiBtn.setAttribute("aria-expanded", "true");
+    var first = el.chatEmojiPicker.querySelector("button");
+    if (first) first.focus();
+  }
+  el.chatEmojiBtn.addEventListener("click", function () {
+    if (!el.chatEmojiPicker.hidden) { closeEmojiPicker(true); return; }
+    openEmojiPicker();
+  });
+  el.chatEmojiBtn.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !el.chatEmojiPicker.hidden) {
+      e.preventDefault();
+      closeEmojiPicker(false);
+    }
+  });
+  el.chatEmojiPicker.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeEmojiPicker(true);
+    }
   });
   document.addEventListener("click", function (e) {
     if (el.chatEmojiPicker.hidden) return;
     if (e.target === el.chatEmojiBtn || el.chatEmojiPicker.contains(e.target)) return;
-    el.chatEmojiPicker.hidden = true;
+    closeEmojiPicker(false);
   });
 }
 

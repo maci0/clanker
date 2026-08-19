@@ -75,6 +75,12 @@ pub fn entryLine(arena: std.mem.Allocator, entry: Entry) ![]u8 {
 }
 
 pub fn isBetter(new_val: f64, best_val: ?f64, direction: []const u8) bool {
+    // A non-finite candidate is never better: NaN and Inf comparisons are all
+    // false, so adopting either wedges the loop (nothing can ever beat it) and
+    // a patch gets promoted on a measurement that is not a number. Extraction
+    // rejects non-finite values too; this keeps the decision correct even when
+    // one reaches it directly.
+    if (!std.math.isFinite(new_val)) return false;
     if (best_val == null) return true;
     if (std.mem.eql(u8, direction, "max")) return new_val > best_val.?;
     return new_val < best_val.?;
@@ -100,6 +106,9 @@ pub fn bestMetricOf(arena: std.mem.Allocator, raw: []const u8, direction: []cons
             .number_string => |str| std.fmt.parseFloat(f64, str) catch continue,
             else => continue,
         };
+        // A ledger line written as `1e999` parses to +inf; adopting it makes
+        // it un-beatable and the run stops improving. Skip non-finite metrics.
+        if (!std.math.isFinite(m)) continue;
         if (best == null or isBetter(m, best.?, direction)) best = m;
     }
     return best;
@@ -114,6 +123,28 @@ test "isBetter respects direction" {
     // equal values are not better in either direction
     try std.testing.expect(!isBetter(1.0, 1.0, "min"));
     try std.testing.expect(!isBetter(1.0, 1.0, "max"));
+}
+
+test "isBetter never adopts a non-finite candidate" {
+    try std.testing.expect(!isBetter(std.math.inf(f64), null, "min"));
+    try std.testing.expect(!isBetter(std.math.nan(f64), null, "max"));
+    try std.testing.expect(!isBetter(std.math.inf(f64), 1.0, "max"));
+    try std.testing.expect(!isBetter(std.math.nan(f64), 1.0, "min"));
+}
+
+test "bestMetricOf skips non-finite ledger metrics" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // `1e999` parses to +inf; it must not shadow the real 2.0, and a ledger
+    // holding only non-finite metrics reports no best at all.
+    const raw = "{\"iter\":0,\"ts\":1,\"ok\":true,\"metric\":1e999}\n" ++
+        "{\"iter\":1,\"ts\":2,\"ok\":true,\"metric\":2.0}\n";
+    const best = bestMetricOf(arena, raw, "max");
+    try std.testing.expect(best != null and best.? == 2.0);
+    const inf_only = "{\"iter\":0,\"ts\":1,\"ok\":true,\"metric\":1e999}\n";
+    try std.testing.expect(bestMetricOf(arena, inf_only, "max") == null);
 }
 
 test "tail keeps last lines" {

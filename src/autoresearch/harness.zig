@@ -34,7 +34,11 @@ fn parseFirstFloat(text: []const u8) ?f64 {
             }
             const slice = text[i..end];
             if (std.fmt.parseFloat(f64, slice)) |v| {
-                if (slice.len > 1 or (slice[0] >= '0' and slice[0] <= '9')) return v;
+                // A measurement must be finite: `1e999` parses to +inf, and a
+                // non-finite "best" is unbeatable (NaN/Inf comparisons are all
+                // false), which wedges the loop and can promote a patch on
+                // garbage. Same guard as extractMetric below.
+                if (std.math.isFinite(v) and (slice.len > 1 or (slice[0] >= '0' and slice[0] <= '9'))) return v;
             } else |_| {}
         }
     }
@@ -55,7 +59,12 @@ pub fn extractMetric(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, stdout
                         .number_string => |s| std.fmt.parseFloat(f64, s) catch null,
                         else => null,
                     };
-                    if (f) |val| return val;
+                    // Non-finite values are "no metric", not a measurement:
+                    // once inf or NaN is adopted as best, no real value ever
+                    // beats it, so the run would promote on garbage and then
+                    // refuse every honest improvement. Fall through to the
+                    // stdout/stderr scan like any other absent value.
+                    if (f) |val| if (std.math.isFinite(val)) return val;
                 }
             }
         } else |_| {}
@@ -122,6 +131,27 @@ test "extractMetric handles negatives and scientific notation" {
     const none = extractMetric(gpa, io, tmp.dir, "no numbers", "", "x", "");
     try std.testing.expect(none == null);
 }
+test "extractMetric rejects non-finite values instead of adopting them as best" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // metric.json overflow: 1e999 parses to +inf. It must not become the best
+    // (an inf best can never be beaten), so extraction falls through to stdout.
+    try tmp.dir.writeFile(io, .{ .sub_path = "metric.json", .data = "{\"score\": 1e999}" });
+    const m = extractMetric(gpa, io, tmp.dir, "score: 0.5", "", "score", "score:");
+    try std.testing.expect(m != null and @abs(m.? - 0.5) < 1e-9);
+    // A non-finite metric.json alone reads as no metric at all.
+    try std.testing.expect(extractMetric(gpa, io, tmp.dir, "no numbers here", "", "score", "score:") == null);
+    // A non-finite literal on stdout never escapes as the metric: extraction
+    // either keeps scanning (the exponent's digits re-scan as a finite "999")
+    // or yields nothing, so the promote decision never sees inf/NaN.
+    const after = extractMetric(gpa, io, tmp.dir, "score: 1e999 and 2.5", "", "score", "score:");
+    try std.testing.expect(after != null and std.math.isFinite(after.?));
+}
+
 test "runHarness captures output" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});

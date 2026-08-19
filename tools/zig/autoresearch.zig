@@ -34,15 +34,20 @@ fn appendEntry(out: *lib.Out, obj: std.json.ObjectMap) !void {
     };
     if (run_id.len == 0) return lib.fail(out, "append needs a run id");
     const metric: ?f64 = blk: {
-        if (obj.get("metric")) |v| switch (v) {
-            .float => |f| break :blk f,
-            .integer => |i| break :blk @floatFromInt(i),
-            .number_string => |s| {
-                const f = std.fmt.parseFloat(f64, s) catch break :blk null;
-                break :blk f;
-            },
-            else => break :blk null,
-        } else break :blk null;
+        if (obj.get("metric")) |v| {
+            const f: ?f64 = switch (v) {
+                .float => |x| x,
+                .integer => |x| @floatFromInt(x),
+                .number_string => |s| std.fmt.parseFloat(f64, s) catch null,
+                else => null,
+            };
+            // Keep non-finite values out of the ledger: `1e999` parses to
+            // +inf, and a non-finite best can never be beaten, so a run that
+            // reads it back wedges on garbage. Mirrors the guard in
+            // harness.zig's extractMetric.
+            if (f) |m| if (std.math.isFinite(m)) break :blk m;
+        }
+        break :blk null;
     };
     const entry = logic.Entry{
         .iter = @intCast(@min(jsonUnsigned(obj, "iter"), std.math.maxInt(u32))),

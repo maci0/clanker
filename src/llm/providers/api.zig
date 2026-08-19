@@ -82,7 +82,10 @@ pub const UsageUpdate = struct {
             acc.prompt_cache_miss_tokens = p.cache_miss_tokens;
         }
         if (self.completion) |c| acc.completion_tokens = c;
-        acc.total_tokens = self.total orelse (acc.prompt_tokens + acc.completion_tokens);
+        // Saturating: prompt + completion can exceed u32 when the provider
+        // reports both near the field limit; a wrapped total would land in the
+        // stored stats log.
+        acc.total_tokens = self.total orelse (acc.prompt_tokens +| acc.completion_tokens);
     }
 };
 
