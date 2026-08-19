@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17, distributed-ledger family added as option R 2026-08-19 (Draft 5), options S and T — TigerBeetle applied as an event spine, and a clanker-native spine scoped to a starting mesh — added the same day. Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
+Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17, distributed-ledger family added as option R 2026-08-19 (Draft 5), options S and T — TigerBeetle applied as an event spine, and a Zig spine of our own scoped to a starting mesh — added the same day; option T's packaging corrected later that day on operator direction (a standalone public Zig project offering clanker a library and/or API, not clanker-internal code). Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -228,7 +228,8 @@ candidates rather than above them.
   OLGP pairing, with clanker hosts as clients of a static 6-replica cluster
   and **no official Zig client**. The fixed schema is also what enables its
   simplicity, so "TigerBeetle but general-purpose" is not a fork — option T
-  instead scopes an in-tree Zig spine to what a starting mesh needs:
+  instead scopes a Zig spine of our own — a standalone public project with
+  clanker as first consumer — to what a starting mesh needs:
   single-writer-per-stream logs (the home-instance rule) replicate with no
   consensus at all — fan-out plus id-dedup, which `chatrooms.fanOut` already
   does — and a staged growth path adds machinery only when a measurement
@@ -1407,7 +1408,7 @@ a central replicated service, not full-state-per-host.
   [deploying](https://docs.tigerbeetle.com/operating/deploying/), all fetched
   2026-08-19.
 
-### T. A clanker-native replicated spine — the build-it-ourselves row, promoted
+### T. A Zig replicated spine of our own — the build-it-ourselves row, promoted
 
 Also asked explicitly (2026-08-19): the operator's observation is that the
 surveyed products answer scale the starting point does not have — Fabric
@@ -1456,7 +1457,27 @@ it:
    products earn their weight.
 
 Setup cost at every stage below 3 is "run clanker", which no external
-candidate in this note matches.
+candidate in this note matches. Stage 1's protocol and measurements live in
+[the spike note](t-stage1-stream-replication-spike.md).
+
+**Packaging — a standalone public project, not clanker internals (operator's
+direction, 2026-08-19, refined the same day).** The spine is founded as its
+own git repository: a Zig project designed with clanker in mind and released
+publicly as a general-purpose tool. Its integration surface is part of the
+design brief: an embeddable Zig library clanker fetches as a dependency (the
+dqlite shape — keeps the single-binary property and PRD 0011's "no second
+daemon" non-goal), and/or a small service API for non-Zig consumers (the
+rqlite shape); which of the two leads is the new project's first design
+decision, not this note's. What the packaging changes, both ways: it fills
+the exact gap option P documents — no general-purpose Zig-native replicated
+store exists, and this would be one — and a public release is how the
+external users and hardening the cons below name ever arrive. The costs: a
+third fetched dependency against constraint 2's budget (zwasm, vaxis), and
+the improve loop no longer reaches the spine through improve-self, since the
+project has its own repository and lifecycle. The stage-1 spike stays a
+throwaway inside clanker's tree to prove the semantics cheaply; whether
+productization extracts the spike's code or starts clean in the new
+repository is an open point for after a green spike.
 
 **What TigerBeetle contributes as a blueprint — and what it does not.** Its
 discipline transfers: fixed-width spine records (an event header of ids,
@@ -1473,11 +1494,13 @@ slice; a hand-rolled owner-lease CAS is another.
 
 - **Pros:** nothing new to operate — the transport is PRD 0011's, the fan-out
   exists, the fold exists; full state per host for the streams each host
-  follows; in-tree and improvable by the loop; right-sized for 2–32 members
+  follows; the spike and stage 1 land in clanker's tree while the productized
+  spine is its own public project (see Packaging); right-sized for 2–32 members
   with a growth path (add consensus only when a measurement demands it).
 - **Cons:** clanker owns delivery, retention and backfill semantics — option
   P's warning stands ("the category of work most likely to be subtly wrong");
-  no external community hardening; cross-host queries need building; the
+  external hardening arrives only if the public release finds users;
+  cross-host queries need building; the
   32-member ceiling is inherited from the PRD until that is revisited.
 - **Unknowns:** backfill/catch-up cost for a host that was down; whether the
   contended-document slice ever outgrows single-owner + CAS; retention policy
@@ -1588,7 +1611,7 @@ know everything".
 | R. immudb | Central + read replicas | n/a — primary is SPOF | none found (gRPC / pg wire / REST gw) | 1 server | KV+SQL+docs | **BUSL 1.1**; replicas reject writes; ledger without the "distributed" |
 | R. Hypercore/Autobase, OrbitDB | **Full per host** | **AP** | none (JS runtime) | Node daemon per host | Logs + docs + KV | Eventual total order that may retroactively reorder |
 | S. TigerBeetle as event spine | Central 6-replica service (hosts are clients) | CP | none official (C tb_client, unverified for Zig 0.16) | Cluster, static membership | No — counts + hashes only | Immutable ordered spine; bodies need a second store |
-| T. Clanker-native spine (build it) | **Full per host** (followed streams) | AP for streams; single-owner docs | n/a — in-tree | **Nothing new** | Spine + docs; bodies local | Owns a deliberately small distributed-systems problem; staged growth |
+| T. A Zig spine of our own (standalone public project) | **Full per host** (followed streams) | AP for streams; single-owner docs | native — a Zig library and/or its own API | **Nothing new** at stage 1; later the project as a dependency | Spine + docs; bodies local | Owns a deliberately small distributed-systems problem; staged growth |
 
 Five observations for whoever writes the RFC, none of them a recommendation:
 
