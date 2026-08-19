@@ -50,7 +50,6 @@ const Report = struct {
     w: *std.Io.Writer,
     failures: usize = 0,
     warnings: usize = 0,
-    default_provider: []const u8 = "",
 
     fn line(self: *Report, status: Status, label: []const u8, detail: []const u8) void {
         switch (status) {
@@ -101,22 +100,6 @@ fn runChecks(
     rep.section("config");
     if (!fileExists(io, "config.toml")) {
         rep.line(.fail, "config.toml", "missing; run `clanker setup`");
-        // Even without config, surface whether tools were ever built so the
-        // user knows which half of the problem to tackle first.
-        if (dirExists(io, "zig-out/tools"))
-            rep.line(.ok, "zig-out/tools/", "present (tools were previously built)")
-        else
-            rep.line(.warn, "zig-out/tools/", "absent; `zig build tools` has not been run");
-        // skills/ and state/ are scaffolded by setup; their absence alongside a
-        // missing config.toml means first-run initialization never completed.
-        if (!dirExists(io, "skills"))
-            rep.line(.warn, "skills/", "absent; run `clanker setup` to scaffold")
-        else
-            rep.line(.ok, "skills/", "");
-        if (!dirExists(io, "state"))
-            rep.line(.warn, "state/", "absent; run `clanker setup` to scaffold")
-        else
-            rep.line(.ok, "state/", "");
         return;
     }
     rep.line(.ok, "config.toml", "");
@@ -134,7 +117,6 @@ fn runChecks(
         return;
     };
     rep.line(.ok, "config parses", "");
-    rep.default_provider = cfg.default_provider;
 
     // A default_provider naming nothing is refused at load, so reaching here
     // means it resolves; the useful thing left to say is which one it is, and
@@ -150,16 +132,6 @@ fn runChecks(
     while (it.next()) |entry| {
         const p = entry.value_ptr;
         const is_default = std.mem.eql(u8, p.name, cfg.default_provider);
-        const label = if (is_default) try std.fmt.allocPrint(arena, "{s} (default)", .{p.name}) else p.name;
-        // A base_url without a scheme produces an opaque runtime connection
-        // failure; surface the typo at startup instead.
-        if (!std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://")) {
-            rep.line(
-                if (is_default) .fail else .warn,
-                label,
-                try std.fmt.allocPrint(arena, "{s} lacks http(s):// scheme", .{p.base_url}),
-            );
-        }
         if (p.api_key_env) |env_name| {
             const set = if (environ_map.get(env_name)) |v| v.len > 0 else false;
             if (set) usable += 1;
@@ -167,7 +139,7 @@ fn runChecks(
             // issues. Only whether the variable holds something.
             rep.line(
                 if (set) .ok else if (is_default) .fail else .warn,
-                label,
+                p.name,
                 if (set) env_name else try std.fmt.allocPrint(arena, "{s} is not set", .{env_name}),
             );
         } else if (llm_registry.forKind(p.kind).auth.file_credential) {
@@ -182,7 +154,7 @@ fn runChecks(
                     "gcloud ADC";
                 rep.line(
                     if (present) .ok else if (is_default) .fail else .warn,
-                    label,
+                    p.name,
                     if (present)
                         try std.fmt.allocPrint(arena, "{s} present", .{kind_label})
                     else
@@ -191,7 +163,7 @@ fn runChecks(
             } else {
                 rep.line(
                     if (is_default) .fail else .warn,
-                    label,
+                    p.name,
                     "no service_account_file or gcloud ADC",
                 );
             }
@@ -203,20 +175,16 @@ fn runChecks(
             // the file is there is the whole answer.
             rep.line(
                 if (present) .ok else if (is_default) .fail else .warn,
-                label,
+                p.name,
                 if (present) "service account file present" else "service account file missing",
             );
         } else {
             // A local runtime (ollama, vllm) needs no credential.
             usable += 1;
-            rep.line(.ok, label, "no credential needed");
+            rep.line(.ok, p.name, "no credential needed");
         }
     }
-    if (cfg.providers.count() == 0) {
-        rep.line(.fail, "providers declared", "none; add at least one provider to config.toml or config.local.toml");
-    } else if (usable == 0) {
-        rep.line(.fail, "any usable provider", "no provider has a credential");
-    }
+    if (usable == 0) rep.line(.fail, "any usable provider", "no provider has a credential");
 
     rep.section("directories");
     for (cfg.agent.tools_dir) |tools_dir| {
@@ -227,31 +195,17 @@ fn runChecks(
             if (present) tools_dir else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{tools_dir}),
         );
     }
-    const broad_sandbox = std.mem.eql(u8, cfg.agent.sandbox_root, "/") or cfg.agent.sandbox_root.len == 0;
     inline for (.{
         .{ "skills_dir", cfg.agent.skills_dir },
         .{ "state_dir", cfg.agent.state_dir },
         .{ "sandbox_root", cfg.agent.sandbox_root },
     }) |pair| {
         const present = dirExists(io, pair[1]);
-        // A sandbox root of "/" or "" grants every tool unrestricted filesystem
-        // access; surface that as a warning rather than silently reporting OK.
-        const broad_grant = std.mem.eql(u8, pair[0], "sandbox_root") and (std.mem.eql(u8, pair[1], "/") or pair[1].len == 0);
-        if (broad_grant and cfg.agent.sandbox_follow_symlinks) {
-            rep.line(.fail, "sandbox_root", "unrestricted filesystem access combined with symlink following makes every path on the system reachable");
-        } else {
-            rep.line(
-                if (broad_grant) .warn else if (present) .ok else .fail,
-                pair[0],
-                if (broad_grant) "grants unrestricted filesystem access to every tool" else if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
-            );
-        }
-    }
-    // sandbox_follow_symlinks lets a link inside a granted prefix reach its
-    // target outside the sandbox; surface that at startup rather than letting it
-    // silently weaken the boundary. Suppressed when already escalated to FAIL above.
-    if (cfg.agent.sandbox_follow_symlinks and !broad_sandbox) {
-        rep.line(.warn, "sandbox_follow_symlinks", "enabled: symlinks inside granted prefixes escape the sandbox");
+        rep.line(
+            if (present) .ok else .fail,
+            pair[0],
+            if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
+        );
     }
     rep.line(
         if (fileExists(io, cfg.agent.system_prompt_file)) .ok else .warn,
@@ -269,17 +223,11 @@ fn runChecks(
     };
     var missing: usize = 0;
     var first_missing: []const u8 = "";
-    var abs_count: usize = 0;
-    var first_abs: []const u8 = "";
     var tools_it = reg.tools.iterator();
     while (tools_it.next()) |entry| {
         if (!fileExists(io, entry.value_ptr.wasm)) {
             missing += 1;
             if (first_missing.len == 0) first_missing = entry.value_ptr.wasm;
-        }
-        if (std.mem.startsWith(u8, entry.value_ptr.wasm, "/")) {
-            abs_count += 1;
-            if (first_abs.len == 0) first_abs = entry.value_ptr.wasm;
         }
     }
     const tool_count = reg.tools.count();
@@ -299,33 +247,6 @@ fn runChecks(
             "{d} missing (e.g. {s}); run `zig build tools`",
             .{ missing, first_missing },
         ));
-    }
-    if (abs_count > 0) {
-        rep.line(.warn, "absolute wasm paths", try std.fmt.allocPrint(
-            arena,
-            "{d} manifest{s} point outside the project tree (e.g. {s}); another local user could swap the binary",
-            .{ abs_count, if (abs_count == 1) "" else "s", first_abs },
-        ));
-    }
-
-    // A zero-length array means no command can ever execute; an empty-string
-    // entry within a non-empty array wildcard-matches every command. Both
-    // weaken the exec permission boundary and are surfaced distinctly.
-    inline for (.{
-        .{ "exec_pattern_allow", cfg.agent.exec_pattern_allow },
-        .{ "repl_exec_allow", cfg.agent.repl_exec_allow },
-    }) |pair| {
-        if (pair[1].len == 0) {
-            rep.line(.fail, pair[0], "zero-length array: no command can ever execute");
-        } else {
-            var wildcard_count: usize = 0;
-            for (pair[1]) |p| {
-                if (p.len == 0 or std.mem.eql(u8, p, "*")) wildcard_count += 1;
-            }
-            if (wildcard_count > 0) {
-                rep.line(.warn, pair[0], try std.fmt.allocPrint(arena, "{d} entr{s} wildcard-match every command", .{ wildcard_count, if (wildcard_count == 1) "y" else "ies" }));
-            }
-        }
     }
 }
 
@@ -347,12 +268,6 @@ pub fn cmdDoctor(init: std.process.Init) !void {
     } else {
         rep.w.writeAll("Everything looks good. Run `clanker providers check` for connectivity.\n") catch {};
     }
-    // Compact diagnostic line designed for copy-paste into bug reports and
-    // support threads: version, platform, and outcome in one string.
-    rep.w.print(
-        "diagnostic: clanker/{s} {s}/{s} provider={s} failures={d} warnings={d}\n",
-        .{ build_options.version, plat_os, plat_arch, rep.default_provider, rep.failures, rep.warnings },
-    ) catch {};
     out.interface.flush() catch {};
     // A non-zero exit lets `clanker doctor` guard a script or a CI step.
     if (rep.failures > 0) std.process.exit(1);
@@ -361,7 +276,7 @@ pub fn cmdDoctor(init: std.process.Init) !void {
 /// Provider name to the env var it reads, for the "what could I use" hint.
 /// Only providers clanker ships in config.toml need an entry; anything else
 /// is reported by name from the config itself.
-fn wouldWork(io: std.Io, environ_map: *std.process.Environ.Map, cfg: *const config.Config, arena: std.mem.Allocator) !?[]const u8 {
+fn wouldWork(environ_map: *std.process.Environ.Map, cfg: *const config.Config, arena: std.mem.Allocator) !?[]const u8 {
     var it = cfg.providers.iterator();
     while (it.next()) |entry| {
         const p = entry.value_ptr;
@@ -369,15 +284,6 @@ fn wouldWork(io: std.Io, environ_map: *std.process.Environ.Map, cfg: *const conf
             if (environ_map.get(env_name)) |v| {
                 if (v.len > 0) return try arena.dupe(u8, p.name);
             }
-        } else if (llm_registry.forKind(p.kind).auth.file_credential) {
-            if (vertex_token.resolveCredentialsPath(arena, p.service_account_file, environ_map)) |path| {
-                if (fileExists(io, path)) return try arena.dupe(u8, p.name);
-            }
-        } else if (p.service_account_file.len > 0) {
-            if (fileExists(io, p.service_account_file)) return try arena.dupe(u8, p.name);
-        } else {
-            // Local runtime: no credential needed.
-            return try arena.dupe(u8, p.name);
         }
     }
     return null;
@@ -429,7 +335,7 @@ pub fn cmdSetup(init: std.process.Init) !void {
         w.print("  Default provider '{s}' has what it needs.\n", .{active}) catch {};
     } else {
         w.print("  Default provider '{s}' has no credential in this environment.\n", .{active}) catch {};
-        if (try wouldWork(io, init.environ_map, &cfg, arena)) |other| {
+        if (try wouldWork(init.environ_map, &cfg, arena)) |other| {
             w.print("  '{s}' does. Set default_provider = \"{s}\" in config.local.toml to use it.\n", .{ other, other }) catch {};
         } else {
             const p = cfg.provider(active) catch null;

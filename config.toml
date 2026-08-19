@@ -447,16 +447,16 @@ max_history = 500
 
 # Turn-time self-repair: watch the stream for a pattern and inject a
 # correction, up to a cap, rather than letting a turn fail on a known-shaped
-# mistake. One conservative rule catches the most common mid-stream error.
-[ttsr]
-max_retries_per_turn = 3
-buffer_bytes = 4096
-
-[[ttsr.rules]]
-name = "no-such-tool"
-pattern = "unknown tool"
-inject = "That tool does not exist. List the tools you have and pick one."
-max_fires = 1
+# mistake. No rules by default, which makes the whole thing inert.
+# [ttsr]
+# max_retries_per_turn = 3
+# buffer_bytes = 4096
+#
+# [[ttsr.rules]]
+# name = "no-such-tool"
+# pattern = "unknown tool"
+# inject = "That tool does not exist. List the tools you have and pick one."
+# max_fires = 1
 
 # Persistent eval kernels: a long-lived subprocess an eval can talk to instead
 # of paying process startup per case. Off by default and worth leaving off
@@ -601,4 +601,3 @@ python_wasi_max_memory_bytes = 268435456
 # updated to match.
 [improve]
 max_context_requests = 5
-plan_phase = true

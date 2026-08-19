@@ -10,7 +10,6 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
-const utf8 = @import("utf8");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -28,29 +27,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const steps = lib.optStr(parsed, "steps_to_reproduce");
     const expected = lib.optStr(parsed, "expected");
     const actual = lib.optStr(parsed, "actual");
-    var severity = lib.optStr(parsed, "severity") orelse "";
-    if (severity.len == 0) severity = "normal";
+    const severity = lib.optStr(parsed, "severity") orelse "normal";
     const environment = lib.optStr(parsed, "environment");
-    const impact = lib.optStr(parsed, "impact");
-    var component: ?[]const u8 = lib.optStr(parsed, "component");
-    if (component == null) {
-        component = inferComponent(title_raw);
-    }
-    if (component == null) {
-        const desc = description orelse "";
-        if (desc.len > 0) component = inferComponent(desc);
-    }
+    const component = lib.optStr(parsed, "component") orelse inferComponent(title_raw);
     const room = lib.optStr(parsed, "room");
-    if (room) |r| {
-        if (r.len == 0) return lib.fail(out, "room must be non-empty and match [a-zA-Z0-9_-]+");
-        for (r) |c| {
-            const ok = (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_' or c == '-';
-            if (!ok) return lib.fail(out, "room must match [a-zA-Z0-9_-]+");
-        }
-    }
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
-    const repro_lang = lib.optStr(parsed, "repro_lang") orelse "sh";
 
     const priority = mapSeverity(severity) orelse {
         var buf: [128]u8 = undefined;
@@ -65,12 +47,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try appendField(&body_buf, "Severity", severity);
     try appendField(&body_buf, "Component", component);
     try appendField(&body_buf, "Environment", environment);
-    try appendField(&body_buf, "Impact", impact);
     try appendSection(&body_buf, "Description", description, null);
     try appendSection(&body_buf, "Steps to Reproduce", steps, null);
     try appendSection(&body_buf, "Expected Behaviour", expected, null);
     try appendSection(&body_buf, "Actual Behaviour", actual, null);
-    try appendSection(&body_buf, "Reproduce", repro, repro_lang);
+    try appendSection(&body_buf, "Reproduce", repro, "sh");
     try appendSection(&body_buf, "Fix hint", fix_hint, "");
 
     const prefix = "[BUG] ";
@@ -78,7 +59,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const title = blk: {
         if (std.ascii.startsWithIgnoreCase(title_raw, "[bug]")) break :blk title_raw;
         const max_title = title_buf.len - prefix.len;
-        const t = utf8.cap(title_raw, max_title);
+        const t = if (title_raw.len > max_title) title_raw[0..max_title] else title_raw;
         break :blk std.fmt.bufPrint(&title_buf, prefix ++ "{s}", .{t}) catch title_raw;
     };
 
@@ -92,17 +73,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.objectField("title");
         try s.write(title);
         try s.objectField("body");
-        if (body_buf.items.len > 32768) {
-            const marker = "\u{2026}[truncated]";
-            const capped = utf8.cap(body_buf.items, 32768 - marker.len);
-            var tmp: std.ArrayList(u8) = .empty;
-            defer tmp.deinit(lib.alloc);
-            try tmp.appendSlice(lib.alloc, capped);
-            try tmp.appendSlice(lib.alloc, marker);
-            try s.write(tmp.items);
-        } else {
-            try s.write(body_buf.items);
-        }
+        try s.write(body_buf.items);
         try s.objectField("column");
         try s.write("backlog");
         try s.objectField("priority");
@@ -165,7 +136,7 @@ fn mapSeverity(sev: []const u8) ?[]const u8 {
 }
 
 fn inferComponent(title: []const u8) ?[]const u8 {
-    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools", "webui", "chat", "memory", "auth", "config", "agent", "evals", "improve", "peers", "records", "hooks", "mcp" };
+    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools", "webui", "chat", "memory", "auth", "config" };
     for (tokens) |tok| {
         if (std.ascii.indexOfIgnoreCase(title, tok)) |_| return tok;
     }
