@@ -4,11 +4,11 @@
 
 - **Question:** llm.client's 'bounded chat aborts a provider that never sends a response' (client.zig:1624) intermittently never returns: the test binary sits at ~0% CPU indefinitely. Seen twice in four otherwise-green runs of one tree on 2026-08-18 (arm64 macOS), once for 3 hours. Suspect: the 2026-08-17 request watchdog sometimes fails to unblock the parked read. Recovery: kill the test binary (match by cwd) and rerun.
 - **Finding:** Investigating on 2026-08-18.
-- **Resolution:** Investigating on 2026-08-18.
+- **Resolution:** Resolved on 2026-08-19. root-caused to the one-shot Abort.trigger + uncancelable read; fixed in bugs/2026-08-19-bounded-chat-one-shot-abort-wedges.md (Abort.triggered latch, retrigger-until-done); two full green suite runs verify
 
 ## Status
 
-Investigating on 2026-08-18.
+Resolved on 2026-08-19. root-caused to the one-shot Abort.trigger + uncancelable read; fixed in bugs/2026-08-19-bounded-chat-one-shot-abort-wedges.md (Abort.triggered latch, retrigger-until-done); two full green suite runs verify
 
 ## Trigger and scope
 
@@ -52,3 +52,6 @@ Kill-and-rerun converged on the fifth attempt (320/320, 0 failed). The
 consecutive wedges in one directory and none in its siblings look like a
 streak, not a property of the directory: the fifth run in that same
 directory passed with no change to the tree.
+## Root cause found (2026-08-19)
+
+Reproduced on pristine ea246c5f: first run wedged, and 'sample' pinned the main thread at client.zig:372 — future.cancel inside Threaded.waitForCancelWithSignaling, futex-waiting forever. Mechanism: chatWithTimeout fires Abort.trigger exactly once at the deadline; a trigger landing before the worker armed the abort (or before its connection reached the pool) shuts down nothing, the worker then parks in a read, and cancel cannot rescue a blocked read. The retry loops added a second wedge shape: a successful trigger surfaces as a retryable transport error and the retry re-opens a connection with no watchdog left. Confirmed defect filed as docs/reports/bugs/2026-08-19-bounded-chat-one-shot-abort-wedges.md, which carries the fix (latched Abort.triggered + retrigger-until-done) and verification.

@@ -72,6 +72,13 @@ pub const Abort = struct {
     mutex: std.Io.Mutex = .init,
     /// Non-null only while a `chat` on some thread is using this client.
     client: ?*std.http.Client = null,
+    /// Latched by `trigger`, including a trigger that found nothing armed.
+    /// The retry loops read it to refuse a retry after a deliberate abort:
+    /// the transport error a shutdown produces is retryable by shape, and a
+    /// retried attempt opens a fresh connection that the one-shot watchdog
+    /// which already fired would never shut down — the request then blocks
+    /// forever in a read nothing will unblock.
+    triggered: std.atomic.Value(bool) = .init(false),
 
     /// Point this handle at the client `chat` is about to use.
     pub fn arm(self: *Abort, io: std.Io, c: *std.http.Client) void {
@@ -94,6 +101,10 @@ pub const Abort = struct {
     pub fn trigger(self: *Abort, io: std.Io) void {
         self.mutex.lockUncancelable(io);
         defer self.mutex.unlock(io);
+        // Latch before checking what is armed: a trigger that raced ahead of
+        // `arm` still means "this call is over", and the request must see
+        // that the moment it next consults the flag.
+        self.triggered.store(true, .release);
         const c = self.client orelse return;
 
         c.connection_pool.mutex.lockUncancelable(io);
@@ -138,6 +149,14 @@ pub const Ctx = struct {
         return .{ .io = self.io, .gpa = self.gpa, .environ_map = self.environ_map };
     }
 };
+
+/// Whether the caller's deadline machinery has already aborted this call.
+/// Consulted by the retry loops: retrying past a deliberate abort opens a
+/// connection no watchdog is left to shut down.
+fn abortWasTriggered(ctx: *const Ctx) bool {
+    const a = ctx.abort orelse return false;
+    return a.triggered.load(.acquire);
+}
 
 /// Response body cap for chat completions (8 MiB).
 const resp_cap = 8 << 20;
@@ -248,7 +267,7 @@ pub fn chat(
             if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
-        if (isRetryable(outcome.status) and attempt < max_attempts) {
+        if (isRetryable(outcome.status) and attempt < max_attempts and !abortWasTriggered(ctx)) {
             noteRetry();
             const delay = retryDelayNs(ctx.io, attempt);
             log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{ @intFromEnum(outcome.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts });
@@ -368,7 +387,25 @@ pub fn chatWithTimeout(
             error.Timeout => {
                 if (done.isSet()) break;
                 if (deadline.durationFromNow(ctx.io).raw.nanoseconds > 0) continue;
-                abort.trigger(ctx.io);
+                // One trigger is not enough. A short deadline can lapse
+                // before the worker has armed the abort, or armed it before
+                // its connection reached the pool; a trigger landing in that
+                // window shuts down nothing, the worker then parks in a read,
+                // and `future.cancel` cannot rescue a blocked read (see
+                // `Abort`) — it wedges this thread alongside the worker.
+                // Keep triggering until the worker itself reports done, and
+                // only then reap the future.
+                while (!done.isSet()) {
+                    abort.trigger(ctx.io);
+                    const tick: std.Io.Clock.Timestamp = .fromNow(ctx.io, .{
+                        .clock = .awake,
+                        .raw = .{ .nanoseconds = @as(i96, deadline_watch_tick_ms) * std.time.ns_per_ms },
+                    });
+                    done.waitTimeout(ctx.io, .{ .deadline = tick }) catch |werr| switch (werr) {
+                        error.Timeout => {},
+                        error.Canceled => break,
+                    };
+                }
                 _ = future.cancel(ctx.io) catch {};
                 return error.Timeout;
             },
@@ -461,7 +498,23 @@ const DeadlineWatch = struct {
             // Order matters: record the verdict before unblocking the reader,
             // so the request thread cannot finish and read `fired` as false.
             self.fired.store(true, .release);
-            self.abort.trigger(self.io);
+            // Retrigger until the request thread reports done. The request
+            // runs on the caller's thread here, so a one-shot trigger that
+            // lands before it armed the abort — or before its connection
+            // reached the pool — unblocks nothing, and with this watchdog
+            // gone that thread would park in its read forever
+            // (docs/reports/investigations/2026-08-18-bounded-chat-abort-test-hangs.md).
+            while (!self.done.isSet()) {
+                self.abort.trigger(self.io);
+                const retick: std.Io.Clock.Timestamp = .fromNow(self.io, .{
+                    .clock = .awake,
+                    .raw = .{ .nanoseconds = @as(i96, deadline_watch_tick_ms) * std.time.ns_per_ms },
+                });
+                self.done.waitTimeout(self.io, .{ .deadline = retick }) catch |err| switch (err) {
+                    error.Timeout => {},
+                    error.Canceled => return,
+                };
+            }
             return;
         }
     }
@@ -749,7 +802,7 @@ fn retryAfterTransportError(
     llm_t0: std.Io.Timestamp,
     err: anyerror,
 ) !bool {
-    if (attempt < max_attempts and isRetryableTransport(err)) {
+    if (!abortWasTriggered(ctx) and attempt < max_attempts and isRetryableTransport(err)) {
         noteRetry();
         try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
         return true;
@@ -923,7 +976,7 @@ pub fn chatStream(
             return err;
         };
 
-        if (isRetryable(response.head.status) and attempt < max_attempts) {
+        if (isRetryable(response.head.status) and attempt < max_attempts and !abortWasTriggered(ctx)) {
             noteRetry();
             const delay = retryDelayForHead(ctx.io, attempt, response.head);
             log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{

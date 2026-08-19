@@ -335,6 +335,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A lapsed LLM deadline can no longer wedge the caller forever. The abort
+  that unblocks a stalled provider read fired exactly once, so a deadline
+  that lapsed before the request had armed it (or pooled its connection)
+  shut down nothing, and the follow-up cancel parked the caller at 0% CPU
+  alongside the stuck read — `zig build test` hung indefinitely in the
+  never-answering-provider tests, and every production
+  `request_timeout_ms` / `stream_idle_timeout_ms` deadline carried the same
+  race. The abort now latches, retries are refused after a deliberate
+  abort, and the deadline side retriggers every 250ms until the request
+  thread actually returns
+  (docs/reports/bugs/2026-08-19-bounded-chat-one-shot-abort-wedges.md).
+
 - After `clanker improve-self` promotes a change, the checkout the command
   was invoked from no longer sits on the promotion's inverse diff.
   `mergeBack` fast-forwards the shared branch ref and used to resync only
