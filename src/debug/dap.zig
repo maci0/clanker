@@ -63,6 +63,7 @@ pub fn decodeFrame(buf: []const u8) ?Decoded {
         }
     }
     const n = content_len orelse return null;
+    if (n > max_frame_bytes) return null;
     if (buf.len < body_start + n) return null;
     return .{ .payload = buf[body_start .. body_start + n], .consumed = body_start + n };
 }
@@ -947,4 +948,10 @@ test "writeEvents embeds raw event objects instead of stringifying them" {
     var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
     try writeEvents(&s, &.{"{\"seq\":2,\"type\":\"event\",\"event\":\"stopped\"}"});
     try std.testing.expectEqualStrings("[{\"seq\":2,\"type\":\"event\",\"event\":\"stopped\"}]", out.written());
+}
+
+test "DAP decode refuses an oversized declared frame before arithmetic" {
+    var evil_buf: [64]u8 = undefined;
+    const evil = try std.fmt.bufPrint(&evil_buf, "Content-Length: {d}\r\n\r\n", .{std.math.maxInt(usize)});
+    try std.testing.expect(decodeFrame(evil) == null);
 }
