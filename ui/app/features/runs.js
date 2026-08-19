@@ -601,16 +601,10 @@ function drawRun(g) {
     chip.type = "button"; chip.className = "secondary"; chip.textContent = "iter " + st.iteration; upgradePfButton(chip);
     chip.title = st.iteration + " · " + (st.llm.label || "llm") + (st.tools.length ? " · " + st.tools.map(function(t){ return t.label; }).join(", ") : "");
     chip.addEventListener("click", function(){
-      // focus first node of this stage (llm)
-      var target = canvas.querySelector('.run-node[data-kind="llm"]');
-      // find by iteration tag neighbour
       var tags = canvas.querySelectorAll(".run-iter-tag");
       for (var ti=0; ti<tags.length; ti++) if (tags[ti].textContent.trim() === String(st.iteration)) {
-        var sib = tags[ti].nextElementSibling;
-        // walk to next llm node near tag
         var x = parseFloat(tags[ti].style.left) + 20;
         var y = parseFloat(tags[ti].style.top) + 11;
-        // fallback: focus canvas center near tag
         canvas.scrollLeft = Math.max(0, x - canvas.clientWidth/2);
         canvas.scrollTop = Math.max(0, y - canvas.clientHeight/2);
         break;
@@ -635,13 +629,10 @@ function drawRun(g) {
       scrubOut.textContent = "iter " + v + " / " + maxIter;
       // dim nodes past scrub point so you can see how the run grew
       canvas.querySelectorAll(".run-node").forEach(function(n){
-        var iterTag = n.previousElementSibling;
-        // find iter via crumb mapping: nearest llm tag — simpler: use data highlight path via iter
         var nodeIter = parseInt(n.getAttribute("data-iter") || "0", 10);
         if (isNaN(nodeIter)) return;
         n.style.opacity = (nodeIter > v) ? "0.2" : "";
       });
-      // keep selected detail in sync: if its iter is now hidden, auto-select nearest visible iter
     });
     el.runGraph.appendChild(scrubWrap);
   }

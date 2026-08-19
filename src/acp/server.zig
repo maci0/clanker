@@ -44,12 +44,7 @@ pub const Connection = struct {
         // stateful when sessions are wired; accepting an unknown id is a no-op
         // per ACP v1.
         if (req.id == null) {
-            if (std.mem.eql(u8, req.method.?, "session/cancel")) {
-                if (req.params) |p| if (p == .object) if (p.object.get("sessionId")) |sid| if (sid == .string) {
-                    if (self.prompt_busy.getPtr(sid.string)) |busy| busy.* = false;
-                };
-                return alloc.dupe(u8, "");
-            }
+            if (std.mem.eql(u8, req.method.?, "session/cancel")) cancelSession(self, req.params);
             return alloc.dupe(u8, "");
         }
 
@@ -74,14 +69,20 @@ pub const Connection = struct {
             return handleSessionPrompt(self, alloc, arena, req.id.?, req.params);
         }
         if (std.mem.eql(u8, req.method.?, "session/cancel")) {
-            if (req.params) |p| if (p == .object) if (p.object.get("sessionId")) |sid| if (sid == .string) {
-                if (self.prompt_busy.getPtr(sid.string)) |busy| busy.* = false;
-            };
+            cancelSession(self, req.params);
             return responseObject(alloc, req.id.?, "{\"stopReason\":\"cancelled\"}");
         }
         return responseError(alloc, req.id.?, -32601, "Method not found");
     }
 };
+
+/// Clears a session's in-flight prompt when a cancel names it. Unknown ids are
+/// a no-op: per ACP v1, cancelling something not running is not an error.
+fn cancelSession(conn: *Connection, params: ?json.Value) void {
+    if (params) |p| if (p == .object) if (p.object.get("sessionId")) |sid| if (sid == .string) {
+        if (conn.prompt_busy.getPtr(sid.string)) |busy| busy.* = false;
+    };
+}
 
 fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.Allocator, id: json.Value, params: ?json.Value) ![]u8 {
     const p = params orelse return responseError(alloc, id, -32602, "session/new requires params");
