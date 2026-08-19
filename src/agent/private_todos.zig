@@ -60,7 +60,7 @@ pub const List = struct {
     }
 
     fn find(self: *List, id: []const u8) ?*Item {
-        if (id.len < 2 or id[0] != 'p') return null;
+        if (!std.mem.startsWith(u8, id, "p")) return null;
         const wanted = std.fmt.parseInt(u32, id[1..], 10) catch return null;
         for (self.items.items) |*it| {
             if (it.id == wanted) return it;
