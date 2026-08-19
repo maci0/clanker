@@ -2879,7 +2879,7 @@ pub const Agent = struct {
                 continue;
             }
             if (pre_hook.decision == .ask) {
-                const allowed = if (self.confirm_fn) |confirm| confirm(tc.name, if (pre_hook.reason.len > 0) pre_hook.reason else argsPreview(tc.arguments)) else false;
+                const allowed = if (self.confirm_fn) |confirm| confirm(tc.name, if (pre_hook.reason.len > 0) pre_hook.reason else confirmArgsPreview(tc.arguments)) else false;
                 if (!allowed) {
                     results[i] = try toolErrorJson(self.arena, "PreToolUse hook requires approval for {s}, but approval was not granted", .{tc.name});
                     continue;
@@ -2894,7 +2894,7 @@ pub const Agent = struct {
             // the first worker spawns.
             if (self.confirm_fn) |confirm| {
                 if (self.reg.get(tc.name)) |t| {
-                    if (t.enabled and t.needsConfirm() and !confirm(tc.name, argsPreview(tc.arguments))) {
+                    if (t.enabled and t.needsConfirm() and !confirm(tc.name, confirmArgsPreview(tc.arguments))) {
                         log.log(.info, "tool '{s}' declined by the user", .{tc.name});
                         results[i] = try toolErrorJson(self.arena, "the user declined this {s} call. Do not retry it unchanged: adjust the approach, or put the question to ask_user.", .{tc.name});
                         continue;
@@ -3567,32 +3567,32 @@ const ToolWorker = struct {
     }
 };
 
-/// Strips trailing punctuation from a candidate exact-match answer only when
-/// the remainder is a number or boolean, so "42." becomes "42" while a string
-/// like "hello." keeps its period (the user asked for the exact value).
 /// What the human is shown when asked to allow a tool call: enough of the
 /// arguments to judge it, never all of them, a whole file write would drown
 /// the question. Truncation backs up to a UTF-8 boundary because the preview
 /// is re-encoded as JSON for the stream event, and a split code point there
 /// is not a smaller preview but a malformed one.
-fn argsPreview(args: []const u8) []const u8 {
+/// The human-facing confirm preview, capped at `args_preview_cap`; distinct
+/// from `loop_guard.argsPreview` (cap 512), which is the model-facing preview
+/// in the loop-guard warning, deliberately shown larger.
+fn confirmArgsPreview(args: []const u8) []const u8 {
     return utf8.cap(args, args_preview_cap);
 }
 
-test argsPreview {
-    try std.testing.expectEqualStrings("short", argsPreview("short"));
+test confirmArgsPreview {
+    try std.testing.expectEqualStrings("short", confirmArgsPreview("short"));
     const long = "x" ** 500;
-    try std.testing.expectEqual(args_preview_cap, argsPreview(long).len);
+    try std.testing.expectEqual(args_preview_cap, confirmArgsPreview(long).len);
     // A multi-byte code point straddling the cap is dropped whole.
     const emoji = ("y" ** 399) ++ "\u{1F600}";
-    try std.testing.expectEqualStrings("y" ** 399, argsPreview(emoji));
+    try std.testing.expectEqualStrings("y" ** 399, confirmArgsPreview(emoji));
 }
 
 /// The error message out of a failed tool result ({"ok":false,"error":"..."}),
 /// for the autolearn log's tool_error events. Without it the aggregated
 /// roadmap item reads "Fix 'git' tool errors (1 failure(s), last: )", a
 /// count with no clue what actually failed. Truncation backs up to a UTF-8
-/// boundary for the same reason as [[argsPreview]].
+/// boundary for the same reason as [[confirmArgsPreview]].
 fn errorDetail(arena: std.mem.Allocator, content: []const u8) []const u8 {
     const cap = 200;
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, content, .{ .ignore_unknown_fields = true }) catch return "";
@@ -3620,6 +3620,9 @@ test errorDetail {
     try std.testing.expectEqualStrings("z" ** 199, errorDetail(arena, long));
 }
 
+/// Strips trailing punctuation from a candidate exact-match answer only when
+/// the remainder is a number or boolean, so "42." becomes "42" while a string
+/// like "hello." keeps its period (the user asked for the exact value).
 fn stripTrailingPunctForExact(s: []const u8) []const u8 {
     var stripped = s;
     while (stripped.len > 0) {
