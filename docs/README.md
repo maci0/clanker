@@ -1165,7 +1165,7 @@ Fields:
   - `base_url`, `api_key_env`, `path` (endpoint path override; defaults per `kind`), `default_model` (only needed with more than one model).
   - `check_timeout_seconds`: how long `providers check` waits for this endpoint before reporting it as timed out, overriding `agent.provider_check_timeout_seconds` for this provider alone. Unset takes the global default; `0` means no ceiling. For a LAN endpoint that either answers instantly or is switched off, a second or two is plenty, while a hosted provider wants the longer global default.
   - Moonshot's `kimi-k3` model supports reasoning (returns a `reasoning` field).
-- `models`: top-level map of `"<provider>/<model>"` → model settings: `provider` (required — which entry under `providers` this belongs to), `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`, `category`.
+- `models`: top-level map of `"<provider>/<model>"` → model settings: `provider` (required — which entry under `providers` this belongs to), `id` (wire SKU when the table key is a local alias), `context_window`, `max_tokens`, `temperature`, `top_p`, `reasoning_effort`, `display`, `cost_per_1m_input`, `cost_per_1m_output`, `capabilities`, `category`, `rpm` (per-name requests-per-minute cap), `tool_schema`/`thinking_schema`/`reasoning_format` (per-model wire overrides, same spellings as the provider-level keys), `base_url`/`path` (endpoint override for this model alone).
 - `agent`:
   - `max_iterations`: tool-call rounds per turn before the run stops (default 50). Hitting it errors the turn, so keep it generous for multi-file work.
   - `compact_threshold_bytes`: if conversation exceeds this, compact history.

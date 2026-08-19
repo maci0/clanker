@@ -125,7 +125,12 @@ fn runChecks(
     else
         rep.line(.warn, "config.local.toml", "absent; defaults from config.toml only");
     // TOML is canonical and the loader reads nothing else; a leftover
-    // pre-migration file silently does nothing, which is worth saying.
+    // pre-migration file silently does nothing, which is worth saying. The
+    // old primary `config.json` is the one most likely to hold settings a
+    // person thinks are still in effect, so it gets a check too, not just
+    // the local override.
+    if (fileExists(io, "config.json"))
+        rep.line(.warn, "config.json", "ignored; convert it to config.toml and delete it");
     if (fileExists(io, "config.local.json"))
         rep.line(.warn, "config.local.json", "ignored; convert to config.local.toml and delete it");
 
