@@ -31,7 +31,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (severity.len == 0) severity = "normal";
     const environment = lib.optStr(parsed, "environment");
     const impact = lib.optStr(parsed, "impact");
-    const component = lib.optStr(parsed, "component") orelse inferComponent(title_raw);
+    var component: ?[]const u8 = lib.optStr(parsed, "component");
+    if (component == null) {
+        component = inferComponent(title_raw);
+    }
+    if (component == null) {
+        const desc = description orelse "";
+        if (desc.len > 0) component = inferComponent(desc);
+    }
     const room = lib.optStr(parsed, "room");
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
