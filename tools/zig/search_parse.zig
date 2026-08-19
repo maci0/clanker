@@ -39,9 +39,64 @@ pub fn isBotChallenge(page: []const u8) bool {
     return std.mem.find(u8, page, "anomaly-modal") != null;
 }
 
+/// Whether one search hit plausibly answers the query: at least two distinct
+/// query terms (or the single term of a one-word query) appear
+/// case-insensitively in its title, snippet, or URL. Terms shorter than three
+/// characters carry no signal and are skipped.
+///
+/// Two, not one, is the load-bearing choice. Bing's RSS endpoint serves
+/// poisoned results that match exactly one word of a multi-word query —
+/// "distributed ledger state store" returned thesaurus entries for
+/// "distributed" — and a one-term threshold keeps all of it. A relevant hit
+/// restates the query's vocabulary; demanding two terms is what separates
+/// immudb from a dictionary page. A query with no usable terms filters
+/// nothing rather than everything.
+pub fn matchesQuery(query: []const u8, r: WebResult) bool {
+    var terms: [16][]const u8 = undefined;
+    var n: usize = 0;
+    var it = std.mem.tokenizeAny(u8, query, " \t\r\n\"'`,.;:!?()[]{}<>/\\|+&=#*-_");
+    outer: while (it.next()) |t| {
+        if (t.len < 3) continue;
+        for (terms[0..n]) |seen| {
+            if (std.ascii.eqlIgnoreCase(seen, t)) continue :outer;
+        }
+        terms[n] = t;
+        n += 1;
+        if (n == terms.len) break;
+    }
+    if (n == 0) return true;
+    const needed = @min(2, n);
+    var hits: usize = 0;
+    for (terms[0..n]) |t| {
+        if (std.ascii.findIgnoreCase(r.title, t) != null or
+            std.ascii.findIgnoreCase(r.snippet, t) != null or
+            std.ascii.findIgnoreCase(r.url, t) != null)
+        {
+            hits += 1;
+            if (hits >= needed) return true;
+        }
+    }
+    return false;
+}
+
+/// Compacts `results` down to the hits that share vocabulary with the query
+/// and returns how many survive. A backend whose whole page was off-topic
+/// compacts to zero, which reads as "returned nothing" to the caller — that
+/// is the point: falling through to the next backend beats collecting noise.
+pub fn keepRelevant(query: []const u8, results: []WebResult) usize {
+    var kept: usize = 0;
+    for (results) |r| {
+        if (!matchesQuery(query, r)) continue;
+        results[kept] = r;
+        kept += 1;
+    }
+    return kept;
+}
+
 /// Fantasy-land checks are untestable here; only pure logic lives in this
-/// module. The network watchers (Bing serving poisoned results, DDG serving a
-/// challenge) land in web_search.zig where the live fetch happens.
+/// module. The live watchers (DDG serving a challenge page) land in
+/// web_search.zig where the fetch happens; what Bing poisoning looks like is
+/// pure text, so its filter (`matchesQuery` above) lives here.
 /// Extracts the first `<name>...</name>` region, slicing into `region`.
 fn extractTag(comptime name: []const u8, region: []const u8) ?[]const u8 {
     const open_tag = "<" ++ name ++ ">";
@@ -594,6 +649,54 @@ test "isBotChallenge detects the anomaly page" {
         "Unfortunately, bots use DuckDuckGo too.<div class=\"anomaly-modal\">",
     ));
     try std.testing.expect(!isBotChallenge("<html><body>real results here</body></html>"));
+}
+
+test "matchesQuery keeps two-term hits and drops one-word poisoning" {
+    // The live shapes from report
+    // 2026-08-19-research-sweep-web-backend-returns-unrelated-results: Bing's
+    // RSS answered "distributed ledger state store" with thesaurus entries
+    // matching only "distributed".
+    const q = "distributed ledger state store";
+    try std.testing.expect(!matchesQuery(q, .{
+        .title = "Distributed - Definition, Meaning & Synonyms | Vocabulary.com",
+        .url = "https://www.vocabulary.com/dictionary/distributed",
+        .snippet = "Something distributed is spread out over an area.",
+    }));
+    try std.testing.expect(matchesQuery(q, .{
+        .title = "immudb - immutable database",
+        .url = "https://immudb.io/",
+        .snippet = "An open source immutable ledger with cryptographic state proofs.",
+    }));
+    // Case-insensitive, and the URL counts as a place a term can appear.
+    try std.testing.expect(matchesQuery(q, .{
+        .title = "QLDB overview",
+        .url = "https://aws.amazon.com/qldb/LEDGER-STORE",
+        .snippet = "",
+    }));
+    // A one-word query needs its one word; with no usable terms nothing is
+    // filtered, because there is no vocabulary to check against.
+    try std.testing.expect(matchesQuery("immudb", .{ .title = "immudb", .url = "", .snippet = "" }));
+    try std.testing.expect(!matchesQuery("immudb", .{ .title = "ChatGPT", .url = "https://openai.com", .snippet = "" }));
+    try std.testing.expect(matchesQuery("a of", .{ .title = "anything", .url = "", .snippet = "" }));
+}
+
+test "keepRelevant compacts a poisoned page to zero and keeps order" {
+    var results = [_]WebResult{
+        .{ .title = "Distributed - Vocabulary.com", .url = "https://vocabulary.com/d", .snippet = "spread out" },
+        .{ .title = "immudb immutable ledger", .url = "https://immudb.io/", .snippet = "database with proofs" },
+        .{ .title = "Dispensed - Vocabulary.com", .url = "https://vocabulary.com/x", .snippet = "given out" },
+        .{ .title = "AWS QLDB ledger database", .url = "https://aws.amazon.com/qldb", .snippet = "journal store" },
+    };
+    const kept = keepRelevant("immutable ledger database", &results);
+    try std.testing.expectEqual(@as(usize, 2), kept);
+    try std.testing.expectEqualStrings("immudb immutable ledger", results[0].title);
+    try std.testing.expectEqualStrings("AWS QLDB ledger database", results[1].title);
+
+    var poisoned = [_]WebResult{
+        .{ .title = "Distributed - Vocabulary.com", .url = "https://vocabulary.com/d", .snippet = "spread out" },
+        .{ .title = "Distribution - Vocabulary.com", .url = "https://vocabulary.com/e", .snippet = "the act" },
+    };
+    try std.testing.expectEqual(@as(usize, 0), keepRelevant("distributed ledger state store", &poisoned));
 }
 
 test "percentEncode encodes reserved, leaves unreserved" {
