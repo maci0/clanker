@@ -500,6 +500,10 @@ pub const Registry = struct {
         return std.mem.order(u8, a.name, b.name) == .lt;
     }
 
+    fn toolDefNameLt(_: void, a: types.ToolDef, b: types.ToolDef) bool {
+        return std.mem.order(u8, a.name, b.name) == .lt;
+    }
+
     /// Converts registry tools into LLM ToolDefs (in the given arena).
     /// Name of the tool that hands out schemas on demand. Defined here
     /// because both the registry (which advertises it) and the agent (which
@@ -628,6 +632,7 @@ pub const Registry = struct {
                 .internal = t.internal,
             });
         }
+        std.mem.sort(types.ToolDef, out.items[1..], {}, toolDefNameLt);
         return out.toOwnedSlice(arena);
     }
 
@@ -644,6 +649,7 @@ pub const Registry = struct {
                 .internal = t.internal,
             });
         }
+        std.mem.sort(types.ToolDef, out.items, {}, toolDefNameLt);
         return out.toOwnedSlice(arena);
     }
 
@@ -1549,4 +1555,30 @@ test "the registry cache stamp changes when a descriptor is added, edited, or to
     // `clanker plugins off` writes only this file; the stamp must see it.
     try dir.writeFile(io, .{ .sub_path = plugins_state_path, .data = "{\"disabled\":[\"echo\"]}" });
     try std.testing.expect(Registry.cacheStamp(io, dir, &dirs) != edited);
+}
+
+test "tool defs are sorted by name so prompts are stable across load order" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var reg = Registry{};
+    try reg.tools.put(arena, "zeta", .{ .name = "zeta", .description = "d", .wasm = "x.wasm", .input_schema = .{ .object = .{} } });
+    try reg.tools.put(arena, "alpha", .{ .name = "alpha", .description = "d", .wasm = "x.wasm", .input_schema = .{ .object = .{} } });
+    try reg.tools.put(arena, "mid", .{ .name = "mid", .description = "d", .wasm = "x.wasm", .input_schema = .{ .object = .{} } });
+
+    const defs = try reg.toToolDefs(arena);
+    try std.testing.expectEqual(@as(usize, 3), defs.len);
+    try std.testing.expectEqualStrings("alpha", defs[0].name);
+    try std.testing.expectEqualStrings("mid", defs[1].name);
+    try std.testing.expectEqualStrings("zeta", defs[2].name);
+
+    const core = [_][]const u8{ "zeta", "alpha", "mid" };
+    var revealed: std.StringArrayHashMapUnmanaged(void) = .empty;
+    const lazy = try reg.lazyToolDefs(arena, &core, &revealed);
+    try std.testing.expectEqual(@as(usize, 4), lazy.len);
+    try std.testing.expectEqualStrings("load_tools", lazy[0].name);
+    try std.testing.expectEqualStrings("alpha", lazy[1].name);
+    try std.testing.expectEqualStrings("mid", lazy[2].name);
+    try std.testing.expectEqualStrings("zeta", lazy[3].name);
 }
