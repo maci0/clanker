@@ -69,7 +69,7 @@ pub fn cmd(init: std.process.Init, opts: Options, fire: runner.Fire, tool: Tool)
 
     const sub = opts.sub;
     if (std.mem.eql(u8, sub, "list")) return list(io, arena, now, tool);
-    if (std.mem.eql(u8, sub, "log")) return showLog(io, arena, tool);
+    if (std.mem.eql(u8, sub, "log")) return showLog(io, arena, tool, opts.arg1);
     if (std.mem.eql(u8, sub, "add")) return add(io, arena, opts, now, tool);
     if (std.mem.eql(u8, sub, "remove")) return remove(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "enable")) return setEnabled(io, arena, opts, true, tool);
@@ -98,10 +98,17 @@ fn nextText(buf: []u8, e: store.Entry, now: i64) []const u8 {
     return cron.formatStamp(buf, next, e.tz_offset_minutes);
 }
 
-fn showLog(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
+fn showLog(io: std.Io, arena: std.mem.Allocator, tool: Tool, count_text: ?[]const u8) !void {
     const result = try callTool(arena, tool, "{\"action\":\"list\"}");
     const recs = try parseLog(arena, result);
-    try out(io, try renderLog(arena, recs));
+    const limit: usize = if (count_text) |text| blk: {
+        const n = std.fmt.parseInt(usize, text, 10) catch {
+            log.log(.error_, "schedule log count '{s}' is not a number", .{text});
+            return Error.BadSubcommand;
+        };
+        break :blk n;
+    } else std.math.maxInt(usize);
+    try out(io, try renderLog(arena, recs, @min(recs.len, limit)));
 }
 
 // ------------------------------------------------------------------ writing --
@@ -382,13 +389,14 @@ fn renderList(arena: std.mem.Allocator, entries: []const store.Entry, now: i64) 
     return w.written();
 }
 
-fn renderLog(arena: std.mem.Allocator, recs: []const store.Record) ![]const u8 {
-    if (recs.len == 0) {
+fn renderLog(arena: std.mem.Allocator, recs: []const store.Record, max_recs: usize) ![]const u8 {
+    const shown = if (recs.len > max_recs) recs[0..max_recs] else recs;
+    if (shown.len == 0) {
         return "no scheduled runs recorded yet (" ++ store.ledger_path ++ ")\n";
     }
     var w: std.Io.Writer.Allocating = .init(arena);
     errdefer w.deinit();
-    for (recs) |r| {
+    for (shown) |r| {
         var when: [32]u8 = undefined;
         try w.writer.print("{s}  {s: <8}{s: <8}{s: <7}{d: >6}ms  {s}", .{
             cron.formatStamp(&when, r.ts, 0),
@@ -538,4 +546,27 @@ test "parsed entries survive later arena allocations" {
 
     const table = try renderList(arena, entries, cron.epochFromCivil(2026, 8, 19, 12, 0, 0));
     try testing.expect(std.mem.find(u8, table, "(bad spec)") == null);
+}
+
+test "renderLog honours a requested record count" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const recs = [_]store.Record{
+        .{ .ts = 200, .id = "sch-2", .cron = "* * * * *", .task = "second task", .trigger = "due", .ok = true },
+        .{ .ts = 100, .id = "sch-1", .cron = "* * * * *", .task = "first task", .trigger = "manual", .ok = false, .err = "boom" },
+    };
+
+    const all = try renderLog(arena, &recs, 2);
+    try testing.expect(std.mem.find(u8, all, "second task") != null);
+    try testing.expect(std.mem.find(u8, all, "first task") != null);
+
+    const one = try renderLog(arena, &recs, 1);
+    try testing.expect(std.mem.find(u8, one, "second task") != null);
+    try testing.expect(std.mem.find(u8, one, "first task") == null);
+
+    const zero = try renderLog(arena, &recs, 0);
+    try testing.expect(std.mem.find(u8, zero, "second task") == null);
+    try testing.expect(std.mem.find(u8, zero, "no scheduled runs recorded yet") != null);
 }
