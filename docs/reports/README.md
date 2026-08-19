@@ -80,6 +80,12 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A throwing plugin mount broke the tab switch instead of showing a tab error](bugs/2026-08-19-webui-plugin-mount-throw-breaks-tab-switch.md) — Resolved
+
+- [Corrupt state/webui_plugins.json was swallowed silently](bugs/2026-08-19-webui-plugin-state-corruption-silent.md) — Resolved
+
+- [A capped scheduled run takes the whole run-due sweep down with it](bugs/2026-08-19-schedule-sweep-dies-with-capped-entry.md) — Resolved
+
 - [The UnknownProvider hint pointed at config.toml although providers merge from config.toml + config.local.toml](bugs/2026-08-19-unknownprovider-hint-names-only-config-toml.md) — Resolved
 
 - [Vertex error bodies reach the operator as a bare HTTP status: the Google error envelope is parsed by no codec and unrecognised bodies are discarded](bugs/2026-08-19-vertex-error-bodies-discarded.md) — Resolved
