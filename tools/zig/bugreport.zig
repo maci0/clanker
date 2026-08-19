@@ -126,6 +126,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 /// `**Name:** value` on its own line. An absent value writes nothing.
 fn appendField(buf: *std.ArrayList(u8), name: []const u8, value: ?[]const u8) !void {
     const v = value orelse return;
+    if (v.len == 0) return;
     try buf.appendSlice(lib.alloc, "**");
     try buf.appendSlice(lib.alloc, name);
     try buf.appendSlice(lib.alloc, ":** ");
