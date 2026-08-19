@@ -56,7 +56,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             std.mem.indexOf(u8, rl, "`") == null and
             std.mem.indexOf(u8, rl, "\r") == null)
         {
-            repro_lang = rl;
+            repro_lang = utf8.cap(rl, 64);
         }
     }
 
