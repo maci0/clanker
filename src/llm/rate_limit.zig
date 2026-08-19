@@ -162,7 +162,7 @@ test "aliases of one wire SKU share a model bucket; distinct SKUs do not" {
     try std.testing.expectEqualStrings("m:xai/grok-4.6", a);
 
     var plain = try config.Provider.single(arena, "xai", "https://api.x.ai/v1", .openai_compat, "grok-3", .{ .max_tokens = 64, .rpm = 10 });
-    var p_buf: [256]u8 = undefined;
-    const p = try modelKey(&p_buf, &plain);
-    try std.testing.expectEqualStrings("m:xai/grok-3", p);
+    var key_buf: [256]u8 = undefined;
+    const key = try modelKey(&key_buf, &plain);
+    try std.testing.expectEqualStrings("m:xai/grok-3", key);
 }

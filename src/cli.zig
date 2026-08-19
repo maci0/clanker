@@ -17459,9 +17459,9 @@ test "findCatalogProvider prefers an exact base_url match over a shared env var"
     // Both moonshotai and moonshotai-cn share the MOONSHOT_API_KEY env var;
     // only the .ai host matches this provider's base_url exactly.
     const p = try config.Provider.single(arena, "kimi-k3", "https://api.moonshot.ai/v1", .openai_compat, "kimi-k3", .{});
-    var p_env = p;
-    p_env.api_key_env = "MOONSHOT_API_KEY";
-    const found = findCatalogProvider(catalog, &p_env) orelse return error.TestUnexpectedResult;
+    var env_override = p;
+    env_override.api_key_env = "MOONSHOT_API_KEY";
+    const found = findCatalogProvider(catalog, &env_override) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("Moonshot AI", found.object.get("name").?.string);
 }
 

@@ -847,7 +847,7 @@ test "build omits unavailable or empty instruction layers; project still include
     const local_heading = "## Project-local operator instructions (.agents/AGENTS.md)";
 
     // Missing file: soft skip.
-    const p_missing = try build(arena, io, .{
+    const prompt_missing = try build(arena, io, .{
         .system_prompt_file = base_path,
         .skills_dir = skills_path,
         .learnings_file = learnings_path,
@@ -855,12 +855,12 @@ test "build omits unavailable or empty instruction layers; project still include
         .project_agents_file = project_path,
         .local_instructions_file = missing_local,
     }, &.{});
-    try std.testing.expect(std.mem.find(u8, p_missing, heading) == null);
-    try std.testing.expect(std.mem.find(u8, p_missing, local_heading) == null);
-    try std.testing.expect(std.mem.find(u8, p_missing, "PROJECT_ONLY_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, prompt_missing, heading) == null);
+    try std.testing.expect(std.mem.find(u8, prompt_missing, local_heading) == null);
+    try std.testing.expect(std.mem.find(u8, prompt_missing, "PROJECT_ONLY_MARKER") != null);
 
     // Empty / whitespace-only file: soft skip.
-    const p_empty = try build(arena, io, .{
+    const prompt_empty = try build(arena, io, .{
         .system_prompt_file = base_path,
         .skills_dir = skills_path,
         .learnings_file = learnings_path,
@@ -868,12 +868,12 @@ test "build omits unavailable or empty instruction layers; project still include
         .project_agents_file = project_path,
         .local_instructions_file = empty_local,
     }, &.{});
-    try std.testing.expect(std.mem.find(u8, p_empty, heading) == null);
-    try std.testing.expect(std.mem.find(u8, p_empty, local_heading) == null);
-    try std.testing.expect(std.mem.find(u8, p_empty, "PROJECT_ONLY_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, prompt_empty, heading) == null);
+    try std.testing.expect(std.mem.find(u8, prompt_empty, local_heading) == null);
+    try std.testing.expect(std.mem.find(u8, prompt_empty, "PROJECT_ONLY_MARKER") != null);
 
     // Empty path string: no global load attempted.
-    const p_none = try build(arena, io, .{
+    const prompt_none = try build(arena, io, .{
         .system_prompt_file = base_path,
         .skills_dir = skills_path,
         .learnings_file = learnings_path,
@@ -881,9 +881,9 @@ test "build omits unavailable or empty instruction layers; project still include
         .project_agents_file = project_path,
         .local_instructions_file = "",
     }, &.{});
-    try std.testing.expect(std.mem.find(u8, p_none, heading) == null);
-    try std.testing.expect(std.mem.find(u8, p_none, local_heading) == null);
-    try std.testing.expect(std.mem.find(u8, p_none, "PROJECT_ONLY_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, prompt_none, heading) == null);
+    try std.testing.expect(std.mem.find(u8, prompt_none, local_heading) == null);
+    try std.testing.expect(std.mem.find(u8, prompt_none, "PROJECT_ONLY_MARKER") != null);
 }
 
 test "build expands @imports in AGENTS.md; missing import soft-skips" {

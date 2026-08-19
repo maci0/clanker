@@ -1682,8 +1682,10 @@ pub const Agent = struct {
         if (msgs.len == 0) return null;
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.ctx.gpa);
-        buf.ensureTotalCapacity(self.ctx.gpa, 4096) catch {};
         var hdr_buf: [96]u8 = undefined;
+        // The summary never exceeds the cap plus this header, so one
+        // reallocation-free build fits in the initial capacity.
+        buf.ensureTotalCapacity(self.ctx.gpa, local_summary_max_bytes + hdr_buf.len) catch {};
         const hdr = std.fmt.bufPrint(&hdr_buf, "[conversation summary: {d} earlier messages compacted (extractive)]\n", .{msgs.len}) catch return null;
         buf.appendSlice(self.ctx.gpa, hdr) catch return null;
 
