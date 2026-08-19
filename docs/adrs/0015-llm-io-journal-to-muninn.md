@@ -3,7 +3,10 @@
 ## Status
 
 Accepted. Records the choice in
-[RFC 0004](../rfcs/0004-llm-io-into-muninndb.md).
+[RFC 0004](../rfcs/0004-llm-io-into-muninndb.md). Not yet
+implemented (2026-08-19): `recordUsage` / `recordFailure` still write only
+`state/token_stats.jsonl`; there is no `state/llm_io.jsonl` journal and no
+`muninn_url` config.
 
 ## Context
 

@@ -3,7 +3,9 @@
 ## Status
 
 Accepted. Records the choice in
-[RFC 0002](../rfcs/0002-chat-upload-into-knowledge.md).
+[RFC 0002](../rfcs/0002-chat-upload-into-knowledge.md). Not yet
+implemented (2026-08-19): no `uploads-<workspace>` / `uploads` collection is
+written; chat uploads still stay on the vision / `@file` paths.
 
 ## Context
 

@@ -2,8 +2,8 @@
 
 ## Status
 
-Shipped. Sources of truth: `src/research/auto_research.zig` (`Loop`) +
-`src/research/harness.zig`, and `src/cli.zig`'s
+Shipped. Sources of truth: `src/autoresearch/loop.zig` (`Loop`) +
+`src/autoresearch/harness.zig`, and `src/cli.zig`'s
 `cmdAutoresearch` (`Command.autoresearch`). The ledger entry shape and the
 stdout/stderr tails live in `tools/zig/autoresearch_logic.zig`, shared with
 the `autoresearch` WASM tool; each iteration's ledger write goes through that

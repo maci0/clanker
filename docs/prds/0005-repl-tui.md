@@ -152,9 +152,9 @@ specific `vxfw` shape, not an open-ended "figure it out":
 | Slash-command fuzzy palette (Ctrl-P) | **Shipped** | Third `PickerKind` over `command_registry`, same modal as `/model`/`/theme`; Tab-complete remains a separate prefix match |
 | Transcript search (Ctrl-R) | **Shipped** | Incremental case-insensitive search over `lines`; drives `view_end` like paging |
 | Line-level markdown outside fences | **Shipped** | `mdLineSegments`: bold/italic/code/headings/bullets on completed + live stream |
-| Multi-line markdown constructs | **Gap** | Tables, block quotes, nested/ordered lists, setext headings still unstyled; `clanker run`'s `MdStream` stays richer |
+| Multi-line markdown constructs | **Shipped (0039)** | Tables, block quotes, nested/ordered lists via `mdLineSegments` (PRD 0039); setext headings still unstyled |
 | Inline `ask_user`/confirm-before-write | **Shipped** | Dedicated ask modal (`ask_open` / `handleAskKey` / `drawAskModal`) on a pthread bridge; `ask_fn` always, `confirm_fn` when `confirm_writes=always` |
-| Multi-line input | **Gap** | `vxfw.TextField` has no multi-line mode; Shift+Enter has no vaxis primitive to hook |
+| Multi-line input | **Shipped (0040)** | Shift+Enter / Alt+Enter newline via `newline_marker` / `takeComposerText` (PRD 0040); Enter still submits |
 | Plan / research modes | **Shipped** | `/plan [on|off]` and `/research [on|off]`; bare commands toggle, status bar shows active modes |
 | Visible stats/compaction | **Shipped** | `src/tui/turn_stats.zig`; status-bar context meter + per-turn line + last-row session strip (same fields as the web `#run-metrics`) + compaction notices |
 
@@ -310,12 +310,16 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       arrives rather than only once the turn lands, and it falls back to plain
       on any parse failure.
 
-      What is still missing is narrower than this item used to claim: it is
-      line-level only, so multi-line constructs (tables, block quotes, nested
-      or ordered lists, setext headings) are not modelled. `clanker run`'s
-      `MdStream` remains the richer renderer.
-- [ ] **Multi-line input** (Shift+Enter or a heredoc paste mode). `vxfw.TextField`
-      is single-line; Enter always submits.
+      What is still missing is narrower than this item used to claim:
+      tables, block quotes and nested/ordered lists now render via
+      `mdLineSegments` (shipped as [PRD 0039](0039-repl-block-level-markdown-tables-block-quotes-nested-lists.md));
+      only setext headings remain unmodelled, where `clanker run`'s
+      `MdStream` stays the richer renderer.
+- [x] **Multi-line input** (Shift+Enter / Alt+Enter newline, Enter submits).
+      Shipped as [PRD 0040](0040-repl-multi-line-input-shift-enter-newline-enter-submits.md):
+      the composer renders one row per line (`drawComposer`), `⏎` is the
+      `newline_marker`, and `takeComposerText` joins the buffer on submit;
+      `vxfw.TextField` itself stays single-line.
 - [ ] **Image / multimodal input.** The web UI has an attachment path (webui
       1.3); this REPL has no route for a task that needs one.
 - [x] **Plan mode toggle.** `/plan [on|off]` updates `Agent.plan_mode`; bare
@@ -328,9 +332,9 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
 
 ## Open questions / future work
 
-- Order of the remaining open items (multi-line input, truecolor
-  autodetection, multimodal) is operator preference; ask/confirm is no longer
-  the surprise gap relative to the web UI.
+- Order of the remaining open items (truecolor autodetection, multimodal) is
+  operator preference; ask/confirm is no longer the surprise gap relative to
+  the web UI.
 - **`Agent.on_compact` hook.** Mid-turn compaction is currently *detected*
   rather than reported: `Agent.maybeCompactMessages` logs and moves on, so
   `stats.summaryState` recognises the summary message it left behind by its

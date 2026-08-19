@@ -24,7 +24,7 @@ This PRD is only about loading more than one already-trusted local directory.
 (`src/toolhost/registry.zig:167`). Nineteen non-test call sites across nine files
 pass it straight through, ten of them in `src/cli.zig` alone:
 `src/cli.zig`, `src/tui/repl.zig`, `src/agent/subagent.zig`,
-`src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/research/auto_research.zig`,
+`src/peers/phonebook.zig`, `src/mcp/server.zig`, `src/autoresearch/loop.zig`,
 `src/doctor.zig`, `src/improve/engine.zig` (`:1230`, `:1467`, `:1725`: three
 sites in the self-improve engine, the consumer most likely to break silently),
 `src/gate/checks.zig` (`toolDescriptorGate`).
@@ -149,7 +149,7 @@ it is easy to assume otherwise.
 
 **Call sites.** `src/cli.zig`, `src/tui/repl.zig`,
 `src/agent/subagent.zig`, `src/peers/phonebook.zig`, `src/mcp/server.zig`,
-`src/research/auto_research.zig`, `src/doctor.zig`, and `src/improve/engine.zig`
+`src/autoresearch/loop.zig`, `src/doctor.zig`, and `src/improve/engine.zig`
 (three sites: `:1230`, `:1467`, `:1725`) all pass
 `cfg.agent.tools_dir` straight to `Registry.load` today; each becomes a
 mechanical no-op change once the type is a slice, since none of them branch on
@@ -218,7 +218,7 @@ behavior). No per-directory `enabled` toggle (remove the entry from
    with a warning naming both paths; missing entry warns and continues.
 3. Call sites: mechanical type adjustment across `src/cli.zig`,
    `src/tui/repl.zig`, `src/agent/subagent.zig`, `src/peers/phonebook.zig`,
-   `src/mcp/server.zig`, `src/research/auto_research.zig`, `src/doctor.zig`,
+   `src/mcp/server.zig`, `src/autoresearch/loop.zig`, `src/doctor.zig`,
    `src/improve/engine.zig` (three sites), `src/gate/checks.zig`: no new
    branching on directory count.
 4. `plugins` harness_config: replace hardcoded

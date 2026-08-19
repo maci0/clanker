@@ -106,13 +106,12 @@ projects, and the strongest case against the recommendation.
 - [RFC 0011 — REPL image/multimodal input](0011-repl-image-multimodal-input.md) — Decided
 - [RFC 0010 — REPL multi-line task input](0010-repl-multi-line-task-input.md) — Decided
 - [RFC 0009 — REPL block-level markdown in the vaxis transcript](0009-repl-block-level-markdown-in-the-vaxis-transcript.md) — Decided
-- [RFC 0009 — REPL block-level markdown rendering](0009-repl-block-level-markdown-rendering.md) — Draft
 - [RFC 0008 — How an agent claims a shared resource before writing it](0008-claims-on-shared-resources.md) — Discussion
 - [RFC 0007 — HTTP surface for the five record-store tools](0007-records-http-surface.md) — Decided
 - [RFC 0006 — Where ck_cas lock sidecars live](0006-where-ck-cas-lock-sidecars-live.md) — Decided
 - [RFC 0001 — Workspace, room, board, and folder hierarchy](0001-workspace-room-board-hierarchy.md) — Decided
-- [RFC 0002: Chat file upload into Knowledge / memory](0002-chat-upload-into-knowledge.md) — Decided (ADR 0014)
-- [RFC 0003: Attachments on a goal card (files and links)](0003-goal-card-file-attachments.md) — Discussion
-- [RFC 0004: Pipe LLM inputs and outputs into MuninnDB](0004-llm-io-into-muninndb.md) — Decided (ADR 0015)
-- [RFC 0005: First-run onboarding](0005-first-run-onboarding.md) — Decided (ADR 0016)
+- [RFC 0002 — Chat file upload into Knowledge / memory](0002-chat-upload-into-knowledge.md) — Decided (ADR 0014)
+- [RFC 0003 — Attachments on a goal card (files and links)](0003-goal-card-file-attachments.md) — Discussion
+- [RFC 0004 — Pipe LLM inputs and outputs into MuninnDB](0004-llm-io-into-muninndb.md) — Decided (ADR 0015)
+- [RFC 0005 — First-run onboarding](0005-first-run-onboarding.md) — Decided (ADR 0016)
 <!-- inventory:rfc:end -->

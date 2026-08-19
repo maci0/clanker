@@ -89,8 +89,8 @@ and Implementation lists checkable file-level phases.
 | [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Shipped | Consecutive canonical-call reminders; configurable thresholds/exclusions |
 | [0030](0030-acp-server.md) | ACP server (`clanker acp`) | In progress | stdio stub + initialize live; session methods open |
 | [0031](0031-tool-result-pruning.md) | Deterministic tool-result pruning | Shipped | Request-only head/tail pruning; saved transcripts stay exact |
-| [0032](0032-mcp-client-bridge.md) | MCP client bridge | In progress | deepseek-code.com audit; needs a new registry dispatch kind |
-| [0033](0033-agent-presets.md) | Agent presets | Shipped | deepseek-code.com audit; supersedes the Feynman "role prompt files" note |
+| [0032](0032-mcp-client-bridge.md) | MCP client bridge | In progress | needs a new registry dispatch kind |
+| [0033](0033-agent-presets.md) | Agent presets | Shipped | supersedes the Feynman "role prompt files" note |
 | [0034](0034-session-subprocs.md) | Session subprocess inspector | Draft | Lists/kills 0016 registry rows from doctor + a guest |
 | [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
 | [0036](0036-sixel-mascot-rendering.md) | SIXEL mascot rendering | Shipped | Kitty → SIXEL → Unicode cells implemented; manual terminal matrix open |

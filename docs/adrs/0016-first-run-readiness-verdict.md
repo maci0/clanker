@@ -3,7 +3,10 @@
 ## Status
 
 Accepted. Records the choice in
-[RFC 0005](../rfcs/0005-first-run-onboarding.md).
+[RFC 0005](../rfcs/0005-first-run-onboarding.md). Partly
+implemented (2026-08-19): the REPL first-turn hint ships (PRD 0005), but the
+structured verdict (`ready` / `blocked` on `GET /api/status`) and
+`state/onboarding.json` do not exist yet.
 
 ## Context
 

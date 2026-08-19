@@ -3,8 +3,8 @@
 ## Status
 
 Accepted. Shipped as [PRD 0004 — Autoresearch](../prds/0004-autoresearch.md);
-the implementation is `src/research/auto_research.zig` and
-`src/research/harness.zig`, with the ledger entry shape shared with the
+the implementation is `src/autoresearch/loop.zig` (`Loop`) and
+`src/autoresearch/harness.zig`, with the ledger entry shape shared with the
 `autoresearch` WASM tool via `tools/zig/autoresearch_logic.zig`.
 
 ## Context
@@ -38,7 +38,7 @@ Three options:
   into one engine means every improve-engine invariant (allowed surface, gate
   policy, staging conventions) grows an "unless this is a research run"
   branch, which is how invariants stop being invariants.
-- **A generic sibling loop.** `src/research/` gets its own state
+- **A generic sibling loop.** `src/autoresearch/` gets its own state
   (`state/autoresearch/<run-id>/`), its own CLI (`clanker autoresearch`), and
   its own read-only WASM tool, while reusing the improve engine's loop shape
   and idioms (`parseProposal`, `validatePath`, `patch_apply` against a staged
@@ -47,11 +47,11 @@ Three options:
 
 ## Decision
 
-Autoresearch is a generic sibling loop in `src/research/`, neither an
+Autoresearch is a generic sibling loop in `src/autoresearch/`, neither an
 extension of the self-improve engine nor a port of the reference design. The
 harness contract is the whole of the domain coupling: any shell command that
 exits 0 and emits one scalar metric, either as `<pattern><number>` in its
-output or as a `metric.json` file (`src/research/harness.zig`'s
+output or as a `metric.json` file (`src/autoresearch/harness.zig`'s
 `extractMetric`). Proposal parsing, path validation and patch application are
 borrowed from the improve engine, so the anti-cheat properties are inherited
 rather than re-derived. State, CLI surface and the results-reading tool are
