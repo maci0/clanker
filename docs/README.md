@@ -52,7 +52,7 @@ pointers (`buildRequest`, `parseResponse`, `parseErrorDetail`,
 `src/llm/providers/`, and listed in the single `registry` table in
 `src/llm/registry.zig`. Keys must not enter the sandbox and the transport is
 on the per-token hot path, which is what rules WASM out:
-[docs/adrs/0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
+[ADR 0004](adrs/0004-providers-are-a-native-vtable-not-wasm.md).
 
 `src/llm/client.zig` is the shared HTTP / SSE / retry / token-counting core.
 It is deliberately one module for every provider and contains no
@@ -87,7 +87,7 @@ header, the URL verb and the credential.
 - **vertex_anthropic**: Anthropic models served by Google Vertex AI. The model name goes in the URL (`.../publishers/anthropic/models/<model>:rawPredict`, `:streamRawPredict` when streaming) and the body carries `anthropic_version` instead of `model`. Set `project` and `location`. The credential is a service-account JSON, gcloud Application Default Credentials (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`), or a pasted access token in `api_key_env`. Tokens are minted in-process and cached until they near expiry. Service-account minting signs the RS256 assertion Google requires in `src/llm/gcp_jwt.zig` (`der` parses the PKCS#8 key, `std.crypto.ff` does the constant-time modular exponentiation, RSASSA-PKCS1-v1_5 padding by hand). User ADC exchanges the refresh token at the same token endpoint. No gcloud subprocess. User ADC also sends `x-goog-user-project` from `project`. Tokens renew automatically: the cache is checked on every request and re-mints five minutes before Google's stated expiry, so a long-running `serve` or REPL session never hits an expired token.
 
 **Auth is a separate axis from the wire format**
-([docs/adrs/0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md)),
+([ADR 0005](adrs/0005-auth-is-a-strategy-axis-separate-from-wire-kind.md)),
 and the split is real in the code: `src/llm/auth.zig` owns **credential
 acquisition** — where the secret comes from — while **header application** —
 how it rides the request — stays each provider's `authHeaders`. Three
@@ -847,9 +847,9 @@ Narrow a search to one store with `--kind report` or `--kind runbook` (default `
 Write them:
 
 ```bash
-clanker reports create investigation 2026-08-16-run-livelock "clanker run never finishes" "TL;DR of the symptom"
-clanker reports append docs/reports/investigations/2026-08-16-run-livelock.md "## New evidence"
-clanker reports update docs/reports/investigations/2026-08-16-run-livelock.md "Investigating." "Resolved."
+clanker reports create investigation 2026-08-19-demo-record "clanker run never finishes" "TL;DR of the symptom"
+clanker reports append docs/reports/investigations/2026-08-19-demo-record.md "## New evidence"
+clanker reports update docs/reports/investigations/2026-08-19-demo-record.md "Investigating." "Resolved."
 ```
 
 `create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation`, `missing-tool` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `missing-tool` records a basic verb clanker lacks: it lands in the investigations store and the tool inserts `missing-clanker-tool-` into the filename after the date itself, so these records are findable by name without trusting the author to mark them. `rename <path> <new-slug>` moves a record inside its own store, rewrites the inventory link under compare-and-swap, preserves a `missing-clanker-tool-` marker whether or not the new slug carries it, and lists every in-store file still naming the old record (mentions elsewhere in the tree are outside the tool's grants — search for them). `append` adds markdown to the end of a record and `update` replaces one exact passage. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.
@@ -876,9 +876,9 @@ Write them:
 
 ```bash
 clanker rfc create "HTTP client for the proxy" "The proxy needs one client and the choice is not recorded"
-clanker rfc append docs/rfcs/0007-http-client-for-the-proxy.md "## Option C"
-clanker rfc recommend docs/rfcs/0007-http-client-for-the-proxy.md "Adopt option B" 7 "Why, and what would move it"
-clanker rfc status docs/rfcs/0007-http-client-for-the-proxy.md decided "Chose option B; see the ADR"
+clanker rfc append docs/rfcs/0022-http-client-for-the-proxy.md "## Option C"
+clanker rfc recommend docs/rfcs/0022-http-client-for-the-proxy.md "Adopt option B" 7 "Why, and what would move it"
+clanker rfc status docs/rfcs/0022-http-client-for-the-proxy.md decided "Chose option B; see the ADR"
 ```
 
 `create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2.

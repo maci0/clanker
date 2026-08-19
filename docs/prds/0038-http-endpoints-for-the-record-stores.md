@@ -136,7 +136,7 @@ idle.
   `toolRefusalStatus`, `respondTool`, `respondCompressible`, `queryParam`,
   `percentDecode`. Not `requestPath`: no record id is read off the path, and
   the router matches against the already query-stripped `path`.
-- [PRD 0037](0037-adr-and-prd-record-stores.md) (soft): added the `adr` and
+- [PRD 0037](0037-decision-and-spec-stores-on-the-cli.md) (soft): added the `adr` and
   `prd` guests and CLI verbs; this extends the same guests to HTTP.
 - `handleSkills` / `skillsRouteToToolInput` in `src/cli.zig` (soft): the
   pattern the pure route function copies.

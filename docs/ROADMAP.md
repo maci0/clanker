@@ -313,7 +313,7 @@ crept back outside `providers/`)**
   with no provider surface; pin: byte-stable ordering for prompt-cache
   hits must stay host-controlled.
 
-**Profiles (`--profile` + `--dump-config`)** — **shipped 2026-08-17:** `clanker --profile <name>` reads `profiles/<name>.toml` as an overlay between `config.local.toml` and env/flags (`src/config.zig:Config.loadWithProfile`, `src/cli.zig` global flags, `src/main.zig` --dump-config printer); `profiles/web.toml` and `profiles/headless.toml` ship as examples. Cheap, composes with hot reload, and gives the plugin surfaces a way to ship curated bundles. ([RFC 0012](../rfcs/0012-named-config-profiles-profile-and-dump-config.md) → [ADR 0024](../adrs/0024-config-profiles-are-a-file-overlay-with-profile-and-dump.md) → [PRD 0042](../prds/0042-config-profiles-profile-and-dump-config-file-overlay.md))
+**Profiles (`--profile` + `--dump-config`)** — **shipped 2026-08-17:** `clanker --profile <name>` reads `profiles/<name>.toml` as an overlay between `config.local.toml` and env/flags (`src/config.zig:Config.loadWithProfile`, `src/cli.zig` global flags, `src/main.zig` --dump-config printer); `profiles/web.toml` and `profiles/headless.toml` ship as examples. Cheap, composes with hot reload, and gives the plugin surfaces a way to ship curated bundles. ([RFC 0012](rfcs/0012-named-config-profiles-profile-and-dump-config.md) → [ADR 0024](adrs/0024-config-profiles-are-a-file-overlay-with-profile-and-dump.md) → [PRD 0042](prds/0042-config-profiles-profile-and-dump-config-file-overlay.md))
 
 **Verified clean / must stay core**
 

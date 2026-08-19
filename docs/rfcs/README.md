@@ -29,7 +29,7 @@ Open a numbered scaffold, optionally seeded from a research note:
 Record the recommendation with its confidence:
 
 ```json
-{"action":"recommend","path":"docs/rfcs/0007-http-client-for-the-proxy.md","recommendation":"Option A, std.http, with a review if the proxy ever needs HTTP/2.","confidence":7,"rationale":"No new dependency, and the missing features are not on the roadmap."}
+{"action":"recommend","path":"docs/rfcs/0022-http-client-for-the-proxy.md","recommendation":"Option A, std.http, with a review if the proxy ever needs HTTP/2.","confidence":7,"rationale":"No new dependency, and the missing features are not on the roadmap."}
 ```
 
 All of these are actions of the `rfc` tool. Everything below is detail.

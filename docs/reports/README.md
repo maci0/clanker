@@ -186,8 +186,6 @@ Project agents receive this workflow through the harness prompt and
 
 - [Isolated-run e2e still called the removed `goal` guest](bugs/2026-08-16-worktree-e2e-calls-removed-goal-tool.md) — Resolved
 
-- [research status action never updates the README inventory entry](bugs/2026-08-16-research-status-leaves-inventory-draft.md) — Resolved
-
 - [Worker parallel sandbox omitted tool_self_name, failing capability evals in improve-self](bugs/2026-08-16-worker-sandbox-missing-tool-self-name.md) — Resolved
 
 - [Compaction repeats forever when the history it cannot move exceeds the threshold](bugs/2026-08-16-compaction-cannot-shrink-immovable-history.md) — Resolved
