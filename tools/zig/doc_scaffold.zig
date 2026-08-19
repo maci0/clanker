@@ -389,6 +389,37 @@ pub fn tldrField(text: []const u8, field: []const u8) ?[]const u8 {
     return std.mem.trim(u8, text[found.value_start..found.line_end], " \t\r");
 }
 
+/// The text of one `**Marker**`-led paragraph inside a section, or null when
+/// the section, the marker, or any text after it is absent.
+///
+/// The caller that needs this is one rewriting a whole section from parts it
+/// was only partly given: a field the caller did not pass has to keep what the
+/// section already says, or the rewrite silently destroys an
+/// operator-written paragraph. The marker must start its line, so a sentence
+/// that merely quotes it does not match; the paragraph runs to its first
+/// blank line or the section end, because wrapped prose is still one field.
+pub fn fieldParagraph(text: []const u8, heading: []const u8, marker: []const u8) ?[]const u8 {
+    const sec = findSection(text, heading) orelse return null;
+    var scan = sec.body_start;
+    while (scan < sec.body_end) {
+        const line_end = @min(std.mem.findPos(u8, text, scan, "\n") orelse sec.body_end, sec.body_end);
+        if (std.mem.startsWith(u8, text[scan..line_end], marker)) {
+            var end = line_end;
+            var next = line_end + 1;
+            while (next < sec.body_end) {
+                const next_end = @min(std.mem.findPos(u8, text, next, "\n") orelse sec.body_end, sec.body_end);
+                if (std.mem.trim(u8, text[next..next_end], " \t\r").len == 0) break;
+                end = next_end;
+                next = next_end + 1;
+            }
+            const value = std.mem.trim(u8, text[@min(scan + marker.len, end)..end], " \t\r\n");
+            return if (value.len == 0) null else value;
+        }
+        scan = line_end + 1;
+    }
+    return null;
+}
+
 const TldrField = struct { value_start: usize, line_end: usize };
 
 fn findTldrField(text: []const u8, field: []const u8) ?TldrField {
@@ -1318,6 +1349,35 @@ test "replaceTldrField drops a wrapped bullet's continuation lines" {
             "  link and the write lands where every reader looks.",
         tldrField(record, "Resolution").?,
     );
+}
+
+test "fieldParagraph reads a wrapped bold-led paragraph and reports an absent one" {
+    const rfc =
+        "# RFC 0004 — x\n\n## Recommendation\n\n**Recommended option:** A\n\n" ++
+        "**Confidence:** 7/10\n\n" ++
+        "**Why this confidence.** The eval corpus covers the hot path,\n" ++
+        "and a failed soak would sink it.\n\n" ++
+        "**Rationale.** Beats B on cost.\n\n## Open questions\n\nNone.\n";
+    // A wrapped paragraph reads whole, not as its first line.
+    try std.testing.expectEqualStrings(
+        "The eval corpus covers the hot path,\nand a failed soak would sink it.",
+        fieldParagraph(rfc, "## Recommendation", "**Why this confidence.**").?,
+    );
+    try std.testing.expectEqualStrings(
+        "Beats B on cost.",
+        fieldParagraph(rfc, "## Recommendation", "**Rationale.**").?,
+    );
+    // Absent marker, absent section, and a marker with nothing after it are
+    // all "no existing text", not an empty string to preserve.
+    try std.testing.expect(fieldParagraph(rfc, "## Recommendation", "**Reversibility.**") == null);
+    try std.testing.expect(fieldParagraph(rfc, "## Decision", "**Rationale.**") == null);
+    try std.testing.expect(fieldParagraph("## R\n\n**Empty.**\n\nnext\n", "## R", "**Empty.**") == null);
+    // A sentence quoting the marker mid-line does not match it.
+    try std.testing.expect(fieldParagraph(
+        "## R\n\nsee **Reversibility.** below\n",
+        "## R",
+        "**Reversibility.**",
+    ) == null);
 }
 
 test "replaceTldrField stops a wrapped bullet at the next bullet" {

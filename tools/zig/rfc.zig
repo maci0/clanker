@@ -484,12 +484,25 @@ fn recommend(obj: std.json.Value, out: *lib.Out) !void {
     const confidence: u8 = @round(confidence_raw);
     const rationale = lib.str(obj, "rationale") catch
         return lib.fail(out, "recommend needs a rationale: why this beats the runner-up against the stated constraints");
-    const moves = lib.optStr(obj, "moves_confidence") orelse "";
-    const reversibility = lib.optStr(obj, "reversibility") orelse "";
+    const moves_given = lib.optStr(obj, "moves_confidence") orelse "";
+    const reversibility_given = lib.optStr(obj, "reversibility") orelse "";
 
     const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the RFC before writing its recommendation");
     const text = try lib.alloc.dupe(u8, raw);
     const expected = try lib.alloc.dupe(u8, try lib.hash(text));
+
+    // A field the caller did not give keeps what the section already says.
+    // recommend rewrites the whole section, and the CLI verb passes neither
+    // optional field, so writing the placeholder over an existing paragraph
+    // silently destroyed operator-written reasoning.
+    const moves = if (moves_given.len > 0)
+        moves_given
+    else
+        doc.fieldParagraph(text, "## Recommendation", "**Why this confidence.**") orelse "";
+    const reversibility = if (reversibility_given.len > 0)
+        reversibility_given
+    else
+        doc.fieldParagraph(text, "## Recommendation", "**Reversibility.**") orelse "";
 
     var body: std.Io.Writer.Allocating = .init(lib.alloc);
     defer body.deinit();

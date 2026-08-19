@@ -1548,6 +1548,28 @@ test "rfc wasm tool numbers a document, seeds it from research, and bounds its c
     try std.testing.expect(std.mem.find(u8, with_rec, "Keep the flat file for now") != null);
     try std.testing.expect(std.mem.find(u8, with_rec, "## References") != null);
 
+    // A recommend that was not given moves_confidence or reversibility keeps
+    // the section's existing paragraphs instead of writing the template
+    // placeholders over them: the CLI verb passes neither, so the placeholder
+    // branch used to destroy operator-written reasoning on every rerun.
+    const mod4b = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod4b.deinit();
+    const with_fields = try mod4b.executeTool("{\"action\":\"recommend\",\"path\":\"docs/rfcs/0004-key-value-store-for-state.md\",\"recommendation\":\"Keep the flat file for now\",\"confidence\":7,\"rationale\":\"No dependency.\",\"moves_confidence\":\"A failed fsync soak would sink it.\",\"reversibility\":\"Trivial: no data format changes hands.\"}");
+    defer std.testing.allocator.free(with_fields);
+    try std.testing.expect(std.mem.find(u8, with_fields, "\"ok\":true") != null);
+    const mod4c = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod4c.deinit();
+    const rerecommended = try mod4c.executeTool("{\"action\":\"recommend\",\"path\":\"docs/rfcs/0004-key-value-store-for-state.md\",\"recommendation\":\"Keep the flat file for now\",\"confidence\":8,\"rationale\":\"Soak passed.\"}");
+    defer std.testing.allocator.free(rerecommended);
+    try std.testing.expect(std.mem.find(u8, rerecommended, "\"confidence\":8") != null);
+    const rerec = try tmp.dir.readFileAlloc(io, "docs/rfcs/0004-key-value-store-for-state.md", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(rerec);
+    try std.testing.expect(std.mem.find(u8, rerec, "**Why this confidence.** A failed fsync soak would sink it.") != null);
+    try std.testing.expect(std.mem.find(u8, rerec, "**Reversibility.** Trivial: no data format changes hands.") != null);
+    try std.testing.expect(std.mem.find(u8, rerec, "**Rationale.** Soak passed.") != null);
+    try std.testing.expect(std.mem.find(u8, rerec, "_State what evidence") == null);
+    try std.testing.expect(std.mem.find(u8, rerec, "_How hard is this to undo") == null);
+
     // "Decided" without saying what was decided is how an RFC becomes a dead end.
     const mod5 = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
     defer mod5.deinit();
