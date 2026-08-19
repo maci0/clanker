@@ -51,7 +51,6 @@ pub const LlmAccess = struct {
 /// guest actually reserved would corrupt its linear memory, so a module that
 /// stays silent keeps the original, smallest guarantee.
 pub const host_arena_cap = 64 * 1024;
-pub const scratch_cap = 64 * 1024;
 
 /// Error codes returned by ck_* host functions.
 /// Zig standard library directory, resolved by running `zig env`.
