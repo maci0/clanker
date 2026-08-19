@@ -94,9 +94,19 @@ pub const Session = struct {
     disconnect_timeout_ms: u32 = 3_000,
 
     pub fn deinit(self: *Session) void {
+        self.clearPendingBreakpoints();
         for (self.events.items) |e| self.gpa.free(e);
         self.events.deinit(self.gpa);
         self.buf.deinit(self.gpa);
+    }
+
+    fn clearPendingBreakpoints(self: *Session) void {
+        const bp = self.pending_bps orelse return;
+        self.gpa.free(bp.source);
+        self.gpa.free(bp.lines);
+        if (bp.condition) |c| self.gpa.free(c);
+        if (bp.hit_condition) |h| self.gpa.free(h);
+        self.pending_bps = null;
     }
 
     pub fn takeEvents(self: *Session, arena: std.mem.Allocator) ![][]const u8 {
@@ -241,7 +251,7 @@ pub const Session = struct {
         }
         if (self.pending_bps) |bp| {
             _ = self.setBreakpoints(arena, bp.source, bp.lines, bp.condition, bp.hit_condition) catch {};
-            self.pending_bps = null;
+            self.clearPendingBreakpoints();
         }
         return resp orelse "{\"ok\":true}";
     }
@@ -261,6 +271,7 @@ pub const Session = struct {
         hit_condition: ?[]const u8,
     ) ![]const u8 {
         if (self.reg.get(self.session_id, self.kind) == null) {
+            self.clearPendingBreakpoints();
             self.pending_bps = .{
                 .source = try self.gpa.dupe(u8, source),
                 .lines = try self.gpa.dupe(i64, lines),
@@ -900,4 +911,28 @@ test "seq numbers increase across requests" {
     try std.testing.expectEqual(@as(u32, 1), sess.nextSeq());
     try std.testing.expectEqual(@as(u32, 2), sess.nextSeq());
     try std.testing.expectEqual(@as(u32, 3), sess.nextSeq());
+}
+
+test "pending breakpoints are freed on deinit and on re-queue" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+
+    var sess = Session{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .reg = &reg,
+        .session_id = "dbg-pending",
+    };
+    defer sess.deinit();
+
+    const lines = [_]i64{ 42, 43 };
+    const queued = try sess.setBreakpoints(std.testing.allocator, "src/main.zig", lines[0..], "x > 0", "2");
+    try std.testing.expect(std.mem.find(u8, queued, "\"queued\":true") != null);
+
+    // Re-queue replaces the earlier pending breakpoints without leaking them.
+    const requeued = try sess.setBreakpoints(std.testing.allocator, "src/debug/dap.zig", lines[0..], null, null);
+    try std.testing.expect(std.mem.find(u8, requeued, "\"queued\":true") != null);
 }
