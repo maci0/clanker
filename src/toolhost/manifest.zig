@@ -512,6 +512,10 @@ fn checkPolicy(v: *Validator, obj: json.ObjectMap) !void {
         for (cmds) |item| {
             if (item != .string or item.string.len == 0) continue;
             const cmd = item.string;
+            if (std.mem.eql(u8, cmd, "*")) {
+                try v.addFmt(.err, "exec_allow", "\"{s}\" grants nothing: the gate compares argv[0] exactly, so a glob never matches a command", .{cmd});
+                continue;
+            }
             if (std.mem.findScalar(u8, cmd, '/') != null or std.mem.findScalar(u8, cmd, ' ') != null) {
                 try v.addFmt(.err, "exec_allow", "\"{s}\" must be a bare command name: the gate compares argv[0] exactly, so a path or an argument never matches", .{cmd});
             }
@@ -974,4 +978,17 @@ test "sourceCallsModel spots every helper the descriptor gate cares about" {
     try testing.expect(sourceCallsModel("const x = try lib.llmSystem(alloc, sys, prompt);"));
     try testing.expect(sourceCallsModel("lib.subagentBriefed("));
     try testing.expect(!sourceCallsModel("// lib.llmish( is not a helper\nconst y = 1;"));
+}
+
+test "exec_allow glob is rejected as a no-op grant" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rep = try reportFor(arena,
+        \\{ "name": "stars", "description": "d", "wasm": "s.wasm", "input_schema": {"type":"object"},
+        \\  "exec_allow": ["*"] }
+    );
+    try testing.expect(!rep.ok());
+    try testing.expect(hasFinding(rep, .err, "exec_allow"));
 }
