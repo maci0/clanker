@@ -19,12 +19,15 @@ const Request = struct {
 pub const Connection = struct {
     initialized: bool = false,
     session_counter: u32 = 0,
-    sessions: std.StringArrayHashMapUnmanaged(void) = .empty,
+    sessions: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
     prompt_busy: std.StringArrayHashMapUnmanaged(bool) = .empty,
 
     pub fn deinit(self: *Connection, gpa: std.mem.Allocator) void {
         var it = self.sessions.iterator();
-        while (it.next()) |kv| gpa.free(kv.key_ptr.*);
+        while (it.next()) |kv| {
+            gpa.free(kv.key_ptr.*);
+            gpa.free(kv.value_ptr.*);
+        }
         self.sessions.deinit(gpa);
         self.prompt_busy.deinit(gpa);
     }
@@ -103,7 +106,8 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
     conn.session_counter += 1;
     const sid = try std.fmt.allocPrint(arena, "acp-{d}", .{conn.session_counter});
     const owned = try alloc.dupe(u8, sid);
-    try conn.sessions.put(alloc, owned, {});
+    const cwd_dup = try alloc.dupe(u8, cwd);
+    try conn.sessions.put(alloc, owned, cwd_dup);
     try conn.prompt_busy.put(alloc, owned, false);
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
