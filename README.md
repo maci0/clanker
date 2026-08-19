@@ -48,6 +48,13 @@ policy.
 
 ## Quick start
 
+Requirements: **Zig 0.16.x** and, for `zig build test`, **Node ≥ 20**. The Zig
+release is pinned in `build.zig.zon`'s `minimum_zig_version` (CI installs
+exactly that release from it) and the Node version in [.nvmrc](.nvmrc).
+`zig build` and `zig build tools` need no Node — `tools/ts/dist/` is committed
+so a checkout without a Node toolchain still builds and runs every tool — but
+the test step drives its JS suites with `node --test`.
+
 Build the binary, compile the WASM tools, run the test suite, create local
 state, run the complete gate, and enable the repository hooks:
 

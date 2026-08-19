@@ -110,6 +110,15 @@ jobs:
         with:
           use-cache: true
 
+      # `zig build test` runs the ~20 node --test suites under ui/app, so the
+      # runner's floating preinstalled Node would test against whatever version
+      # the image happens to ship. Pin .nvmrc here too, like the linux verify
+      # job; no npm cache is warmed because nothing on this job runs npm.
+      - name: Install Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
       - name: Build and run unit tests
         run: |
           zig build
