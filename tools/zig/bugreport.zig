@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -70,7 +71,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const title = blk: {
         if (std.ascii.startsWithIgnoreCase(title_raw, "[bug]")) break :blk title_raw;
         const max_title = title_buf.len - prefix.len;
-        const t = if (title_raw.len > max_title) title_raw[0..max_title] else title_raw;
+        const t = utf8.cap(title_raw, max_title);
         break :blk std.fmt.bufPrint(&title_buf, prefix ++ "{s}", .{t}) catch title_raw;
     };
 
