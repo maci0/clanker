@@ -411,26 +411,30 @@ function loadSkills() {
       list.forEach(function (sk) {
         var card = document.createElement("div");
         card.className = "skill-card";
-        var box = document.createElement("input");
-        box.type = "checkbox";
-        box.checked = sk.enabled !== false;
-        box.title = box.checked ? "Included in the system prompt" : "Off: not sent to the model";
-        box.addEventListener("change", function () {
-          box.disabled = true;
+        // Not named `box`: this callback used to shadow the #skills container
+        // with the checkbox, so the card was appended into its own checkbox,
+        // a hierarchy cycle the DOM refuses, which made any non-empty skills
+        // list render as "Could not load skills."
+        var check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = sk.enabled !== false;
+        check.title = check.checked ? "Included in the system prompt" : "Off: not sent to the model";
+        check.addEventListener("change", function () {
+          check.disabled = true;
           fetch("/api/skills", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: sk.name, enabled: box.checked })
+            body: JSON.stringify({ name: sk.name, enabled: check.checked })
           })
             .then(_readJson)
             .then(function () { return loadSkills(); })
             .catch(function (err) {
-              box.checked = !box.checked;
+              check.checked = !check.checked;
               if (status) status.textContent = "Skill: " + err.message;
             })
-            .then(function () { box.disabled = false; });
+            .then(function () { check.disabled = false; });
         });
-        card.appendChild(box);
+        card.appendChild(check);
         var name = document.createElement("span");
         name.className = "skill-name";
         name.textContent = sk.title || sk.name.replace(/\.md$/, "");
