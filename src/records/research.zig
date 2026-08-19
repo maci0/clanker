@@ -21,7 +21,6 @@
 //! where a snippet is most likely to be mistaken for a finding.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 const reports_cmd = @import("reports.zig");
@@ -51,9 +50,10 @@ pub const Tool = common.Tool;
 /// not in a column of candidates, and an 80-column terminal cannot hold it
 /// anyway.
 const snippet_bytes: usize = 96;
-/// Statuses are one word ("Draft", "Current", "Stale", "Superseded").
-const status_column_max: usize = 18;
-const status_column_min: usize = 10;
+
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "plan", "sweep", "search", "open", "create", "append", "update", "status" };
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     try common.out(init.io, try run(init.arena.allocator(), opts, tool));
@@ -75,8 +75,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "update")) return update(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
-    log.log(.error_, "unknown research subcommand '{s}' (expected list, plan, sweep, search, open, create, append, update or status)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("research", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --
@@ -88,7 +87,7 @@ fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
 
 fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const query = opts.arg1 orelse {
-        log.log(.error_, "research search needs a query: clanker research search \"embedded kv\"", .{});
+        common.usageError("research search needs a query: clanker research search \"embedded kv\"", .{});
         return Error.MissingArg;
     };
 
@@ -108,7 +107,7 @@ fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 
 fn plan(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const topic = opts.arg1 orelse {
-        log.log(.error_, "research plan needs a topic: clanker research plan \"embedded key-value stores\" \"which one fits a single-writer sidecar?\"", .{});
+        common.usageError("research plan needs a topic: clanker research plan \"embedded key-value stores\" \"which one fits a single-writer sidecar?\"", .{});
         return Error.MissingArg;
     };
     const input = try common.request(arena, &.{
@@ -123,7 +122,7 @@ fn plan(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 
 fn sweep(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const topic = opts.arg1 orelse {
-        log.log(.error_, "research sweep needs a topic: clanker research sweep \"embedded key-value stores\" deep", .{});
+        common.usageError("research sweep needs a topic: clanker research sweep \"embedded key-value stores\" deep", .{});
         return Error.MissingArg;
     };
     const input = try common.request(arena, &.{
@@ -165,7 +164,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "research create needs {s}: clanker research create embedded-kv \"Embedded key-value stores\" \"Which one fits a single-writer sidecar?\"", .{what});
+    common.usageError("research create needs {s}: clanker research create embedded-kv \"Embedded key-value stores\" \"Which one fits a single-writer sidecar?\"", .{what});
     return Error.MissingArg;
 }
 
@@ -217,22 +216,7 @@ pub fn renderList(arena: std.mem.Allocator, index_md: []const u8) ![]const u8 {
 
     try w.writer.writeAll("NOTES\n\n");
     const width = reports_cmd.statusWidth(entries);
-    for (entries) |e| {
-        const status = if (e.note.len > 0 and e.note.len <= status_column_max) e.note else "";
-        try w.writer.splatByteAll(' ', 2);
-        try w.writer.print("{s}", .{status});
-        try w.writer.splatByteAll(' ', width -| status.len);
-        try w.writer.print("{s}\n", .{e.title});
-        try w.writer.splatByteAll(' ', 2 + width);
-        try w.writer.print("{s}\n", .{e.path});
-        // Prose that would not fit the status column keeps its own line rather
-        // than being cut to a width it was never written for.
-        if (status.len == 0 and e.note.len > 0) {
-            try w.writer.splatByteAll(' ', 2 + width);
-            try w.writer.print("{s}\n", .{e.note});
-        }
-        try w.writer.writeByte('\n');
-    }
+    for (entries) |e| try reports_cmd.renderInventoryRow(&w.writer, e, width, 2 + width);
 
     try w.writer.writeAll("NEXT\n\n");
     try w.writer.writeAll("  clanker research open <path>        print one note in full\n");

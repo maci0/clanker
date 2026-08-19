@@ -93,6 +93,8 @@ const webui_vendor_three_core = ui_vendor.three_core;
 const webui_vendor_patternfly = ui_vendor.patternfly;
 const webui_vendor_patternfly_addons = ui_vendor.patternfly_addons;
 const edit_distance = @import("util/edit_distance.zig");
+const no_color = @import("util/no_color.zig");
+const test_env = @import("util/test_env.zig");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
 /// module (see build.zig), so the two can no longer drift apart.
@@ -259,7 +261,22 @@ pub const Options = struct {
     /// `prune --yes`: actually delete. Absent, it only reports, because a
     /// recursive delete is not undoable.
     apply: bool = false,
+    /// `commit --all`: hand smart_commit scope "all" instead of the default
+    /// "staged", so it groups every tracked change rather than only the index.
+    /// The two scopes commit different copies of a file -- "staged" builds each
+    /// group in the index so a hunk-narrowed index lands exactly as staged,
+    /// "all" commits by pathspec and so takes the worktree copy -- which is
+    /// why the choice is the operator's and not a heuristic.
+    commit_all: bool = false,
     verbose: bool = false,
+    /// `--quiet`/`-q`: the other end of `--verbose`. Progress logging is on at
+    /// `info` by default, so a scripted `clanker run` gets `[INFO] ... [exec]`
+    /// tracing on stderr it never asked for and, until this flag, could only
+    /// silence through `CLANKER_LOG_LEVEL` -- an environment variable, for
+    /// something the invocation knows. `--verbose` wins if both are given: it
+    /// is the ask for more, and asking for more and less at once is not a
+    /// mistake worth failing an invocation over.
+    quiet: bool = false,
     /// `serve --webui-port <port>` (and the older `--port`, still accepted).
     /// Named for the surface it serves rather than for the process, leaving
     /// room for a second surface to get its own port without either name
@@ -435,7 +452,7 @@ pub const Options = struct {
     /// Global `--profile <name>`: load `profiles/<name>.toml` as an overlay
     /// between `config.local.toml` and env/flags (ADR 0024).
     profile: ?[]const u8 = null,
-    /// Global `--dump-config`: print the merged config and exit.
+    /// Global `--dump-config`: print the merged config as JSON and exit.
     dump_config: bool = false,
     /// `mesh <sub> [arg]`: "status" (default), "join" takes host:port,
     /// "leave"/"admit"/"deny" take a peer id. Absent leave is self-leave.
@@ -530,6 +547,54 @@ pub fn parse(args: []const []const u8, diag: ?*[]const u8) !Options {
 /// Parse CLI args, returning the resolved command through `cmd_out` (set on
 /// `error.FlagNotForCommand` / `error.BadSubcommand`) so callers can name the
 /// actual command in a help hint even when a global flag precedes it.
+const BoolFlag = struct { spelling: []const u8, field: []const u8, value: bool, flag: Flag };
+const ValueFlag = struct { spelling: []const u8, field: []const u8, flag: Flag };
+
+/// Flags whose whole parse is "set this field, remember the flag". Walked
+/// with `inline for`, so each row compiles to the comparison a hand-written
+/// `else if` had; spellings are distinct, so row order does not matter.
+const bool_flags = [_]BoolFlag{
+    .{ .spelling = "--dry-run", .field = "dry_run", .value = true, .flag = .dry_run },
+    .{ .spelling = "--no-worktree", .field = "no_worktree", .value = true, .flag = .worktree },
+    .{ .spelling = "--yes", .field = "apply", .value = true, .flag = .yes },
+    .{ .spelling = "--all", .field = "commit_all", .value = true, .flag = .commit_all },
+    .{ .spelling = "--tasks", .field = "eval_tasks_only", .value = true, .flag = .tasks },
+    .{ .spelling = "--proxy", .field = "proxy", .value = true, .flag = .proxy },
+    .{ .spelling = "--no-proxy", .field = "proxy", .value = false, .flag = .proxy },
+    .{ .spelling = "--synthesize", .field = "compare_synthesize", .value = true, .flag = .compare_synthesize },
+    .{ .spelling = "--reveal", .field = "compare_reveal", .value = true, .flag = .compare_reveal },
+    .{ .spelling = "--dump-config", .field = "dump_config", .value = true, .flag = .dump_config },
+};
+
+/// The same, for flags taking a value.
+const value_flags = [_]ValueFlag{
+    .{ .spelling = "--provider", .field = "provider", .flag = .provider },
+    .{ .spelling = "--mascot-size", .field = "mascot_size", .flag = .mascot_size },
+    .{ .spelling = "--mascot-facing", .field = "mascot_facing", .flag = .mascot_facing },
+    .{ .spelling = "--mascot-speed", .field = "mascot_speed", .flag = .mascot_speed },
+    .{ .spelling = "--theme", .field = "theme", .flag = .theme },
+    .{ .spelling = "--session", .field = "session", .flag = .session },
+    .{ .spelling = "--goal", .field = "goal", .flag = .goal },
+    .{ .spelling = "--host", .field = "host", .flag = .host },
+    .{ .spelling = "--harness", .field = "research_harness", .flag = .research_harness },
+    .{ .spelling = "--metric", .field = "research_metric", .flag = .research_metric },
+    .{ .spelling = "--pattern", .field = "research_pattern", .flag = .research_pattern },
+    .{ .spelling = "--for", .field = "arena_for", .flag = .arena_for },
+    .{ .spelling = "--against", .field = "arena_against", .flag = .arena_against },
+    .{ .spelling = "--for-provider", .field = "arena_for_provider", .flag = .arena_for_provider },
+    .{ .spelling = "--against-provider", .field = "arena_against_provider", .flag = .arena_against_provider },
+    .{ .spelling = "--show", .field = "compare_show", .flag = .compare_show },
+    .{ .spelling = "--pick", .field = "compare_pick", .flag = .compare_pick },
+    .{ .spelling = "--tz-offset", .field = "schedule_tz", .flag = .schedule_tz },
+    .{ .spelling = "--kind", .field = "reports_kind", .flag = .reports_kind },
+    .{ .spelling = "--judge-provider", .field = "arena_judge_provider", .flag = .arena_judge_provider },
+    .{ .spelling = "--match", .field = "arena_match", .flag = .arena_match },
+    .{ .spelling = "--defend", .field = "arena_defend", .flag = .arena_defend },
+    .{ .spelling = "--alternative", .field = "arena_alternative", .flag = .arena_alternative },
+    .{ .spelling = "--profile", .field = "profile", .flag = .profile },
+    .{ .spelling = "--preset", .field = "preset", .flag = .preset },
+};
+
 pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?*Command) !Options {
     var opts = Options{};
     var idx: usize = 1;
@@ -612,27 +677,29 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         // are legal for is checked once the command is known.
         if (!end_of_flags and a.len > 0 and a[0] == '-') {
             var used: ?Flag = null;
-            if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
+            inline for (bool_flags) |bf| {
+                if (used == null and std.mem.eql(u8, a, bf.spelling)) {
+                    @field(opts, bf.field) = bf.value;
+                    used = bf.flag;
+                }
+            }
+            inline for (value_flags) |vf| {
+                if (used == null and std.mem.eql(u8, a, vf.spelling)) {
+                    @field(opts, vf.field) = try takeValue(args, &idx, inline_value, a, diag);
+                    used = vf.flag;
+                }
+            }
+            if (used != null) {
+                // Handled by the tables above.
+            } else if (std.mem.eql(u8, a, "--verbose") or std.mem.eql(u8, a, "-v")) {
                 opts.verbose = true;
                 used = .verbose;
-            } else if (std.mem.eql(u8, a, "--dry-run")) {
-                opts.dry_run = true;
-                used = .dry_run;
+            } else if (std.mem.eql(u8, a, "--quiet") or std.mem.eql(u8, a, "-q")) {
+                opts.quiet = true;
+                used = .quiet;
             } else if (std.mem.eql(u8, a, "--worktree") or std.mem.eql(u8, a, "-wt")) {
                 opts.worktree = true;
                 used = .worktree;
-            } else if (std.mem.eql(u8, a, "--no-worktree")) {
-                opts.no_worktree = true;
-                used = .worktree;
-            } else if (std.mem.eql(u8, a, "--yes")) {
-                opts.apply = true;
-                used = .yes;
-            } else if (std.mem.eql(u8, a, "--tasks")) {
-                opts.eval_tasks_only = true;
-                used = .tasks;
-            } else if (std.mem.eql(u8, a, "--provider")) {
-                opts.provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .provider;
             } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
                 opts.continue_last = true;
                 used = .continue_last;
@@ -642,18 +709,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 // so consuming the next argv would eat a task or a subcommand.
                 opts.mascot = inline_value orelse "on";
                 used = .mascot;
-            } else if (std.mem.eql(u8, a, "--mascot-size")) {
-                opts.mascot_size = try takeValue(args, &idx, inline_value, a, diag);
-                used = .mascot_size;
-            } else if (std.mem.eql(u8, a, "--mascot-facing")) {
-                opts.mascot_facing = try takeValue(args, &idx, inline_value, a, diag);
-                used = .mascot_facing;
-            } else if (std.mem.eql(u8, a, "--mascot-speed")) {
-                opts.mascot_speed = try takeValue(args, &idx, inline_value, a, diag);
-                used = .mascot_speed;
-            } else if (std.mem.eql(u8, a, "--theme")) {
-                opts.theme = try takeValue(args, &idx, inline_value, a, diag);
-                used = .theme;
             } else if (std.mem.eql(u8, a, "--model") or std.mem.eql(u8, a, "-m")) {
                 opts.model = try takeValue(args, &idx, inline_value, a, diag);
                 used = .model;
@@ -664,12 +719,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     return error.BadReasoningEffort;
                 };
                 used = .reasoning_effort;
-            } else if (std.mem.eql(u8, a, "--session")) {
-                opts.session = try takeValue(args, &idx, inline_value, a, diag);
-                used = .session;
-            } else if (std.mem.eql(u8, a, "--goal")) {
-                opts.goal = try takeValue(args, &idx, inline_value, a, diag);
-                used = .goal;
             } else if (std.mem.eql(u8, a, "--iters")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.iters = std.fmt.parseInt(u32, v, 10) catch {
@@ -696,15 +745,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 };
                 opts.webui_port_deprecated_alias = true;
                 used = .webui_port;
-            } else if (std.mem.eql(u8, a, "--host")) {
-                opts.host = try takeValue(args, &idx, inline_value, a, diag);
-                used = .host;
-            } else if (std.mem.eql(u8, a, "--proxy")) {
-                opts.proxy = true;
-                used = .proxy;
-            } else if (std.mem.eql(u8, a, "--no-proxy")) {
-                opts.proxy = false;
-                used = .proxy;
             } else if (std.mem.eql(u8, a, "--proxy-port")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.proxy_port = std.fmt.parseInt(u16, v, 10) catch {
@@ -728,12 +768,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     if (tt.len > 0) try appendRepeatable(&opts.research_targets, tt);
                 }
                 used = .research_target;
-            } else if (std.mem.eql(u8, a, "--harness")) {
-                opts.research_harness = try takeValue(args, &idx, inline_value, a, diag);
-                used = .research_harness;
-            } else if (std.mem.eql(u8, a, "--metric")) {
-                opts.research_metric = try takeValue(args, &idx, inline_value, a, diag);
-                used = .research_metric;
             } else if (std.mem.eql(u8, a, "--direction")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 if (!std.mem.eql(u8, v, "min") and !std.mem.eql(u8, v, "max")) {
@@ -742,9 +776,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 }
                 opts.research_direction = v;
                 used = .research_direction;
-            } else if (std.mem.eql(u8, a, "--pattern")) {
-                opts.research_pattern = try takeValue(args, &idx, inline_value, a, diag);
-                used = .research_pattern;
             } else if (std.mem.eql(u8, a, "--budget")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.research_budget = std.fmt.parseInt(u32, v, 10) catch {
@@ -752,18 +783,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     return error.BadBudget;
                 };
                 used = .research_budget;
-            } else if (std.mem.eql(u8, a, "--for")) {
-                opts.arena_for = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_for;
-            } else if (std.mem.eql(u8, a, "--against")) {
-                opts.arena_against = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_against;
-            } else if (std.mem.eql(u8, a, "--for-provider")) {
-                opts.arena_for_provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_for_provider;
-            } else if (std.mem.eql(u8, a, "--against-provider")) {
-                opts.arena_against_provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_against_provider;
             } else if (std.mem.eql(u8, a, "--rounds")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.arena_rounds = std.fmt.parseInt(u32, v, 10) catch {
@@ -800,36 +819,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 const trimmed = std.mem.trim(u8, v, " \t");
                 if (trimmed.len > 0) try appendRepeatable(&opts.compare_with, trimmed);
                 used = .compare_with;
-            } else if (std.mem.eql(u8, a, "--show")) {
-                opts.compare_show = try takeValue(args, &idx, inline_value, a, diag);
-                used = .compare_show;
-            } else if (std.mem.eql(u8, a, "--pick")) {
-                opts.compare_pick = try takeValue(args, &idx, inline_value, a, diag);
-                used = .compare_pick;
-            } else if (std.mem.eql(u8, a, "--synthesize")) {
-                opts.compare_synthesize = true;
-                used = .compare_synthesize;
-            } else if (std.mem.eql(u8, a, "--reveal")) {
-                opts.compare_reveal = true;
-                used = .compare_reveal;
-            } else if (std.mem.eql(u8, a, "--tz-offset")) {
-                opts.schedule_tz = try takeValue(args, &idx, inline_value, a, diag);
-                used = .schedule_tz;
-            } else if (std.mem.eql(u8, a, "--kind")) {
-                opts.reports_kind = try takeValue(args, &idx, inline_value, a, diag);
-                used = .reports_kind;
-            } else if (std.mem.eql(u8, a, "--judge-provider")) {
-                opts.arena_judge_provider = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_judge_provider;
-            } else if (std.mem.eql(u8, a, "--match")) {
-                opts.arena_match = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_match;
-            } else if (std.mem.eql(u8, a, "--defend")) {
-                opts.arena_defend = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_defend;
-            } else if (std.mem.eql(u8, a, "--alternative")) {
-                opts.arena_alternative = try takeValue(args, &idx, inline_value, a, diag);
-                used = .arena_alternative;
             } else if (std.mem.eql(u8, a, "--position")) {
                 // Repeatable, and not comma-split the way --target is: a stance
                 // is prose, and "use a queue, not direct calls" is one position
@@ -838,15 +827,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 const trimmed = std.mem.trim(u8, v, " \t");
                 if (trimmed.len > 0) try appendRepeatable(&opts.arena_positions, trimmed);
                 used = .arena_position;
-            } else if (std.mem.eql(u8, a, "--profile")) {
-                opts.profile = try takeValue(args, &idx, inline_value, a, diag);
-                used = .profile;
-            } else if (std.mem.eql(u8, a, "--dump-config")) {
-                opts.dump_config = true;
-                used = .dump_config;
-            } else if (std.mem.eql(u8, a, "--preset")) {
-                opts.preset = try takeValue(args, &idx, inline_value, a, diag);
-                used = .preset;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -1255,7 +1235,10 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
     if (opts.command != .help and opts.command != .version and opts.command != .git) {
         for (seen_flags[0..seen_flags_len]) |f| {
             if (!commandAccepts(opts.command, f)) {
-                setDiag(diag, f.name());
+                // The primary spelling, not the heading form: naming the flag
+                // as "--model, -m is not an option" reads as two rejected
+                // arguments, and no one typed the comma.
+                setDiag(diag, primaryFlagName(f));
                 if (cmd_out) |c| c.* = opts.command;
                 return error.FlagNotForCommand;
             }
@@ -1490,9 +1473,14 @@ pub fn commandName(c: Command) []const u8 {
 
 /// The whole command list, grouped. Rendered from `specs` so a new command
 /// cannot be added without appearing here.
+///
+/// Its only caller is the help path (`printCommandHelp` for a command with no
+/// spec of its own, i.e. `clanker help --help`), so this is requested output:
+/// stdout, the same stream `clanker --help` uses. It used to go to stderr,
+/// which made that one spelling of --help the only one a pipe could not read.
 fn printUsage(io: std.Io) void {
     var buf: [8192]u8 = undefined;
-    writeStdErr(io, renderUsage(&buf)) catch {};
+    writeStdOut(io, renderUsage(&buf)) catch {};
 }
 
 pub fn printUsageHint(io: std.Io) void {
@@ -1648,7 +1636,7 @@ fn renderUsage(buf: []u8) []const u8 {
             writeWrappedHelpBlurb(&w, s.blurb) catch {};
         }
     }
-    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
+    w.writeAll("\nEverywhere\n  --verbose, -v                     log what it is doing\n  --quiet, -q                       log only errors\n  --profile <name>                  overlay profiles/<name>.toml on the config\n  --dump-config                     print the merged config as JSON and exit\n  --help, -h                        this text, or a command's own help\n  --version                         print the version\n\nclanker <command> --help for a command's options.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -1679,10 +1667,48 @@ fn writeWrappedHelpBlurb(w: *std.Io.Writer, blurb: []const u8) !void {
 /// `clanker <command> --help`: what that one command takes, rather than the
 /// whole list. Previously this errored with "unrecognized argument '--help'",
 /// which is the least helpful thing a --help can do.
+/// The width every help surface is written to; the two "stays within 80
+/// columns" tests are what hold it.
+const help_columns: usize = 80;
+
+/// `usage: clanker <usage>`, folded at a `|` when an enumerated subcommand
+/// list would run past the help width. `clanker rfc` accepts nine
+/// subcommands and naming every one is what keeps the line honest, so the
+/// line wraps rather than the list being trimmed back to whatever fits: the
+/// usage line is the only place an operator sees the whole set at once.
+fn writeUsageLine(w: *std.Io.Writer, usage: []const u8) void {
+    const prefix = "usage: clanker ";
+    const bracket = std.mem.find(u8, usage, "[");
+    if (prefix.len + usage.len <= help_columns or bracket == null) {
+        w.print("{s}{s}\n", .{ prefix, usage }) catch {};
+        return;
+    }
+    const indent = prefix.len + bracket.? + 1;
+    w.print("{s}{s}", .{ prefix, usage[0 .. bracket.? + 1] }) catch {};
+    var col = indent;
+    var rest = usage[bracket.? + 1 ..];
+    while (rest.len > 0) {
+        // A piece carries its own trailing `|`, so a break never leaves the
+        // separator orphaned at the start of the next line.
+        const piece_len = if (std.mem.find(u8, rest, "|")) |bar| bar + 1 else rest.len;
+        const piece = rest[0..piece_len];
+        if (col > indent and col + piece.len > help_columns) {
+            w.writeAll("\n") catch {};
+            w.splatByteAll(' ', indent) catch {};
+            col = indent;
+        }
+        w.writeAll(piece) catch {};
+        col += piece.len;
+        rest = rest[piece_len..];
+    }
+    w.writeAll("\n") catch {};
+}
+
 fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
     const s = specFor(cmd) orelse return "";
     var w: std.Io.Writer = .fixed(buf);
-    w.print("usage: clanker {s}\n\n{s}\n", .{ s.usage, s.blurb }) catch {};
+    writeUsageLine(&w, s.usage);
+    w.print("\n{s}\n", .{s.blurb}) catch {};
     if (s.detail.len > 0) {
         w.print("\n{s}\n", .{s.detail}) catch {};
     } else if (s.flags.len > 0) {
@@ -1691,7 +1717,7 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
             w.print("  {s: <26}{s}\n", .{ f.name(), f.describe() }) catch {};
         }
     }
-    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --help, -h.\n") catch {};
+    w.writeAll("\nAlso accepted everywhere: --verbose, -v; --quiet, -q; --profile <name>;\n--dump-config; --help, -h.\n") catch {};
     return buf[0..w.end];
 }
 
@@ -1701,7 +1727,12 @@ fn renderCommandHelp(buf: []u8, cmd: Command) []const u8 {
 /// value to parse.
 fn renderFlagHelp(buf: []u8, flag: Flag) []const u8 {
     var w: std.Io.Writer = .fixed(buf);
-    w.print("usage: clanker {s} -h\n\n", .{flag.name()}) catch {};
+    // The usage line is a command to retype, so it carries one spelling: the
+    // primary long form. `flag.name()` is the *heading* form and carries the
+    // aliases and the value placeholder with it, which rendered as
+    // "usage: clanker --continue, -c -h" and "usage: clanker --mascot-size
+    // <size> -h" — neither of which runs.
+    w.print("usage: clanker {s} -h\n\n", .{primaryFlagName(flag)}) catch {};
 
     if (flag == .mascot) {
         w.writeAll(
@@ -1769,6 +1800,7 @@ fn printFlagHelp(io: std.Io, flag: Flag) void {
 /// believes it took effect.
 const Flag = enum {
     verbose,
+    quiet,
     provider,
     model,
     reasoning_effort,
@@ -1815,6 +1847,7 @@ const Flag = enum {
     compare_reveal,
     schedule_tz,
     reports_kind,
+    commit_all,
     profile,
     dump_config,
     preset,
@@ -1822,8 +1855,9 @@ const Flag = enum {
     fn name(self: Flag) []const u8 {
         return switch (self) {
             .verbose => "--verbose, -v",
+            .quiet => "--quiet, -q",
             .provider => "--provider",
-            .model => "--model",
+            .model => "--model, -m",
             .reasoning_effort => "--reasoning-effort",
             .session => "--session",
             .continue_last => "--continue, -c",
@@ -1868,6 +1902,7 @@ const Flag = enum {
             .compare_reveal => "--reveal",
             .schedule_tz => "--tz-offset",
             .reports_kind => "--kind",
+            .commit_all => "--all",
             .profile => "--profile",
             .dump_config => "--dump-config",
             .preset => "--preset",
@@ -1881,8 +1916,9 @@ const Flag = enum {
     fn describe(self: Flag) []const u8 {
         return switch (self) {
             .verbose => "log diagnostic progress while clanker runs",
+            .quiet => "drop progress logging to errors only (--verbose wins if both are given)",
             .provider => "use this provider instead of the configured default",
-            .model => "the model to use, or <provider>/<model> (alias -m)",
+            .model => "the model to use, or <provider>/<model>",
             .reasoning_effort => "pin reasoning effort for every turn: none, low, medium, high, or max (beats config and auto-thinking)",
             .session => "resume a saved conversation by id",
             .continue_last => "pick up the most recently touched session",
@@ -1927,14 +1963,15 @@ const Flag = enum {
             .compare_reveal => "print the label-to-model key even with no verdict",
             .schedule_tz => "read cron fields at a fixed offset from UTC (±HH:MM)",
             .reports_kind => "narrow a reports search: all, report, or runbook",
+            .commit_all => "group every tracked change, not just what is staged",
             .profile => "use a named config profile from profiles/<name>.toml",
-            .dump_config => "print the merged config and exit",
+            .dump_config => "print the merged config as JSON and exit",
             .preset => "run with a preset from presets/<name>.toml",
         };
     }
 
     fn global(self: Flag) bool {
-        return self == .verbose or self == .profile or self == .dump_config;
+        return self == .verbose or self == .quiet or self == .profile or self == .dump_config;
     }
 };
 
@@ -1954,6 +1991,7 @@ fn flagForHelp(arg: []const u8, command: Command) ?Flag {
         if (std.mem.eql(u8, arg, primaryFlagName(f))) return f;
     }
     if (std.mem.eql(u8, arg, "-v")) return .verbose;
+    if (std.mem.eql(u8, arg, "-q")) return .quiet;
     if (std.mem.eql(u8, arg, "-m")) return .model;
     if (std.mem.eql(u8, arg, "-c")) return .continue_last;
     if (std.mem.eql(u8, arg, "-wt") or std.mem.eql(u8, arg, "--no-worktree")) return .worktree;
@@ -1992,16 +2030,16 @@ const Spec = struct {
     detail: []const u8 = "",
 };
 
-/// `--verbose`/`-v`, `--help`/`-h` and `--version` are accepted everywhere and
-/// so are not listed per command.
+/// `--verbose`/`-v`, `--quiet`/`-q`, `--help`/`-h` and `--version` are accepted
+/// everywhere and so are not listed per command.
 const specs = [_]Spec{
     .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n                   The mascot needs a terminal at least 12x13 at medium,\n                   10x12 at small, 9x10 at xsmall, 8x9 at mini and 23x18 at\n                   large; it is skipped, not clipped, below that" },
-    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft." },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  left or right. tui.mascot_facing. Applies to loop and\n                   place; place faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that." },
+    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking" },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
     .{ .command = .add_goal, .usage = "add-goal \"<objective>\" [\"<completion criterion>\"]", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It creates a goal-card and writes the\ngoals.json index, and prints the id, but never starts work. The criterion\nis optional: the goal loop drafts a measurable one on its first turn. Run\nit later with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
-    .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent" },
+    .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
     .{ .command = .serve, .usage = "serve [options]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as, .proxy, .proxy_port }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n--proxy                mount an OpenAI/Anthropic compatibility proxy at\n                       /proxy/v1 on this socket. Off by default. --no-proxy\n                       forces it off even if the file enabled it.\n--proxy-port <port>    optional dedicated proxy listener. When it differs\n                       from --webui-port, /v1 lives at the root on that port\n                       and /api/* is not mounted there.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name. The optional second\nlistener is --proxy-port, not a rename of --webui-port.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as, proxy, proxy_port\n  CLANKER_HOST, CLANKER_WEBUI_PORT, CLANKER_PROXY_PORT\n  --host, --webui-port, --serve-as, --proxy, --no-proxy, --proxy-port\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Without --proxy the process still opens exactly\none socket. --proxy keeps that true and mounts /proxy/v1 on it. A distinct\n--proxy-port is the only way a second socket is opened. Configured\n[[peers]] are outbound URLs this process connects to, never anything it\nlistens on." },
@@ -2009,7 +2047,7 @@ const specs = [_]Spec{
     .{ .command = .acp, .usage = "acp", .blurb = "serve clanker as an ACP coding agent (stdio)", .group = .work },
 
     .{ .command = .sessions, .usage = "sessions", .blurb = "list saved conversations", .group = .inspect, .detail = "Also reachable as `clanker history`.\n\nLists every conversation in state/sessions, newest last. To resume one:\n  clanker run --session <id> \"continue where we left off\"\n  clanker repl --session <id>\nTo export one as a standalone HTML file:\n  clanker session export <id>" },
-    .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file." },
+    .{ .command = .session_export, .usage = "session export <id> [path]", .blurb = "write one conversation as a self-contained HTML file", .group = .inspect, .detail = "Writes state/exports/<id>.html unless a path is given. One file, no scripts and\nno external stylesheet, font or image, so it opens straight from file:// with no\nnetwork. Session text is model and tool output, so every field is HTML-escaped\non the way in; markup in a transcript renders as the characters that were typed.\n\nThere is deliberately no upload and no public URL. Sharing is copying the file.\n\nThe other subcommand under `session` is `search <query>`, which finds saved\nconversations containing a substring; `clanker session search --help` has it." },
     .{ .command = .session_search, .usage = "session search <query>", .blurb = "find saved conversations containing a substring", .group = .inspect, .detail = "Linear scan of state/sessions, newest first. Min 3 characters.\nResume a hit: clanker repl --session <id>" },
     .{ .command = .graph, .usage = "graph [run-id | answer [run-id]]", .blurb = "list runs, draw one as a timeline, or print its answer", .group = .inspect, .detail = "With no argument, lists recorded runs (newest last). With a run id, renders\nthe execution graph as an ASCII timeline of LLM calls and tool invocations.\nThe web UI (clanker serve) shows the same graph interactively.\n\n`answer` prints the final answer a run recorded — the latest run's, or the\nnamed run's. The graph is the only durable copy of an answer once the\nterminal scrolls (clanker run saves no session); the recorded text is\ncapped, and a longer answer says how much of it the record holds.\n\nEXAMPLES\n  clanker graph                       list recorded runs\n  clanker graph run-1786940774        draw that run as a timeline\n  clanker graph answer                the latest run's final answer\n  clanker graph answer run-1786940774 that run's final answer" },
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
@@ -2017,10 +2055,10 @@ const specs = [_]Spec{
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .preset, .usage = "preset [list|show <name>|new <name>]", .blurb = "list, inspect, or scaffold presets", .group = .inspect, .detail = "A preset is one preset.toml from presets/ (plus configured roots).\nFilters the already-loaded Registry, no recompile. Examples: research\n(read/search only) and full (no filter).\n\nlist              every preset with its description\nshow <name>       print the preset.toml\nnew <name>        scaffold presets/<name>.toml" },
     .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status|rename]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n  rename <path> <new-slug>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, missing-tool, or runbook. Report slugs start\nYYYY-MM-DD-, runbook slugs are lowercase and hyphenated. missing-tool records\na basic verb clanker lacks: it lands in the investigations store and the tool\nitself inserts `missing-clanker-tool-` into the filename after the date, so\nthe record is findable by name without trusting the caller to mark it.\nappend adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead. rename moves a\nrecord to a new filename in its own store, rewrites its inventory link, and\nlists every file in the two stores still naming the old record; a\nmissing-clanker-tool- marker survives the rename whether or not the new slug\ncarries it.\n\nAll of these are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
-    .{ .command = .research, .usage = "research [list|plan|sweep|search|open|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
-    .{ .command = .rfc, .usage = "rfc [list|search|open|checklist|create|recommend|status]", .blurb = "open and maintain requests for comment under docs/rfcs/", .group = .inspect, .detail = "An RFC is a decision that has not been made yet: the candidates, what each\nimplies short, medium and long term, and a recommendation with a confidence\nfrom 0 to 10. An ADR is the decision once it is made. These are the same\nrecords the agent reads and writes through the `rfc` tool.\n\nSearch first. A matching ADR means the question is already settled, which is\nthe one answer that should stop an RFC from being written at all.\n\nREADING\n  list                       every RFC with its status, and the next number\n  search <query>             one text search across the RFCs and the ADRs\n  open <path>                print one RFC in full\n  checklist [topic]          what an RFC has to pin down, and what to ask\n\nWRITING\n  create <title> <overview> [slug]\n  append <path> <content>\n  update <path> <old> <new>\n  recommend <path> <recommendation> <confidence 0-10> [rationale]\n  status <path> <state> [note]\n\nSTATES\n  draft        being written; not yet up for discussion\n  discussion   open for comment\n  decided      settled; an ADR usually follows\n  deferred     not now, and the note says what would reopen it\n  withdrawn    dropped without a decision\n  superseded   replaced; the note names what replaced it\n\ncreate allocates the next number, renders docs/rfcs/TEMPLATE.md and indexes\nit. An RFC needs real options: at least two candidates, the status quo, and\none out-of-the-box possibility. append, update, recommend and status are\ncompare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the RFC and retry against its current text.\n\nEXAMPLES\n  clanker rfc                                      every RFC\n  clanker rfc search \"http client\"                 already decided?\n  clanker rfc checklist \"state store\"              what to pin down first\n  clanker rfc create \"HTTP client for the proxy\" \"One client, not recorded\"\n  clanker rfc open docs/rfcs/0001-http-client.md\n  clanker rfc recommend docs/rfcs/0001-http-client.md \"Adopt option B\" 7 \"Why\"\n  clanker rfc status docs/rfcs/0001-http-client.md decided \"See the ADR\"" },
-    .{ .command = .adr, .usage = "adr [list|search|open|create|status]", .blurb = "record and maintain architecture decisions under docs/adrs/", .group = .inspect, .detail = "An ADR is a decision that has already been made: the constraint that forced\nit, the choice, and what the choice costs. The RFC that may precede it argues\nthe alternatives; neither store requires the other. These are the same records\nthe agent reads and writes through the `adr` tool.\n\nSearch first. A matching ADR means the question is settled, and the answer is\nto read it — or supersede it — rather than decide it again.\n\nREADING\n  list                       every ADR with its status, and the next number\n  search <query>             one text search across the ADRs, RFCs and PRDs\n  open <path>                print one ADR in full\n\nWRITING\n  create <title> <context> <decision> <consequences> [rfc path]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n\nSTATES\n  proposed     drafted, not yet agreed\n  accepted     in force; this is the default a new ADR is created in\n  superseded   replaced; the note names what replaced it\n  deprecated   no longer applies; the note says what stopped being true\n\nThe title is the choice made, not the question: \"Providers are a native\nvtable\", not \"How should providers work?\". Consequences is required and has\nto name the honest downside — an ADR that only argues for its own decision is\nuseless to the one reader it is written for, whoever is deciding whether to\nrevisit it.\n\nPassing the RFC a decision came from links it from Status and quotes that\nRFC's recommendation under the Decision, so a divergence between what was\nrecommended and what was chosen is visible while it is still being written.\n\nA later reversal supersedes an ADR rather than editing it. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the ADR and retry against its current text.\n\nEXAMPLES\n  clanker adr                                      every decision on record\n  clanker adr search \"provider vtable\"             already decided?\n  clanker adr open docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md\n  clanker adr create \"Providers are a native vtable\" \\\n      \"Keys must not enter the sandbox\" \\\n      \"Each provider is one vtable file plus a registry row\" \\\n      \"Adding one is three edits; a provider cannot be hot-swapped\"\n  clanker adr status docs/adrs/0004-providers.md superseded \\\n      \"Superseded by ADR 0021.\"" },
-    .{ .command = .prd, .usage = "prd [list|search|open|checklist|create|status]", .blurb = "write and maintain product requirement docs under docs/prds/", .group = .inspect, .detail = "A PRD is what a feature is meant to be: the problem, the goals, the mechanism,\nand the acceptance criteria it is checked against. It is not a decision (that\nis an ADR), not an open question (an RFC), and not the shipped narrative (the\nROADMAP). These are the same records the agent reads and writes through the\n`prd` tool.\n\nThe listing groups by status with the unfinished work first, because \"what is\nstill open\" is the question this store is read to answer.\n\nREADING\n  list                       every PRD, grouped by status, and the next number\n  search <query>             one text search across the PRDs and the ADRs\n  open <path>                print one PRD in full\n  checklist                  what a Draft has to pin down before it is planned\n\nWRITING\n  create <title> <problem> <goals> [draft|in_progress|shipped]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n\nSTATES\n  draft         not built; Design must settle the blockers first\n  in_progress   partially built; Status names what is live and what is open\n  shipped       code is the source of truth; the note has to name those files\n\nA Draft is not planned until its dependencies are named, its blocking\nquestions are settled in Design rather than parked under Open questions, and\nits implementation phases name files. Run checklist when the request is too\nvague to draft from, and put its questions to whoever asked.\n\nGoals and acceptance criteria have to cover each other. A bug belongs in Known\nissues, never in Open questions. When the code drifts from the document, fix\nthe document the same day.\n\nappend, update and status are compare-and-swap writes: a concurrent edit is\nrefused rather than overwritten, so reopen the PRD and retry.\n\nEXAMPLES\n  clanker prd                                      every PRD, open work first\n  clanker prd checklist                            what to pin down first\n  clanker prd search \"kanban board\"                is it already specified?\n  clanker prd open docs/prds/0002-kanban-board.md\n  clanker prd create \"Scheduled runs\" \\\n      \"Nothing fires unless something outside clanker invokes it\" \\\n      \"1. Fire due entries on a cron spec  2. Never run two sweeps\"\n  clanker prd status docs/prds/0009-schedule.md shipped \\\n      \"src/schedule/ is the source of truth; clanker schedule exposes it\"" },
+    .{ .command = .research, .usage = "research [list|plan|sweep|search|open|create|append|update|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
+    .{ .command = .rfc, .usage = "rfc [list|search|open|checklist|create|append|update|recommend|status]", .blurb = "open and maintain requests for comment under docs/rfcs/", .group = .inspect, .detail = "An RFC is a decision that has not been made yet: the candidates, what each\nimplies short, medium and long term, and a recommendation with a confidence\nfrom 0 to 10. An ADR is the decision once it is made. These are the same\nrecords the agent reads and writes through the `rfc` tool.\n\nSearch first. A matching ADR means the question is already settled, which is\nthe one answer that should stop an RFC from being written at all.\n\nREADING\n  list                       every RFC with its status, and the next number\n  search <query>             one text search across the RFCs and the ADRs\n  open <path>                print one RFC in full\n  checklist [topic]          what an RFC has to pin down, and what to ask\n\nWRITING\n  create <title> <overview> [slug]\n  append <path> <content>\n  update <path> <old> <new>\n  recommend <path> <recommendation> <confidence 0-10> [rationale]\n  status <path> <state> [note]\n\nSTATES\n  draft        being written; not yet up for discussion\n  discussion   open for comment\n  decided      settled; an ADR usually follows\n  deferred     not now, and the note says what would reopen it\n  withdrawn    dropped without a decision\n  superseded   replaced; the note names what replaced it\n\ncreate allocates the next number, renders docs/rfcs/TEMPLATE.md and indexes\nit. An RFC needs real options: at least two candidates, the status quo, and\none out-of-the-box possibility. append, update, recommend and status are\ncompare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the RFC and retry against its current text.\n\nEXAMPLES\n  clanker rfc                                      every RFC\n  clanker rfc search \"http client\"                 already decided?\n  clanker rfc checklist \"state store\"              what to pin down first\n  clanker rfc create \"HTTP client for the proxy\" \"One client, not recorded\"\n  clanker rfc open docs/rfcs/0001-http-client.md\n  clanker rfc recommend docs/rfcs/0001-http-client.md \"Adopt option B\" 7 \"Why\"\n  clanker rfc status docs/rfcs/0001-http-client.md decided \"See the ADR\"" },
+    .{ .command = .adr, .usage = "adr [list|search|open|create|append|update|status]", .blurb = "record and maintain architecture decisions under docs/adrs/", .group = .inspect, .detail = "An ADR is a decision that has already been made: the constraint that forced\nit, the choice, and what the choice costs. The RFC that may precede it argues\nthe alternatives; neither store requires the other. These are the same records\nthe agent reads and writes through the `adr` tool.\n\nSearch first. A matching ADR means the question is settled, and the answer is\nto read it — or supersede it — rather than decide it again.\n\nREADING\n  list                       every ADR with its status, and the next number\n  search <query>             one text search across the ADRs, RFCs and PRDs\n  open <path>                print one ADR in full\n\nWRITING\n  create <title> <context> <decision> <consequences> [rfc path]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n\nSTATES\n  proposed     drafted, not yet agreed\n  accepted     in force; this is the default a new ADR is created in\n  superseded   replaced; the note names what replaced it\n  deprecated   no longer applies; the note says what stopped being true\n\nThe title is the choice made, not the question: \"Providers are a native\nvtable\", not \"How should providers work?\". Consequences is required and has\nto name the honest downside — an ADR that only argues for its own decision is\nuseless to the one reader it is written for, whoever is deciding whether to\nrevisit it.\n\nPassing the RFC a decision came from links it from Status and quotes that\nRFC's recommendation under the Decision, so a divergence between what was\nrecommended and what was chosen is visible while it is still being written.\n\nA later reversal supersedes an ADR rather than editing it. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the ADR and retry against its current text.\n\nEXAMPLES\n  clanker adr                                      every decision on record\n  clanker adr search \"provider vtable\"             already decided?\n  clanker adr open docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md\n  clanker adr create \"Providers are a native vtable\" \\\n      \"Keys must not enter the sandbox\" \\\n      \"Each provider is one vtable file plus a registry row\" \\\n      \"Adding one is three edits; a provider cannot be hot-swapped\"\n  clanker adr status docs/adrs/0004-providers.md superseded \\\n      \"Superseded by ADR 0021.\"" },
+    .{ .command = .prd, .usage = "prd [list|search|open|checklist|create|append|update|status]", .blurb = "write and maintain product requirement docs under docs/prds/", .group = .inspect, .detail = "A PRD is what a feature is meant to be: the problem, the goals, the mechanism,\nand the acceptance criteria it is checked against. It is not a decision (that\nis an ADR), not an open question (an RFC), and not the shipped narrative (the\nROADMAP). These are the same records the agent reads and writes through the\n`prd` tool.\n\nThe listing groups by status with the unfinished work first, because \"what is\nstill open\" is the question this store is read to answer.\n\nREADING\n  list                       every PRD, grouped by status, and the next number\n  search <query>             one text search across the PRDs and the ADRs\n  open <path>                print one PRD in full\n  checklist                  what a Draft has to pin down before it is planned\n\nWRITING\n  create <title> <problem> <goals> [draft|in_progress|shipped]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n\nSTATES\n  draft         not built; Design must settle the blockers first\n  in_progress   partially built; Status names what is live and what is open\n  shipped       code is the source of truth; the note has to name those files\n\nA Draft is not planned until its dependencies are named, its blocking\nquestions are settled in Design rather than parked under Open questions, and\nits implementation phases name files. Run checklist when the request is too\nvague to draft from, and put its questions to whoever asked.\n\nGoals and acceptance criteria have to cover each other. A bug belongs in Known\nissues, never in Open questions. When the code drifts from the document, fix\nthe document the same day.\n\nappend, update and status are compare-and-swap writes: a concurrent edit is\nrefused rather than overwritten, so reopen the PRD and retry.\n\nEXAMPLES\n  clanker prd                                      every PRD, open work first\n  clanker prd checklist                            what to pin down first\n  clanker prd search \"kanban board\"                is it already specified?\n  clanker prd open docs/prds/0002-kanban-board.md\n  clanker prd create \"Scheduled runs\" \\\n      \"Nothing fires unless something outside clanker invokes it\" \\\n      \"1. Fire due entries on a cron spec  2. Never run two sweeps\"\n  clanker prd status docs/prds/0009-schedule.md shipped \\\n      \"src/schedule/ is the source of truth; clanker schedule exposes it\"" },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
@@ -2039,7 +2077,7 @@ const specs = [_]Spec{
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
     .{ .command = .schedule, .usage = "schedule [list|add|remove|enable|disable|run|run-due|log]", .blurb = "run the agent on a cron-like schedule", .group = .work, .flags = &.{ .provider, .model, .schedule_tz }, .detail = "Entries live in state/schedule.json; each fire lands one line in\nstate/schedule/log.jsonl. Nothing fires on its own; the system's own cron\n(or a systemd timer) calls `clanker schedule run-due`, typically every minute:\n\n  * * * * * cd /path/to/clanker && ./zig-out/bin/clanker schedule run-due\n\nlist                        every entry, with its next fire time (default)\nadd \"<cron>\" \"<task>\"       schedule a task; the first run is the first\n                            window after the add, never immediately\nremove <id>                 drop an entry (its ledger history stays)\nenable <id> / disable <id>  a disabled entry is skipped; re-enabling counts\n                            its next window from now, not from the pause\nrun <id>                    fire one entry now, whatever its schedule says.\n                            Counts as a real run: it advances the window and\n                            lands in the ledger, marked \"manual\"\nrun-due                     fire everything whose window has passed\nlog                         the last 20 ledger records, newest first\n\n--provider <p> / --model <m>  recorded on the entry by `add`, so a scheduled\n                              run can use a cheaper backend than the default\n--tz-offset <±HH:MM>          read the cron fields at a fixed offset from UTC\n                              (also `UTC`, or a plain minute count). Fixed on\n                              purpose: there is no time zone database here, so\n                              an entry does not shift itself for DST\n\nThe spec is five fields: minute hour day-of-month month day-of-week, each\n`*`, a number, `a-b`, `*/n`, `a-b/n`, or a comma-separated list of those.\nSunday is 0 or 7. Names (MON, JAN) and @nicknames are not accepted. When both\nday fields are restricted the entry fires when either matches, as in Vixie\ncron.\n\nA missed window fires once and is not backfilled: a machine that slept through\na day of a */5 entry runs it once on wake and resumes, rather than working\nthrough 288 windows. The ledger records how many were skipped." },
     .{ .command = .git, .usage = "git <args...>", .blurb = "passthrough to git in the repo root", .group = .maintain },
-    .{ .command = .commit, .usage = "commit [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups staged (or all) files,\nvalidates conventional commit messages, then asks before committing.\n\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
+    .{ .command = .commit, .usage = "commit [--all] [--yes] [--dry-run]", .blurb = "group the working tree into conventional commits", .group = .maintain, .flags = &.{ .commit_all, .yes, .dry_run }, .detail = "Calls the smart_commit tool: groups the changed files, validates\nconventional commit messages, then asks before committing.\n\nThe default scope is the index: each group is committed from what is\nstaged, so an index narrowed to one session's hunks lands exactly as\nstaged and anything else stays unstaged. --all widens it to every\ntracked change and commits by pathspec, which takes the worktree copy.\n\nThe confirmation is a terminal prompt, so a script must pass --yes:\nwith stdin redirected clanker refuses rather than reading the empty\nanswer as a no and exiting 0.\n\n--all       group every tracked change, not just what is staged\n--yes       skip the confirmation prompt\n--dry-run   print the proposal only" },
 };
 
 fn specFor(cmd: Command) ?*const Spec {
@@ -2056,6 +2094,45 @@ fn commandAccepts(cmd: Command, flag: Flag) bool {
         if (f == flag) return true;
     }
     return false;
+}
+
+/// True when `text` names `spelling` as a whole option, not as the prefix of a
+/// longer one: `--proxy` must not be counted as documented because
+/// `--proxy-port` happens to be, and the same for `--for`/`--for-provider` and
+/// `--mascot`/`--mascot-size`.
+fn documentsFlagSpelling(text: []const u8, spelling: []const u8) bool {
+    var rest = text;
+    while (std.mem.find(u8, rest, spelling)) |i| {
+        const after = rest[i + spelling.len ..];
+        const next: u8 = if (after.len == 0) ' ' else after[0];
+        if (!std.ascii.isAlphanumeric(next) and next != '-') return true;
+        rest = rest[i + spelling.len ..];
+    }
+    return false;
+}
+
+test "every flag a command accepts is named in that command's --help" {
+    // `commandAccepts` reads `spec.flags`, but `clanker <cmd> --help` prints
+    // the hand-written `spec.detail`, so the two drift silently: a flag added
+    // to `flags` alone is accepted by the parser and invisible to the operator
+    // (`goal` took --provider/--model/--reasoning-effort and documented none
+    // of them, `repl` took --preset and --mascot-speed the same way). Nothing
+    // else compares the two, so pin it here.
+    for (&specs) |*s| {
+        for (s.flags) |f| {
+            // The global four are listed once by the shared footer
+            // ("Also accepted everywhere: ..."), not per command.
+            if (f.global()) continue;
+            const spelling = primaryFlagName(f);
+            if (documentsFlagSpelling(s.detail, spelling)) continue;
+            if (documentsFlagSpelling(s.usage, spelling)) continue;
+            std.debug.print(
+                "`clanker {s}` accepts {s} but its help text never mentions it\n",
+                .{ commandName(s.command), spelling },
+            );
+            return error.UndocumentedFlag;
+        }
+    }
 }
 
 pub fn run(init: std.process.Init, opts: Options) !void {
@@ -2381,11 +2458,10 @@ fn walkZig(io: std.Io, arena: std.mem.Allocator, list: *std.ArrayList([]const u8
 
 /// Memorable auto-generated instance names (adjective-noun), so multi-instance
 /// setups identify each other by names like "clanker-cobalt-otter" instead of
-/// opaque ids.
-// Futurama-robot flavored: a fresh instance reads like it just clocked in at
-// the Robot Arms Conglomerate, not a wildlife photo caption.
+/// opaque ids. The nouns are `config.instance_name_nouns`, shared with the
+/// bare fallback name.
 const name_adjectives = [_][]const u8{ "shiny", "rusty", "chrome", "cosmic", "atomic", "turbo", "neon", "quantum", "vintage", "bionic", "rogue", "sentient", "bootleg", "unlicensed", "reckless", "glitchy" };
-const name_nouns = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
+const name_nouns = config.instance_name_nouns;
 
 fn friendlyInstanceName(arena: std.mem.Allocator, io: std.Io) !struct { name: []const u8, id: []const u8 } {
     // Entropy comes from the Io seam (io.random), not the wall clock, so a
@@ -2912,7 +2988,7 @@ fn renderConfiguredProviderModels(arena: std.mem.Allocator, provider: *const con
 /// is declared and never referenced -- see `llm/client.zig`'s `Abort`), so a
 /// host that resolves, accepts the connection and then says nothing blocks the
 /// calling thread forever. Two of this fetch's callers are `clanker serve`
-/// request handlers, and `handleCatalogSearch` reaches it while holding
+/// request handlers, and `handleCatalog` reaches it while holding
 /// `catalog_cache_mutex`: unbounded there, one wedged CDN connection takes the
 /// catalog away from every later request in the process, not just its own.
 /// The snapshot is a few MiB over a public CDN, so 30s is well past a healthy
@@ -3721,7 +3797,7 @@ fn shouldIsolate(opts: Options, mode: config.WorktreeMode, cfg: *const config.Co
     // `git_worktree_on` names modes that isolate by default. A named mode
     // opts in regardless of `worktree`/`goal_worktree`; one left out (or an
     // empty list) keeps the historical default below.
-    if (containsMode(cfg.agent.git_worktree_on, mode)) return true;
+    if (cfg.agent.worktreeOn(mode)) return true;
     // An isolated CLI session is deliberately a compound default: it keeps
     // its changes private and (at the resolveRunTask call site) declines the
     // ambient active goal. Flags remain an escape hatch for either half.
@@ -3731,12 +3807,6 @@ fn shouldIsolate(opts: Options, mode: config.WorktreeMode, cfg: *const config.Co
     else
         cfg.agent.worktree;
     return isolateByDefault(opts, def);
-}
-
-/// Whether `m` is named in `modes` (the `[agent] git_worktree_on` list).
-fn containsMode(modes: []const config.WorktreeMode, m: config.WorktreeMode) bool {
-    for (modes) |x| if (x == m) return true;
-    return false;
 }
 
 test shouldIsolate {
@@ -4069,7 +4139,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     run_out = &out_w;
     // NO_COLOR (https://no-color.org) is the standard opt-out; honour it
     // ahead of the isTty check rather than requiring a clanker-specific flag.
-    run_stdout_color = init.environ_map.get("NO_COLOR") == null and (stdout_file.isTty(io) catch false);
+    run_stdout_color = !no_color.requested(init.environ_map) and (stdout_file.isTty(io) catch false);
     a.on_token = &runDelta;
 
     // The spinner and the live tool-status line belong to the REPL. `run` is
@@ -4682,21 +4752,33 @@ fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
     return content;
 }
 
-fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
-    // goal_loop.run boxed this CliGoalLoopContext as Callbacks.context.
-    const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
-    const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
+/// One evaluator turn. The CLI and server adapters box different contexts but
+/// ask the identical question, so the call lives here once.
+fn goalLoopEvaluate(
+    ctx: *client.Ctx,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    condition: []const u8,
+    answer: []const u8,
+) anyerror!goal_loop.Decision {
+    const prompt = try goal_loop.evaluatorTask(arena, condition, answer);
     const messages = [_]types.Message{
-        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
+        .{ .role = .system, .content = goal_loop.evaluator_system_prompt },
         .{ .role = .user, .content = prompt },
     };
     var err_detail: ?[]const u8 = null;
-    const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
-        .provider = loop_ctx.provider,
+    const resp = try client.chat(ctx, arena, .{
+        .provider = provider,
         .messages = &messages,
         .max_tokens = goal_loop.evaluator_max_tokens,
     }, &err_detail);
-    return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
+    return goal_loop.parseDecision(arena, resp.message.content orelse "");
+}
+
+fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
+    // goal_loop.run boxed this CliGoalLoopContext as Callbacks.context.
+    const loop_ctx: *CliGoalLoopContext = @ptrCast(@alignCast(context));
+    return goalLoopEvaluate(loop_ctx.ctx, loop_ctx.arena, loop_ctx.provider, loop_ctx.condition, answer);
 }
 
 fn cliGoalLoopDecision(_: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
@@ -4731,18 +4813,7 @@ fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror
 fn serverGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror!goal_loop.Decision {
     // goal_loop.run boxed this ServerGoalLoopContext as Callbacks.context.
     const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
-    const prompt = try goal_loop.evaluatorTask(loop_ctx.arena, loop_ctx.condition, answer);
-    const messages = [_]types.Message{
-        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
-        .{ .role = .user, .content = prompt },
-    };
-    var err_detail: ?[]const u8 = null;
-    const resp = try client.chat(loop_ctx.ctx, loop_ctx.arena, .{
-        .provider = loop_ctx.provider,
-        .messages = &messages,
-        .max_tokens = goal_loop.evaluator_max_tokens,
-    }, &err_detail);
-    return goal_loop.parseDecision(loop_ctx.arena, resp.message.content orelse "");
+    return goalLoopEvaluate(loop_ctx.ctx, loop_ctx.arena, loop_ctx.provider, loop_ctx.condition, answer);
 }
 
 fn serverGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
@@ -4825,10 +4896,11 @@ fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     if (!cfg.modules.sessions) return error.ModuleDisabled;
     const q = std.mem.trim(u8, opts.task orelse return error.MissingArg, " \t\r\n");
+    // A too-short query is a usage mistake, not a search that found nothing.
+    // It used to print to stdout and exit 0, so a script could not tell it
+    // from an empty result set and read the diagnostic as data.
     if (q.len < session_search_min_len) {
-        const msg = try std.fmt.allocPrint(arena, "query must be at least {d} characters\n", .{session_search_min_len});
-        try writeStdOut(io, msg);
-        return;
+        usageExitFor(io, "session", "session search needs at least {d} characters: clanker session search \"<query>\"", .{session_search_min_len});
     }
     const hits = session.searchSessions(io, arena, std.Io.Dir.cwd(), q, session_search_limit) catch {
         return error.ToolFailed;
@@ -5154,7 +5226,7 @@ fn toolText(
         if (k == .bool) ok = k.bool;
     }
     if (!ok) {
-        const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
         if (std.mem.eql(u8, detail, "no such run")) return error.ToolFailed;
         log.log(.error_, "{s}: {s}", .{ tool_name, detail });
         return error.ToolFailed;
@@ -5479,7 +5551,7 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
     const sub = opts.preset_sub orelse "list";
     const target = opts.preset_target;
     if (std.mem.eql(u8, sub, "list")) {
-        if (target != null) return printUsageError(io, "preset list takes no argument", .{});
+        if (target != null) usageExitFor(io, "preset", "preset list takes no argument", .{});
         var dir = std.Io.Dir.cwd().openDir(io, "presets", .{ .iterate = true }) catch {
             try std.Io.File.stdout().writeStreamingAll(io, "(no presets/ directory)\n");
             return;
@@ -5512,34 +5584,36 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
         }
         return;
     } else if (std.mem.eql(u8, sub, "show")) {
-        const name = target orelse return printUsageError(io, "preset show <name>", .{});
+        const name = target orelse usageExitFor(io, "preset", "preset show needs a name: clanker preset show <name>; run `clanker preset list` to see names", .{});
         const path = try std.fmt.allocPrint(gpa, "presets/{s}.toml", .{name});
         defer gpa.free(path);
         const text = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(64 * 1024)) catch {
-            return printUsageError(io, "no preset '{s}'", .{name});
+            printUsageError(io, "no preset '{s}'; run `clanker preset list` to see names", .{name});
+            std.process.exit(1);
         };
         defer gpa.free(text);
         try std.Io.File.stdout().writeStreamingAll(io, text);
         if (text.len == 0 or text[text.len - 1] != '\n') try std.Io.File.stdout().writeStreamingAll(io, "\n");
         return;
     } else if (std.mem.eql(u8, sub, "new")) {
-        const name = target orelse return printUsageError(io, "preset new <name>", .{});
+        const name = target orelse usageExitFor(io, "preset", "preset new needs a name: clanker preset new <name>", .{});
         if (name.len == 0 or std.mem.findScalar(u8, name, '/') != null or std.mem.findScalar(u8, name, '\\') != null or std.mem.find(u8, name, "..") != null)
-            return printUsageError(io, "invalid preset name '{s}'", .{name});
+            usageExitFor(io, "preset", "invalid preset name '{s}'; use a plain file name with no '/', '\\' or '..'", .{name});
         _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch {
             var cwd = std.Io.Dir.cwd();
             try cwd.createDirPath(io, "presets");
-            _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return printUsageError(io, "cannot create presets/", .{});
+            _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return error.PresetsDirUnusable;
         };
         // Re-open after maybe-create to get a handle we own.
-        var dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return printUsageError(io, "cannot open presets/", .{});
+        var dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return error.PresetsDirUnusable;
         defer dir.close(io);
         const path = try std.fmt.allocPrint(gpa, "{s}.toml", .{name});
         defer gpa.free(path);
         if (std.Io.Dir.openFile(dir, io, path, .{ .mode = .read_only }) catch null) |f| {
             var file = f;
             file.close(io);
-            return printUsageError(io, "preset '{s}' already exists", .{name});
+            printUsageError(io, "preset '{s}' already exists; pick another name or delete presets/{s}.toml first", .{ name, name });
+            std.process.exit(1);
         }
         const scaffold =
             \\description = ""
@@ -5554,7 +5628,7 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
         try std.Io.File.stdout().writeStreamingAll(io, line);
         return;
     } else {
-        return printUsageError(io, "unknown preset subcommand '{s}' (list, show, new)", .{sub});
+        usageExitFor(io, "preset", "unknown preset subcommand '{s}' (list, show, new)", .{sub});
     }
 }
 
@@ -6109,7 +6183,7 @@ fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
     if (result != .object) return error.ToolFailed;
     const ok = result.object.get("ok") orelse return error.ToolFailed;
     if (ok != .bool or !ok.bool) {
-        const detail = if (result.object.get("error")) |e| if (e == .string) e.string else "tool failed" else "tool failed";
+        const detail = json_util.strFieldOrNull(result.object, "error") orelse "tool failed";
         log.log(.error_, "write-goal: {s}", .{detail});
         return error.ToolFailed;
     }
@@ -6145,7 +6219,7 @@ fn cmdAddGoal(init: std.process.Init, opts: Options) !void {
     if (result != .object) return error.ToolFailed;
     const ok = result.object.get("ok") orelse return error.ToolFailed;
     if (ok != .bool or !ok.bool) {
-        const detail = if (result.object.get("error")) |e| if (e == .string) e.string else "tool failed" else "tool failed";
+        const detail = json_util.strFieldOrNull(result.object, "error") orelse "tool failed";
         log.log(.error_, "add-goal: {s}", .{detail});
         return error.ToolFailed;
     }
@@ -6210,11 +6284,17 @@ fn cmdMesh(init: std.process.Init, opts: Options) !void {
         .sub = opts.mesh_sub,
         .arg1 = opts.mesh_arg1,
     }, control_host, listen.port) catch |err| switch (err) {
-        mesh_cmd.Error.BadSubcommand => return error.BadSubcommand,
-        mesh_cmd.Error.MissingArg => return error.MissingArg,
-        mesh_cmd.Error.MeshOff => return error.ModuleDisabled,
-        mesh_cmd.Error.ServeNotRunning => return error.ServeNotRunning,
-        mesh_cmd.Error.RequestFailed => return error.HttpError,
+        // Same contract as the record stores: `mesh_cmd` has already written
+        // the diagnostic, and its line is the specific one — it names the URL
+        // it dialled, which is what tells a two-serve host *which* serve is
+        // down. Mapping these onto generic errors printed a second, vaguer
+        // line under it ("clanker serve is not running"), so only the exit
+        // status is left to set here.
+        mesh_cmd.Error.BadSubcommand, mesh_cmd.Error.MissingArg => {
+            printUsageHintFor(init.io, "mesh");
+            std.process.exit(2);
+        },
+        mesh_cmd.Error.MeshOff, mesh_cmd.Error.ServeNotRunning, mesh_cmd.Error.RequestFailed => std.process.exit(1),
         else => return err,
     };
 }
@@ -6342,7 +6422,8 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // defaults -- dry_run true. The write below was a second dry run
     // reporting success. toolText also demands a `text` field, which
     // smart_commit does not emit, so the verb could not succeed at all.
-    const preview = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, true, null);
+    const scope: []const u8 = if (opts.commit_all) "all" else "staged";
+    const preview = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, true, scope, null);
     try writeStdOut(io, preview.text);
     if (dry) return;
     // Nothing to write, and nothing to confirm: the preview already said so.
@@ -6354,10 +6435,24 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // multi-commit plan once landed as `chore: update working tree`. A human
     // confirming interactively still may, eyes open — the note is on screen.
     if (preview.degraded and opts.apply) {
-        try writeStdOut(io, "refusing --yes: the grouping degraded to a fallback plan (see the note above); rerun clanker commit, or confirm interactively without --yes\n");
-        return error.DegradedCommitPlan;
+        // The refusal is a diagnostic, not part of the plan: it goes to
+        // stderr so a caller capturing stdout for the plan still sees why
+        // nothing was written, and it is the only line printed — returning a
+        // bare `error.DegradedCommitPlan` on top of it put a Zig error name
+        // in front of the operator with the explanation on another stream.
+        printUsageError(io, "refusing --yes: the grouping degraded to a fallback plan (see the note above); rerun clanker commit, or confirm interactively without --yes", .{});
+        std.process.exit(1);
     }
     if (!opts.apply) {
+        // A prompt nobody can answer is not a safety check. With stdin
+        // redirected or closed — a script, CI, `clanker commit </dev/null` —
+        // the read below returns zero bytes, which read as "not y": the
+        // command printed "aborted" and exited 0, so an automated caller was
+        // told it had succeeded at committing nothing. Name the flag instead.
+        if (!(std.Io.File.stdin().isTty(io) catch false)) {
+            printUsageError(io, "refusing to commit: stdin is not a terminal, so `Proceed? [y/N]` cannot be answered; pass --yes to apply the plan above, or --dry-run to only print it", .{});
+            std.process.exit(1);
+        }
         try writeStdOut(io, "Proceed? [y/N] ");
         var buf: [8]u8 = undefined;
         // readStreaming takes a vector of buffers, not one buffer.
@@ -6373,7 +6468,7 @@ fn cmdCommit(init: std.process.Init, opts: Options) !void {
     // second answer -- a truncated reply turned an approved
     // `fix(smart_commit): ...` plan into one `chore: update working tree`
     // commit (docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md).
-    const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false, preview.commits);
+    const done = try smartCommitPlan(io, init.gpa, arena, &cfg, init.environ_map, false, scope, preview.commits);
     try writeStdOut(io, done.text);
 }
 
@@ -6401,21 +6496,25 @@ fn smartCommitPlan(
     cfg: *const config.Config,
     environ_map: *std.process.Environ.Map,
     dry_run: bool,
+    scope: []const u8,
     plan: ?[]const commit_logic.Commit,
 ) !CommitPlan {
+    // The preview and the write must name the same scope: they group and
+    // commit different copies of a file ("staged" builds each group in the
+    // index, "all" commits by pathspec and takes the worktree), so a write
+    // that silently fell back to "staged" would land something other than the
+    // plan that was confirmed.
     const body = if (plan) |p|
-        try commitBody(arena, dry_run, p)
-    else if (dry_run)
-        "{\"dry_run\":true,\"scope\":\"staged\"}"
+        try commitBody(arena, dry_run, scope, p)
     else
-        "{\"dry_run\":false,\"scope\":\"staged\"}";
+        try std.fmt.allocPrint(arena, "{{\"dry_run\":{},\"scope\":\"{s}\"}}", .{ dry_run, scope });
     const raw = try toolJson(io, gpa, arena, cfg, environ_map, "smart_commit", body);
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch
         return error.ToolBadOutput;
     if (parsed != .object) return error.ToolBadOutput;
-    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    const ok = json_util.boolFieldOrFalse(parsed.object, "ok");
     if (!ok) {
-        const detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "refused";
         log.log(.error_, "commit: {s}", .{detail});
         return error.ToolFailed;
     }
@@ -6468,7 +6567,7 @@ fn smartCommitPlan(
 }
 
 /// A `smart_commit` request body carrying a plan to write as-is.
-fn commitBody(arena: std.mem.Allocator, dry_run: bool, plan: []const commit_logic.Commit) ![]const u8 {
+fn commitBody(arena: std.mem.Allocator, dry_run: bool, scope: []const u8, plan: []const commit_logic.Commit) ![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
     var w = std.Io.Writer.Allocating.fromArrayList(arena, &buf);
     var s: std.json.Stringify = .{ .writer = &w.writer };
@@ -6476,7 +6575,7 @@ fn commitBody(arena: std.mem.Allocator, dry_run: bool, plan: []const commit_logi
     try s.objectField("dry_run");
     try s.write(dry_run);
     try s.objectField("scope");
-    try s.write("staged");
+    try s.write(scope);
     try s.objectField("commits");
     try s.beginArray();
     for (plan) |c| {
@@ -6490,6 +6589,29 @@ fn commitBody(arena: std.mem.Allocator, dry_run: bool, plan: []const commit_logi
     try s.endArray();
     try s.endObject();
     return w.written();
+}
+
+test "commit --all reaches smart_commit as scope \"all\", and is the default's opposite" {
+    // The scope decides which copy of a file is committed, so a flag that
+    // parsed but never reached the guest would quietly commit the index while
+    // the operator asked for the worktree.
+    const all = try parse(&.{ "clanker", "commit", "--all" }, null);
+    try std.testing.expect(all.commit_all);
+    const staged = try parse(&.{ "clanker", "commit" }, null);
+    try std.testing.expect(!staged.commit_all);
+
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const plan = [_]commit_logic.Commit{.{ .message = "fix: x", .files = &.{"a.zig"} }};
+    try std.testing.expect(std.mem.containsAtLeast(u8, try commitBody(a, false, "all", &plan), 1, "\"scope\":\"all\""));
+    try std.testing.expect(std.mem.containsAtLeast(u8, try commitBody(a, false, "staged", &plan), 1, "\"scope\":\"staged\""));
+
+    // --all belongs to `commit` only: `run --all` would otherwise be accepted
+    // and ignored.
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "run", "--all", "t" }, &diag));
+    try std.testing.expectEqualStrings("--all", diag);
 }
 
 fn cmdGit(init: std.process.Init, opts: Options) !void {
@@ -6510,12 +6632,23 @@ fn cmdGit(init: std.process.Init, opts: Options) !void {
         }
         try argv.append(init.gpa, arg);
     }
-    const result = try std.process.run(init.gpa, init.io, .{ .argv = argv.items });
-    defer init.gpa.free(result.stdout);
-    defer init.gpa.free(result.stderr);
-    try std.Io.File.stdout().writeStreamingAll(init.io, result.stdout);
-    try std.Io.File.stderr().writeStreamingAll(init.io, result.stderr);
-    if (result.term != .exited or result.term.exited != 0) return error.GitFailed;
+    // Inherited stdio and git's own exit status: a passthrough that is not
+    // transparent is worse than no passthrough. `std.process.run` captured
+    // both streams and replayed them after git had finished, so `clanker git
+    // log` could not reach a pager, `| head` could not stop it early, and a
+    // large `diff` was held whole in memory. It then flattened every failure
+    // to `error.GitFailed` (exit 1) with a "git exited with an error" line
+    // printed under git's own message, which erases the codes callers read:
+    // `git diff --quiet` answers 1 for "there are changes" and 128 for "not a
+    // repository", and `merge-base --is-ancestor` is 1-vs-128 the same way.
+    var child = try std.process.spawn(init.io, .{ .argv = argv.items });
+    switch (try child.wait(init.io)) {
+        .exited => |code| std.process.exit(code),
+        // Signalled or stopped rather than exited. 128 is the shell's band for
+        // that; the exact signal is not recoverable portably here, and any
+        // nonzero already tells a script the command did not succeed.
+        else => std.process.exit(128),
+    }
 }
 
 fn cmdRevert(init: std.process.Init, opts: Options) !void {
@@ -6552,10 +6685,17 @@ fn printServeBanner(io: std.Io, environ_map: *std.process.Environ.Map, disp: []c
     const stdout = std.Io.File.stdout();
     const tty = stdout.isTty(io) catch false;
     if (!tty) {
-        std.debug.print("http://{s}/webui\n", .{disp});
+        // `std.debug.print` writes to *stderr*, so the one line the doc
+        // comment promises a piped stdout was the one line it never got:
+        // `clanker serve | grep -m1 webui` blocked forever while the URL went
+        // to the terminal. The bare line is data, so it goes where the card
+        // below goes.
+        var url_buf: [512]u8 = undefined;
+        const line = std.fmt.bufPrint(&url_buf, "http://{s}/webui\n", .{disp}) catch return;
+        stdout.writeStreamingAll(io, line) catch {};
         return;
     }
-    const color = environ_map.get("NO_COLOR") == null;
+    const color = !no_color.requested(environ_map);
     const bold = if (color) "\x1b[1m" else "";
     const dim = if (color) "\x1b[2m" else "";
     const green = if (color) "\x1b[32m" else "";
@@ -7073,7 +7213,6 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         }
         const is_webui = isWebuiIndexPath(path) or
             isWebuiAssetPath(path) or
-            std.mem.eql(u8, path, "/webui/import-map.json") or
             std.mem.eql(u8, path, "/webui/vendor/preact.module.js") or std.mem.eql(u8, path, "/webui/vendor/htm.module.js") or std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js") or
             std.mem.startsWith(u8, path, "/webui/plugins/") or
             std.mem.startsWith(u8, path, "/webui/themes/") or
@@ -7152,7 +7291,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const keep_alive_eligible = (is_webui and isWebuiRead(method) and cfg.modules.webui) or
             (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/"));
         if (keep_alive_eligible) {
-            const conn_val = headerValue(headers_raw, "connection") orelse "";
+            const conn_val = proxy.headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
         }
         if (is_webui and !cfg.modules.webui) {
@@ -7173,8 +7312,6 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleHttpMetrics(stream);
         } else if (isWebuiRead(method) and isWebuiIndexPath(path)) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/import-map.json")) {
-            handleWebuiImportMap(io, gpa, cfg, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/preact.module.js")) {
             respondJs(gpa, stream, webui_vendor_preact, &gzip_preact, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/htm.module.js")) {
@@ -7369,10 +7506,7 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: st
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(NotifyRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
+    const parsed = jsonBody(NotifyRequestBody, arena, body, stream) orelse return;
     const from = parsed.from orelse "";
     const kind = parsed.kind orelse "";
     const topic = parsed.topic orelse "";
@@ -7406,14 +7540,8 @@ fn handleChatMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Conf
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatMessageBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatMessageBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
     const text = parsed.text orelse "";
     if (text.len > chatrooms.max_text_len) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"text too long\"}");
@@ -7618,14 +7746,8 @@ fn handleChatSend(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatSendBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatSendBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
     const text = parsed.text orelse "";
     if (text.len == 0) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty message\"}");
@@ -7673,14 +7795,8 @@ fn handleChatSubscribe(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Co
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatSubscribeBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatSubscribeBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
     chatrooms.subscribe(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, parsed.on) catch |err| {
         log.log(.error_, "POST /api/chat/subscribe room={s}: {s}", .{ room, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"subscribe failed\"}");
@@ -7694,22 +7810,10 @@ fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatReactBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
-    const emoji = parsed.emoji orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing emoji\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatReactBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
+    const emoji = requiredField("emoji", parsed.emoji, stream) orelse return;
     // Same cap as the guest `chat react` op (chatrooms.max_emoji_len), so a
     // reaction can never carry a whole payload or an empty label.
     if (emoji.len == 0 or emoji.len > chatrooms.max_emoji_len) {
@@ -7728,11 +7832,7 @@ fn handleChatReact(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
             return;
         },
     };
-    if (added) {
-        respond(stream, 200, "OK", "{\"ok\":true,\"added\":true}");
-    } else {
-        respond(stream, 200, "OK", "{\"ok\":true,\"added\":false}");
-    }
+    respond(stream, 200, "OK", if (added) "{\"ok\":true,\"added\":true}" else "{\"ok\":true,\"added\":false}");
 }
 
 fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
@@ -7740,22 +7840,10 @@ fn handleChatEdit(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config,
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatEditBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
-    const text = parsed.text orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing text\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatEditBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
+    const text = requiredField("text", parsed.text, stream) orelse return;
     // Same text contract as POST /api/chat/send and the guest `chat edit` op
     // (src/sandbox/host.zig): empty or over-cap edits must not be storable,
     // or a message could exceed the documented max_text_len.
@@ -7791,18 +7879,9 @@ fn handleChatDelete(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatDeleteBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatDeleteBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
     _ = room;
     chatrooms.deleteMessage(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, cfg, msg_id, cfg.instance.name) catch |err| switch (err) {
         error.NotFound => {
@@ -7827,28 +7906,15 @@ fn handleChatPin(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatPinBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const msg_id = parsed.msg_id orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing msg_id\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatPinBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const msg_id = requiredField("msg_id", parsed.msg_id, stream) orelse return;
     const pinned = chatrooms.togglePin(std.Io.Dir.cwd(), io, gpa, arena, cfg.agent.state_dir, room, msg_id) catch |err| {
         log.log(.error_, "POST /api/chat/pin: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"pin failed\"}");
         return;
     };
-    if (pinned) {
-        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":true}");
-    } else {
-        respond(stream, 200, "OK", "{\"ok\":true,\"pinned\":false}");
-    }
+    respond(stream, 200, "OK", if (pinned) "{\"ok\":true,\"pinned\":true}" else "{\"ok\":true,\"pinned\":false}");
 }
 
 fn handleChatTopic(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
@@ -7856,18 +7922,9 @@ fn handleChatTopic(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(ChatTopicBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
-    const room = parsed.room orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing room\"}");
-        return;
-    };
-    const topic = parsed.topic orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing topic\"}");
-        return;
-    };
+    const parsed = jsonBody(ChatTopicBody, arena, body, stream) orelse return;
+    const room = requiredField("room", parsed.room, stream) orelse return;
+    const topic = requiredField("topic", parsed.topic, stream) orelse return;
     // Same cap as the guest `chat set_topic` op (chatrooms.max_topic_len):
     // without it a topic could overflow the fixed room_meta.json frame.
     if (topic.len > chatrooms.max_topic_len) {
@@ -8287,10 +8344,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(A2ARequest, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
+    const parsed = jsonBody(A2ARequest, arena, body, stream) orelse return;
     const id = parsed.id orelse .null;
     var text: []const u8 = "";
     if (parsed.params) |p| {
@@ -9521,15 +9575,26 @@ fn webuiAssetTag(
 
 /// Rewrite absolute `/webui/` asset URLs to `/webui/~<tag>/` and inject an
 /// import map so ES module absolute imports resolve under the same tag.
+///
+/// The map is written *inline*, not as `<script type="importmap" src="...">`.
+/// An external map costs a whole blocking round trip before any module can be
+/// resolved — the map is ~370 bytes, so the request is pure latency — and it
+/// only works at all in Chromium 133+: Firefox and Safari ignore a map with
+/// `src`, which left `core/ui.js`'s absolute
+/// `import ... from "/webui/vendor/signals-core.module.js"` resolving to the
+/// untagged URL while the head preloaded the tagged one. Those browsers
+/// therefore fetched the three vendor modules twice (~6.9 KB gz of wasted
+/// preload) and never saw the cache-bust tag that makes a rebuild land.
 fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u8) ![]const u8 {
     const needle = "/webui/";
     const already = "/webui/~";
     const replacement = try std.fmt.allocPrint(arena, "/webui/~{s}/", .{tag});
+    var map_buf: [1024]u8 = undefined;
     const map = try std.fmt.allocPrint(
         arena,
-        \\<script type="importmap" src="/webui/~{s}/import-map.json"></script>
+        \\<script type="importmap">{s}</script>
     ,
-        .{tag},
+        .{try webuiImportMapJson(&map_buf, tag)},
     );
 
     var out: std.ArrayList(u8) = .empty;
@@ -9651,24 +9716,6 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
 /// painted the rail chrome and never ran app.js.
 fn webuiImportMapJson(buf: []u8, tag: []const u8) ![]const u8 {
     return std.fmt.bufPrint(buf, "{{\"imports\":{{\"/webui/vendor/\":\"/webui/~{s}/vendor/\",\"/webui/core/\":\"/webui/~{s}/core/\",\"/webui/lib/\":\"/webui/~{s}/lib/\",\"/webui/features/\":\"/webui/~{s}/features/\",\"/webui/app.js\":\"/webui/~{s}/app.js\",\"/webui/app.css\":\"/webui/~{s}/app.css\",\"/webui/preact-boot.js\":\"/webui/~{s}/preact-boot.js\"}}}}", .{ tag, tag, tag, tag, tag, tag, tag });
-}
-
-fn handleWebuiImportMap(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io.net.Stream) void {
-    const tag = webuiAssetTag(io, gpa, cfg) orelse {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"webui asset tag unavailable\"}");
-        return;
-    };
-    var body_buf: [512]u8 = undefined;
-    const body = webuiImportMapJson(&body_buf, tag) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"import map overflow\"}");
-        return;
-    };
-    request_status = 200;
-    const cache_control = webuiAssetCacheControl("no-cache");
-    var hbuf: [512]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/importmap+json\r\nContent-Length: {d}\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ body.len, cache_control, connHeader() }) catch return;
-    raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, body);
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
@@ -9954,8 +10001,19 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         return;
     }
 
+    // The lock covers the cache and the search that reads it, and stops
+    // there. It used to be held by `defer` across `respondCompressible` too,
+    // which gzips several kilobytes and writes them to a socket: one slow
+    // reader then blocked every other catalog search in the process for the
+    // length of its own transfer. The response body is arena memory copied
+    // out of the tree by `writeSearch`, so it survives the unlock even if a
+    // concurrent `/api/catalog/refresh` swaps the snapshot underneath.
+    var out: std.Io.Writer.Allocating = .init(arena);
     _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
-    defer _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+    var unlocked = false;
+    defer if (!unlocked) {
+        _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+    };
 
     if (catalog_parsed == null) {
         if (catalog_cache == null) {
@@ -9985,9 +10043,11 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
     catalog_mod.writeSearch(&s, found.hits, found.truncated) catch return;
+    unlocked = true;
+    _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
 
@@ -10140,22 +10200,18 @@ fn readConfigForEdit(io: std.Io, arena: std.mem.Allocator, name: []const u8) ![]
 }
 
 test "a config file that cannot be read is an error, never an empty edit base" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     // Absent is an empty file: that is what a first-time edit sees.
-    try std.testing.expectEqualStrings("", try readConfigForEditIn(io, arena, tmp.dir, "config.local.toml"));
+    try std.testing.expectEqualStrings("", try readConfigForEditIn(io, arena, env.tmp.dir, "config.local.toml"));
 
     // Present but unreadable is not. Callers splice into these bytes and
     // write the splice back, so "" here silently replaces the whole config.
-    try tmp.dir.createDirPath(io, "config.local.toml");
-    try std.testing.expectError(error.ConfigFileUnreadable, readConfigForEditIn(io, arena, tmp.dir, "config.local.toml"));
+    try env.tmp.dir.createDirPath(io, "config.local.toml");
+    try std.testing.expectError(error.ConfigFileUnreadable, readConfigForEditIn(io, arena, env.tmp.dir, "config.local.toml"));
 }
 
 /// `GET /api/config/raw?file=<name>` — the file's current bytes, for the
@@ -10647,8 +10703,69 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"providers tool unavailable\"}");
         return;
     };
-    const body = overlayLiveProviderModels(io, gpa, arena, cfg, environ_map, raw) orelse raw;
+    const annotated = annotateProviderUsability(arena, cfg, environ_map, io, raw) orelse raw;
+    const body = overlayLiveProviderModels(io, gpa, arena, cfg, environ_map, annotated) orelse annotated;
     respondTool(stream, body);
+}
+
+/// Adds `usable` (and `reason` when false) to each provider row of the
+/// guest's list. The guest cannot answer this: usability is this serve
+/// process's environ plus which loopback ports answer, and neither reaches
+/// the sandbox. The verdict is `providers.unusableReason` — the exact gate
+/// the TUI `/model` picker applies — so the web chat picker and `/model`
+/// offer the same set while the row itself stays in the payload: the Models
+/// view is inventory and still names a configured-but-unkeyed provider, the
+/// way `clanker providers check` prints "not configured". Null when the raw
+/// body has no provider rows to annotate (caller falls back to it verbatim).
+fn annotateProviderUsability(
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    io: ?std.Io,
+    raw: []const u8,
+) ?[]const u8 {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return null;
+    if (parsed != .object) return null;
+    const rows = parsed.object.get("providers") orelse return null;
+    if (rows != .array) return null;
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return null;
+    var top = parsed.object.iterator();
+    while (top.next()) |kv| {
+        if (std.mem.eql(u8, kv.key_ptr.*, "providers")) continue;
+        s.objectField(kv.key_ptr.*) catch return null;
+        s.write(kv.value_ptr.*) catch return null;
+    }
+    s.objectField("providers") catch return null;
+    s.beginArray() catch return null;
+    for (rows.array.items) |item| {
+        if (item != .object) {
+            s.write(item) catch return null;
+            continue;
+        }
+        s.beginObject() catch return null;
+        var kit = item.object.iterator();
+        while (kit.next()) |kv| {
+            s.objectField(kv.key_ptr.*) catch return null;
+            s.write(kv.value_ptr.*) catch return null;
+        }
+        const reason: ?[]const u8 = if (json_util.strFieldOrNull(item.object, "name")) |name| blk: {
+            const prov = cfg.providers.getPtr(name) orelse break :blk null;
+            break :blk providers.unusableReason(arena, environ_map, prov, io);
+        } else null;
+        s.objectField("usable") catch return null;
+        s.write(reason == null) catch return null;
+        if (reason) |r| {
+            s.objectField("reason") catch return null;
+            s.write(r) catch return null;
+        }
+        s.endObject() catch return null;
+    }
+    s.endArray() catch return null;
+    s.endObject() catch return null;
+    return out.written();
 }
 
 /// When the guest list has a provider with no static models, ask that
@@ -10691,10 +10808,16 @@ fn overlayLiveProviderModels(
         s.beginArray() catch return null;
         const models = item.object.get("models");
         const empty = models == null or models.? != .array or models.?.array.items.len == 0;
+        // A row `annotateProviderUsability` marked not-callable never gets a
+        // live fill: the fetch would spend its whole timeout on an endpoint
+        // this process provably cannot call (missing key, dead loopback).
+        const row_usable = if (item.object.get("usable")) |u| u == .bool and u.bool else true;
         if (!empty) {
             for (models.?.array.items) |m| {
                 s.write(m) catch return null;
             }
+        } else if (!row_usable) {
+            // Leave the models array empty; the row stays as inventory.
         } else if (cfg.providers.getPtr(name)) |prov| {
             const budget_s = prov.check_timeout_seconds orelse cfg.agent.provider_check_timeout_seconds;
             writeLiveModels(io, gpa, arena, prov, environ_map, @as(i64, budget_s) * std.time.ms_per_s, &s);
@@ -10882,14 +11005,8 @@ fn handleWebuiPlugins(
 
     var input: []const u8 = "{}";
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(WebuiPluginPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        const name = req.name orelse {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
-            return;
-        };
+        const req = jsonBody(WebuiPluginPost, arena, body, stream) orelse return;
+        const name = requiredField("name", req.name, stream) orelse return;
         // No explicit target preserves the old toggle semantics, resolved
         // against the guest-owned registry rather than a second native copy.
         const on = req.enabled orelse blk: {
@@ -11081,26 +11198,21 @@ fn collectThemeEntries(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ![
 }
 
 test "collectThemeEntries orders by order then name and skips junk" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const arena = env.arena();
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    try env.tmp.dir.createDirPath(io, "themes");
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/zeta.json", .data = "{\"scheme\":\"dark\",\"order\":2,\"tokens\":{\"--bg\":\"#111\"}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/alpha.json", .data = "{\"scheme\":\"light\",\"order\":2,\"tokens\":{\"--bg\":\"#eee\"}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/first.json", .data = "{\"scheme\":\"dark\",\"order\":1,\"tokens\":{\"--bg\":\"#000\"}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/notes.md", .data = "nope" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/catalog.json", .data = "{\"tokens\":{}}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/bad.json", .data = "not json" });
 
-    try tmp.dir.createDirPath(io, "themes");
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/zeta.json", .data = "{\"scheme\":\"dark\",\"order\":2,\"tokens\":{\"--bg\":\"#111\"}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/alpha.json", .data = "{\"scheme\":\"light\",\"order\":2,\"tokens\":{\"--bg\":\"#eee\"}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/first.json", .data = "{\"scheme\":\"dark\",\"order\":1,\"tokens\":{\"--bg\":\"#000\"}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/notes.md", .data = "nope" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/catalog.json", .data = "{\"tokens\":{}}" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "themes/bad.json", .data = "not json" });
-
-    const entries = try collectThemeEntries(io, tmp.dir, arena);
+    const entries = try collectThemeEntries(io, env.tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 3), entries.len);
     try std.testing.expectEqualStrings("first", entries[0].id);
     try std.testing.expectEqualStrings("alpha", entries[1].id);
@@ -11286,10 +11398,7 @@ fn handleBoard(
 fn handleGoalWrite(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, body: []const u8, stream: std.Io.net.Stream) void {
     var guard = file_lock.acquire(io, std.Io.Dir.cwd(), "state", "goals", gpa);
     defer guard.release();
-    const req = std.json.parseFromSliceLeaky(GoalPost, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    };
+    const req = jsonBody(GoalPost, arena, body, stream) orelse return;
     if (req.objective != null) {
         var input: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &input.writer, .options = .{} };
@@ -11552,10 +11661,7 @@ fn handleSessions(
             return;
         }
         if (std.mem.eql(u8, method, "POST")) {
-            const req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-                return;
-            };
+            const req = jsonBody(SessionPatchBody, arena, body, stream) orelse return;
             if (req.archived) |arch| {
                 session.setArchived(io, gpa, arena, std.Io.Dir.cwd(), id, arch) catch {
                     respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
@@ -11611,10 +11717,7 @@ fn handleSessions(
 
     // Import: POST /api/sessions with {import_chat:true, title, messages:[{role,content}]}
     if (std.mem.eql(u8, method, "POST")) {
-        const import_req = std.json.parseFromSliceLeaky(SessionPatchBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
+        const import_req = jsonBody(SessionPatchBody, arena, body, stream) orelse return;
         if (import_req.import_chat orelse false) {
             const msgs = import_req.messages orelse &[_]session.StoredMessage{};
             const title = import_req.title orelse "imported chat";
@@ -12391,61 +12494,23 @@ test "fork route suffix parsing yields a valid source id and refuses traversal" 
 }
 
 test "forkSession mints an id that still passes validSessionId" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const arena = env.arena();
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try session.saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try session.saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = "sess-1",
         .title = "t",
         .messages = &.{.{ .role = .user, .content = "hi" }},
         .created = 1,
         .updated = 2,
     });
-    const forked = try session.forkSession(io, std.testing.allocator, arena, tmp.dir, "sess-1");
+    const forked = try session.forkSession(io, std.testing.allocator, arena, env.tmp.dir, "sess-1");
     // The fork id is returned to the client and must itself stay addressable
     // through the id-validated session endpoints.
     try std.testing.expect(session.validSessionId(forked));
-}
-
-fn sessionListJSON(arena: std.mem.Allocator, list: []const session.SessionMeta) ![]const u8 {
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("sessions");
-    try s.beginArray();
-    for (list) |m| {
-        try s.beginObject();
-        try s.objectField("id");
-        try s.write(m.id);
-        try s.objectField("title");
-        try s.write(m.title);
-        try s.objectField("created");
-        try s.write(m.created);
-        try s.objectField("updated");
-        try s.write(m.updated);
-        try s.objectField("workspace");
-        try s.write(m.workspace);
-        try s.objectField("archived");
-        try s.write(m.archived);
-        try s.objectField("messages");
-        try s.write(m.messages);
-        try s.objectField("bytes");
-        try s.write(m.bytes);
-        try s.endObject();
-    }
-    try s.endArray();
-    try s.endObject();
-    return out.written();
 }
 
 /// Only the roles the transcript actually renders: system prompts are internal
@@ -12501,14 +12566,8 @@ fn handlePlugins(
     const arena = arena_state.allocator();
 
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(PluginToggleBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
-        const name = req.name orelse {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
-            return;
-        };
+        const req = jsonBody(PluginToggleBody, arena, body, stream) orelse return;
+        const name = requiredField("name", req.name, stream) orelse return;
         // The name becomes a word in the tool's argument string, so anything
         // with whitespace in it would silently become a different command.
         if (name.len == 0 or name.len > 64 or std.mem.findAny(u8, name, " \t\r\n") != null) {
@@ -12731,10 +12790,7 @@ fn handleWorkspaces(
             return;
         }
         if (std.mem.eql(u8, method, "POST")) {
-            const req = std.json.parseFromSliceLeaky(WorkspaceBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-                respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-                return;
-            };
+            const req = jsonBody(WorkspaceBody, arena, body, stream) orelse return;
             const name: ?[]const u8 = if (req.name.len > 0) req.name else null;
             const folder: ?[]const u8 = if (req.path.len > 0) req.path else null;
             if (name == null and folder == null and req.roots.len == 0) {
@@ -12774,10 +12830,7 @@ fn handleWorkspaces(
     }
 
     if (std.mem.eql(u8, method, "POST")) {
-        const req = std.json.parseFromSliceLeaky(WorkspaceBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-            return;
-        };
+        const req = jsonBody(WorkspaceBody, arena, body, stream) orelse return;
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         const owner = selfInstanceId(cfg);
         const created = (if (req.roots.len > 0)
@@ -12822,26 +12875,35 @@ fn handleWorkspaces(
     s.objectField("workspaces") catch return;
     s.beginArray() catch return;
 
-    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, null, true, false, countChats(sessions, "")) catch return;
+    // One pass over the sessions, not one per workspace. Every chat carries a
+    // workspace label, so the per-workspace count is a group-by, and the
+    // orphan pass needs the same table to say which labels the registry does
+    // not know. Scanning the whole list per row made this handler quadratic
+    // in a store that only ever grows.
+    var chats_by_workspace = chatCounts(arena, sessions) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+        return;
+    };
+    const chatsIn = struct {
+        fn count(map: *const std.StringArrayHashMapUnmanaged(usize), id: []const u8) usize {
+            return map.get(id) orelse 0;
+        }
+    }.count;
+
+    writeWorkspaceJson(&s, "", cwd_name, cwd_abs, null, true, false, chatsIn(&chats_by_workspace, "")) catch return;
     for (registered) |w| {
-        writeWorkspaceJson(&s, w.id, w.name, workspacePrimaryPath(w), w.roots, false, false, countChats(sessions, w.id)) catch return;
+        writeWorkspaceJson(&s, w.id, w.name, workspacePrimaryPath(w), w.roots, false, false, chatsIn(&chats_by_workspace, w.id)) catch return;
     }
     // Label-only folders that predate the registry still appear so their
-    // chats stay reachable until a path is attached.
-    var seen_orphans: std.ArrayList([]const u8) = .empty;
-    for (sessions) |m| {
-        if (m.workspace.len == 0) continue;
-        if (workspace_mod.find(registered, m.workspace) != null) continue;
-        var already = false;
-        for (seen_orphans.items) |o| {
-            if (std.mem.eql(u8, o, m.workspace)) {
-                already = true;
-                break;
-            }
-        }
-        if (already) continue;
-        seen_orphans.append(arena, m.workspace) catch continue;
-        writeWorkspaceJson(&s, m.workspace, m.workspace, "", null, false, true, countChats(sessions, m.workspace)) catch continue;
+    // chats stay reachable until a path is attached. The count table is
+    // already deduplicated by label, so each orphan is emitted once without
+    // a second `seen` list to scan.
+    var orphans = chats_by_workspace.iterator();
+    while (orphans.next()) |kv| {
+        const id = kv.key_ptr.*;
+        if (id.len == 0) continue;
+        if (workspace_mod.find(registered, id) != null) continue;
+        writeWorkspaceJson(&s, id, id, "", null, false, true, kv.value_ptr.*) catch continue;
     }
 
     s.endArray() catch return;
@@ -12849,12 +12911,21 @@ fn handleWorkspaces(
     respondCompressible(arena, stream, accepts_gzip, out.written());
 }
 
-fn countChats(sessions: []const session.SessionMeta, id: []const u8) usize {
-    var n: usize = 0;
+/// Chats per workspace label, in first-seen order (which is newest-first:
+/// `listSessions` sorts by `updated`). Insertion-ordered so the orphan rows
+/// `/api/workspaces` emits from it stay stable across requests.
+fn chatCounts(
+    arena: std.mem.Allocator,
+    sessions: []const session.SessionMeta,
+) !std.StringArrayHashMapUnmanaged(usize) {
+    var counts: std.StringArrayHashMapUnmanaged(usize) = .empty;
+    try counts.ensureTotalCapacity(arena, @intCast(sessions.len + 1));
     for (sessions) |m| {
-        if (std.mem.eql(u8, m.workspace, id)) n += 1;
+        const gop = try counts.getOrPut(arena, m.workspace);
+        if (!gop.found_existing) gop.value_ptr.* = 0;
+        gop.value_ptr.* += 1;
     }
-    return n;
+    return counts;
 }
 
 fn writeWorkspaceJson(
@@ -14176,9 +14247,9 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
     s.objectField("run_defaults") catch return;
     s.beginObject() catch return;
     s.objectField("webui_worktree") catch return;
-    s.write(cfg.agent.isolated_webui or containsMode(cfg.agent.git_worktree_on, .webui)) catch return;
+    s.write(cfg.agent.isolated_webui or cfg.agent.worktreeOn(.webui)) catch return;
     s.objectField("goal_worktree") catch return;
-    s.write(containsMode(cfg.agent.git_worktree_on, .goal)) catch return;
+    s.write(cfg.agent.worktreeOn(.goal)) catch return;
     s.endObject() catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", buf[0..w.end]);
@@ -14190,8 +14261,8 @@ fn handleStatus(cfg: *const config.Config, stream: std.Io.net.Stream) void {
 /// normal chat.
 fn shouldWebuiIsolate(req: RunRequestBody, cfg: *const config.Config) bool {
     if (req.worktree) |v| return v;
-    if (cfg.agent.isolated_webui or containsMode(cfg.agent.git_worktree_on, .webui)) return true;
-    return req.goal.len > 0 and containsMode(cfg.agent.git_worktree_on, .goal);
+    if (cfg.agent.isolated_webui or cfg.agent.worktreeOn(.webui)) return true;
+    return req.goal.len > 0 and cfg.agent.worktreeOn(.goal);
 }
 
 test shouldWebuiIsolate {
@@ -14270,6 +14341,26 @@ fn visionFallbackProvider(cfg: *const config.Config, current_name: []const u8, p
 /// provider. Prefix the provider name always; when images were attached, add
 /// a hint that the model may not be vision-capable, the most common
 /// image-upload failure class.
+// Escape `detail` through the JSON stringifier: provider error text can
+// contain quotes, backslashes, or newlines that plain bufPrint interpolation
+// would turn into malformed JSON clients cannot parse. `fallback` is the body
+// used when even the escaped form does not fit.
+fn respondRunError(stream: std.Io.net.Stream, detail: []const u8, fallback: []const u8) void {
+    var ebuf: [8192]u8 = undefined;
+    var ew: std.Io.Writer = .fixed(&ebuf);
+    var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
+    const built = err_body: {
+        es.beginObject() catch break :err_body false;
+        es.objectField("ok") catch break :err_body false;
+        es.write(false) catch break :err_body false;
+        es.objectField("error") catch break :err_body false;
+        es.write(detail) catch break :err_body false;
+        es.endObject() catch break :err_body false;
+        break :err_body true;
+    };
+    respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else fallback);
+}
+
 fn enrichRunError(arena: std.mem.Allocator, provider_name: []const u8, had_images: bool, detail: []const u8) []const u8 {
     const suffix: []const u8 = if (had_images)
         "; with image attachment, the provider/model may not support vision, or the image is invalid; check that the selected model is vision-capable and that modules.multimodal is enabled"
@@ -14553,6 +14644,22 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             return;
         }
         provider_copy.default_model = req.model;
+    }
+    // A request that names a provider this process cannot call is refused
+    // with the reason rather than started: the fallback chain would serve it
+    // under a different provider while the graph and the chat kept the
+    // requested name, so the run would finish looking like a model that never
+    // answered. The gate is the one the chat picker's list was built from
+    // (`providers.unusableReason`), so a refusal here means a stale or
+    // hand-written client, never a row the picker offered. A request that
+    // names no provider keeps the configured default and its fallback chain.
+    if (req.provider.len > 0) {
+        if (providers.unusableReason(arena, environ_map, provider, io)) |reason| {
+            const err_body = std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"provider '{s}' is not callable from this server: {s}\"}}", .{ provider.name, reason }) catch
+                "{\"ok\":false,\"error\":\"provider is not callable from this server\"}";
+            respond(stream, 400, "Bad Request", err_body);
+            return;
+        }
     }
     // Image attachments need a vision-capable model. If the selected provider
     // cannot take the image, route the run to a fallback provider that can:
@@ -14848,10 +14955,19 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
         }
         const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+        // When the fallback chain replaced the requested provider mid-run,
+        // say so on the stream: the run must not finish looking like the
+        // provider that never answered.
+        if (!std.mem.eql(u8, a.provider.name, provider.name)) {
+            writeStreamEvent(stream.socket.handle, "status", .{ .message = std.fmt.allocPrint(arena, "Served by fallback provider '{s}' — '{s}' did not answer.", .{ a.provider.name, provider.name }) catch "Served by a fallback provider." });
+        }
         // Otherwise the answer was already streamed via runStreamDelta; a
         // structured "done" event carries the turn's stats, then the
         // trailing Connection: close ends the client-side stream.
+        // `served_by` is whoever actually answered (the fallback chain
+        // repoints the agent's provider), which can differ from the request.
         writeStreamEvent(stream.socket.handle, "done", .{
+            .served_by = a.provider.name,
             .prompt_tokens = a.stats.total_prompt_tokens,
             .completion_tokens = a.stats.total_completion_tokens,
             .cost = a.stats.cost,
@@ -14883,22 +14999,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .evaluate = serverGoalLoopEvaluate,
         }) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
-            // Escape `detail` through the JSON stringifier: provider error text
-            // can contain quotes, backslashes, or newlines that plain bufPrint
-            // interpolation would turn into malformed JSON clients cannot parse.
-            var ebuf: [8192]u8 = undefined;
-            var ew: std.Io.Writer = .fixed(&ebuf);
-            var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
-            const built = err_body: {
-                es.beginObject() catch break :err_body false;
-                es.objectField("ok") catch break :err_body false;
-                es.write(false) catch break :err_body false;
-                es.objectField("error") catch break :err_body false;
-                es.write(detail) catch break :err_body false;
-                es.endObject() catch break :err_body false;
-                break :err_body true;
-            };
-            respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"goal loop failed\"}");
+            respondRunError(stream, detail, "{\"ok\":false,\"error\":\"goal loop failed\"}");
             return;
         };
         loop_outcome = outcome;
@@ -14906,22 +15007,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     } else blk: {
         const resp = a.run(&messages, final_task, &err_detail) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
-            // Escape `detail` through the JSON stringifier: provider error text
-            // can contain quotes, backslashes, or newlines that plain bufPrint
-            // interpolation would turn into malformed JSON clients cannot parse.
-            var ebuf: [8192]u8 = undefined;
-            var ew: std.Io.Writer = .fixed(&ebuf);
-            var es = std.json.Stringify{ .writer = &ew, .options = .{ .emit_null_optional_fields = false } };
-            const built = err_body: {
-                es.beginObject() catch break :err_body false;
-                es.objectField("ok") catch break :err_body false;
-                es.write(false) catch break :err_body false;
-                es.objectField("error") catch break :err_body false;
-                es.write(detail) catch break :err_body false;
-                es.endObject() catch break :err_body false;
-                break :err_body true;
-            };
-            respond(stream, 500, "Internal Server Error", if (built) ebuf[0..ew.end] else "{\"ok\":false,\"error\":\"run failed\"}");
+            respondRunError(stream, detail, "{\"ok\":false,\"error\":\"run failed\"}");
             return;
         };
         break :blk resp.message.content orelse "";
@@ -14956,6 +15042,10 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     s.write(true) catch return;
     s.objectField("content") catch return;
     s.write(content) catch return;
+    // Whoever actually answered: the fallback chain repoints the agent's
+    // provider, so this can differ from the provider the request named.
+    s.objectField("served_by") catch return;
+    s.write(a.provider.name) catch return;
     s.endObject() catch return;
     respond(stream, 200, "OK", rbuf[0..w.end]);
 }
@@ -14998,6 +15088,26 @@ test "retrieval prompt labels knowledge as untrusted and separates operator task
 
 fn connHeader() []const u8 {
     return if (request_keep_alive) "Connection: keep-alive\r\n" else "Connection: close\r\n";
+}
+
+/// Parses a request body into `T`, answering the shared 400 when it is not
+/// valid JSON for that shape. Every `POST /api/*` handler wants the same
+/// refusal, so it lives here once rather than in each of them.
+fn jsonBody(comptime T: type, arena: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) ?T {
+    return std.json.parseFromSliceLeaky(T, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+        return null;
+    };
+}
+
+/// Unwraps a field a route requires, answering the shared "missing <name>"
+/// 400 when the body omitted it. `name` is comptime so the message is a
+/// literal rather than something the handler has to format into a buffer.
+fn requiredField(comptime name: []const u8, value: anytype, stream: std.Io.net.Stream) ?@typeInfo(@TypeOf(value)).optional.child {
+    return value orelse {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing " ++ name ++ "\"}");
+        return null;
+    };
 }
 
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
@@ -15150,22 +15260,8 @@ fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     raw_http.writeAllFd(stream.socket.handle, out);
 }
 
-/// True when the request's Accept-Encoding lists gzip. Scoped to that header's
-/// own line so a request target that happens to contain "gzip" cannot flip it.
-/// The (trimmed) value of the first header line named `name`, matched
-/// case-insensitively on the header name only.
-fn headerValue(headers_raw: []const u8, name: []const u8) ?[]const u8 {
-    var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
-    while (lines.next()) |line| {
-        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
-        if (!std.ascii.eqlIgnoreCase(line[0..colon], name)) continue;
-        return std.mem.trim(u8, line[colon + 1 ..], " ");
-    }
-    return null;
-}
-
 fn requestCorrelationId(headers_raw: []const u8) ?[]const u8 {
-    const value = headerValue(headers_raw, "x-request-id") orelse return null;
+    const value = proxy.headerValue(headers_raw, "x-request-id") orelse return null;
     if (value.len == 0 or value.len > 128) return null;
     for (value) |c| {
         if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == ':')) return null;
@@ -15260,7 +15356,7 @@ fn allowedAuthority(value: []const u8, port: u16, serve_as_hosts: []const []cons
 /// origins alone meant a LAN browser reaching a `--host 0.0.0.0` server could
 /// load the page and then have every POST from it refused as cross-origin.
 fn crossOriginRequest(headers_raw: []const u8, port: u16, serve_as_hosts: []const []const u8) bool {
-    const origin = headerValue(headers_raw, "origin") orelse return false;
+    const origin = proxy.headerValue(headers_raw, "origin") orelse return false;
     const authority = if (std.mem.startsWith(u8, origin, "http://"))
         origin["http://".len..]
     else if (std.mem.startsWith(u8, origin, "https://"))
@@ -15413,6 +15509,8 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
     try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173/evil\r\n", 4173, none));
 }
 
+/// True when the request's Accept-Encoding lists gzip. Scoped to that header's
+/// own line so a request target that happens to contain "gzip" cannot flip it.
 fn acceptsGzip(headers_raw: []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
@@ -15494,7 +15592,7 @@ test "fuzz: header parsing never panics on bytes straight off the socket" {
             const len = smith.slice(&buf);
             const headers_raw = buf[0..len];
             const allow: []const []const u8 = &.{"clanker.lan"};
-            _ = headerValue(headers_raw, "origin");
+            _ = proxy.headerValue(headers_raw, "origin");
             _ = crossOriginRequest(headers_raw, 4173, allow);
             _ = unexpectedHost(headers_raw, 4173, allow);
             _ = acceptsGzip(headers_raw);
@@ -15713,17 +15811,13 @@ test "parseWithCommand resolves the real command when a global flag precedes it"
 }
 
 test "the listener resolves config < env < flag, in that order" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = fixture.io();
 
-    try tmp.dir.writeFile(io, .{
+    try fixture.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -15741,7 +15835,7 @@ test "the listener resolves config < env < flag, in that order" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, fixture.tmp.dir, "config.toml", "absent.toml");
 
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
@@ -15791,17 +15885,13 @@ test "with nothing configured the listener is loopback on the default port" {
     // The safe default has to survive the new layering: an install with no
     // [serve] table, no CLANKER_* and no flags must still bind loopback
     // rather than land on the network by accident.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = fixture.io();
 
-    try tmp.dir.writeFile(io, .{
+    try fixture.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -15814,7 +15904,7 @@ test "with nothing configured the listener is loopback on the default port" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, fixture.tmp.dir, "config.toml", "absent.toml");
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
 
@@ -15835,15 +15925,11 @@ test "serve --proxy and --no-proxy resolve against the file and env" {
     const port = try parse(&.{ "clanker", "serve", "--proxy-port", "17922" }, null);
     try std.testing.expectEqual(@as(?u16, 17922), port.proxy_port);
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    try tmp.dir.writeFile(io, .{
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
+    const io = fixture.io();
+    try fixture.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -15859,7 +15945,7 @@ test "serve --proxy and --no-proxy resolve against the file and env" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, fixture.tmp.dir, "config.toml", "absent.toml");
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
 
@@ -16087,6 +16173,7 @@ test "every registered option routes a following help flag to itself" {
 
     const aliases = [_]struct { []const u8, Flag }{
         .{ "-v", .verbose },
+        .{ "-q", .quiet },
         .{ "-m", .model },
         .{ "-c", .continue_last },
         .{ "-wt", .worktree },
@@ -16106,12 +16193,37 @@ test "every option can render its own help" {
         const help = renderFlagHelp(&buf, flag);
         try std.testing.expect(std.mem.startsWith(u8, help, "usage: clanker "));
         try std.testing.expect(std.mem.find(u8, help, primaryFlagName(flag)) != null);
+        // The usage line is meant to be retyped, so it carries the one
+        // spelling that runs: not the heading form, which folds in the alias
+        // ("--continue, -c -h") or the value placeholder ("--mascot-size
+        // <size> -h") and produces a command line clanker itself rejects.
+        const prefix = "usage: clanker ";
+        const usage_line = help[prefix.len..std.mem.findScalar(u8, help, '\n').?];
+        var expected_buf: [64]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&expected_buf, "{s} -h", .{primaryFlagName(flag)});
+        try std.testing.expectEqualStrings(expected, usage_line);
         var lines = std.mem.splitScalar(u8, help, '\n');
         while (lines.next()) |line| try std.testing.expect(line.len <= 80);
     }
     const mascot = renderFlagHelp(&buf, .mascot);
     try std.testing.expect(std.mem.find(u8, mascot, "MODES") != null);
     try std.testing.expect(std.mem.find(u8, mascot, "clanker repl") != null);
+}
+
+test "--quiet is global, and --verbose wins when both are given" {
+    // Both are accepted on every command, so neither can be refused as "not an
+    // option for this command"; main.zig applies quiet first and verbose
+    // second, which is what makes the louder of the two win.
+    const q = try parse(&.{ "clanker", "stats", "--quiet" }, null);
+    try std.testing.expect(q.quiet);
+    try std.testing.expect(!q.verbose);
+
+    const short = try parse(&.{ "clanker", "-q", "sessions" }, null);
+    try std.testing.expect(short.quiet);
+    try std.testing.expectEqual(Command.sessions, short.command);
+
+    const both = try parse(&.{ "clanker", "-q", "-v", "stats" }, null);
+    try std.testing.expect(both.quiet and both.verbose);
 }
 
 test "mistyped commands get conservative suggestions" {
@@ -16266,6 +16378,40 @@ test "every command is listed in the help table" {
     }
 }
 
+test "record store usage lines name every accepted subcommand" {
+    // The `usage:` line is the only place an operator sees the list, and the
+    // dispatch chain is the only place it is enforced. They drifted once:
+    // `research` and `rfc` grew `append` and `update` and their usage lines
+    // kept naming the older set, so `--help` denied a subcommand that worked.
+    const stores = .{
+        .{ Command.reports, reports_cmd.subcommands },
+        .{ Command.research, research_cmd.subcommands },
+        .{ Command.rfc, rfc_cmd.subcommands },
+        .{ Command.adr, adr_cmd.subcommands },
+        .{ Command.prd, prd_cmd.subcommands },
+    };
+    inline for (stores) |store| {
+        const usage = specFor(store[0]).?.usage;
+        const open_bracket = std.mem.find(u8, usage, "[").?;
+        const close_bracket = std.mem.find(u8, usage, "]").?;
+        var listed = std.mem.splitScalar(u8, usage[open_bracket + 1 .. close_bracket], '|');
+        for (store[1]) |sub| {
+            const next = listed.next() orelse {
+                std.debug.print("{s} usage line stops before '{s}'\n", .{ @tagName(store[0]), sub });
+                return error.TestUnexpectedResult;
+            };
+            if (!std.mem.eql(u8, next, sub)) {
+                std.debug.print("{s} usage line has '{s}' where dispatch has '{s}'\n", .{ @tagName(store[0]), next, sub });
+                return error.TestUnexpectedResult;
+            }
+        }
+        if (listed.next()) |extra| {
+            std.debug.print("{s} usage line names '{s}', which dispatch does not accept\n", .{ @tagName(store[0]), extra });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
 test "top-level help stays within 80 columns" {
     var buf: [16384]u8 = undefined;
     const usage = renderUsage(&buf);
@@ -16273,6 +16419,30 @@ test "top-level help stays within 80 columns" {
     while (lines.next()) |line| {
         if (line.len > 80) {
             std.debug.print("help line is {d} columns: {s}\n", .{ line.len, line });
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "every everywhere-flag is named in both help footers" {
+    // `Flag.global()` is what the parser accepts on every command; the two
+    // help footers are hand-written prose. They drifted: --profile and
+    // --dump-config worked on every command and their own `-h` said
+    // "Available on every command", while `clanker --help` and every
+    // `clanker <cmd> --help` listed only --verbose/--quiet/--help.
+    var top_buf: [16384]u8 = undefined;
+    const top = renderUsage(&top_buf);
+    var cmd_buf: [16384]u8 = undefined;
+    const cmd = renderCommandHelp(&cmd_buf, .stats);
+    for (std.enums.values(Flag)) |f| {
+        if (!f.global()) continue;
+        const spelling = primaryFlagName(f);
+        if (std.mem.find(u8, top, spelling) == null) {
+            std.debug.print("top-level help never names {s}\n", .{spelling});
+            return error.TestUnexpectedResult;
+        }
+        if (std.mem.find(u8, cmd, spelling) == null) {
+            std.debug.print("command help footer never names {s}\n", .{spelling});
             return error.TestUnexpectedResult;
         }
     }
@@ -16333,17 +16503,13 @@ test "eval help uses operator-facing names" {
 }
 
 test "--model provider/model picks both, and leaves a slashed model id alone" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "zai"
@@ -16362,7 +16528,7 @@ test "--model provider/model picks both, and leaves a slashed model id alone" {
         \\
         ,
     });
-    const cfg = try config.Config.load(io, arena, tmp.dir, "config.toml", "absent.toml");
+    const cfg = try config.Config.load(io, arena, env.tmp.dir, "config.toml", "absent.toml");
 
     // The prefix names a provider, so it selects one.
     const split = try resolveProvider(&cfg, .{ .model = "zai/glm-5.2" });
@@ -16593,16 +16759,12 @@ test "run failure detail names the provider and hints at vision when images were
 }
 
 test "resolveRunTask attaches explicit and newest-active goals from real goals.json" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.createDirPath(io, "state");
     // Two active goals; the higher `updated` must win auto-steer. One done
     // goal must never be selected.
     const goals_json =
@@ -16612,10 +16774,10 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
         \\  {"id":"new","objective":"ship the feature","completion_criterion":"tests green","boundaries":"docs only","status":"active","updated":50}
         \\]
     ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
 
     // Explicit id: that goal only, even if not the newest.
-    const explicit = try resolveRunTask(arena, io, tmp.dir, "do the thing", "old", false);
+    const explicit = try resolveRunTask(arena, io, env.tmp.dir, "do the thing", "old", false);
     try std.testing.expect(std.mem.find(u8, explicit.task, "## Active goal") != null);
     try std.testing.expect(std.mem.find(u8, explicit.task, "old objective") != null);
     try std.testing.expect(std.mem.find(u8, explicit.task, "do the thing") != null);
@@ -16625,7 +16787,7 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
     // Auto: newest active (updated=50), not the done goal with updated=99.
     // The resolved goal_id must be the one auto-steer actually picked, so
     // its status can be advanced (and its run registered) after the run.
-    const auto = try resolveRunTask(arena, io, tmp.dir, "chat task", null, true);
+    const auto = try resolveRunTask(arena, io, env.tmp.dir, "chat task", null, true);
     try std.testing.expect(std.mem.find(u8, auto.task, "ship the feature") != null);
     try std.testing.expect(std.mem.find(u8, auto.task, "tests green") != null);
     try std.testing.expect(std.mem.find(u8, auto.task, "chat task") != null);
@@ -16633,67 +16795,59 @@ test "resolveRunTask attaches explicit and newest-active goals from real goals.j
     try std.testing.expectEqualStrings("new", auto.goal_id.?);
 
     // Goal-only: empty task becomes a work order for that goal.
-    const goal_only = try resolveRunTask(arena, io, tmp.dir, "", "new", false);
+    const goal_only = try resolveRunTask(arena, io, env.tmp.dir, "", "new", false);
     try std.testing.expect(std.mem.find(u8, goal_only.task, "Work on this goal until the completion criterion is met.") != null);
     try std.testing.expect(std.mem.find(u8, goal_only.task, "ship the feature") != null);
 
     // A requested saved goal must exist; falling back to an unscoped task
     // would silently run the wrong thing.
-    try std.testing.expectError(error.GoalNotFound, resolveRunTask(arena, io, tmp.dir, "plain", "no-such", false));
+    try std.testing.expectError(error.GoalNotFound, resolveRunTask(arena, io, env.tmp.dir, "plain", "no-such", false));
 
     // Auto with no active goals leaves the task alone.
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
-    const none = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[]" });
+    const none = try resolveRunTask(arena, io, env.tmp.dir, "plain", null, true);
     try std.testing.expectEqualStrings("plain", none.task);
     try std.testing.expect(none.goal_id == null);
 }
 
 test "an unreadable goals.json is not an empty goal list" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.createDirPath(io, "state");
 
     // No store at all: nothing to steer with, and that is not a failure.
-    try std.testing.expectEqual(@as(?[]const std.json.Value, null), try readGoalsArray(arena, io, tmp.dir));
+    try std.testing.expectEqual(@as(?[]const std.json.Value, null), try readGoalsArray(arena, io, env.tmp.dir));
 
     // A store that is there and will not parse. Answering "no goals" here made
     // a saved goal look deleted: `--goal <id>` said not found, and an
     // auto-steered run dropped its steering without a word.
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[{\"id\":\"g1\",}]" });
-    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, tmp.dir));
-    try std.testing.expectError(error.GoalStoreUnreadable, loadGoalById(arena, io, tmp.dir, "g1"));
-    try std.testing.expectError(error.GoalStoreUnreadable, resolveRunTask(arena, io, tmp.dir, "plain", "g1", false));
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "[{\"id\":\"g1\",}]" });
+    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, env.tmp.dir));
+    try std.testing.expectError(error.GoalStoreUnreadable, loadGoalById(arena, io, env.tmp.dir, "g1"));
+    try std.testing.expectError(error.GoalStoreUnreadable, resolveRunTask(arena, io, env.tmp.dir, "plain", "g1", false));
 
     // Auto-steering is opportunistic, so it degrades to an unsteered run
     // rather than refusing it -- but the goal id must not be invented.
-    const degraded = try resolveRunTask(arena, io, tmp.dir, "plain", null, true);
+    const degraded = try resolveRunTask(arena, io, env.tmp.dir, "plain", null, true);
     try std.testing.expectEqualStrings("plain", degraded.task);
     try std.testing.expect(degraded.goal_id == null);
 
     // A JSON document that is not a goal list is the same hazard.
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "{\"goals\":[]}" });
-    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, tmp.dir));
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = "{\"goals\":[]}" });
+    try std.testing.expectError(error.GoalStoreUnreadable, readGoalsArray(arena, io, env.tmp.dir));
 }
 
 test "runIterationBudget precedence: body override, then goal default, then global" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.createDirPath(io, "state");
     // "budgeted" carries a stored max_iterations of 60; "plain" has none.
     const goals_json =
         \\[
@@ -16702,33 +16856,33 @@ test "runIterationBudget precedence: body override, then goal default, then glob
         \\  {"id":"done","objective":"d","completion_criterion":"c","status":"done","max_iterations":99,"updated":30}
         \\]
     ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/goals.json", .data = goals_json });
 
     // A per-run override always wins, whatever the goal stores.
-    const overridden = runIterationBudget(arena, io, tmp.dir, 7, "budgeted", false);
+    const overridden = runIterationBudget(arena, io, env.tmp.dir, 7, "budgeted", false);
     try std.testing.expectEqual(@as(u32, 7), overridden.?);
     // An override even beats an explicit goal with no stored value.
-    const overridden_plain = runIterationBudget(arena, io, tmp.dir, 7, "plain", false);
+    const overridden_plain = runIterationBudget(arena, io, env.tmp.dir, 7, "plain", false);
     try std.testing.expectEqual(@as(u32, 7), overridden_plain.?);
 
     // Blank box + a goal with a stored budget uses that goal's value.
-    const goal_default = runIterationBudget(arena, io, tmp.dir, null, "budgeted", false);
+    const goal_default = runIterationBudget(arena, io, env.tmp.dir, null, "budgeted", false);
     try std.testing.expectEqual(@as(u32, 60), goal_default.?);
 
     // Auto-steer resolves the newest active goal (updated=20, "plain") which
     // has no stored budget -> null (global default applies).
-    const auto_none = runIterationBudget(arena, io, tmp.dir, null, null, true);
+    const auto_none = runIterationBudget(arena, io, env.tmp.dir, null, null, true);
     try std.testing.expect(auto_none == null);
     // The done goal's budget is never picked by auto-steer.
-    const explicit_done = runIterationBudget(arena, io, tmp.dir, null, "done", false);
+    const explicit_done = runIterationBudget(arena, io, env.tmp.dir, null, "done", false);
     try std.testing.expectEqual(@as(u32, 99), explicit_done.?);
 
     // A goal with no stored value and no override -> null (global fallback).
-    const explicit_plain = runIterationBudget(arena, io, tmp.dir, null, "plain", false);
+    const explicit_plain = runIterationBudget(arena, io, env.tmp.dir, null, "plain", false);
     try std.testing.expect(explicit_plain == null);
 
     // No goal at all -> null.
-    const no_goal = runIterationBudget(arena, io, tmp.dir, null, null, false);
+    const no_goal = runIterationBudget(arena, io, env.tmp.dir, null, null, false);
     try std.testing.expect(no_goal == null);
 }
 
@@ -16802,21 +16956,6 @@ test "the browser's answer crosses threads to the waiting run" {
     try std.testing.expectEqualStrings("hold", answer);
 }
 
-test "sessionListJSON carries each conversation's byte weight" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const list = [_]session.SessionMeta{
-        .{ .id = "s1", .title = "one", .created = 1, .updated = 2, .messages = 2, .bytes = 13 },
-    };
-    const out = try sessionListJSON(arena, &list);
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{});
-    const first = parsed.object.get("sessions").?.array.items[0];
-    try std.testing.expectEqual(@as(i64, 13), first.object.get("bytes").?.integer);
-    try std.testing.expectEqual(@as(i64, 2), first.object.get("messages").?.integer);
-}
-
 // --------------------------------------------------------- providers check --
 
 test "the sweep summary is one row per provider, with the default marked in the table" {
@@ -16877,6 +17016,75 @@ test "providers list overlay only fires when a models array is empty" {
         \\{"ok":true,"default":"ollama","providers":[{"name":"ollama","models":[]}]}
     ));
     try std.testing.expect(!providers_logic.listNeedsLiveModelsAlloc(arena, "{\"providers\":[]}"));
+}
+
+test "provider list rows carry usable with a reason for a missing key, and the row stays" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("CLI_TEST_SET_KEY", "x");
+
+    var cfg = config.Config{};
+    var keyed = try config.Provider.single(arena, "deepseek", "https://api.deepseek.test", .openai_compat, "m", .{});
+    keyed.api_key_env = "CLI_TEST_SET_KEY";
+    try cfg.providers.put(arena, "deepseek", keyed);
+    var unkeyed = try config.Provider.single(arena, "anthropic", "https://api.anthropic.test", .anthropic, "claude-opus-5", .{});
+    unkeyed.api_key_env = "CLI_TEST_UNSET_KEY";
+    try cfg.providers.put(arena, "anthropic", unkeyed);
+
+    const raw =
+        \\{"ok":true,"default":"deepseek","default_provider":"deepseek","providers":[
+        \\  {"name":"deepseek","default_model":"m","models":[{"name":"m"}]},
+        \\  {"name":"anthropic","default_model":"claude-opus-5","models":[{"name":"claude-opus-5"}]}
+        \\]}
+    ;
+    const annotated = annotateProviderUsability(arena, &cfg, &env, null, raw).?;
+    // The keyed row is callable; the unkeyed row is marked, not stripped:
+    // the Models view is inventory and must still name it, with the reason.
+    try std.testing.expect(std.mem.find(u8, annotated, "\"name\":\"deepseek\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"name\":\"anthropic\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"reason\":\"CLI_TEST_UNSET_KEY not set\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, annotated, "\"usable\":false"));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, annotated, "\"usable\":true"));
+    // Top-level fields and the model rows survive the rewrite.
+    try std.testing.expect(std.mem.find(u8, annotated, "\"default\":\"deepseek\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"default_provider\":\"deepseek\"") != null);
+    try std.testing.expect(std.mem.find(u8, annotated, "\"name\":\"claude-opus-5\"") != null);
+
+    // A body with no provider rows (the guest's not_configured shape) is
+    // left for the caller to relay verbatim.
+    try std.testing.expect(annotateProviderUsability(arena, &cfg, &env, null, "{\"ok\":false,\"error\":\"not_configured\"}") == null);
+}
+
+test "provider list marks a dead loopback endpoint not usable" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    const port = server.socket.address.getPort();
+    const url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/v1", .{port});
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "vllm-local", try config.Provider.single(arena, "vllm-local", url, .openai_compat, "m", .{}));
+    const raw = try std.fmt.allocPrint(arena,
+        \\{{"ok":true,"default":"vllm-local","providers":[{{"name":"vllm-local","base_url":"{s}","models":[{{"name":"m"}}]}}]}}
+    , .{url});
+
+    const alive = annotateProviderUsability(arena, &cfg, &env, io, raw).?;
+    try std.testing.expect(std.mem.find(u8, alive, "\"usable\":true") != null);
+    server.deinit(io);
+    const dead = annotateProviderUsability(arena, &cfg, &env, io, raw).?;
+    try std.testing.expect(std.mem.find(u8, dead, "\"usable\":false") != null);
+    try std.testing.expect(std.mem.find(u8, dead, "listening") != null);
 }
 
 test "a live /models listing fills the picker, skipping entries it cannot name" {
@@ -16984,7 +17192,7 @@ test "httpGetDeadline gives up on a silent host and names the timeout" {
     // accepts from, so the handshake and the request write both succeed and the
     // read then blocks forever. `loadModelsDev` and `GET /api/providers/models`
     // reach the network through this call from `clanker serve` worker threads,
-    // and `handleCatalogSearch` does so holding `catalog_cache_mutex`: without
+    // and `handleCatalog` does so holding `catalog_cache_mutex`: without
     // the ceiling one wedged connection keeps that lock for the life of the
     // process. `error.Timeout` rather than a collapsed null is what puts the
     // cause in the operator's log.
@@ -17353,13 +17561,13 @@ fn cmdArena(init: std.process.Init, opts: Options) !void {
         return error.ToolBadOutput;
     };
     if (parsed != .object) return error.ToolBadOutput;
-    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    const ok = json_util.boolFieldOrFalse(parsed.object, "ok");
     if (!ok) {
-        const msg = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        const msg = json_util.strFieldOrNull(parsed.object, "error") orelse "refused";
         log.log(.error_, "arena: {s}", .{msg});
         return error.ArenaRefused;
     }
-    const text = if (parsed.object.get("text")) |t| (if (t == .string) t.string else "") else "";
+    const text = json_util.strFieldOrEmpty(parsed.object, "text");
     try writeStdOut(io, text);
     if (text.len > 0 and text[text.len - 1] != '\n') try writeStdOut(io, "\n");
 }
@@ -17446,13 +17654,13 @@ fn cmdCompare(init: std.process.Init, opts: Options) !void {
         return error.ToolBadOutput;
     };
     if (parsed != .object) return error.ToolBadOutput;
-    const ok = if (parsed.object.get("ok")) |k| (k == .bool and k.bool) else false;
+    const ok = json_util.boolFieldOrFalse(parsed.object, "ok");
     if (!ok) {
-        const msg = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "refused") else "refused";
+        const msg = json_util.strFieldOrNull(parsed.object, "error") orelse "refused";
         log.log(.error_, "compare: {s}", .{msg});
         return error.CompareRefused;
     }
-    const text = if (parsed.object.get("text")) |t| (if (t == .string) t.string else "") else "";
+    const text = json_util.strFieldOrEmpty(parsed.object, "text");
     try writeStdOut(io, text);
     if (text.len > 0 and text[text.len - 1] != '\n') try writeStdOut(io, "\n");
 }
@@ -17581,9 +17789,9 @@ fn cmdWorkflow(init: std.process.Init, opts: Options) !void {
         }
         for (list) |item| {
             if (item != .object) continue;
-            const name = if (item.object.get("name")) |n| (if (n == .string) n.string else "") else "";
-            const hint = if (item.object.get("arg_hint")) |h| (if (h == .string) h.string else "") else "";
-            const desc = if (item.object.get("description")) |d| (if (d == .string) d.string else "") else "";
+            const name = json_util.strFieldOrEmpty(item.object, "name");
+            const hint = json_util.strFieldOrEmpty(item.object, "arg_hint");
+            const desc = json_util.strFieldOrEmpty(item.object, "description");
             var buf: [1024]u8 = undefined;
             const line = if (hint.len > 0)
                 std.fmt.bufPrint(&buf, "{s} {s}: {s}\n", .{ name, hint, desc }) catch continue
@@ -17763,8 +17971,15 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
     // preloads the untagged URL while the script tag loads the tagged one, the
     // browser fetches the same file twice.
     try std.testing.expect(std.mem.find(u8, out, "modulepreload\" href=\"/webui/~deadbeef/app.js\"") != null);
+    // Inline, never `src=`: an external map is a blocking round trip before
+    // any module resolves, and Firefox and Safari ignore it outright.
     try std.testing.expect(std.mem.find(u8, out, "type=\"importmap\"") != null);
-    try std.testing.expect(std.mem.find(u8, out, "src=\"/webui/~deadbeef/import-map.json\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "importmap\" src=") == null);
+    try std.testing.expect(std.mem.find(u8, out, "import-map.json") == null);
+    try std.testing.expect(std.mem.find(u8, out, "{\"imports\":{\"/webui/vendor/\":\"/webui/~deadbeef/vendor/\"") != null);
+    // The map's own keys must survive the rewrite pass untagged, or every
+    // specifier it exists to remap stops matching.
+    try std.testing.expect(std.mem.find(u8, out, "\"/webui/core/\":\"/webui/~deadbeef/core/\"") != null);
     try std.testing.expect(std.mem.find(u8, out, "href=\"/webui/app.css\"") == null);
 }
 
@@ -17879,20 +18094,16 @@ test "webui chrome icons are drawn, not typed as unicode" {
 }
 
 test "runStreamTodos frames the private list as one \\x01 todos event" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
     // A file stands in for the stream socket: writeAllFd only ever writes to
     // a raw fd, and a file is one that can be read back without a reader
     // thread to keep a pipe from filling.
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var sink = try tmp.dir.createFile(io, "stream.bin", .{});
+    var sink = try env.tmp.dir.createFile(io, "stream.bin", .{});
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const arena = env.arena();
 
     var list = private_todos.List{ .alloc = std.testing.allocator };
     defer list.deinit();
@@ -17909,7 +18120,7 @@ test "runStreamTodos frames the private list as one \\x01 todos event" {
     run_stream_socket = null;
     sink.close(io);
 
-    const line = try tmp.dir.readFileAlloc(io, "stream.bin", arena, .limited(64 * 1024));
+    const line = try env.tmp.dir.readFileAlloc(io, "stream.bin", arena, .limited(64 * 1024));
 
     try std.testing.expect(line.len > 0);
     try std.testing.expectEqual(@as(u8, 1), line[0]);
@@ -17935,4 +18146,29 @@ test "runStreamTodos with no stream and no allocator is a no-op, not a crash" {
     run_stream_socket = null;
     serve_gpa = null;
     runStreamTodos("[]");
+}
+
+test "chatCounts groups every session by workspace in one pass" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const sessions = [_]session.SessionMeta{
+        .{ .id = "a", .workspace = "proj" },
+        .{ .id = "b", .workspace = "" },
+        .{ .id = "c", .workspace = "proj" },
+        .{ .id = "d", .workspace = "other" },
+        .{ .id = "e", .workspace = "" },
+    };
+    var counts = try chatCounts(arena, &sessions);
+
+    try std.testing.expectEqual(@as(usize, 2), counts.get("proj").?);
+    try std.testing.expectEqual(@as(usize, 2), counts.get("").?);
+    try std.testing.expectEqual(@as(usize, 1), counts.get("other").?);
+    try std.testing.expect(counts.get("missing") == null);
+    // Insertion order is session order, so `/api/workspaces` emits its
+    // orphan rows newest-first the way the old per-session loop did.
+    try std.testing.expectEqualStrings("proj", counts.keys()[0]);
+    try std.testing.expectEqualStrings("", counts.keys()[1]);
+    try std.testing.expectEqualStrings("other", counts.keys()[2]);
 }

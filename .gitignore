@@ -71,3 +71,7 @@ tools/grammars/*.so
 *.ck_cas.lock
 
 .semcode.db/
+
+# Mirrored by the agency_sync tool from an external repo (github.com/
+# msitarzewski/agency-agents); fetched data, not project source.
+/agency/

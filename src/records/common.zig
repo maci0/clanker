@@ -9,6 +9,7 @@
 //! matched line is the same problem in every store, so it is one function.
 
 const std = @import("std");
+const diag = @import("../util/diag.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
@@ -17,7 +18,8 @@ pub const Error = error{
     BadSubcommand,
     MissingArg,
     /// The tool ran and refused the request (`{"ok":false,...}`), or answered
-    /// something the command cannot read. The detail is already logged.
+    /// something the command cannot read. The reason is already on stderr: a
+    /// refusal as a diagnostic, an unreadable answer as a log record.
     ToolFailed,
 };
 
@@ -93,9 +95,67 @@ pub fn request(arena: std.mem.Allocator, fields: []const Field) ![]const u8 {
     return w.written();
 }
 
+/// A usage mistake is an interactive diagnostic, not a runtime log. It gets
+/// the same `error: ...` shape on stderr that `cli.printUsageError` gives
+/// every other command, rather than the timestamped `[ERROR] ts_ms=...`
+/// record `log.log` writes: `clanker reports bogus` and `clanker preset bogus`
+/// are the same mistake and used to be answered in two different formats.
+/// The caller still returns `BadSubcommand`/`MissingArg`, which is what makes
+/// the exit status 2.
+pub fn usageError(comptime fmt: []const u8, args: anytype) void {
+    diag.errorLine(fmt, args);
+}
+
+/// The accepted subcommands of one record store, spelled once.
+///
+/// Each store used to carry the list three times — the dispatch chain, the
+/// "expected ..." refusal, and the `usage:` line of its spec in `cli.zig` —
+/// and they drifted: `research` and `rfc` both grew `append` and `update`
+/// while their usage lines went on naming the shorter, older set, so
+/// `clanker rfc --help` refused to admit to a subcommand the parser accepted.
+/// The store now declares `subcommands` once and both the refusal and the
+/// spec's usage line are pinned to it (`record store usage lines name every
+/// accepted subcommand` in `cli.zig`).
+pub fn badSubcommand(
+    comptime store: []const u8,
+    comptime subcommands: []const []const u8,
+    sub: []const u8,
+) Error {
+    usageError(
+        "unknown " ++ store ++ " subcommand '{s}' (expected " ++ englishList(subcommands) ++ ")",
+        .{sub},
+    );
+    return Error.BadSubcommand;
+}
+
+/// `{"a", "b", "c"}` as `a, b or c`, at compile time.
+fn englishList(comptime items: []const []const u8) []const u8 {
+    comptime {
+        var prose: []const u8 = "";
+        for (items, 0..) |item, i| {
+            if (i > 0) prose = prose ++ (if (i + 1 == items.len) " or " else ", ");
+            prose = prose ++ item;
+        }
+        return prose;
+    }
+}
+
+test "englishList reads as prose for one, two and many" {
+    try std.testing.expectEqualStrings("list", comptime englishList(&.{"list"}));
+    try std.testing.expectEqualStrings("list or open", comptime englishList(&.{ "list", "open" }));
+    try std.testing.expectEqualStrings("list, open or status", comptime englishList(&.{ "list", "open", "status" }));
+}
+
 /// Runs the store's tool and returns its parsed answer, or `ToolFailed` with
-/// the reason already logged. `store` is the command's own name, which is what
-/// prefixes the log line.
+/// the reason already on stderr. `store` is the command's own name, which is
+/// what prefixes the message.
+///
+/// A refusal is the caller's mistake — a path outside the store, a status
+/// change missing its note — so it gets the same `error: ...` diagnostic as
+/// `clanker workflow show nope`; it used to arrive as a timestamped `[ERROR]
+/// ts_ms=...` record, which made "no such ADR" read like a subsystem fault.
+/// An answer that is not readable JSON is the opposite case, a broken build
+/// rather than a bad argument, and stays a log record.
 pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: []const u8) !std.json.Value {
     const raw = try tool.call(tool.ctx, input);
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
@@ -108,11 +168,8 @@ pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: 
     }
     const ok = parsed.object.get("ok");
     if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = if (parsed.object.get("error")) |e|
-            (if (e == .string) e.string else "the tool refused the request")
-        else
-            "the tool refused the request";
-        log.log(.error_, "{s}: {s}", .{ store, detail });
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
+        diag.errorLine("{s}: {s}", .{ store, detail });
         return Error.ToolFailed;
     }
     return parsed;
@@ -222,7 +279,7 @@ pub fn openRecord(
     tool: Tool,
 ) ![]const u8 {
     const path = path_arg orelse {
-        log.log(.error_, "{s} open needs a path: clanker {s} open {s}", .{ store, store, example_path });
+        usageError("{s} open needs a path: clanker {s} open {s}", .{ store, store, example_path });
         return Error.MissingArg;
     };
     const input = try request(arena, &.{
@@ -247,11 +304,11 @@ pub fn appendRecord(
     tool: Tool,
 ) ![]const u8 {
     const path = path_arg orelse {
-        log.log(.error_, "{s} append needs a path and markdown content: clanker {s} append {s}", .{ store, store, example });
+        usageError("{s} append needs a path and markdown content: clanker {s} append {s}", .{ store, store, example });
         return Error.MissingArg;
     };
     const content = content_arg orelse {
-        log.log(.error_, "{s} append needs the markdown to add after the path", .{store});
+        usageError("{s} append needs the markdown to add after the path", .{store});
         return Error.MissingArg;
     };
     const input = try request(arena, &.{
@@ -275,15 +332,15 @@ pub fn updateRecord(
     tool: Tool,
 ) ![]const u8 {
     const path = path_arg orelse {
-        log.log(.error_, "{s} update needs a path, the exact old text, and its replacement", .{store});
+        usageError("{s} update needs a path, the exact old text, and its replacement", .{store});
         return Error.MissingArg;
     };
     const old = old_arg orelse {
-        log.log(.error_, "{s} update needs the exact current text to replace; copy it from `clanker {s} open {s}`", .{ store, store, path });
+        usageError("{s} update needs the exact current text to replace; copy it from `clanker {s} open {s}`", .{ store, store, path });
         return Error.MissingArg;
     };
     const new = new_arg orelse {
-        log.log(.error_, "{s} update needs replacement text after the old text (\"\" removes it)", .{store});
+        usageError("{s} update needs replacement text after the old text (\"\" removes it)", .{store});
         return Error.MissingArg;
     };
     const input = try request(arena, &.{
@@ -355,8 +412,55 @@ pub fn byPath(_: void, a: std.json.Value, b: std.json.Value) bool {
     return std.mem.lessThan(u8, pa, pb);
 }
 
+/// The row block the numbered listings share: a status column padded to the
+/// widest status present (never below the store's own floor, never past
+/// `status_column_max`), then the path, then the title indented under it.
+///
+/// A record whose status is unreadable still gets a row: the path is what the
+/// reader needs in order to go look, and hiding it would make it invisible.
+///
+/// `titleText` is how a store drops the number its own titles repeat — ADR
+/// titles carry an "ADR 0001 — " prefix the path above the row already
+/// spells, RFC titles do not, so the transform is the caller's.
+pub fn renderStatusRows(
+    w: *std.Io.Writer,
+    records: []const std.json.Value,
+    min_status_width: usize,
+    status_column_max: usize,
+    title_column_bytes: usize,
+    titleText: *const fn ([]const u8) []const u8,
+) !void {
+    var status_width = min_status_width;
+    for (records) |r| {
+        if (r != .object) continue;
+        const s = json_util.strFieldOrEmpty(r.object, "status");
+        const n = if (s.len == 0) 1 else s.len;
+        if (n > status_width) status_width = @min(n, status_column_max);
+    }
+
+    for (records) |r| {
+        if (r != .object) continue;
+        const path = json_util.strFieldOrEmpty(r.object, "path");
+        const title = json_util.strFieldOrEmpty(r.object, "title");
+        const raw_status = json_util.strFieldOrEmpty(r.object, "status");
+        const status = if (raw_status.len == 0) "?" else raw_status;
+        try w.print("  {s}", .{utf8.cap(status, status_column_max)});
+        try w.splatByteAll(' ', status_width -| status.len);
+        try w.print("  {s}\n", .{path});
+        if (title.len > 0) {
+            try w.splatByteAll(' ', status_width + 4);
+            try w.print("{s}\n", .{utf8.cap(titleText(title), title_column_bytes)});
+        }
+    }
+}
+
+/// Title transform for a store whose titles carry no number of their own.
+pub fn titleAsIs(title: []const u8) []const u8 {
+    return title;
+}
+
 fn missingStatusArg(store: []const u8, usage: StatusUsage, what: []const u8) Error {
-    log.log(.error_, "{s} status needs {s}: clanker {s} status {s}", .{ store, what, store, usage.example });
+    usageError("{s} status needs {s}: clanker {s} status {s}", .{ store, what, store, usage.example });
     return Error.MissingArg;
 }
 
@@ -486,4 +590,9 @@ test "callTool names the store in its refusal" {
     const parsed = try callTool(arena_state.allocator(), "adr", .{ .ctx = &fine, .call = Canned.call }, "{}");
     try testing.expectEqual(@as(u64, 7), unsignedField(parsed, "next_number"));
     try testing.expectEqual(@as(u64, 0), unsignedField(parsed, "missing"));
+
+    // A negative count reads as absent rather than wrapping through @intCast.
+    var negative: Canned = .{ .answer = "{\"ok\":true,\"next_number\":-1}" };
+    const wrapped = try callTool(arena_state.allocator(), "adr", .{ .ctx = &negative, .call = Canned.call }, "{}");
+    try testing.expectEqual(@as(u64, 0), unsignedField(wrapped, "next_number"));
 }

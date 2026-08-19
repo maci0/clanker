@@ -20,6 +20,9 @@
 //!
 //! Input:  {"op": "...", "room": "board", ...}   op defaults to config.op
 //! Output: {"ok": true, "board": {"columns": [...], "cards": [...]}}
+//!         add/create also returns "card_id": "<id>" for the card it just
+//!         created (the chat message id, per `apply`), so a caller such as
+//!         bugreport can hand the caller the new card without re-deriving it.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -174,7 +177,7 @@ fn apply(alloc: std.mem.Allocator, room: []const u8, act: cards.Action) !Sent {
 /// The board as the web UI and an agent both read it: the fixed column set,
 /// then every card. Re-derived from the log after a write rather than assumed,
 /// because a concurrent claim from a peer may have won.
-fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []const u8) !void {
+fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []const u8, card_id: ?[]const u8) !void {
     var w = lib.writer(out);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
     try s.beginObject();
@@ -182,6 +185,10 @@ fn respond(out: *lib.Out, room: []const u8, list: []cards.Card, only_for: []cons
     try s.write(true);
     try s.objectField("room");
     try s.write(room);
+    if (card_id) |cid| {
+        try s.objectField("card_id");
+        try s.write(cid);
+    }
     try s.objectField("board");
     try s.beginObject();
     try s.objectField("columns");
@@ -303,7 +310,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     });
     const list = try cards.derive(alloc, msgs);
 
-    if (std.mem.eql(u8, op, "list")) return respond(out, room, list, only_for);
+    if (std.mem.eql(u8, op, "list")) return respond(out, room, list, only_for, null);
 
     // Everything else writes, and everything except create names a card. The op
     // is checked before the id so a request wrong in both ways is told the op is
@@ -338,7 +345,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const raw = req.assignee orelse req.who;
             break :blk if (raw) |a| (if (a.len > 0) a else null) else null;
         };
-        _ = apply(alloc, room, .{
+        const sent = apply(alloc, room, .{
             .action = "add",
             .title = title,
             .body = if (body.len > 0) body else null,
@@ -355,7 +362,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .worktree = req.worktree,
             .labels = req.labels,
         }) catch return lib.fail(out, "could not post the card to the room");
-        return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
+        return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "", sent.id);
     }
 
     if (req.id.len == 0) return lib.fail(out, "which card? pass its id from kanban_list");
@@ -446,7 +453,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const card = cards.get(list, req.id).?;
         if (!cards.hasSubtask(card, sid) or !cards.hasSubtask(card, on))
             return lib.fail(out, "checklist dependency must name two items on this card");
-        if (!(req.off orelse false) and cards.checklistReaches(card, on, sid, 0))
+        if (!(req.off orelse false) and try cards.checklistReaches(lib.alloc, card, on, sid))
             return lib.fail(out, "checklist dependency would create a cycle");
         break :blk .{ .action = "subtask_depend", .todo = req.id, .subtask = sid, .on = on, .off = req.off orelse false };
     } else if (std.mem.eql(u8, op, "depend_add") or std.mem.eql(u8, op, "depend_remove")) blk: {
@@ -480,5 +487,5 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     };
 
     _ = apply(alloc, room, act) catch return lib.fail(out, "could not post the change to the room");
-    return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "");
+    return respond(out, room, try cards.derive(alloc, try history(alloc, room)), "", null);
 }

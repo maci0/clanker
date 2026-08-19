@@ -116,12 +116,31 @@ function ensurePicker() {
     if (e.key === "Escape") {
       e.preventDefault();
       closePicker();
-      if (_anchor && _anchor.focus) _anchor.focus();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveFocus(e.key === "ArrowDown" ? 1 : -1);
     }
   });
   window.addEventListener("resize", function () {
     if (_open && _anchor) positionPicker(_anchor);
   });
+}
+
+// Rows are real buttons, so Enter and Space already activate them and only
+// the up/down walk is ours. Wraps at both ends, the modulo walk
+// core/modelpicker.js uses for its own list.
+function moveFocus(delta) {
+  var opts = _list.querySelectorAll("button[data-theme]");
+  if (!opts.length) return;
+  var at = -1;
+  for (var i = 0; i < opts.length; i++) {
+    if (opts[i] === document.activeElement) { at = i; break; }
+  }
+  var next = at < 0 ? (delta > 0 ? 0 : opts.length - 1)
+                    : (at + delta + opts.length) % opts.length;
+  var row = opts[next];
+  if (row.focus) row.focus();
+  if (row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
 }
 
 function positionPicker(anchor) {
@@ -149,11 +168,20 @@ function renderList(current) {
   THEMES.forEach(function (name) {
     var row = document.createElement("button");
     row.type = "button";
-    row.className = "model-picker__option";
+    row.className = "model-picker__option theme-picker__option";
     row.setAttribute("role", "option");
     row.setAttribute("data-theme", name);
     row.setAttribute("aria-selected", name === current ? "true" : "false");
     if (name === current) row.classList.add("is-current");
+    // The palette's own background, so a theme is recognisable before it is
+    // applied. "system" has no file and no fixed colour: it keeps an empty
+    // ring so every label still starts at the same x.
+    var swatch = document.createElement("span");
+    swatch.className = "theme-picker__swatch";
+    swatch.setAttribute("aria-hidden", "true");
+    var rec = CATALOG[name];
+    if (rec && rec.tokens && rec.tokens["--bg"]) swatch.style.background = rec.tokens["--bg"];
+    row.appendChild(swatch);
     var label = document.createElement("span");
     label.className = "model-picker__option-label";
     label.textContent = name;
@@ -177,10 +205,17 @@ function openPicker(anchor, current) {
 
 function closePicker() {
   if (!_open) return;
+  var anchor = _anchor;
+  // A hidden element keeps the focus it holds, so without handing it back the
+  // page falls to <body> and the next Tab restarts at the top of the
+  // document. Only when focus is inside the picker: a click outside must keep
+  // the focus that click just moved.
+  var restore = _picker && _picker.contains(document.activeElement);
   _open = false;
   if (_picker) _picker.hidden = true;
-  if (_anchor) _anchor.setAttribute("aria-expanded", "false");
+  if (anchor) anchor.setAttribute("aria-expanded", "false");
   _anchor = null;
+  if (restore && anchor && anchor.focus) anchor.focus();
 }
 
 function choose(name) {

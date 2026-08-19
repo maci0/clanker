@@ -34,6 +34,9 @@ pub const SubJob = struct {
     err_name: ?[]const u8 = null,
     done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     thread: ?std.Thread = null,
+    /// Callers currently inside `waitSub` for this job. Read and written
+    /// only under `mu`; a reap skips any job a waiter still points at.
+    waiting: u32 = 0,
 };
 
 const ExecJob = struct {
@@ -44,6 +47,9 @@ const ExecJob = struct {
     term: ?std.process.Child.Term = null,
     done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     thread: ?std.Thread = null,
+    /// Callers currently inside `waitExec`/`kill` for this job. Read and
+    /// written only under `mu`; a reap skips any job a waiter points at.
+    waiting: u32 = 0,
 };
 
 var mu: SpinMutex = .{};
@@ -77,6 +83,59 @@ fn waitExecThread(job: *ExecJob, io: std.Io, reg: *subprocess.Registry) void {
     job.term = term;
     job.done.store(true, .release);
     reg.forget(job.session_id, job.id);
+}
+
+/// Completed jobs kept for a later `wait` or `list`. `ck_job` is
+/// start-and-forget, so a finished job has to stay retrievable; without a
+/// bound the tables only grow, and in a long-lived `clanker serve` that
+/// retains every background subagent's task and result text (kilobytes
+/// apiece) for the life of the process, plus a linear scan over the lot on
+/// every lookup.
+const max_retained_done = 64;
+
+/// Frees one job and joins its waiter thread. Caller must have removed it
+/// from its table first, so nothing else can reach it.
+fn destroyJob(comptime T: type, job: *T, gpa: std.mem.Allocator) void {
+    if (job.thread) |th| th.join();
+    gpa.free(job.id);
+    gpa.free(job.session_id);
+    if (T == SubJob) {
+        gpa.free(job.task);
+        if (job.result) |r| gpa.free(r);
+        if (job.err_name) |e| gpa.free(e);
+    }
+    gpa.destroy(job);
+}
+
+/// Drops the oldest completed jobs past `max_retained_done`. Callers hold
+/// `mu`; the joins here are on threads that already stored `done`, so they
+/// return at once and cannot re-enter the lock.
+fn reapDone(comptime T: type, list: *std.ArrayList(*T), gpa: std.mem.Allocator) void {
+    var done_count: usize = 0;
+    for (list.items) |j| {
+        if (j.done.load(.acquire) and j.waiting == 0) done_count += 1;
+    }
+    if (done_count <= max_retained_done) return;
+    var to_drop = done_count - max_retained_done;
+    var i: usize = 0;
+    while (i < list.items.len and to_drop > 0) {
+        const j = list.items[i];
+        if (!j.done.load(.acquire) or j.waiting != 0) {
+            i += 1;
+            continue;
+        }
+        _ = list.orderedRemove(i);
+        to_drop -= 1;
+        destroyJob(T, j, gpa);
+    }
+}
+
+/// Hands this job's thread handle to exactly one caller. Under `mu` so a
+/// reap and a concurrent `wait` on the same job never both join it.
+fn takeThreadLocked(job: anytype) ?std.Thread {
+    const th = job.thread;
+    job.thread = null;
+    return th;
 }
 
 fn findExec(id: []const u8) ?*ExecJob {
@@ -156,6 +215,7 @@ pub fn startExec(
     {
         mu.lock();
         defer mu.unlock();
+        reapDone(ExecJob, &execs, gpa);
         execs.append(gpa, job) catch {
             // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(pid, std.posix.SIG.TERM) catch {};
@@ -178,16 +238,26 @@ fn termFields(term: std.process.Child.Term) struct { exit: ?u8, signaled: bool }
 
 pub fn waitExec(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
     var found: ?*ExecJob = null;
+    var thread: ?std.Thread = null;
     {
         mu.lock();
         defer mu.unlock();
         found = findExec(id);
+        // Claim the job before releasing the lock: a concurrent `startExec`
+        // reaps completed jobs, and without the claim it could free this one
+        // out from under the read below.
+        if (found) |j| {
+            j.waiting += 1;
+            thread = takeThreadLocked(j);
+        }
     }
     const job = found orelse return error.NotFound;
-    if (job.thread) |th| {
-        th.join();
-        job.thread = null;
+    defer {
+        mu.lock();
+        job.waiting -= 1;
+        mu.unlock();
     }
+    if (thread) |th| th.join();
     if (job.term) |term| {
         const fields = termFields(term);
         if (fields.exit) |code| {
@@ -216,6 +286,7 @@ pub fn registerSub(gpa: std.mem.Allocator, id: []const u8, session_id: []const u
         .task = try gpa.dupe(u8, task),
         .thread = thread,
     };
+    reapDone(SubJob, &subs, gpa);
     try subs.append(gpa, job);
 }
 
@@ -234,6 +305,7 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) voi
 
 pub fn waitSub(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
     var found: ?*SubJob = null;
+    var thread: ?std.Thread = null;
     {
         mu.lock();
         defer mu.unlock();
@@ -243,12 +315,18 @@ pub fn waitSub(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
                 break;
             }
         }
+        if (found) |j| {
+            j.waiting += 1;
+            thread = takeThreadLocked(j);
+        }
     }
     const job = found orelse return error.NotFound;
-    if (job.thread) |th| {
-        th.join();
-        job.thread = null;
+    defer {
+        mu.lock();
+        job.waiting -= 1;
+        mu.unlock();
     }
+    if (thread) |th| th.join();
     if (job.err_name) |e| {
         return std.fmt.allocPrint(arena, "{{\"ok\":false,\"job\":{f},\"error\":{f}}}", .{
             std.json.fmt(id, .{}),
@@ -298,20 +376,27 @@ pub fn listJson(arena: std.mem.Allocator, reg: ?*subprocess.Registry, session_id
 
 pub fn kill(reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) bool {
     var found: ?*ExecJob = null;
+    var thread: ?std.Thread = null;
     {
         mu.lock();
         defer mu.unlock();
         found = findExec(id);
+        if (found) |j| {
+            j.waiting += 1;
+            thread = takeThreadLocked(j);
+        }
     }
     if (found) |job| {
+        defer {
+            mu.lock();
+            job.waiting -= 1;
+            mu.unlock();
+        }
         if (!job.done.load(.acquire)) {
             // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(job.pid, std.posix.SIG.TERM) catch {};
         }
-        if (job.thread) |th| {
-            th.join();
-            job.thread = null;
-        }
+        if (thread) |th| th.join();
         if (reg) |r| r.forget(session_id, id);
         return true;
     }
@@ -333,14 +418,22 @@ pub fn testingClear(gpa: std.mem.Allocator) void {
             defer mu.unlock();
             break :blk execs.pop();
         };
-        const j = job orelse break;
-        if (j.thread) |th| th.join();
-        gpa.free(j.id);
-        gpa.free(j.session_id);
-        gpa.destroy(j);
+        destroyJob(ExecJob, job orelse break, gpa);
     }
+    while (true) {
+        const job: ?*SubJob = blk: {
+            mu.lock();
+            defer mu.unlock();
+            break :blk subs.pop();
+        };
+        destroyJob(SubJob, job orelse break, gpa);
+    }
+    mu.lock();
+    defer mu.unlock();
     execs.deinit(gpa);
     execs = .empty;
+    subs.deinit(gpa);
+    subs = .empty;
 }
 
 test "makeId is 16 hex and unique at the same timestamp" {
@@ -374,4 +467,30 @@ test "startExec reaps true and wait returns exit 0" {
     try std.testing.expect(std.mem.find(u8, got, "\"done\":true") != null);
     try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
     try std.testing.expect(reg.get("sess-job", id) == null);
+}
+
+test "completed background jobs are reaped past the retention cap" {
+    const gpa = std.testing.allocator;
+    defer testingClear(gpa);
+
+    // Twice the cap, each finished before the next registers, so every one
+    // of them is reapable by the time the table is due a sweep.
+    const total = max_retained_done * 2;
+    var i: usize = 0;
+    while (i < total) : (i += 1) {
+        var id_buf: [16]u8 = undefined;
+        const id = makeId(@intCast(i), &id_buf);
+        const th = try std.Thread.spawn(.{}, struct {
+            fn run() void {}
+        }.run, .{});
+        try registerSub(gpa, id, "sess-reap", "task text", th);
+        finishSub(id, "result text", null);
+    }
+
+    mu.lock();
+    defer mu.unlock();
+    // The cap bounds what is retained; the newest job has not been swept
+    // yet (a sweep runs at the *next* registration), hence the +1.
+    try std.testing.expect(subs.items.len <= max_retained_done + 1);
+    try std.testing.expect(subs.items.len > 0);
 }

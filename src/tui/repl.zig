@@ -57,6 +57,7 @@ const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
 const workflows_mod = @import("../agent/workflows.zig");
 const Agent = agent_loop.Agent;
+const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const syntax = @import("syntax.zig");
@@ -75,11 +76,6 @@ const worktree_mod = @import("../improve/worktree.zig");
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
 const stream_tick_ms: u32 = 33;
-
-fn containsWorktreeMode(modes: []const config.WorktreeMode, wanted: config.WorktreeMode) bool {
-    for (modes) |mode| if (mode == wanted) return true;
-    return false;
-}
 
 /// Redraw cadence the mascot's `loop` mode runs at, ~20fps: one animation
 /// frame and one column of travel per tick, so it crosses a 100-column
@@ -484,7 +480,7 @@ fn tuiGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror
     const self = loop_ctx.model;
     const prompt = try goal_loop.evaluatorTask(self.arena, loop_ctx.condition, answer);
     const messages = [_]types.Message{
-        .{ .role = .system, .content = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence." },
+        .{ .role = .system, .content = goal_loop.evaluator_system_prompt },
         .{ .role = .user, .content = prompt },
     };
     var err_detail: ?[]const u8 = null;
@@ -832,24 +828,21 @@ const ModelCandidate = struct {
 /// Flattens every configured provider's models into one list, in config
 /// order (providers, then models within a provider), which is what makes the
 /// picker's unfiltered list read as grouped-by-provider without a separate
-/// sort pass. A provider whose credentials cannot possibly be present is
-/// skipped entirely (the same offline `unconfiguredReason` gate `providers
-/// check` applies before it pings), so the picker never offers a model the
-/// operator cannot call on this machine.
+/// sort pass. A provider this process cannot call is skipped entirely
+/// (`providers.unusableReason`: the offline credential gate plus the
+/// loopback probe), so the picker never offers a model the operator cannot
+/// call on this machine.
 fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, io: ?std.Io) ![]const ModelCandidate {
     var out: std.ArrayList(ModelCandidate) = .empty;
     var pit = cfg.providers.iterator();
     while (pit.next()) |pentry| {
-        if (providers.unconfiguredReason(arena, environ_map, pentry.value_ptr) != null) continue;
-        // A keyless loopback provider (vllm/ollama) passes the credential
-        // gate whether or not its server is running; one local TCP connect
-        // settles it without pinging anything over a network. Null io skips
-        // the probe (unit tests exercise the flattening, not the machine).
-        if (io) |the_io| {
-            if (providers.loopbackEndpoint(pentry.value_ptr.base_url)) |lb| {
-                if (!providers.loopbackAlive(the_io, lb.port)) continue;
-            }
-        }
+        // The combined gate: the credential check plus, when io is present, a
+        // loopback TCP probe for keyless local providers (vllm/ollama), since
+        // those pass the credential gate whether or not their server runs.
+        // Null io skips the probe (unit tests exercise the flattening, not
+        // the machine). The web UI's `GET /api/providers` annotation applies
+        // this same function, so both pickers offer the same set.
+        if (providers.unusableReason(arena, environ_map, pentry.value_ptr, io) != null) continue;
         const provider_start = out.items.len;
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {
@@ -3346,7 +3339,7 @@ const Model = struct {
             if (k == .bool) ok = k.bool;
         }
         if (!ok) {
-            const raw_detail = if (parsed.object.get("error")) |e| (if (e == .string) e.string else "unknown") else "unknown";
+            const raw_detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
             const detail = clean(self.arena, raw_detail) orelse "unknown";
             const extra = internalToolFailureHint(tool_name, detail);
             self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ display_name, detail, extra }) catch "error: internal tool failed", .dim = true }) catch {};
@@ -3746,7 +3739,12 @@ const Model = struct {
         if (attach_len > 0) {
             var parts: std.ArrayList(types.ImagePart) = .empty;
             for (self.pending_attach_paths.items) |apath| {
-                const buf = std.Io.Dir.cwd().readFileAlloc(self.io, apath, self.arena, .limited(4 * 1024 * 1024 + 1)) catch continue;
+                // Raw bytes are gpa-owned and freed here: only the base64 is
+                // sent, so keeping the original in the session arena held a
+                // second full copy of every attachment for the rest of the
+                // session (up to 4 MiB apiece, on top of the ~1.33x encoding).
+                const buf = std.Io.Dir.cwd().readFileAlloc(self.io, apath, self.gpa, .limited(4 * 1024 * 1024 + 1)) catch continue;
+                defer self.gpa.free(buf);
                 if (buf.len == 0 or buf.len > 4 * 1024 * 1024) continue;
                 const mime = if (std.mem.endsWith(u8, apath, ".png")) "image/png" else if (std.mem.endsWith(u8, apath, ".jpg") or std.mem.endsWith(u8, apath, ".jpeg")) "image/jpeg" else if (std.mem.endsWith(u8, apath, ".webp")) "image/webp" else "image/png";
                 const enc = std.base64.standard.Encoder;
@@ -5824,6 +5822,13 @@ const Model = struct {
                             writeRowAt(surface, row, &col, preset_matches[idx].description, .{ .dim = true });
                         }
                     },
+                    .theme => {
+                        // A twelve-block palette swatch after the name, so the
+                        // live preview is not the only colour on screen: each
+                        // row shows its full palette before it is applied.
+                        writeRowAt(surface, row, &col, "  ", style);
+                        _ = writeThemePalette(surface, row, &col, theme_matches[idx]);
+                    },
                     .model => {
                         const c = model_matches[idx];
                         if (std.mem.eql(u8, c.provider, self.provider.name) and std.mem.eql(u8, c.model, self.provider.default_model))
@@ -7037,6 +7042,36 @@ fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, styl
     }
 }
 
+/// A `/theme` palette swatch: twelve single-cell blocks, one per role in the
+/// theme's `Rgb` (fenced-code token colours first, then the chrome roles), so
+/// a full palette is visible before it is applied. Writes nothing and returns
+/// false when the theme has no RGB palette (`default`/`mono`), which keeps
+/// those rows aligned with the palette rows; a narrow terminal clips the tail
+/// blocks rather than wrapping.
+fn writeThemePalette(surface: vxfw.Surface, row: u16, col: *u16, name: []const u8) bool {
+    const rgb = theme_mod.palette(name) orelse return false;
+    const colors = [_]theme_mod.Rgb24{
+        rgb.keyword,
+        rgb.string,
+        rgb.number,
+        rgb.builtin,
+        rgb.preproc,
+        rgb.comment,
+        rgb.dim,
+        rgb.tool,
+        rgb.err,
+        rgb.rule,
+        rgb.prompt,
+        rgb.accent,
+    };
+    inline for (colors) |c| {
+        if (col.* + 1 > surface.size.width) return true;
+        surface.writeCell(col.*, row, .{ .char = .{ .grapheme = "\xe2\x96\x88", .width = 1 }, .style = .{ .fg = .{ .rgb = c } } });
+        col.* += 1;
+    }
+    return true;
+}
+
 fn statusTextFits(width: u16, col: u16, text: []const u8) bool {
     return width_mod.displayWidth(text) <= @as(usize, width -| col);
 }
@@ -8059,7 +8094,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     var wt: ?worktree_mod.Worktree = null;
     defer if (wt) |*w| w.deinit(gpa);
     var harness_root: ?[]const u8 = null;
-    if (cfg.agent.isolated_tui or containsWorktreeMode(cfg.agent.git_worktree_on, .tui)) {
+    if (cfg.agent.isolated_tui or cfg.agent.worktreeOn(.tui)) {
         const root_z = try std.process.currentPathAlloc(io, gpa);
         defer gpa.free(root_z);
         const root = try arena.dupe(u8, root_z);

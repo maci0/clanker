@@ -15,9 +15,9 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 
 DEFAULT_CLANKER_DIR = Path("/home/yannick/code/maci0/clanker")
@@ -78,7 +78,7 @@ ESCALATE_STAGE = "escalate"
 HARNESS_STAGE = "harness"
 EXAMPLES = """
 EXAMPLES
-  run.sh                                    menus for all three, then run
+  run.sh                                    start the three menus, then the loop
 
   loop.py                                   clanker from PATH, configured model
   loop.py --model ollama/qwen3.6-27b-tuned  that model for improve-self
@@ -109,9 +109,12 @@ REPAIR
      harness fixes it, from the escalation run's error lines.
      Without that flag, level 4 is skipped.
 
-  Every level returns to improve-self afterwards, so the loop
-  keeps going. Each only ever triggers on a non-zero exit, and
-  every harness is resolved before the first batch starts.
+  A failed repair run goes to escalation; a failed escalation
+  run goes to the harness when one is set. A success at any
+  level, or a finished harness run, returns to improve-self.
+  Each only ever triggers on a non-zero exit. The clanker
+  binary and any --fix-repairs-with command are resolved
+  before the first batch starts.
 
 WATCHDOG
   No run may hang the loop, so every child has two limits.
@@ -126,8 +129,9 @@ WATCHDOG
                     batch. Off by default: a batch is meant to
                     run long.
 
-  A stopped run counts as a failed run, so the level below it
-  repairs it exactly as it would any other failure.
+  A stopped run counts as a failed run, so the next repair
+  level handles it the same way. A stopped harness run has
+  no level below it: the loop returns to improve-self.
 """
 # Only the outside harness gets this. A clanker run already has clanker's verbs
 # as its own tools and its system prompt already carries the checkout's
@@ -253,6 +257,7 @@ def run_to_log(
     label: str,
     cap: float = 0,
     silence: float = 0,
+    scan: Callable[[subprocess.Popen[bytes], bytes], None] | None = None,
 ) -> CommandResult:
     """Run a command, mirror its combined output, and retain it for the caller."""
     log = tempfile.NamedTemporaryFile(
@@ -276,6 +281,8 @@ def run_to_log(
                 log.write(line)
                 sys.stdout.buffer.write(line)
                 sys.stdout.buffer.flush()
+                if scan is not None:
+                    scan(process, line)
         except BaseException:
             stop_process_group(process)
             process.wait()
@@ -297,60 +304,43 @@ def stop_process_group(process: subprocess.Popen[bytes]) -> None:
         pass
 
 
+class ImproveBatchScan:
+    """Stop an improve batch as soon as two adjacent iterations exhaust retries."""
+
+    def __init__(self) -> None:
+        self.previous_failed_iteration: int | None = None
+        self.stopped_after_failures: tuple[int, int] | None = None
+        self.running_pid: int | None = None
+
+    def __call__(self, process: subprocess.Popen[bytes], line: bytes) -> None:
+        running_match = ALREADY_RUNNING.search(line)
+        if running_match is not None:
+            self.running_pid = int(running_match.group(1))
+        match = ALL_ATTEMPTS_FAILED.search(line)
+        if match is None or self.stopped_after_failures is not None:
+            return
+        failed_iteration = int(match.group(1))
+        if self.previous_failed_iteration == failed_iteration - 1:
+            self.stopped_after_failures = (self.previous_failed_iteration, failed_iteration)
+            print(
+                "==> two consecutive improve-self iterations failed; stopping the batch for repair",
+                flush=True,
+            )
+            stop_process_group(process)
+        self.previous_failed_iteration = failed_iteration
+
+
 def run_improve_to_log(
     command: Sequence[str], *, cwd: Path, cap: float = 0, silence: float = 0
 ) -> CommandResult:
-    """Stop an improve batch as soon as two adjacent iterations exhaust retries."""
-    log = tempfile.NamedTemporaryFile(
-        mode="wb", prefix="clanker-improve-", suffix=".log", delete=False
+    """Run an improve batch under the early-stop scan for exhausted retries."""
+    scan = ImproveBatchScan()
+    result = run_to_log(command, cwd=cwd, label="improve", cap=cap, silence=silence, scan=scan)
+    return replace(
+        result,
+        stopped_after_failures=scan.stopped_after_failures,
+        running_pid=scan.running_pid,
     )
-    log_path = Path(log.name)
-    previous_failed_iteration: int | None = None
-    stopped_after_failures: tuple[int, int] | None = None
-    running_pid: int | None = None
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        assert process.stdout is not None
-        watchdog = Watchdog(process, cap=cap, silence=silence)
-        try:
-            for line in iter(process.stdout.readline, b""):
-                watchdog.saw_output()
-                log.write(line)
-                sys.stdout.buffer.write(line)
-                sys.stdout.buffer.flush()
-                running_match = ALREADY_RUNNING.search(line)
-                if running_match is not None:
-                    running_pid = int(running_match.group(1))
-                match = ALL_ATTEMPTS_FAILED.search(line)
-                if match is None or stopped_after_failures is not None:
-                    continue
-                failed_iteration = int(match.group(1))
-                if previous_failed_iteration == failed_iteration - 1:
-                    stopped_after_failures = (previous_failed_iteration, failed_iteration)
-                    print(
-                        "==> two consecutive improve-self iterations failed; stopping the batch for repair",
-                        flush=True,
-                    )
-                    stop_process_group(process)
-                previous_failed_iteration = failed_iteration
-        except BaseException:
-            stop_process_group(process)
-            process.wait()
-            raise
-        finally:
-            watchdog.stop()
-        return CommandResult(
-            process.wait(), log_path, stopped_after_failures, running_pid, watchdog.reason
-        )
-    finally:
-        log.close()
 
 
 def read_log(path: Path) -> str:

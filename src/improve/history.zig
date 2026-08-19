@@ -392,7 +392,7 @@ pub const History = struct {
         for (files) |f| {
             const dst = try std.fmt.allocPrint(self.gpa, "{s}/{s}/{s}", .{ self.history_dir, id, f });
             defer self.gpa.free(dst);
-            ensure_dir.ensureDir(self.base, self.io, dirName(dst)) catch {};
+            ensure_dir.ensureDir(self.base, self.io, std.fs.path.dirname(dst) orelse ".") catch {};
             copyFile(self.io, self.gpa, self.base, f, dst) catch |err| {
                 // A new file has no previous version to snapshot; that is not
                 // a failure and should not hide real snapshot problems.
@@ -695,11 +695,6 @@ fn firstLine(s: []const u8, max: usize) []const u8 {
     const trimmed = std.mem.trim(u8, s, " \t\r\n");
     const end = std.mem.findScalar(u8, trimmed, '\n') orelse trimmed.len;
     return trimmed[0..@min(end, max)];
-}
-
-fn dirName(path: []const u8) []const u8 {
-    if (std.mem.findScalarLast(u8, path, '/')) |i| return path[0..i];
-    return ".";
 }
 
 fn copyFile(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, src: []const u8, dst: []const u8) !void {

@@ -318,6 +318,12 @@ const State = struct {
     removed: bool = false,
 
     subtasks: std.ArrayListUnmanaged(SubtaskState) = .empty,
+    /// `subtask id -> index into subtasks`. The fold below reaches for a
+    /// checklist item once per `subtask_*` message, and the list scan this
+    /// replaces made that O(items) apiece: a card whose checklist was built
+    /// and toggled item by item cost O(items^2) string compares, all of them
+    /// in the wasm interpreter, on every board read.
+    subtask_ix: std.StringHashMapUnmanaged(u32) = .empty,
     deps: std.ArrayListUnmanaged(DepState) = .empty,
     log: std.ArrayListUnmanaged(LogEntry) = .empty,
     prompt_tokens: u64 = 0,
@@ -326,11 +332,13 @@ const State = struct {
     runs: std.ArrayListUnmanaged([]const u8) = .empty,
 
     fn subtask(self: *State, arena: std.mem.Allocator, id: []const u8, text: []const u8, parent: []const u8) !*SubtaskState {
-        for (self.subtasks.items) |*s| {
-            if (std.mem.eql(u8, s.id, id)) return s;
-        }
+        if (self.subtask_ix.get(id)) |ix| return &self.subtasks.items[ix];
+        const ix: u32 = @intCast(self.subtasks.items.len);
         try self.subtasks.append(arena, .{ .id = id, .text = text, .parent = parent });
-        return &self.subtasks.items[self.subtasks.items.len - 1];
+        // Indexed after the append, so a failed append cannot leave the map
+        // pointing at a slot that does not exist.
+        try self.subtask_ix.put(arena, id, ix);
+        return &self.subtasks.items[ix];
     }
 
     fn dep(self: *State, arena: std.mem.Allocator, on: []const u8) !*DepState {
@@ -628,6 +636,16 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         const c = kv.value_ptr;
         if (c.removed) continue;
 
+        // The ids a checklist edge may point at, built once per card. The
+        // membership test below used to rescan every subtask per edge, so a
+        // card with a large checklist cost O(items^2 * edges) string compares
+        // in the wasm interpreter for what is one lookup per edge.
+        var live_subs: std.StringHashMapUnmanaged(void) = .empty;
+        for (c.subtasks.items) |s| {
+            if (s.removed or s.text.len == 0) continue;
+            try live_subs.put(arena, s.id, {});
+        }
+
         var subs: std.ArrayListUnmanaged(Subtask) = .empty;
         for (c.subtasks.items) |s| {
             // A subtask only toggled or removed, never added, has no text and
@@ -636,10 +654,7 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
             var sub_deps: std.ArrayListUnmanaged([]const u8) = .empty;
             for (s.deps.items) |d| {
                 if (d.off) continue;
-                for (c.subtasks.items) |target| {
-                    if (!target.removed and target.text.len > 0 and std.mem.eql(u8, target.id, d.on))
-                        try sub_deps.append(arena, d.on);
-                }
+                if (live_subs.contains(d.on)) try sub_deps.append(arena, d.on);
             }
             try subs.append(arena, .{ .id = s.id, .text = s.text, .done = s.done, .parent = s.parent, .depends_on = sub_deps.items });
         }
@@ -767,13 +782,46 @@ pub fn checklistComplete(card: *const Card) bool {
 
 /// Whether following `from`'s depends_on edges can reach `sought`. Used to
 /// refuse a new edge that would close a cycle.
-pub fn checklistReaches(card: *const Card, from: []const u8, sought: []const u8, depth: usize) bool {
+///
+/// Iterative, with a visited slot per item. The recursive walk this replaces
+/// re-entered a node once per distinct path leading to it, so a checklist
+/// where items share dependencies -- k diamonds chained, which an operator
+/// builds by hand with 2k `subtask_depend` calls -- cost 2^k walks. Every
+/// `subtask_depend` runs this in the wasm interpreter, so the guest simply
+/// stopped answering. Visiting each item once makes it O(items * edges).
+pub fn checklistReaches(
+    alloc: std.mem.Allocator,
+    card: *const Card,
+    from: []const u8,
+    sought: []const u8,
+) !bool {
     if (std.mem.eql(u8, from, sought)) return true;
-    if (depth >= card.subtasks.len) return false;
-    for (card.subtasks) |sub| {
-        if (!std.mem.eql(u8, sub.id, from)) continue;
-        for (sub.depends_on) |next| {
-            if (checklistReaches(card, next, sought, depth + 1)) return true;
+    const n = card.subtasks.len;
+    if (n == 0) return false;
+    const visited = try alloc.alloc(bool, n);
+    defer alloc.free(visited);
+    @memset(visited, false);
+    // Each item is pushed at most once (the push is what sets `visited`), so
+    // one slot per item is the whole stack this walk can ever need.
+    const stack = try alloc.alloc(usize, n);
+    defer alloc.free(stack);
+    var top: usize = 0;
+    for (card.subtasks, 0..) |sub, i| {
+        if (visited[i] or !std.mem.eql(u8, sub.id, from)) continue;
+        visited[i] = true;
+        stack[top] = i;
+        top += 1;
+    }
+    while (top > 0) {
+        top -= 1;
+        for (card.subtasks[stack[top]].depends_on) |next| {
+            if (std.mem.eql(u8, next, sought)) return true;
+            for (card.subtasks, 0..) |sub, j| {
+                if (visited[j] or !std.mem.eql(u8, sub.id, next)) continue;
+                visited[j] = true;
+                stack[top] = j;
+                top += 1;
+            }
         }
     }
     return false;
@@ -1182,6 +1230,78 @@ test "checklist items nest and carry independent dependency edges" {
     try std.testing.expectEqualStrings("root", folded[0].subtasks[2].depends_on[0]);
 }
 
+test "a large checklist folds by id lookup, keeping one edge per live target" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // 200 items, each depending on the one before it, plus one removed item
+    // that a live edge still points at. Both the per-action item lookup and
+    // the projection's edge filter used to scan the whole checklist, so this
+    // shape cost O(items^2) string compares inside the wasm interpreter; the
+    // assertions below are what those scans were computing.
+    const n = 200;
+    var messages: std.ArrayListUnmanaged(Message) = .empty;
+    try messages.append(arena, msg("m1", "x", 100, try encodeAdd(arena, "long list")));
+    for (0..n) |i| {
+        const id = try std.fmt.allocPrint(arena, "s{d}", .{i});
+        try messages.append(arena, msg(id, "x", @intCast(200 + i), try encode(arena, .{
+            .action = "subtask_add",
+            .todo = "m1",
+            .subtask = id,
+            .text = id,
+        })));
+    }
+    for (1..n) |i| {
+        const id = try std.fmt.allocPrint(arena, "s{d}", .{i});
+        const on = try std.fmt.allocPrint(arena, "s{d}", .{i - 1});
+        try messages.append(arena, msg(try std.fmt.allocPrint(arena, "e{d}", .{i}), "x", @intCast(1000 + i), try encode(arena, .{
+            .action = "subtask_depend",
+            .todo = "m1",
+            .subtask = id,
+            .on = on,
+        })));
+    }
+    // A re-add of an existing id must not grow the list, and an edge onto a
+    // removed item must not survive the projection.
+    try messages.append(arena, msg("dup", "x", 2000, try encode(arena, .{
+        .action = "subtask_add",
+        .todo = "m1",
+        .subtask = "s0",
+        .text = "s0 again",
+    })));
+    try messages.append(arena, msg("gone", "x", 2001, try encode(arena, .{
+        .action = "subtask_add",
+        .todo = "m1",
+        .subtask = "ghost",
+        .text = "ghost",
+    })));
+    try messages.append(arena, msg("edge-ghost", "x", 2002, try encode(arena, .{
+        .action = "subtask_depend",
+        .todo = "m1",
+        .subtask = "s5",
+        .on = "ghost",
+    })));
+    try messages.append(arena, msg("rm", "x", 2003, try encode(arena, .{
+        .action = "subtask_remove",
+        .todo = "m1",
+        .subtask = "ghost",
+    })));
+
+    const folded = try derive(arena, messages.items);
+    try std.testing.expectEqual(@as(usize, 1), folded.len);
+    const card = folded[0];
+    try std.testing.expectEqual(@as(usize, n), card.subtasks.len);
+    try std.testing.expectEqualStrings("s0", card.subtasks[0].id);
+    try std.testing.expectEqual(@as(usize, 0), card.subtasks[0].depends_on.len);
+    // Every later item keeps exactly its one live predecessor edge, listed once.
+    for (1..n) |i| {
+        try std.testing.expectEqual(@as(usize, 1), card.subtasks[i].depends_on.len);
+        const want = try std.fmt.allocPrint(arena, "s{d}", .{i - 1});
+        try std.testing.expectEqualStrings(want, card.subtasks[i].depends_on[0]);
+    }
+}
+
 test "done requires every checklist node and dependency cycles are detectable" {
     const subs = [_]Subtask{
         .{ .id = "a", .text = "root", .done = true, .depends_on = &.{"b"} },
@@ -1189,10 +1309,48 @@ test "done requires every checklist node and dependency cycles are detectable" {
     };
     const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
     try std.testing.expect(!checklistComplete(&card));
-    try std.testing.expect(checklistReaches(&card, "a", "b", 0));
-    try std.testing.expect(!checklistReaches(&card, "b", "a", 0));
+    try std.testing.expect(try checklistReaches(t_alloc, &card, "a", "b"));
+    try std.testing.expect(!try checklistReaches(t_alloc, &card, "b", "a"));
     try std.testing.expect(!checklistItemReady(&card, "a"));
     try std.testing.expect(checklistItemReady(&card, "b"));
+}
+
+test "checklistReaches walks a diamond chain instead of every path through it" {
+    // Item i depends on both i+1 and i+2: 2^(n/2) distinct paths from the
+    // head to the tail, and the recursive walk took all of them. 60 levels is
+    // unreachable that way and instant with a visited set. The assertion that
+    // matters is that this test terminates at all.
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const n = 60;
+    var subs: std.ArrayListUnmanaged(Subtask) = .empty;
+    for (0..n) |i| {
+        var deps: std.ArrayListUnmanaged([]const u8) = .empty;
+        if (i + 1 < n) try deps.append(arena, try std.fmt.allocPrint(arena, "s{d}", .{i + 1}));
+        if (i + 2 < n) try deps.append(arena, try std.fmt.allocPrint(arena, "s{d}", .{i + 2}));
+        try subs.append(arena, .{
+            .id = try std.fmt.allocPrint(arena, "s{d}", .{i}),
+            .text = "item",
+            .depends_on = deps.items,
+        });
+    }
+    const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = subs.items };
+    try std.testing.expect(try checklistReaches(t_alloc, &card, "s0", "s59"));
+    try std.testing.expect(!try checklistReaches(t_alloc, &card, "s59", "s0"));
+}
+
+test "checklistReaches terminates on a dependency graph that is already cyclic" {
+    // The old walk leaned on a depth counter for this; the visited set is
+    // what stops it now, and a pre-existing cycle is reachable through a
+    // hand-edited room log.
+    const subs = [_]Subtask{
+        .{ .id = "a", .text = "a", .depends_on = &.{"b"} },
+        .{ .id = "b", .text = "b", .depends_on = &.{"a"} },
+    };
+    const card: Card = .{ .id = "c", .title = "goal", .created_by = "x", .ts = 1, .subtasks = &subs };
+    try std.testing.expect(try checklistReaches(t_alloc, &card, "a", "b"));
+    try std.testing.expect(!try checklistReaches(t_alloc, &card, "a", "missing"));
 }
 
 test "hasSubtask names only items actually on the card" {

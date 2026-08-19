@@ -80,6 +80,18 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [rfc recommend replaces existing Why-this-confidence and Reversibility text with template placeholders](bugs/2026-08-19-rfc-recommend-replaces-fields-it-was-not-given.md) — Open
+
+- [research sweep's web backend returns only unrelated pages](bugs/2026-08-19-research-sweep-web-backend-returns-unrelated-results.md) — Open
+
+- [improve-self fast-forwards main's ref but leaves the working tree/index reverted to pre-promotion content](bugs/2026-08-19-improve-self-merge-leaves-worktree-reverted.md) — Reopened
+
+- [zigLibDir spawns bare zig with no PATH search or environment, always failing](bugs/2026-08-19-zig-lib-dir-never-resolves-in-sandbox.md) — Resolved
+
+- [improve-self hangs when a provider goes quiet: proposal/plan LLM calls have no deadline](bugs/2026-08-18-improve-engine-llm-calls-have-no-deadline.md) — Resolved
+
+- [improve-self staging tests fail on peers.notifications unreadable-log test](bugs/2026-08-18-improve-self-notifications-test-assertion.md) — Resolved
+
 - [The agent loop sends max_tokens_per_turn as the completion grant](bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md) — Open
 
 - [recent_commits test fails when a commit subject contains the two characters backslash-n](bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md) — Open
@@ -180,6 +192,7 @@ Project agents receive this workflow through the harness prompt and
 
 <!-- inventory:investigation:start -->
 - [zig build test intermittently hangs forever in the bounded-chat abort test](investigations/2026-08-18-bounded-chat-abort-test-hangs.md) — Investigating
+- [Stale post-promotion checkout diff on doctor.zig was committed and pushed as revert 124d592e](investigations/2026-08-19-stale-checkout-diff-pushed-as-revert.md) — Investigating
 
 - [The REPL had no /rfc although clanker rfc exists](investigations/2026-08-17-missing-clanker-tool-rfc-slash-command-in-tui.md) — Resolved
 - [Escalation run died AnswerTruncatedToEmpty after 34 iterations](investigations/2026-08-18-escalation-run-answer-truncated-to-empty.md) — Investigating

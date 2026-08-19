@@ -133,7 +133,7 @@ test "an unreadable log is an error, not an empty one" {
     try ensure_dir.ensureDir(tmp.dir, io, "state");
     try ensure_dir.ensureDir(tmp.dir, io, path);
 
-    try std.testing.expectError(error.IsDir, store(io, std.testing.allocator, tmp.dir, .{
+    store(io, std.testing.allocator, tmp.dir, .{
         .from = "peer",
         .kind = "message",
         .topic = "",
@@ -141,5 +141,12 @@ test "an unreadable log is an error, not an empty one" {
         .ts = 1,
         .received_at = 2,
         .id = "delivery-1",
-    }));
+    }) catch |err| {
+        // FileNotFound is the one read outcome the store may treat as "no log
+        // yet". This is a directory, not a missing file, so the store must
+        // surface the read failure rather than rewrite the ledger empty.
+        try std.testing.expect(@as(anyerror, err) != error.FileNotFound);
+        return;
+    };
+    return error.StoreAcceptedUnreadableLog;
 }

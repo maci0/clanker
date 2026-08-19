@@ -276,27 +276,7 @@ fn list(out: *lib.Out) !void {
 }
 
 fn open(obj: std.json.Value, out: *lib.Out) !void {
-    const path = lib.str(obj, "path") catch
-        return lib.fail(out, "open needs the path of a PRD");
-    if (!doc.isPathIn(dir, path)) return lib.fail(out, "path must be a markdown file directly below docs/prds/");
-    const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the PRD");
-    const text = try lib.alloc.dupe(u8, raw);
-
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("title");
-    try s.write(doc.documentTitle(text));
-    try s.objectField("status");
-    try s.write(doc.statusFrom(text, &statuses));
-    try s.objectField("text");
-    try s.write(text);
-    try s.endObject();
-    lib.commit(out, &w);
+    return records_grep.openNumbered(out, obj, dir, &statuses, "a PRD");
 }
 
 /// Searches the PRDs and the ADRs together: an ADR is what *constrains* a
@@ -413,29 +393,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     // CAS miss leaves the PRD correct and names the row to reconcile.
     const indexed = setInventoryStatus(std.fs.path.basename(path), label) catch false;
 
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("action");
-    try s.write("status");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("status");
-    try s.write(label);
-    try s.objectField("indexed");
-    try s.write(indexed);
-    if (!indexed) {
-        try s.objectField("note");
-        try s.write("the PRD's status changed, but its docs/prds/README.md inventory row could not be updated (missing row or markers, or a concurrent edit); set that row's Status cell by hand so the index does not disagree with the PRD");
-    }
-    if (std.mem.eql(u8, label, "Shipped")) {
-        try s.objectField("reminder");
-        try s.write("Re-verify the Acceptance criteria against the code, not only Design: a checked box that is aspirational is worse than an unchecked one that names the gap.");
-    }
-    try s.endObject();
-    lib.commit(out, &w);
+    try records_grep.writeStatusReply(out, path, label, indexed, "the PRD's status changed, but its docs/prds/README.md inventory row could not be updated (missing row or markers, or a concurrent edit); set that row's Status cell by hand so the index does not disagree with the PRD", if (std.mem.eql(u8, label, "Shipped")) "Re-verify the Acceptance criteria against the code, not only Design: a checked box that is aspirational is worse than an unchecked one that names the gap." else null);
 }
 
 /// Derived from `statuses`, so what `status` accepts and what `list` reads

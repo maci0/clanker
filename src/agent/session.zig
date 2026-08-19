@@ -6,6 +6,7 @@ const json = std.json;
 const types = @import("../llm/types.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const test_env = @import("../util/test_env.zig");
 
 pub const Session = struct {
     id: []const u8,
@@ -943,45 +944,37 @@ fn roleFromStr(s: []const u8) !types.Role {
 // ------------------------------------------------------------------- tests --
 
 test "session store rejects ids that can escape its directory" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     const bad_id = "../../escaped";
-    try std.testing.expectError(error.InvalidSessionId, saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try std.testing.expectError(error.InvalidSessionId, saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = bad_id,
         .title = "bad",
         .messages = &.{},
         .created = 0,
         .updated = 0,
     }));
-    try std.testing.expectError(error.InvalidSessionId, loadSession(io, std.testing.allocator, arena, tmp.dir, bad_id));
-    try std.testing.expectError(error.InvalidSessionId, deleteSession(io, arena, tmp.dir, bad_id));
-    try std.testing.expectError(error.InvalidSessionId, forkSession(io, std.testing.allocator, arena, tmp.dir, bad_id));
-    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "escaped.json", .{}));
+    try std.testing.expectError(error.InvalidSessionId, loadSession(io, std.testing.allocator, arena, env.tmp.dir, bad_id));
+    try std.testing.expectError(error.InvalidSessionId, deleteSession(io, arena, env.tmp.dir, bad_id));
+    try std.testing.expectError(error.InvalidSessionId, forkSession(io, std.testing.allocator, arena, env.tmp.dir, bad_id));
+    try std.testing.expectError(error.FileNotFound, env.tmp.dir.statFile(io, "escaped.json", .{}));
 }
 
 test "a saved session round-trips its image attachments, including through a fork" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     var imgs = [_]types.ImagePart{.{ .mime = "image/png", .b64 = "aGk=" }};
     const messages = [_]types.Message{
         .{ .role = .user, .content = "what is in this picture?", .images = &imgs },
         .{ .role = .assistant, .content = "a greeting" },
     };
-    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = "vision",
         .title = "vision",
         .messages = &messages,
@@ -990,7 +983,7 @@ test "a saved session round-trips its image attachments, including through a for
     });
 
     // The attachment is model-visible input, so resuming must resend it.
-    const loaded = try loadSession(io, std.testing.allocator, arena, tmp.dir, "vision");
+    const loaded = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, "vision");
     const got = loaded.messages[0].images orelse return error.AttachmentDropped;
     try std.testing.expectEqual(@as(usize, 1), got.len);
     try std.testing.expectEqualStrings("image/png", got[0].mime);
@@ -999,13 +992,13 @@ test "a saved session round-trips its image attachments, including through a for
     try std.testing.expect(loaded.messages[1].images == null);
 
     // forkSession round-trips through load+save, so it stripped them too.
-    const fork_id = try forkSession(io, std.testing.allocator, arena, tmp.dir, "vision");
-    const forked = try loadSession(io, std.testing.allocator, arena, tmp.dir, fork_id);
+    const fork_id = try forkSession(io, std.testing.allocator, arena, env.tmp.dir, "vision");
+    const forked = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, fork_id);
     const fork_imgs = forked.messages[0].images orelse return error.AttachmentDropped;
     try std.testing.expectEqualStrings("aGk=", fork_imgs[0].b64);
 
     // The listing counter agrees with what a re-listing recomputes.
-    const metas = try listSessions(io, arena, tmp.dir);
+    const metas = try listSessions(io, arena, env.tmp.dir);
     for (metas) |m| {
         if (!std.mem.eql(u8, m.id, "vision")) continue;
         try std.testing.expectEqual(transcriptBytes(&messages), m.bytes);
@@ -1013,20 +1006,16 @@ test "a saved session round-trips its image attachments, including through a for
 }
 
 test "session load rejects an unknown persisted message role" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
-    try tmp.dir.createDirPath(io, "state/sessions");
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/bad-role.json", .data =
+    try env.tmp.dir.createDirPath(io, "state/sessions");
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/bad-role.json", .data =
         \\{"id":"bad-role","title":"bad","created":0,"updated":0,"messages":[{"role":"operator","content":"do not reinterpret me"}]}
     });
-    try std.testing.expectError(error.InvalidRole, loadSession(io, std.testing.allocator, arena, tmp.dir, "bad-role"));
+    try std.testing.expectError(error.InvalidRole, loadSession(io, std.testing.allocator, arena, env.tmp.dir, "bad-role"));
 }
 
 test "compactMessages counts short content and tool-call arguments" {
@@ -1155,89 +1144,76 @@ test "compactMessages never leaves a tool result with no tool_calls to answer" {
 }
 
 test "latestSessionId picks the most recently updated session" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     // No store yet: null, not an error.
-    try std.testing.expect(latestSessionId(io, arena, tmp.dir) == null);
+    try std.testing.expect(latestSessionId(io, arena, env.tmp.dir) == null);
 
-    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = "older",
         .title = "t",
         .messages = &.{},
         .created = 100,
         .updated = 100,
     });
-    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = "newer",
         .title = "t",
         .messages = &.{},
         .created = 50,
         .updated = 200,
     });
-    try std.testing.expectEqualStrings("newer", latestSessionId(io, arena, tmp.dir).?);
+    try std.testing.expectEqualStrings("newer", latestSessionId(io, arena, env.tmp.dir).?);
 }
 
 test "listSessions and latestSessionId use the listing header without the transcript" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
-    try tmp.dir.createDirPath(io, "state/sessions");
+    try env.tmp.dir.createDirPath(io, "state/sessions");
     // Deliberately not valid past `messages`: if listing walked the
     // transcript this file would be skipped as corrupt.
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "state/sessions/hdr.json",
         .data = "{\"id\":\"hdr\",\"title\":\"from-header\",\"created\":1,\"updated\":9,\"message_count\":3,\"bytes\":42,\"messages\":[THIS IS NOT JSON",
     });
 
-    const list = try listSessions(io, arena, tmp.dir);
+    const list = try listSessions(io, arena, env.tmp.dir);
     try std.testing.expectEqual(@as(usize, 1), list.len);
     try std.testing.expectEqualStrings("hdr", list[0].id);
     try std.testing.expectEqualStrings("from-header", list[0].title);
     try std.testing.expectEqual(@as(usize, 3), list[0].messages);
     try std.testing.expectEqual(@as(usize, 42), list[0].bytes);
-    try std.testing.expectEqualStrings("hdr", latestSessionId(io, arena, tmp.dir).?);
+    try std.testing.expectEqualStrings("hdr", latestSessionId(io, arena, env.tmp.dir).?);
 }
 
 test "listSessions lists a pre-counter file from the header alone" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
-    try tmp.dir.createDirPath(io, "state/sessions");
+    try env.tmp.dir.createDirPath(io, "state/sessions");
     // No message_count/bytes, and the transcript is garbage: a full parse
     // would skip this file. The picker still needs the title and updated.
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "state/sessions/old.json",
         .data = "{\"id\":\"old\",\"title\":\"legacy\",\"created\":1,\"updated\":8,\"messages\":[THIS IS NOT JSON",
     });
 
-    const list = try listSessions(io, arena, tmp.dir);
+    const list = try listSessions(io, arena, env.tmp.dir);
     try std.testing.expectEqual(@as(usize, 1), list.len);
     try std.testing.expectEqualStrings("old", list[0].id);
     try std.testing.expectEqualStrings("legacy", list[0].title);
     try std.testing.expectEqual(@as(i64, 8), list[0].updated);
     try std.testing.expectEqual(@as(usize, 0), list[0].messages);
     try std.testing.expectEqual(@as(usize, 0), list[0].bytes);
-    try std.testing.expectEqualStrings("old", latestSessionId(io, arena, tmp.dir).?);
+    try std.testing.expectEqualStrings("old", latestSessionId(io, arena, env.tmp.dir).?);
 }
 
 test "session save/load round trip" {
@@ -1879,17 +1855,12 @@ test "snippetAround keeps context, marks both cuts, and flattens the line" {
 }
 
 test "searchSessions finds conversations by message text, newest first" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = "older",
         .title = "cron questions",
         .created = 100,
@@ -1899,7 +1870,7 @@ test "searchSessions finds conversations by message text, newest first" {
             .{ .role = .assistant, .content = "five fields, and the cron spec is read at a fixed offset" },
         },
     });
-    try saveSession(io, std.testing.allocator, arena, tmp.dir, .{
+    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
         .id = "newer",
         .title = "unrelated",
         .created = 200,
@@ -1909,7 +1880,7 @@ test "searchSessions finds conversations by message text, newest first" {
 
     // Case-insensitive, and the conversation the word appears in twice is one
     // row that says so rather than two rows.
-    const hits = try searchSessions(io, arena, tmp.dir, "cron", 10);
+    const hits = try searchSessions(io, arena, env.tmp.dir, "cron", 10);
     try std.testing.expectEqual(@as(usize, 1), hits.len);
     try std.testing.expectEqualStrings("older", hits[0].id);
     try std.testing.expectEqualStrings("cron questions", hits[0].title);
@@ -1919,18 +1890,18 @@ test "searchSessions finds conversations by message text, newest first" {
     try std.testing.expect(std.mem.find(u8, hits[0].snippet, "CRON") != null);
 
     // A word in both conversations returns both, newest first.
-    const both = try searchSessions(io, arena, tmp.dir, "spec", 10);
+    const both = try searchSessions(io, arena, env.tmp.dir, "spec", 10);
     try std.testing.expectEqual(@as(usize, 2), both.len);
     try std.testing.expectEqualStrings("newer", both[0].id);
 
     // No match is an empty list, not an error, and neither is an empty store.
-    try std.testing.expectEqual(@as(usize, 0), (try searchSessions(io, arena, tmp.dir, "zzzz", 10)).len);
+    try std.testing.expectEqual(@as(usize, 0), (try searchSessions(io, arena, env.tmp.dir, "zzzz", 10)).len);
     var empty = std.testing.tmpDir(.{});
     defer empty.cleanup();
     try std.testing.expectEqual(@as(usize, 0), (try searchSessions(io, arena, empty.dir, "cron", 10)).len);
 
     // The limit is applied after the sort, so it keeps the newest.
-    const capped = try searchSessions(io, arena, tmp.dir, "spec", 1);
+    const capped = try searchSessions(io, arena, env.tmp.dir, "spec", 1);
     try std.testing.expectEqual(@as(usize, 1), capped.len);
     try std.testing.expectEqualStrings("newer", capped[0].id);
 }

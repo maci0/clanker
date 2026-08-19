@@ -5,19 +5,260 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- `agency_sync` tool: mirrors persona files from
+  github.com/msitarzewski/agency-agents into `agency/<division>/<file>.md`
+  (verbatim) plus a catalog at `agency/index.json` (division, path, name,
+  description per persona). These are not clanker skills and nothing here
+  is ever injected into a system prompt — the corpus is ~150 personas
+  across 17 divisions, and always-loading that would bloat every turn.
+  `{}` syncs every division; `{"division": "..."}` scopes to one and
+  merges into the existing catalog rather than replacing it.
+
+- The web UI's theme picker is keyboard-operable and shows each palette's
+  colour. ArrowUp/ArrowDown walk the option list and wrap at both ends (the
+  modulo walk `core/modelpicker.js` already used), closing the picker hands
+  focus back to the theme toggle instead of dropping it to `<body>`, and every
+  row carries a dot filled with that theme's `--bg` (`system` keeps an empty
+  ring, so labels stay aligned). Enter and Space activate a row through the
+  option's own `<button>`, not a hand-rolled key handler.
+
+- Tool descriptors may declare `prompt_guidance`: binding usage rules the
+  harness injects into the system prompt's new `## Tool guidance` section
+  (ahead of the catalog, for every enabled non-internal tool that declares
+  one) and echoes as `guidance` in the `load_tools` reply, so the rules are
+  read again at the moment the tool is loaded. The `rfc` tool is the first
+  user: its guidance states that a claim is verified only by opening the
+  original source it cites — a `docs/research/` note is a summary, not a
+  source — after a live run interpreted "check against its own source" as
+  re-reading the note. The rfc tool's own create/seed messages were
+  tightened the same way.
+
 ### Changed
+
+- `clanker doctor`'s header line now carries the clanker version and target
+  platform (`clanker doctor 0.x.y (linux/x86_64)`), so its output is usable as
+  a bug-report attachment without asking for those separately, and its
+  manifests check FAILs when zero tools are registered instead of reporting
+  OK with a count of 0 — an empty registry means the tool build or manifest
+  directory is broken, not healthy.
+
+- Catalog specs are applied from the models.dev snapshot without parsing the
+  matched provider. `Config.load` used to build a `std.json.Value` tree of the
+  whole provider member -- for an aggregator that is hundreds of models and the
+  bulk of the 4 MB snapshot -- to read the specs of the two or three models a
+  config actually names; only the named models' spans reach `std.json` now.
+  Every config-loading command pays this on startup.
+
+- A REPL turn no longer copies the whole system prompt into the run arena when
+  the prompt has not changed. `refreshSystemPrompt` runs once per turn and
+  built the prompt (plus every skill file, the learnings file and the workflow
+  catalog it reads) straight into the arena that lives for the session, so a
+  long conversation accumulated one full copy of all of it per turn even though
+  the text was almost always identical. It builds in scratch and copies only on
+  a real change.
+
+- Image attachments no longer keep their raw bytes for the rest of the REPL
+  session: only the base64 the request carries is retained, instead of that
+  plus a second full copy of every attachment (up to 4 MiB apiece).
+
+- `clanker --dump-config` prints the merged config as JSON. It printed Zig's
+  struct-literal debug form, in which a string is a list of byte integers, a
+  provider map is its internal `.bytes = u8@7fdfe1466150` buffer pointer, and
+  the whole config is one unbroken line: neither readable by a person nor
+  parsable by a script, and host addresses on stdout at that. The dump now
+  pipes into `jq`, omits the `*_present`/`*_fields` parse bookkeeping that is
+  not configuration, and holds no credentials (only the `api_key_env` name a
+  provider reads its key from).
+
+- `clanker research --help` and `clanker rfc --help` name `append` and
+  `update` in their usage line. Both accepted the subcommands and documented
+  them in the help body, but the usage line kept naming the older, shorter
+  set, so the one place an operator sees the whole surface disagreed with the
+  parser. The five record stores now declare their subcommand list once, and
+  a test pins each usage line to it. A usage line too long for 80 columns
+  (`rfc` accepts nine subcommands) wraps rather than being trimmed back.
+
+- `bugreport` truncates an over-length title instead of letting it through whole. The `[BUG] ` prefix was budgeted as five bytes rather than six, so a title long enough to need trimming produced a formatted line one byte over the 600-byte buffer, and the fallback on that failure was the untruncated title. Titles now trim to fit the prefix, and shorter ones are unchanged.
+
+- `clanker <command> --help` names the record-store subcommands the parser
+  actually accepts. `adr` and `prd` omitted `append` and `update` from their
+  usage line, and `research` omitted `create`, while each command's own error
+  message listed them, so the usage line was the narrower of two disagreeing
+  lists. `clanker session --help` and the bare-`clanker session` usage error
+  now name `search <query>` beside `export <id>`: `session` resolves to the
+  export help, so the other half of the command was reachable only from the
+  top-level list.
+
+- The web UI's chat model picker and fallback-provider select only offer
+  providers this serve process can actually call, judged by the same gate the
+  TUI `/model` picker applies (`providers.unusableReason`: the offline
+  credential check plus a TCP probe for explicit loopback endpoints). Each
+  row of `GET /api/providers` now carries `usable` and, when false, `reason`;
+  the row itself stays in the payload, so the Models view still lists a
+  configured-but-unkeyed provider as inventory, dimmed and named "not
+  callable" with the server's reason. A stale `localStorage` selection
+  naming a now-uncallable provider/model falls back to the configured
+  default instead of staying selected. `POST /api/run` refuses (400, with
+  the reason) a request that explicitly names a provider the process cannot
+  call, rather than starting a run the fallback chain would serve under a
+  different name.
+
+- A recorded run's graph names the provider that actually served it. The
+  provider was stamped at run start and never rewritten when the fallback
+  chain switched providers mid-run, so a run served entirely by a fallback
+  finished looking like the requested provider while `state/token_stats.jsonl`
+  named the real one. The `/api/run` reply (and the stream's `done` event)
+  also carry `served_by`, and a streaming run that switched providers says so
+  in a status line.
+
+- Every `clanker` invocation no longer forks `zig env` at startup. The Zig standard-library path it resolves is read by exactly two cold paths (the `zig_std` tool, and the improve engine's std-symbol help for a patch that failed to compile), so `sandbox/host.zig` resolves it on first use and caches it in a static buffer instead. `--help`, `mcp`, `acp` and every CLI verb were each paying a fork+exec of the compiler for a path they never read. `clanker sessions` drops from 10.1 ms to 7.9 ms and `clanker stats` from 12.0 ms to 9.5 ms (ReleaseFast, hyperfine, 30 runs), with system time roughly halved.
+
+- Completed background jobs (`ck_job`, so `jobs` start-and-forget execs and background subagents) are dropped once 64 finished ones are retained. The two tables were process-global and never trimmed, so a long-lived `clanker serve` held every background subagent's task and result text for the life of the process, and every `wait`/`kill`/`list` scanned the whole accumulation. `list` and `wait` still answer for anything running and for the newest 64 completed jobs; older completed ids now read as not-found. A job a `wait` is currently holding is never reaped out from under it.
+
+- `[memory.chunk]`, `[memory.embedding]` and `[memory.vector] backend` are gone. Nothing had read them since the native `src/memory/` layer was replaced by the sandboxed `memory` tool: chunk size, overlap, strategy and the embedder are inputs to a `memory` tool call, and only the builtin hash+cosine path exists. They parsed into fields nobody read, and the reference documented them as settings. `[memory]` now carries `backend`, `vector.top_k` and `vector.threshold`, all three read; setting one of the removed keys is reported as an unknown key instead of being silently ignored.
+
+- Every `clanker` invocation loaded its configuration twice. The startup dotenv probe wants one flag, `[modules] dotenv`, but `Config.loadQuiet` ran the same load as the command behind it, including `applyCatalogSpecs`: a 3.8 MB read of `state/models-dev.json` and a byte walk of the whole thing to find the spans of configured providers. The catalog fills nothing outside `[models]`, so the probe skips it now and the snapshot is read and walked once per process instead of twice. `clanker sessions` drops from 66.9 ms to 45.9 ms (Debug build, hyperfine, 20 runs).
+
+- `findProviderSpan` no longer re-derives each catalog member's `api` URL and `env` array on every call. It is called once per configured provider, and each call sub-scanned every member of the snapshot for those two fields and re-parsed each `env` array, so a config naming providers models.dev does not know by id walked the snapshot once per provider. `models_dev.indexProviders` extracts them once for the whole provider loop; the match rule and its answer are unchanged.
+
+- The web UI's Runs view — the recorded-run picker, its execution graph, the node detail panel and the A/B run diff — loads on first open, not on every page load. It was ~64 KB raw inline in `app.js`, so a visit that only used Chat downloaded and parsed the whole graph renderer to never draw one; it is `ui/app/features/runs.js` now, dynamically imported by the `runs` view loader with the same retryable-rejection rule as every other feature view. `lib/runs-list.js` goes with it, since nothing outside that view read it. Eager JS on a chat-only visit drops from 147.7 KB to 128.2 KB gzipped (`app.js` itself from 291.3 KB to 229.9 KB raw) and one request disappears; opening Runs costs the same two lazy hops it already cost for `lib/graph.js`.
+
+- The web UI's System view loads its config editor and MCP server list on first open, not on every page load. Both were top-level IIFEs at the bottom of `app.js` that bound *and* called `load()` at startup, so a visit that only used Chat downloaded 12.5 KB of raw JS it never ran and paid for a `GET /api/config/raw` and a `GET /api/mcp/servers` it never read. They are `ui/app/features/system.js` now, dynamically imported by the `system` view loader with the same retryable-rejection rule as every other feature view. Eager JS on a chat-only visit drops from 149.0 KB to 146.2 KB gzipped and two boot-time API round trips disappear.
+
+- Web UI plugins load their code when their tab is first opened, not on every page load. An enabled addon's tab, title and group come from its `plugin.json` (already answered by `/api/webui/plugins`), so the page can offer it without downloading a byte of it; `app.js` and `app.css` arrive on first open, the same deferral the built-in feature views already had. Across the nine shipped addons that is 53.3 KB gzipped and 16 requests off every visit, chat-only ones included. An addon that does work outside its own view sets `"eager": true` in its `plugin.json` and keeps loading at startup; the music dock is the shipped case. A deferred script that fails to arrive leaves its tab in place showing the failure with a Retry, rather than an empty panel.
+
+- `GET /api/workspaces` counts a workspace's chats in one pass over the session listing instead of one pass per workspace. It re-scanned every session for each registered workspace, then again for each label-only orphan, with a linear `seen` list on top, so a store that only grows made the handler quadratic. The rows and their order are unchanged.
+
+- `GET /api/catalog` releases the models.dev snapshot lock before it answers. The lock guards the cached 3.8 MB body and the parsed tree, but it was held by `defer` across gzip and the socket write as well, so one slow reader serialized every other catalog search in the process for the length of its own transfer. It now covers the parse and the search only; the response body is already copied out of the tree by then.
 
 - Tool descriptors are loaded once per process instead of once per call: `toolJson` (every CLI tool invocation and every HTTP API route under `clanker serve`) re-read and re-parsed all 118 `*.tool.json` manifests, ~180 KB of JSON and ~260 `openat` per request. A cache validated by a stat sweep serves them instead, so an added, removed, edited, or toggled plugin is still picked up without a restart.
 
-### Fixed
+### Added
 
-- The web UI's Skills list (under Tools and Prompts) renders again when at
-  least one skill exists. The row-building callback in
-  `core/tools.js: loadSkills` shadowed the `#skills` container variable with
-  the row's own checkbox, so every card was appended into its checkbox — a
-  DOM hierarchy cycle the browser refuses — and the whole panel fell into its
-  error branch, showing "Could not load skills." with a Try again that reran
-  the same failure. Only an empty skills list ever displayed.
+- `clanker commit --all` groups every tracked change instead of only what is
+  staged. The `smart_commit` guest has always taken both scopes and the two
+  commit different copies of a file (`staged` builds each group in the index,
+  so a hunk-narrowed index lands exactly as staged; `all` commits by pathspec
+  and so takes the worktree copy), but the CLI hardcoded `staged` while its
+  own `--help` said it grouped "staged (or all) files". The preview and the
+  write are given the same scope, so the plan that is confirmed is the plan
+  that lands.
+
+
+- `clanker goal --help`, `clanker autoresearch --help` and `clanker repl
+  --help` name every flag their command accepts. `goal` took `--provider`,
+  `--model` and `--reasoning-effort` and documented none of them,
+  `autoresearch` took `--provider`/`--model`, and `repl` took `--preset` and
+  `--mascot-speed`; the parser reads a spec's `flags` list while `--help`
+  prints its hand-written `detail`, so the two drifted with nothing comparing
+  them. A test now fails on any flag a command accepts without documenting.
+
+- `clanker-proxy` exits 2 on a bad invocation instead of 0. A missing `--host`
+  value, an unparseable `--port`, and an unrecognized flag all printed the
+  usage line and returned normally from `main`, so `clanker-proxy --prot 9000
+  && curl ...` read a refused invocation as a started proxy. Each now names the
+  offending argument on stderr and exits 2, the same usage-error code `clanker`
+  itself uses. `clanker-proxy --help` / `-h` is a real flag now (previously it
+  fell through to the unknown-argument branch) and prints the option reference
+  on stdout, exit 0.
+- The URL a starting listener prints goes to stdout, not stderr. `clanker
+  serve` with stdout piped promised "the original bare `http://host:port/webui`
+  line", and `clanker-proxy` its `http://host:port/v1` line, but both went
+  through `std.debug.print`, which writes to stderr: `clanker serve | grep -m1
+  webui` blocked forever while the URL scrolled past on the terminal.
+- `clanker --help` and every `clanker <command> --help` name `--profile
+  <name>` and `--dump-config`. Both are accepted on every command and their own
+  `clanker --profile -h` said "Available on every command", but neither help
+  footer listed them, so nothing an operator could read said they existed. A
+  test now pins every flag the parser treats as global to both footers.
+
+- `clanker git <args...>` is a transparent passthrough again. It captured both
+  of git's streams and replayed them after git had finished, so `clanker git
+  log` never reached a pager, `| head` could not stop it early, and a large
+  `diff` was held whole in memory; every nonzero status was then flattened to
+  1 with a "git exited with an error" line printed under git's own message.
+  Stdio is inherited and git's own exit status is the command's, so
+  `clanker git diff --quiet` is 1 for "there are changes" and 128 for "not a
+  repository", the way the callers of those codes expect.
+- `clanker commit` with stdin redirected (a script, CI, `clanker commit
+  </dev/null`) read the unanswerable `Proceed? [y/N]` prompt as a no: it
+  printed "aborted" and exited 0, so an automated caller was told it had
+  succeeded at committing nothing. It now refuses with a diagnostic naming
+  `--yes`, and exits 1.
+- The five record stores (`reports`, `research`, `rfc`, `adr`, `prd`) reported
+  a refused request as a timestamped `[ERROR] ts_ms=...` log record, so
+  `clanker adr open <missing>` read like a subsystem fault while
+  `clanker workflow show <missing>` — the same mistake — answered with a plain
+  `error: ...` line. Both are diagnostics now. An answer that is not readable
+  JSON stays a log record: that one really is a broken build, not a bad
+  argument.
+- `clanker mesh` printed two error lines for one failure, the second vaguer
+  than the first: the specific "clanker serve is not reachable at <url>" was
+  followed by a generic "clanker serve is not running". Only the line naming
+  the URL it dialled survives, which is what identifies the serve on a host
+  running several.
+- `clanker --continue -h` and the other aliased or value-taking options headed
+  their help with a usage line that does not run — `usage: clanker --continue,
+  -c -h`, `usage: clanker --mascot-size <size> -h`. The usage line carries the
+  primary spelling; the aliases stay in the heading below it.
+- `clanker stats --model x` reported the rejected flag as `--model, -m`, which
+  reads as two arguments. It names the spelling on its own now.
+- `clanker sessions` listed nothing and exited 1 with "query must be at least 3
+  characters". The listing reaches the `sessions` guest through the CLI's
+  generic passthrough, which always sends `{"args":"<argv tail>"}` — empty for
+  a bare `clanker sessions` — and the guest read that empty string as a search
+  query. A blank `q`/`args` is no query now; the three-character floor still
+  applies to a query the caller actually typed.
+
+- `clanker session search <2-char query>` printed its complaint on stdout and
+  exited 0, so a script could not tell a rejected query from a search that
+  matched nothing, and read the diagnostic as a result row. It is a usage error
+  on stderr with exit 2, like every other rejected invocation.
+
+- Every `clanker preset` failure exited 0: an unknown subcommand, a missing
+  name, an invalid name, a preset that does not exist and one that already
+  exists all printed `error: ...` and then reported success. Usage mistakes
+  exit 2 and the two not-found cases exit 1, matching `clanker workflow`.
+
+- `clanker help --help` wrote the command list to stderr while every other
+  spelling of `--help` writes it to stdout, so that one form could not be
+  piped into a pager.
+
+- `NO_COLOR=` (present but empty) suppressed colour in `clanker run` output and
+  the `clanker serve` banner while the REPL kept its theme. https://no-color.org
+  says present *and non-empty*; one predicate (`src/util/no_color.zig`) now
+  answers for all three.
+
+- The five record stores (`reports`, `research`, `rfc`, `adr`, `prd`) reported
+  usage mistakes as timestamped `[ERROR] ts_ms=... ` log records rather than the
+  `error: ...` diagnostic every other command prints, so `clanker reports bogus`
+  and `clanker preset bogus` — the same mistake — came back in two formats.
+  Tool failures stay log records; they are runtime events, not usage.
+
+- The web UI's elevation is a token again. Three rungs of shadow existed but
+  only two had names, so a plate seated on the backplane was retyped as a
+  literal at sixteen sites in five recipes (`0 1px 2px`/`3px`/`4px` between
+  0.04 and 0.12 alpha), the chat composer among them, where it had grown the
+  full rounded-card pair of a hairline plus a soft 24px bloom that raised on
+  focus. A literal shadow is invisible to a theme: `:root`, the system-dark
+  block and all ten `themes/*.json` retune `--lift` and `--lift-high`, so
+  those sixteen kept casting a light-theme black smudge on graphite and under
+  hackerman's green-on-black. The seated rung is `--lift-low` now, declared
+  beside the other two in every theme, and `ui/app/design-tokens.test.mjs`
+  fails on any offset shadow that is not a rung. The mobile chat drawer keeps
+  its sideways cast, which no vertical rung says, and names `--scrim` for it.
+- The music dock's controls are drawn from the web UI's icon grid instead of
+  typed. Its transport pulled glyphs from three Unicode blocks at once (bars
+  from U+23xx, a triangle from U+25B6, speakers from U+1F50A) and the last of
+  those are emoji, so a browser painted the mute and volume buttons in its own
+  colours next to monochrome siblings whatever the theme said. `ICON_PATHS`
+  gains `play`, `pause`, `prev`, `next`, `volume`, `mute` and `note` on the
+  same 24-grid and 1.75 stroke as every other icon, and the dock reaches for
+  them through `api.icon`. Emoji stay where they are content -- reactions,
+  room avatars, `:shortcode:` -- and a test now pins that they are never
+  chrome.
 - The web UI's indicator lamps are one recipe again. The dome the sheet's
   header calls "one boldness, spent in one place" had been retyped by hand at
   five call sites and had drifted to two highlight opacities, three glow
@@ -44,6 +285,27 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   and writes failures too. One shared `aria-live` line was only ever written
   on success, so after a failed live listing a screen reader kept hearing a
   stale "12 catalog matches." from the Discover panel.
+
+### Fixed
+
+- The web UI's Skills list (under Tools and Prompts) renders again when at
+  least one skill exists. The row-building callback in
+  `core/tools.js: loadSkills` shadowed the `#skills` container variable with
+  the row's own checkbox, so every card was appended into its checkbox — a
+  DOM hierarchy cycle the browser refuses — and the whole panel fell into its
+  error branch, showing "Could not load skills." with a Try again that reran
+  the same failure. Only an empty skills list ever displayed.
+- `clanker write-goal` (and the TUI `/write-goal` and the `goal_write` tool)
+  no longer pastes the whole intent into every field its keywords cover: a
+  rich intent used to come back with the objective, criterion, proof and
+  boundaries all holding the same blob. Each field now holds only the
+  sentence(s) — or, for a one-sentence intent, the clause — of the intent
+  that answer that fork, a fork the intent left open still gets its stated
+  default under Assumed / Still open, and a fork whose only matching text is
+  already claimed by another field defaults rather than duplicating it. The
+  raw intent survives once, as the record's `intent`. The draft logic moved
+  to `tools/zig/write_goal_logic.zig` and is host-tested, so its tests now
+  actually run (`test` blocks in a wasm guest never did).
 
 ### Changed
 
@@ -99,6 +361,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `--quiet`/`-q`, accepted on every command, drops logging to errors only. It
+  is the missing counterpart to `--verbose`: progress logging runs at `info`
+  by default, so a scripted `clanker run` collected `[INFO] ... [exec]`
+  tracing on stderr that only the `CLANKER_LOG_LEVEL` environment variable
+  could turn off. Precedence is file, then environment, then flags, with
+  `--verbose` beating `--quiet` when both are given.
 - `zig build test` runs `ui/app/design-tokens.test.mjs`, which fails when a
   stylesheet under `ui/app/` or `ui/plugins/` sets a `border-radius` or
   `font-size` that is not one of the declared tokens. An off-scale literal
@@ -116,6 +384,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `zig build test` stays green.
 
 ### Fixed
+
+- `zig build` failed at HEAD: the `an unreadable log is an error, not an empty one` test in `src/peers/notifications.zig` mixed `expectError` with a `catch` block and did not parse, so no build mode could compile the tree.
 
 - The web UI's tool settings panel types each field from the descriptor's
   declared default (`config_types` in `GET /api/plugins`, read off the

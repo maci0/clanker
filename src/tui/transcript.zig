@@ -373,7 +373,19 @@ pub fn cardPreview(gpa: std.mem.Allocator, bytes: []const u8) ![]u8 {
         try out.appendSlice(gpa, bytes[i .. i + len]);
         i += len;
     }
-    if (truncated) try out.appendSlice(gpa, "\u{2026}");
+    if (truncated) {
+        var omitted_lines: usize = 0;
+        for (bytes[i..]) |b| {
+            if (b == '\n') omitted_lines += 1;
+        }
+        if (omitted_lines > 0) {
+            const marker = try std.fmt.allocPrint(gpa, "\u{2026} ({d} lines omitted)", .{omitted_lines});
+            defer gpa.free(marker);
+            try out.appendSlice(gpa, marker);
+        } else {
+            try out.appendSlice(gpa, "\u{2026}");
+        }
+    }
     return out.toOwnedSlice(gpa);
 }
 

@@ -96,13 +96,13 @@ function renderPrompts(prompts){
   }
   prompts.forEach(function(p){
     var card=document.createElement("div"); card.className="prompt-card";
-    var head=document.createElement("div"); head.style.cssText="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap";
-    var title=document.createElement("strong"); title.textContent=p.title||p.id; title.style.flex="1"; head.appendChild(title);
+    var head=document.createElement("div"); head.className="prompt-head";
+    var title=document.createElement("strong"); title.textContent=p.title||p.id; head.appendChild(title);
     var useBtn=document.createElement("button"); useBtn.type="button"; useBtn.className="secondary"; useBtn.textContent="Use";
     useBtn.addEventListener("click",function(){ applyPromptToComposer(p.content); });
     head.appendChild(useBtn);
     var body=document.createElement("pre"); body.textContent=p.content;
-    body.style.cssText="white-space:pre-wrap;word-break:break-word;margin:0.5rem 0 0;font-size:13px;color:var(--fg-muted);max-height:9rem;overflow:auto";
+    body.className="prompt-body";
     var copyBtn=document.createElement("button"); copyBtn.type="button"; copyBtn.className="secondary"; copyBtn.textContent="Copy";
     copyBtn.addEventListener("click",function(){
       copyText(p.content, copyBtn, "Copy", body);

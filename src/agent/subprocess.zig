@@ -8,6 +8,10 @@ const session = @import("session.zig");
 
 /// Blocking lock around `std.atomic.Mutex` for structures that do not carry
 /// an `std.Io` handle (the process-global registry is touched at first use).
+/// Bounds each pipe read; the leftover assembly above handles arbitrary
+/// line lengths, so this only caps how much is read per syscall.
+const stdout_chunk_bytes: usize = 4096;
+
 const SpinMutex = struct {
     raw: std.atomic.Mutex = .unlocked,
 
@@ -103,8 +107,8 @@ pub const Registry = struct {
     /// is not included. Blocks until a line arrives or the pipe closes.
     pub fn readStdoutLine(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8) ![]u8 {
         while (true) {
-            if (self.takeLine(arena, session_id, kind)) |line| return line;
-            var tmp: [4096]u8 = undefined;
+            if (try self.takeLine(arena, session_id, kind)) |line| return line;
+            var tmp: [stdout_chunk_bytes]u8 = undefined;
             const n = try self.readStdoutInto(session_id, kind, &tmp);
             if (n == 0) return error.KernelExited;
             try self.appendLeftover(session_id, kind, tmp[0..n]);
@@ -114,8 +118,8 @@ pub const Registry = struct {
     /// Reads up to `max` bytes from leftover or the pipe. Blocks until at
     /// least one byte or EOF. Used by DAP framing, which is not line-oriented.
     pub fn readStdout(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8, max: usize) ![]u8 {
-        if (self.takeLeftover(arena, session_id, kind, max)) |got| return got;
-        var tmp: [4096]u8 = undefined;
+        if (try self.takeLeftover(arena, session_id, kind, max)) |got| return got;
+        var tmp: [stdout_chunk_bytes]u8 = undefined;
         const n = try self.readStdoutInto(session_id, kind, tmp[0..@min(max, tmp.len)]);
         if (n == 0) return error.KernelExited;
         return arena.dupe(u8, tmp[0..n]);
@@ -145,25 +149,26 @@ pub const Registry = struct {
         };
     }
 
-    fn takeLine(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8) ?[]u8 {
+    fn takeLine(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8) !?[]u8 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const h = self.findLocked(session_id, kind) orelse return null;
-        const nl = std.mem.findScalar(u8, h.leftover.items, '\n') orelse return null;
-        const line = arena.dupe(u8, std.mem.trimEnd(u8, h.leftover.items[0..nl], "\r")) catch return null;
-        const rest = h.leftover.items[nl + 1 ..];
+        const line_bytes = std.mem.sliceTo(h.leftover.items, '\n');
+        if (line_bytes.len == h.leftover.items.len) return null;
+        const line = arena.dupe(u8, std.mem.trimEnd(u8, line_bytes, "\r")) catch |err| return err;
+        const rest = h.leftover.items[line_bytes.len + 1 ..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
         h.leftover.shrinkRetainingCapacity(rest.len);
         return line;
     }
 
-    fn takeLeftover(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8, max: usize) ?[]u8 {
+    fn takeLeftover(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8, max: usize) !?[]u8 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const h = self.findLocked(session_id, kind) orelse return null;
         if (h.leftover.items.len == 0) return null;
         const n = @min(h.leftover.items.len, max);
-        const out = arena.dupe(u8, h.leftover.items[0..n]) catch return null;
+        const out = arena.dupe(u8, h.leftover.items[0..n]) catch |err| return err;
         const rest = h.leftover.items[n..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
         h.leftover.shrinkRetainingCapacity(rest.len);
@@ -422,4 +427,12 @@ test "adopt a live process, write/read a line, SIGTERM on session end" {
     try std.testing.expectEqual(@as(usize, 0), reg.count());
     // A second terminate is a no-op, not a crash on a stale pid.
     reg.terminateSession("live-1");
+}
+
+test "register refuses an empty kind" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = Registry.init(std.testing.allocator, threaded.io());
+    defer reg.deinit();
+    try std.testing.expectError(error.EmptyKind, reg.register("sess-1", "", 42));
 }

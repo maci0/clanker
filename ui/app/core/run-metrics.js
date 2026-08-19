@@ -46,9 +46,8 @@ export function emptyRunMetrics() {
   };
 }
 
-export function beginLiveTurn(m, now) {
-  m.live = true;
-  m.liveStartedAt = typeof now === "number" ? now : 0;
+// The live counters carry one turn only, so both ends of a turn clear them.
+function clearLiveTurn(m) {
   m.liveToolMs = 0;
   m.liveSteps = 0;
   m.liveTtftMs = null;
@@ -59,6 +58,12 @@ export function beginLiveTurn(m, now) {
   m.liveEstChars = 0;
   m.liveTtftTotal = 0;
   m.liveTtftSamples = 0;
+}
+
+export function beginLiveTurn(m, now) {
+  m.live = true;
+  m.liveStartedAt = typeof now === "number" ? now : 0;
+  clearLiveTurn(m);
   m.turnCount += 1;
   return m;
 }
@@ -176,15 +181,6 @@ export function applyDoneStats(m, evt) {
   }
   m.live = false;
   m.liveStartedAt = 0;
-  m.liveToolMs = 0;
-  m.liveSteps = 0;
-  m.liveTtftMs = null;
-  m.livePrompt = 0;
-  m.liveCompletion = 0;
-  m.liveCacheHit = 0;
-  m.liveCacheMiss = 0;
-  m.liveEstChars = 0;
-  m.liveTtftTotal = 0;
-  m.liveTtftSamples = 0;
+  clearLiveTurn(m);
   return m;
 }

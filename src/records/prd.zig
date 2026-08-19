@@ -12,7 +12,6 @@
 //! find them.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
@@ -46,6 +45,10 @@ const title_column_bytes: usize = 62;
 /// with thirty Shipped rows.
 const status_order = [_][]const u8{ "Draft", "In progress", "Partial", "Implemented", "Shipped" };
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "status" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -60,8 +63,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
 
-    log.log(.error_, "unknown prd subcommand '{s}' (expected list, search, open, checklist, create, append, update or status)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("prd", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --
@@ -73,7 +75,7 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const query = opts.arg1 orelse {
-        log.log(.error_, "prd search needs a query: clanker prd search \"kanban board\"", .{});
+        common.usageError("prd search needs a query: clanker prd search \"kanban board\"", .{});
         return Error.MissingArg;
     };
 
@@ -146,7 +148,7 @@ pub fn renderCreated(arena: std.mem.Allocator, path: []const u8, status: []const
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "prd create needs {s}: clanker prd create \"Scheduled runs\" \"<what breaks without it>\" \"1. ...\" [draft|in_progress|shipped]", .{what});
+    common.usageError("prd create needs {s}: clanker prd create \"Scheduled runs\" \"<what breaks without it>\" \"1. ...\" [draft|in_progress|shipped]", .{what});
     return Error.MissingArg;
 }
 
@@ -514,31 +516,4 @@ test "renderChecklist prints the question to ask under each requirement" {
     const text = try renderChecklist(arena, reqs.array.items);
     try testing.expect(std.mem.find(u8, text, "Numbered goals") != null);
     try testing.expect(std.mem.find(u8, text, "ask: What must be true for this to be done?") != null);
-}
-
-test "callTool reports the tool's own refusal sentence" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const Canned = struct {
-        payload: []const u8,
-        fn call(ctx: *anyopaque, _: []const u8) anyerror![]const u8 {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.payload;
-        }
-    };
-    var canned: Canned = .{ .payload = "{\"ok\":false,\"error\":\"a shipped PRD needs a note naming the source files\"}" };
-    const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
-    try testing.expectError(Error.ToolFailed, common.callTool(arena, "prd", tool, "{}"));
-}
-
-test "unsignedField refuses a negative count instead of wrapping it" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const v = try parseValue(arena, "{\"next_number\":-1,\"good\":7}");
-    try testing.expectEqual(@as(u64, 0), common.unsignedField(v, "next_number"));
-    try testing.expectEqual(@as(u64, 7), common.unsignedField(v, "good"));
 }

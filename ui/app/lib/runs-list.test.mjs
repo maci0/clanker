@@ -7,6 +7,9 @@ import { dayBucket, fmtWhen, groupRunsByDay, matchesRunQuery, runRows, runStarte
 
 const here = dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(join(here, "..", "app.js"), "utf8");
+// The Runs view moved out of app.js into a lazily-imported feature module;
+// the wiring these tests pin moved with it.
+const runsView = readFileSync(join(here, "..", "features", "runs.js"), "utf8");
 const markup = readFileSync(join(here, "..", "index.html"), "utf8");
 const guest = readFileSync(join(here, "..", "..", "webui.zig"), "utf8");
 
@@ -123,18 +126,24 @@ test("the Runs view is wired to the list, not just the select", function () {
   assert.match(app, /runList: document\.getElementById\("run-list"\)/);
   // Filtering has to rewrite both halves of the picker, or the list keeps
   // showing runs the dropdown has already dropped.
-  assert.match(app, /renderRunList\(matches\)/);
+  assert.match(runsView, /renderRunList\(matches\)/);
   // Selection is single-sourced through the select, and the highlight is set
   // wherever a run is actually loaded, so a deep link marks the right row.
-  assert.match(app, /function selectRunFromList/);
-  assert.match(app, /markSelectedRunRow\(id\)/);
+  assert.match(runsView, /function selectRunFromList/);
+  assert.match(runsView, /markSelectedRunRow\(id\)/);
 });
 
 test("no second copy of the failure predicate survives in app.js", function () {
   // app.js used to define its own runFailed reading (r.nodes||[]).some,
   // which threw on a listing entry, where `nodes` is a count.
   assert.ok(!/function runFailed/.test(app), "runFailed belongs to runs-list.js alone");
-  assert.match(app, /from "\.\/lib\/runs-list\.js"/);
+  assert.ok(!/function runFailed/.test(runsView), "runFailed belongs to runs-list.js alone");
+  assert.match(runsView, /from "\.\.\/lib\/runs-list\.js"/);
+  // ...and app.js must not pull it back onto the eager path: a chat-only visit
+  // downloads app.js and never the Runs view, so this import belongs to the
+  // feature module alone.
+  assert.ok(!/lib\/runs-list\.js/.test(markup), "no <script> tag may make runs-list eager again");
+  assert.ok(!/from "\.\/lib\/runs-list\.js"/.test(app), "app.js must reach the Runs view through import()");
 });
 
 test("the guest serves the module it now imports", function () {
@@ -143,4 +152,8 @@ test("the guest serves the module it now imports", function () {
   assert.match(guest, /@embedFile\("app\/lib\/runs-list\.js"\)/);
   assert.match(guest, /"lib\/runs-list\.js"/);
   assert.match(guest, /endsWith\(u8, path, "\/lib\/runs-list\.js"\)/);
+  assert.match(guest, /@embedFile\("app\/features\/runs\.js"\)/);
+  assert.match(guest, /"features\/runs\.js"/);
+  assert.match(guest, /endsWith\(u8, path, "\/features\/runs\.js"\)/);
+  assert.match(app, /import\("\.\/features\/runs\.js"\)/);
 });

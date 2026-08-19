@@ -126,7 +126,7 @@
      to fit its content (the layout measures each box rather than assuming a
      height) and reads left-aligned like every other label in the file. */
   min-height: auto; font-weight: normal; color: inherit; text-align: left; cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--lift-low);
 }
 
 .run-node:hover { border-color: var(--accent); }
@@ -155,7 +155,7 @@
 
 .run-node[data-match="true"] { outline: 2px solid var(--warn); outline-offset: 2px; }
 
-.run-node[data-jump="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--violet) 35%, transparent), 0 1px 2px rgba(0,0,0,0.12); }
+.run-node[data-jump="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--violet) 35%, transparent), var(--lift-low); }
 
 .run-node[data-jump="true"] .run-node-label::after { content: " ↗"; color: var(--violet-text); font-weight: 700; }
 
@@ -200,7 +200,7 @@
 .run-detail {
   margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  box-shadow: var(--lift-low);
 }
 
 .run-detail[hidden] { display: none; }
@@ -628,7 +628,7 @@
 .slack-emoji-picker {
   position: absolute; bottom: 100%; left: 1rem; z-index: 40;
   background: var(--surface); border: 1px solid var(--rule);
-  border-radius: var(--radius-lg); box-shadow: 0 4px 16px rgba(0,0,0,.2);
+  border-radius: var(--radius-lg); box-shadow: var(--lift);
   padding: 0.5rem; max-width: 320px;
   display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px;
 }
@@ -660,7 +660,7 @@
 /* ── Create channel dialog ── */
 .slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 0; background: var(--surface); box-shadow: var(--lift); max-width: 400px; width: 90vw; }
 
-.slack-dialog::backdrop { background: rgba(0,0,0,.5); }
+.slack-dialog::backdrop { background: var(--scrim); }
 
 .slack-dialog-form { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
 
@@ -729,7 +729,10 @@
   .slack-sidebar {
     position: absolute; z-index: 30; height: 100%; left: 0; top: 0;
     width: 260px; min-width: 260px; max-width: 260px; flex: none;
-    box-shadow: 4px 0 16px rgba(0,0,0,.2);
+    /* The one shadow that is not a --lift rung: a drawer casts sideways, and
+       no vertical rung says that. Its ink is still the theme's --scrim, which
+       is what the drawer lays over the content anyway. */
+    box-shadow: 4px 0 16px var(--scrim);
   }
   .slack-sidebar.is-collapsed {
     transform: translateX(-100%);
@@ -792,7 +795,7 @@
 
 .chat-msg:hover .chat-gutter-time, .chat-msg:focus-within .chat-gutter-time { opacity: 1; }
 
-.chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem var(--space-1); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem var(--space-1); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--lift-low); }
 
 .chat-msg:hover .chat-actions, .chat-msg:focus-within .chat-actions { display: flex; }
 
@@ -981,6 +984,10 @@
 
 .models-variant-row[hidden] { display: none; }
 
+/* A provider this serve process cannot call: kept in the inventory table,
+   visibly not offered — the notice above the table carries the reason. */
+.models-uncallable-row { opacity: 0.55; }
+
 .models-snippet-note {
   margin: var(--space-2) 0 0;
   font-size: var(--step-0);
@@ -1073,6 +1080,21 @@
 
 .prompt-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
 
+/* The head row and the body well were written as inline `style.cssText` in
+   features/prompts.js, which put a rung of the space scale (0.5rem) and a
+   step of the type scale (13px) back on the page as literals -- and inline
+   styles are invisible to design-tokens.test.mjs, so nothing caught them.
+   Every declaration a sheet can hold belongs in a sheet. */
+.prompt-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.prompt-head > strong { flex: 1; }
+
+.prompt-body {
+  margin: var(--space-3) 0 0; padding: 0;
+  font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 9rem; overflow: auto;
+}
+
 .tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; letter-spacing: -0.01em; line-height: 1.4; }
 
 button.tool-name:hover { color: var(--accent-text); }
@@ -1097,7 +1119,7 @@ button.tool-name:focus-visible { outline: 2px solid var(--accent); outline-offse
   min-height: 32px; padding: 0.15rem 0.7rem; font-size: var(--step-0); font-weight: 600;
   font-family: var(--mono); border-radius: var(--radius-sm); cursor: pointer;
   background: var(--surface); border: 1px solid var(--border); color: var(--fg-muted);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: var(--bevel-raised);
 }
 
 .tool-toggle[data-on="true"] { color: var(--ok); border-color: var(--ok); }
@@ -1155,7 +1177,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
 
-.tool-toggle:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.18); }
+.tool-toggle:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--bevel-pressed); }
 
 .tool-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 

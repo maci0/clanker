@@ -9,6 +9,7 @@ const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const strField = @import("../util/json.zig").strField;
 const manifest = @import("manifest.zig");
+const test_env = @import("../util/test_env.zig");
 
 pub const Tool = struct {
     /// Schema version of the descriptor this was parsed from. Absent in the
@@ -27,6 +28,12 @@ pub const Tool = struct {
     /// manifest omits `llm_description` (see `parseDescriptor`), so an
     /// unmigrated tool still works, just not as cheaply.
     llm_description: []const u8 = "",
+    /// Binding usage rules for this tool, injected into the system prompt's
+    /// "## Tool guidance" section whenever the tool is in the catalog and
+    /// echoed by `load_tools`. Distinct from the descriptions, which say what
+    /// the tool does: this says how it must be used, and it rides ahead of the
+    /// catalog so a lazy-loaded tool's rules are read before its schema is.
+    prompt_guidance: []const u8 = "",
     /// Where the module is, as resolved by `resolveWasmPath` at load: a path
     /// with a separator (`zig-out/tools/x.wasm`) is read from the process's
     /// working directory, a bare name from the manifest's own directory. Not
@@ -556,6 +563,33 @@ pub const Registry = struct {
         return out.written();
     }
 
+    /// The body of the system prompt's "## Tool guidance" section: one
+    /// `### name` block per enabled catalog tool that declares
+    /// `prompt_guidance`, sorted like the catalog. Rendered from the whole
+    /// registry rather than the loaded tool defs, because in catalog mode a
+    /// tool's schema may be lazy-loaded while its usage rules must be visible
+    /// from the first request.
+    pub fn guidanceText(self: *const Registry, arena: std.mem.Allocator) ![]const u8 {
+        var out: std.Io.Writer.Allocating = .init(arena);
+        var listed: std.ArrayList([]const u8) = .empty;
+        var it = self.tools.iterator();
+        while (it.next()) |kv| {
+            const t = kv.value_ptr.*;
+            if (t.internal or !t.enabled or t.prompt_guidance.len == 0) continue;
+            try listed.append(arena, t.name);
+        }
+        std.mem.sort([]const u8, listed.items, {}, struct {
+            fn lt(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.lessThan(u8, a, b);
+            }
+        }.lt);
+        for (listed.items) |name| {
+            const t = self.get(name).?;
+            try out.writer.print("### {s}\n\n{s}\n\n", .{ t.name, t.prompt_guidance });
+        }
+        return out.written();
+    }
+
     fn firstLine(s: []const u8) []const u8 {
         const line = s[0 .. std.mem.findScalar(u8, s, '\n') orelse s.len];
         // Long enough to choose by, short enough that forty of them stay cheap.
@@ -672,6 +706,9 @@ pub const Registry = struct {
         };
         if (obj.get("llm_description")) |ld| {
             if (ld == .string and ld.string.len > 0) t.llm_description = ld.string;
+        }
+        if (obj.get("prompt_guidance")) |pg| {
+            if (pg == .string) t.prompt_guidance = pg.string;
         }
         if (obj.get("check")) |c| {
             if (c == .bool) t.check = c.bool;
@@ -882,17 +919,13 @@ pub const Registry = struct {
 // ------------------------------------------------------------------- tests --
 
 test "registry loads descriptors" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     try dir.writeFile(io, .{
@@ -908,7 +941,7 @@ test "registry loads descriptors" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
     const tool = reg.get("calculator").?;
     try std.testing.expectEqualStrings("calculator", tool.name);
     // Bare name: resolved beside the manifest, so a self-contained plugin
@@ -920,17 +953,13 @@ test "registry loads descriptors" {
 }
 
 test "a descriptor's fuel budget is parsed, and junk values keep the default" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     try dir.writeFile(io, .{
@@ -946,23 +975,19 @@ test "a descriptor's fuel budget is parsed, and junk values keep the default" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
     try std.testing.expectEqual(@as(u64, 250_000_000), reg.get("thrifty").?.fuel);
     try std.testing.expectEqual(@as(u64, 0), reg.get("sloppy").?.fuel);
 }
 
 test "plugin toggles disable optional tools but never core ones" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     try dir.writeFile(io, .{
@@ -983,7 +1008,7 @@ test "plugin toggles disable optional tools but never core ones" {
         .data = "{\"disabled\":[\"web_search\",\"status\"]}",
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
     try std.testing.expect(!reg.get("web_search").?.enabled);
     try std.testing.expect(reg.get("status").?.enabled); // core: toggle ignored
 
@@ -993,17 +1018,13 @@ test "plugin toggles disable optional tools but never core ones" {
 }
 
 test "config overrides apply only to keys the descriptor opted in" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
     try dir.createDirPath(io, "tools");
     // `max_depth` is offered for tuning; `secret` is not.
@@ -1031,7 +1052,7 @@ test "config overrides apply only to keys the descriptor opted in" {
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"tools"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"tools"});
 
     const rlm = reg.get("rlm").?;
     try std.testing.expectEqual(@as(i64, 6), rlm.config.object.get("max_depth").?.integer);
@@ -1076,110 +1097,126 @@ test "a descriptor schema always reaches the provider with a type" {
     try std.testing.expect(b.input_schema == .object);
 }
 
-test "a missing tools_dir yields an empty registry without error" {
-    // Wrong path is a soft miss (warn + empty), not a hard fail, serve and
-    // doctor both load this way. The log must not sole-blame zig build tools;
-    // that phrasing is asserted by source grep in the change's verification.
+test "prompt_guidance is parsed from the descriptor and rendered for catalog tools only" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const guided =
+        \\{ "name": "rfc", "description": "d", "wasm": "r.wasm",
+        \\  "prompt_guidance": "GUIDANCE_MARKER open the cited source, not the note" }
+    ;
+    const t = try Registry.parseDescriptor(arena, guided);
+    try std.testing.expectEqualStrings("GUIDANCE_MARKER open the cited source, not the note", t.prompt_guidance);
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    // An internal tool's guidance never reaches the prompt, and a tool with no
+    // guidance contributes no block.
+    const hidden =
+        \\{ "name": "webui", "description": "d", "wasm": "w.wasm",
+        \\  "internal": true, "prompt_guidance": "HIDDEN_MARKER" }
+    ;
+    const plain =
+        \\{ "name": "calc", "description": "d", "wasm": "c.wasm" }
+    ;
+    var reg = Registry{};
+    try reg.tools.put(arena, t.name, t);
+    try reg.tools.put(arena, (try Registry.parseDescriptor(arena, hidden)).name, try Registry.parseDescriptor(arena, hidden));
+    try reg.tools.put(arena, (try Registry.parseDescriptor(arena, plain)).name, try Registry.parseDescriptor(arena, plain));
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"no-such-tools-dir"});
+    const text = try reg.guidanceText(arena);
+    try std.testing.expect(std.mem.find(u8, text, "### rfc") != null);
+    try std.testing.expect(std.mem.find(u8, text, "GUIDANCE_MARKER") != null);
+    try std.testing.expect(std.mem.find(u8, text, "HIDDEN_MARKER") == null);
+    try std.testing.expect(std.mem.find(u8, text, "calc") == null);
+}
+
+test "a missing tools_dir yields an empty registry without error" {
+    // Wrong path is a soft miss (warn + empty), not a hard fail, serve and
+    // doctor both load this way. The log must not sole-blame zig build tools;
+    // that phrasing is asserted by source grep in the change's verification.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const io = env.io();
+
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"no-such-tools-dir"});
     try std.testing.expectEqual(@as(usize, 0), reg.tools.count());
     try std.testing.expect(reg.get("webui") == null);
 }
 
 test "a two-entry tools_dir list loads both directories" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "builtins");
-    try tmp.dir.createDirPath(io, "extra");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "builtins");
+    try env.tmp.dir.createDirPath(io, "extra");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "builtins/alpha.tool.json",
         .data =
         \\{ "name": "alpha", "description": "a", "wasm": "alpha.wasm", "input_schema": {} }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "extra/beta.tool.json",
         .data =
         \\{ "name": "beta", "description": "b", "wasm": "beta.wasm", "input_schema": {} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{ "builtins", "extra" });
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{ "builtins", "extra" });
     try std.testing.expectEqual(@as(usize, 2), reg.tools.count());
     try std.testing.expectEqualStrings("builtins/alpha.wasm", reg.get("alpha").?.wasm);
     try std.testing.expectEqualStrings("extra/beta.wasm", reg.get("beta").?.wasm);
 }
 
 test "a later tools_dir wins a cross-directory name collision" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "builtins");
-    try tmp.dir.createDirPath(io, "override");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "builtins");
+    try env.tmp.dir.createDirPath(io, "override");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "builtins/echo.tool.json",
         .data =
         \\{ "name": "echo", "description": "stock", "wasm": "stock.wasm", "input_schema": {} }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "override/echo.tool.json",
         .data =
         \\{ "name": "echo", "description": "local", "wasm": "local.wasm", "input_schema": {} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{ "builtins", "override" });
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{ "builtins", "override" });
     try std.testing.expectEqual(@as(usize, 1), reg.tools.count());
     try std.testing.expectEqualStrings("local", reg.get("echo").?.description);
     try std.testing.expectEqualStrings("override/local.wasm", reg.get("echo").?.wasm);
 }
 
 test "a missing tools_dir list entry does not empty the rest" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "builtins");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "builtins");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "builtins/keep.tool.json",
         .data =
         \\{ "name": "keep", "description": "k", "wasm": "keep.wasm", "input_schema": {} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{ "no-such-extra", "builtins" });
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{ "no-such-extra", "builtins" });
     try std.testing.expectEqual(@as(usize, 1), reg.tools.count());
     try std.testing.expect(reg.get("keep") != null);
 }
@@ -1379,21 +1416,16 @@ test "a manifest with no version is v1, and an unknown version is refused" {
 }
 
 test "a bare wasm name resolves beside its manifest; a path never moves" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const io = env.io();
 
     // What a third-party package looks like: one directory holding the
     // manifest and the module, with no idea what clanker's cwd will be.
-    try tmp.dir.createDirPath(io, "vendor/hello");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "vendor/hello");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "vendor/hello/hello.tool.json",
         .data =
         \\{ "name": "hello", "description": "d", "wasm": "hello.wasm", "input_schema": {"type":"object"} }
@@ -1401,14 +1433,14 @@ test "a bare wasm name resolves beside its manifest; a path never moves" {
     });
     // An in-tree manifest names a path from the repo root and must keep
     // meaning exactly that.
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "vendor/hello/rooted.tool.json",
         .data =
         \\{ "name": "rooted", "description": "d", "wasm": "zig-out/tools/rooted.wasm", "input_schema": {"type":"object"} }
         ,
     });
 
-    const reg = try Registry.load(io, arena, tmp.dir, &.{"vendor/hello"});
+    const reg = try Registry.load(io, arena, env.tmp.dir, &.{"vendor/hello"});
     try std.testing.expectEqualStrings("vendor/hello/hello.wasm", reg.get("hello").?.wasm);
     try std.testing.expectEqualStrings("zig-out/tools/rooted.wasm", reg.get("rooted").?.wasm);
 

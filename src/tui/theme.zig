@@ -17,6 +17,7 @@
 //! guess is visible and self-correcting (`--theme mono`), not silent.
 
 const std = @import("std");
+const no_color = @import("../util/no_color.zig");
 
 pub const Rgb24 = [3]u8;
 
@@ -231,6 +232,25 @@ pub const tokyo_day_palette = struct {
     pub const yellow: Rgb24 = .{ 0x8c, 0x6c, 0x3e };
     pub const green: Rgb24 = .{ 0x58, 0x75, 0x39 };
     pub const teal: Rgb24 = .{ 0x11, 0x8c, 0x74 };
+};
+
+/// Dracula (dracula/dracula-theme), the famous high-saturation dark palette.
+/// Values from the project's own colour table (draculatheme.com/spec), not
+/// transcribed from prose; the role assignment below is the spec's own:
+/// pink keywords, yellow strings, purple constants/numbers, green functions,
+/// cyan types, grey comments.
+pub const dracula_palette = struct {
+    pub const bg: Rgb24 = .{ 0x28, 0x2a, 0x36 };
+    pub const current_line: Rgb24 = .{ 0x44, 0x47, 0x5a };
+    pub const foreground: Rgb24 = .{ 0xf8, 0xf8, 0xf2 };
+    pub const comment: Rgb24 = .{ 0x62, 0x72, 0xa4 };
+    pub const cyan: Rgb24 = .{ 0x8b, 0xe9, 0xfd };
+    pub const green: Rgb24 = .{ 0x50, 0xfa, 0x7b };
+    pub const orange: Rgb24 = .{ 0xff, 0xb8, 0x6c };
+    pub const pink: Rgb24 = .{ 0xff, 0x79, 0xc6 };
+    pub const purple: Rgb24 = .{ 0xbd, 0x93, 0xf9 };
+    pub const red: Rgb24 = .{ 0xff, 0x55, 0x55 };
+    pub const yellow: Rgb24 = .{ 0xf1, 0xfa, 0x8c };
 };
 
 /// A 24-bit foreground SGR sequence, built at comptime so a theme field is
@@ -459,6 +479,51 @@ pub const Theme = struct {
         },
     };
 
+    /// Dracula (dracula/dracula-theme): pink keywords, yellow strings, purple
+    /// numbers, green functions, orange preprocessor lines, cyan tools, red
+    /// errors — the most colourful member of the set, for operators who want
+    /// the palette as loud as its reputation. Preprocessor directives are the
+    /// one role the spec table does not name, so they take the palette's
+    /// orange rather than sharing pink with keywords.
+    pub const dracula: Theme = .{
+        .reset = "\x1b[0m",
+        .bold = "\x1b[1m",
+        .italic = "\x1b[3m",
+        .dim = fg(dracula_palette.comment),
+        .code = fg(dracula_palette.cyan),
+        .heading1 = "\x1b[1m" ++ fg(dracula_palette.pink),
+        .heading = "\x1b[1m" ++ fg(dracula_palette.purple),
+        .quote = fg(dracula_palette.comment),
+        .rule = fg(dracula_palette.current_line),
+        .list_num = fg(dracula_palette.orange),
+        .fence = fg(dracula_palette.comment),
+        .prompt = fg(dracula_palette.green),
+        .tool = fg(dracula_palette.cyan),
+        .err = fg(dracula_palette.red),
+        .answer_marker = "\x1b[1m" ++ fg(dracula_palette.pink),
+        .ask_question = "\x1b[1m" ++ fg(dracula_palette.yellow),
+        .ask_pick = "\x1b[1m" ++ fg(dracula_palette.cyan),
+        .syn_keyword = fg(dracula_palette.pink),
+        .syn_string = fg(dracula_palette.yellow),
+        .syn_number = fg(dracula_palette.purple),
+        .syn_builtin = fg(dracula_palette.green),
+        .syn_preproc = fg(dracula_palette.orange),
+        .rgb = .{
+            .keyword = dracula_palette.pink,
+            .string = dracula_palette.yellow,
+            .number = dracula_palette.purple,
+            .builtin = dracula_palette.green,
+            .preproc = dracula_palette.orange,
+            .comment = dracula_palette.comment,
+            .dim = dracula_palette.comment,
+            .tool = dracula_palette.cyan,
+            .err = dracula_palette.red,
+            .rule = dracula_palette.current_line,
+            .prompt = dracula_palette.green,
+            .accent = dracula_palette.purple,
+        },
+    };
+
     /// Every field empty: no SGR codes are ever written, so output stays
     /// identical whether or not the terminal understands color.
     pub const mono: Theme = .{};
@@ -478,6 +543,7 @@ const ThemeId = enum {
     tokyo_storm,
     tokyo_day,
     hackerman,
+    dracula,
 };
 
 const theme_by_name = std.StaticStringMap(ThemeId).initComptime(.{
@@ -497,6 +563,7 @@ const theme_by_name = std.StaticStringMap(ThemeId).initComptime(.{
     .{ "day", .tokyo_day },
     .{ "tokyonight-day", .tokyo_day },
     .{ "hackerman", .hackerman },
+    .{ "dracula", .dracula },
 });
 
 fn themeFromId(id: ThemeId) Theme {
@@ -511,6 +578,7 @@ fn themeFromId(id: ThemeId) Theme {
         .tokyo_storm => Theme.tokyo_storm,
         .tokyo_day => Theme.tokyo_day,
         .hackerman => Theme.hackerman,
+        .dracula => Theme.dracula,
     };
 }
 
@@ -521,9 +589,7 @@ pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Th
     if (name) |n| {
         if (theme_by_name.get(n)) |id| return themeFromId(id);
     }
-    if (environ_map.get("NO_COLOR")) |v| {
-        if (v.len > 0) return Theme.mono;
-    }
+    if (no_color.requested(environ_map)) return Theme.mono;
     return Theme.default;
 }
 
@@ -542,6 +608,7 @@ pub const names = [_][]const u8{
     "tokyonight-storm",
     "tokyonight-day",
     "hackerman",
+    "dracula",
 };
 
 /// Whether `select` recognizes `name` (canonical spelling or a known alias),
@@ -549,6 +616,22 @@ pub const names = [_][]const u8{
 /// default.
 pub fn isKnown(name: []const u8) bool {
     return theme_by_name.get(name) != null;
+}
+
+/// The full twelve-role RGB palette for a theme, `null` when the theme
+/// carries no RGB palette (`default`/`mono`). The REPL's `/theme` picker
+/// renders these as one-cell blocks so a palette is visible before it is
+/// applied; `swatch` narrows the same palette to the four chrome colours.
+pub fn palette(name: []const u8) ?Rgb {
+    const id = theme_by_name.get(name) orelse return null;
+    return themeFromId(id).rgb;
+}
+
+/// Four chrome colours (`prompt`, `tool`, `err`, `accent`) for a compact
+/// swatch. `null` when the theme carries no RGB palette (`default`/`mono`).
+pub fn swatch(name: []const u8) ?[4]Rgb24 {
+    const rgb = palette(name) orelse return null;
+    return .{ rgb.prompt, rgb.tool, rgb.err, rgb.accent };
 }
 
 test "isKnown accepts every canonical name and rejects a typo" {
@@ -561,6 +644,40 @@ test "isKnown accepts every canonical name and rejects a typo" {
     try std.testing.expect(isKnown("day"));
     try std.testing.expect(!isKnown("nord"));
     try std.testing.expect(!isKnown(""));
+}
+
+test "palette exposes all twelve roles and is null for non-palette themes" {
+    const mocha_rgb = Theme.mocha.rgb.?;
+    const p = palette("mocha").?;
+    try std.testing.expectEqual(mocha_rgb.keyword, p.keyword);
+    try std.testing.expectEqual(mocha_rgb.string, p.string);
+    try std.testing.expectEqual(mocha_rgb.number, p.number);
+    try std.testing.expectEqual(mocha_rgb.builtin, p.builtin);
+    try std.testing.expectEqual(mocha_rgb.preproc, p.preproc);
+    try std.testing.expectEqual(mocha_rgb.comment, p.comment);
+    try std.testing.expectEqual(mocha_rgb.dim, p.dim);
+    try std.testing.expectEqual(mocha_rgb.tool, p.tool);
+    try std.testing.expectEqual(mocha_rgb.err, p.err);
+    try std.testing.expectEqual(mocha_rgb.rule, p.rule);
+    try std.testing.expectEqual(mocha_rgb.prompt, p.prompt);
+    try std.testing.expectEqual(mocha_rgb.accent, p.accent);
+    try std.testing.expect(palette("catppuccin") != null);
+    try std.testing.expect(palette("default") == null);
+    try std.testing.expect(palette("mono") == null);
+    try std.testing.expect(palette("nord") == null);
+}
+
+test "swatch exposes chrome colours and is null for non-palette themes" {
+    const mocha_rgb = Theme.mocha.rgb.?;
+    const sw = swatch("mocha").?;
+    try std.testing.expectEqual(mocha_rgb.prompt, sw[0]);
+    try std.testing.expectEqual(mocha_rgb.tool, sw[1]);
+    try std.testing.expectEqual(mocha_rgb.err, sw[2]);
+    try std.testing.expectEqual(mocha_rgb.accent, sw[3]);
+    try std.testing.expect(swatch("catppuccin") != null);
+    try std.testing.expect(swatch("default") == null);
+    try std.testing.expect(swatch("mono") == null);
+    try std.testing.expect(swatch("nord") == null);
 }
 
 test "default theme matches the REPL's existing byte-for-byte colors" {

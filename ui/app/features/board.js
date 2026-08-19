@@ -587,6 +587,28 @@ function menuAvatar(name) {
   av.textContent = (name || "?").slice(0, 2).toUpperCase();
   return av;
 }
+// The card avatar and the detail sidebar open the same Members picker; only
+// the popup's anchoring differs.
+function memberPicker(c, anchored) {
+  var popup = menuPopup(anchored);
+  popup.classList.add("member-picker-popup");
+  popup.appendChild(menuTitle("Members", !anchored));
+  var unBtn = menuItem({ muted: true });
+  unBtn.appendChild(icon("close", 12));
+  unBtn.appendChild(document.createTextNode(" Remove member"));
+  unBtn.addEventListener("click", function () { popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
+  popup.appendChild(unBtn);
+  var peers = (_getKnownPeers() || []).map(function (p) { return typeof p === "string" ? p : p.name || p; });
+  if (c.assignee && peers.indexOf(c.assignee) === -1) peers.unshift(c.assignee);
+  peers.forEach(function (name) {
+    var opt = menuItem({ current: name === c.assignee });
+    opt.appendChild(menuAvatar(name));
+    opt.appendChild(document.createTextNode(name));
+    opt.addEventListener("click", function () { popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
+    popup.appendChild(opt);
+  });
+  return popup;
+}
 function dismissOnOutside(node, extra) {
   var closePop = function (ev) {
     if (node.contains(ev.target) || (extra && extra.contains && extra.contains(ev.target))) return;
@@ -837,28 +859,10 @@ function cardNode(c) {
     av.title = c.assignee + " — click to reassign";
     av.addEventListener("click", function(e){
       e.stopPropagation();
-      // Trello-style member picker popup
       var existing = document.querySelector(".member-picker-popup");
       if (existing) existing.remove();
-      var popup = menuPopup();
-      popup.classList.add("member-picker-popup");
-      popup.appendChild(menuTitle("Members", true));
-      var unBtn = menuItem({ muted: true });
-      unBtn.appendChild(icon("close", 12));
-      unBtn.appendChild(document.createTextNode(" Remove assignee"));
-      unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
-      popup.appendChild(unBtn);
-      var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
-      if (peers.indexOf(c.assignee) === -1 && c.assignee) peers.unshift(c.assignee);
-      peers.forEach(function(name){
-        var opt = menuItem({ current: name === c.assignee });
-        opt.appendChild(menuAvatar(name));
-        opt.appendChild(document.createTextNode(name));
-        opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
-        popup.appendChild(opt);
-      });
+      var popup = memberPicker(c, false);
       dismissOnOutside(popup);
-      // Position near the avatar
       av.style.position = "relative";
       av.appendChild(popup);
     });
@@ -881,12 +885,9 @@ function cardNode(c) {
     e.dataTransfer.setData("text/plain", c.id);
     e.dataTransfer.effectAllowed = "move";
     b.setAttribute("data-dragging", "true");
-    // Store the column we are dragging from
-    boardDragSource = { cardId: c.id, column: c.column };
   });
   b.addEventListener("dragend", function () {
     b.removeAttribute("data-dragging");
-    boardDragSource = null;
     clearDropIndicators();
   });
   // Cards are also drop targets for intra-column reorder
@@ -903,9 +904,7 @@ function cardNode(c) {
     clearDropIndicators();
     var draggedId = e.dataTransfer.getData("text/plain");
     if (!draggedId || draggedId === c.id) return;
-    var rect = b.getBoundingClientRect();
-    var above = (e.clientY - rect.top) < rect.height / 2;
-    handleCardDrop(draggedId, c.column, c.id, above);
+    handleCardDrop(draggedId, c.column);
   });
 
   /* Dragging is not available to a keyboard, so the same move is on the
@@ -923,9 +922,6 @@ function cardNode(c) {
   });
   return b;
 }
-
-/* ---- Drag-and-drop helpers for within-column reordering ---- */
-var boardDragSource = null;
 
 function showDropIndicator(targetCard, e) {
   clearDropIndicators();
@@ -945,17 +941,12 @@ function clearDropIndicators() {
   for (var i = 0; i < indicators.length; i++) indicators[i].remove();
 }
 
-function handleCardDrop(draggedId, targetColumn, targetCardId, above) {
-  // For now, move card to the target column (cross-column drag)
-  // The server doesn't support position ordering yet, so we just move columns
+/* Only the column changes: the board has no per-column ordering to post, so a
+   drop within one column is a no-op and the indicator is the only feedback. */
+function handleCardDrop(draggedId, targetColumn) {
   var draggedCard = cardById(draggedId);
-  if (!draggedCard) return;
-  if (draggedCard.column !== targetColumn) {
-    // Cross-column move
-    postBoard({ op: "move", id: draggedId, column: targetColumn }, "Moved.");
-  }
-  // Within-column reorder: visually swap and track position
-  // (Server-side ordering support would go here)
+  if (!draggedCard || draggedCard.column === targetColumn) return;
+  postBoard({ op: "move", id: draggedId, column: targetColumn }, "Moved.");
 }
 
 function cardDetailInner() { return el.cardDetailBox || el.cardDetail; }
@@ -1308,23 +1299,7 @@ function showCardDetail(id) {
   assignBtn.addEventListener("click", function() {
     var existing = assignWrap.querySelector(".member-picker-popup");
     if (existing) { existing.remove(); return; }
-    var popup = menuPopup(true);
-    popup.classList.add("member-picker-popup");
-    popup.appendChild(menuTitle("Members"));
-    var unBtn = menuItem({ muted: true });
-    unBtn.appendChild(icon("close", 12));
-    unBtn.appendChild(document.createTextNode(" Remove member"));
-    unBtn.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: "" }, "Unassigned."); });
-    popup.appendChild(unBtn);
-    var peers = (_getKnownPeers() || []).map(function(p){ return typeof p === "string" ? p : p.name || p; });
-    if (c.assignee && peers.indexOf(c.assignee) === -1) peers.unshift(c.assignee);
-    peers.forEach(function(name){
-      var opt = menuItem({ current: name === c.assignee });
-      opt.appendChild(menuAvatar(name));
-      opt.appendChild(document.createTextNode(name));
-      opt.addEventListener("click", function(){ popup.remove(); postBoard({ op: "update", id: c.id, assignee: name }, "Assigned to " + name + "."); });
-      popup.appendChild(opt);
-    });
+    var popup = memberPicker(c, true);
     dismissOnOutside(popup, assignBtn);
     assignWrap.appendChild(popup);
   });
@@ -1896,12 +1871,10 @@ function showCardDetail(id) {
   entries.forEach(function (e) {
     var item = document.createElement("div");
     item.className = "card-activity-item";
-    // Avatar
     var avatar = document.createElement("div");
     avatar.className = "card-activity-avatar";
     var whoName = e.who || "?";
     avatar.textContent = whoName.slice(0, 2).toUpperCase();
-    // Set a unique color based on name hash
     var nameHash = 0;
     for (var ci = 0; ci < whoName.length; ci++) nameHash = ((nameHash << 5) - nameHash + whoName.charCodeAt(ci)) | 0;
     // One stable tone per name, from the theme-aware chat-hue palette (in
@@ -1909,7 +1882,6 @@ function showCardDetail(id) {
     // light and dark alike. No literal hex or white-is-assumed text here.
     avatar.classList.add("avatar-tone-" + (Math.abs(nameHash) % 8));
     item.appendChild(avatar);
-    // Content
     var content = document.createElement("div");
     content.className = "card-activity-content";
     var line1 = document.createElement("div");

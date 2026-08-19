@@ -93,6 +93,9 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0021 — How improve-self promotions reach origin and the invoking checkout](0021-improve-promotion-landing-lifecycle.md) — Discussion
+- [RFC 0020 — How clanker drives an external coding agent (Claude Code, Codex, Grok)](0020-how-clanker-drives-claude-code-as-a-backend-agent.md) — Decided
+- [RFC 0019 — Shared state store for worktree-isolated runs and mesh peers](0019-shared-state-store.md) — Discussion
 - [RFC 0018 — Agent presets: named tool + persona bundles](0018-agent-presets-named-tool-persona-bundles.md) — Decided
 - [RFC 0017 — Deterministic tool-result pruning (bounded head/marker/tail)](0017-deterministic-tool-result-pruning-bounded-head-marker-tail.md) — Decided
 - [RFC 0016 — Loop-hygiene guard: deterministic repeated-tool reminder](0016-loop-hygiene-guard-deterministic-repeated-tool-reminder.md) — Decided

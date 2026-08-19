@@ -20,6 +20,7 @@ const log = @import("../util/log.zig");
 const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const utf8 = @import("../util/utf8.zig");
+const test_env = @import("../util/test_env.zig");
 
 const event_path = "state/autolearn.jsonl";
 /// Hard cap on the log so a busy harness cannot grow state without bound.
@@ -92,7 +93,7 @@ fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
     // would otherwise contend with the handle appendLine is about to hold.
     if (base.statFile(io, event_path, .{})) |st| {
         if (st.size > max_log_bytes) trimLog(base, io, gpa, arena) catch |err| {
-            log.log(.warn, "autolearn: trim failed: {s}", .{@errorName(err)});
+            log.log(.warn, "autolearn: failed to trim log: {s}", .{@errorName(err)});
         };
     } else |_| {}
 
@@ -196,20 +197,15 @@ fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
 // ------------------------------------------------------------------- tests --
 
 test "recordTo appends without re-reading the existing log" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    recordTo(env.tmp.dir, io, std.testing.allocator, arena, "tool_call", "read_file", "");
+    recordTo(env.tmp.dir, io, std.testing.allocator, arena, "tool_error", "read_file", "not found");
 
-    recordTo(tmp.dir, io, std.testing.allocator, arena, "tool_call", "read_file", "");
-    recordTo(tmp.dir, io, std.testing.allocator, arena, "tool_error", "read_file", "not found");
-
-    const raw = try tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
+    const raw = try env.tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(raw);
 
     var lines: usize = 0;
@@ -224,17 +220,13 @@ test "recordTo appends without re-reading the existing log" {
 }
 
 test "trimLog keeps only the newest keep_lines lines" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.createDirPath(io, "state");
 
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    const arena = env.arena();
 
     var contents: std.ArrayList(u8) = .empty;
     defer contents.deinit(std.testing.allocator);
@@ -243,11 +235,11 @@ test "trimLog keeps only the newest keep_lines lines" {
         const line = try std.fmt.allocPrint(arena, "{{\"ts\":{d}}}\n", .{i});
         try contents.appendSlice(std.testing.allocator, line);
     }
-    try tmp.dir.writeFile(io, .{ .sub_path = event_path, .data = contents.items });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = event_path, .data = contents.items });
 
-    try trimLog(tmp.dir, io, std.testing.allocator, std.testing.allocator);
+    try trimLog(env.tmp.dir, io, std.testing.allocator, std.testing.allocator);
 
-    const raw = try tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
+    const raw = try env.tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(raw);
     var lines: usize = 0;
     var first_ts: ?usize = null;
@@ -267,18 +259,13 @@ test "trimLog keeps only the newest keep_lines lines" {
 }
 
 test "recordRunTo writes a run event with all fields" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     const tools = [_][]const u8{ "read_file", "git" };
-    recordRunTo(tmp.dir, io, std.testing.allocator, arena, .{
+    recordRunTo(env.tmp.dir, io, std.testing.allocator, arena, .{
         .provider = "kimi-k3",
         .model = "kimi-k3",
         .prompt_tokens = 100,
@@ -289,7 +276,7 @@ test "recordRunTo writes a run event with all fields" {
         .tools = &tools,
     });
 
-    const raw = try tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
+    const raw = try env.tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(raw);
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
     try std.testing.expectEqualStrings("run", parsed.object.get("type").?.string);

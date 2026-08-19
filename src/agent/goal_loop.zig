@@ -147,6 +147,11 @@ pub fn continuationTask(alloc: std.mem.Allocator, condition: []const u8, next_tu
     );
 }
 
+/// The evaluator's system message. Spelled here beside `evaluatorTask` and
+/// `evaluator_max_tokens` so every surface asks the same question; the call
+/// itself stays with the surface, which is where the client lives.
+pub const evaluator_system_prompt = "You are a conservative goal-completion evaluator. Do not use tools or perform work; assess only the supplied evidence.";
+
 /// A tool-free evaluator prompt. The completed answer is evidence, not an
 /// instruction channel: it is quoted inside a named boundary and the evaluator
 /// is told to ignore directives found there.

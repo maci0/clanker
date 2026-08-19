@@ -54,10 +54,10 @@ pub const Connection = struct {
         }
 
         if (std.mem.eql(u8, req.method.?, "initialize")) {
-            const requested = protocolVersion(req.params) orelse
+            _ = protocolVersion(req.params) orelse
                 return responseError(alloc, req.id.?, -32602, "initialize requires integer protocolVersion");
             self.initialized = true;
-            return initializeResponse(alloc, req.id.?, requested);
+            return responseInitialize(alloc, req.id.?);
         }
         if (!self.initialized) {
             return responseError(alloc, req.id.?, -32002, "initialize must be the first request");
@@ -97,7 +97,7 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
     if (cwd.len == 0 or cwd[0] != '/') {
         return responseError(alloc, id, -32602, "cwd must be an absolute path");
     }
-    if (cwd.len == 1 and cwd[0] == '/') {} else if (std.mem.findScalar(u8, cwd, 0) != null) {
+    if (std.mem.findScalar(u8, cwd, 0) != null) {
         return responseError(alloc, id, -32602, "cwd does not exist");
     }
     conn.session_counter += 1;
@@ -137,20 +137,8 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
         return responseError(alloc, id, -32603, "session already has an in-flight prompt");
     }
     const prompt_val = obj.get("prompt") orelse return responseError(alloc, id, -32602, "session/prompt requires prompt");
-    const prompt_text: []const u8 = switch (prompt_val) {
-        .string => |s| s,
-        .array => |arr| blk: {
-            var buf: std.ArrayList(u8) = .empty;
-            for (arr.items) |item| {
-                if (item == .object) if (item.object.get("text")) |t| if (t == .string) {
-                    if (buf.items.len > 0) try buf.append(arena, '\n');
-                    try buf.appendSlice(arena, t.string);
-                };
-            }
-            break :blk buf.items;
-        },
-        else => return responseError(alloc, id, -32602, "session/prompt requires prompt"),
-    };
+    const prompt_text = (try promptText(arena, prompt_val)) orelse
+        return responseError(alloc, id, -32602, "session/prompt requires prompt");
     _ = prompt_text;
     // v1 stub: report end_turn without running the model; real Agent wiring lands next
     // turn once sessions own an Agent + cwd. This already satisfies the ACP shape
@@ -170,6 +158,26 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     return out.toOwnedSlice();
 }
 
+/// Normalizes ACP prompt payloads to plain text. String prompts pass through;
+/// content-block arrays concatenate their `text` entries with newlines. Returns
+/// null for any other shape, leaving the caller to report the typed error.
+fn promptText(arena: std.mem.Allocator, value: json.Value) !?[]const u8 {
+    return switch (value) {
+        .string => |s| s,
+        .array => |arr| blk: {
+            var buf: std.ArrayList(u8) = .empty;
+            for (arr.items) |item| {
+                if (item == .object) if (item.object.get("text")) |t| if (t == .string) {
+                    if (buf.items.len > 0) try buf.append(arena, '\n');
+                    try buf.appendSlice(arena, t.string);
+                };
+            }
+            break :blk buf.items;
+        },
+        else => null,
+    };
+}
+
 fn protocolVersion(params: ?json.Value) ?u32 {
     const p = params orelse return null;
     const obj = switch (p) {
@@ -183,7 +191,7 @@ fn protocolVersion(params: ?json.Value) ?u32 {
     };
 }
 
-fn initializeResponse(alloc: std.mem.Allocator, id: json.Value, requested: u32) ![]u8 {
+fn responseInitialize(alloc: std.mem.Allocator, id: json.Value) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
     var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
@@ -191,7 +199,7 @@ fn initializeResponse(alloc: std.mem.Allocator, id: json.Value, requested: u32) 
     try s.objectField("result");
     try s.beginObject();
     try s.objectField("protocolVersion");
-    try s.write(if (requested == protocol_version) requested else protocol_version);
+    try s.write(protocol_version);
     try s.objectField("agentCapabilities");
     try s.beginObject();
     try s.objectField("loadSession");

@@ -13,7 +13,6 @@
 //! this file is.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 
@@ -49,6 +48,10 @@ const status_column_max: usize = 18;
 /// the titles on a straight edge.
 const status_column_min: usize = 10;
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "search", "open", "create", "append", "update", "status", "rename" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -63,8 +66,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "rename")) return rename(io, arena, opts, tool);
 
-    log.log(.error_, "unknown reports subcommand '{s}' (expected list, search, open, create, append, update, status or rename)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("reports", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --
@@ -78,7 +80,7 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const query = opts.arg1 orelse {
-        log.log(.error_, "reports search needs a query: clanker reports search \"worktree symlink\"", .{});
+        common.usageError("reports search needs a query: clanker reports search \"worktree symlink\"", .{});
         return Error.MissingArg;
     };
     const kind = opts.kind orelse "all";
@@ -129,11 +131,11 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 
 fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const path = opts.arg1 orelse {
-        log.log(.error_, "reports rename needs a path and the new filename stem: clanker reports rename docs/reports/bugs/<name>.md <new-slug>", .{});
+        common.usageError("reports rename needs a path and the new filename stem: clanker reports rename docs/reports/bugs/<name>.md <new-slug>", .{});
         return Error.MissingArg;
     };
     const slug = opts.arg2 orelse {
-        log.log(.error_, "reports rename needs the new filename stem after the path (report slugs start YYYY-MM-DD-)", .{});
+        common.usageError("reports rename needs the new filename stem after the path (report slugs start YYYY-MM-DD-)", .{});
         return Error.MissingArg;
     };
 
@@ -164,7 +166,7 @@ fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "reports create needs {s}: clanker reports create investigation 2026-08-16-worktree-symlink \"Worktree setup rejects a symlink\" \"TL;DR of what was seen\"", .{what});
+    common.usageError("reports create needs {s}: clanker reports create investigation 2026-08-16-worktree-symlink \"Worktree setup rejects a symlink\" \"TL;DR of what was seen\"", .{what});
     return Error.MissingArg;
 }
 
@@ -242,22 +244,7 @@ pub fn renderList(arena: std.mem.Allocator, reports_index: []const u8, runbooks_
         // -- it is indented instead, so the titles stay the left edge that is
         // scanned and the detail stays visibly subordinate to them.
         const detail_indent = if (width == 0) 4 else 2 + width;
-        for (entries) |e| {
-            const status = if (e.note.len > 0 and e.note.len <= status_column_max) e.note else "";
-            try w.writer.splatByteAll(' ', 2);
-            try w.writer.print("{s}", .{status});
-            try w.writer.splatByteAll(' ', width -| status.len);
-            try w.writer.print("{s}\n", .{e.title});
-            try w.writer.splatByteAll(' ', detail_indent);
-            try w.writer.print("{s}\n", .{e.path});
-            // Prose that would not fit the status column keeps its own line
-            // rather than being cut down to a width it was never written for.
-            if (status.len == 0 and e.note.len > 0) {
-                try w.writer.splatByteAll(' ', detail_indent);
-                try w.writer.print("{s}\n", .{e.note});
-            }
-            try w.writer.writeByte('\n');
-        }
+        for (entries) |e| try renderInventoryRow(&w.writer, e, width, detail_indent);
     }
 
     if (total == 0) {
@@ -290,6 +277,30 @@ pub fn statusWidth(entries: []const Entry) usize {
     }
     if (widest == 0) return 0;
     return @max(widest, status_column_min);
+}
+
+/// One row of an inventory listing: the status column, the title, then the
+/// path (and any summary too long for that column) indented under it.
+///
+/// `clanker research` prints the same table, so the row lives here beside
+/// `statusWidth` rather than being written out twice. The indent is a
+/// parameter because a store with no status column indents its detail
+/// differently from one that has it to sit under.
+pub fn renderInventoryRow(w: *std.Io.Writer, e: Entry, width: usize, detail_indent: usize) !void {
+    const status = if (e.note.len > 0 and e.note.len <= status_column_max) e.note else "";
+    try w.splatByteAll(' ', 2);
+    try w.print("{s}", .{status});
+    try w.splatByteAll(' ', width -| status.len);
+    try w.print("{s}\n", .{e.title});
+    try w.splatByteAll(' ', detail_indent);
+    try w.print("{s}\n", .{e.path});
+    // Prose that would not fit the status column keeps its own line rather
+    // than being cut down to a width it was never written for.
+    if (status.len == 0 and e.note.len > 0) {
+        try w.splatByteAll(' ', detail_indent);
+        try w.print("{s}\n", .{e.note});
+    }
+    try w.writeByte('\n');
 }
 
 /// Read one `<!-- inventory:<kind>:start -->` block out of an index README.

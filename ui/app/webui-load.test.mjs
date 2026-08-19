@@ -56,15 +56,15 @@ test("a failed view load surfaces an error with a retry instead of a blank panel
 });
 
 test("a failed chunk import is not cached: every lazy view loader drops its promise", function () {
-  // Each of the ten lazily imported modules (arena, fleet, todos, board,
-  // goals, prompts, models, knowledge, tools, run-graph) caches its import()
+  // Each of the eleven lazily imported modules (arena, fleet, todos, board,
+  // goals, prompts, models, knowledge, tools, run-graph, system) caches its import()
   // promise so a second open does not re-fetch. A rejected promise must not
   // stay cached, or the view's Try again and every later open re-throw the
   // same dead promise and the view stays broken for the life of the page.
   const markers = app.match(/null; \/\/ a failed chunk import must be retryable/g) || [];
-  assert.equal(markers.length, 10, "all ten lazy loaders reset their module promise on rejection");
+  assert.equal(markers.length, 11, "all eleven lazy loaders reset their module promise on rejection");
   // The failure still reaches the caller (showView surfaces it) — the reset
   // must rethrow, not swallow.
   const rethrows = app.match(/catch\(function \(err\) \{[\s\S]*?throw err;\s*\}\)|function \(err\) \{[\s\S]*?null; \/\/ a failed chunk import[\s\S]*?throw err;/g) || [];
-  assert.ok(rethrows.length >= 10, "every loader rethrows after resetting");
+  assert.ok(rethrows.length >= 11, "every loader rethrows after resetting");
 });

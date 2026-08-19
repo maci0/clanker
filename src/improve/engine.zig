@@ -27,11 +27,13 @@ const gate_checks = @import("../gate/checks.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const registry = @import("../toolhost/registry.zig");
+const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const disk_cap = @import("../util/disk_cap.zig");
 const worktree_mod = @import("worktree.zig");
+const test_env = @import("../util/test_env.zig");
 
 pub const Options = struct {
     instructions: []const u8,
@@ -259,8 +261,7 @@ const SourceRef = struct { path: []const u8, line: usize, rest: []const u8 };
 /// The next `<path>:<line>:<col>:` reference into the standard library in a
 /// compiler message. Only std paths: the project's own files are already in
 /// the context the model was given.
-fn nextStdSourceRef(text: []const u8) ?SourceRef {
-    const lib = sandbox_host.zig_lib_dir;
+fn nextStdSourceRef(lib: []const u8, text: []const u8) ?SourceRef {
     if (lib.len == 0) return null;
     var rest = text;
     while (std.mem.find(u8, rest, lib)) |at| {
@@ -630,11 +631,11 @@ pub const Engine = struct {
             .{ .role = .user, .content = user_prompt },
         };
         var err_detail: ?[]const u8 = null;
-        const resp = client.chat(self.ctx, self.arena, .{
+        const resp = client.chatWithDeadline(self.ctx, self.arena, .{
             .provider = self.provider,
             .messages = &messages,
             .max_tokens = opts.response_tokens,
-        }, &err_detail) catch |err| {
+        }, &err_detail, self.cfg.agent.request_timeout_ms) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.ProposalRequestFailed;
@@ -909,7 +910,7 @@ pub const Engine = struct {
             return .failed;
         }
 
-        // ---- 5. gate ----
+        // ---- 6. gate ----
         log.log(.info, "gating in {s} ...", .{staging});
         var gate_timer = GateTimer.start(self.ctx.io);
         const cache_args = self.sharedCacheArgs();
@@ -1144,7 +1145,7 @@ pub const Engine = struct {
             log.log(.info, "capability evals: PASS", .{});
         }
 
-        // ---- 6. promote ----
+        // ---- 7. promote ----
         log.log(.info, "gates green, promoting {d} file(s)", .{proposal.changes.len});
         const files = proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{};
         try self.hist.snapshot(id, files);
@@ -1318,13 +1319,13 @@ pub const Engine = struct {
         };
 
         var err_detail: ?[]const u8 = null;
-        const resp = client.chat(self.ctx, self.arena, .{
+        const resp = client.chatWithDeadline(self.ctx, self.arena, .{
             .provider = self.provider,
             .messages = &messages,
             // An idea list is a few hundred tokens; the full patch budget
             // only invites the model to write the patches here too.
             .max_tokens = @min(opts.response_tokens, 4096),
-        }, &err_detail) catch |err| {
+        }, &err_detail, self.cfg.agent.request_timeout_ms) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.warn, "plan request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.PlanRequestFailed;
@@ -1472,42 +1473,8 @@ pub const Engine = struct {
         return added;
     }
 
-    /// Applies the proposal's changes under `staging` through the sandboxed
-    /// `patch_apply` WASM tool (fs_prefixes: ["state/staging"]) instead of a
-    /// native file-write path. The tool only performs the text edits; the
-    /// decision to gate and promote the result stays here, native.
     fn applyPatch(self: *Engine, staging: []const u8, changes: []const proposal_mod.Change) !void {
-        var reg = try registry.Registry.load(self.ctx.io, self.arena, std.Io.Dir.cwd(), self.cfg.agent.tools_dir);
-        const mod = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, &reg, "patch_apply", null);
-        defer mod.deinit();
-
-        var enc: std.Io.Writer.Allocating = .init(self.arena);
-        var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
-        try s.beginObject();
-        try s.objectField("changes");
-        try s.beginArray();
-        for (changes) |c| {
-            const rel = try std.fmt.allocPrint(self.arena, "{s}/{s}", .{ staging, c.file });
-            try s.beginObject();
-            try s.objectField("file");
-            try s.write(rel);
-            try s.objectField("old");
-            try s.write(c.old);
-            try s.objectField("new");
-            try s.write(c.new);
-            try s.endObject();
-        }
-        try s.endArray();
-        try s.endObject();
-
-        const raw = try mod.executeTool(enc.written());
-        defer self.ctx.gpa.free(raw);
-        const resp = std.json.parseFromSliceLeaky(struct { ok: bool = false, @"error": []const u8 = "" }, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
-            return error.PatchApplyFailed;
-        if (!resp.ok) {
-            log.log(.error_, "patch_apply tool: {s}", .{resp.@"error"});
-            return error.PatchApplyFailed;
-        }
+        return proposal_mod.applyPatchViaTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, staging, changes);
     }
 
     /// Reads recent git history for reverts of promoted improvements and
@@ -1867,7 +1834,11 @@ pub const Engine = struct {
     /// failed four attempts running on std.posix.SEEK. This is the same lookup
     /// the zig_std tool does, attached to the failure that needs it.
     fn stdSymbolHelp(self: *Engine, err_text: []const u8) []const u8 {
-        if (sandbox_host.zig_lib_dir.len == 0) return "";
+        // First read of the lib dir shells out to `zig env`; this path only
+        // runs when a patch failed to compile, which is why the lookup is
+        // lazy rather than paid at startup by every clanker invocation.
+        const lib_dir = sandbox_host.zigLibDir(self.ctx.io, self.ctx.environ_map);
+        if (lib_dir.len == 0) return "";
         var out: std.ArrayList(u8) = .empty;
         var seen: [4][]const u8 = undefined;
         var seen_n: usize = 0;
@@ -1878,7 +1849,7 @@ pub const Engine = struct {
         // several same-named declarations is the relevant one.
         var notes = err_text;
         var shown: usize = 0;
-        while (nextStdSourceRef(notes)) |ref| {
+        while (nextStdSourceRef(lib_dir, notes)) |ref| {
             notes = ref.rest;
             if (shown == 3) break;
             const excerpt = self.readAround(ref.path, ref.line) orelse continue;
@@ -1938,7 +1909,7 @@ pub const Engine = struct {
 
     /// Up to 12 lines mentioning `sym` in the standard library source.
     fn stdGrep(self: *Engine, sym: []const u8) ?[]const u8 {
-        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zig_lib_dir}) catch return null;
+        const std_dir = std.fmt.allocPrint(self.ctx.gpa, "{s}/std", .{sandbox_host.zigLibDir(self.ctx.io, self.ctx.environ_map)}) catch return null;
         defer self.ctx.gpa.free(std_dir);
         const pattern = std.fmt.allocPrint(self.ctx.gpa, "(pub (fn|const|var) {s}\\b|\\b{s} *[:=])", .{ sym, sym }) catch return null;
         defer self.ctx.gpa.free(pattern);
@@ -2054,7 +2025,7 @@ pub const Engine = struct {
         if (match != .object) return;
         const verdict = match.object.get("verdict") orelse return;
         if (verdict != .object) return;
-        const headline = if (verdict.object.get("headline")) |h| (if (h == .string) h.string else "") else "";
+        const headline = json_util.strFieldOrEmpty(verdict.object, "headline");
         const winner = if (verdict.object.get("winner")) |w| (if (w == .integer) w.integer else -1) else -1;
 
         // Index 1 is the "reject this proposal" side, since "for"/"against" seed
@@ -4121,13 +4092,11 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     // The improvement machinery is modifiable, so the one thing that must not
     // be removable is the gating itself. This runs against the staged text,
     // which is the only place a patch exists before it is promoted.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const arena = fixture.arena();
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = fixture.io();
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
     var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
@@ -4140,9 +4109,7 @@ test "a patch that drops a gate call from the engine is rejected before it compi
         .instructions = "",
     };
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
+    const staged = fixture.tmp.dir;
     try staged.createDirPath(io, "src/improve");
 
     // A file that still contains every load-bearing call passes.
@@ -4178,133 +4145,65 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     try std.testing.expect(try engine.brokenInvariant(staged, &elsewhere) == null);
 }
 
+/// Stage `file` holding only the invariant needles recorded for it, confirm
+/// `brokenInvariant` passes over it, then replace `drop` with `with` and
+/// confirm `drop` is the needle it names. The three tests below differ only
+/// in those three strings.
+fn expectInvariantCaught(file: []const u8, drop: []const u8, with: []const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const staged = tmp.dir;
+    try staged.createDirPath(io, std.fs.path.dirname(file).?);
+
+    var keeps: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        if (!std.mem.eql(u8, inv.file, file)) continue;
+        try keeps.appendSlice(arena, inv.needle);
+        try keeps.appendSlice(arena, "\n");
+    }
+    try staged.writeFile(io, .{ .sub_path = file, .data = keeps.items });
+    const changes = [_]proposal_mod.Change{.{ .file = file, .old = "", .new = "" }};
+    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
+
+    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, drop, with);
+    try staged.writeFile(io, .{ .sub_path = file, .data = gutted });
+    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings(drop, bad.needle);
+}
+
 test "a patch that guts a gate implementation in checks.zig is rejected too" {
     // checks.zig is deliberately outside the protected surface, so a
     // proposal can legitimately touch it -- but not by deleting the exit
-    // code check every gate shares.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var engine = Engine{
-        .ctx = &ctx,
-        .arena = arena,
-        .provider = undefined,
-        .cfg = undefined,
-        .hist = undefined,
-        .instructions = "",
-    };
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
-    try staged.createDirPath(io, "src/gate");
-
-    var keeps: std.ArrayList(u8) = .empty;
-    for (gate_invariants) |inv| {
-        if (!std.mem.eql(u8, inv.file, "src/gate/checks.zig")) continue;
-        try keeps.appendSlice(arena, inv.needle);
-        try keeps.appendSlice(arena, "\n");
-    }
-    try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = keeps.items });
-    const changes = [_]proposal_mod.Change{.{ .file = "src/gate/checks.zig", .old = "", .new = "" }};
-    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
-
-    // Drop the exit-code check -- the shared piece that decides pass/fail
-    // for build, test, and tools gates alike -- and it is caught.
-    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, ".exited => |c| c == 0,", "");
-    try staged.writeFile(io, .{ .sub_path = "src/gate/checks.zig", .data = gutted });
-    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
-    try std.testing.expectEqualStrings(".exited => |c| c == 0,", bad.needle);
+    // code check every gate shares, which decides pass/fail for build, test
+    // and tools gates alike.
+    try expectInvariantCaught("src/gate/checks.zig", ".exited => |c| c == 0,", "");
 }
 
 test "a patch that bypasses merge-back CAS is rejected" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var engine = Engine{
-        .ctx = &ctx,
-        .arena = arena,
-        .provider = undefined,
-        .cfg = undefined,
-        .hist = undefined,
-        .instructions = "",
-    };
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
-    try staged.createDirPath(io, "src/improve");
-
-    var keeps: std.ArrayList(u8) = .empty;
-    for (gate_invariants) |inv| {
-        if (!std.mem.eql(u8, inv.file, "src/improve/worktree.zig")) continue;
-        try keeps.appendSlice(arena, inv.needle);
-        try keeps.appendSlice(arena, "\n");
-    }
-    try staged.writeFile(io, .{ .sub_path = "src/improve/worktree.zig", .data = keeps.items });
-    const changes = [_]proposal_mod.Change{.{ .file = "src/improve/worktree.zig", .old = "", .new = "" }};
-    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
-
-    const cas_call = "updateRefCas(gpa, io, self.base_branch, commit, base_sha)";
-    const bypassed = try std.mem.replaceOwned(u8, arena, keeps.items, cas_call, "");
-    try staged.writeFile(io, .{ .sub_path = "src/improve/worktree.zig", .data = bypassed });
-    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
-    try std.testing.expectEqualStrings(cas_call, bad.needle);
+    try expectInvariantCaught("src/improve/worktree.zig", "updateRefCas(gpa, io, self.base_branch, commit, base_sha)", "");
 }
 
 test "a patch that flips improve defaults in src/config.zig is rejected" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var env = std.process.Environ.Map.init(std.testing.allocator);
-    defer env.deinit();
-    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
-    var engine = Engine{
-        .ctx = &ctx,
-        .arena = arena,
-        .provider = undefined,
-        .cfg = undefined,
-        .hist = undefined,
-        .instructions = "",
-    };
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const staged = tmp.dir;
-    try staged.createDirPath(io, "src");
-
-    var keeps: std.ArrayList(u8) = .empty;
-    for (gate_invariants) |inv| {
-        if (!std.mem.eql(u8, inv.file, "src/config.zig")) continue;
-        try keeps.appendSlice(arena, inv.needle);
-        try keeps.appendSlice(arena, "\n");
-    }
-    try staged.writeFile(io, .{ .sub_path = "src/config.zig", .data = keeps.items });
-    const changes = [_]proposal_mod.Change{.{ .file = "src/config.zig", .old = "", .new = "" }};
-    try std.testing.expect(try engine.brokenInvariant(staged, &changes) == null);
-
-    const gutted = try std.mem.replaceOwned(u8, arena, keeps.items, "capability_gate: bool = true", "capability_gate: bool = false");
-    try staged.writeFile(io, .{ .sub_path = "src/config.zig", .data = gutted });
-    const bad = try engine.brokenInvariant(staged, &changes) orelse return error.TestExpectedRejection;
-    try std.testing.expectEqualStrings("capability_gate: bool = true", bad.needle);
+    try expectInvariantCaught("src/config.zig", "capability_gate: bool = true", "capability_gate: bool = false");
 }
 
 test "uncoveredCapabilityTasks fails closed on empty eval output" {
@@ -4445,8 +4344,7 @@ test "a compile error about a std signature comes back with the declaration" {
 
     // Without a lib dir there is nothing to read, and saying so beats a
     // confusing empty result.
-    const saved = sandbox_host.zig_lib_dir;
-    defer sandbox_host.zig_lib_dir = saved;
+    const saved = sandbox_host.zigLibDir(ctx.io, ctx.environ_map);
     if (saved.len == 0) return error.SkipZigTest;
 
     const err = try std.fmt.allocPrint(arena,

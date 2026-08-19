@@ -245,16 +245,7 @@ pub fn chat(
         attempt += 1;
         try rate_limit.waitFor(ctx.io, ctx.gpa, provider);
         outcome = doFetch(ctx, &client, url, body, cred, impl, provider, arena, err_detail) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
         if (isRetryable(outcome.status) and attempt < max_attempts) {
@@ -623,7 +614,7 @@ pub fn promptCost(u: types.Usage, per_1m_input: f64) f64 {
 
 /// Total estimated cost (input + output) for a single completion, using the
 /// provider's active model pricing. Returns 0 when pricing info is absent.
-/// Public so CLI status bars and other callers can reuse the same math.
+/// Public so the proxy's token-stats row uses the same math.
 pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
     const active = provider.activeModel();
     var cost: f64 = 0;
@@ -631,44 +622,6 @@ pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
     if (active.cost_per_1m_output) |co| cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
     return cost;
 }
-
-/// Running per-session totals behind the REPL status line: one add() per turn
-/// where the turn's resp.usage is consumed, and the composed line reads the
-/// fields directly. Cost uses totalCost so the number matches the token-stats
-/// log instead of drifting into a second pricing formula.
-pub const SessionUsage = struct {
-    prompt: u64 = 0,
-    completion: u64 = 0,
-    cache_hit: u64 = 0,
-    cost: f64 = 0,
-
-    pub fn add(self: *SessionUsage, provider: *const config.Provider, u: types.Usage) void {
-        self.prompt += u.prompt_tokens;
-        self.completion += u.completion_tokens;
-        self.cache_hit += u.prompt_cache_hit_tokens;
-        self.cost += totalCost(provider, u);
-    }
-
-    /// Cached share of all prompt tokens, 0-100; 0 before the first turn.
-    pub fn cachePct(self: SessionUsage) u8 {
-        if (self.prompt == 0) return 0;
-        return @intCast(@min(self.cache_hit, self.prompt) * 100 / self.prompt);
-    }
-
-    /// The built-in status-line segment: `provider/model · ↑in ↓out tok · $cost · cache pct%`.
-    /// Statusline tool segments are appended after this by the caller (the REPL),
-    /// which owns the registry and the sandbox; this type only knows the totals.
-    pub fn writeSegment(self: SessionUsage, w: *std.Io.Writer, provider: *const config.Provider) !void {
-        try w.print("{s}/{s} · ↑{d} ↓{d} tok · ${d:.4} · cache {d}%", .{
-            provider.name,
-            provider.activeModelName(),
-            self.prompt,
-            self.completion,
-            self.cost,
-            self.cachePct(),
-        });
-    }
-};
 
 /// Records one completion in the global token-usage log (best-effort). The
 /// caller supplies `duration_ms`; 0 means "unknown" (chat() times the whole
@@ -782,6 +735,31 @@ fn sendStreamBody(req: *std.http.Client.Request, body: []const u8) !void {
     try body_writer.writer.writeAll(body);
     try body_writer.end();
     try req.connection.?.flush();
+}
+
+/// The transport-failure arm every attempt of the retry loop shares. Returns
+/// true once the backoff has been slept and the attempt should be retried, and
+/// false after the give-up has been logged and recorded, leaving the caller to
+/// return the error it caught.
+fn retryAfterTransportError(
+    ctx: *Ctx,
+    arena: std.mem.Allocator,
+    provider: *const config.Provider,
+    attempt: u32,
+    llm_t0: std.Io.Timestamp,
+    err: anyerror,
+) !bool {
+    if (attempt < max_attempts and isRetryableTransport(err)) {
+        noteRetry();
+        try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
+        return true;
+    }
+    log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
+        provider.name, @errorName(err), attempt, max_attempts,
+    });
+    noteError();
+    recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+    return false;
 }
 
 fn sleepRetry(io: std.Io, attempt: u32, provider_name: []const u8, http_status: u16, reason: []const u8) !void {
@@ -922,16 +900,7 @@ pub fn chatStream(
             .headers = headers,
             .extra_headers = extra[0..extra_len],
         }) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
         req_slot = opened;
@@ -945,30 +914,12 @@ pub fn chatStream(
             log.log(.debug, "LLM streaming request provider={s} bytes={d}", .{ provider.name, body.len });
         }
         sendStreamBody(req, body) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
 
         response = req.receiveHead(&redirect_buffer) catch |err| {
-            if (attempt < max_attempts and isRetryableTransport(err)) {
-                noteRetry();
-                try sleepRetry(ctx.io, attempt, provider.name, 0, @errorName(err));
-                continue;
-            }
-            log.log(.error_, "request to '{s}' failed: {s} (attempt {d}/{d})", .{
-                provider.name, @errorName(err), attempt, max_attempts,
-            });
-            noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            if (try retryAfterTransportError(ctx, arena, provider, attempt, llm_t0, err)) continue;
             return err;
         };
 
@@ -1871,39 +1822,6 @@ test "cached prompt tokens are billed at the cache-read rate" {
     // No cache: unchanged from the plain rate.
     const cold = types.Usage{ .prompt_tokens = 1000, .completion_tokens = 0, .total_tokens = 1000 };
     try std.testing.expectApproxEqAbs(@as(f64, 0.005), promptCost(cold, 5.0), 1e-9);
-}
-
-test "session usage accumulates and renders the built-in status segment" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var provider = try config.Provider.single(arena, "mock", "https://x", .openai_compat, "model-x", .{});
-
-    var su = SessionUsage{};
-    try std.testing.expectEqual(@as(u8, 0), su.cachePct()); // before the first turn
-    su.add(&provider, .{
-        .prompt_tokens = 1000,
-        .completion_tokens = 50,
-        .total_tokens = 1050,
-        .prompt_cache_hit_tokens = 250,
-        .prompt_cache_miss_tokens = 750,
-    });
-    su.add(&provider, .{
-        .prompt_tokens = 500,
-        .completion_tokens = 25,
-        .total_tokens = 525,
-    });
-    try std.testing.expectEqual(@as(u64, 1500), su.prompt);
-    try std.testing.expectEqual(@as(u64, 75), su.completion);
-    try std.testing.expectEqual(@as(u64, 250), su.cache_hit);
-    try std.testing.expectEqual(@as(u8, 16), su.cachePct()); // 250/1500, truncated
-
-    var buf: [256]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    try su.writeSegment(&w, &provider);
-    const line = w.buffered();
-    try std.testing.expectEqualStrings("mock/model-x · ↑1500 ↓75 tok · $0.0000 · cache 16%", line);
 }
 
 /// Drives one `chat` call against the anthropic mock and returns the request

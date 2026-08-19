@@ -8,7 +8,7 @@ function showChip(node, on) {
   else node.setAttribute("aria-hidden", "true");
 }
 
-export function renderStatusInto(status, els, readOnly) {
+export function renderStatusInto(status, els) {
   if (!status) {
     els.instanceChip.textContent = "disconnected";
     els.instanceChip.dataset.state = "down";
@@ -21,7 +21,6 @@ export function renderStatusInto(status, els, readOnly) {
   }
   var peers = status.peers || [];
   var instanceName = status.instance.name;
-  var knownPeers = peers;
   els.instanceChip.textContent = status.instance.name;
   els.instanceChip.dataset.state = "live";
   upgradePfChip(els.instanceChip);
@@ -33,7 +32,7 @@ export function renderStatusInto(status, els, readOnly) {
   els.peers.textContent = "";
   if (peers.length === 0) {
     els.peers.textContent = "none configured";
-    return { instanceName: instanceName, knownPeers: knownPeers };
+    return { instanceName: instanceName, knownPeers: peers };
   }
   var list = document.createElement("ul");
   peers.forEach(function (p) {
@@ -53,5 +52,5 @@ export function renderStatusInto(status, els, readOnly) {
     list.appendChild(item);
   });
   els.peers.appendChild(list);
-  return { instanceName: instanceName, knownPeers: knownPeers };
+  return { instanceName: instanceName, knownPeers: peers };
 }

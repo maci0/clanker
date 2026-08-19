@@ -229,11 +229,61 @@ pub fn loadNamedTool(
     llm_ctx: ?*client.Ctx,
 ) !*ToolModule {
     const tool = reg.get(tool_name) orelse return error.UnknownTool;
-    const wasm_bytes = try std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(1 << 20));
-    defer gpa.free(wasm_bytes);
+    const wasm_bytes = try cachedWasm(io, tool.wasm);
     const sb = try arena.create(host.Sandbox);
     sb.* = try host.sandboxFor(gpa, io, arena, environ_map, cfg, tool, llm_ctx);
     return ToolModule.load(gpa, io, sb, wasm_bytes);
+}
+
+/// Process-wide cache of tool wasm bytes, keyed by the descriptor's `wasm`
+/// path and validated by a stat (size + mtime).
+///
+/// Every `toolJson` / `toolText` call — that is, every HTTP route that relays a
+/// guest and every record-store CLI verb — used to open and read the module
+/// afresh, ~80 KB apiece, and one web UI page load issues tens of them. The
+/// agent loop already keeps the same cache per run (`Agent.wasmBytes`); this is
+/// that cache for the callers that have no run to hang it on. `ToolModule.load`
+/// copies what it compiles (the old code freed these bytes right after), so a
+/// cached buffer is only ever read.
+///
+/// ponytail: a superseded generation is leaked, not freed. Another thread may
+/// still be compiling from it, and invalidation happens on `zig build tools`,
+/// not per call, so the leak is bounded by how often the modules are rebuilt.
+const WasmCache = struct {
+    const Entry = struct { stamp: u64, bytes: []const u8 };
+
+    /// Outlives every request that fills it, so it cannot borrow a caller's gpa.
+    const gpa = std.heap.page_allocator;
+    var map: std.StringHashMapUnmanaged(Entry) = .empty;
+    /// Spun rather than parked: the critical section is one stat plus a map
+    /// lookup, and connection threads have no `std.Io` mutex to hand.
+    var mutex: std.atomic.Mutex = .unlocked;
+
+    fn lock() void {
+        while (!mutex.tryLock()) std.Thread.yield() catch {};
+    }
+};
+
+/// The wasm at `path`, read once per (path, mtime, size).
+fn cachedWasm(io: std.Io, path: []const u8) ![]const u8 {
+    const base = std.Io.Dir.cwd();
+    const st = try base.statFile(io, path, .{});
+    var h = std.hash.Wyhash.init(0x1F83D9ABFB41BD6B);
+    h.update(std.mem.asBytes(&st.size));
+    h.update(std.mem.asBytes(&st.mtime));
+    const stamp = h.final();
+
+    WasmCache.lock();
+    defer WasmCache.mutex.unlock();
+
+    if (WasmCache.map.get(path)) |e| {
+        if (e.stamp == stamp) return e.bytes;
+    }
+    const bytes = try base.readFileAlloc(io, path, WasmCache.gpa, .limited(1 << 20));
+    const gop = try WasmCache.map.getOrPut(WasmCache.gpa, path);
+    if (!gop.found_existing) gop.key_ptr.* = try WasmCache.gpa.dupe(u8, path);
+    gop.value_ptr.* = .{ .stamp = stamp, .bytes = bytes };
+    return bytes;
 }
 
 fn seedRng(seed: u64, salt: []const u8, io: std.Io) u64 {
@@ -253,6 +303,27 @@ fn seedRng(seed: u64, salt: []const u8, io: std.Io) u64 {
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "a tool's wasm is read from disk once, not once per call" {
+    var tp = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer tp.deinit();
+    const io = tp.io();
+
+    const path = "zig-out/tools/chat.wasm";
+    const first = cachedWasm(io, path) catch |err| switch (err) {
+        // `zig build tools` has not run in this checkout.
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    const second = try cachedWasm(io, path);
+    // Same backing buffer: the second call answered from the cache instead of
+    // opening and re-reading the module.
+    try std.testing.expectEqual(first.ptr, second.ptr);
+
+    const direct = try std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(direct);
+    try std.testing.expectEqualSlices(u8, direct, first);
+}
 
 test "zwasm loads a Zig-compiled module and calls it" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
@@ -478,6 +549,26 @@ test "web_search wasm tool returns results from a live backend (skips when offli
     }
 }
 
+/// One `board.wasm` call. Each op is its own descriptor config, so each step is
+/// its own sandbox and module, sharing the room's log through the same state dir.
+fn boardStep(io: std.Io, cfg: *config_mod.Config, env: *std.process.Environ.Map, dir: std.Io.Dir, wasm: []const u8, config_json: []const u8, args: []const u8) ![]u8 {
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = env,
+        .cfg = cfg,
+        .state_dir = "",
+        .state_base_dir = dir,
+        .config_json = config_json,
+        .tool_self_name = "kanban",
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    return mod.executeTool(args);
+}
+
 test "board wasm tool folds a room log longer than one history page completely" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
@@ -498,26 +589,6 @@ test "board wasm tool folds a room log longer than one history page completely" 
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/board.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
-    const Step = struct {
-        fn run(io_: std.Io, cfg_: *config_mod.Config, env: *std.process.Environ.Map, dir: std.Io.Dir, wasm_: []const u8, config_json: []const u8, args: []const u8) ![]u8 {
-            var sb = host.Sandbox{
-                .gpa = std.testing.allocator,
-                .io = io_,
-                .root_dir = "/tmp/ck-sandbox-test",
-                .network_allow = &.{},
-                .environ_map = env,
-                .cfg = cfg_,
-                .state_dir = "",
-                .state_base_dir = dir,
-                .config_json = config_json,
-                .tool_self_name = "kanban",
-            };
-            const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
-            defer mod.deinit();
-            return mod.executeTool(args);
-        }
-    };
-
     // 25 cards: five more than one history page (host page size 20). All the
     // adds land within a second or two, so they share a timestamp, exactly
     // the shape that used to fold to its newest page only: the host answered
@@ -527,12 +598,12 @@ test "board wasm tool folds a room log longer than one history page completely" 
     while (i <= 25) : (i += 1) {
         const args = try std.fmt.allocPrint(std.testing.allocator, "{{\"title\":\"card-{d:0>2}\"}}", .{i});
         defer std.testing.allocator.free(args);
-        const out = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", args);
+        const out = try boardStep(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", args);
         defer std.testing.allocator.free(out);
         try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
     }
 
-    const listed = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"list\"}", "{}");
+    const listed = try boardStep(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"list\"}", "{}");
     defer std.testing.allocator.free(listed);
     try std.testing.expect(std.mem.find(u8, listed, "\"ok\":true") != null);
     i = 1;
@@ -563,35 +634,13 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
     const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/board.wasm", std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(wasm);
 
-    // Each op is its own descriptor config, so each step is its own module,
-    // sharing the room's log through the same state dir.
-    const Step = struct {
-        fn run(io_: std.Io, cfg_: *config_mod.Config, env: *std.process.Environ.Map, dir: std.Io.Dir, wasm_: []const u8, config_json: []const u8, args: []const u8) ![]u8 {
-            var sb = host.Sandbox{
-                .gpa = std.testing.allocator,
-                .io = io_,
-                .root_dir = "/tmp/ck-sandbox-test",
-                .network_allow = &.{},
-                .environ_map = env,
-                .cfg = cfg_,
-                .state_dir = "",
-                .state_base_dir = dir,
-                .config_json = config_json,
-                .tool_self_name = "kanban",
-            };
-            const mod = try ToolModule.load(std.testing.allocator, io_, &sb, wasm_);
-            defer mod.deinit();
-            return mod.executeTool(args);
-        }
-    };
-
     // A bare card first, so the later update has something unassigned to hit.
-    const first = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"bare\"}");
+    const first = try boardStep(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"bare\"}");
     defer std.testing.allocator.free(first);
     try std.testing.expect(std.mem.find(u8, first, "\"ok\":true") != null);
 
     // kanban_add's manifested `assignee` puts the card on someone at creation.
-    const second = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"taken\",\"assignee\":\"beta\"}");
+    const second = try boardStep(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"create\"}", "{\"title\":\"taken\",\"assignee\":\"beta\"}");
     defer std.testing.allocator.free(second);
     try std.testing.expect(std.mem.find(u8, second, "\"ok\":true") != null);
     try std.testing.expect(std.mem.find(u8, second, "\"assignee\":\"beta\"") != null);
@@ -607,7 +656,7 @@ test "board wasm tool assigns at creation, and update's assignee reassigns" {
     // dropped by ignore_unknown_fields when only `who` was wired).
     const upd = try std.fmt.allocPrint(std.testing.allocator, "{{\"id\":\"{s}\",\"assignee\":\"gamma\"}}", .{card_id});
     defer std.testing.allocator.free(upd);
-    const third = try Step.run(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"update\"}", upd);
+    const third = try boardStep(io, &cfg, &env_map, tmp.dir, wasm, "{\"op\":\"update\"}", upd);
     defer std.testing.allocator.free(third);
     try std.testing.expect(std.mem.find(u8, third, "\"ok\":true") != null);
     try std.testing.expect(std.mem.find(u8, third, "\"assignee\":\"gamma\"") != null);

@@ -13,7 +13,6 @@
 //! finding it at all.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
@@ -46,6 +45,10 @@ const title_column_bytes: usize = 62;
 /// Statuses are one word ("Accepted", "Superseded", ...).
 const status_column_max: usize = 12;
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "search", "open", "create", "append", "update", "status" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -59,8 +62,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
 
-    log.log(.error_, "unknown adr subcommand '{s}' (expected list, search, open, create, append, update or status)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("adr", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --
@@ -72,7 +74,7 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const query = opts.arg1 orelse {
-        log.log(.error_, "adr search needs a query: clanker adr search \"provider vtable\"", .{});
+        common.usageError("adr search needs a query: clanker adr search \"provider vtable\"", .{});
         return Error.MissingArg;
     };
 
@@ -142,7 +144,7 @@ pub fn renderCreated(arena: std.mem.Allocator, path: []const u8, rfc: []const u8
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "adr create needs {s}: clanker adr create \"<decision as the choice made>\" \"<context>\" \"<decision>\" \"<consequences>\" [rfc path]", .{what});
+    common.usageError("adr create needs {s}: clanker adr create \"<decision as the choice made>\" \"<context>\" \"<decision>\" \"<consequences>\" [rfc path]", .{what});
     return Error.MissingArg;
 }
 
@@ -192,33 +194,8 @@ pub fn renderList(arena: std.mem.Allocator, raw_adrs: []const std.json.Value, ne
         return w.written();
     }
 
-    var status_width: usize = 8;
-    for (adrs) |r| {
-        if (r != .object) continue;
-        const s = json_util.strFieldOrEmpty(r.object, "status");
-        const n = if (s.len == 0) 1 else s.len;
-        if (n > status_width) status_width = @min(n, status_column_max);
-    }
-
     try w.writer.print("{d} ADR(s)\n\n", .{adrs.len});
-    for (adrs) |r| {
-        if (r != .object) continue;
-        const path = json_util.strFieldOrEmpty(r.object, "path");
-        const title = json_util.strFieldOrEmpty(r.object, "title");
-        // An unreadable ADR still gets a row: the path is what the reader
-        // needs in order to go look, and hiding it would make it invisible.
-        const raw_status = json_util.strFieldOrEmpty(r.object, "status");
-        const status = if (raw_status.len == 0) "?" else raw_status;
-        try w.writer.print("  {s}", .{utf8.cap(status, status_column_max)});
-        var pad = status_width -| status.len;
-        while (pad > 0) : (pad -= 1) try w.writer.writeByte(' ');
-        try w.writer.print("  {s}\n", .{path});
-        if (title.len > 0) {
-            var indent = status_width + 4;
-            while (indent > 0) : (indent -= 1) try w.writer.writeByte(' ');
-            try w.writer.print("{s}\n", .{utf8.cap(stripAdrPrefix(title), title_column_bytes)});
-        }
-    }
+    try common.renderStatusRows(&w.writer, adrs, 8, status_column_max, title_column_bytes, stripAdrPrefix);
 
     try w.writer.print("\nNEXT\n\n  next free number is {d:0>4}\n", .{next_number});
     try w.writer.writeAll("  clanker adr open <path>          read one in full\n");
@@ -437,31 +414,4 @@ test "renderCreated reports an inventory that could not be updated" {
     const text = try renderCreated(arena, "docs/adrs/0018-x.md", "", false);
     try testing.expect(std.mem.find(u8, text, "inventory was not updated") != null);
     try testing.expect(std.mem.find(u8, text, "docs/adrs/README.md") != null);
-}
-
-test "callTool reports the tool's own refusal sentence" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const Canned = struct {
-        payload: []const u8,
-        fn call(ctx: *anyopaque, _: []const u8) anyerror![]const u8 {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.payload;
-        }
-    };
-    var canned: Canned = .{ .payload = "{\"ok\":false,\"error\":\"a superseded ADR needs a note naming what supersedes it\"}" };
-    const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
-    try testing.expectError(Error.ToolFailed, common.callTool(arena, "adr", tool, "{}"));
-}
-
-test "unsignedField refuses a negative count instead of wrapping it" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const v = try parseValue(arena, "{\"next_number\":-1,\"good\":7}");
-    try testing.expectEqual(@as(u64, 0), common.unsignedField(v, "next_number"));
-    try testing.expectEqual(@as(u64, 7), common.unsignedField(v, "good"));
 }

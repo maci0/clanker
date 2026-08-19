@@ -33,8 +33,8 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch
-        return declineJson(out, "input is not a transform request");
-    if (req.payload.len == 0) return declineJson(out, "empty payload");
+        return lib.fail(out, "input is not a transform request");
+    if (req.payload.len == 0) return lib.fail(out, "empty payload");
 
     const settings = std.json.parseFromSliceLeaky(Settings, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Settings{};
 
@@ -54,35 +54,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const answer = lib.llm(prompt) catch |err| {
         lib.log(2, @errorName(err));
-        return declineJson(out, "translation call failed");
+        return lib.fail(out, "translation call failed");
     };
 
     const cleaned = model_reply.stripFence(answer);
     // A translation that is no longer JSON would corrupt the tool result for
     // every later layer, so it is dropped rather than passed on.
     const is_json = std.json.validate(alloc, cleaned) catch false;
-    if (!is_json) return declineJson(out, "model returned text that is not JSON");
+    if (!is_json) return lib.fail(out, "model returned text that is not JSON");
 
-    try okJson(out, cleaned);
-}
-
-/// Models wrap JSON in ```json fences even when told not to.
-fn okJson(out: *lib.Out, payload: []const u8) !void {
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w, .options = .{} };
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("payload");
-    try s.write(payload);
-    try s.endObject();
-    try out.writeAll(buf[0..w.end]);
-}
-
-/// `ok: false` tells the harness to keep the original payload.
-fn declineJson(out: *lib.Out, reason: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const body = try std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"{s}\"}}", .{reason});
-    try out.writeAll(body);
+    try lib.okPayload(out, cleaned);
 }

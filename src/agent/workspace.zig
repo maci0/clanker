@@ -146,7 +146,7 @@ fn fromStored(arena: std.mem.Allocator, stored: []const StoredWorkspace) ![]Work
 /// Reads the registry. A missing (or empty) file is an empty list.
 ///
 /// A file that is *there* and cannot be read is not: `add`, `remove` and
-/// `setRoots` all load, mutate and then `save` the whole list, so answering
+/// `updateRoots` all load, mutate and then `save` the whole list, so answering
 /// "empty" for an unreadable registry makes the next mutation write a one-entry
 /// file over every workspace the operator had, and report success. `FileNotFound`
 /// is the only error that means empty; every other one is surfaced so those

@@ -206,7 +206,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     const references = if (research_path.len > 0)
         try std.fmt.allocPrint(
             lib.alloc,
-            "- Research: [{s}](../research/{s}) — read {s}. Its claims are unverified here until each one is checked against its own source.\n",
+            "- Research: [{s}](../research/{s}) — read {s}. Its claims are unverified here until each is checked against the source it cites (the URL, repository, or file — the note itself is not the source).\n",
             .{
                 if (research_title.len > 0) research_title else research_path,
                 research_path[research_dir.len + 1 ..],
@@ -295,7 +295,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     try s.objectField("next");
     try s.beginArray();
     if (seeded) {
-        try s.write("The seeded options are unverified stubs from the research note. Re-check each claim against its own source before writing it into the body, and delete the stubs that do not survive.");
+        try s.write("The seeded options are unverified stubs from the research note. For each claim, open the source the note cites for it (web_fetch, gh_read, read_file) — re-reading the note itself verifies nothing — then rewrite the stub in this RFC's terms or delete it.");
     } else {
         try s.write("Fill the options: at least two real candidates, the status quo, and one out-of-the-box option (something already here, a primitive, or not doing it).");
     }
@@ -309,7 +309,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
 
 fn renderSeededOptions(w: *std.Io.Writer, options: []const []const u8, research_path: []const u8) !void {
     try w.print(
-        "\nSeeded from [{s}]({s}). Every line below is a claim carried over unverified:\ncheck it against its own source, then rewrite it in this RFC's terms or delete it.\n",
+        "\nSeeded from [{s}]({s}). Every line below is a claim carried over unverified:\nopen the source it cites (not the research note) before keeping it, then rewrite\nit in this RFC's terms or delete it.\n",
         .{ research_path, relativeToRfcs(research_path) },
     );
     for (options) |option| {
@@ -362,12 +362,7 @@ fn addToInventory(entry: []const u8) !bool {
 /// write it, so every RFC stayed `Draft` in the inventory however often its
 /// own Status line moved; the status action carries the index with it.
 fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
-    const idx = try records_grep.readIndex(index_path);
-
-    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
-    defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, idx.text, inventory_start, inventory_end, link, label)) return false;
-    return records_grep.writeIndex(index_path, idx, updated.written());
+    return records_grep.setIndexStatus(index_path, inventory_start, inventory_end, link, label);
 }
 
 /// Paths of every research note that exists, for a `create` that linked none.
@@ -393,27 +388,7 @@ fn list(out: *lib.Out) !void {
 }
 
 fn open(obj: std.json.Value, out: *lib.Out) !void {
-    const path = lib.str(obj, "path") catch
-        return lib.fail(out, "open needs the path of an RFC");
-    if (!doc.isPathIn(dir, path)) return lib.fail(out, "path must be a markdown file directly below docs/rfcs/");
-    const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the RFC");
-    const text = try lib.alloc.dupe(u8, raw);
-
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("title");
-    try s.write(doc.documentTitle(text));
-    try s.objectField("status");
-    try s.write(doc.statusFrom(text, &statuses));
-    try s.objectField("text");
-    try s.write(text);
-    try s.endObject();
-    lib.commit(out, &w);
+    return records_grep.openNumbered(out, obj, dir, &statuses, "an RFC");
 }
 
 /// Searches the RFCs and the ADRs together. A decision that was already made
@@ -597,25 +572,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     // CAS miss leaves the RFC correct and names the line to reconcile.
     const indexed = setInventoryStatus(std.fs.path.basename(path), label) catch false;
 
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("action");
-    try s.write("status");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("status");
-    try s.write(label);
-    try s.objectField("indexed");
-    try s.write(indexed);
-    if (!indexed) {
-        try s.objectField("note");
-        try s.write("the RFC's status changed, but its docs/rfcs/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status word by hand so the index does not disagree with the RFC");
-    }
-    try s.endObject();
-    lib.commit(out, &w);
+    try records_grep.writeStatusReply(out, path, label, indexed, "the RFC's status changed, but its docs/rfcs/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status word by hand so the index does not disagree with the RFC", null);
 }
 
 /// Derived from `statuses`, so what `status` accepts and what `list` reads

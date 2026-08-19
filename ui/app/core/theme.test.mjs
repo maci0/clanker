@@ -34,3 +34,48 @@ test("theme.js loads the catalog from disk, not a hardcoded list", function () {
   assert.match(themeJs, /export function themesReady/);
   assert.doesNotMatch(themeJs, /export var THEMES = \["system", "light"/);
 });
+
+// The picker's keyboard and swatch behaviour. These landed as three improve
+// passes (imp-1787095166595783866, imp-1787096287238773039,
+// imp-1787097418987953973), were removed wholesale in 48d03d8b, and are
+// restored here; the pins exist so a third round-trip is a red test.
+const appCss = readFileSync(join(here, "..", "app.css"), "utf8");
+
+test("the picker walks its options with ArrowUp/ArrowDown and wraps", function () {
+  assert.match(themeJs, /ArrowDown/);
+  assert.match(themeJs, /ArrowUp/);
+  // Wrap at both ends, the same modulo walk core/modelpicker.js uses. The
+  // first version clamped going down and wrapped going up.
+  assert.match(themeJs, /\(at \+ delta \+ opts\.length\) % opts\.length/);
+  assert.match(themeJs, /scrollIntoView\(\{ block: "nearest" \}\)/);
+});
+
+test("the picker leaves Enter/Space to the option buttons", function () {
+  // Rows are real <button>s, so the browser already fires click on Enter and
+  // Space. A keydown arm for them is a hand-rolled duplicate that also
+  // preventDefault()s the native path.
+  assert.doesNotMatch(themeJs, /e\.key === "Enter"/);
+  assert.doesNotMatch(themeJs, /e\.key === " "/);
+});
+
+test("closing the picker hands focus back to the toggle", function () {
+  // A hidden element keeps focus: without this the page falls back to <body>
+  // and the next Tab restarts at the top of the document.
+  assert.match(themeJs, /function closePicker\(\)[\s\S]*?_picker\.contains\(document\.activeElement\)/);
+  assert.match(themeJs, /function closePicker\(\)[\s\S]*?anchor\.focus\(\)/);
+});
+
+test("each option carries a swatch laid out beside its label", function () {
+  assert.match(themeJs, /theme-picker__swatch/);
+  assert.match(themeJs, /tokens\["--bg"\]/);
+  // .model-picker__option is flex-direction: column, so an unqualified swatch
+  // span renders stacked above the label with its margin doing nothing. The
+  // theme rows need their own row-direction modifier.
+  assert.match(themeJs, /theme-picker__option/);
+  assert.match(appCss, /\.theme-picker__option \{[^}]*flex-direction: row/);
+  assert.match(appCss, /\.theme-picker__swatch \{/);
+  assert.ok(
+    appCss.indexOf(".theme-picker__option {") > appCss.indexOf(".model-picker__option {"),
+    "the theme modifier must come after .model-picker__option to win the cascade"
+  );
+});

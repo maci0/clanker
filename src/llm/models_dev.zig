@@ -253,54 +253,103 @@ fn spanString(arena: std.mem.Allocator, span: []const u8) ?[]const u8 {
     return std.json.parseFromSliceLeaky([]const u8, arena, span, .{}) catch null;
 }
 
+/// A top-level catalog member with the three fields provider matching needs.
+/// `findProviderSpan` used to re-derive them from the raw span on every call,
+/// and it is called once per configured provider: a config naming P providers
+/// that models.dev does not name by id walked the ~4 MB snapshot P times over,
+/// sub-scanning each member for `api` and re-parsing each member's `env` array
+/// every pass.
+///
+/// They are filled on first use rather than up front. Extracting them for
+/// every member is itself a second pass over the whole snapshot (`memberSpan`
+/// walks each member's object, and the spans sum to the file), and the
+/// ordinary configured provider -- `anthropic`, `openai`, `deepseek` are all
+/// models.dev ids -- is answered by the exact-name rung, which reads none of
+/// them. `resolved` memoizes across the providers that do reach the fallback.
+pub const IndexedProvider = struct {
+    key: []const u8,
+    value: []const u8,
+    /// Whether the three fields below have been extracted from `value` yet.
+    resolved: bool = false,
+    /// Empty when the member is not an object or carries no `api`.
+    api: []const u8 = "",
+    host: ?[]const u8 = null,
+    envs: []const []const u8 = &.{},
+};
+
+/// Every member as a match candidate, in document order. Only the key and the
+/// raw span are read here; see `IndexedProvider` for why the rest waits.
+pub fn indexProviders(arena: std.mem.Allocator, members: []const Member) []IndexedProvider {
+    const out = arena.alloc(IndexedProvider, members.len) catch return &.{};
+    for (members, out) |m, *e| e.* = .{ .key = m.key, .value = m.value };
+    return out;
+}
+
+/// Fills `api` / `host` / `envs` from the member's raw span, once.
+fn resolveMatchFields(arena: std.mem.Allocator, e: *IndexedProvider) void {
+    if (e.resolved) return;
+    e.resolved = true;
+    if (e.value.len == 0 or e.value[0] != '{') return;
+    if (memberSpan(e.value, "api")) |span| {
+        if (spanString(arena, span)) |api| {
+            e.api = api;
+            e.host = hostOf(api);
+        }
+    }
+    if (memberSpan(e.value, "env")) |envs| {
+        // `env` is a small array of names; parsing just that span is
+        // cheaper than a second raw-array walker for one field.
+        e.envs = std.json.parseFromSliceLeaky([]const []const u8, arena, envs, .{}) catch &[_][]const u8{};
+    }
+}
+
 /// `findProvider`'s rule over raw spans: exact name, then exact `api` URL,
 /// then same host, then a shared `api_key_env`, each taking the first hit in
 /// document order. Returns the matched provider's raw JSON span, so the
 /// caller parses one provider instead of the whole snapshot.
 ///
 /// An exact name hit stops the walk: it outranks every fallback, so nothing
-/// later in the document can change the answer. That is the ordinary case —
-/// `anthropic`, `openai`, `deepseek` are all models.dev ids — and it means a
+/// later in the document can change the answer. That is the ordinary case --
+/// `anthropic`, `openai`, `deepseek` are all models.dev ids -- and it means a
 /// configured provider costs a key comparison, not a scan of its models.
 pub fn findProviderSpan(
     arena: std.mem.Allocator,
-    members: []const Member,
+    index: []IndexedProvider,
     name: []const u8,
     base_url: []const u8,
     api_key_env: ?[]const u8,
 ) ?[]const u8 {
+    // Names first, on their own pass. An exact name hit outranks every
+    // fallback wherever it sits in the document, so finding it here gives the
+    // same answer the interleaved walk gave -- and costs only key comparisons,
+    // leaving every member's `api`/`env` unextracted.
+    if (name.len > 0) {
+        for (index) |e| {
+            if (std.mem.eql(u8, e.key, name)) return e.value;
+        }
+    }
     const want_base = std.mem.trimEnd(u8, base_url, "/");
     const want_host = hostOf(base_url);
     var api_match: ?[]const u8 = null;
     var host_fallback: ?[]const u8 = null;
     var env_fallback: ?[]const u8 = null;
-    for (members) |m| {
-        if (name.len > 0 and std.mem.eql(u8, m.key, name)) return m.value;
-        if (m.value.len == 0 or m.value[0] != '{') continue;
-        // Nothing below can beat a hit already recorded, so skip the field
-        // scans once all three fallbacks are decided.
-        if (api_match != null and host_fallback != null and env_fallback != null) continue;
-        const api: []const u8 = blk: {
-            const span = memberSpan(m.value, "api") orelse break :blk "";
-            break :blk spanString(arena, span) orelse "";
-        };
-        if (api_match == null and api.len > 0 and want_base.len > 0 and
-            std.mem.eql(u8, std.mem.trimEnd(u8, api, "/"), want_base)) api_match = m.value;
+    for (index) |*e| {
+        // Nothing below can beat a hit already recorded, so stop once all
+        // three fallbacks are decided rather than resolving the rest.
+        if (api_match != null and host_fallback != null and env_fallback != null) break;
+        resolveMatchFields(arena, e);
+        if (api_match == null and e.api.len > 0 and want_base.len > 0 and
+            std.mem.eql(u8, std.mem.trimEnd(u8, e.api, "/"), want_base)) api_match = e.value;
         if (host_fallback == null) if (want_host) |wh| {
-            if (hostOf(api)) |eh| {
-                if (std.mem.eql(u8, eh, wh)) host_fallback = m.value;
+            if (e.host) |eh| {
+                if (std.mem.eql(u8, eh, wh)) host_fallback = e.value;
             }
         };
         if (env_fallback == null) if (api_key_env) |want_env| {
-            if (memberSpan(m.value, "env")) |envs| {
-                // `env` is a small array of names; parsing just that span is
-                // cheaper than a second raw-array walker for one field.
-                const parsed = std.json.parseFromSliceLeaky([]const []const u8, arena, envs, .{}) catch &[_][]const u8{};
-                for (parsed) |e| {
-                    if (std.mem.eql(u8, e, want_env)) {
-                        env_fallback = m.value;
-                        break;
-                    }
+            for (e.envs) |name_in_env| {
+                if (std.mem.eql(u8, name_in_env, want_env)) {
+                    env_fallback = e.value;
+                    break;
                 }
             }
         };
@@ -359,6 +408,30 @@ pub fn findProvider(
 
 /// A catalog model matching `model_name`: exact key, then the part after the
 /// last `/` (OpenRouter-style ids against a vendor's own table).
+/// The raw span of a provider's `models` object, or null when the provider
+/// member is not an object or carries none.
+pub fn modelsSpan(provider_span: []const u8) ?[]const u8 {
+    return memberSpan(provider_span, "models");
+}
+
+/// The raw span of one model inside a `models` object span: exact id first,
+/// then the segment after the last `/`, matching `findModel`'s rule.
+///
+/// Raw so the caller parses one model instead of the provider. A provider's
+/// span is the bulk of the snapshot for the aggregators (OpenRouter alone is
+/// hundreds of models, and `models` is nearly all of the member's bytes), and
+/// `Config.load` reads the specs of the handful of models the config actually
+/// names. Parsing the whole provider into a `std.json.Value` tree to look up
+/// two of them allocated the entire subtree per configured provider on every
+/// CLI invocation; scanning for the member costs one pass and no allocation.
+pub fn findModelSpan(models_raw: []const u8, model_name: []const u8) ?[]const u8 {
+    if (memberSpan(models_raw, model_name)) |span| return span;
+    if (std.mem.findScalarLast(u8, model_name, '/')) |slash| {
+        return memberSpan(models_raw, model_name[slash + 1 ..]);
+    }
+    return null;
+}
+
 pub fn findModel(provider_entry: std.json.Value, model_name: []const u8) ?std.json.Value {
     if (provider_entry != .object) return null;
     const models_v = provider_entry.object.get("models") orelse return null;
@@ -455,7 +528,7 @@ fn expectSameMatch(arena: std.mem.Allocator, body: []const u8, name: []const u8,
     const catalog = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
     const want = findProvider(catalog, name, base_url, env);
     const members = topLevelMembers(arena, body);
-    const got_span = findProviderSpan(arena, members, name, base_url, env);
+    const got_span = findProviderSpan(arena, indexProviders(arena, members), name, base_url, env);
     if (want == null) {
         try std.testing.expect(got_span == null);
         return;
@@ -557,6 +630,33 @@ test "findModel matches a wire SKU and a slashed alias tail" {
     try std.testing.expect(findModel(p, "grok-4.6") != null);
     try std.testing.expect(findModel(p, "xai/grok-4.6") != null);
     try std.testing.expect(findModel(p, "grok4.6-coding") == null);
+}
+
+test "findModelSpan answers the same models findModel does, without parsing the provider" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const index = indexProviders(arena, topLevelMembers(arena, sample));
+    const provider = findProviderSpan(arena, index, "xai", "", null).?;
+    const models_raw = modelsSpan(provider).?;
+
+    // The raw span is the model object itself, so `specs` reads it exactly as
+    // it reads the subtree the whole-provider parse used to produce.
+    const span = findModelSpan(models_raw, "grok-4.6").?;
+    const m = try std.json.parseFromSliceLeaky(std.json.Value, arena, span, .{});
+    const s = try specs(arena, m);
+    try std.testing.expectEqual(@as(u32, 500000), s.context_window.?);
+    try std.testing.expectEqualStrings("Grok 4.6", s.display.?);
+
+    // Same alias rule as findModel: the tail after the last slash, and no
+    // match for a name the catalog does not carry.
+    try std.testing.expect(findModelSpan(models_raw, "xai/grok-4.6") != null);
+    try std.testing.expect(findModelSpan(models_raw, "grok4.6-coding") == null);
+
+    // A provider member with no `models` object reads as "no models", not as
+    // a match on some other member.
+    try std.testing.expect(modelsSpan("{\"api\":\"https://example.invalid\"}") == null);
 }
 
 test "specs reads context, output, cost, display, and capabilities" {

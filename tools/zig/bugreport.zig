@@ -34,84 +34,35 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
 
-    // Validate severity → board priority mapping
     const priority = mapSeverity(severity) orelse {
         var buf: [128]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "severity must be one of: critical, high, normal, medium, low, minor (got \"{s}\")", .{severity}) catch return lib.fail(out, "invalid severity");
         return lib.fail(out, msg);
     };
 
-    // Build the formatted body
     var body_buf: std.ArrayList(u8) = .empty;
     defer body_buf.deinit(lib.alloc);
 
     try body_buf.appendSlice(lib.alloc, "## Bug Report\n\n");
+    try appendField(&body_buf, "Severity", severity);
+    try appendField(&body_buf, "Component", component);
+    try appendField(&body_buf, "Environment", environment);
+    try appendSection(&body_buf, "Description", description, null);
+    try appendSection(&body_buf, "Steps to Reproduce", steps, null);
+    try appendSection(&body_buf, "Expected Behaviour", expected, null);
+    try appendSection(&body_buf, "Actual Behaviour", actual, null);
+    try appendSection(&body_buf, "Reproduce", repro, "sh");
+    try appendSection(&body_buf, "Fix hint", fix_hint, "");
 
-    try body_buf.appendSlice(lib.alloc, "**Severity:** ");
-    try body_buf.appendSlice(lib.alloc, severity);
-    try body_buf.appendSlice(lib.alloc, "\n");
-
-    if (component) |c| {
-        try body_buf.appendSlice(lib.alloc, "**Component:** ");
-        try body_buf.appendSlice(lib.alloc, c);
-        try body_buf.appendSlice(lib.alloc, "\n");
-    }
-
-    if (environment) |e| {
-        try body_buf.appendSlice(lib.alloc, "**Environment:** ");
-        try body_buf.appendSlice(lib.alloc, e);
-        try body_buf.appendSlice(lib.alloc, "\n");
-    }
-
-    if (description) |d| {
-        try body_buf.appendSlice(lib.alloc, "\n### Description\n");
-        try body_buf.appendSlice(lib.alloc, d);
-        try body_buf.appendSlice(lib.alloc, "\n");
-    }
-
-    if (steps) |s| {
-        try body_buf.appendSlice(lib.alloc, "\n### Steps to Reproduce\n");
-        try body_buf.appendSlice(lib.alloc, s);
-        try body_buf.appendSlice(lib.alloc, "\n");
-    }
-
-    if (expected) |e| {
-        try body_buf.appendSlice(lib.alloc, "\n### Expected Behaviour\n");
-        try body_buf.appendSlice(lib.alloc, e);
-        try body_buf.appendSlice(lib.alloc, "\n");
-    }
-
-    if (actual) |a| {
-        try body_buf.appendSlice(lib.alloc, "\n### Actual Behaviour\n");
-        try body_buf.appendSlice(lib.alloc, a);
-        try body_buf.appendSlice(lib.alloc, "\n");
-    }
-
-    if (repro) |r| {
-        try body_buf.appendSlice(lib.alloc, "\n### Reproduce\n```sh\n");
-        try body_buf.appendSlice(lib.alloc, r);
-        try body_buf.appendSlice(lib.alloc, "\n```\n");
-    }
-
-    if (fix_hint) |h| {
-        try body_buf.appendSlice(lib.alloc, "\n### Fix hint\n```\n");
-        try body_buf.appendSlice(lib.alloc, h);
-        try body_buf.appendSlice(lib.alloc, "\n```\n");
-    }
-
-    // Prefix title with [BUG] if it doesn't already have it
+    const prefix = "[BUG] ";
     var title_buf: [600]u8 = undefined;
     const title = blk: {
-        if (std.ascii.startsWithIgnoreCase(title_raw, "[bug]")) {
-            break :blk title_raw;
-        }
-        const prefix_len: usize = 5; // "[BUG] "
-        const max_title = title_buf.len - prefix_len;
+        if (std.ascii.startsWithIgnoreCase(title_raw, "[bug]")) break :blk title_raw;
+        const max_title = title_buf.len - prefix.len;
         const t = if (title_raw.len > max_title) title_raw[0..max_title] else title_raw;
-        break :blk std.fmt.bufPrint(&title_buf, "[BUG] {s}", .{t}) catch title_raw;
+        break :blk std.fmt.bufPrint(&title_buf, prefix ++ "{s}", .{t}) catch title_raw;
     };
 
-    // Build the kanban_add args as JSON
     var args_buf: std.ArrayList(u8) = .empty;
     defer args_buf.deinit(lib.alloc);
     {
@@ -135,13 +86,40 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try args_buf.appendSlice(lib.alloc, w.written());
     }
 
-    // Call kanban_add via ck_tool
     const result = lib.toolCall("kanban_add", args_buf.items) catch |err| {
         return lib.failErr(out, err, "posting the bug to the board");
     };
 
-    // Forward the kanban_add response — it contains ok, board, and the new card id
+    // kanban_add's own reply carries ok, board and the new card id.
     try out.writeAll(result);
+}
+
+/// `**Name:** value` on its own line. An absent value writes nothing.
+fn appendField(buf: *std.ArrayList(u8), name: []const u8, value: ?[]const u8) !void {
+    const v = value orelse return;
+    try buf.appendSlice(lib.alloc, "**");
+    try buf.appendSlice(lib.alloc, name);
+    try buf.appendSlice(lib.alloc, ":** ");
+    try buf.appendSlice(lib.alloc, v);
+    try buf.appendSlice(lib.alloc, "\n");
+}
+
+/// A `### heading` block, its body optionally in a fenced code block of the
+/// named language. An absent or empty value writes nothing, heading included.
+fn appendSection(buf: *std.ArrayList(u8), heading: []const u8, value: ?[]const u8, fence: ?[]const u8) !void {
+    const v = value orelse return;
+    if (v.len == 0) return;
+    try buf.appendSlice(lib.alloc, "\n### ");
+    try buf.appendSlice(lib.alloc, heading);
+    try buf.appendSlice(lib.alloc, "\n");
+    if (fence) |lang| {
+        try buf.appendSlice(lib.alloc, "```");
+        try buf.appendSlice(lib.alloc, lang);
+        try buf.appendSlice(lib.alloc, "\n");
+    }
+    try buf.appendSlice(lib.alloc, v);
+    try buf.appendSlice(lib.alloc, "\n");
+    if (fence != null) try buf.appendSlice(lib.alloc, "```\n");
 }
 
 fn mapSeverity(sev: []const u8) ?[]const u8 {
@@ -158,7 +136,7 @@ fn mapSeverity(sev: []const u8) ?[]const u8 {
 }
 
 fn inferComponent(title: []const u8) ?[]const u8 {
-    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools" };
+    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools", "webui", "chat", "memory", "auth", "config" };
     for (tokens) |tok| {
         if (std.ascii.indexOfIgnoreCase(title, tok)) |_| return tok;
     }

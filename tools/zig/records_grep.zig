@@ -153,6 +153,24 @@ pub fn writeIndex(path: []const u8, index: Index, updated: []const u8) !bool {
     return true;
 }
 
+/// Rewrites one inventory row's status in place, compare-and-swap against the
+/// index as read. Every store keeps a second copy of a record's status in its
+/// README, and only the `status` action writes both; the stores differ only in
+/// which markers bound the inventory, so the read-modify-write lives here once.
+pub fn setIndexStatus(
+    index_path: []const u8,
+    start_marker: []const u8,
+    end_marker: []const u8,
+    link: []const u8,
+    label: []const u8,
+) !bool {
+    const idx = try readIndex(index_path);
+    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer updated.deinit();
+    if (!try doc.setInventoryStatus(&updated.writer, idx.text, start_marker, end_marker, link, label)) return false;
+    return writeIndex(index_path, idx, updated.written());
+}
+
 /// `grepAll` narrowed to the store's records: a missing or unreadable store is
 /// an empty result, not an error, and non-record files are dropped.
 ///
@@ -217,6 +235,82 @@ pub fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void
     try s.write(action);
     try s.objectField("path");
     try s.write(path);
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// The `open` reply the four numbered stores share: the record's own text,
+/// plus the title and status read back out of it. `noun` names the record in
+/// the refusals, article included ("an ADR", "a research note").
+///
+/// All four had their own byte-identical copy of this, differing only in that
+/// noun and in the store they read from.
+pub fn openNumbered(
+    out: *lib.Out,
+    obj: std.json.Value,
+    dir: []const u8,
+    statuses: []const []const u8,
+    noun: []const u8,
+) !void {
+    const path = lib.str(obj, "path") catch
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "open needs the path of {s}", .{noun}));
+    if (!doc.isPathIn(dir, path))
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "path must be a markdown file directly below {s}/", .{dir}));
+    const raw = lib.fsRead(path) catch |err|
+        return lib.failErr(out, err, try std.fmt.allocPrint(lib.alloc, "opening {s}", .{noun}));
+    const text = try lib.alloc.dupe(u8, raw);
+
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("title");
+    try s.write(doc.documentTitle(text));
+    try s.objectField("status");
+    try s.write(doc.statusFrom(text, statuses));
+    try s.objectField("text");
+    try s.write(text);
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// The `status` action's reply, identical across all five record stores: the
+/// path, the label it now carries, and whether the store's README inventory
+/// copy went with it. Only the note explaining a missed inventory write is
+/// store-specific, and only the PRD store has a follow-up reminder, so both
+/// are passed in.
+pub fn writeStatusReply(
+    out: *lib.Out,
+    path: []const u8,
+    label: []const u8,
+    indexed: bool,
+    note: []const u8,
+    reminder: ?[]const u8,
+) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("status");
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("status");
+    try s.write(label);
+    try s.objectField("indexed");
+    try s.write(indexed);
+    if (!indexed) {
+        try s.objectField("note");
+        try s.write(note);
+    }
+    if (reminder) |r| {
+        try s.objectField("reminder");
+        try s.write(r);
+    }
     try s.endObject();
     lib.commit(out, &w);
 }

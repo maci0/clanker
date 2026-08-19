@@ -24,6 +24,19 @@ export function makeLineSplitter(onLine) {
   };
 }
 
+// Drain a fetch body into a splitter. The caller flushes once this resolves.
+export function pumpInto(body, splitter) {
+  var reader = body.getReader();
+  var decoder = new TextDecoder();
+  return (function pump() {
+    return reader.read().then(function (chunk) {
+      if (chunk.done) return;
+      splitter.push(decoder.decode(chunk.value, { stream: true }));
+      return pump();
+    });
+  })();
+}
+
 // Same-origin SSE watch of GET /api/events. Commands stay on fetch POST.
 // Absent endpoint (404) is soft-fail: probe once, never leave EventSource
 // reconnecting into console noise.

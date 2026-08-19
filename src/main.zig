@@ -141,6 +141,7 @@ comptime {
     _ = @import("util/file_lock.zig");
     _ = @import("util/disk_cap.zig");
     _ = @import("util/edit_distance.zig");
+    _ = @import("util/no_color.zig");
     _ = @import("util/ensure_dir.zig");
     _ = @import("util/json.zig");
     _ = @import("util/raw_http.zig");
@@ -200,37 +201,16 @@ comptime {
     _ = @import("records/prd.zig");
 }
 
-/// Resolves the Zig standard library directory at startup (via `zig env`),
-/// used by the zig_std tool to look up symbol signatures.
-fn resolveZigLibDir(io: std.Io, gpa: std.mem.Allocator) void {
-    const argv = [_][]const u8{ "zig", "env" };
-    const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return;
-    defer gpa.free(res.stdout);
-    defer gpa.free(res.stderr);
-    // zig env prints Zig struct syntax: .lib_dir = "/path/to/lib"
-    var it = std.mem.splitScalar(u8, res.stdout, '\n');
-    while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (std.mem.find(u8, trimmed, ".lib_dir =")) |idx| {
-            const rest = trimmed[idx + ".lib_dir =".len ..];
-            const after = std.mem.trimStart(u8, rest, " \t\"");
-            var end: usize = after.len;
-            if (std.mem.findScalar(u8, after, '"')) |q| end = q;
-            const dir = after[0..end];
-            if (dir.len > 0) host.zig_lib_dir = gpa.dupe(u8, dir) catch return;
-            return;
-        }
-    }
-}
-
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
-    resolveZigLibDir(init.io, gpa);
-    // Both live for the whole process, but freeing them keeps the debug
+    // The Zig lib dir is resolved on first use (`host.zigLibDir`), not here:
+    // it costs a fork+exec of the compiler and only `zig_std` and the improve
+    // engine's std-symbol help ever read it.
+    //
+    // These live for the whole process, but freeing them keeps the debug
     // allocator's leak report meaningful: a real leak should not hide behind a
     // known one.
     defer subprocess.deinitProcessRegistry();
-    defer if (host.zig_lib_dir.len > 0) gpa.free(host.zig_lib_dir);
     defer vertex_token.deinit(init.io, gpa);
     defer rate_limit.deinit(init.io, gpa);
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
@@ -274,7 +254,7 @@ pub fn main(init: std.process.Init) !void {
             else
                 cli.printUsageError(init.io, "unrecognized argument '{s}'", .{shown}),
             error.MissingArg => if (std.mem.eql(u8, diag, "export"))
-                cli.printUsageError(init.io, "clanker session needs `export <id>`; to list conversations run `clanker sessions`", .{})
+                cli.printUsageError(init.io, "clanker session needs a subcommand: `export <id>` or `search <query>`; to list conversations run `clanker sessions`", .{})
             else if (std.mem.eql(u8, diag, "conversation id"))
                 cli.printUsageError(init.io, "clanker session export needs a conversation id; run `clanker sessions` for the list", .{})
             else if (std.mem.eql(u8, diag, "improvement id"))
@@ -350,16 +330,26 @@ pub fn main(init: std.process.Init) !void {
             break :blk config.Config.loadWithProfile(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml", p) catch null;
         } else config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
         if (merged) |c| {
-            var buf: [65536]u8 = undefined;
-            var w: std.Io.Writer = .fixed(&buf);
-            w.print("{any}\n", .{c}) catch |err| log.log(.warn, "config dump truncated ({s}); output is incomplete", .{@errorName(err)});
-            cli.writeStdOut(init.io, w.buffered()) catch {};
+            // Allocating, not a fixed buffer: the merged config of a machine
+            // with a dozen providers is well past any stack-sized dump, and a
+            // config dump that silently stops halfway is worse than none.
+            var out: std.Io.Writer.Allocating = .init(arena);
+            if (c.writeJson(&out.writer)) {
+                cli.writeStdOut(init.io, out.written()) catch {};
+            } else |err| {
+                cli.printUsageError(init.io, "could not render the config as JSON ({s})", .{@errorName(err)});
+                std.process.exit(1);
+            }
         } else {
             cli.printUsageError(init.io, "could not load configuration; check config.toml syntax or run `clanker setup` to create one", .{});
             std.process.exit(1);
         }
         std.process.exit(0);
     }
+    // Order is the precedence: `--quiet` overrides CLANKER_LOG_LEVEL above,
+    // and `--verbose` overrides both. Two flags on one invocation asking for
+    // opposite things resolves toward more output rather than refusing.
+    if (opts.quiet) log.setLevel(.error_);
     if (opts.verbose) log.setLevel(.debug);
 
     // Load API keys and other secrets from $CLANKER_ENV_FILE or ./.env
@@ -390,7 +380,6 @@ pub fn main(init: std.process.Init) !void {
             error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
             error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
             error.ModuleDisabled => "this module is disabled in config.toml",
-            error.ServeNotRunning => "clanker serve is not running; start it with modules.mesh = true",
             error.UnknownProvider => "no provider by that name in config.toml; run `clanker providers check` for the list",
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",
@@ -403,8 +392,8 @@ pub fn main(init: std.process.Init) !void {
             error.GateFailed => "one or more gates failed (see output above)",
             error.EvalsFailed => "one or more evals failed (see output above)",
             error.UnknownEval => "no eval by that name; run `clanker eval` with no argument to list them",
+            error.PresetsDirUnusable => "presets/ could not be created or opened; check permissions in the working directory",
             error.HttpError => "the HTTP request failed; check the provider's status and your network",
-            error.GitFailed => "git exited with an error (see output above)",
             error.ArenaRefused => "the arena match was refused (see output above)",
             error.CompareRefused => "the comparison was refused (see output above)",
             else => null,

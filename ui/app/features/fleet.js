@@ -290,8 +290,14 @@ function renderDMs(container, chatData) {
   container.appendChild(list);
 }
 
+// One IntersectionObserver for the whole run list, re-armed on each render.
+// Kept module-level so a re-render disconnects the previous one instead of
+// leaving it holding detached cards alive.
+var _subProbeObserver = null;
+
 function renderRuns(container, detailNode, runs) {
   container.textContent = "";
+  if (_subProbeObserver) { _subProbeObserver.disconnect(); _subProbeObserver = null; }
   if (!runs.length) {
     var empty = el("p", "run-empty", "No runs recorded yet. Start a task in Chat to watch its agent tree here. ");
     var goChat = el("button", "primary", "Open Chat");
@@ -407,38 +413,63 @@ function renderRuns(container, detailNode, runs) {
     }
 
     if (!children.length && root.run_id.indexOf("sub-") !== 0) {
-      fetch("/api/runs/" + encodeURIComponent(root.run_id)).then(readJson).then(function (g) {
-        var body = g.text ? JSON.parse(g.text) : g;
-        var ids = [];
-        (body.nodes || []).forEach(function (n) {
-          extractSubIds(n.output || "").forEach(function (sid) { if (ids.indexOf(sid) === -1) ids.push(sid); });
-          extractSubIds(n.detail || "").forEach(function (sid) { if (ids.indexOf(sid) === -1) ids.push(sid); });
-        });
-        if (!ids.length) return;
-        var extra = ids.filter(function (sid) { return !grouped.byId[sid]; });
-        if (!extra.length) return;
-        var note = el("div", "meta fleet-note");
-        note.textContent = "Sub-runs referenced in output: " + extra.join(", ");
-        container.appendChild(note);
-        extra.forEach(function (sid) {
-          var row2 = el("div", "tool-row fleet-card fleet-extra-row");
-          row2.addEventListener("click", function (e) {
-            if (e.target.closest && e.target.closest("button")) return;
-            openRun(sid);
-          });
-          row2.appendChild(el("div", "tool-name", sid));
-          var a = el("div", "toolbar-actions");
-          var b = el("button", "secondary", "Open");
-          b.type = "button";
-          b.setAttribute("aria-label", "Open run " + sid);
-          b.addEventListener("click", function () { openRun(sid); });
-          a.appendChild(b);
-          row2.appendChild(a);
-          container.appendChild(row2);
-        });
-      }).catch(function () {});
+      probeSubRuns(card, root.run_id);
     }
   });
+
+  // Sub-run ids only appear inside a run's node output, so finding them costs
+  // one graph fetch per childless card. Doing that at render time issued one
+  // request per run in the list (up to the 200 the janitor keeps), and each
+  // one loads and compiles a wasm guest server-side. Probe only the cards the
+  // operator actually scrolls to, once each.
+  function probeSubRuns(card, runId) {
+    if (typeof IntersectionObserver !== "function") { loadSubRuns(runId); return; }
+    if (!_subProbeObserver) {
+      _subProbeObserver = new IntersectionObserver(function (entries, obs) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          obs.unobserve(e.target);
+          var id = e.target._fleetProbeId;
+          if (id) { e.target._fleetProbeId = null; loadSubRuns(id); }
+        });
+      });
+    }
+    card._fleetProbeId = runId;
+    _subProbeObserver.observe(card);
+  }
+
+  function loadSubRuns(runId) {
+    fetch("/api/runs/" + encodeURIComponent(runId)).then(readJson).then(function (g) {
+      var body = g.text ? JSON.parse(g.text) : g;
+      var ids = [];
+      (body.nodes || []).forEach(function (n) {
+        extractSubIds(n.output || "").forEach(function (sid) { if (ids.indexOf(sid) === -1) ids.push(sid); });
+        extractSubIds(n.detail || "").forEach(function (sid) { if (ids.indexOf(sid) === -1) ids.push(sid); });
+      });
+      if (!ids.length) return;
+      var extra = ids.filter(function (sid) { return !grouped.byId[sid]; });
+      if (!extra.length) return;
+      var note = el("div", "meta fleet-note");
+      note.textContent = "Sub-runs referenced in output: " + extra.join(", ");
+      container.appendChild(note);
+      extra.forEach(function (sid) {
+        var row2 = el("div", "tool-row fleet-card fleet-extra-row");
+        row2.addEventListener("click", function (e) {
+          if (e.target.closest && e.target.closest("button")) return;
+          openRun(sid);
+        });
+        row2.appendChild(el("div", "tool-name", sid));
+        var a = el("div", "toolbar-actions");
+        var b = el("button", "secondary", "Open");
+        b.type = "button";
+        b.setAttribute("aria-label", "Open run " + sid);
+        b.addEventListener("click", function () { openRun(sid); });
+        a.appendChild(b);
+        row2.appendChild(a);
+        container.appendChild(row2);
+      });
+    }).catch(function () {});
+  }
 }
 
 function renderSimpleGraph(container, g) {
@@ -607,6 +638,18 @@ function renderFloor(runs, roster){
 var _meshTimer = null;
 var _meshTopo = "";
 var _refreshMapFn = null;
+var _mapCoalesce = null;
+
+/* Live events arrive one per chat message (noteChat publishes both `chat` and
+   `talk`) and a map refresh is three fetches. Coalesce a burst into one
+   refresh instead of tripling every message into HTTP traffic. */
+function scheduleMapRefresh() {
+  if (_mapCoalesce) return;
+  _mapCoalesce = setTimeout(function () {
+    _mapCoalesce = null;
+    if (_refreshMapFn) _refreshMapFn();
+  }, 500);
+}
 
 /* The mesh poll follows the view the way the rooms and arena polls do:
    armed while Fleet is open, stopped by stopFleet when the operator leaves.
@@ -622,6 +665,7 @@ function startMeshTimer() {
 
 export function stopFleet() {
   if (_meshTimer) { clearInterval(_meshTimer); _meshTimer = null; }
+  if (_mapCoalesce) { clearTimeout(_mapCoalesce); _mapCoalesce = null; }
 }
 
 function meshPos(nodes, i, w, h) {
@@ -873,7 +917,7 @@ export function initFleet() {
     initFleet._liveBound = true;
     onLive(function (ev) {
       if (!ev) return;
-      if (ev.t === "talk" || ev.t === "run" || ev.t === "mesh") refreshMap();
+      if (ev.t === "talk" || ev.t === "run" || ev.t === "mesh") scheduleMapRefresh();
     });
   }
   startMeshTimer();

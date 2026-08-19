@@ -312,25 +312,7 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     // CAS miss leaves the record correct and says which line to reconcile.
     const indexed = setInventoryStatus(kind, path[reports_dir.len + 1 ..], label) catch false;
 
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("action");
-    try s.write("status");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("status");
-    try s.write(label);
-    try s.objectField("indexed");
-    try s.write(indexed);
-    if (!indexed) {
-        try s.objectField("note");
-        try s.write("the record's status changed, but its docs/reports/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status by hand so the index does not disagree with the record");
-    }
-    try s.endObject();
-    lib.commit(out, &w);
+    try records_grep.writeStatusReply(out, path, label, indexed, "the record's status changed, but its docs/reports/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status by hand so the index does not disagree with the record", null);
 }
 
 /// Move a record to a new filename inside its own store. The store never
@@ -480,14 +462,13 @@ fn labelFor(wanted: []const u8) ?[]const u8 {
 }
 
 fn setInventoryStatus(kind: []const u8, link: []const u8, label: []const u8) !bool {
-    const idx = try records_grep.readIndex(reports_dir ++ "/README.md");
-    const start_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind});
-    const end_marker = try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind});
-
-    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
-    defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, idx.text, start_marker, end_marker, link, label)) return false;
-    return records_grep.writeIndex(reports_dir ++ "/README.md", idx, updated.written());
+    return records_grep.setIndexStatus(
+        reports_dir ++ "/README.md",
+        try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:start -->", .{kind}),
+        try std.fmt.allocPrint(lib.alloc, "<!-- inventory:{s}:end -->", .{kind}),
+        link,
+        label,
+    );
 }
 
 const Target = struct {

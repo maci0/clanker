@@ -939,27 +939,7 @@ fn search(obj: std.json.Value, out: *lib.Out) !void {
 }
 
 fn open(obj: std.json.Value, out: *lib.Out) !void {
-    const path = lib.str(obj, "path") catch
-        return lib.fail(out, "open needs the path of a research note");
-    if (!doc.isPathIn(dir, path)) return lib.fail(out, "path must be a markdown file directly below docs/research/");
-    const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the research note");
-    const text = try lib.alloc.dupe(u8, raw);
-
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("title");
-    try s.write(doc.documentTitle(text));
-    try s.objectField("status");
-    try s.write(doc.statusFrom(text, &statuses));
-    try s.objectField("text");
-    try s.write(text);
-    try s.endObject();
-    lib.commit(out, &w);
+    return records_grep.openNumbered(out, obj, dir, &statuses, "a research note");
 }
 
 fn append(obj: std.json.Value, out: *lib.Out) !void {
@@ -1046,34 +1026,11 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
     // than overwriting a concurrent edit to the index.
     const indexed = setInventoryStatus(std.fs.path.basename(path), label) catch false;
 
-    var w = lib.writer(out);
-    var s = lib.json(&w);
-    try s.beginObject();
-    try s.objectField("ok");
-    try s.write(true);
-    try s.objectField("action");
-    try s.write("status");
-    try s.objectField("path");
-    try s.write(path);
-    try s.objectField("status");
-    try s.write(label);
-    try s.objectField("indexed");
-    try s.write(indexed);
-    if (!indexed) {
-        try s.objectField("note");
-        try s.write("the note's status changed, but its docs/research/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status by hand so the index does not disagree with the note");
-    }
-    try s.endObject();
-    lib.commit(out, &w);
+    try records_grep.writeStatusReply(out, path, label, indexed, "the note's status changed, but its docs/research/README.md inventory line could not be updated (missing entry or markers, or a concurrent edit); set that line's status by hand so the index does not disagree with the note", null);
 }
 
 fn setInventoryStatus(link: []const u8, label: []const u8) !bool {
-    const idx = try records_grep.readIndex(index_path);
-
-    var updated: std.Io.Writer.Allocating = .init(lib.alloc);
-    defer updated.deinit();
-    if (!try doc.setInventoryStatus(&updated.writer, idx.text, inventory_start, inventory_end, link, label)) return false;
-    return records_grep.writeIndex(index_path, idx, updated.written());
+    return records_grep.setIndexStatus(index_path, inventory_start, inventory_end, link, label);
 }
 
 /// The display spelling of an accepted status, or null when it is not one.

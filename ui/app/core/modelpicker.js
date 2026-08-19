@@ -2,6 +2,7 @@
 // store, popover UI (search + provider groups) as the operator surface.
 
 import { icon } from "./icons.js";
+import { callableProviders } from "./utils.js";
 
 var _providerCache = [];
 var _modelIndex = [];
@@ -322,7 +323,13 @@ export function loadProviders() {
       if (_allUsage && _allUsage.length) _renderUsage(null);
       _el.modelSelect.textContent = "";
       _modelIndex = [];
-      (d.providers || []).forEach(function (prov) {
+      // The cache above keeps every configured provider (usage rows and the
+      // context meter still need unkeyed ones), but the picker offers only
+      // what this server says it can call. A stale localStorage value naming
+      // a now-uncallable pair finds no option below and the configured
+      // default stays selected instead.
+      var callable = callableProviders(d.providers);
+      callable.forEach(function (prov) {
         var group = document.createElement("optgroup");
         group.label = prov.name;
         var models = (prov.models || []).slice().sort(function (a, b) {
@@ -358,7 +365,7 @@ export function loadProviders() {
         none.value = "";
         none.textContent = "None (no auto-retry)";
         _el.fallbackProvider.appendChild(none);
-        (d.providers || []).forEach(function (prov) {
+        callable.forEach(function (prov) {
           var opt = document.createElement("option");
           opt.value = prov.name;
           opt.textContent = prov.name;

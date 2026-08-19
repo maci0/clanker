@@ -123,6 +123,21 @@ fn resolveSkillsDir() []const u8 {
     return skills_dir;
 }
 
+/// The fields every skill carries, between an already-open `beginObject` and
+/// its `endObject`, so the listing and the single-skill read cannot drift.
+fn writeSkillFields(s: *std.json.Stringify, sk: Listed) !void {
+    try s.objectField("name");
+    try s.write(sk.name);
+    try s.objectField("title");
+    try s.write(sk.title);
+    try s.objectField("description");
+    try s.write(sk.description);
+    try s.objectField("bytes");
+    try s.write(sk.bytes);
+    try s.objectField("enabled");
+    try s.write(sk.enabled);
+}
+
 fn writeList(out: *lib.Out, skills: []const Listed) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
@@ -133,16 +148,7 @@ fn writeList(out: *lib.Out, skills: []const Listed) !void {
     try s.beginArray();
     for (skills) |sk| {
         try s.beginObject();
-        try s.objectField("name");
-        try s.write(sk.name);
-        try s.objectField("title");
-        try s.write(sk.title);
-        try s.objectField("description");
-        try s.write(sk.description);
-        try s.objectField("bytes");
-        try s.write(sk.bytes);
-        try s.objectField("enabled");
-        try s.write(sk.enabled);
+        try writeSkillFields(&s, sk);
         try s.endObject();
     }
     try s.endArray();
@@ -158,16 +164,7 @@ fn writeOne(out: *lib.Out, sk: Listed) !void {
     try s.write(true);
     try s.objectField("skill");
     try s.beginObject();
-    try s.objectField("name");
-    try s.write(sk.name);
-    try s.objectField("title");
-    try s.write(sk.title);
-    try s.objectField("description");
-    try s.write(sk.description);
-    try s.objectField("bytes");
-    try s.write(sk.bytes);
-    try s.objectField("enabled");
-    try s.write(sk.enabled);
+    try writeSkillFields(&s, sk);
     try s.objectField("body");
     try s.write(sk.body);
     try s.endObject();

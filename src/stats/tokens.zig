@@ -17,6 +17,7 @@ const append_line = @import("../util/append_line.zig");
 const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
+const test_env = @import("../util/test_env.zig");
 
 pub const stat_path = "token_stats.jsonl";
 /// Hard cap on the log so a busy harness cannot grow state without bound.
@@ -399,15 +400,10 @@ pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]
 // ------------------------------------------------------------------- tests --
 
 test "append + aggregate groups by provider/model and sums" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     const mk = struct {
         fn r(provider: []const u8, model: []const u8, prompt: u64, comp: u64, hit: u64, miss: u64) Record {
@@ -426,11 +422,11 @@ test "append + aggregate groups by provider/model and sums" {
         }
     }.r;
 
-    append(tmp.dir, io, std.testing.allocator, arena, "", mk("kimi-k3", "kimi-k3", 100, 20, 80, 20));
-    append(tmp.dir, io, std.testing.allocator, arena, "", mk("kimi-k3", "kimi-k3", 200, 30, 200, 30));
-    append(tmp.dir, io, std.testing.allocator, arena, "", mk("deepseek", "deepseek-v4-flash", 1000, 50, 900, 100));
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", mk("kimi-k3", "kimi-k3", 100, 20, 80, 20));
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", mk("kimi-k3", "kimi-k3", 200, 30, 200, 30));
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", mk("deepseek", "deepseek-v4-flash", 1000, 50, 900, 100));
 
-    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
     try std.testing.expectEqual(@as(usize, 2), stats.len);
     // Sorted by total tokens desc: deepseek (1050) before kimi (350).
     try std.testing.expectEqualStrings("deepseek", stats[0].provider);
@@ -453,17 +449,12 @@ test "append + aggregate groups by provider/model and sums" {
 }
 
 test "failed records count toward error_rate and older lines stay successes" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    append(tmp.dir, io, std.testing.allocator, arena, "", .{
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
         .ts = 1,
         .provider = "kimi-k3",
         .model = "kimi-k3",
@@ -475,7 +466,7 @@ test "failed records count toward error_rate and older lines stay successes" {
         .cost = 0,
         .duration_ms = 20,
     });
-    append(tmp.dir, io, std.testing.allocator, arena, "", .{
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
         .ts = 2,
         .provider = "kimi-k3",
         .model = "kimi-k3",
@@ -492,7 +483,7 @@ test "failed records count toward error_rate and older lines stay successes" {
         .request_id = "http-9",
     });
 
-    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
     try std.testing.expectEqual(@as(usize, 1), stats.len);
     try std.testing.expectEqual(@as(u64, 2), stats[0].calls);
     try std.testing.expectEqual(@as(u64, 1), stats[0].ok_calls);
@@ -501,7 +492,7 @@ test "failed records count toward error_rate and older lines stay successes" {
 
     // A pre-field line (no ok/err) must parse as a success so historical
     // logs do not suddenly look like a 100% error rate.
-    const recs = try loadAll(tmp.dir, io, std.testing.allocator, arena, "");
+    const recs = try loadAll(env.tmp.dir, io, std.testing.allocator, arena, "");
     try std.testing.expect(recs[0].ok);
     try std.testing.expectEqual(@as(u16, 0), recs[0].http_status);
     try std.testing.expect(!recs[1].ok);
@@ -572,15 +563,10 @@ test "statsJSON serializes more pairs than a fixed buffer held" {
 }
 
 test "an over-cap log still aggregates instead of reporting no usage" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     // `append` trims only on the write *after* the cap is crossed, so a log
     // sitting just over it is a state the writer produces on purpose. A reader
@@ -595,26 +581,22 @@ test "an over-cap log still aggregates instead of reporting no usage" {
         try body.appendSlice(std.testing.allocator, line);
         try body.append(std.testing.allocator, '\n');
     }
-    try tmp.dir.writeFile(io, .{ .sub_path = stat_path, .data = body.items });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = stat_path, .data = body.items });
 
-    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
     try std.testing.expectEqual(@as(usize, 1), stats.len);
     try std.testing.expect(stats[0].calls > 0);
     try std.testing.expectEqual(stats[0].calls * 2, stats[0].total_tokens);
 }
 
 test "thinking metadata aggregates into CLI and API distributions" {
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
 
     for ([_][]const u8{ "low", "high", "high", "xhigh" }) |level| {
-        append(tmp.dir, io, std.testing.allocator, arena, "", .{
+        append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
             .ts = 1,
             .provider = "p",
             .model = "m",
@@ -631,7 +613,7 @@ test "thinking metadata aggregates into CLI and API distributions" {
     }
     // Failed main calls do not skew the distribution of selected effort on
     // completed calls, even though their metadata remains useful in JSONL.
-    append(tmp.dir, io, std.testing.allocator, arena, "", .{
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
         .ts = 2,
         .provider = "p",
         .model = "m",
@@ -646,7 +628,7 @@ test "thinking metadata aggregates into CLI and API distributions" {
         .thinking_level = "medium",
     });
 
-    const stats = try aggregate(tmp.dir, io, std.testing.allocator, arena, "");
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
     const total = totals(stats);
     try std.testing.expectEqual(@as(u64, 1), total.thinking_low);
     try std.testing.expectEqual(@as(u64, 0), total.thinking_medium);

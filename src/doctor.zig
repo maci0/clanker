@@ -19,6 +19,18 @@ const log = @import("util/log.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const llm_registry = @import("llm/registry.zig");
+const build_options = @import("build_options");
+const plat_os: []const u8 = switch (@import("builtin").os.tag) {
+    .linux => "linux",
+    .macos => "macos",
+    .windows => "windows",
+    else => "other",
+};
+const plat_arch: []const u8 = switch (@import("builtin").cpu.arch) {
+    .x86_64 => "x86_64",
+    .aarch64 => "aarch64",
+    else => "other",
+};
 
 const Status = enum {
     ok,
@@ -67,6 +79,14 @@ fn fileExists(io: std.Io, path: []const u8) bool {
     const f = std.Io.Dir.cwd().openFile(io, path, .{}) catch return false;
     f.close(io);
     return true;
+}
+
+fn dirHasEntries(io: std.Io, path: []const u8) bool {
+    var d = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch return false;
+    defer d.close(io);
+    var it = d.iterate();
+    const entry = it.next(io) catch null;
+    return entry != null;
 }
 
 /// Every check doctor runs, so `setup` can end with the same report rather
@@ -192,6 +212,9 @@ fn runChecks(
         "system prompt",
         cfg.agent.system_prompt_file,
     );
+    if (dirExists(io, cfg.agent.skills_dir) and !dirHasEntries(io, cfg.agent.skills_dir)) {
+        rep.line(.warn, "skills", try std.fmt.allocPrint(arena, "{s} is empty; no skill files found", .{cfg.agent.skills_dir}));
+    }
 
     rep.section("tools");
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
@@ -207,7 +230,12 @@ fn runChecks(
             if (first_missing.len == 0) first_missing = entry.value_ptr.wasm;
         }
     }
-    rep.line(.ok, "manifests", try std.fmt.allocPrint(arena, "{d} registered", .{reg.tools.count()}));
+    const tool_count = reg.tools.count();
+    rep.line(
+        if (tool_count > 0) .ok else .fail,
+        "manifests",
+        try std.fmt.allocPrint(arena, "{d} registered", .{tool_count}),
+    );
     if (missing == 0) {
         rep.line(.ok, "compiled modules", "every tool has its .wasm");
     } else {
@@ -228,7 +256,7 @@ pub fn cmdDoctor(init: std.process.Init) !void {
 
     var out = std.Io.File.stdout().writer(io, &.{});
     var rep = Report{ .w = &out.interface };
-    rep.w.writeAll("clanker doctor\n") catch {};
+    rep.w.print("clanker doctor {s} ({s}/{s})\n", .{ build_options.version, plat_os, plat_arch }) catch {};
 
     try runChecks(io, arena, init.environ_map, &rep);
 

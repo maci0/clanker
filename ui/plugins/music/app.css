@@ -33,6 +33,11 @@
 
 .music-btn {
   flex: none;
+  /* The control's glyph is a drawn .icon (display:block), so the button
+     centres it itself rather than relying on the base rule's text-align. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 32px;
   min-height: 32px;
   padding: 0 var(--space-2);

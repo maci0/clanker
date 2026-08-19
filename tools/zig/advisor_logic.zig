@@ -113,7 +113,7 @@ pub fn summarizeTurn(
         try out.appendSlice(arena, ": ");
         if (m.content) |c| {
             if (std.mem.startsWith(u8, c, "[advisor:")) continue;
-            try out.appendSlice(arena, cap(c, 400));
+            try out.appendSlice(arena, capUtf8(c, 400));
         }
         for (m.tool_calls) |tc| {
             try out.appendSlice(arena, "\n  tool ");
@@ -122,7 +122,7 @@ pub fn summarizeTurn(
                 try out.appendSlice(arena, " <redacted>");
             } else {
                 try out.appendSlice(arena, " ");
-                try out.appendSlice(arena, cap(tc.arguments, 200));
+                try out.appendSlice(arena, capUtf8(tc.arguments, 200));
             }
         }
         try out.append(arena, '\n');
@@ -135,10 +135,6 @@ fn shouldRedact(name: []const u8, redact_names: []const []const u8) bool {
         if (std.mem.eql(u8, n, name)) return true;
     }
     return false;
-}
-
-fn cap(s: []const u8, n: usize) []const u8 {
-    return if (s.len > n) s[0..n] else s;
 }
 
 test "parseNote reads a fenced JSON object" {

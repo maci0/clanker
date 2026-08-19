@@ -46,17 +46,31 @@
   --code-bg: #d4d0c6;
   --code-fg: #1b1c18;
 
-  /* Per-sender chat hues: one stable color per clanker name so different
-     senders read as different people at a glance. Light-tuned here; the
-     dark blocks redefine them brighter so they stay legible on graphite. */
-  --chat-hue-0: #0b57d0;
-  --chat-hue-1: #7c3aed;
-  --chat-hue-2: #047857;
-  --chat-hue-3: #92400e;
-  --chat-hue-4: #b91c1c;
-  --chat-hue-5: #0f6f8f;
-  --chat-hue-6: #9333ea;
-  --chat-hue-7: #3f6212;
+  /* Per-sender chat hues: one stable colour per clanker name so different
+     senders read as different people at a glance.
+
+     These are the card enamels below, shaded for text: the same RAL Classic
+     vocabulary as the panel greys, not a second palette. They used to be a
+     framework's default ramp used raw (violet-600, purple-600, emerald-700,
+     lime-800 and friends), which is how a page that had exiled violet from
+     its chrome one screen up still painted two of its eight senders violet.
+     Worse, all ten themes/*.json shipped byte-identical copies of two sets,
+     so hackerman's green-on-black CRT and latte's pastel both drew senders
+     in the same borrowed ramp: a "theme" that themed everything but this.
+
+     Day is each enamel darkened until it clears 5.5:1 on the panel face,
+     night is the same enamel tinted until it clears 5.5:1 on the cabinet
+     interior, a derivation per theme family rather than one set inverted. Leaf
+     green is pushed past its minimum on purpose: at the bar it and yellow
+     green were the same colour. Pinned by design-tokens.test.mjs. */
+  --chat-hue-0: #1d5c9e;  /* RAL 5017 traffic blue */
+  --chat-hue-1: #9c386a;  /* RAL 4003 heather violet */
+  --chat-hue-2: #1f4a24;  /* RAL 6002 leaf green */
+  --chat-hue-3: #984517;  /* RAL 2001 red orange */
+  --chat-hue-4: #6c4a86;  /* RAL 4008 signal violet */
+  --chat-hue-5: #406727;  /* RAL 6018 yellow green */
+  --chat-hue-6: #a72920;  /* RAL 3001 signal red */
+  --chat-hue-7: #715b00;  /* RAL 1004 golden yellow */
 
   /* Card cover/label hues. Theme-constant on purpose: a card's colour must
      mean the same thing whichever theme the browser picked, so these are the
@@ -138,9 +152,40 @@
   --lamp-ring: 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
   --lamp-glow: 0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
 
-  /* A panel has depth on the backplane: offset and blur, never a halo. */
+  /* A panel has depth on the backplane: offset and blur, never a halo. Three
+     rungs, because there were always three and only two had names: a plate
+     seated flush on the backplane (--lift-low), one standing off it (--lift),
+     and one floating clear of it (--lift-high). The seated rung was the one
+     every rule retyped, in five recipes between 0.04 and 0.12 alpha, and
+     because a retyped `rgba(0, 0, 0, 0.04)` is a literal it never reached the
+     dark block or any of themes/*.json -- so a seated plate had no edge at all
+     on graphite and cast a black shadow under hackerman's green-on-black.
+     Every theme redefines all three; a shadow that is not one of them is a
+     shadow the theme cannot see. */
+  --lift-low: 0 1px 2px rgba(24, 29, 26, 0.10);
   --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
   --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
+
+  /* The machined edge, which is depth *within* a plate rather than height
+     above the backplane, so it is its own scale and not a --lift rung. Three
+     idioms, the same three a real panel has: a face standing proud of its
+     surround (--bevel-raised, lit from above and shaded below), a well milled
+     into it (--bevel-inset, the textarea and the goal plate), and an actuator
+     held down (--bevel-pressed, deeper than the well so a press reads as
+     travel).
+
+     These were seven retyped literals in six alphas -- 0.06, 0.08, 0.10,
+     0.12, 0.18, 0.25 -- and, being literals, they went the way --lift-low
+     went before it was named: no theme could see them. Every theme repaints
+     its shadow hue (hackerman's rungs are green, because black on a black
+     backplane is nothing at all), so a hardcoded rgba(0, 0, 0, .25) meant the
+     pressed actuator and the textarea well simply vanished there while the
+     raised plate wore a white highlight borrowed from a grey cabinet. Every
+     theme redefines all three; a bevel that is not one of them is a bevel the
+     theme cannot see. */
+  --bevel-raised: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(24, 29, 26, 0.10);
+  --bevel-inset: inset 0 1px 2px rgba(24, 29, 26, 0.08);
+  --bevel-pressed: inset 0 1px 2px rgba(24, 29, 26, 0.18);
 
   /* PatternFly theme bridge (step 8): clanker palette tokens drive PF globals.
      Brand/icon/on-brand must remap too: plain buttons read icon-color, primary
@@ -217,18 +262,25 @@
     --scrim: rgba(0, 0, 0, 0.56);
     --warn: #fbbf24;
     --warn-text: #fcd34d;
-    --chat-hue-0: #82aaff;
-    --chat-hue-1: #b799ff;
-    --chat-hue-2: #4ade80;
-    --chat-hue-3: #fbbf24;
-    --chat-hue-4: #f87171;
-    --chat-hue-5: #22d3ee;
-    --chat-hue-6: #c084fc;
-    --chat-hue-7: #a3e635;
+    --chat-hue-0: #62a1e2;  /* RAL 5017 traffic blue */
+    --chat-hue-1: #d385ac;  /* RAL 4003 heather violet */
+    --chat-hue-2: #a0d8a7;  /* RAL 6002 leaf green */
+    --chat-hue-3: #e5834e;  /* RAL 2001 red orange */
+    --chat-hue-4: #ae92c3;  /* RAL 4008 signal violet */
+    --chat-hue-5: #6bad41;  /* RAL 6018 yellow green */
+    --chat-hue-6: #e58079;  /* RAL 3001 signal red */
+    --chat-hue-7: #c19a00;  /* RAL 1004 golden yellow */
     --code-bg: #121411;
     --code-fg: #e8eae5;
+    --lift-low: 0 1px 2px rgba(0, 0, 0, 0.40);
     --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
     --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
+    /* Graphite catches far less light than a grey enamel face, so the
+       highlight drops to a third of the day-shift value; the shade deepens to
+       match the heavier rungs above. */
+    --bevel-raised: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+    --bevel-inset: inset 0 1px 2px rgba(0, 0, 0, 0.30);
+    --bevel-pressed: inset 0 1px 2px rgba(0, 0, 0, 0.50);
   }
 }
 /* Named palettes (light, dark, mocha, ...) live in themes/*.json and are
@@ -813,7 +865,7 @@ form[hidden] { display: none; }
   padding: var(--space-3);
   margin: var(--space-2) 0;
   background: var(--surface);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  box-shadow: var(--lift-low);
 }
 .event-ask .ask-question {
   font-family: var(--sans); font-size: var(--step-0);
@@ -1092,12 +1144,12 @@ form[hidden] { display: none; }
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 0.55rem 0.7rem 0.45rem;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 8px 24px -12px rgba(0,0,0,0.08);
+  box-shadow: var(--lift-low);
   transition: box-shadow 160ms ease, border-color 160ms ease;
 }
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 12px 32px -16px rgba(0,0,0,0.12);
+  box-shadow: var(--lift);
 }
 .composer > label[for="task"] {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -1132,7 +1184,7 @@ textarea:not(.pf-v6-c-form-control) {
   font-family: var(--sans); font-size: var(--step-1); line-height: 1.55;
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius); resize: vertical;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--bevel-inset);
 }
 textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
 .composer textarea {
@@ -1180,7 +1232,7 @@ button.primary:where(:not(.pf-v6-c-button)),
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
   color: var(--on-accent); background: var(--accent);
   border: 0; border-radius: var(--radius-pill); cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  box-shadow: var(--lift-low);
 }
 button.secondary:where(:not(.pf-v6-c-button)) {
   font-size: var(--step-0); padding: var(--space-2) 0.8rem;
@@ -1207,7 +1259,7 @@ button.pf-v6-c-button {
   min-height: 40px; padding: 0.5rem 1.05rem;
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
   border: 0; border-radius: var(--radius-pill); cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  box-shadow: var(--lift-low);
 }
 button.pf-v6-c-button.pf-m-primary,
 button.pf-v6-c-button:not(.pf-m-secondary):not(.pf-m-plain):not(.pf-m-danger):not(.pf-m-link) {
@@ -1529,7 +1581,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
   background: var(--surface-2);
   padding: 0.75rem var(--space-4); margin-top: 0.75rem;
   max-width: calc(var(--measure) + 1.8rem + 2px);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--bevel-inset);
 }
 .goal-objective { max-width: var(--measure); font-family: var(--sans); font-size: var(--step-1); font-weight: 650; line-height: 1.45; color: var(--fg); overflow-wrap: anywhere; }
 .goal-meta {
@@ -1711,7 +1763,7 @@ button.rail-group {
    press. Harmless on pointer devices too. */
 button:active:not(:disabled) {
   transform: translateY(1px);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--bevel-pressed);
 }
 @media (prefers-reduced-motion: reduce) { button:active:not(:disabled) { transform: none; } }
 
@@ -1774,7 +1826,7 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
   padding: 0.45rem 0.85rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface);
   font-family: var(--sans); font-size: var(--step-0); color: var(--fg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: var(--bevel-raised);
 }
 .more > summary::-webkit-details-marker { display: none; }
 .more > summary:hover { color: var(--fg); border-color: var(--fg-muted); }
@@ -1886,6 +1938,15 @@ button.header-model[aria-expanded="true"] .model-chip__chevron {
 .model-picker__option:focus-visible {
   outline: 2px solid var(--accent); outline-offset: -1px;
 }
+/* Theme rows carry a colour dot, so they lay out across instead of down.
+   Must stay after .model-picker__option, whose flex-direction it overrides. */
+.theme-picker__option {
+  flex-direction: row; align-items: center; gap: var(--space-2);
+}
+.theme-picker__swatch {
+  flex: none; width: 10px; height: 10px; border-radius: 50%;
+  border: 1px solid var(--rule); background: transparent;
+}
 @media (prefers-reduced-motion: reduce) {
   .model-picker__panel { transition: none; }
 }
@@ -1964,7 +2025,7 @@ mark {
 }
 .scroll-bottom[hidden] { display: none; }
 .scroll-bottom:hover { border-color: var(--accent); color: var(--accent-text); }
-.scroll-bottom:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 2px rgba(0,0,0,0.12); }
+.scroll-bottom:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--bevel-pressed); }
 .scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
 
@@ -1993,7 +2054,7 @@ mark {
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--surface); color: var(--fg);
   font-family: var(--sans); font-size: var(--step-0); line-height: 1.35; cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  box-shadow: var(--lift-low);
 }
 .suggestion:hover { border-color: var(--border); background: var(--surface-2); }
 .suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -2522,7 +2583,7 @@ h2#session-title {
   width: 100%; min-height: 54px; max-height: 140px; resize: vertical; font-size: var(--step-0);
   border-radius: var(--radius-lg); padding: 0.5rem var(--space-3); font-family: var(--sans);
   border: 1px solid var(--rule); background: var(--surface);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.06); line-height: 1.4;
+  box-shadow: var(--lift-low); line-height: 1.4;
 }
 .board-quick-add .board-add-form textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
 .board-quick-add .board-add-actions { display: flex; gap: var(--space-2); align-items: center; }
@@ -2540,7 +2601,7 @@ h2#session-title {
 .board-col-menu {
   position: absolute; top: 100%; right: 0; z-index: 50;
   min-width: 220px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); box-shadow: 0 8px 16px rgba(0,0,0,.25);
+  border-radius: var(--radius-lg); box-shadow: var(--lift);
   padding: var(--space-1) 0; display: none;
 }
 .board-col-menu.is-open { display: block; }
@@ -2693,7 +2754,7 @@ h2#session-title {
 .card:hover .card-quick-edit-btn { opacity: 1; }
 .card:active { transform: translateY(0); }
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent), 0 1px 3px rgba(0, 0, 0, 0.1); }
+.card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent), var(--lift-low); }
 .card[aria-current="true"] .card-title { color: var(--accent-text); }
 .card[data-dragging="true"] { opacity: 0.35; transform: scale(0.97); box-shadow: none; }
 /* Card quick-edit pencil — appears on hover */
@@ -2735,8 +2796,19 @@ h2#session-title {
 .card-label {
   font-size: 0; font-weight: 700; letter-spacing: 0.02em;
   padding: 0; width: 40px; height: 8px; border-radius: var(--radius-lg);
-  color: #111; line-height: 1.4; cursor: pointer;
-  transition: all 140ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  /* Fallback ink only: every known hue below sets its own measured --card-*-ink
+     alongside its background. A label whose colour is not one of the ten gets
+     no background either, so it sits on the card face and must be read in the
+     page's own ink -- a hardcoded #111 was invisible on every dark theme. */
+  color: var(--fg); line-height: 1.4; cursor: pointer;
+  /* Only the four properties the hover rule below actually changes. `all`
+     also animated the hue and its ink, so a label picking up a colour faded
+     through whatever sat between the two -- and it would silently animate
+     every property added here later. */
+  transition: font-size 140ms cubic-bezier(0.2, 0.9, 0.3, 1),
+              width 140ms cubic-bezier(0.2, 0.9, 0.3, 1),
+              height 140ms cubic-bezier(0.2, 0.9, 0.3, 1),
+              padding 140ms cubic-bezier(0.2, 0.9, 0.3, 1);
   overflow: hidden; white-space: nowrap;
 }
 .card-labels .card-label { cursor: default; }
@@ -2880,11 +2952,11 @@ h2#session-title {
 .card-detail-cover[data-color="sky"] { background: var(--card-sky); min-height: 116px; }
 .card-detail-cover[data-color="pink"] { background: var(--card-pink); min-height: 116px; }
 .card-detail-cover-btn {
-  border: none; background: rgba(0,0,0,0.55); color: #fff; border-radius: var(--radius-lg);
+  border: none; background: var(--scrim); color: var(--card-ink-on-dark); border-radius: var(--radius-lg);
   padding: 0.3rem 0.7rem; font-size: var(--step--1); cursor: pointer; font-weight: 500;
   transition: background 120ms ease;
 }
-.card-detail-cover-btn:hover { background: rgba(0,0,0,0.6); }
+.card-detail-cover-btn:hover { background: color-mix(in srgb, #000 12%, var(--scrim)); }
 .card-detail-header {
   display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) var(--space-4) 0;
   position: sticky; top: 0; background: var(--surface); z-index: 2;
@@ -3125,7 +3197,7 @@ h2#session-title {
   white-space: pre-wrap; overflow-wrap: anywhere;
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface); color: var(--fg);
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  box-shadow: var(--lift-low);
 }
 .log-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 

@@ -19,6 +19,7 @@ const toml_bridge = @import("util/toml_bridge.zig");
 const atomic_write = @import("util/atomic_write.zig");
 const models_dev = @import("llm/models_dev.zig");
 const llm_registry = @import("llm/registry.zig");
+const test_env = @import("util/test_env.zig");
 
 /// A schema failure is reported before it reaches the command dispatcher.
 /// Keeping the original TOML source here is intentional: the intermediate
@@ -548,6 +549,11 @@ pub const Agent = struct {
     /// Start Web UI chat runs isolated by default: no implicit active-goal
     /// steering and a private worktree. The checkbox can still opt a run out.
     isolated_webui: bool = false,
+
+    /// Whether `git_worktree_on` names `mode`.
+    pub fn worktreeOn(self: Agent, mode: WorktreeMode) bool {
+        return std.mem.indexOfScalar(WorktreeMode, self.git_worktree_on, mode) != null;
+    }
 };
 
 /// Persistent eval kernels (PRD 0016). Off by default. Python cells run
@@ -755,6 +761,12 @@ pub const Instance = struct {
     id: []const u8 = "",
 };
 
+/// Futurama-robot flavored, so a fresh instance reads like it just clocked in
+/// at the Robot Arms Conglomerate. Shared by `defaultInstName` here and
+/// `friendlyInstanceName` in cli.zig, so a bare fallback name and a name
+/// `clanker init` writes read as the same kind of thing.
+pub const instance_name_nouns = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
+
 /// What `clanker serve` binds, for deployments that cannot pass flags on the
 /// invocation (a systemd unit, a container image).
 ///
@@ -836,12 +848,6 @@ pub const Chatrooms = struct {
 
 pub const Memory = struct {
     backend: []const u8 = "hybrid",
-    chunk_strategy: []const u8 = "markdown",
-    chunk_size: u32 = 800,
-    chunk_overlap: u32 = 120,
-    embedding_provider: []const u8 = "",
-    embedding_model: []const u8 = "",
-    vector_backend: []const u8 = "builtin",
     vector_top_k: u32 = 5,
     vector_threshold: f32 = 0.35,
 };
@@ -1045,7 +1051,6 @@ pub const Config = struct {
     memory_present: bool = false,
     instance_present: bool = false,
     serve_present: bool = false,
-    serve_as_present: bool = false,
     default_provider_present: bool = false,
     peers_present: bool = false,
     web_present: bool = false,
@@ -1099,6 +1104,102 @@ pub const Config = struct {
         return p;
     }
 
+    /// `--dump-config`, as JSON.
+    ///
+    /// `{any}` on a `Config` is Zig's struct-literal debug form: a
+    /// `[]const u8` prints as a list of byte integers, a hash map prints as
+    /// its internal `.bytes = u8@7fdfe1466150` pointer, and the whole config
+    /// lands on one unbroken line. That is unreadable by a person, unparsable
+    /// by a script, and it puts host addresses on stdout, so the one flag
+    /// whose whole job is "show me what you actually loaded" answered in the
+    /// one shape nothing can use.
+    pub fn writeJson(self: *const Config, w: *std.Io.Writer) !void {
+        var s = std.json.Stringify{ .writer = w, .options = .{ .whitespace = .indent_2 } };
+        try writeJsonValue(&s, self.*);
+        try w.writeByte('\n');
+    }
+
+    /// True for a field that records *how the config was parsed* rather than
+    /// what it says: `agent_present` is "did the file have an `[agent]`
+    /// table", `agent_fields` is "which of its keys were set". Both matter to
+    /// the merge, neither is a setting, and together they are most of the
+    /// struct.
+    fn isParseBookkeeping(comptime name: []const u8) bool {
+        return std.mem.endsWith(u8, name, "_present") or std.mem.endsWith(u8, name, "_fields");
+    }
+
+    fn writeJsonValue(s: *std.json.Stringify, value: anytype) !void {
+        const T = @TypeOf(value);
+        switch (@typeInfo(T)) {
+            .optional => {
+                if (value) |inner| try writeJsonValue(s, inner) else try s.write(null);
+            },
+            .pointer => |ptr| {
+                // A `[]const u8` is a string; every other slice is a list.
+                if (ptr.size != .slice or ptr.child == u8) return s.write(value);
+                try s.beginArray();
+                for (value) |item| try writeJsonValue(s, item);
+                try s.endArray();
+            },
+            .@"struct" => |st| {
+                // `std.StringArrayHashMapUnmanaged` is the shape `providers`,
+                // `mcp_servers` and `models` take; it is a JSON object keyed
+                // by its own keys, not a struct of internal buffers.
+                if (@hasDecl(T, "getEntry") and @hasField(T, "entries")) {
+                    try s.beginObject();
+                    var it = value.iterator();
+                    while (it.next()) |kv| {
+                        try s.objectField(kv.key_ptr.*);
+                        try writeJsonValue(s, kv.value_ptr.*);
+                    }
+                    return s.endObject();
+                }
+                try s.beginObject();
+                inline for (st.fields) |f| {
+                    if (comptime !isParseBookkeeping(f.name)) {
+                        try s.objectField(f.name);
+                        try writeJsonValue(s, @field(value, f.name));
+                    }
+                }
+                try s.endObject();
+            },
+            else => try s.write(value),
+        }
+    }
+
+    test "writeJson renders the merged config as parsable JSON, not Zig debug syntax" {
+        const gpa = std.testing.allocator;
+        var cfg: Config = .{ .default_provider = "deepseek" };
+        try cfg.providers.put(gpa, "deepseek", .{
+            .name = "deepseek",
+            .base_url = "https://api.deepseek.com",
+            .api_key_env = "DEEPSEEK_API_KEY",
+            .default_model = "deepseek-chat",
+        });
+        defer cfg.providers.deinit(gpa);
+
+        var out: std.Io.Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        try cfg.writeJson(&out.writer);
+
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), out.written(), .{});
+
+        // A string is a string, not a list of byte integers.
+        try std.testing.expectEqualStrings("deepseek", parsed.object.get("default_provider").?.string);
+        // A hash map is an object keyed by its own keys, not an internal
+        // buffer pointer.
+        const row = parsed.object.get("providers").?.object.get("deepseek").?.object;
+        try std.testing.expectEqualStrings("https://api.deepseek.com", row.get("base_url").?.string);
+        try std.testing.expectEqualStrings("openai_compat", row.get("kind").?.string);
+        // Parse bookkeeping is not configuration and stays out.
+        try std.testing.expect(parsed.object.get("agent_present") == null);
+        try std.testing.expect(parsed.object.get("agent_fields") == null);
+        // No `u8@...` host address anywhere in the dump.
+        try std.testing.expect(std.mem.find(u8, out.written(), "u8@") == null);
+    }
+
     /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
     /// `dir`. All returned strings are allocated in `arena`.
     pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8) !Config {
@@ -1106,6 +1207,13 @@ pub const Config = struct {
     }
 
     pub fn loadWithProfile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8, profile: ?[]const u8) !Config {
+        return loadInner(io, arena, dir, file_name, local_file_name, profile, true);
+    }
+
+    /// `apply_catalog` false skips `applyCatalogSpecs`, which reads and scans
+    /// the ~4 MB models.dev snapshot. Only `loadQuiet` passes false: it wants
+    /// one `[modules]` flag, and the catalog fills nothing outside `[models]`.
+    fn loadInner(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, local_file_name: []const u8, profile: ?[]const u8, apply_catalog: bool) !Config {
         if (!diagnostics_suppressed) last_load_diagnostic = false;
         const base = (try loadFile(io, arena, dir, file_name, .required)).?;
         var cfg = base.cfg;
@@ -1131,7 +1239,7 @@ pub const Config = struct {
         // that only sets, say, `default_provider` has no "providers" section by
         // design, and warning about it points at a config that is in fact fine.
         if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
-        applyCatalogSpecs(io, arena, dir, &cfg);
+        if (apply_catalog) applyCatalogSpecs(io, arena, dir, &cfg);
         if (cfg.providers.count() == 0) {
             log.log(.warn, "config {s}: no providers defined", .{base.path});
         } else if (cfg.providers.get(cfg.default_provider) == null) {
@@ -1187,7 +1295,11 @@ pub const Config = struct {
         const prior = diagnostics_suppressed;
         diagnostics_suppressed = true;
         defer diagnostics_suppressed = prior;
-        return load(io, arena, dir, file_name, local_file_name);
+        // No catalog: the caller reads `modules.dotenv` and throws the rest
+        // away, and the command behind it loads again in full moments later.
+        // Applying specs here read and walked the whole models.dev snapshot a
+        // second time on every single invocation.
+        return loadInner(io, arena, dir, file_name, local_file_name, null, false);
     }
 
     /// Returns and clears the operator-facing diagnostic emitted by the most
@@ -1377,7 +1489,6 @@ pub const Config = struct {
             cfg.serve = parsed.serve;
             cfg.serve_fields = parsed.fields;
             cfg.serve_present = true;
-            cfg.serve_as_present = parsed.fields.serve_as;
         }
         if (obj.get("peers")) |v| {
             cfg.peers = try parsePeers(arena, v);
@@ -1623,17 +1734,28 @@ pub const Config = struct {
         // invocation for the few kilobytes of it any config actually reads.
         const members = models_dev.topLevelMembers(arena, body);
         if (members.len == 0) return;
+        // Built once for the whole provider loop: the per-member `api`/`env`
+        // extraction it replaces used to run once per configured provider.
+        const index = models_dev.indexProviders(arena, members);
         var it = cfg.providers.iterator();
         while (it.next()) |pkv| {
             const p = pkv.value_ptr;
-            const span = models_dev.findProviderSpan(arena, members, p.name, p.base_url, p.api_key_env) orelse continue;
-            const cat_p = std.json.parseFromSliceLeaky(std.json.Value, arena, span, .{ .ignore_unknown_fields = true }) catch continue;
+            const span = models_dev.findProviderSpan(arena, index, p.name, p.base_url, p.api_key_env) orelse continue;
+            // Scanned, not parsed. The matched provider's `models` object is
+            // nearly all of its bytes -- for an aggregator like OpenRouter
+            // that is hundreds of models -- and a config names two or three
+            // of them. Parsing the provider into a `std.json.Value` tree
+            // materialised the whole subtree on every `Config.load`; only the
+            // configured models' spans reach `std.json` now.
+            const models_raw = models_dev.modelsSpan(span) orelse continue;
             var mit = p.models.iterator();
             while (mit.next()) |mkv| {
                 const key = mkv.key_ptr.*;
                 const m = mkv.value_ptr;
                 const sku = m.wireName(key);
-                const cat_m = models_dev.findModel(cat_p, sku) orelse models_dev.findModel(cat_p, key) orelse continue;
+                const model_span = models_dev.findModelSpan(models_raw, sku) orelse
+                    models_dev.findModelSpan(models_raw, key) orelse continue;
+                const cat_m = std.json.parseFromSliceLeaky(std.json.Value, arena, model_span, .{ .ignore_unknown_fields = true }) catch continue;
                 const spec = models_dev.specs(arena, cat_m) catch continue;
                 if (!m.context_window_set) {
                     if (spec.context_window) |c| m.context_window = c;
@@ -2019,11 +2141,7 @@ pub const Config = struct {
         seed ^= std.hash.Wyhash.hash(0, std.mem.asBytes(&seed));
         var prng = std.Random.DefaultPrng.init(seed);
         const n = prng.random().intRangeAtMost(u16, 100, 999);
-        // Futurama-robot flavored, matching friendlyInstanceName's word list
-        // in cli.zig (cmdInit) so a fresh instance and a bare fallback name
-        // both read as the same kind of thing.
-        const bots = [_][]const u8{ "bender", "clamps", "calculon", "flexo", "crushinator", "hedonismbot", "roberto", "donbot", "preacherbot", "cogsworth", "servo", "gearbot", "rustbucket", "widget", "clunker", "tinman", "sparky", "rustbolt", "boltface", "mechbot" };
-        const bot = bots[prng.random().intRangeAtMost(usize, 0, bots.len - 1)];
+        const bot = instance_name_nouns[prng.random().intRangeAtMost(usize, 0, instance_name_nouns.len - 1)];
         return std.fmt.allocPrint(arena, "clanker-{s}-{d}", .{ bot, n });
     }
 
@@ -2745,34 +2863,14 @@ pub const Config = struct {
             else => return error.MemoryNotObject,
         };
         var m = Memory{};
-        warnUnknownKeys(obj, &.{ "backend", "chunk", "embedding", "vector" }, "memory");
+        warnUnknownKeys(obj, &.{ "backend", "vector" }, "memory");
         if (obj.get("backend")) |k| m.backend = try jsonStr(k, "backend");
-        if (obj.get("chunk")) |k| {
-            const co = switch (k) {
-                .object => |o| o,
-                else => return error.MemoryNotObject,
-            };
-            warnUnknownKeys(co, &.{ "size", "overlap", "strategy" }, "memory.chunk");
-            if (co.get("size")) |x| m.chunk_size = try jsonUnsigned(u32, x, "chunk.size");
-            if (co.get("overlap")) |x| m.chunk_overlap = try jsonUnsigned(u32, x, "chunk.overlap");
-            if (co.get("strategy")) |x| m.chunk_strategy = try jsonStr(x, "chunk.strategy");
-        }
-        if (obj.get("embedding")) |k| {
-            const eo = switch (k) {
-                .object => |o| o,
-                else => return error.MemoryNotObject,
-            };
-            warnUnknownKeys(eo, &.{ "provider", "model" }, "memory.embedding");
-            if (eo.get("provider")) |x| m.embedding_provider = try jsonStr(x, "embedding.provider");
-            if (eo.get("model")) |x| m.embedding_model = try jsonStr(x, "embedding.model");
-        }
         if (obj.get("vector")) |k| {
             const vo = switch (k) {
                 .object => |o| o,
                 else => return error.MemoryNotObject,
             };
-            warnUnknownKeys(vo, &.{ "backend", "top_k", "threshold" }, "memory.vector");
-            if (vo.get("backend")) |x| m.vector_backend = try jsonStr(x, "vector.backend");
+            warnUnknownKeys(vo, &.{ "top_k", "threshold" }, "memory.vector");
             if (vo.get("top_k")) |x| m.vector_top_k = try jsonUnsigned(u32, x, "vector.top_k");
             if (vo.get("threshold")) |x| m.vector_threshold = @floatCast(try jsonFloat(x, "vector.threshold"));
         }
@@ -2959,22 +3057,13 @@ pub const Config = struct {
 // tests
 // ---------------------------------------------------------------------------
 
-test "agent.global_instructions_file parses and defaults empty" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
-
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
+/// Writes the minimum config a `Config.load` test needs, with `agent_keys`
+/// spliced under `[agent]`. The provider and model stanzas are required for the
+/// load to succeed and are the same in every such test, so repeating them at
+/// each call site only buries the one line the test is about.
+fn writeAgentConfig(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, agent_keys: []const u8) !void {
+    var buf: [1024]u8 = undefined;
+    const data = try std.fmt.bufPrint(&buf,
         \\default_provider = "ollama"
         \\
         \\[providers.ollama]
@@ -2984,10 +3073,24 @@ test "agent.global_instructions_file parses and defaults empty" {
         \\provider = "ollama"
         \\
         \\[agent]
-        \\global_instructions_file = "/home/op/.agents/AGENTS.md"
+        \\{s}
         \\
-        ,
-    });
+    , .{agent_keys});
+    try dir.writeFile(io, .{ .sub_path = sub_path, .data = data });
+}
+
+test "agent.global_instructions_file parses and defaults empty" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const dir = env.tmp.dir;
+
+    const io = env.io();
+
+    try writeAgentConfig(io, dir, "config.toml",
+        \\global_instructions_file = "/home/op/.agents/AGENTS.md"
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("/home/op/.agents/AGENTS.md", cfg.agent.global_instructions_file);
     try std.testing.expectEqualStrings("", (Agent{}).global_instructions_file);
@@ -3028,14 +3131,10 @@ test "tui mascot speed is an integer from zero through ten" {
 }
 
 test "config errors retain base and local TOML source paths" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
     // A nested base-table setting is rejected at its exact TOML line rather
     // than becoming the old context-free FieldNotString startup error.
@@ -3052,9 +3151,9 @@ test "config errors retain base and local TOML source paths" {
         \\max_iterations = "many"
         \\
     ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_bad });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_bad });
     try std.testing.expectEqual(@as(usize, 10), Config.lineForSetting(base_bad, "agent.max_iterations"));
-    try std.testing.expectError(error.FieldNotInt, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotInt, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
     try std.testing.expect(Config.takeLoadDiagnostic());
 
     // The local layer is parsed independently. An invalid array item there
@@ -3076,10 +3175,10 @@ test "config errors retain base and local TOML source paths" {
         \\inject = "retry"
         \\
     ;
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_ok });
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = local_bad });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data = base_ok });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = local_bad });
     try std.testing.expectEqual(@as(usize, 3), Config.lineForSetting(local_bad, "ttsr.rules[].pattern"));
-    try std.testing.expectError(error.FieldNotString, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotString, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
     try std.testing.expect(Config.takeLoadDiagnostic());
 }
 
@@ -3098,17 +3197,13 @@ test "hooks default off and parse explicit lifecycle settings" {
 }
 
 test "config load and merge" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
     try dir.writeFile(io, .{
         .sub_path = "config.toml",
@@ -3154,17 +3249,13 @@ test "config load and merge" {
 }
 
 test "config.local.toml can add a model without repeating providers" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
     try dir.writeFile(io, .{
         .sub_path = "config.toml",
@@ -3203,17 +3294,13 @@ test "config.local.toml [instance] is not re-persisted when base lacks one" {
     // [instance] table to config.local.toml on every startup (the vendored
     // TOML parser tolerates the duplicate, so the only symptom is a file
     // that grows an [instance] block per boot).
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
     try dir.writeFile(io, .{
         .sub_path = "config.toml",
@@ -3244,17 +3331,13 @@ test "config.local.toml [instance] is not re-persisted when base lacks one" {
 }
 
 test "model temperature outside 0..2 fails at load" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
     try dir.writeFile(io, .{
         .sub_path = "config.toml",
@@ -3303,23 +3386,19 @@ test "web.allow accepts glob patterns and the catch-all" {
 }
 
 test "config.local.toml web.allow replaces the global web allowlist" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
         \\web.allow = ["global.example", "keep.example"]
     });
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
         \\web.allow = ["local.example"]
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 1), cfg.web.allow.len);
     try std.testing.expectEqualStrings("local.example", cfg.web.allow[0]);
 }
@@ -3330,130 +3409,97 @@ test "config.local.toml sandbox_follow_symlinks reaches the merged config" {
     // and then silently dropped. That is what happened here: the sandbox kept
     // refusing a symlinked `state/` while config.local.toml plainly said to
     // allow it, and nothing reported an unknown key because the key was known.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
         \\[agent]
         \\max_iterations = 10
     });
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
         \\[agent]
         \\sandbox_follow_symlinks = true
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.agent.sandbox_follow_symlinks);
     // The local file set one key; the base value must survive.
     try std.testing.expectEqual(@as(u32, 10), cfg.agent.max_iterations);
 }
 
 test "sandbox_follow_symlinks defaults to false with no config saying otherwise" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
         \\[agent]
         \\max_iterations = 10
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     // ADR 0017: following a link out of the sandbox root is a security risk,
     // so it is off unless the operator asked for it.
     try std.testing.expect(!cfg.agent.sandbox_follow_symlinks);
 }
 
 test "config.local.toml can clear serve_as" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
         \\serve = { host = "127.0.0.1", serve_as = ["base.example"] }
     });
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
         \\serve = { serve_as = [] }
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("127.0.0.1", cfg.serve.host.?);
     try std.testing.expectEqual(@as(usize, 0), cfg.serve.serve_as.len);
 }
 
 test "config.local.toml that only sets host does not clear a base proxy = true" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.toml", .data =
         \\serve = { host = "127.0.0.1", proxy = true }
     });
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
         \\serve = { host = "0.0.0.0" }
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("0.0.0.0", cfg.serve.host.?);
     try std.testing.expect(cfg.serve.proxy);
 
-    try tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "config.local.toml", .data =
         \\serve = { proxy = false }
     });
-    const off = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const off = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(!off.serve.proxy);
 }
 
 test "confirm_writes parses its three values and rejects anything else" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "config.toml",
         \\confirm_writes = "browser"
-        \\
-        ,
-    });
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(ConfirmWrites.browser, cfg.agent.confirm_writes);
 
@@ -3462,55 +3508,25 @@ test "confirm_writes parses its three values and rejects anything else" {
 
     // A typo must fail the load, not silently run without the gate the
     // config asked for.
-    try dir.writeFile(io, .{
-        .sub_path = "bad.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "bad.toml",
         \\confirm_writes = "sometimes"
-        \\
-        ,
-    });
+    );
     try std.testing.expectError(error.ConfirmWritesInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
 test "worktree and goal_worktree parse and default to auto" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "config.toml",
         \\worktree = "yes"
         \\goal_worktree = "no"
-        \\
-        ,
-    });
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(WorktreeDefault.yes, cfg.agent.worktree);
     try std.testing.expectEqual(WorktreeDefault.no, cfg.agent.goal_worktree);
@@ -3520,57 +3536,27 @@ test "worktree and goal_worktree parse and default to auto" {
     try std.testing.expectEqual(WorktreeDefault.auto, (Agent{}).goal_worktree);
 
     // A typo must fail the load rather than silently isolate differently.
-    try dir.writeFile(io, .{
-        .sub_path = "bad.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "bad.toml",
         \\worktree = "sometimes"
-        \\
-        ,
-    });
+    );
     try std.testing.expectError(error.WorktreeDefaultInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
 test "agent.git_worktree_on and isolated defaults parse" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
-    try dir.writeFile(io, .{
-        .sub_path = "config.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "config.toml",
         \\git_worktree_on = ["goal", "webui"]
         \\isolated_cli = true
         \\isolated_tui = false
         \\isolated_webui = true
-        \\
-        ,
-    });
+    );
     const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualSlices(WorktreeMode, &.{ .goal, .webui }, cfg.agent.git_worktree_on);
     try std.testing.expect(cfg.agent.isolated_cli);
@@ -3582,37 +3568,20 @@ test "agent.git_worktree_on and isolated defaults parse" {
     try std.testing.expect(!(Agent{}).isolated_cli);
 
     // An unknown mode fails the load rather than being silently ignored.
-    try dir.writeFile(io, .{
-        .sub_path = "bad.toml",
-        .data =
-        \\default_provider = "ollama"
-        \\
-        \\[providers.ollama]
-        \\base_url = "http://127.0.0.1:11434/v1"
-        \\
-        \\[models."ollama/llama3.1"]
-        \\provider = "ollama"
-        \\
-        \\[agent]
+    try writeAgentConfig(io, dir, "bad.toml",
         \\git_worktree_on = ["goal", "nope"]
-        \\
-        ,
-    });
+    );
     try std.testing.expectError(error.WorktreeModeInvalid, Config.load(io, arena, dir, "bad.toml", "config.local.toml"));
 }
 
 test "agent.fallback_provider parses and is not reset by a partial local override" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
     try dir.writeFile(io, .{ .sub_path = "config.toml", .data =
         \\default_provider = "deepseek"
@@ -3636,17 +3605,13 @@ test "agent.fallback_provider parses and is not reset by a partial local overrid
 }
 
 test "agent.fallback_providers accepts an array" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const dir = tmp.dir;
+    const dir = env.tmp.dir;
 
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const io = env.io();
 
     try dir.writeFile(io, .{ .sub_path = "config.toml", .data =
         \\default_provider = "deepseek"
@@ -3670,16 +3635,12 @@ test "agent.fallback_providers accepts an array" {
 }
 
 test "a config.local.json sibling is ignored: TOML is canonical" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "committed"
@@ -3690,29 +3651,25 @@ test "a config.local.json sibling is ignored: TOML is canonical" {
     // A leftover pre-migration file: it must have no effect at all, not even
     // as a fallback when no config.local.toml exists. A legacy format that
     // only sometimes applies is worse than requiring the file be converted.
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.json",
         .data =
         \\{ "default_provider": "from_json" }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("committed", cfg.default_provider);
     try std.testing.expectEqualStrings("config.toml", cfg.default_provider_from.?);
 }
 
 test "default_provider provenance names the file that set it" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
     // The base file sets it and no local override exists: the base owns it.
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -3720,7 +3677,7 @@ test "default_provider provenance names the file that set it" {
         \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    const named = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const named = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     try std.testing.expectEqualStrings("config.toml", named.default_provider_from.?);
 
     // Nothing sets it, so the struct fallback is in force and provenance is
@@ -3740,16 +3697,12 @@ test "default_provider provenance names the file that set it" {
 }
 
 test "a local override that does not name a default leaves provenance on the base" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -3757,7 +3710,7 @@ test "a local override that does not name a default leaves provenance on the bas
         \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.toml",
         .data =
         // A local file that redefines a provider repeats its models: merge
@@ -3766,7 +3719,7 @@ test "a local override that does not name a default leaves provenance on the bas
         \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     // merge() only takes default_provider when the local file named one, so
     // provenance must not drift to the local file just because it was read.
     try std.testing.expectEqualStrings("a", cfg.default_provider);
@@ -3869,16 +3822,12 @@ test "legacy flat provider fields are rejected with a pointer to the fix" {
 }
 
 test "a single model needs no default_model" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "solo"
@@ -3886,23 +3835,19 @@ test "a single model needs no default_model" {
         \\models = { "solo/only" = { provider = "solo", max_tokens = 128 } }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     const solo = cfg.providers.getPtr("solo").?;
     try std.testing.expectEqualStrings("only", solo.activeModelName());
     try std.testing.expectEqual(@as(u32, 128), solo.activeModel().max_tokens);
 }
 
 test "a model id is the wire SKU; the table key is the local name" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "xai"
@@ -3917,7 +3862,7 @@ test "a model id is the wire SKU; the table key is the local name" {
         \\temperature = 0.7
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     const xai = cfg.providers.getPtr("xai").?;
     try std.testing.expectEqual(@as(usize, 2), xai.models.count());
     try std.testing.expectEqualStrings("grok4.6-coding", xai.activeModelName());
@@ -3935,17 +3880,13 @@ test "a model id is the wire SKU; the table key is the local name" {
 }
 
 test "unset model specs fill from the models.dev snapshot; written values win" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.createDirPath(io, "state");
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "state/models-dev.json",
         .data =
         \\{
@@ -3964,7 +3905,7 @@ test "unset model specs fill from the models.dev snapshot; written values win" {
         \\}
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "xai"
@@ -3981,7 +3922,7 @@ test "unset model specs fill from the models.dev snapshot; written values win" {
         \\max_tokens = 8192
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     const coding = cfg.providers.getPtr("xai").?.models.get("grok4.6-coding").?;
     try std.testing.expectEqual(@as(u32, 500000), coding.context_window);
     try std.testing.expectEqual(@as(u32, 250000), coding.max_tokens);
@@ -3997,17 +3938,50 @@ test "unset model specs fill from the models.dev snapshot; written values win" {
     try std.testing.expect(capped.max_tokens_set);
 }
 
-test "rpm is accepted on a provider and on a model" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+test "loadQuiet answers the modules flag without applying catalog specs" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.createDirPath(io, "state");
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "state/models-dev.json",
+        .data =
+        \\{"xai": {"api": "https://api.x.ai/v1", "models": {"grok-4.6": {"limit": {"context": 500000}}}}}
+        ,
+    });
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "xai"
+        \\[modules]
+        \\dotenv = false
+        \\[providers.xai]
+        \\base_url = "https://api.x.ai/v1"
+        \\[models."xai/grok-4.6"]
+        \\provider = "xai"
+        ,
+    });
+
+    // The flag the startup dotenv probe reads is what loadQuiet must answer.
+    const quiet = try Config.loadQuiet(io, arena, env.tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expect(!quiet.modules.dotenv);
+    // ... and it must not pay for the snapshot walk to do it.
+    try std.testing.expectEqual((Model{}).context_window, quiet.providers.getPtr("xai").?.models.get("grok-4.6").?.context_window);
+
+    // The command behind the probe still gets the filled spec.
+    const full = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
+    try std.testing.expectEqual(@as(u32, 500000), full.providers.getPtr("xai").?.models.get("grok-4.6").?.context_window);
+}
+
+test "rpm is accepted on a provider and on a model" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "n"
@@ -4021,7 +3995,7 @@ test "rpm is accepted on a provider and on a model" {
         \\provider = "n"
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     const n = cfg.providers.getPtr("n").?;
     try std.testing.expectEqual(@as(u32, 40), n.rpm.?);
     try std.testing.expectEqual(@as(u32, 10), n.models.get("fast").?.rpm.?);
@@ -4029,16 +4003,12 @@ test "rpm is accepted on a provider and on a model" {
 }
 
 test "tool_schema and thinking_schema parse on providers and models, model wins" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "n"
@@ -4053,7 +4023,7 @@ test "tool_schema and thinking_schema parse on providers and models, model wins"
         \\thinking_schema = "none"
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     var n = cfg.providers.get("n").?;
     n.default_model = "plain";
     try std.testing.expectEqual(ToolSchema.openai, n.effectiveToolSchema());
@@ -4064,16 +4034,12 @@ test "tool_schema and thinking_schema parse on providers and models, model wins"
 }
 
 test "an unknown thinking_schema is rejected at load" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "n"
@@ -4083,21 +4049,17 @@ test "an unknown thinking_schema is rejected at load" {
     });
     try std.testing.expectError(
         error.UnknownThinkingSchema,
-        Config.load(io, arena, tmp.dir, "config.toml", "missing.toml"),
+        Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
 test "mcp_servers stanzas parse and validate per transport" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "n"
@@ -4116,14 +4078,14 @@ test "mcp_servers stanzas parse and validate per transport" {
     });
     // Loaded as the LOCAL overlay too: merge() must carry mcp_servers
     // through, or a stanza in config.local.toml validates and then vanishes.
-    try tmp.dir.writeFile(io, .{ .sub_path = "base.toml", .data =
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "base.toml", .data =
         \\default_provider = "n"
         \\providers = { n = { base_url = "https://n.test/v1" } }
         \\models = { "n/m" = { provider = "n" } }
     });
-    const merged = try Config.load(io, arena, tmp.dir, "base.toml", "config.toml");
+    const merged = try Config.load(io, arena, env.tmp.dir, "base.toml", "config.toml");
     try std.testing.expect(merged.mcp_servers.get("github") != null);
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     const gh = cfg.mcp_servers.get("github").?;
     try std.testing.expectEqualStrings("github-mcp-server", gh.command);
     try std.testing.expectEqual(@as(usize, 1), gh.args.len);
@@ -4133,16 +4095,12 @@ test "mcp_servers stanzas parse and validate per transport" {
 }
 
 test "an mcp server with a bad transport or missing endpoint is rejected" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "n"
@@ -4153,21 +4111,17 @@ test "an mcp server with a bad transport or missing endpoint is rejected" {
     });
     try std.testing.expectError(
         error.McpServerCommandMissing,
-        Config.load(io, arena, tmp.dir, "config.toml", "missing.toml"),
+        Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml"),
     );
 }
 
 test "a local override with only default_provider keeps the base providers" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4175,13 +4129,13 @@ test "a local override with only default_provider keeps the base providers" {
         \\models = { "a/m" = { provider = "a" }, "b/m" = { provider = "b" } }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.toml",
         .data =
         \\default_provider = "b"
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     // The point of the test: switching the default provider from a local file
     // must not look like a config that defines no providers.
     try std.testing.expectEqual(@as(usize, 2), cfg.providers.count());
@@ -4200,16 +4154,12 @@ test "tool-result pruning config rejects retained bytes at the threshold" {
 }
 
 test "advisor section parses and stays off by default" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4223,7 +4173,7 @@ test "advisor section parses and stays off by default" {
         \\timeout_ms = 2500
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.advisor.enabled);
     try std.testing.expectEqualStrings("a", cfg.advisor.provider);
     try std.testing.expectEqualStrings("session", cfg.advisor.scope);
@@ -4232,16 +4182,12 @@ test "advisor section parses and stays off by default" {
 }
 
 test "config.local.toml replaces advisor, ttsr, and kernel wholesale" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4255,7 +4201,7 @@ test "config.local.toml replaces advisor, ttsr, and kernel wholesale" {
         \\enabled = false
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.toml",
         .data =
         \\[advisor]
@@ -4268,7 +4214,7 @@ test "config.local.toml replaces advisor, ttsr, and kernel wholesale" {
         \\enabled = true
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.advisor.enabled);
     try std.testing.expectEqualStrings("a", cfg.advisor.provider);
     try std.testing.expectEqual(@as(u32, 5), cfg.ttsr.max_retries_per_turn);
@@ -4276,16 +4222,12 @@ test "config.local.toml replaces advisor, ttsr, and kernel wholesale" {
 }
 
 test "debug adapters parse from nested tables" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4300,7 +4242,7 @@ test "debug adapters parse from nested tables" {
         \\command = ["python3", "-m", "debugpy.adapter"]
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.debug.enabled);
     try std.testing.expectEqual(@as(u32, 1000), cfg.debug.disconnect_timeout_ms);
     try std.testing.expectEqual(@as(usize, 2), cfg.debug.adapters.len);
@@ -4316,16 +4258,12 @@ test "debug adapters parse from nested tables" {
 }
 
 test "first boot with no [instance] anywhere persists a name to the local file" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4334,31 +4272,27 @@ test "first boot with no [instance] anywhere persists a name to the local file" 
         ,
     });
 
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.instance.name.len > 0);
 
-    const written = try tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
+    const written = try env.tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
     defer std.testing.allocator.free(written);
     try std.testing.expect(std.mem.find(u8, written, "[instance]") != null);
     try std.testing.expect(std.mem.find(u8, written, cfg.instance.name) != null);
 
     // Second boot: the persisted name must survive unchanged rather than
     // being re-rolled on every launch.
-    const cfg2 = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg2 = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings(cfg.instance.name, cfg2.instance.name);
 }
 
 test "persisting an instance name appends to an existing local file without clobbering it" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4366,7 +4300,7 @@ test "persisting an instance name appends to an existing local file without clob
         \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.toml",
         .data =
         \\[agent]
@@ -4374,26 +4308,22 @@ test "persisting an instance name appends to an existing local file without clob
         ,
     });
 
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(u32, 7), cfg.agent.max_iterations);
 
-    const written = try tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
+    const written = try env.tmp.dir.readFileAlloc(io, "config.local.toml", std.testing.allocator, .limited(1 << 16));
     defer std.testing.allocator.free(written);
     try std.testing.expect(std.mem.find(u8, written, "max_iterations = 7") != null);
     try std.testing.expect(std.mem.find(u8, written, "[instance]") != null);
 }
 
 test "mesh section and peer id parse" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4410,7 +4340,7 @@ test "mesh section and peer id parse" {
         \\admission = "open"
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.modules.mesh);
     try std.testing.expectEqual(@as(u16, 7421), cfg.mesh.listen_port);
     try std.testing.expectEqualStrings("open", cfg.mesh.admission);
@@ -4420,15 +4350,11 @@ test "mesh section and peer id parse" {
 }
 
 test "mesh.admission prompt is a valid load" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4442,21 +4368,17 @@ test "mesh.admission prompt is a valid load" {
         \\admission = "prompt"
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqualStrings("prompt", cfg.mesh.admission);
 }
 
 test "partial local agent keeps base tools_dir" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4465,13 +4387,13 @@ test "partial local agent keeps base tools_dir" {
         \\agent = { tools_dir = "tools/manifests", max_iterations = 30 }
         ,
     });
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.toml",
         .data =
         \\agent = { sandbox_root = "." }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 1), cfg.agent.tools_dir.len);
     try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
@@ -4479,16 +4401,12 @@ test "partial local agent keeps base tools_dir" {
 }
 
 test "agent request deadlines and the repeat abort threshold parse and default to off" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4497,20 +4415,20 @@ test "agent request deadlines and the repeat abort threshold parse and default t
         \\agent = { max_iterations = 30 }
         ,
     });
-    const base = try Config.load(io, arena, tmp.dir, "config.toml", "missing.local.toml");
+    const base = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.local.toml");
     // Bounded unless opted out of: a hang has no error to retry, so the
     // deadline a config omits is the one a fresh checkout most needs.
     try std.testing.expectEqual(@as(u32, 900_000), base.agent.request_timeout_ms);
     try std.testing.expectEqual(@as(u32, 120_000), base.agent.stream_idle_timeout_ms);
     try std.testing.expectEqual(@as(u32, 0), base.agent.repeat_tool_abort_threshold);
 
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.toml",
         .data =
         \\agent = { request_timeout_ms = 300000, stream_idle_timeout_ms = 120000, repeat_tool_abort_threshold = 12 }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(u32, 300000), cfg.agent.request_timeout_ms);
     try std.testing.expectEqual(@as(u32, 120000), cfg.agent.stream_idle_timeout_ms);
     try std.testing.expectEqual(@as(u32, 12), cfg.agent.repeat_tool_abort_threshold);
@@ -4519,28 +4437,24 @@ test "agent request deadlines and the repeat abort threshold parse and default t
 
     // 0 is still the explicit opt-out, and now that it is no longer the
     // default it is the only way to ask for an unbounded clock.
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.local.toml",
         .data =
         \\agent = { request_timeout_ms = 0, stream_idle_timeout_ms = 0 }
         ,
     });
-    const unbounded = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const unbounded = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(u32, 0), unbounded.agent.request_timeout_ms);
     try std.testing.expectEqual(@as(u32, 0), unbounded.agent.stream_idle_timeout_ms);
 }
 
 test "agent.tools_dir accepts a string or an array" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4549,7 +4463,7 @@ test "agent.tools_dir accepts a string or an array" {
         \\agent = { tools_dir = ["tools/manifests", "/home/user/.config/clanker/plugins"] }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 2), cfg.agent.tools_dir.len);
     try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
     try std.testing.expectEqualStrings("/home/user/.config/clanker/plugins", cfg.agent.tools_dir[1]);
@@ -4564,19 +4478,15 @@ test "agent.tools_dir accepts a string or an array" {
 }
 
 test "the providers-check timeout has a short default, a global key, and a per-provider override" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
     // Default first: a config that says nothing about it still bounds a sweep.
     try std.testing.expectEqual(@as(u32, 10), (Agent{}).provider_check_timeout_seconds);
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "hosted"
@@ -4585,7 +4495,7 @@ test "the providers-check timeout has a short default, a global key, and a per-p
         \\agent = { provider_check_timeout_seconds = 30 }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.provider_check_timeout_seconds);
     // Null, not 30: the sweep reads the global default itself, so "unset" stays
     // distinguishable from "set to the same number".
@@ -4594,16 +4504,12 @@ test "the providers-check timeout has a short default, a global key, and a per-p
 }
 
 test "a negative check timeout is rejected instead of wrapping into a huge one" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4611,20 +4517,16 @@ test "a negative check timeout is rejected instead of wrapping into a huge one" 
         \\models = { "a/m" = { provider = "a" } }
         ,
     });
-    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4632,20 +4534,16 @@ test "a negative max_tokens is rejected instead of wrapping into a huge cap" {
         \\models = { "a/m" = { provider = "a", max_tokens = -1 } }
         ,
     });
-    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "advisor and improve unsigned fields reject negatives; ttsr buffer is capped" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4655,9 +4553,9 @@ test "advisor and improve unsigned fields reject negatives; ttsr buffer is cappe
         \\context_turns = -1
         ,
     });
-    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
 
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4667,9 +4565,9 @@ test "advisor and improve unsigned fields reject negatives; ttsr buffer is cappe
         \\max_context_bytes = -1
         ,
     });
-    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
 
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4683,7 +4581,7 @@ test "advisor and improve unsigned fields reject negatives; ttsr buffer is cappe
         \\max_fires = 2
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(ttsr_buffer_bytes_max, cfg.ttsr.buffer_bytes);
     try std.testing.expectEqual(@as(usize, 1), cfg.ttsr.rules.len);
     try std.testing.expectEqual(@as(u32, 2), cfg.ttsr.rules[0].max_fires);
@@ -4735,16 +4633,12 @@ test "reasoning_effort parses supported values and null when absent" {
 }
 
 test "an invalid reasoning_effort is rejected" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4752,20 +4646,16 @@ test "an invalid reasoning_effort is rejected" {
         \\models = { "a/m" = { provider = "a", reasoning_effort = "turbo" } }
         ,
     });
-    try std.testing.expectError(error.UnknownReasoningEffort, Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml"));
+    try std.testing.expectError(error.UnknownReasoningEffort, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "agent.reasoning_effort pins the per-turn effort and rejects unknown values" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4775,7 +4665,7 @@ test "agent.reasoning_effort pins the per-turn effort and rejects unknown values
         \\reasoning_effort = "high"
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(ReasoningEffort.high, cfg.agent.reasoning_effort.?);
 
     // Absent, the per-model config and sampling profile stay in charge.
@@ -4809,16 +4699,12 @@ test "agent.reasoning_effort pins the per-turn effort and rejects unknown values
 }
 
 test "agent.git_remote_ops and exec_pattern_allow parse from config" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4827,7 +4713,7 @@ test "agent.git_remote_ops and exec_pattern_allow parse from config" {
         \\agent = { git_remote_ops = true, exec_pattern_allow = ["gh pr create*", "gh pr merge*"] }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(cfg.agent.git_remote_ops);
     try std.testing.expectEqual(@as(usize, 2), cfg.agent.exec_pattern_allow.len);
     try std.testing.expectEqualStrings("gh pr create*", cfg.agent.exec_pattern_allow[0]);
@@ -4852,16 +4738,12 @@ test "agent.git_remote_ops and exec_pattern_allow parse from config" {
 }
 
 test "agent.repl_exec_allow parses, defaults empty, and rejects a non-array" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4870,7 +4752,7 @@ test "agent.repl_exec_allow parses, defaults empty, and rejects a non-array" {
         \\agent = { repl_exec_allow = ["ls", "cat"] }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(@as(usize, 2), cfg.agent.repl_exec_allow.len);
     try std.testing.expectEqualStrings("ls", cfg.agent.repl_exec_allow[0]);
     try std.testing.expectEqualStrings("cat", cfg.agent.repl_exec_allow[1]);
@@ -4911,16 +4793,12 @@ test "agent.repl_exec_allow parses, defaults empty, and rejects a non-array" {
 }
 
 test "agent.worktree and goal_worktree parse and reject bad values" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
@@ -4929,7 +4807,7 @@ test "agent.worktree and goal_worktree parse and reject bad values" {
         \\agent = { worktree = "yes", goal_worktree = "no" }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "config.local.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expectEqual(WorktreeDefault.yes, cfg.agent.worktree);
     try std.testing.expectEqual(WorktreeDefault.no, cfg.agent.goal_worktree);
 
@@ -5182,16 +5060,12 @@ test "a default_provider naming no provider is rejected at load" {
 }
 
 test "agent.tool_catalog and hot_tools load from config" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "p"
@@ -5200,22 +5074,18 @@ test "agent.tool_catalog and hot_tools load from config" {
         \\agent = { tool_catalog = false, hot_tools = 3 }
         ,
     });
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     try std.testing.expectEqual(false, cfg.agent.tool_catalog);
     try std.testing.expectEqual(@as(u32, 3), cfg.agent.hot_tools);
 }
 
 test "an unknown key in a known section does not fail the load" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{
+    try env.tmp.dir.writeFile(io, .{
         .sub_path = "config.toml",
         .data =
         \\default_provider = "p"
@@ -5226,7 +5096,7 @@ test "an unknown key in a known section does not fail the load" {
     });
     // A misspelled key only warns (logged, not asserted here); the load must
     // still succeed with the real default rather than silently misbehaving.
-    const cfg = try Config.load(io, arena, tmp.dir, "config.toml", "missing.toml");
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     try std.testing.expectEqual(@as(u32, 50), cfg.agent.max_iterations);
 }
 
@@ -5333,7 +5203,7 @@ fn documentsKey(text: []const u8, key: []const u8) bool {
             const rest = std.mem.trimStart(u8, line[key.len..], " \t");
             if (rest.len > 0 and rest[0] == '=') return true;
         }
-        // `[memory.chunk]`, `[[ttsr.rules]]`: the key names a table.
+        // `[memory.vector]`, `[[ttsr.rules]]`: the key names a table.
         if (std.mem.startsWith(u8, line, "[")) {
             if (std.mem.find(u8, line, key)) |at| {
                 const before = line[at - 1];
@@ -5387,9 +5257,9 @@ test "config.toml documents every key the loader accepts" {
         }
     }
 
-    // `[memory]`'s keys are nested tables, so its field names (chunk_size,
-    // vector_top_k, ...) are not the spellings a file uses. Check those.
-    inline for ([_][]const u8{ "memory", "chunk", "embedding", "vector", "size", "overlap", "strategy", "top_k", "threshold", "backend" }) |key| {
+    // `[memory]`'s keys are nested tables, so its field names (vector_top_k,
+    // ...) are not the spellings a file uses. Check those.
+    inline for ([_][]const u8{ "memory", "vector", "top_k", "threshold", "backend" }) |key| {
         if (!documentsKey(text, key)) {
             std.debug.print("config.toml does not document memory key {s}\n", .{key});
             return error.UndocumentedConfigKey;

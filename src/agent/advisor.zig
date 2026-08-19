@@ -23,7 +23,7 @@ pub fn summarizeTurn(
     messages: []const types.Message,
     redact_names: []const []const u8,
 ) ![]const u8 {
-    var converted: std.ArrayList(logic.Message) = .empty;
+    var converted = try std.ArrayList(logic.Message).initCapacity(arena, messages.len);
     for (messages) |m| {
         var calls: []const logic.ToolCall = &.{};
         if (m.tool_calls) |tcs| {

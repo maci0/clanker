@@ -13,7 +13,6 @@
 //! the number to claim never has to be counted by hand.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
@@ -45,6 +44,10 @@ const title_column_bytes: usize = 58;
 /// Statuses are one word ("Draft", "Discussion", "Decided", ...).
 const status_column_max: usize = 12;
 
+/// Every subcommand the dispatch below accepts, in the order `--help`
+/// lists them. The spec's usage line in `cli.zig` is pinned to this list.
+pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "recommend", "status" };
+
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     try common.out(init.io, try run(init.arena.allocator(), opts, tool));
 }
@@ -65,8 +68,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "recommend")) return recommend(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
 
-    log.log(.error_, "unknown rfc subcommand '{s}' (expected list, search, open, checklist, create, append, update, recommend or status)", .{sub});
-    return Error.BadSubcommand;
+    return common.badSubcommand("rfc", &subcommands, sub);
 }
 
 // ------------------------------------------------------------------ reading --
@@ -78,7 +80,7 @@ fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
 
 fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const query = opts.arg1 orelse {
-        log.log(.error_, "rfc search needs a query: clanker rfc search \"http client\"", .{});
+        common.usageError("rfc search needs a query: clanker rfc search \"http client\"", .{});
         return Error.MissingArg;
     };
 
@@ -138,7 +140,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    log.log(.error_, "rfc create needs {s}: clanker rfc create \"HTTP client for the proxy\" \"The proxy needs one client and the choice is not recorded\"", .{what});
+    common.usageError("rfc create needs {s}: clanker rfc create \"HTTP client for the proxy\" \"The proxy needs one client and the choice is not recorded\"", .{what});
     return Error.MissingArg;
 }
 
@@ -159,11 +161,11 @@ fn recommend(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     const rationale = opts.arg4 orelse "";
 
     const confidence = std.fmt.parseInt(u8, std.mem.trim(u8, confidence_text, " \t"), 10) catch {
-        log.log(.error_, "rfc recommend needs a whole-number confidence from 0 to 10, not '{s}'", .{confidence_text});
+        common.usageError("rfc recommend needs a whole-number confidence from 0 to 10, not '{s}'", .{confidence_text});
         return Error.MissingArg;
     };
     if (confidence > 10) {
-        log.log(.error_, "rfc recommend confidence is 0 to 10, not {d}", .{confidence});
+        common.usageError("rfc recommend confidence is 0 to 10, not {d}", .{confidence});
         return Error.MissingArg;
     }
 
@@ -183,7 +185,7 @@ fn recommend(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingRecommendArg(what: []const u8) Error {
-    log.log(.error_, "rfc recommend needs {s}: clanker rfc recommend docs/rfcs/<name>.md \"Adopt option B\" 7 \"Why, and what would move it\"", .{what});
+    common.usageError("rfc recommend needs {s}: clanker rfc recommend docs/rfcs/<name>.md \"Adopt option B\" 7 \"Why, and what would move it\"", .{what});
     return Error.MissingArg;
 }
 
@@ -219,35 +221,8 @@ pub fn renderList(arena: std.mem.Allocator, rfcs: []const std.json.Value, next_n
         return w.written();
     }
 
-    var status_width: usize = 6;
-    for (rfcs) |r| {
-        if (r != .object) continue;
-        const s = json_util.strFieldOrEmpty(r.object, "status");
-        const n = if (s.len == 0) 1 else s.len;
-        if (n > status_width) status_width = @min(n, status_column_max);
-    }
-
     try w.writer.print("{d} RFC(s)\n\n", .{rfcs.len});
-    for (rfcs) |r| {
-        if (r != .object) continue;
-        const path = json_util.strFieldOrEmpty(r.object, "path");
-        const title = json_util.strFieldOrEmpty(r.object, "title");
-        // An unreadable RFC still gets a row: the path is what the reader
-        // needs to go look, and hiding it would make it invisible.
-        const status = if (json_util.strFieldOrEmpty(r.object, "status").len == 0)
-            "?"
-        else
-            json_util.strFieldOrEmpty(r.object, "status");
-        try w.writer.print("  {s}", .{utf8.cap(status, status_column_max)});
-        var pad = status_width -| status.len;
-        while (pad > 0) : (pad -= 1) try w.writer.writeByte(' ');
-        try w.writer.print("  {s}\n", .{path});
-        if (title.len > 0) {
-            var indent = status_width + 4;
-            while (indent > 0) : (indent -= 1) try w.writer.writeByte(' ');
-            try w.writer.print("{s}\n", .{utf8.cap(title, title_column_bytes)});
-        }
-    }
+    try common.renderStatusRows(&w.writer, rfcs, 6, status_column_max, title_column_bytes, common.titleAsIs);
 
     try w.writer.print("\nNEXT\n\n  next free number is {d:0>4}\n", .{next_number});
     try w.writer.writeAll("  clanker rfc open <path>          read one in full\n");
@@ -403,31 +378,4 @@ test "renderChecklist prints the question to ask under each requirement" {
     try testing.expect(std.mem.find(u8, text, "http client") != null);
     try testing.expect(std.mem.find(u8, text, "the decision as a question") != null);
     try testing.expect(std.mem.find(u8, text, "ask: What exactly is being decided?") != null);
-}
-
-test "callTool reports the tool's own refusal sentence" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const Canned = struct {
-        payload: []const u8,
-        fn call(ctx: *anyopaque, _: []const u8) anyerror![]const u8 {
-            const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.payload;
-        }
-    };
-    var canned: Canned = .{ .payload = "{\"ok\":false,\"error\":\"path must be below docs/rfcs/\"}" };
-    const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
-    try testing.expectError(Error.ToolFailed, common.callTool(arena, "rfc", tool, "{}"));
-}
-
-test "unsignedField refuses a negative count instead of wrapping it" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const v = try parseValue(arena, "{\"next_number\":-1,\"good\":7}");
-    try testing.expectEqual(@as(u64, 0), common.unsignedField(v, "next_number"));
-    try testing.expectEqual(@as(u64, 7), common.unsignedField(v, "good"));
 }

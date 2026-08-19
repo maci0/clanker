@@ -16,11 +16,20 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
-    const q = lib.optStr(req, "q") orelse lib.optStr(req, "args");
+    // A blank query is no query. `clanker sessions` reaches this tool through
+    // the CLI's generic passthrough, which always sends {"args":"<argv tail>"}
+    // — empty for a bare `clanker sessions`. Treating that empty string as a
+    // search made the plain listing exit 1 with "query must be at least 3
+    // characters". The length guard still applies to a query the caller
+    // actually typed.
+    const q = blk: {
+        const raw_q = lib.optStr(req, "q") orelse lib.optStr(req, "args") orelse break :blk null;
+        const trimmed = std.mem.trim(u8, raw_q, " \t\r\n");
+        break :blk if (trimmed.len == 0) null else trimmed;
+    };
     if (q) |query| {
-        const trimmed = std.mem.trim(u8, query, " \t\r\n");
-        if (trimmed.len < 3) return lib.fail(out, "query must be at least 3 characters");
-        return searchSessions(out, trimmed);
+        if (query.len < 3) return lib.fail(out, "query must be at least 3 characters");
+        return searchSessions(out, query);
     }
     const as_json = if (lib.optStr(req, "format")) |fmt| std.mem.eql(u8, fmt, "json") else false;
 

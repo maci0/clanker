@@ -7,7 +7,8 @@
 //! one host.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
+const diag = @import("../util/diag.zig");
+const json_util = @import("../util/json.zig");
 
 pub const version = @import("build_options").version;
 
@@ -53,7 +54,7 @@ pub fn cmd(init: std.process.Init, opts: Options, host: []const u8, port: u16) !
     if (std.mem.eql(u8, sub, "status")) return status(init, host, port);
     if (std.mem.eql(u8, sub, "join")) {
         const address = opts.arg1 orelse {
-            log.log(.error_, "mesh join needs a host:port: clanker mesh join 127.0.0.1:7420", .{});
+            diag.errorLine("mesh join needs a host:port: clanker mesh join 127.0.0.1:7420", .{});
             return Error.MissingArg;
         };
         const body = try std.fmt.allocPrint(arena, "{{\"address\":{f}}}", .{std.json.fmt(address, .{})});
@@ -77,7 +78,7 @@ pub fn cmd(init: std.process.Init, opts: Options, host: []const u8, port: u16) !
     if (std.mem.eql(u8, sub, "pending")) return pending(init, host, port);
     if (std.mem.eql(u8, sub, "admit") or std.mem.eql(u8, sub, "deny")) {
         const id = opts.arg1 orelse {
-            log.log(.error_, "mesh {s} needs a peer id: clanker mesh {s} <id>", .{ sub, sub });
+            diag.errorLine("mesh {s} needs a peer id: clanker mesh {s} <id>", .{ sub, sub });
             return Error.MissingArg;
         };
         const allow = std.mem.eql(u8, sub, "admit");
@@ -91,7 +92,7 @@ pub fn cmd(init: std.process.Init, opts: Options, host: []const u8, port: u16) !
         return;
     }
 
-    log.log(.error_, "unknown mesh subcommand '{s}' (expected status, join, leave, pending, admit or deny)", .{sub});
+    diag.errorLine("unknown mesh subcommand '{s}' (expected status, join, leave, pending, admit or deny)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -196,7 +197,7 @@ fn callWithTimeout(
     var fut = io.concurrent(fetchTask, .{ io, gpa, url, method, payload, &body, &done }) catch {
         // Waiting without a ceiling is the thing being avoided, so a missing
         // worker is a refusal rather than a fall back to an unbounded call.
-        log.log(.error_, "mesh: no spare worker to run the request under a timeout", .{});
+        diag.errorLine("mesh: no spare worker to run the request under a timeout", .{});
         return Error.RequestFailed;
     };
     const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
@@ -213,7 +214,7 @@ fn callWithTimeout(
                 // cancel() interrupts the blocking syscall and joins the task,
                 // so nothing is left writing into `body` after this returns.
                 if (fut.cancel(io)) |_| {} else |_| {}
-                log.log(.error_, "clanker serve at {s} accepted the connection and did not answer within {d}ms", .{ url, timeout_ms });
+                diag.errorLine("clanker serve at {s} accepted the connection and did not answer within {d}ms", .{ url, timeout_ms });
                 return Error.ServeNotRunning;
             },
             error.Canceled => {
@@ -223,19 +224,19 @@ fn callWithTimeout(
         };
     }
     const status_n = fut.await(io) catch |err| {
-        log.log(.error_, "clanker serve is not reachable at {s} ({s}); start `clanker serve` with modules.mesh = true", .{ url, @errorName(err) });
+        diag.errorLine("clanker serve is not reachable at {s} ({s}); start `clanker serve` with modules.mesh = true", .{ url, @errorName(err) });
         return Error.ServeNotRunning;
     };
     const text = try arena.dupe(u8, body.written());
     if (status_n == 404) {
-        log.log(.error_, "modules.mesh is off; set it and restart `clanker serve`", .{});
+        diag.errorLine("modules.mesh is off; set it and restart `clanker serve`", .{});
         return Error.MeshOff;
     }
     if (status_n >= 400) {
         if (jsonError(arena, text)) |msg| {
-            log.log(.error_, "{s}", .{msg});
+            diag.errorLine("{s}", .{msg});
         } else {
-            log.log(.error_, "mesh request failed (HTTP {d})", .{status_n});
+            diag.errorLine("mesh request failed (HTTP {d})", .{status_n});
         }
         return Error.RequestFailed;
     }
@@ -270,7 +271,7 @@ pub fn renderStatus(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const 
         if (item != .object) continue;
         const mid = strField(item.object, "id");
         const name = strField(item.object, "name");
-        const up = if (item.object.get("up")) |v| (v == .bool and v.bool) else false;
+        const up = json_util.boolFieldOrFalse(item.object, "up");
         const label = if (name.len > 0 and !std.mem.eql(u8, name, mid)) name else mid;
         try out.writer.print("  {s}", .{label});
         if (mid.len > 0 and !std.mem.eql(u8, label, mid)) try out.writer.print("  {s}", .{mid});

@@ -428,6 +428,15 @@ clanker.registerView({
        than the layout's fixed one. Rotate/squash while airborne or just
        impacted, the same visual grammar drawAgent uses, so a thrown plant
        reads as the same kind of event as a thrown clanker. */
+    // A ring under a held sprite, so it is obvious the pointer has it rather
+    // than that it teleported.
+    function dragShadow(cx, py) {
+      ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
+      ctx2d.lineWidth = 1;
+      ctx2d.beginPath();
+      ctx2d.ellipse(cx, py + TILE - 2, TILE * 0.45, 3, 0, 0, Math.PI * 2);
+      ctx2d.stroke();
+    }
     function drawProp(prop, ox, oy) {
       var px = ox + prop.x * TILE;
       var py = oy + prop.y * TILE;
@@ -448,13 +457,7 @@ clanker.registerView({
         tile(PROP_TILE[prop.kind], px, py);
       }
       if (spinning || squashed) ctx2d.restore();
-      if (prop.dragging) {
-        ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
-        ctx2d.lineWidth = 1;
-        ctx2d.beginPath();
-        ctx2d.ellipse(px + (prop.w * TILE) / 2, py + TILE - 2, TILE * 0.45, 3, 0, 0, Math.PI * 2);
-        ctx2d.stroke();
-      }
+      if (prop.dragging) dragShadow(px + (prop.w * TILE) / 2, py);
     }
 
     /* ---------- drawing ----------
@@ -590,13 +593,7 @@ clanker.registerView({
       ctx2d.fillStyle = cssVar("--ok", "#7aa");
       ctx2d.fillRect(cx + janitor.dir * 15 - 4, foot - 2, 9, 4); // mop head
       if (spinning || squashed) ctx2d.restore();
-      if (janitor.dragging) {
-        ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
-        ctx2d.lineWidth = 1;
-        ctx2d.beginPath();
-        ctx2d.ellipse(px + TILE / 2, py + TILE - 2, TILE * 0.45, 3, 0, 0, Math.PI * 2);
-        ctx2d.stroke();
-      }
+      if (janitor.dragging) dragShadow(px + TILE / 2, py);
       // A pat/slap/throw reaction outranks his own ambient rounds banter;
       // the window is checked here as well as in the step, so a line cannot
       // outlive it by a frame on a path that draws without stepping.
@@ -733,15 +730,7 @@ clanker.registerView({
         ctx2d.fillRect(px + 10, py + 4, 2, 2);
       }
       if (spinning || squashed) ctx2d.restore();
-      if (a.dragging) {
-        // A ring under a held clanker, so it is obvious the pointer has it
-        // rather than that it teleported.
-        ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
-        ctx2d.lineWidth = 1;
-        ctx2d.beginPath();
-        ctx2d.ellipse(px + TILE / 2, py + TILE - 2, TILE * 0.45, 3, 0, 0, Math.PI * 2);
-        ctx2d.stroke();
-      }
+      if (a.dragging) dragShadow(px + TILE / 2, py);
       if (a.bubble) bubble(px, py, a.bubble.slice(0, 30), ox, o_width);
       else if (asleep(a)) drawZzz(px, py);
     }

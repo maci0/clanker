@@ -34,8 +34,8 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     const req = std.json.parseFromSliceLeaky(Request, alloc, input, .{ .ignore_unknown_fields = true }) catch
-        return declineJson(out, "input is not a transform request");
-    if (req.payload.len == 0) return declineJson(out, "empty payload");
+        return lib.fail(out, "input is not a transform request");
+    if (req.payload.len == 0) return lib.fail(out, "empty payload");
 
     const settings = std.json.parseFromSliceLeaky(Settings, alloc, lib.config(), .{ .ignore_unknown_fields = true }) catch Settings{};
     const mode_is_json = !std.mem.eql(u8, settings.mode, "text");
@@ -54,16 +54,16 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const answer = lib.llm(prompt) catch |err| {
         lib.log(2, @errorName(err));
-        return declineJson(out, "llm call failed");
+        return lib.fail(out, "llm call failed");
     };
 
     const cleaned = model_reply.stripFence(answer);
     if (mode_is_json) {
         const is_json = std.json.validate(alloc, cleaned) catch false;
-        if (!is_json) return declineJson(out, "model returned text that is not JSON");
+        if (!is_json) return lib.fail(out, "model returned text that is not JSON");
     }
 
-    try okJson(out, cleaned);
+    try lib.okPayload(out, cleaned);
 }
 
 fn interpolate(alloc: std.mem.Allocator, tmpl: []const u8, lang: []const u8, tool: []const u8) ![]const u8 {
@@ -82,21 +82,4 @@ fn interpolate(alloc: std.mem.Allocator, tmpl: []const u8, lang: []const u8, too
         }
     }
     return out.toOwnedSlice(alloc);
-}
-
-fn okJson(out: *lib.Out, payload: []const u8) !void {
-    var buf: [64 * 1024]u8 = undefined;
-    var w: std.Io.Writer = .fixed(&buf);
-    var s2 = std.json.Stringify{ .writer = &w, .options = .{} };
-    try s2.beginObject();
-    try s2.objectField("ok");
-    try s2.write(true);
-    try s2.objectField("payload");
-    try s2.write(payload);
-    try s2.endObject();
-    try out.writeAll(buf[0..w.end]);
-}
-
-fn declineJson(out: *lib.Out, reason: []const u8) !void {
-    return lib.fail(out, reason);
 }

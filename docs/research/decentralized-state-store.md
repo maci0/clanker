@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17. Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
+Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17, distributed-ledger family added as option R 2026-08-19 (Draft 5), options S and T — TigerBeetle applied as an event spine, and a Zig spine of our own scoped to a starting mesh — added the same day; option T's packaging corrected later that day on operator direction (a standalone public Zig project offering clanker a library and/or API, not clanker-internal code). Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -200,6 +200,41 @@ candidates rather than above them.
   resolving concurrency there is nothing for them to do; the append-only logs
   need ordering, not merging. The PRD's non-goal is no longer the reason —
   `medium` confidence.
+- **The distributed-ledger family (option R, added 2026-08-19) decomposes
+  into parts clanker mostly has or can add cheaply.** A ledger is a
+  replicated log + consensus total order + deterministic fold + tamper
+  evidence (+ BFT in the blockchain variants). The board/chatroom design is
+  already the log and the fold; total order is available from the surveyed
+  Raft rows without BFT's cost; tamper evidence is a hash chain addable to
+  any backend for one hash per record — and it is the one part with a
+  clanker-specific argument, because the improve ledger's prefix has already
+  been silently rewritten once. BFT itself buys nothing here: every node runs
+  the same self-modifying code under one operator, so the realistic bad
+  writer is a correlated fault BFT cannot absorb — `high` confidence on the
+  decomposition, `medium` on the per-candidate verdicts.
+- **The standalone ledger-database market is consolidating away from itself.**
+  Amazon retired QLDB on 2025-07-31 pointing users at Aurora PostgreSQL and
+  conceding the migration loses cryptographic verifiability; Google's
+  Trillian is in maintenance mode naming Tessera as successor; immudb — the
+  strongest survivor — is **BUSL 1.1, not open source**, and its replication
+  is read-only replicas pulling from a primary with no documented failover —
+  `medium` for QLDB (press), `high` for the rest (read at source 2026-08-19).
+- **TigerBeetle's schema can be repurposed as a spine, and its architecture is
+  the argument for building our own (options S and T, 2026-08-19).** A
+  `Transfer` is fixed-width integers — immutable, undeletable, no payload
+  field — so clanker events can ride it only as counts plus 128-bit content
+  hashes, never as bodies: TigerBeetle as a replicated, totally ordered,
+  immutable index beside a bulk store, which is TigerBeetle's own prescribed
+  OLGP pairing, with clanker hosts as clients of a static 6-replica cluster
+  and **no official Zig client**. The fixed schema is also what enables its
+  simplicity, so "TigerBeetle but general-purpose" is not a fork — option T
+  instead scopes a Zig spine of our own — a standalone public project with
+  clanker as first consumer — to what a starting mesh needs:
+  single-writer-per-stream logs (the home-instance rule) replicate with no
+  consensus at all — fan-out plus id-dedup, which `chatrooms.fanOut` already
+  does — and a staged growth path adds machinery only when a measurement
+  demands it, so setup cost below fleet scale stays "run clanker" — `high` on
+  the schema facts, `medium` on the design reasoning.
 
 ## Scope and method
 
@@ -217,7 +252,8 @@ candidates rather than above them.
   surveyed; if a self-hosted store wins, its own HA is a later question. No
   benchmark was run: every performance number is quoted, not measured. Neither
   Zig driver was compiled or run against a live server.
-- **Freshness:** all verification 2026-08-16. The PRD is the fastest-moving input
+- **Freshness:** all verification 2026-08-16, option R's sources fetched
+  2026-08-19. The PRD is the fastest-moving input
   — marked *in progress*, so a Phase 1 landing or a revised non-goal dates this
   note before any external source does. `nats.zig` is pre-1.0 and its API is
   declared unstable.
@@ -232,7 +268,14 @@ candidates rather than above them.
   alternatives). It also drops the recommendation language earlier drafts had
   drifted into: the field is laid out for an RFC to choose from, per this
   directory's own convention. The tier-1 finding is the only one that has
-  survived unchanged throughout.
+  survived unchanged throughout. Draft 5 (2026-08-19) adds option R, the
+  distributed-ledger family, decomposed into its parts rather than adopted or
+  rejected whole; no earlier verdict changed. Its leads were gathered by
+  direct web search and verified with fetches, because the sweep web backend
+  failed again (see rejected leads). The same day's operator exchange added
+  options S and T: TigerBeetle's Transfer schema, client list, OLGP pairing
+  and cluster model fetched at source, and the build-it-ourselves row
+  promoted and scoped to a staged growth path.
 - **Known gaps, stated so the next reader does not mistake breadth for depth.**
   Licences for Consul, CockroachDB, YugabyteDB and Turso are unverified, as is
   the Loro per-character figure (its source 403s). No candidate was compiled, deployed or
@@ -1151,7 +1194,9 @@ anything else. The honest answer is that it does not exist for this use case.
   or a hand-written LWW/OR-set layer, gossiped over the mesh transport PRD 0011
   is already building — and it is the only option that keeps everything in-tree.
   Its cost is that clanker would own a distributed-systems problem, which is the
-  category of work most likely to be subtly wrong.
+  category of work most likely to be subtly wrong. Promoted to its own scoped
+  candidate as option T (2026-08-19); TigerBeetle's schema applied directly
+  rather than as blueprint is option S.
 - **Evidence:** [TigerBeetle architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md),
   [TigerBeetle on dbdb.io](https://dbdb.io/db/tigerbeetle),
   [awesome-zig](https://github.com/zigcc/awesome-zig), read 2026-08-16.
@@ -1184,6 +1229,288 @@ streaming and worse at everything else NATS was attractive for.
   [message broker comparison 2026](https://dev.to/mahdi0shamlou/message-brokers-comparison-2026-kafka-rabbitmq-nats-redis-streams-which-one-should-you-3ea8),
   [NATS alternatives roundup](https://www.modern-datatools.com/alternatives/nats),
   read 2026-08-16 — all secondary comparison pages, so `medium` at best.
+
+### R. Distributed ledgers — the family decomposed, and which parts apply
+
+Asked explicitly (2026-08-19 pass). "Distributed ledger" is not one candidate
+but a bundle of properties, and the honest way to weigh it is to take the
+bundle apart: (1) a replicated append-only log, (2) a total order over that
+log agreed by consensus, (3) a deterministic state machine folded from the
+log, (4) cryptographic tamper evidence — hash chaining and Merkle proofs —
+and, in the blockchain variants, (5) Byzantine fault tolerance among mutually
+distrusting parties. Clanker already has (1) and (3) in-tree: [ADR
+0001](../adrs/0001-board-is-a-chatroom.md)'s board is a chatroom log folded
+deterministically into cards, and PRD 0011 replicates per-owner logs with
+id-dedup. The in-tree design is ledger-shaped already, minus consensus and
+crypto — so this section prices (2), (4) and (5) separately instead of
+adopting or rejecting the bundle whole.
+
+- **CometBFT (the maintained successor to Tendermint Core) + an ABCI app** —
+  the general-purpose form of (2)+(3)+(5): a Go consensus engine that takes a
+  deterministic state machine written in any language over the ABCI interface
+  and replicates it across nodes, tolerating fewer than one-third faulty or
+  malicious members; the README claims up to 10k TPS. Apache-2.0. Fit: this is
+  the strongest ordering guarantee in the whole note — a BFT-agreed total
+  order over exactly the append-then-fold shape clanker's logs and board
+  already have, and the state machine could in principle be clanker-native
+  Zig behind ABCI. Cost: a Go daemon and a validator set per deployment, BFT
+  quorum (a minority partition stalls — CP), and consensus latency on every
+  write for a fault class the fleet does not contain (the closing verdict
+  below).
+  Evidence: [CometBFT repo](https://github.com/cometbft/cometbft), fetched
+  2026-08-19.
+- **Hyperledger Fabric — the permissioned-blockchain form.** Ordering is Raft
+  (crash fault tolerant, the recommended default) or SmartBFT since v3.0
+  (tolerates fewer than one-third malicious); a deployment runs ordering
+  nodes, peers, *and* certificate authorities with per-organization MSP
+  identity. That identity machinery is the point of Fabric: it exists so
+  organizations that do not trust each other can share a ledger. A fleet of
+  one operator's instances has no such boundary to enforce, so Fabric's
+  distinguishing cost buys nothing here, and with Raft ordering its guarantee
+  collapses to what rqlite/dqlite (option K) already offer without the PKI.
+  Evidence:
+  [ordering service docs](https://hyperledger-fabric.readthedocs.io/en/latest/orderer/ordering_service.html),
+  fetched 2026-08-19.
+- **immudb — the ledger database without the "distributed".** "Immutable
+  database based on zero trust, SQL/Key-Value/Document model, tamperproof,
+  data change history" (its own description): every transaction extends a
+  cryptographically verifiable chain, clients can verify inclusion and
+  consistency, and the APIs are gRPC, PostgreSQL wire v3, and REST through
+  the separate immugw — plus embedded use, but only from Go. Two findings
+  gate it. **Licence: BUSL 1.1**, not an OSI licence. And replication is
+  asynchronous primary→replica pull (gRPC `ExportTx`) where **replicas
+  reject writes**, with no automatic failover documented — topologically it
+  is option J's central store with hash chains and a weaker HA story, giving
+  property (4) while failing the "no agent blocked by a down host" constraint
+  the same way single-node Postgres does. Evidence:
+  [repo](https://github.com/codenotary/immudb),
+  [replication docs](https://docs.immudb.io/master/production/replication.html),
+  both fetched 2026-08-19.
+- **Hypercore/Autobase and OrbitDB — the peer-to-peer log family.** The AP
+  corner of the ledger space, and structurally the closest to PRD 0011:
+  per-writer append-only logs with Merkle integrity, replicated peer-to-peer,
+  folded into a view. Autobase (Holepunch/Pears) linearizes multiple writers'
+  Hypercores into one eventually consistent view through an `apply` handler
+  that must be a pure deterministic reducer — and its docs state it **can
+  reorder previously seen nodes when new causal information arrives**, so the
+  fold must tolerate retroactive reordering or peers diverge. OrbitDB is
+  Merkle-CRDTs over Helia/libp2p (MIT, 8.8k stars; JS, with a Go
+  implementation by Berty) offering event-log, document and KV types — the
+  applied form of option G on a p2p transport, sharing its verdict. Both are
+  JavaScript runtimes, so each host would run a Node daemon beside clanker;
+  no Zig path exists. What the family demonstrates is that PRD 0011's
+  own shape — single-owner logs, deterministic fold — extends to multi-writer
+  with Merkle integrity, which is an argument for the build-it-ourselves row
+  in option P, not for adopting a JS stack. Evidence:
+  [Autobase docs](https://docs.pears.com/building-blocks/autobase),
+  [OrbitDB repo](https://github.com/orbitdb/orbitdb), fetched 2026-08-19.
+- **The category's own trajectory is the strongest signal in this section.**
+  Amazon retired QLDB — the flagship managed ledger database — on
+  2025-07-31, recommending migration to Aurora PostgreSQL and conceding the
+  migration loses cryptographic verifiability (press coverage; AWS's own page
+  not fetched, so `medium`). Google's Trillian, the Merkle-log service behind
+  Certificate Transparency (Apache-2.0, MySQL/MariaDB-backed, centrally
+  operated), declares itself in maintenance mode and points new operators at
+  Tessera. The standalone verifiable-ledger market is consolidating into
+  "ordinary database plus audit machinery" — which is evidence for taking the
+  useful ledger properties à la carte rather than adopting a ledger product.
+  Evidence: [InfoQ on QLDB's retirement](https://www.infoq.com/news/2024/07/aws-kill-qldb),
+  [Trillian repo](https://github.com/google/trillian), fetched 2026-08-19.
+
+**What survives the decomposition.** Two parts. *Total order* (2) is real —
+observation 5 in the comparison already names ordering as the axis the
+append-only logs care about and almost nothing guarantees — but the surveyed
+Raft rows (rqlite, etcd, Consul) provide agreed total order without BFT's
+quorum economics, so a ledger product is not needed to get it. *Tamper
+evidence* (4) is the one part with a clanker-specific argument: it is a hash
+chain over an append log — addable to any backend in this note, including
+today's flat files, for one hash per record, no consensus and no daemon — and
+the improve ledger has already had its prefix silently rewritten once
+(three `accepted` entries flipped in worktree copies while the shared file
+froze,
+[bug](../reports/bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md));
+a chained log makes a rewritten prefix detectable at read time, though it
+prevents nothing. A self-modifying harness is unusually exposed to its own
+defective writers, and that is an integrity argument, not a consensus one.
+
+**What does not survive.** *BFT* (5): every clanker node runs the same
+self-improving binary under one operator, so the realistic bad writer is a
+defect replicated to every node — a correlated fault, which is precisely the
+class BFT consensus cannot absorb (it protects a correct majority from a
+faulty minority, and here there is no independent majority). Paying BFT's
+latency and quorum cost to defend against a minority-node threat model the
+deployment does not have is the wrong trade — `high` confidence on the
+reasoning, with the caveat that it rests on the single-operator premise
+(see "What would change the answer"). Fabric's identity machinery falls with
+it, and the public-chain variants add token economics on top (rejected leads).
+
+### S. TigerBeetle applied — accounts and transfers as clanker entities and events
+
+Asked explicitly by the operator (2026-08-19): option P rules TigerBeetle out
+because nothing in `state/` is a debit or a credit — but can the schema be
+*repurposed*, accounts as clanker ids and transfers as the appended events
+(runs, autolearn entries, token stats)?
+
+**The schema fact that decides the shape.** A `Transfer` is fixed-width
+integers only — `id`, `debit_account_id`, `credit_account_id`, `amount` and
+`user_data_128` are u128, plus `user_data_64`, `user_data_32`, `ledger` (u32),
+`code`/`flags` (u16) and a u64 timestamp. **There is no variable-length or
+blob field**, and transfers can be neither modified nor deleted after
+creation. So an event *body* — a run record, an autolearn entry — cannot live
+in TigerBeetle under any mapping. What a transfer can carry is a count and a
+reference: the docs themselves describe the `user_data` fields as "optional
+secondary identifiers to link this transfer to an external entity or event".
+
+**What the mapping degrades to, and it is still interesting.** Not
+TigerBeetle-as-the-store but TigerBeetle-as-the-spine: `amount` = tokens,
+bytes or a record count; `user_data_128` = a 128-bit content hash of the
+appended record; accounts per (instance, stream, provider@model). Double
+entry is satisfiable with natural pairs — provider credits, instance debits
+for token accounting; stream/writer pairs for the logs — and account balances
+then *are* the aggregates `clanker stats` currently computes by scanning
+JSONL, replicated and strictly serialized. The result is a totally ordered,
+immutable, undeletable index over append-only logs whose bodies stay in a
+bulk store. That immutability is enforced by the state machine at the API,
+which is a different (and in some ways stronger) property than a hash chain's
+cryptographic detectability — but it is not a proof an external verifier can
+check, so it complements rather than replaces open question 14.
+
+**This is TigerBeetle's own prescribed architecture, not an abuse.** The docs
+are explicit that TigerBeetle "works alongside your general purpose database"
+(their OLGP), which stores "metadata about ledgers and accounts (such as
+string names or descriptions)" while TigerBeetle holds transfers and
+balances, and that "initiating a transfer should not require fetching
+metadata from the general purpose database". Option S therefore *composes
+with* a tier-2 bulk store rather than competing with one — the same
+composition observation 4 makes for etcd and S3.
+
+**Topology correction.** Repurposing TigerBeetle does not make clanker peers
+into replicas. A cluster is its own fixed set of replicas — six recommended,
+membership static, size unchangeable after creation for now — and every
+clanker host would be a *client* of that cluster. On the tier-2 axes this is
+a central replicated service, not full-state-per-host.
+
+- **Pros:** the strongest ordering + immutability combination available for
+  the event spine; balances as free replicated aggregates; single binary,
+  operationally the simplest cluster in the note; Zig reference code.
+- **Cons:** bodies need a second store by design; cluster membership is
+  static; **no official Zig client** — the supported list is .NET, Go, Java,
+  Node.js, Python, Ruby, Rust, so a Zig caller presumably binds the C
+  `tb_client` library, which is `unverified` for Zig 0.16; double-entry
+  ergonomics for non-financial events are untested anywhere.
+- **Unknowns:** whether `tb_client` links cleanly into a musl Zig 0.16 build;
+  write batching/latency for the spine's append rate; whether 128 bits of
+  hash is an acceptable integrity anchor for the logs.
+- **Evidence:**
+  [Transfer reference](https://docs.tigerbeetle.com/reference/transfer/),
+  [clients](https://docs.tigerbeetle.com/coding/clients/),
+  [system architecture](https://docs.tigerbeetle.com/coding/system-architecture/),
+  [deploying](https://docs.tigerbeetle.com/operating/deploying/), all fetched
+  2026-08-19.
+
+### T. A Zig replicated spine of our own — the build-it-ourselves row, promoted
+
+Also asked explicitly (2026-08-19): the operator's observation is that the
+surveyed products answer scale the starting point does not have — Fabric
+exists for mutually distrusting organizations, Corrosion was built for 800+
+nodes, CockroachDB for geo-distribution — while a starting clanker mesh is
+PRD 0011's "handful of instances" under one operator, capped at
+`max_members = 32`. Option P already names the build-it-ourselves row; this
+section promotes it to a candidate and scopes it, with TigerBeetle as the
+design reference rather than the dependency.
+
+**The decomposition that makes it small.** What makes the heavyweight
+candidates hard is multi-writer consensus — and clanker's data is mostly
+single-writer *by construction*. The home-instance rule (PRD 0011) gives
+every session, run and log stream exactly one writing host; ADR 0001's board
+is already a log folded deterministically into state. A single-writer,
+self-ordered stream replicates with **no consensus at all**: reliable fan-out
+plus id-dedup, which is precisely what `src/peers/chatrooms.zig` `fanOut`
+does today. So the owned distributed-systems problem is not "a database"; it
+is (a) at-least-once delivery of per-owner ordered streams with dedup —
+already prototyped in-tree — plus (b) the ~16 KB of genuinely contended
+documents, which the narrow-the-requirement analysis isolated, and which the
+home-instance rule already sidesteps by assigning each document an owner. A
+consensus round only becomes necessary if ownerless multi-writer documents
+are ever required; until then the spine is AP for streams and single-owner
+for documents, and the PRD's "no CRDT, no merge" non-goal is honored rather
+than fought.
+
+**The growth path is the point.** The operator's requirement (2026-08-19) is
+a store that grows and scales naturally as a mesh grows, without a large
+upfront resource, setup or maintenance cost — and the decomposition above
+yields exactly that as stages, each adopted only when a measurement demands
+it:
+
+0. **One host** — the status quo: files under `state/`, with tier 1's channel
+   as the only change.
+1. **2–32 members** — replicate owner streams by fan-out with id-dedup:
+   `chatrooms.fanOut` generalized from chat messages to state streams.
+   Nothing new to run, no consensus, and joining stays PRD 0011's admission
+   flow.
+2. **Measured contention on shared documents** — owner leases plus the
+   existing CAS over the ~16 KB contended-document subset. Still no
+   consensus.
+3. **A fleet past the 32-member cap** — the first stage that needs a real
+   engine decision (consensus for membership and contended documents, or a
+   hub topology), and the first stage at which the surveyed heavyweight
+   products earn their weight.
+
+Setup cost at every stage below 3 is "run clanker", which no external
+candidate in this note matches. Stage 1's protocol and measurements live in
+[the spike note](t-stage1-stream-replication-spike.md).
+
+**Packaging — a standalone public project, not clanker internals (operator's
+direction, 2026-08-19, refined the same day).** The spine is founded as its
+own git repository: a Zig project designed with clanker in mind and released
+publicly as a general-purpose tool. Its integration surface is part of the
+design brief: an embeddable Zig library clanker fetches as a dependency (the
+dqlite shape — keeps the single-binary property and PRD 0011's "no second
+daemon" non-goal), and/or a small service API for non-Zig consumers (the
+rqlite shape); which of the two leads is the new project's first design
+decision, not this note's. What the packaging changes, both ways: it fills
+the exact gap option P documents — no general-purpose Zig-native replicated
+store exists, and this would be one — and a public release is how the
+external users and hardening the cons below name ever arrive. The costs: a
+third fetched dependency against constraint 2's budget (zwasm, vaxis), and
+the improve loop no longer reaches the spine through improve-self, since the
+project has its own repository and lifecycle. The stage-1 spike stays a
+throwaway inside clanker's tree to prove the semantics cheaply; whether
+productization extracts the spike's code or starts clean in the new
+repository is an open point for after a green spike.
+
+**What TigerBeetle contributes as a blueprint — and what it does not.** Its
+discipline transfers: fixed-width spine records (an event header of ids,
+counts and a content hash — option S's transfer, minus the double-entry
+framing), deterministic fold, allocation bounded up front. Its storage engine
+does not: static allocation, zero-deserialization and single-core determinism
+are *enabled by* the fixed schema, so "TigerBeetle but general-purpose" would
+surrender exactly the properties that make TigerBeetle simple. And its VSR
+consensus is only needed for the contended-document slice, if ever — adopting
+it first would be building for the fleet the mesh does not yet have, the same
+overkill the operator is naming in Fabric. Open question 12 (cr-sqlite over
+the mesh transport, no Corrosion) is one concrete engine choice for that
+slice; a hand-rolled owner-lease CAS is another.
+
+- **Pros:** nothing new to operate — the transport is PRD 0011's, the fan-out
+  exists, the fold exists; full state per host for the streams each host
+  follows; the spike and stage 1 land in clanker's tree while the productized
+  spine is its own public project (see Packaging); right-sized for 2–32 members
+  with a growth path (add consensus only when a measurement demands it).
+- **Cons:** clanker owns delivery, retention and backfill semantics — option
+  P's warning stands ("the category of work most likely to be subtly wrong");
+  external hardening arrives only if the public release finds users;
+  cross-host queries need building; the
+  32-member ceiling is inherited from the PRD until that is revisited.
+- **Unknowns:** backfill/catch-up cost for a host that was down; whether the
+  contended-document slice ever outgrows single-owner + CAS; retention policy
+  for replicated streams on small hosts.
+- **Evidence:** in-tree — `src/peers/chatrooms.zig` (append + fan-out +
+  dedup), [PRD 0011](../prds/0011-clanker-mesh.md) (home-instance rule,
+  `max_members`, non-goals), [ADR
+  0001](../adrs/0001-board-is-a-chatroom.md) (log-fold state); TigerBeetle
+  design docs as cited under option S. Design reasoning, not measurement —
+  `medium` confidence.
 
 ## Out-of-the-box options
 
@@ -1279,6 +1606,12 @@ know everything".
 | H. S3 conditional writes | External | CP-ish | none needed (HTTP) | A bucket | Blobs + claims only | Complement, not a primary |
 | G. CRDTs (Yjs/Automerge/Loro) | **Full per host** | **AP** | none | Nothing | n/a | Library, not a store; see L for the applied form |
 | P. TigerBeetle | Full per host (VSR) | CP | native Zig | Binary per node | **No — fixed schema** | Unusable here; best Zig reference |
+| R. CometBFT + ABCI app | **Full per host** | CP (BFT, >2/3 quorum) | n/a — the ABCI app is the store | Go daemon per node + the app | App-defined | Strongest total order in the note; consensus on every write |
+| R. Hyperledger Fabric | Full per org | CP | none (SDKs: Go/Node/Java) | Orderers + peers + CAs/MSP | No | Inter-org identity machinery the fleet does not have |
+| R. immudb | Central + read replicas | n/a — primary is SPOF | none found (gRPC / pg wire / REST gw) | 1 server | KV+SQL+docs | **BUSL 1.1**; replicas reject writes; ledger without the "distributed" |
+| R. Hypercore/Autobase, OrbitDB | **Full per host** | **AP** | none (JS runtime) | Node daemon per host | Logs + docs + KV | Eventual total order that may retroactively reorder |
+| S. TigerBeetle as event spine | Central 6-replica service (hosts are clients) | CP | none official (C tb_client, unverified for Zig 0.16) | Cluster, static membership | No — counts + hashes only | Immutable ordered spine; bodies need a second store |
+| T. A Zig spine of our own (standalone public project) | **Full per host** (followed streams) | AP for streams; single-owner docs | native — a Zig library and/or its own API | **Nothing new** at stage 1; later the project as a dependency | Spine + docs; bodies local | Owns a deliberately small distributed-systems problem; staged growth |
 
 Five observations for whoever writes the RFC, none of them a recommendation:
 
@@ -1371,6 +1704,18 @@ Five observations for whoever writes the RFC, none of them a recommendation:
 | Redpanda/Kafka/Redis Streams cover streaming but not the KV+watch+TTL combination | secondary comparison pages | 2026-08-16 | medium |
 | FDB production users: Apple (Record Layer), Snowflake metadata, Tigris metadata | [Record Layer announcement](https://www.foundationdb.org/blog/announcing-record-layer/), [Tigris](https://www.tigrisdata.com/blog/building-a-database-using-foundationdb/) | 2026-08-16 | medium |
 | ~~No Zig client for NATS~~ | previous draft of this note | 2026-08-16 | **retracted** — `nats-io/nats.zig` is official and supports JetStream + KV |
+| CometBFT is Apache-2.0 Go BFT state-machine replication; the ABCI app can be any language; README claims up to 10k TPS; tolerates fewer than 1/3 faulty | [repo](https://github.com/cometbft/cometbft), fetched | 2026-08-19 | high |
+| Fabric ordering is Raft (CFT, recommended) or SmartBFT since v3.0 (< 1/3 malicious); a deployment runs orderers, peers, and CA/MSP identity | [ordering service docs](https://hyperledger-fabric.readthedocs.io/en/latest/orderer/ordering_service.html), fetched | 2026-08-19 | high |
+| immudb is **BUSL 1.1**, Go, ~9k stars; KV + SQL + document; gRPC, PostgreSQL wire v3, REST via separate immugw; embeds in Go only | [repo](https://github.com/codenotary/immudb), fetched | 2026-08-19 | high |
+| immudb replication is asynchronous primary→replica pull (gRPC `ExportTx`); replicas reject all direct writes; no automatic failover documented | [replication docs](https://docs.immudb.io/master/production/replication.html), fetched | 2026-08-19 | high |
+| Amazon QLDB service ended 2025-07-31; AWS recommended migrating to Aurora PostgreSQL; the migration loses cryptographic verifiability | [InfoQ](https://www.infoq.com/news/2024/07/aws-kill-qldb) + press roundup; AWS's own page not fetched | 2026-08-19 | medium — press only |
+| OrbitDB is MIT, JS (Go implementation by Berty), 8.8k stars, Merkle-CRDTs over Helia/libp2p, eventually consistent; event/document/KV types | [repo](https://github.com/orbitdb/orbitdb), fetched | 2026-08-19 | high |
+| Autobase linearizes multi-writer Hypercores into an eventually consistent view; may reorder previously seen nodes as causal info arrives; `apply` must be a pure deterministic reducer; Node.js runtime | [Pears docs](https://docs.pears.com/building-blocks/autobase), fetched | 2026-08-19 | high |
+| Trillian is a centrally operated Merkle-log gRPC service over MySQL/MariaDB, Apache-2.0, 3.7k stars, in maintenance mode; recommends Tessera for new logs | [repo](https://github.com/google/trillian), fetched | 2026-08-19 | high |
+| A TigerBeetle `Transfer` is fixed-width integers only (id, account ids, amount, user_data_128 all u128; user_data_64/32; ledger u32; code/flags u16; timestamp u64) with no blob field; transfers can be neither modified nor deleted; user_data fields are "optional secondary identifiers to link this transfer to an external entity or event" | [Transfer reference](https://docs.tigerbeetle.com/reference/transfer/), fetched | 2026-08-19 | high |
+| TigerBeetle's official clients are .NET, Go, Java, Node.js, Python, Ruby, Rust — no Zig client listed | [clients](https://docs.tigerbeetle.com/coding/clients/), fetched | 2026-08-19 | high |
+| TigerBeetle prescribes running beside a general-purpose (OLGP) database: names/metadata there, transfers and balances in TigerBeetle; "initiating a transfer should not require fetching metadata from the general purpose database" | [system architecture](https://docs.tigerbeetle.com/coding/system-architecture/), fetched | 2026-08-19 | high |
+| A TigerBeetle cluster's size is fixed at creation (six replicas recommended for production); membership is static, add/remove at runtime not yet supported | [deploying](https://docs.tigerbeetle.com/operating/deploying/), fetched | 2026-08-19 | high |
 
 ### Rejected leads, kept deliberately
 
@@ -1396,6 +1741,23 @@ Five observations for whoever writes the RFC, none of them a recommendation:
   sidecar. Not pursued.
 - **Temporal / Restate.** Durable-execution engines. They would replace the agent
   loop, not the state store. Out of scope for this question.
+- **`research` tool `sweep`, web backend, retried 2026-08-19.** For the
+  option-R pass, `distributed ledger state store` and `immutable ledger
+  database` at depth standard returned nothing on-topic at all: every WEB hit
+  across every query angle was an unrelated page (Chinese hardware-vendor
+  sites, bird-watching forum threads, thesaurus entries for "hate"). Third
+  recorded failure of this backend; option R's leads were gathered by direct
+  web search and every cited claim verified with a fetch.
+- **Public smart-contract chains (Ethereum and kin).** Rejected without a
+  fetch, on the trust model alone: proof-of-work/stake economics, gas
+  metering and token incentives exist to coordinate mutually distrusting
+  strangers, which a one-operator fleet is not. If BFT ordering is ever
+  actually wanted, the permissioned form (CometBFT, option R) is the
+  applicable shape at a fraction of the machinery.
+- **Corda.** Named in ledger roundups; not investigated in this pass. A lead,
+  not a finding.
+- **Tessera.** Trillian's named successor for transparency logs; not
+  investigated. A lead, not a finding.
 
 ## Open questions
 
@@ -1468,10 +1830,19 @@ only ones that block choosing a tier-2 backend.
     clanker's own gossip over the mesh transport PRD 0011 is already building?
     That would give multi-writer full replication with no second daemon and no
     Rust, which is the combination nothing else in this note offers. Entirely
-    unexplored, and the most interesting loose end here.
-13. **Is Marmot real?** Recorded from discussion threads only; repo, licence,
-    maturity and conflict semantics were never fetched. It is the least verified
-    option in the note and would need a pass of its own before being weighed.
+    unexplored, and the most interesting loose end here. Now also one concrete
+    engine choice for option T's contended-document slice.
+13. **Is Marmot production-ready?** Its repo, licence, architecture and conflict
+    semantics were fetched 2026-08-16 (see option M, which corrected the earlier
+    discussion-thread description of v1), but v2 is a young rewrite: 2PC
+    write-path behaviour at the stated agent counts and out-of-order sync on
+    ordered logs would need a pass of their own before it is weighed.
+14. **Is a hash chain over the shared append logs worth one hash per record?**
+    The only ledger property option R leaves standing with a clanker-specific
+    argument. The improve ledger's prefix has been silently rewritten once
+    already, and a chained log makes a rewritten prefix detectable at read
+    time on any backend — including today's flat files — with no consensus
+    and no daemon. Cheap to spike; entirely unexplored.
 
 ## What would change the answer
 
@@ -1493,6 +1864,10 @@ only ones that block choosing a tier-2 backend.
   tier-1 breakage into a permanent one and forces that half immediately.
 - **An operator who will not run a server.** Collapses tier 2 to option I or to
   doing nothing, regardless of what the survey says.
+- **Peers stopping being one operator's.** Every BFT verdict in option R
+  rests on the premise that the fleet is mutually trusting because one
+  operator runs every node. A mesh that admitted other operators' instances
+  would reintroduce the minority-adversary model and reopen the CometBFT row.
 
 ## References
 
@@ -1564,6 +1939,7 @@ only ones that block choosing a tier-2 backend.
 **Zig-native landscape**
 
 - [TigerBeetle architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md) · [dbdb.io entry](https://dbdb.io/db/tigerbeetle)
+- [TigerBeetle Transfer reference](https://docs.tigerbeetle.com/reference/transfer/) · [clients](https://docs.tigerbeetle.com/coding/clients/) · [system architecture — the OLGP pairing](https://docs.tigerbeetle.com/coding/system-architecture/) · [deploying](https://docs.tigerbeetle.com/operating/deploying/) — options S and T
 - [awesome-zig](https://github.com/zigcc/awesome-zig)
 
 **NATS alternatives**
@@ -1601,6 +1977,15 @@ only ones that block choosing a tier-2 backend.
 - [Building multi-writer applications on Amazon S3](https://aws.amazon.com/blogs/storage/building-multi-writer-applications-on-amazon-s3-using-native-controls/)
 - [Leader election with S3 conditional writes](https://www.morling.dev/blog/leader-election-with-s3-conditional-writes/)
 - [Can S3 replace a central orchestrator for agents?](https://benpiper.com/post/2026/can-s3-replace-a-central-orchestrator-for-agents/)
+
+**Distributed ledgers (option R)**
+
+- [CometBFT](https://github.com/cometbft/cometbft) — BFT state-machine replication over ABCI
+- [Hyperledger Fabric: the ordering service](https://hyperledger-fabric.readthedocs.io/en/latest/orderer/ordering_service.html)
+- [immudb](https://github.com/codenotary/immudb) · [replication docs](https://docs.immudb.io/master/production/replication.html)
+- [InfoQ: AWS to retire QLDB](https://www.infoq.com/news/2024/07/aws-kill-qldb) — press, AWS's own page not fetched
+- [Autobase (Pears docs)](https://docs.pears.com/building-blocks/autobase) · [OrbitDB](https://github.com/orbitdb/orbitdb)
+- [Trillian](https://github.com/google/trillian) — maintenance mode, names Tessera as successor
 
 **Agent-harness prior art**
 

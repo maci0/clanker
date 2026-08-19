@@ -8,7 +8,8 @@ pub const PatternError = error{ EmptyPattern, BadEscape, OutOfMemory };
 /// Compiled pattern: a sequence of literal fragments separated by `*`.
 pub const Pattern = struct {
     parts: []const []const u8,
-    /// True when the pattern begins with `*`.
+    /// Set when the pattern starts with `*`; when no literal fragments
+    /// remain this is what makes an all-wildcards pattern match every input.
     leading_star: bool,
     /// True when the pattern ends with `*`.
     trailing_star: bool,
@@ -52,11 +53,15 @@ pub const Pattern = struct {
         };
     }
 
+    /// Returns true when every literal fragment appears somewhere in `hay`, in
+    /// order, with each `*` wildcard spanning any bytes (including none).
+    /// Matching is deliberately unanchored: a leading or trailing `*` does not
+    /// change which slices match the bare fragments, because plain fragment
+    /// search never requires the first fragment at offset 0 nor the last at the
+    /// end. The only pattern without fragments is all wildcards, which matches
+    /// every input.
     pub fn matches(self: Pattern, hay: []const u8) bool {
         if (self.parts.len == 0) return self.leading_star;
-        if (self.parts.len == 1 and !self.leading_star and !self.trailing_star) {
-            return std.mem.find(u8, hay, self.parts[0]) != null;
-        }
         var rest = hay;
         for (self.parts) |part| {
             const at = std.mem.find(u8, rest, part) orelse return false;

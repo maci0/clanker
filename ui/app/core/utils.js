@@ -297,3 +297,18 @@ export function themeToken(name) {
 }
 
 
+/* GET /api/providers rows carry `usable` (and `reason` when false): the
+   server's own verdict on whether *it* can call the provider — its environ,
+   its loopback ports — computed with the same gate the TUI /model picker
+   applies. The chat model picker and the fallback select consume only the
+   callable set; the Models view keeps the full list as inventory and shows
+   the reason. A row without the field (an older server) counts as callable,
+   so a mixed deploy degrades to the old behavior rather than an empty picker. */
+export function callableProviders(list) {
+  return (list || []).filter(function (p) { return !!p && p.usable !== false; });
+}
+
+export function providerUnusableReason(p) {
+  if (!p || p.usable !== false) return "";
+  return p.reason || "not configured";
+}

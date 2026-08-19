@@ -29,15 +29,19 @@
     "--warn-text": "#92400e",
     "--code-bg": "#d4d0c6",
     "--code-fg": "#1b1c18",
-    "--chat-hue-0": "#0b57d0",
-    "--chat-hue-1": "#7c3aed",
-    "--chat-hue-2": "#047857",
-    "--chat-hue-3": "#92400e",
-    "--chat-hue-4": "#b91c1c",
-    "--chat-hue-5": "#0f6f8f",
-    "--chat-hue-6": "#9333ea",
-    "--chat-hue-7": "#3f6212",
+    "--chat-hue-0": "#1d5c9e",
+    "--chat-hue-1": "#9c386a",
+    "--chat-hue-2": "#1f4a24",
+    "--chat-hue-3": "#984517",
+    "--chat-hue-4": "#6c4a86",
+    "--chat-hue-5": "#406727",
+    "--chat-hue-6": "#a72920",
+    "--chat-hue-7": "#715b00",
+    "--lift-low": "0 1px 2px rgba(24, 29, 26, 0.10)",
     "--lift": "0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35)",
-    "--lift-high": "0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45)"
+    "--lift-high": "0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45)",
+    "--bevel-raised": "inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(24, 29, 26, 0.10)",
+    "--bevel-inset": "inset 0 1px 2px rgba(24, 29, 26, 0.08)",
+    "--bevel-pressed": "inset 0 1px 2px rgba(24, 29, 26, 0.18)"
   }
 }

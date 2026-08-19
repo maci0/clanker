@@ -1,0 +1,19 @@
+{
+  "name": "agency_sync",
+  "description": "Mirror persona files from github.com/msitarzewski/agency-agents into agency/<division>/<file>.md, verbatim, plus a summary catalog at agency/index.json (division, path, name, description per persona). These are not clanker skills and are never injected into any system prompt — agency-agents ships ~150 personas across 17 divisions, and auto-loading that as always-on context would bloat every turn. This tool only mirrors the corpus locally; a separate picker reads agency/index.json and the model's task to choose which persona (if any) fits. Input: {} syncs every division (dozens of HTTP round trips, can take a while); {\"division\":\"engineering\"} scopes to one division for a fast, repeatable check — a scoped sync merges into the existing catalog rather than replacing it, so other divisions' entries survive.",
+  "llm_description": "Sync agency-agents personas (github.com/msitarzewski/agency-agents) verbatim into agency/<division>/<file>.md plus a catalog at agency/index.json. {} = every division; {division} = one division only, merged into the existing catalog. Not clanker skills — nothing here is auto-injected into a prompt.",
+  "wasm": "zig-out/tools/agency_sync.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "division": {
+        "type": "string",
+        "description": "Sync only this division's directory (e.g. engineering, marketing, design). Omit to sync every division listed in the source repo's divisions.json."
+      }
+    }
+  },
+  "fs_prefixes": ["agency"],
+  "network_allow": ["raw.githubusercontent.com", "api.github.com"],
+  "confirm": false,
+  "category": "agent"
+}

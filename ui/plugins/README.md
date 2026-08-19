@@ -23,6 +23,14 @@ one is a directory here:
 `group` is one of the rail's groups (`Work`, `Watch`, `Set up`) and decides
 where the view's button appears.
 
+`app.js` and `app.css` are fetched the first time the view's tab is opened, not
+on page load: the tab, its title and its group are built from `plugin.json`
+alone, so an addon nobody opens costs nothing but this manifest. Set
+`"eager": true` when the addon does work outside its own view — a persistent
+dock, a live subscription — and its script will load with the page instead. It
+is then on every visit's critical path, so it needs a reason; `boot` below only
+runs once the script has loaded.
+
 `capabilities` names the `api` members the view actually uses. Known names:
 `get`, `post`, `live`, `emit`, `confirm`, `prompt`, `toast`, `workspace`, `icon`,
 `storage`, `render`, `session`. An unknown name is refused on write. The field is a
@@ -37,7 +45,9 @@ clanker.registerView({
   title: "Activity",
   group: "Watch",
   boot: function (api) {
-    // Optional. Runs when the script loads, even if the view is closed.
+    // Optional. Runs when the script loads, even if the view is closed —
+    // which, unless the manifest says "eager": true, is the first time
+    // someone opens this view.
     // Persistent chrome (a mini-player dock) belongs here.
   },
   mount: function (container, api) {
