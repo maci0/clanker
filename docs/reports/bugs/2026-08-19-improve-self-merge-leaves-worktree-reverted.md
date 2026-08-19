@@ -4,11 +4,11 @@
 
 - **What failed:** After imp-1787081817304037321 promoted and fast-forwarded main to 136e80b2 (adding a test to graph.zig), the actual working tree file and index still lacked the new test - git show HEAD had it, git diff HEAD did not. A blind commit-as-is pass right after promotion would have re-deleted the just-verified test. Fixed by git restore --source=HEAD --worktree, not yet root-caused in the merge-back code path.
 - **Impact:** To be confirmed.
-- **Resolution:** Resolved on 2026-08-18. Root cause found in src/improve/worktree.zig: Worktree.mergeBack's fast-forward path moves the shared branch ref and resets only its own throwaway worktree, by design -- it never resyncs whatever other checkout invoked improve-self. Confirmed unconditional on every promotion, unrelated to eval retries. No code fix proposed (real design tradeoff); documented as operational guidance instead.
+- **Resolution:** Reopened on 2026-08-19. Fifth occurrence 2026-08-19, and the warned-about hazard fired for real: the invoking checkout's stale pre-promotion copy of src/doctor.zig was committed and pushed as 124d592e, deleting promoted imp-1787102961990565171 and imp-1787104236888936691 from origin/main. The prior resolution documented guidance only; mergeBack still resyncs nothing but its own throwaway worktree, so every promotion leaves the invoking checkout showing the inverse diff. Reapplied on branch reapply-doctor-improvements.
 
 ## Status
 
-Resolved on 2026-08-18. Root cause found in src/improve/worktree.zig: Worktree.mergeBack's fast-forward path moves the shared branch ref and resets only its own throwaway worktree, by design -- it never resyncs whatever other checkout invoked improve-self. Confirmed unconditional on every promotion, unrelated to eval retries. No code fix proposed (real design tradeoff); documented as operational guidance instead.
+Reopened on 2026-08-19. Fifth occurrence 2026-08-19, and the warned-about hazard fired for real: the invoking checkout's stale pre-promotion copy of src/doctor.zig was committed and pushed as 124d592e, deleting promoted imp-1787102961990565171 and imp-1787104236888936691 from origin/main. The prior resolution documented guidance only; mergeBack still resyncs nothing but its own throwaway worktree, so every promotion leaves the invoking checkout showing the inverse diff. Reapplied on branch reapply-doctor-improvements.
 
 ## Symptom and impact
 
@@ -123,3 +123,21 @@ git restore --source=HEAD --worktree -- <path>        # sync working tree to the
 then verify with a real build/test (`zig build test`, exit code checked directly per the AGENTS.md `tail`-masks-exit-code caveat) before pushing. Never `git commit` the stale staged state as-is — it would silently re-delete whatever `improve-self` just promoted and verified, while the commit history claims it landed.
 
 The existing runbook `docs/runbooks/concurrent-agent-sessions-on-one-checkout.md` already describes an adjacent symptom ("unexplained imp- commits and a staged file that undoes them") but frames it as transient, mid-iteration state from a *still-running* respawning loop (`scripts/imp-autorecover-loop/loop.py`) that resolves once the loop goes quiet. All four occurrences here were the process having already fully exited (confirmed via `state/improve.lock` absent and no matching process in `ps`), so "wait for it to finish" does not apply and the state does not self-resolve — the fix above is needed regardless of whether a background loop is also active.
+## Fifth occurrence — the hazard fires: stale checkout committed and pushed as a revert
+
+The failure mode the TL;DR warned about (a blind commit of the stale tree re-deleting a verified promotion) actually happened, on origin/main.
+
+Verified from the main checkout's history and the improvements ledger:
+
+- 68726302 (2026-08-19 09:39 +0800) and 6b7e4030 (10:00 +0800) are improve-self promotions to src/doctor.zig: both ids, imp-1787102961990565171 and imp-1787104236888936691, are recorded as status accepted in state/improvements.jsonl (grep over the ledger).
+- 124d592e (10:12 +0800, author ywy50) touches only src/doctor.zig, +2/-19, and 'git revert --no-commit 124d592e' on the origin/main tip stages exactly the combined +19/-2 of the two promotions — the commit is the byte-exact inverse of both, i.e. the pre-promotion working-tree copy committed as-is.
+
+Operator's account (reported, not independently reproducible — the checkout was clean again by the time this was traced): doctor.zig was never edited by hand; after the improve worktree merged, the main checkout flagged doctor.zig as an unstaged change, git pull refused because of it, and committing+pushing that 'change' to unblock the pull produced 124d592e.
+
+This matches the confirmed root cause exactly: Worktree.mergeBack's fast-forward moves the shared branch ref and 'git -C <worktree> reset --hard' resyncs only the engine's own throwaway worktree (src/improve/worktree.zig, mergeBack and the reset comment above it), so the invoking checkout's index and working tree stay at pre-promotion content and present the inverse diff.
+
+Impact is no longer 'to be confirmed': two verified, gated, promoted improvements were silently deleted from origin/main by the operator following git's own suggestion for clearing a blocked pull.
+
+Recovery this time: revert of the revert on branch reapply-doctor-improvements (commit 820b61de, plus the CHANGELOG entry the promotions never added), clanker gate all nine gates PASS, merged back via PR. Incident trace: docs/reports/investigations/2026-08-19-stale-checkout-diff-pushed-as-revert.md.
+
+The follow-up stands and is now demonstrated by data loss, not hypothesis: after the fast-forward, mergeBack (or the improve-self CLI epilogue) must resync the invoking checkout's index and working tree to the new HEAD when that checkout is the branch's — or at minimum print the two git restore commands instead of leaving git to suggest committing the inverse diff.
