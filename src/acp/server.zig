@@ -380,3 +380,25 @@ test "ACP session/prompt rejects whitespace-only text" {
     defer std.testing.allocator.free(ws);
     try std.testing.expect(std.mem.find(u8, ws, "\"code\":-32602") != null);
 }
+
+test "ACP session/prompt rejects a concurrent in-flight prompt" {
+    var conn = Connection{};
+    defer conn.deinit(std.testing.allocator);
+    const init = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+    );
+    defer std.testing.allocator.free(init);
+    const new_s = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}
+    );
+    defer std.testing.allocator.free(new_s);
+    // Simulate an in-flight prompt by setting the busy flag directly; a second
+    // prompt on the same session must be rejected with -32603, not queued or dropped.
+    const busy = conn.prompt_busy.getPtr("acp-1") orelse return;
+    busy.* = true;
+    const concurrent = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"acp-1","prompt":"second"}}
+    );
+    defer std.testing.allocator.free(concurrent);
+    try std.testing.expect(std.mem.find(u8, concurrent, "\"code\":-32603") != null);
+}
