@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The UnknownProvider hint pointed at config.toml although providers merge from config.toml + config.local.toml](bugs/2026-08-19-unknownprovider-hint-names-only-config-toml.md) — Resolved
+
 - [Vertex error bodies reach the operator as a bare HTTP status: the Google error envelope is parsed by no codec and unrecognised bodies are discarded](bugs/2026-08-19-vertex-error-bodies-discarded.md) — Resolved
 
 - [A lapsed chat deadline can wedge the caller forever: the abort fires once and cancel cannot rescue a blocked read](bugs/2026-08-19-bounded-chat-one-shot-abort-wedges.md) — Resolved
@@ -197,7 +199,7 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
-- [google-vertex-anthropic returns HTTP 400 on every request, blocking improve-self](investigations/2026-08-19-vertex-anthropic-400.md) — Closed
+- [google-vertex-anthropic returns HTTP 400 on every request, blocking improve-self](investigations/2026-08-19-vertex-anthropic-400.md) — Resolved
 
 - [zig build test intermittently hangs forever in the bounded-chat abort test](investigations/2026-08-18-bounded-chat-abort-test-hangs.md) — Resolved
 - [Stale post-promotion checkout diff on doctor.zig was committed and pushed as revert 124d592e](investigations/2026-08-19-stale-checkout-diff-pushed-as-revert.md) — Investigating
