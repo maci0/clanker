@@ -388,8 +388,10 @@ fn parseEntry(arena: std.mem.Allocator, text: []const u8, base_dir: []const u8) 
     // left alone; everything else is relative to the index README's directory.
     const path = if (std.mem.find(u8, link, "://") != null or std.mem.startsWith(u8, link, "docs/"))
         arena.dupe(u8, link) catch return null
+    else if (std.mem.startsWith(u8, link, "./"))
+        std.fmt.allocPrint(arena, "{s}/{s}", .{ base_dir, link[2..] }) catch return null
     else
-        std.fmt.allocPrint(arena, "{s}/{s}", .{ base_dir, std.mem.trimStart(u8, link, "./") }) catch return null;
+        std.fmt.allocPrint(arena, "{s}/{s}", .{ base_dir, link }) catch return null;
 
     return .{
         .title = arena.dupe(u8, title) catch return null,
@@ -607,4 +609,15 @@ test "search kind accepts only all, report and runbook" {
     try std.testing.expect(searchKindAllowed("runbook"));
     try std.testing.expect(!searchKindAllowed("prd"));
     try std.testing.expect(!searchKindAllowed(""));
+}
+
+test "a parent-relative inventory link keeps its ../ traversal" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const index = "<!-- inventory:investigation:start -->\n- [Cross-store runbook](../runbooks/guide.md) — Open\n<!-- inventory:investigation:end -->\n";
+    const entries = try inventory(arena, index, "investigation", "docs/reports");
+    try std.testing.expectEqual(@as(usize, 1), entries.len);
+    try std.testing.expectEqualStrings("docs/reports/../runbooks/guide.md", entries[0].path);
 }
