@@ -81,7 +81,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try appendSection(&body_buf, "Expected Behaviour", expected, null);
     try appendSection(&body_buf, "Actual Behaviour", actual, null);
     try appendSection(&body_buf, "Reproduce", repro, repro_lang);
-    try appendSection(&body_buf, "Fix hint", fix_hint, "");
+    var effective_fix = fix_hint;
+    if (effective_fix == null) {
+        if (component) |c| effective_fix = investigateHint(c);
+    }
+    try appendSection(&body_buf, "Fix hint", effective_fix, "");
 
     const prefix = "[BUG] ";
     var title_buf: [600]u8 = undefined;
@@ -180,5 +184,30 @@ fn inferComponent(title: []const u8) ?[]const u8 {
     for (tokens) |tok| {
         if (std.ascii.indexOfIgnoreCase(title, tok)) |_| return tok;
     }
+    return null;
+}
+
+/// Maps an inferred component token to the source directory most likely
+/// implicated, so a kanban card carries an investigation pointer even when
+/// the reporter did not supply one.
+fn investigateHint(component: []const u8) ?[]const u8 {
+    if (std.ascii.eqlIgnoreCase(component, "llm")) return "src/llm/";
+    if (std.ascii.eqlIgnoreCase(component, "tui")) return "src/tui/";
+    if (std.ascii.eqlIgnoreCase(component, "sandbox")) return "src/sandbox/";
+    if (std.ascii.eqlIgnoreCase(component, "schedule")) return "src/schedule/";
+    if (std.ascii.eqlIgnoreCase(component, "serve")) return "src/serve/";
+    if (std.ascii.eqlIgnoreCase(component, "tools")) return "tools/zig/";
+    if (std.ascii.eqlIgnoreCase(component, "webui")) return "ui/app/";
+    if (std.ascii.eqlIgnoreCase(component, "chat")) return "src/peers/chatrooms.zig";
+    if (std.ascii.eqlIgnoreCase(component, "auth")) return "src/llm/auth.zig";
+    if (std.ascii.eqlIgnoreCase(component, "config")) return "src/config.zig";
+    if (std.ascii.eqlIgnoreCase(component, "agent")) return "src/agent/";
+    if (std.ascii.eqlIgnoreCase(component, "evals")) return "evals/";
+    if (std.ascii.eqlIgnoreCase(component, "improve")) return "src/improve/";
+    if (std.ascii.eqlIgnoreCase(component, "peers")) return "src/peers/";
+    if (std.ascii.eqlIgnoreCase(component, "records")) return "src/records/";
+    if (std.ascii.eqlIgnoreCase(component, "hooks")) return "src/hooks/";
+    if (std.ascii.eqlIgnoreCase(component, "mcp")) return "src/mcp/";
+    if (std.ascii.eqlIgnoreCase(component, "memory")) return "tools/zig/memory.zig";
     return null;
 }
