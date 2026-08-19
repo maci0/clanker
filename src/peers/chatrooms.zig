@@ -157,12 +157,27 @@ fn subPath(arena: std.mem.Allocator, state_dir: []const u8, name: []const u8) ![
     return std.fmt.allocPrint(arena, "{s}/{s}", .{ state_dir, name });
 }
 
+/// [chatrooms].rooms come from config.toml, which is operator-authored and not
+/// checked by the TOML parser beyond shape. An empty name has no room to
+/// subscribe to, and a duplicate name creates duplicate delivery paths when
+/// the room list is folded into chatroom operations. Reject both in
+/// `subscribedRooms`, where config defaults first meet runtime overrides.
+fn validateConfiguredRooms(rooms: []const []const u8) !void {
+    for (rooms, 0..) |room, i| {
+        if (room.len == 0) return error.EmptyRoomName;
+        for (rooms[0..i]) |prev| {
+            if (std.mem.eql(u8, prev, room)) return error.DuplicateRoomName;
+        }
+    }
+}
+
 // ------------------------------------------------------------------ reading --
 
 /// Rooms this instance subscribes to: config defaults minus the runtime
 /// "unsubscribed" set, plus the runtime "rooms" overrides from
 /// state/<sub_path>. Arena-owned.
 pub fn subscribedRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config) ![][]const u8 {
+    try validateConfiguredRooms(cfg.chatrooms.rooms);
     var rooms: std.ArrayList([]const u8) = .empty;
     var unsub: std.ArrayList([]const u8) = .empty;
     if (cfg.chatrooms.on) {
@@ -1546,6 +1561,26 @@ test "inbox cursor drains a capped same-timestamp burst without loss" {
     try std.testing.expectEqual(@as(usize, 2), second.len);
     try std.testing.expectEqualStrings("burst-5", second[0].id);
     try std.testing.expectEqualStrings("burst-6", second[1].id);
+}
+
+test "subscribedRooms rejects empty and duplicate configured rooms" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    var cfg = config_mod.Config{};
+    cfg.chatrooms.on = true;
+
+    cfg.chatrooms.rooms = &.{""};
+    try std.testing.expectError(error.EmptyRoomName, subscribedRooms(env.tmp.dir, io, arena, "", &cfg));
+
+    cfg.chatrooms.rooms = &.{ "dev", "ops", "dev" };
+    try std.testing.expectError(error.DuplicateRoomName, subscribedRooms(env.tmp.dir, io, arena, "", &cfg));
+
+    cfg.chatrooms.rooms = &.{ "dev", "ops" };
+    const rooms = try subscribedRooms(env.tmp.dir, io, arena, "", &cfg);
+    try std.testing.expectEqual(@as(usize, 2), rooms.len);
 }
 
 test "subscribe on/off round-trip" {
