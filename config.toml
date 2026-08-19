@@ -601,3 +601,4 @@ python_wasi_max_memory_bytes = 268435456
 # updated to match.
 [improve]
 max_context_requests = 5
+plan_phase = true
