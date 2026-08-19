@@ -9,6 +9,13 @@ pub fn encodeFrame(alloc: std.mem.Allocator, payload: []const u8) ![]u8 {
     return std.fmt.allocPrint(alloc, "Content-Length: {d}\r\n\r\n{s}", .{ payload.len, payload });
 }
 
+/// Hard cap on one buffered DAP frame. A real adapter's messages are at most
+/// a few MiB (a large `variables` response); a `Content-Length` declaring
+/// more than this can never complete, so `readFrame` fails fast instead of
+/// growing its buffer by one chunk per read until the process runs out of
+/// memory (the frame length is adapter-controlled and unchecked).
+const max_frame_bytes: usize = 16 << 20;
+
 pub const Decoded = struct {
     payload: []const u8,
     consumed: usize,
@@ -127,6 +134,10 @@ pub const Session = struct {
                 return err;
             };
             try self.buf.appendSlice(self.gpa, chunk);
+            // The buffer holds only the pending frame's prefix (complete
+            // frames are consumed above), so this caps the declared length an
+            // adapter can make us accumulate.
+            if (self.buf.items.len > max_frame_bytes) return error.FrameTooLarge;
         }
     }
 

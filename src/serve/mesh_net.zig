@@ -304,10 +304,14 @@ fn handleInbound(rt: *Runtime, raw: []const u8) void {
     });
 }
 
-fn drainFrames(rt: *Runtime, acc: *std.ArrayList(u8)) void {
+/// Drains every complete frame buffered in `acc`. Returns false when the
+/// buffer opens with a frame that can never decode (one declaring more bytes
+/// than `max_frame`): that prefix will never shrink, so the caller must stop
+/// reading rather than let each further read grow the buffer forever.
+fn drainFrames(rt: *Runtime, acc: *std.ArrayList(u8)) bool {
     while (true) {
-        const dec = mesh.decodeFrame(acc.items, rt.max_frame) catch break;
-        const got = dec orelse break;
+        const dec = mesh.decodeFrame(acc.items, rt.max_frame) catch return false;
+        const got = dec orelse return true;
         handleInbound(rt, got.payload);
         const rest = acc.items[got.consumed..];
         std.mem.copyForwards(u8, acc.items[0..rest.len], rest);
@@ -327,7 +331,7 @@ fn readLoop(rt: *Runtime, stream: std.Io.net.Stream) void {
         const n = std.posix.read(fd, &tmp) catch break;
         if (n == 0) break;
         acc.appendSlice(rt.gpa, tmp[0..n]) catch break;
-        drainFrames(rt, &acc);
+        if (!drainFrames(rt, &acc)) break;
     }
     rt.mu.lock();
     defer rt.mu.unlock();
@@ -394,7 +398,10 @@ fn acceptOne(arg: *Conn) void {
         stream.close(rt.io);
         return;
     }
-    drainFrames(rt, &acc);
+    if (!drainFrames(rt, &acc)) {
+        stream.close(rt.io);
+        return;
+    }
     readLoop(rt, stream);
 }
 

@@ -471,7 +471,10 @@ fn hasMessageId(arena: std.mem.Allocator, raw: []const u8, id: []const u8, max: 
         while (std.mem.indexOf(u8, line[search_from..], needle)) |rel| {
             const k = search_from + rel;
             const after = line[k + needle.len ..];
-            if (std.mem.startsWith(u8, after, id) and after.len >= id.len and after[id.len] == '"') {
+            // `after.len > id.len` is the bounds guard for the `after[id.len]`
+            // quote probe: `startsWith` already implies `>=`, so equality (a
+            // line truncated right after the id chars) must not index.
+            if (after.len > id.len and std.mem.startsWith(u8, after, id) and after[id.len] == '"') {
                 plausibly_ours = true;
                 break;
             }
@@ -1295,6 +1298,21 @@ test "append dedups a redelivered id even when an older text holds the id byte p
     const raw = try env.tmp.dir.readFileAlloc(io, log_path, std.testing.allocator, .limited(1 << 20));
     defer std.testing.allocator.free(raw);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, raw, "\"id\":\"m42\""));
+}
+
+test "hasMessageId survives a line truncated right after the id bytes" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    // A log line cut off exactly after the id's last byte (no closing quote,
+    // no trailing fields) used to index one past the slice end in the byte
+    // prefilter; it must read as "not ours" rather than fault.
+    const raw = "{\"room\":\"dev\",\"from\":\"a\",\"text\":\"x\",\"id\":\"m42";
+    try std.testing.expect(!hasMessageId(arena, raw, "m42", 100));
+    // A longer id in a truncated line still probes the byte after the id,
+    // which is a digit here, not a quote.
+    try std.testing.expect(!hasMessageId(arena, raw, "m4", 100));
 }
 
 test "appendLocal skips dedup while append keeps it" {
