@@ -250,7 +250,7 @@ fn fireOne(
         // would make one broken schedule silently stop every other.
         ok = false;
         err_name = @errorName(err);
-        log.log(.warn, "schedule: entry {s} failed: {s} (trigger={s})", .{ entry.id, err_name, trigger });
+        log.log(.warn, "schedule: entry {s} failed: {s} (trigger={s}, task={s})", .{ entry.id, err_name, trigger, entry.task });
     };
     const elapsed_ns = started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
     const duration_ms: u64 = @intCast(@max(0, @divTrunc(elapsed_ns, std.time.ns_per_ms)));
