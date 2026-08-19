@@ -84,10 +84,23 @@ pub fn extractMetric(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, stdout
     }
     return null;
 }
-pub fn runHarness(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const []const u8, metric_name: []const u8, pattern: []const u8) !HarnessResult {
+/// Runs the harness command, optionally bounded by `timeout_ms` (0 = no
+/// bound). The deadline covers the whole run: a harness that accepts input and
+/// goes quiet is killed at the deadline just like one that never starts, and
+/// `std.process.run`'s deferred kill reaps it, so a runaway experiment cannot
+/// block the loop (or hold the run lock) forever. A lapsed budget is reported
+/// through `timed_out` rather than as a plain failure: "the experiment ran
+/// away" is a different diagnosis from "it failed".
+pub fn runHarness(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, argv: []const []const u8, metric_name: []const u8, pattern: []const u8, timeout_ms: u32) !HarnessResult {
     const t0 = std.Io.Timestamp.now(io, .awake);
-    const result = std.process.run(gpa, io, .{ .argv = argv, .cwd = .{ .dir = dir }, .stdout_limit = .limited(1 << 20), .stderr_limit = .limited(64 * 1024) }) catch |err| {
-        return HarnessResult{ .ok = false, .detail = @errorName(err) };
+    const timeout: std.Io.Timeout = if (timeout_ms == 0) .none else .{
+        .deadline = std.Io.Clock.Timestamp.fromNow(io, .{
+            .clock = .awake,
+            .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+        }),
+    };
+    const result = std.process.run(gpa, io, .{ .argv = argv, .cwd = .{ .dir = dir }, .stdout_limit = .limited(1 << 20), .stderr_limit = .limited(64 * 1024), .timeout = timeout }) catch |err| {
+        return HarnessResult{ .ok = false, .timed_out = err == error.Timeout, .detail = if (err == error.Timeout) "timed out" else @errorName(err) };
     };
     var res = HarnessResult{ .ok = switch (result.term) {
         .exited => |c| c == 0,
@@ -159,8 +172,24 @@ test "runHarness captures output" {
     const io = threaded.io();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    var res = try runHarness(gpa, io, tmp.dir, &.{ "sh", "-c", "echo score: 3.14" }, "score", "score:");
+    var res = try runHarness(gpa, io, tmp.dir, &.{ "sh", "-c", "echo score: 3.14" }, "score", "score:", 0);
     defer res.deinit(gpa);
     try std.testing.expect(res.ok);
     try std.testing.expect(res.metric != null and @abs(res.metric.? - 3.14) < 1e-9);
+}
+
+test "runHarness kills a harness that outlives its budget" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // `sleep 10` with a 200ms budget: the run must come back as timed out
+    // (not hang), well before the sleep would finish on its own.
+    var res = try runHarness(gpa, io, tmp.dir, &.{ "sh", "-c", "sleep 10" }, "score", "", 200);
+    defer res.deinit(gpa);
+    try std.testing.expect(!res.ok);
+    try std.testing.expect(res.timed_out);
+    try std.testing.expect(res.duration_ms < 10_000);
 }

@@ -14,6 +14,16 @@ const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const file_lock = @import("../util/file_lock.zig");
 pub const Options = struct { targets: []const []const u8 = &.{}, harness_argv: []const []const u8 = &.{}, metric_name: []const u8 = "score", metric_pattern: []const u8 = "", direction: []const u8 = "min", iters: u32 = 3, dry_run: bool = false, research_dir: []const u8 = "state/autoresearch", budget_seconds: u32 = 300 };
+
+/// The per-experiment wall budget in milliseconds, the unit the harness
+/// timeout takes. Seconds are the documented knob (help: "per-experiment wall
+/// seconds"); 0 stays "no bound" so a caller that opts out keeps the old
+/// behavior. Clamped so a huge budget cannot overflow the ms counter.
+fn budgetMs(seconds: u32) u32 {
+    if (seconds == 0) return 0;
+    return @intCast(@min(@as(u64, seconds) * 1000, std.math.maxInt(u32)));
+}
+
 fn isTarget(path: []const u8, targets: []const []const u8) bool {
     for (targets) |targ| {
         if (std.mem.eql(u8, path, targ)) return true;
@@ -243,7 +253,7 @@ pub const Loop = struct {
         const stage_dir_opt: ?std.Io.Dir = std.Io.Dir.cwd().openDir(io, staging_path, .{}) catch null;
         const stage_dir = stage_dir_opt orelse std.Io.Dir.cwd();
         defer if (stage_dir_opt != null) stage_dir.close(io);
-        var harness_res = try harness_mod.runHarness(gpa, io, stage_dir, opts.harness_argv, opts.metric_name, opts.metric_pattern);
+        var harness_res = try harness_mod.runHarness(gpa, io, stage_dir, opts.harness_argv, opts.metric_name, opts.metric_pattern, budgetMs(opts.budget_seconds));
         defer harness_res.deinit(gpa);
         const improved = if (harness_res.metric) |m| ledger.isBetter(m, best.*, opts.direction) else false;
         try self.appendLedgerEntry(run_id, .{
