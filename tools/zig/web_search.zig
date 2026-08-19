@@ -96,7 +96,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // DDG serves its bot-challenge page as a 200; treat that (and an
             // empty page) as "no usable results" and fall back.
             if (!parse.isBotChallenge(b)) {
-                count = parse.parseDdgLite(b, &results, want);
+                count = parse.keepRelevant(query, results[0..parse.parseDdgLite(b, &results, want)]);
             }
         }
     }
@@ -116,9 +116,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const body = lib.httpGet(urlbuf[0..l]) catch |err| {
             return lib.failErr(out, err, "searching Bing (DuckDuckGo Lite was also unavailable or returned nothing)");
         };
-        count = parse.parseBing(body, &results, want);
+        // Bing's RSS endpoint has served whole pages matching at most one
+        // word of the query; results sharing no vocabulary with it are
+        // dropped rather than returned as answers.
+        count = parse.keepRelevant(query, results[0..parse.parseBing(body, &results, want)]);
         if (count == 0) {
-            return lib.fail(out, "both search backends returned no results — DuckDuckGo Lite and Bing were reachable but empty for this query");
+            return lib.fail(out, "both search backends returned no results — DuckDuckGo Lite and Bing were reachable but had nothing matching this query");
         }
     }
 

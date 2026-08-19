@@ -234,6 +234,10 @@ const Sweep = struct {
     /// deep sweep runs a dozen queries; without this the same advice lands
     /// twelve times and buries the notes that are about this search.
     google_noted: bool = false,
+    /// Whether the "a backend answered only off-topic pages" note has been
+    /// made; same de-duplication as `google_noted`, since a poisoned backend
+    /// tends to be poisoned for every query of the sweep.
+    offtopic_noted: bool = false,
 
     fn budgetLeft(self: *const Sweep) bool {
         return self.fetches < fetch_budget;
@@ -346,13 +350,19 @@ fn sweepWeb(st: *Sweep, queries: []const Query, per_query: usize) !void {
             // parses as zero results; the Bing fallback below is what makes
             // that recoverable rather than a silent empty sweep.
             if (!parse.isBotChallenge(body)) count = parse.parseDdgLite(body, &results, per_query);
+            count = relevantOnly(st, q.text, &results, count);
             if (count > 0) try collectWeb(st, results[0..count], q, "duckduckgo");
         }
 
         if (count == 0 and st.budgetLeft()) {
             const bing = std.fmt.bufPrint(&url_buf, "https://www.bing.com/search?q={s}&format=rss&mkt=en-US&setlang=en", .{enc}) catch continue;
             if (fetch(st, bing, null)) |body| {
-                count = parse.parseBing(body, &results, per_query);
+                // Bing's RSS endpoint has served whole pages of results that
+                // match at most one word of the query (thesaurus entries,
+                // hardware-vendor sites); collected as-is they poisoned every
+                // sweep that fell back here. Off-topic pages compact to zero,
+                // which sends the sweep on to the keyed backends below.
+                count = relevantOnly(st, q.text, &results, parse.parseBing(body, &results, per_query));
                 if (count > 0) try collectWeb(st, results[0..count], q, "bing");
             }
         }
@@ -381,7 +391,7 @@ fn sweepWeb(st: *Sweep, queries: []const Query, per_query: usize) !void {
                     // An error response (bad key, quota exhausted) parses as
                     // zero items, which lands in the same "nothing found" note
                     // below as an empty search.
-                    count = parse.parseGoogleApi(lib.alloc, body, &results, per_query);
+                    count = relevantOnly(st, q.text, &results, parse.parseGoogleApi(lib.alloc, body, &results, per_query));
                     if (count > 0) try collectWeb(st, results[0..count], q, "google");
                 }
             } else if (!st.google_noted) {
@@ -412,7 +422,7 @@ fn sweepWeb(st: *Sweep, queries: []const Query, per_query: usize) !void {
                         .{key},
                     ) catch continue;
                     if (fetch(st, brave, headers)) |body| {
-                        count = parse.parseBraveApi(lib.alloc, body, &results, per_query);
+                        count = relevantOnly(st, q.text, &results, parse.parseBraveApi(lib.alloc, body, &results, per_query));
                         if (count > 0) try collectWeb(st, results[0..count], q, "brave");
                     }
                 }
@@ -431,7 +441,7 @@ fn sweepWeb(st: *Sweep, queries: []const Query, per_query: usize) !void {
                 .{enc},
             ) catch continue;
             if (fetch(st, marginalia, null)) |body| {
-                count = parse.parseMarginalia(lib.alloc, body, &results, per_query);
+                count = relevantOnly(st, q.text, &results, parse.parseMarginalia(lib.alloc, body, &results, per_query));
                 if (count > 0) try collectWeb(st, results[0..count], q, "marginalia");
             }
         }
@@ -468,6 +478,20 @@ fn fetch(st: *Sweep, url: []const u8, headers: ?[]const u8) ?[]const u8 {
         }
         return null;
     };
+}
+
+/// Drops hits that share no vocabulary with their query before anything is
+/// collected, and says so once per sweep when a backend's whole page was
+/// off-topic. Zero survivors reads as "returned nothing" at the call sites,
+/// which is what lets the sweep fall through to the next backend instead of
+/// filing thesaurus entries as leads.
+fn relevantOnly(st: *Sweep, query: []const u8, results: []parse.WebResult, count: usize) usize {
+    const kept = parse.keepRelevant(query, results[0..count]);
+    if (count > 0 and kept == 0 and !st.offtopic_noted) {
+        st.offtopic_noted = true;
+        st.note("At least one web backend answered a query with only unrelated pages (Bing's RSS endpoint is known to do this); they were dropped and the next backend tried.");
+    }
+    return kept;
 }
 
 fn collectWeb(st: *Sweep, results: []const parse.WebResult, q: Query, backend: []const u8) !void {
