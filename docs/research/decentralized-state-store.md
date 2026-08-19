@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17. Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
+Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17, distributed-ledger family added as option R 2026-08-19 (Draft 5). Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -200,6 +200,25 @@ candidates rather than above them.
   resolving concurrency there is nothing for them to do; the append-only logs
   need ordering, not merging. The PRD's non-goal is no longer the reason —
   `medium` confidence.
+- **The distributed-ledger family (option R, added 2026-08-19) decomposes
+  into parts clanker mostly has or can add cheaply.** A ledger is a
+  replicated log + consensus total order + deterministic fold + tamper
+  evidence (+ BFT in the blockchain variants). The board/chatroom design is
+  already the log and the fold; total order is available from the surveyed
+  Raft rows without BFT's cost; tamper evidence is a hash chain addable to
+  any backend for one hash per record — and it is the one part with a
+  clanker-specific argument, because the improve ledger's prefix has already
+  been silently rewritten once. BFT itself buys nothing here: every node runs
+  the same self-modifying code under one operator, so the realistic bad
+  writer is a correlated fault BFT cannot absorb — `high` confidence on the
+  decomposition, `medium` on the per-candidate verdicts.
+- **The standalone ledger-database market is consolidating away from itself.**
+  Amazon retired QLDB on 2025-07-31 pointing users at Aurora PostgreSQL and
+  conceding the migration loses cryptographic verifiability; Google's
+  Trillian is in maintenance mode naming Tessera as successor; immudb — the
+  strongest survivor — is **BUSL 1.1, not open source**, and its replication
+  is read-only replicas pulling from a primary with no documented failover —
+  `medium` for QLDB (press), `high` for the rest (read at source 2026-08-19).
 
 ## Scope and method
 
@@ -217,7 +236,8 @@ candidates rather than above them.
   surveyed; if a self-hosted store wins, its own HA is a later question. No
   benchmark was run: every performance number is quoted, not measured. Neither
   Zig driver was compiled or run against a live server.
-- **Freshness:** all verification 2026-08-16. The PRD is the fastest-moving input
+- **Freshness:** all verification 2026-08-16, option R's sources fetched
+  2026-08-19. The PRD is the fastest-moving input
   — marked *in progress*, so a Phase 1 landing or a revised non-goal dates this
   note before any external source does. `nats.zig` is pre-1.0 and its API is
   declared unstable.
@@ -232,7 +252,11 @@ candidates rather than above them.
   alternatives). It also drops the recommendation language earlier drafts had
   drifted into: the field is laid out for an RFC to choose from, per this
   directory's own convention. The tier-1 finding is the only one that has
-  survived unchanged throughout.
+  survived unchanged throughout. Draft 5 (2026-08-19) adds option R, the
+  distributed-ledger family, decomposed into its parts rather than adopted or
+  rejected whole; no earlier verdict changed. Its leads were gathered by
+  direct web search and verified with fetches, because the sweep web backend
+  failed again (see rejected leads).
 - **Known gaps, stated so the next reader does not mistake breadth for depth.**
   Licences for Consul, CockroachDB, YugabyteDB and Turso are unverified, as is
   the Loro per-character figure (its source 403s). No candidate was compiled, deployed or
@@ -1185,6 +1209,120 @@ streaming and worse at everything else NATS was attractive for.
   [NATS alternatives roundup](https://www.modern-datatools.com/alternatives/nats),
   read 2026-08-16 — all secondary comparison pages, so `medium` at best.
 
+### R. Distributed ledgers — the family decomposed, and which parts apply
+
+Asked explicitly (2026-08-19 pass). "Distributed ledger" is not one candidate
+but a bundle of properties, and the honest way to weigh it is to take the
+bundle apart: (1) a replicated append-only log, (2) a total order over that
+log agreed by consensus, (3) a deterministic state machine folded from the
+log, (4) cryptographic tamper evidence — hash chaining and Merkle proofs —
+and, in the blockchain variants, (5) Byzantine fault tolerance among mutually
+distrusting parties. Clanker already has (1) and (3) in-tree: [ADR
+0001](../adrs/0001-board-is-a-chatroom.md)'s board is a chatroom log folded
+deterministically into cards, and PRD 0011 replicates per-owner logs with
+id-dedup. The in-tree design is ledger-shaped already, minus consensus and
+crypto — so this section prices (2), (4) and (5) separately instead of
+adopting or rejecting the bundle whole.
+
+- **CometBFT (the maintained successor to Tendermint Core) + an ABCI app** —
+  the general-purpose form of (2)+(3)+(5): a Go consensus engine that takes a
+  deterministic state machine written in any language over the ABCI interface
+  and replicates it across nodes, tolerating fewer than one-third faulty or
+  malicious members; the README claims up to 10k TPS. Apache-2.0. Fit: this is
+  the strongest ordering guarantee in the whole note — a BFT-agreed total
+  order over exactly the append-then-fold shape clanker's logs and board
+  already have, and the state machine could in principle be clanker-native
+  Zig behind ABCI. Cost: a Go daemon and a validator set per deployment, BFT
+  quorum (a minority partition stalls — CP), and consensus latency on every
+  write for a fault class the fleet does not contain (the closing verdict
+  below).
+  Evidence: [CometBFT repo](https://github.com/cometbft/cometbft), fetched
+  2026-08-19.
+- **Hyperledger Fabric — the permissioned-blockchain form.** Ordering is Raft
+  (crash fault tolerant, the recommended default) or SmartBFT since v3.0
+  (tolerates fewer than one-third malicious); a deployment runs ordering
+  nodes, peers, *and* certificate authorities with per-organization MSP
+  identity. That identity machinery is the point of Fabric: it exists so
+  organizations that do not trust each other can share a ledger. A fleet of
+  one operator's instances has no such boundary to enforce, so Fabric's
+  distinguishing cost buys nothing here, and with Raft ordering its guarantee
+  collapses to what rqlite/dqlite (option K) already offer without the PKI.
+  Evidence:
+  [ordering service docs](https://hyperledger-fabric.readthedocs.io/en/latest/orderer/ordering_service.html),
+  fetched 2026-08-19.
+- **immudb — the ledger database without the "distributed".** "Immutable
+  database based on zero trust, SQL/Key-Value/Document model, tamperproof,
+  data change history" (its own description): every transaction extends a
+  cryptographically verifiable chain, clients can verify inclusion and
+  consistency, and the APIs are gRPC, PostgreSQL wire v3, and REST through
+  the separate immugw — plus embedded use, but only from Go. Two findings
+  gate it. **Licence: BUSL 1.1**, not an OSI licence. And replication is
+  asynchronous primary→replica pull (gRPC `ExportTx`) where **replicas
+  reject writes**, with no automatic failover documented — topologically it
+  is option J's central store with hash chains and a weaker HA story, giving
+  property (4) while failing the "no agent blocked by a down host" constraint
+  the same way single-node Postgres does. Evidence:
+  [repo](https://github.com/codenotary/immudb),
+  [replication docs](https://docs.immudb.io/master/production/replication.html),
+  both fetched 2026-08-19.
+- **Hypercore/Autobase and OrbitDB — the peer-to-peer log family.** The AP
+  corner of the ledger space, and structurally the closest to PRD 0011:
+  per-writer append-only logs with Merkle integrity, replicated peer-to-peer,
+  folded into a view. Autobase (Holepunch/Pears) linearizes multiple writers'
+  Hypercores into one eventually consistent view through an `apply` handler
+  that must be a pure deterministic reducer — and its docs state it **can
+  reorder previously seen nodes when new causal information arrives**, so the
+  fold must tolerate retroactive reordering or peers diverge. OrbitDB is
+  Merkle-CRDTs over Helia/libp2p (MIT, 8.8k stars; JS, with a Go
+  implementation by Berty) offering event-log, document and KV types — the
+  applied form of option G on a p2p transport, sharing its verdict. Both are
+  JavaScript runtimes, so each host would run a Node daemon beside clanker;
+  no Zig path exists. What the family demonstrates is that PRD 0011's
+  own shape — single-owner logs, deterministic fold — extends to multi-writer
+  with Merkle integrity, which is an argument for the build-it-ourselves row
+  in option P, not for adopting a JS stack. Evidence:
+  [Autobase docs](https://docs.pears.com/building-blocks/autobase),
+  [OrbitDB repo](https://github.com/orbitdb/orbitdb), fetched 2026-08-19.
+- **The category's own trajectory is the strongest signal in this section.**
+  Amazon retired QLDB — the flagship managed ledger database — on
+  2025-07-31, recommending migration to Aurora PostgreSQL and conceding the
+  migration loses cryptographic verifiability (press coverage; AWS's own page
+  not fetched, so `medium`). Google's Trillian, the Merkle-log service behind
+  Certificate Transparency (Apache-2.0, MySQL/MariaDB-backed, centrally
+  operated), declares itself in maintenance mode and points new operators at
+  Tessera. The standalone verifiable-ledger market is consolidating into
+  "ordinary database plus audit machinery" — which is evidence for taking the
+  useful ledger properties à la carte rather than adopting a ledger product.
+  Evidence: [InfoQ on QLDB's retirement](https://www.infoq.com/news/2024/07/aws-kill-qldb),
+  [Trillian repo](https://github.com/google/trillian), fetched 2026-08-19.
+
+**What survives the decomposition.** Two parts. *Total order* (2) is real —
+observation 5 in the comparison already names ordering as the axis the
+append-only logs care about and almost nothing guarantees — but the surveyed
+Raft rows (rqlite, etcd, Consul) provide agreed total order without BFT's
+quorum economics, so a ledger product is not needed to get it. *Tamper
+evidence* (4) is the one part with a clanker-specific argument: it is a hash
+chain over an append log — addable to any backend in this note, including
+today's flat files, for one hash per record, no consensus and no daemon — and
+the improve ledger has already had its prefix silently rewritten once
+(three `accepted` entries flipped in worktree copies while the shared file
+froze,
+[bug](../reports/bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md));
+a chained log makes a rewritten prefix detectable at read time, though it
+prevents nothing. A self-modifying harness is unusually exposed to its own
+defective writers, and that is an integrity argument, not a consensus one.
+
+**What does not survive.** *BFT* (5): every clanker node runs the same
+self-improving binary under one operator, so the realistic bad writer is a
+defect replicated to every node — a correlated fault, which is precisely the
+class BFT consensus cannot absorb (it protects a correct majority from a
+faulty minority, and here there is no independent majority). Paying BFT's
+latency and quorum cost to defend against a minority-node threat model the
+deployment does not have is the wrong trade — `high` confidence on the
+reasoning, with the caveat that it rests on the single-operator premise
+(see "What would change the answer"). Fabric's identity machinery falls with
+it, and the public-chain variants add token economics on top (rejected leads).
+
 ## Out-of-the-box options
 
 Each prompt answered explicitly, including the ones that do not apply.
@@ -1279,6 +1417,10 @@ know everything".
 | H. S3 conditional writes | External | CP-ish | none needed (HTTP) | A bucket | Blobs + claims only | Complement, not a primary |
 | G. CRDTs (Yjs/Automerge/Loro) | **Full per host** | **AP** | none | Nothing | n/a | Library, not a store; see L for the applied form |
 | P. TigerBeetle | Full per host (VSR) | CP | native Zig | Binary per node | **No — fixed schema** | Unusable here; best Zig reference |
+| R. CometBFT + ABCI app | **Full per host** | CP (BFT, >2/3 quorum) | n/a — the ABCI app is the store | Go daemon per node + the app | App-defined | Strongest total order in the note; consensus on every write |
+| R. Hyperledger Fabric | Full per org | CP | none (SDKs: Go/Node/Java) | Orderers + peers + CAs/MSP | No | Inter-org identity machinery the fleet does not have |
+| R. immudb | Central + read replicas | n/a — primary is SPOF | none found (gRPC / pg wire / REST gw) | 1 server | KV+SQL+docs | **BUSL 1.1**; replicas reject writes; ledger without the "distributed" |
+| R. Hypercore/Autobase, OrbitDB | **Full per host** | **AP** | none (JS runtime) | Node daemon per host | Logs + docs + KV | Eventual total order that may retroactively reorder |
 
 Five observations for whoever writes the RFC, none of them a recommendation:
 
@@ -1371,6 +1513,14 @@ Five observations for whoever writes the RFC, none of them a recommendation:
 | Redpanda/Kafka/Redis Streams cover streaming but not the KV+watch+TTL combination | secondary comparison pages | 2026-08-16 | medium |
 | FDB production users: Apple (Record Layer), Snowflake metadata, Tigris metadata | [Record Layer announcement](https://www.foundationdb.org/blog/announcing-record-layer/), [Tigris](https://www.tigrisdata.com/blog/building-a-database-using-foundationdb/) | 2026-08-16 | medium |
 | ~~No Zig client for NATS~~ | previous draft of this note | 2026-08-16 | **retracted** — `nats-io/nats.zig` is official and supports JetStream + KV |
+| CometBFT is Apache-2.0 Go BFT state-machine replication; the ABCI app can be any language; README claims up to 10k TPS; tolerates fewer than 1/3 faulty | [repo](https://github.com/cometbft/cometbft), fetched | 2026-08-19 | high |
+| Fabric ordering is Raft (CFT, recommended) or SmartBFT since v3.0 (< 1/3 malicious); a deployment runs orderers, peers, and CA/MSP identity | [ordering service docs](https://hyperledger-fabric.readthedocs.io/en/latest/orderer/ordering_service.html), fetched | 2026-08-19 | high |
+| immudb is **BUSL 1.1**, Go, ~9k stars; KV + SQL + document; gRPC, PostgreSQL wire v3, REST via separate immugw; embeds in Go only | [repo](https://github.com/codenotary/immudb), fetched | 2026-08-19 | high |
+| immudb replication is asynchronous primary→replica pull (gRPC `ExportTx`); replicas reject all direct writes; no automatic failover documented | [replication docs](https://docs.immudb.io/master/production/replication.html), fetched | 2026-08-19 | high |
+| Amazon QLDB service ended 2025-07-31; AWS recommended migrating to Aurora PostgreSQL; the migration loses cryptographic verifiability | [InfoQ](https://www.infoq.com/news/2024/07/aws-kill-qldb) + press roundup; AWS's own page not fetched | 2026-08-19 | medium — press only |
+| OrbitDB is MIT, JS (Go implementation by Berty), 8.8k stars, Merkle-CRDTs over Helia/libp2p, eventually consistent; event/document/KV types | [repo](https://github.com/orbitdb/orbitdb), fetched | 2026-08-19 | high |
+| Autobase linearizes multi-writer Hypercores into an eventually consistent view; may reorder previously seen nodes as causal info arrives; `apply` must be a pure deterministic reducer; Node.js runtime | [Pears docs](https://docs.pears.com/building-blocks/autobase), fetched | 2026-08-19 | high |
+| Trillian is a centrally operated Merkle-log gRPC service over MySQL/MariaDB, Apache-2.0, 3.7k stars, in maintenance mode; recommends Tessera for new logs | [repo](https://github.com/google/trillian), fetched | 2026-08-19 | high |
 
 ### Rejected leads, kept deliberately
 
@@ -1396,6 +1546,23 @@ Five observations for whoever writes the RFC, none of them a recommendation:
   sidecar. Not pursued.
 - **Temporal / Restate.** Durable-execution engines. They would replace the agent
   loop, not the state store. Out of scope for this question.
+- **`research` tool `sweep`, web backend, retried 2026-08-19.** For the
+  option-R pass, `distributed ledger state store` and `immutable ledger
+  database` at depth standard returned nothing on-topic at all: every WEB hit
+  across every query angle was an unrelated page (Chinese hardware-vendor
+  sites, bird-watching forum threads, thesaurus entries for "hate"). Third
+  recorded failure of this backend; option R's leads were gathered by direct
+  web search and every cited claim verified with a fetch.
+- **Public smart-contract chains (Ethereum and kin).** Rejected without a
+  fetch, on the trust model alone: proof-of-work/stake economics, gas
+  metering and token incentives exist to coordinate mutually distrusting
+  strangers, which a one-operator fleet is not. If BFT ordering is ever
+  actually wanted, the permissioned form (CometBFT, option R) is the
+  applicable shape at a fraction of the machinery.
+- **Corda.** Named in ledger roundups; not investigated in this pass. A lead,
+  not a finding.
+- **Tessera.** Trillian's named successor for transparency logs; not
+  investigated. A lead, not a finding.
 
 ## Open questions
 
@@ -1474,6 +1641,12 @@ only ones that block choosing a tier-2 backend.
     discussion-thread description of v1), but v2 is a young rewrite: 2PC
     write-path behaviour at the stated agent counts and out-of-order sync on
     ordered logs would need a pass of their own before it is weighed.
+14. **Is a hash chain over the shared append logs worth one hash per record?**
+    The only ledger property option R leaves standing with a clanker-specific
+    argument. The improve ledger's prefix has been silently rewritten once
+    already, and a chained log makes a rewritten prefix detectable at read
+    time on any backend — including today's flat files — with no consensus
+    and no daemon. Cheap to spike; entirely unexplored.
 
 ## What would change the answer
 
@@ -1495,6 +1668,10 @@ only ones that block choosing a tier-2 backend.
   tier-1 breakage into a permanent one and forces that half immediately.
 - **An operator who will not run a server.** Collapses tier 2 to option I or to
   doing nothing, regardless of what the survey says.
+- **Peers stopping being one operator's.** Every BFT verdict in option R
+  rests on the premise that the fleet is mutually trusting because one
+  operator runs every node. A mesh that admitted other operators' instances
+  would reintroduce the minority-adversary model and reopen the CometBFT row.
 
 ## References
 
@@ -1603,6 +1780,15 @@ only ones that block choosing a tier-2 backend.
 - [Building multi-writer applications on Amazon S3](https://aws.amazon.com/blogs/storage/building-multi-writer-applications-on-amazon-s3-using-native-controls/)
 - [Leader election with S3 conditional writes](https://www.morling.dev/blog/leader-election-with-s3-conditional-writes/)
 - [Can S3 replace a central orchestrator for agents?](https://benpiper.com/post/2026/can-s3-replace-a-central-orchestrator-for-agents/)
+
+**Distributed ledgers (option R)**
+
+- [CometBFT](https://github.com/cometbft/cometbft) — BFT state-machine replication over ABCI
+- [Hyperledger Fabric: the ordering service](https://hyperledger-fabric.readthedocs.io/en/latest/orderer/ordering_service.html)
+- [immudb](https://github.com/codenotary/immudb) · [replication docs](https://docs.immudb.io/master/production/replication.html)
+- [InfoQ: AWS to retire QLDB](https://www.infoq.com/news/2024/07/aws-kill-qldb) — press, AWS's own page not fetched
+- [Autobase (Pears docs)](https://docs.pears.com/building-blocks/autobase) · [OrbitDB](https://github.com/orbitdb/orbitdb)
+- [Trillian](https://github.com/google/trillian) — maintenance mode, names Tessera as successor
 
 **Agent-harness prior art**
 
