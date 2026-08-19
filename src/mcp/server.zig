@@ -101,10 +101,18 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
 }
 
 const Request = struct {
+    jsonrpc: ?[]const u8 = null,
     id: ?json.Value = null,
     method: ?[]const u8 = null,
     params: ?json.Value = null,
 };
+
+/// JSON-RPC requires exactly "jsonrpc": "2.0"; a missing or wrong version is
+/// an Invalid Request, not something to dispatch leniently.
+fn hasValidJsonRpc(jsonrpc: ?[]const u8) bool {
+    const v = jsonrpc orelse return false;
+    return std.mem.eql(u8, v, "2.0");
+}
 
 fn respondError(s: *json.Stringify, code: i64, message: []const u8) !void {
     try s.objectField("error");
@@ -160,7 +168,7 @@ fn handleLine(io: std.Io, gpa: std.mem.Allocator, cache_arena: std.mem.Allocator
         writeResponse(io, out_buf[0..w.end]);
         return;
     };
-    const method_name = req.method orelse {
+    const method_name = (if (hasValidJsonRpc(req.jsonrpc)) req.method else null) orelse {
         var err_buf: [512]u8 = undefined;
         var err_w: std.Io.Writer = .fixed(&err_buf);
         var err_s = json.Stringify{ .writer = &err_w, .options = .{ .emit_null_optional_fields = false } };
@@ -367,4 +375,11 @@ test "fuzz: a JSON-RPC line from stdin never crashes the parse/dispatch path" {
         }
     };
     try std.testing.fuzz({}, Ctx.one, .{});
+}
+
+test "hasValidJsonRpc accepts only the JSON-RPC 2.0 version" {
+    try std.testing.expect(hasValidJsonRpc("2.0"));
+    try std.testing.expect(!hasValidJsonRpc(null));
+    try std.testing.expect(!hasValidJsonRpc("1.0"));
+    try std.testing.expect(!hasValidJsonRpc("2024-11-05"));
 }
