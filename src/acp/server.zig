@@ -54,10 +54,10 @@ pub const Connection = struct {
         }
 
         if (std.mem.eql(u8, req.method.?, "initialize")) {
-            const requested = protocolVersion(req.params) orelse
+            _ = protocolVersion(req.params) orelse
                 return responseError(alloc, req.id.?, -32602, "initialize requires integer protocolVersion");
             self.initialized = true;
-            return responseInitialize(alloc, req.id.?, requested);
+            return responseInitialize(alloc, req.id.?);
         }
         if (!self.initialized) {
             return responseError(alloc, req.id.?, -32002, "initialize must be the first request");
@@ -191,7 +191,7 @@ fn protocolVersion(params: ?json.Value) ?u32 {
     };
 }
 
-fn responseInitialize(alloc: std.mem.Allocator, id: json.Value, requested: u32) ![]u8 {
+fn responseInitialize(alloc: std.mem.Allocator, id: json.Value) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
     var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
@@ -199,7 +199,7 @@ fn responseInitialize(alloc: std.mem.Allocator, id: json.Value, requested: u32) 
     try s.objectField("result");
     try s.beginObject();
     try s.objectField("protocolVersion");
-    try s.write(if (requested == protocol_version) requested else protocol_version);
+    try s.write(protocol_version);
     try s.objectField("agentCapabilities");
     try s.beginObject();
     try s.objectField("loadSession");
