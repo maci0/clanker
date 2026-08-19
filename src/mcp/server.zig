@@ -64,10 +64,10 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: 
     // still be reusing a module they were built with (io/gpa/environ_map/cfg
     // never change across a session, so sharing them is safe).
     var llm_ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = environ_map, .cfg = cfg };
-    var module_cache: ModuleCache = .empty;
-    defer deinitModuleCache(gpa, &module_cache);
     var cache_arena_state = std.heap.ArenaAllocator.init(gpa);
     defer cache_arena_state.deinit();
+    var module_cache: ModuleCache = .empty;
+    defer deinitModuleCache(gpa, &module_cache);
     const cache_arena = cache_arena_state.allocator();
 
     while (true) {
