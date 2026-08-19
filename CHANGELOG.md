@@ -146,6 +146,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 - `GET /api/catalog` releases the models.dev snapshot lock before it answers. The lock guards the cached 3.8 MB body and the parsed tree, but it was held by `defer` across gzip and the socket write as well, so one slow reader serialized every other catalog search in the process for the length of its own transfer. It now covers the parse and the search only; the response body is already copied out of the tree by then.
 
+- `--profile <name>` reads its `[models."<provider>/<model>"]` table against
+  the merged config, like `config.local.toml` already did. The profile was
+  loaded in the mode that distributes models against the *file's own*
+  providers, so a profile adding a model to a provider only `config.toml`
+  declares was rejected with `ModelUnknownProvider` and the only way to add
+  one was to repeat the whole `[providers.<name>]` stanza. A profile that
+  names `default_provider` is now also credited as its source by
+  `clanker providers check`.
+
+- `ck_harness_config` no longer hands a guest the values inside
+  `[mcp_servers.<name>]`'s `env` and `headers`. Those two are the one part of
+  the config schema that carries a credential inline (`GITHUB_TOKEN=...`,
+  `Authorization: Bearer ...`), and the full access level (the `config` tool)
+  serialized them verbatim into guest memory and from there into the model
+  transcript. Names are kept, values read `<redacted>`; `api_key_env` and
+  `service_account_file` were already excluded from every level.
+
 - Tool descriptors are loaded once per process instead of once per call: `toolJson` (every CLI tool invocation and every HTTP API route under `clanker serve`) re-read and re-parsed all 118 `*.tool.json` manifests, ~180 KB of JSON and ~260 `openat` per request. A cache validated by a stat sweep serves them instead, so an added, removed, edited, or toggled plugin is still picked up without a restart.
 
 ### Added

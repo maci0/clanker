@@ -1238,8 +1238,9 @@ fn harnessConfigAccess(tool_name: []const u8) ?HarnessConfigAccess {
     if (std.mem.eql(u8, tool_name, "config")) return .full;
     // arena needs the provider list for one question only: which configured
     // provider is free to judge a match, i.e. is not already fighting it.
-    // `.providers` answers that without handing it the api_key_env names
-    // `.full` carries.
+    // `.providers` answers that without handing it the agent budgets,
+    // mcp_servers and the rest of the merged config that `.full` carries.
+    // No level carries api_key_env or service_account_file.
     // compare needs it for two questions: which providers exist (so `clanker
     // compare` with no --with can put the configured ones side by side) and
     // which one is free to judge, i.e. is not itself an entrant.
@@ -1430,6 +1431,55 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
 
     try s.endObject();
     return w.toOwnedSlice();
+}
+
+/// One external MCP server as JSON, with `env` and `headers` values stripped.
+///
+/// `api_key_env` and `service_account_file` are kept off every access level
+/// because a credential must not cross into guest memory, and `mcp_servers`
+/// is the one section that carries credentials *inline*: its `env` entries are
+/// `NAME=value` and its `headers` are `Header: value`, which is where an
+/// `Authorization: Bearer ...` or a `GITHUB_TOKEN=ghp_...` lands. Writing the
+/// struct wholesale handed those values to the `config` guest, and from there
+/// to the model transcript. The name half is what a guest can use ("which
+/// variables does this server take"), so only the value half is dropped.
+fn writeMcpServerJson(s: *std.json.Stringify, m: *const config_mod.McpServer) !void {
+    try s.beginObject();
+    try s.objectField("transport");
+    try s.write(m.transport);
+    try s.objectField("command");
+    try s.write(m.command);
+    try s.objectField("args");
+    try s.write(m.args);
+    try s.objectField("cwd");
+    try s.write(m.cwd);
+    try s.objectField("url");
+    try s.write(m.url);
+    try s.objectField("tool_call_timeout_ms");
+    try s.write(m.tool_call_timeout_ms);
+    try s.objectField("env");
+    try writeNamesOnly(s, m.env, '=');
+    try s.objectField("headers");
+    try writeNamesOnly(s, m.headers, ':');
+    try s.endObject();
+}
+
+/// Each entry up to and including the first `separator`, with the value
+/// replaced by a fixed marker so a redacted entry still reads as "set" rather
+/// than "absent". An entry with no separator is all name and is emitted whole.
+fn writeNamesOnly(s: *std.json.Stringify, entries: []const []const u8, separator: u8) !void {
+    try s.beginArray();
+    var buf: [256]u8 = undefined;
+    for (entries) |entry| {
+        const cut = std.mem.findScalar(u8, entry, separator) orelse {
+            try s.write(entry);
+            continue;
+        };
+        // Over-long name: the marker alone still says the entry is set.
+        const redacted = std.fmt.bufPrint(&buf, "{s}{c}<redacted>", .{ entry[0..cut], separator }) catch "<redacted>";
+        try s.write(redacted);
+    }
+    try s.endArray();
 }
 
 /// One model's settings as JSON. `provider` is set only for the reconstructed
@@ -6944,6 +6994,37 @@ test "harness config access is scoped to each tool's consumed fields" {
     // No access level, not even .full, should expose credential fields.
     try std.testing.expect(std.mem.find(u8, full, "api_key_env") == null);
     try std.testing.expect(std.mem.find(u8, full, "service_account_file") == null);
+}
+
+test "harnessConfigJSON redacts inline mcp_servers credentials" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config_mod.Config{};
+    var p = config_mod.Provider{ .name = "v", .base_url = "https://x.test", .default_model = "m" };
+    try p.models.put(arena, "m", .{});
+    try cfg.providers.put(arena, "v", p);
+    // `env` and `headers` are the one place a literal secret sits in
+    // config.toml: there is no `*_env` indirection for them.
+    try cfg.mcp_servers.put(arena, "gh", .{
+        .transport = "http",
+        .url = "https://mcp.example.test",
+        .env = &.{ "GITHUB_TOKEN=not-a-real-secret-value", "NO_COLOR" },
+        .headers = &.{"Authorization: Bearer also-not-a-real-secret"},
+    });
+
+    const full = try harnessConfigJSON(arena, &cfg, .full);
+    try std.testing.expect(std.mem.find(u8, full, "not-a-real-secret-value") == null);
+    try std.testing.expect(std.mem.find(u8, full, "also-not-a-real-secret") == null);
+    // The names stay: "which variables does this server take" is the useful
+    // half and carries no secret.
+    try std.testing.expect(std.mem.find(u8, full, "GITHUB_TOKEN=<redacted>") != null);
+    try std.testing.expect(std.mem.find(u8, full, "Authorization:<redacted>") != null);
+    // A bare name has no value half to drop and is emitted whole.
+    try std.testing.expect(std.mem.find(u8, full, "\"NO_COLOR\"") != null);
+    // The rest of the server is still described.
+    try std.testing.expect(std.mem.find(u8, full, "https://mcp.example.test") != null);
 }
 
 test "ck_chat access covers every shipped caller, one op at a time" {
