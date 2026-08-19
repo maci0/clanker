@@ -68,6 +68,31 @@ pub fn openTasksVisibleTo(goal: Goal, instance_id: []const u8) usize {
     return n;
 }
 
+/// The statuses a goal can still be worked on in. `goal_add` dedups against
+/// these: a live goal with the same objective is the same goal, while a
+/// done, archived or abandoned one does not block re-adding the objective —
+/// that is a fresh attempt, not a double-submit.
+pub fn liveStatus(status: []const u8) bool {
+    return std.mem.eql(u8, status, "active") or
+        std.mem.eql(u8, status, "review") or
+        std.mem.eql(u8, status, "blocked");
+}
+
+/// The goal `goal_add` returns instead of appending a second row: a live
+/// goal in the same workspace whose objective is byte-identical. This is
+/// what makes add idempotent — a double-click, a retried HTTP POST, or a
+/// re-run of the same command yields one record, not two. The caller checks
+/// it on every CAS retry, so two racing adds converge on one row too.
+pub fn findAddDuplicate(goals: []const Goal, objective: []const u8, workspace: []const u8) ?Goal {
+    for (goals) |g| {
+        if (!std.mem.eql(u8, g.objective, objective)) continue;
+        if (!std.mem.eql(u8, g.workspace, workspace)) continue;
+        if (!liveStatus(g.status)) continue;
+        return g;
+    }
+    return null;
+}
+
 pub const TaskAdd = struct {
     id: []const u8,
     text: []const u8,
@@ -464,4 +489,42 @@ test "general and goal room names keep board for the default workspace" {
     const default_goal_room = try goalRoomName(gpa, "", "g1");
     defer gpa.free(default_goal_room);
     try std.testing.expectEqualStrings("goal:g1", default_goal_room);
+}
+
+test "findAddDuplicate matches a live goal with the same objective in the same workspace" {
+    const goals = [_]Goal{
+        .{ .id = "1", .objective = "ship the release", .workspace = "relumea", .status = "active", .created = 1, .updated = 1 },
+        .{ .id = "2", .objective = "ship the release", .workspace = "7dtd", .status = "active", .created = 1, .updated = 1 },
+    };
+    const dup = findAddDuplicate(&goals, "ship the release", "relumea").?;
+    try std.testing.expectEqualStrings("1", dup.id);
+    // A different workspace (default vs named), or a different objective,
+    // is a different goal and must not dedup onto this one.
+    try std.testing.expect(findAddDuplicate(&goals, "ship the release", "") == null);
+    try std.testing.expect(findAddDuplicate(&goals, "fix the ui", "relumea") == null);
+}
+
+test "findAddDuplicate ignores terminal goals so a fresh attempt can be added" {
+    const goals = [_]Goal{
+        .{ .id = "1", .objective = "ship", .status = "done", .created = 1, .updated = 1 },
+        .{ .id = "2", .objective = "ship", .status = "archived", .created = 1, .updated = 1 },
+        .{ .id = "3", .objective = "ship", .status = "abandoned", .created = 1, .updated = 1 },
+        .{ .id = "4", .objective = "ship", .status = "review", .created = 1, .updated = 1 },
+    };
+    // The terminal rows are passed over; the first live one is the duplicate.
+    try std.testing.expectEqualStrings("4", findAddDuplicate(&goals, "ship", "").?.id);
+
+    // Only terminal goals with the objective: a fresh attempt is allowed.
+    const finished = goals[0..3];
+    try std.testing.expect(findAddDuplicate(finished, "ship", "") == null);
+}
+
+test "liveStatus accepts exactly the workable statuses" {
+    try std.testing.expect(liveStatus("active"));
+    try std.testing.expect(liveStatus("review"));
+    try std.testing.expect(liveStatus("blocked"));
+    try std.testing.expect(!liveStatus("done"));
+    try std.testing.expect(!liveStatus("archived"));
+    try std.testing.expect(!liveStatus("abandoned"));
+    try std.testing.expect(!liveStatus(""));
 }

@@ -33,6 +33,38 @@ test "operator journey: add-goal persists the objective without starting a run" 
     std.debug.print("pass: operator journey: add-goal persists the objective without starting a run\n", .{});
 }
 
+test "operator journey: add-goal twice with the same objective yields one goal" {
+    // A double-click or a retried POST must not append a second row: the
+    // second add is an idempotent replay of the first and returns the same
+    // goal, so state/goals.json holds one record, not two.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, 9);
+    try harness.linkZigOut(io, tmp.dir);
+
+    const objective = "e2e-add-goal idempotent objective";
+    var first = try harness.run(gpa, io, tmp.dir, &.{ "add-goal", objective });
+    defer first.deinit(gpa);
+    if (!first.ok()) std.debug.print("add-goal (first) failed.\nstdout: {s}\nstderr: {s}\n", .{ first.stdout, first.stderr });
+    try std.testing.expect(first.ok());
+
+    var second = try harness.run(gpa, io, tmp.dir, &.{ "add-goal", objective });
+    defer second.deinit(gpa);
+    if (!second.ok()) std.debug.print("add-goal (second) failed.\nstdout: {s}\nstderr: {s}\n", .{ second.stdout, second.stderr });
+    try std.testing.expect(second.ok());
+
+    // The objective names exactly one record; a duplicated goal would name two.
+    const goals = try tmp.dir.readFileAlloc(io, "state/goals.json", gpa, .limited(1 << 20));
+    defer gpa.free(goals);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, goals, objective));
+    std.debug.print("pass: operator journey: add-goal twice yields one goal\n", .{});
+}
+
 test "operator journey: schedule add then list shows the task" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
