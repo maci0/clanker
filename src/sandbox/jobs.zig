@@ -230,6 +230,15 @@ fn takeThreadLocked(job: anytype) ?std.Thread {
     return th;
 }
 
+/// When two callers `wait` the same job, exactly one takes the thread handle.
+/// The other must not read the job's result yet: the owner is about to join
+/// the thread that sets it. Spinning on `done` (set after result/term) makes
+/// the second waiter observe the same completed job instead of a spurious
+/// "wait failed" / empty text.
+fn awaitJobDone(job: anytype) void {
+    while (!job.done.load(.acquire)) std.Thread.yield() catch {};
+}
+
 fn findExec(id: []const u8) ?*ExecJob {
     for (execs.items) |j| {
         if (std.mem.eql(u8, j.id, id)) return j;
@@ -358,6 +367,7 @@ pub fn waitExec(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
         mu.unlock();
     }
     if (thread) |th| th.join();
+    awaitJobDone(job);
     if (job.term) |term| {
         const fields = termFields(term);
         if (fields.exit) |code| {
@@ -454,6 +464,7 @@ pub fn waitSub(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
         mu.unlock();
     }
     if (thread) |th| th.join();
+    awaitJobDone(job);
     if (job.err_name) |e| {
         return std.fmt.allocPrint(arena, "{{\"ok\":false,\"job\":{f},\"error\":{f}}}", .{
             std.json.fmt(id, .{}),
