@@ -72,13 +72,18 @@ pub const Ctx = struct {
 
 /// 401 from `handleConnection` before CSRF, so an SDK error parser works.
 pub fn writeAuthError(stream: std.Io.net.Stream, path: []const u8, headers_raw: []const u8) u16 {
+    // The shared socket serves the proxy under /proxy/v1; familyOf expects
+    // the /v1 form. Normalize before shaping the error, so an Anthropic SDK
+    // on /proxy/v1/messages gets an Anthropic-shaped 401 rather than an
+    // OpenAI one its parser may reject.
+    const v1_path = stripProxyPrefix(path, .both);
     return writeEnvelope(.{
         .io = undefined,
         .gpa = undefined,
         .cfg = undefined,
         .environ_map = undefined,
         .method = "GET",
-        .path = path,
+        .path = v1_path,
         .query = "",
         .headers_raw = headers_raw,
         .body = "",
