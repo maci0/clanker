@@ -29,6 +29,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const actual = lib.optStr(parsed, "actual");
     const severity = lib.optStr(parsed, "severity") orelse "normal";
     const environment = lib.optStr(parsed, "environment");
+    const impact = lib.optStr(parsed, "impact");
     const component = lib.optStr(parsed, "component") orelse inferComponent(title_raw);
     const room = lib.optStr(parsed, "room");
     const repro = lib.optStr(parsed, "repro");
@@ -48,6 +49,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try appendField(&body_buf, "Severity", severity);
     try appendField(&body_buf, "Component", component);
     try appendField(&body_buf, "Environment", environment);
+    try appendField(&body_buf, "Impact", impact);
     try appendSection(&body_buf, "Description", description, null);
     try appendSection(&body_buf, "Steps to Reproduce", steps, null);
     try appendSection(&body_buf, "Expected Behaviour", expected, null);
