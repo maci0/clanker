@@ -8279,6 +8279,15 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
                 .text = std.fmt.allocPrint(arena, "error: unknown theme '{s}'; type /theme to list available themes", .{name}) catch "error: unknown theme; type /theme to list available themes",
             }) catch {};
         }
+    } else if (themeName(init.environ_map)) |name| {
+        // --theme above is checked; the persistent default must be too, or a
+        // typo'd CLANKER_THEME silently renders the default palette with no
+        // hint that the env var was read and rejected.
+        if (!theme_mod.isKnown(name)) {
+            model.lines.append(arena, .{
+                .text = std.fmt.allocPrint(arena, "error: CLANKER_THEME '{s}' is not a known theme; type /theme to list available themes", .{name}) catch "error: unknown CLANKER_THEME; type /theme to list available themes",
+            }) catch {};
+        }
     }
     model.model_candidates = buildModelCandidates(arena, &model.cfg, init.environ_map, init.io) catch &.{};
     model.command_candidates = buildCommandCandidates(arena) catch &.{};

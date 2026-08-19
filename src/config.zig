@@ -1128,6 +1128,22 @@ pub const Config = struct {
         return std.mem.endsWith(u8, name, "_present") or std.mem.endsWith(u8, name, "_fields");
     }
 
+    /// `mcp_servers.*.env` entries are `"KEY=value"` and `headers` entries
+    /// `"Name: value"`; the value half carries a token. The web API already
+    /// withholds those values (`handleMcpServers` in cli.zig lists names
+    /// only), so the full-config dump must too: `--dump-config` prints
+    /// stdout, which lands in terminals, logs, and bug reports. Only the
+    /// names are written, so the dump still shows which env var / header
+    /// each server gets.
+    fn writeKvNames(s: *std.json.Stringify, items: []const []const u8) !void {
+        try s.beginArray();
+        for (items) |item| {
+            const cut = std.mem.findScalar(u8, item, '=') orelse std.mem.findScalar(u8, item, ':') orelse item.len;
+            try s.write(item[0..cut]);
+        }
+        try s.endArray();
+    }
+
     fn writeJsonValue(s: *std.json.Stringify, value: anytype) !void {
         const T = @TypeOf(value);
         switch (@typeInfo(T)) {
@@ -1151,6 +1167,22 @@ pub const Config = struct {
                     while (it.next()) |kv| {
                         try s.objectField(kv.key_ptr.*);
                         try writeJsonValue(s, kv.value_ptr.*);
+                    }
+                    return s.endObject();
+                }
+                if (T == McpServer) {
+                    // env/headers hold `"KEY=value"`/`"Name: value"` pairs whose
+                    // value half is a token; write names only (see writeKvNames).
+                    try s.beginObject();
+                    inline for (st.fields) |f| {
+                        if (comptime !isParseBookkeeping(f.name)) {
+                            try s.objectField(f.name);
+                            if (comptime std.mem.eql(u8, f.name, "env") or std.mem.eql(u8, f.name, "headers")) {
+                                try writeKvNames(s, @field(value, f.name));
+                            } else {
+                                try writeJsonValue(s, @field(value, f.name));
+                            }
+                        }
                     }
                     return s.endObject();
                 }
@@ -1198,6 +1230,46 @@ pub const Config = struct {
         try std.testing.expect(parsed.object.get("agent_fields") == null);
         // No `u8@...` host address anywhere in the dump.
         try std.testing.expect(std.mem.find(u8, out.written(), "u8@") == null);
+    }
+
+    test "writeJson redacts mcp_servers env and header values, keeping names" {
+        const gpa = std.testing.allocator;
+        var cfg: Config = .{ .default_provider = "deepseek" };
+        defer cfg.providers.deinit(gpa);
+        defer cfg.mcp_servers.deinit(gpa);
+        try cfg.providers.put(gpa, "deepseek", .{
+            .name = "deepseek",
+            .base_url = "https://api.deepseek.com",
+            .api_key_env = "DEEPSEEK_API_KEY",
+            .default_model = "deepseek-chat",
+        });
+        try cfg.mcp_servers.put(gpa, "github", .{
+            .transport = "stdio",
+            .command = "github-mcp-server",
+            .env = &.{ "GITHUB_TOKEN=ghp_super_secret_abc123", "PLAIN" },
+            .headers = &.{ "Authorization: Bearer tok_very_secret", "X-No-Value" },
+        });
+
+        var out: std.Io.Writer.Allocating = .init(gpa);
+        defer out.deinit();
+        try cfg.writeJson(&out.writer);
+
+        // Token values never reach the dump at all...
+        try std.testing.expect(std.mem.find(u8, out.written(), "ghp_super_secret_abc123") == null);
+        try std.testing.expect(std.mem.find(u8, out.written(), "tok_very_secret") == null);
+        // ...and the field keeps its shape: names only, separators cut.
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), out.written(), .{});
+        const row = parsed.object.get("mcp_servers").?.object.get("github").?.object;
+        const env = row.get("env").?.array;
+        try std.testing.expectEqual(@as(usize, 2), env.items.len);
+        try std.testing.expectEqualStrings("GITHUB_TOKEN", env.items[0].string);
+        try std.testing.expectEqualStrings("PLAIN", env.items[1].string);
+        const headers = row.get("headers").?.array;
+        try std.testing.expectEqual(@as(usize, 2), headers.items.len);
+        try std.testing.expectEqualStrings("Authorization", headers.items[0].string);
+        try std.testing.expectEqualStrings("X-No-Value", headers.items[1].string);
     }
 
     /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
