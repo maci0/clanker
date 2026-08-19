@@ -203,6 +203,11 @@ fn runChecks(
     if (dirExists(io, cfg.agent.skills_dir) and !dirHasEntries(io, cfg.agent.skills_dir)) {
         rep.line(.warn, "skills", try std.fmt.allocPrint(arena, "{s} is empty; no skill files found", .{cfg.agent.skills_dir}));
     }
+    // Structured records (ADRs, PRDs, RFCs) scaffold into docs/; without it the
+    // record tools fail with a confusing path error rather than a clear signal.
+    if (!dirExists(io, "docs")) {
+        rep.line(.warn, "docs/", "missing; record tools cannot scaffold new entries");
+    }
 
     rep.section("tools");
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
