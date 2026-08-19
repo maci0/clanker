@@ -4,11 +4,11 @@
 
 - **What failed:** Both 2026-08-19 sweeps (topics 'distributed ledger state store' and 'immutable ledger database', depth standard) returned exclusively off-topic pages — Chinese hardware-vendor sites, bird-forum threads, thesaurus entries — for every query angle, all tagged bing; the 2026-08-16 pass recorded the same backend answering an embedded-SQLite query with dictionary pages, so sweep web output is currently unusable as leads and research falls back to direct web search.
 - **Impact:** sweep web output is unusable as research leads; passes fall back to direct web search and per-claim fetches.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-19. keepRelevant drops hits sharing under two query terms before any backend's results are collected (search_parse/research/web_search); verified by two host tests on the live junk shapes and an on-topic rerun of the sweep reproduction
 
 ## Status
 
-Open.
+Resolved on 2026-08-19. keepRelevant drops hits sharing under two query terms before any backend's results are collected (search_parse/research/web_search); verified by two host tests on the live junk shapes and an on-topic rerun of the sweep reproduction
 
 ## Symptom and impact
 
@@ -44,22 +44,56 @@ tagged `bing`. The GitHub/discussion sections were not the failing part.
 
 ## Root cause
 
-Not traced. What is checked: the failing hits are all tagged `bing`, and the
-same backend produced the 2026-08-16 dictionary-page failure, so the defect
-sits in or behind the Bing scrape path rather than in one topic's phrasing.
-Whether Bing is serving a bot-detection or geo-redirected page that the
-scraper then parses as results, or the scraper parses an unrelated block of
-the page, is unverified — the sweep guest's fetch path was not opened in
-this pass.
+Traced on 2026-08-19 by fetching the exact URLs the guest builds. Bing's
+`format=rss` endpoint itself has decayed upstream: it answers a well-formed,
+correctly percent-encoded multi-word query with an RSS document whose items
+match at most one word of it, or nothing at all. Live probes from a plain
+HTTP client reproduced the report's shapes exactly — `distributed ledger
+state store` returned Vocabulary.com thesaurus entries for "distributed",
+`immutable ledger database` returned Immutable-the-games-company pages and
+dictionary entries, `zig programming language` returned ChatGPT pages. The
+channel `<title>` echoes the full query, so the query reaches Bing intact;
+the results are what changed. Neither the query encoding
+(`parse.percentEncode` is correct, and `+` for spaces behaves the same) nor
+`parseBing` is at fault: the parser faithfully extracts what Bing sent.
+
+Two code-side factors turned an upstream decay into unusable sweeps:
+DuckDuckGo Lite serves its anti-bot page from this network (200 status,
+zero parsed results), so nearly every query fell through to Bing; and
+nothing checked parsed hits against the query, so a page of well-formed
+junk read as success and stopped the fallback chain before the keyed
+backends and Marginalia.
+
+Bing's HTML search page was probed as a replacement backend and is not one:
+like Google, it answers a plain client with a JavaScript challenge carrying
+no organic results.
 
 ## Resolution
 
-Open.
+Resolved on 2026-08-19. `search_parse.keepRelevant` drops hits sharing fewer
+than two distinct query terms (one for one-word queries) across
+title/snippet/URL, case-insensitively; `sweepWeb` applies it to every web
+backend's parse, so an all-junk page compacts to zero and the sweep falls
+through to Google/Brave/Marginalia instead of collecting noise, with a
+once-per-sweep note naming what happened. The `web_search` tool shares the
+same Bing RSS fallback and got the same filter. Upstream Bing cannot be
+fixed from here; what the fix guarantees is that off-topic pages are never
+again filed as leads.
 
 ## Verification
 
-Open — a fixed backend should return database/ledger-related hits for the two
-reproduction commands above.
+- Host tests `matchesQuery keeps two-term hits and drops one-word poisoning`
+  and `keepRelevant compacts a poisoned page to zero and keeps order` in
+  `tools/zig/search_parse.zig`, built from the live junk shapes above.
+- Live rerun of the reproduction, 2026-08-19:
+  `clanker research sweep "immutable ledger database" standard` now returns
+  on-topic WEB hits (immudb, QLDB, Azure Confidential Ledger, ledger-table
+  posts) via Marginalia after the poisoned Bing pages compact to zero; one
+  borderline Bing hit (immutable.com/chain, two matched terms) survived,
+  which is the heuristic working as specified rather than failing.
+- Full gate green: `zig build`, `zig build tools`,
+  `zig build test --summary all` — 320/320 steps, 1673/1684 passed,
+  11 skipped, 0 failed.
 
 ## Follow-up
 
