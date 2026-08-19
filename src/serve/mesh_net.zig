@@ -210,6 +210,15 @@ fn forgetMemberLocked(rt: *Runtime, key: []const u8) bool {
     const m = findMember(rt, key) orelse return false;
     if (m.fd >= 0) {
         writeLeave(rt, m.fd);
+        // Shut the socket down before closing it: `readLoop` for this member
+        // may be blocked in a read on this fd right now, and closing an fd
+        // another thread is reading invites the descriptor-reuse race (the
+        // reader wakes later, compares `m.fd == fd`, and matches a *new*
+        // connection that reused the number). shutdown makes that read
+        // return end-of-stream while the fd still names the old file, so the
+        // reader unwinds before the number can be recycled -- the same
+        // ordering `client.Abort` relies on.
+        _ = std.c.shutdown(m.fd, std.c.SHUT.RDWR);
         _ = std.c.close(m.fd);
     }
     m.* = .{};
@@ -218,7 +227,14 @@ fn forgetMemberLocked(rt: *Runtime, key: []const u8) bool {
 
 fn remember(rt: *Runtime, id: []const u8, name: []const u8, fd: std.posix.fd_t) void {
     if (findMember(rt, id) orelse findMember(rt, name)) |m| {
-        if (m.fd >= 0 and m.fd != fd) _ = std.c.close(m.fd);
+        if (m.fd >= 0 and m.fd != fd) {
+            // The old member's readLoop may still be blocked reading this fd;
+            // shutdown first so it wakes on the old file, then close. Without
+            // it the number can be reused by the joining connection and the
+            // stale reader's exit cleanup zeroes the *new* member's fd.
+            _ = std.c.shutdown(m.fd, std.c.SHUT.RDWR);
+            _ = std.c.close(m.fd);
+        }
         m.fd = fd;
         return;
     }
@@ -601,6 +617,9 @@ pub fn leave(peer_id: []const u8) !void {
                 if (!m.used) continue;
                 if (m.fd >= 0) {
                     writeLeave(rt, m.fd);
+                    // Same shutdown-before-close as `forgetMemberLocked`: the
+                    // member's readLoop may still be blocked on this fd.
+                    _ = std.c.shutdown(m.fd, std.c.SHUT.RDWR);
                     _ = std.c.close(m.fd);
                 }
                 m.* = .{};
