@@ -978,3 +978,107 @@ test "openaiCompletion saturates total_tokens instead of overflowing" {
     defer gpa.free(body);
     try std.testing.expect(std.mem.find(u8, body, "4294967295") != null);
 }
+
+test "anthropic request transcodes to an openai-compat body" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const provider = try config.Provider.single(arena, "qwen", "http://127.0.0.1:9/v1", .openai_compat, "qwen3.5", .{});
+
+    const body =
+        \\{"model":"qwen3.5","system":"be brief","messages":[
+        \\  {"role":"user","content":"hi"},
+        \\  {"role":"assistant","content":[{"type":"text","text":"let me check"},{"type":"tool_use","id":"toolu_1","name":"read","input":{"p":"a"}}]},
+        \\  {"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"the file"}]}]}
+        \\],"tools":[{"name":"read","description":"read a file","input_schema":{"type":"object"}}],"max_tokens":64,"stream":false}
+    ;
+    const open = try anthropicToOpenai(gpa, &provider, body);
+    defer gpa.free(open);
+
+    // The system prompt becomes a system message; role and content survive.
+    try std.testing.expect(std.mem.find(u8, open, "\"model\":\"qwen3.5\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"role\":\"system\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "be brief") != null);
+    // The tool_use block becomes an assistant tool_calls entry; the tool_result
+    // block a tool message bound to the same call id.
+    try std.testing.expect(std.mem.find(u8, open, "\"role\":\"assistant\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "let me check") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"tool_calls\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"id\":\"toolu_1\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"name\":\"read\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"role\":\"tool\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"tool_call_id\":\"toolu_1\"") != null);
+    try std.testing.expect(std.mem.find(u8, open, "the file") != null);
+    // The Anthropic tool def becomes the OpenAI function shape, and the
+    // sampling fields map across.
+    try std.testing.expect(std.mem.find(u8, open, "\"parameters\":{\"type\":\"object\"}") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"max_tokens\":64") != null);
+    try std.testing.expect(std.mem.find(u8, open, "\"stream\":false") != null);
+    // Anthropic's own field names must not leak through to the openai endpoint.
+    try std.testing.expect(std.mem.find(u8, open, "input_schema") == null);
+    try std.testing.expect(std.mem.find(u8, open, "tool_use_id") == null);
+}
+
+test "anthropic response transcodes text, tool calls, and usage" {
+    // `anthropicMessage` abandons the parsed tool-call arguments into gpa (the
+    // proxy runs it under a request-scoped arena), so it is exercised with an
+    // arena here rather than the leak-detecting testing allocator.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const gpa = arena_state.allocator();
+    const body = try anthropicMessage(gpa, "claude-sonnet-4", .{
+        .message = .{
+            .role = .assistant,
+            .content = "ok",
+            .tool_calls = &.{
+                .{ .id = "toolu_1", .name = "read", .arguments = "{\"p\":\"a\"}" },
+                // A tool whose arguments are not JSON must not fail the whole
+                // response: the input falls back to an empty object.
+                .{ .id = "toolu_2", .name = "write", .arguments = "not json at all" },
+            },
+        },
+        .finish_reason = "tool_use",
+        .usage = .{ .prompt_cache_miss_tokens = 10, .prompt_cache_hit_tokens = 5, .completion_tokens = 4 },
+    });
+    try std.testing.expect(std.mem.find(u8, body, "\"type\":\"message\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"type\":\"text\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"text\":\"ok\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"type\":\"tool_use\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"id\":\"toolu_1\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"input\":{\"p\":\"a\"}") != null);
+    // The unparseable arguments block renders as an empty input object.
+    try std.testing.expect(std.mem.find(u8, body, "\"input\":{}") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"stop_reason\":\"tool_use\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"input_tokens\":10") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"output_tokens\":4") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"cache_read_input_tokens\":5") != null);
+}
+
+test "jsonU32 rejects negative and overflowing integers instead of wrapping" {
+    // The proxy mirror of the config `max_tokens=-1` bug: a negative or
+    // oversized max_tokens must come out absent, never wrapped into a huge
+    // u32 that a reasoning model spends its whole grant on.
+    try std.testing.expectEqual(@as(?u32, 64), jsonU32(.{ .integer = 64 }));
+    try std.testing.expectEqual(@as(?u32, null), jsonU32(.{ .integer = -1 }));
+    try std.testing.expectEqual(@as(?u32, null), jsonU32(.{ .integer = std.math.maxInt(u32) + 1 }));
+    try std.testing.expectEqual(@as(?u32, null), jsonU32(.{ .integer = std.math.maxInt(i64) }));
+    try std.testing.expectEqual(@as(?u32, null), jsonU32(.{ .float = 1.5 }));
+    try std.testing.expectEqual(@as(?u32, null), jsonU32(.{ .string = "64" }));
+    try std.testing.expectEqual(@as(?u32, null), jsonU32(null));
+}
+
+test "ssePayloads returns data lines, skipping event lines and empty payloads" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList([]const u8) = .empty;
+    defer out.deinit(gpa);
+    try ssePayloads(
+        "event: message_start\ndata: {\"a\":1}\r\n\r\ndata: \ndata:{\"b\":2}\n: a comment\ndata: [DONE]\n\n",
+        &out,
+        gpa,
+    );
+    try std.testing.expectEqual(@as(usize, 3), out.items.len);
+    try std.testing.expectEqualStrings("{\"a\":1}", out.items[0]);
+    try std.testing.expectEqualStrings("{\"b\":2}", out.items[1]);
+    try std.testing.expectEqualStrings("[DONE]", out.items[2]);
+}

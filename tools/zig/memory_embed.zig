@@ -59,7 +59,14 @@ test "maximum-length token pair cannot overflow the bigram" {
 }
 
 test "zero dimensions are safe" {
+    // A zero-length vec takes the early return before any hashing; this is a
+    // crash-safety check (the old bug was a `% 0` divide on an empty vec).
     hashEmbedInto("anything", &.{});
+    // The smallest usable dimension must still hash and normalize to unit
+    // length rather than dividing by zero or leaving the vec untouched.
+    var one: [1]f32 = undefined;
+    hashEmbedInto("a b", &one);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.0), one[0], 0.000001);
 }
 
 // ------------------------------------------------------------------ ranking

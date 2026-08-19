@@ -17311,17 +17311,13 @@ test "a provider that never answers costs the sweep its budget, not the OS conne
     // A bound socket nobody ever accepts from: the kernel completes the
     // handshake off the backlog, so connect() and the request write both
     // succeed and the client then blocks forever waiting for a response. That
-    // is the shape of the endpoint this command used to hang on.
-    var port: u16 = 0;
-    var server: ?std.Io.net.Server = null;
-    for (0..64) |i| {
-        port = 21000 + @as(u16, @intCast(i * 7 % 3000));
-        const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
-        server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch continue;
-        break;
-    }
-    var listener = server orelse return error.CannotBindTestPort;
+    // is the shape of the endpoint this command used to hang on. Port 0 lets
+    // the kernel pick a free ephemeral port instead of scanning a fixed range
+    // another test process on the same host could be squatting on.
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = std.Io.net.IpAddress.listen(&addr, io, .{}) catch return error.CannotBindTestPort;
     defer listener.socket.close(io);
+    const port = listener.socket.address.getPort();
 
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
@@ -17362,16 +17358,12 @@ test "httpGetDeadline gives up on a silent host and names the timeout" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var port: u16 = 0;
-    var server: ?std.Io.net.Server = null;
-    for (0..64) |i| {
-        port = 24000 + @as(u16, @intCast(i * 7 % 3000));
-        const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
-        server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch continue;
-        break;
-    }
-    var listener = server orelse return error.CannotBindTestPort;
+    // Port 0, not a fixed-range scan: the port must be free, and the kernel
+    // knows which ones are.
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var listener = std.Io.net.IpAddress.listen(&addr, io, .{}) catch return error.CannotBindTestPort;
     defer listener.socket.close(io);
+    const port = listener.socket.address.getPort();
 
     // Whatever the canceled request allocated is abandoned with it, so this
     // runs on an arena: a canceled HTTP request is not a leak to report.

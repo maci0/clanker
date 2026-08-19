@@ -569,7 +569,7 @@ test "renderMatchGroup prints nothing for an empty group" {
     try testing.expectEqualStrings("", w.written());
 }
 
-test "callTool names the store in its refusal" {
+test "callTool fails the call for a refusal and for an unreadable answer" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
 

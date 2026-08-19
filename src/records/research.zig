@@ -562,7 +562,7 @@ test "a missing licence or push date prints a dash rather than a gap" {
     try std.testing.expect(std.mem.find(u8, text, "3 stars · — · — · pushed —\n") != null);
 }
 
-test "a refused tool call fails with the tool's own sentence, not a generic error" {
+test "a refused tool call and an unreadable answer both fail the research call" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -575,6 +575,11 @@ test "a refused tool call fails with the tool's own sentence, not a generic erro
     };
     var canned: Canned = .{ .answer = "{\"ok\":false,\"error\":\"depth must be quick, standard, or deep\"}" };
     const tool: Tool = .{ .ctx = &canned, .call = Canned.call };
+    try std.testing.expectError(Error.ToolFailed, common.callTool(arena.allocator(), "research", tool, "{}"));
+
+    // A refusal without an `error` field falls back to the generic sentence and
+    // still fails the call rather than being read as a result.
+    canned.answer = "{\"ok\":false}";
     try std.testing.expectError(Error.ToolFailed, common.callTool(arena.allocator(), "research", tool, "{}"));
 
     canned.answer = "not json at all";

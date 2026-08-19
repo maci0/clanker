@@ -54,26 +54,20 @@ pub const MockServer = struct {
     served: std.atomic.Value(u32) = .init(0),
 
     pub fn start(io: std.Io, gpa: std.mem.Allocator, mode: Mode) !*MockServer {
-        var seed_ctr: std.atomic.Value(u64) = .init(0);
-        const seed = std.hash.Wyhash.hash(0x6A09E667F3BCC909, std.mem.asBytes(&@intFromPtr(&seed_ctr))) +% seed_ctr.fetchAdd(1, .monotonic);
-        var rng = std.Random.DefaultPrng.init(seed);
-        var server: ?std.Io.net.Server = null;
-        var port: u16 = 0;
-        for (0..64) |_| {
-            port = 20000 + @as(u16, @intCast(rng.random().intRangeLessThan(u32, 0, 30000)));
-            const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", port);
-            server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch {
-                continue;
-            };
-            break;
-        }
-        if (server == null) return error.CannotBindMockPort;
+        // Port 0: the kernel picks a free ephemeral port, so concurrent test
+        // processes cannot collide on a probed range. The old code seeded a
+        // deterministic sequence from a fresh local counter, so every server
+        // in a process probed the same first port and walked the same 64-port
+        // walk on every collision.
+        var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+        var server = std.Io.net.IpAddress.listen(&addr, io, .{}) catch return error.CannotBindMockPort;
+        const port = server.socket.address.getPort();
 
         const self = try gpa.create(MockServer);
         self.* = .{
             .io = io,
             .gpa = gpa,
-            .server = server.?,
+            .server = server,
             .thread = undefined,
             .mode = mode,
             .port = port,

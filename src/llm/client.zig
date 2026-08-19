@@ -2049,3 +2049,62 @@ test "anthropic oauth token goes on Authorization with the oauth beta" {
     // The token must not also be sent as an API key; the API rejects both at once.
     try std.testing.expect(std.mem.find(u8, headers, "x-api-key") == null);
 }
+
+test "totalCost prices input with the cache discount and output at list rates" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var provider = try config.Provider.single(arena, "priced", "http://127.0.0.1:9/v1", .openai_compat, "m", .{});
+    try provider.models.put(arena, "m", .{ .cost_per_1m_input = 3.0, .cost_per_1m_output = 15.0 });
+
+    // 1M uncached input tokens + 1M output tokens at $3/$15 per 1M.
+    const full = totalCost(&provider, .{ .prompt_tokens = 1_000_000, .completion_tokens = 1_000_000, .total_tokens = 2_000_000 });
+    try std.testing.expectApproxEqAbs(@as(f64, 18.0), full, 0.0001);
+
+    // A fully cache-hit prompt bills a tenth of the input rate.
+    const cached = totalCost(&provider, .{ .prompt_tokens = 1_000_000, .prompt_cache_hit_tokens = 1_000_000, .total_tokens = 1_000_000 });
+    try std.testing.expectApproxEqAbs(@as(f64, 0.3), cached, 0.0001);
+
+    // No pricing info on the model means the estimate is 0, not an error.
+    var unpriced = try config.Provider.single(arena, "free", "http://127.0.0.1:9/v1", .openai_compat, "m", .{});
+    try std.testing.expectApproxEqAbs(@as(f64, 0), totalCost(&unpriced, .{ .prompt_tokens = 1_000_000, .completion_tokens = 1_000_000, .total_tokens = 2_000_000 }), 0.0001);
+}
+
+test "chat retries a 503 and gives up after its same-provider attempts" {
+    // The non-streaming half of the retry loop: `chatStream`'s 429 retry is
+    // covered above, but plain `chat` retried on 5xx through the same
+    // `max_attempts` budget without a test. `http_503` exists exactly to
+    // exhaust it -- every attempt must reach the server, none may succeed.
+    const mock_server = @import("mock_server.zig");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, std.testing.allocator, .http_503);
+    defer mock.stop();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("MOCK_API_KEY", "test-key");
+
+    const base_url = try std.fmt.allocPrint(std.testing.allocator, "http://127.0.0.1:{d}", .{mock.port});
+    defer std.testing.allocator.free(base_url);
+    var arena_for_provider = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_for_provider.deinit();
+    var provider = try config.Provider.single(arena_for_provider.allocator(), "mock-503", base_url, .openai_compat, "mock", .{ .max_tokens = 64 });
+    provider.api_key_env = "MOCK_API_KEY";
+
+    var ctx = Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var err_detail: ?[]const u8 = null;
+    try std.testing.expectError(error.ApiError, chat(&ctx, arena, .{
+        .provider = &provider,
+        .messages = &messages,
+    }, &err_detail));
+    // One request per attempt: the retry loop hit the endpoint max_attempts
+    // times and then surfaced the error instead of falling through.
+    try std.testing.expectEqual(@as(usize, 3), mock.captured.items.len);
+    try std.testing.expect(err_detail != null);
+}

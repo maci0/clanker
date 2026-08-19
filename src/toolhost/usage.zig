@@ -178,8 +178,20 @@ test "top returns everything when asked for more than it holds" {
 }
 
 test "a fresh tally is not dirty and saves nothing" {
-    const u = Usage{};
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var u = Usage{};
     try std.testing.expect(!u.dirty);
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    u.save(io, arena_state.allocator(), tmp.dir);
+    // `save` must not touch the file when nothing changed: a run that called
+    // no tools should not rewrite (or create) the tally.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, path, .{}));
 }
 
 test "concurrent process-style saves merge increments" {
