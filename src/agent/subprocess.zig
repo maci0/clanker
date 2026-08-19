@@ -153,9 +153,10 @@ pub const Registry = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const h = self.findLocked(session_id, kind) orelse return null;
-        const nl = std.mem.findScalar(u8, h.leftover.items, '\n') orelse return null;
-        const line = arena.dupe(u8, std.mem.trimEnd(u8, h.leftover.items[0..nl], "\r")) catch |err| return err;
-        const rest = h.leftover.items[nl + 1 ..];
+        const line_bytes = std.mem.sliceTo(h.leftover.items, '\n');
+        if (line_bytes.len == h.leftover.items.len) return null;
+        const line = arena.dupe(u8, std.mem.trimEnd(u8, line_bytes, "\r")) catch |err| return err;
+        const rest = h.leftover.items[line_bytes.len + 1 ..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
         h.leftover.shrinkRetainingCapacity(rest.len);
         return line;
