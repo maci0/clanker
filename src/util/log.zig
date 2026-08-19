@@ -7,6 +7,12 @@ pub const Level = enum {
     info,
     warn,
     error_,
+    /// Above every real level: `log.log` drops everything. The REPL sets
+    /// this once the alt screen exists and `providers check` during its
+    /// sweep, so record-emitting worker threads cannot paint timestamped
+    /// machinery text over an interactive surface. Never accepted from
+    /// config strings.
+    none,
 
     pub fn fromStr(s: []const u8) ?Level {
         // Closed set; the stored tag is `error_` so stringToEnum cannot
@@ -56,10 +62,22 @@ pub const Sink = struct {
     write: *const fn (ctx: *const anyopaque, line: []const u8) void,
 };
 
-var sink: ?Sink = null;
+var sink_storage: Sink = undefined;
+/// The active sink, published as an atomic pointer (`0` = none) so a logging
+/// thread reads the same value setSink stored: the log level, which does
+/// share across threads, is an atomic too, and a plain global was observed
+/// to read back as its zero-initialized self on worker threads. setSink
+/// overwrites `sink_storage` before publishing, so a reader can never
+/// observe a torn pair.
+var sink_ptr = std.atomic.Value(usize).init(0);
 
 pub fn setSink(s: ?Sink) void {
-    sink = s;
+    if (s) |v| {
+        sink_storage = v;
+        sink_ptr.store(@intFromPtr(&sink_storage), .seq_cst);
+    } else {
+        sink_ptr.store(0, .seq_cst);
+    }
 }
 
 pub fn setLevel(l: Level) void {
@@ -90,11 +108,17 @@ pub fn unixMilliseconds() i128 {
 
 pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
     if (@intFromEnum(level) < current_level.load(.acquire)) return;
+    if (level == .warn) {
+        std.debug.print("LEVEL-PEEK level={s} cur={d}\n", .{ @tagName(level), current_level.load(.acquire) });
+    }
     const prefix = switch (level) {
         .debug => "DEBUG",
         .info => "INFO",
         .warn => "WARN",
         .error_ => "ERROR",
+        // Nothing is ever logged at this level; the enum only gives
+        // setLevel a value above error_ to silence records.
+        .none => unreachable,
     };
     // One write per line: tools run on worker threads and the model's tokens
     // stream to stdout at the same time, so a line split across several prints
@@ -116,14 +140,12 @@ pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
         buf[buf.len - 1] = '\n';
         w.end = buf.len;
     };
-    var tid_marker: u8 = 0;
-    std.debug.print("LOG-THREAD {x} sink={any}\n", .{ @intFromPtr(&tid_marker), sink != null });
-    if (sink) |s| {
-        std.debug.print("SINK-CAPTURE\n", .{});
+    const p = sink_ptr.load(.acquire);
+    if (p != 0) {
+        const s: *const Sink = @ptrFromInt(p);
         s.write(s.ctx, buf[0..w.end]);
         return;
     }
-    std.debug.print("LOG-STDERR path (sink null)\n", .{});
     _ = std.c.pthread_mutex_lock(&log_mutex);
     defer _ = std.c.pthread_mutex_unlock(&log_mutex);
     std.debug.print("{s}", .{buf[0..w.end]});
