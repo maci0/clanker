@@ -311,7 +311,12 @@ accurate):**
 | Site | Shape | Why it's residual, not a bug |
 |---|---|---|
 | `src/cli.zig` (REPL stdin read) | `std.posix.read(stdin_file.handle, &tmp)` | Needs "whatever is available right now" semantics on a TTY; a buffered `std.Io.Reader` would block differently. Documented inline. |
-| `src/cli.zig` (HTTP server read loops, `writeAllFd`) | `std.posix.read`/raw `fd_t` | Hand-rolled minimal HTTP server predates/sits below the `std.Io.net` request/response layer clanker uses elsewhere |
+| `src/cli.zig` (HTTP server read loops, `getrlimit(.NOFILE)`) | `std.posix.read`/`setsockopt(SO.RCVTIMEO)`/raw `fd_t`/`getrlimit` | Hand-rolled minimal HTTP server predates/sits below the `std.Io.net` request/response layer clanker uses elsewhere; no `std.Io` equivalent for rlimits |
+| `src/serve/mesh_net.zig` | `std.posix.read`, `setsockopt(SO.RCVTIMEO)`, raw `fd_t` | Mesh wire pump; same raw-socket shape as the HTTP server |
+| `src/serve/live.zig` | `std.posix.poll` (`POLLRDHUP`) | Idle SSE tick polls hangup; `std.posix.POLL` has no `RDHUP` on libc (maps to `EPOLL`) and `POLLHUP` is not a substitute (it needs both halves shut) |
+| `src/agent/subprocess.zig`, `src/sandbox/jobs.zig` | `std.posix.pid_t`, `std.posix.kill` | Session-keyed process table and job kill; no `std.Io` equivalent for pids/signals |
+| `src/util/run_lock.zig` | `std.posix.kill(pid, 0)` | Stale-owner probe for a pid-file lock; no `std.Io` equivalent |
+| `src/util/raw_http.zig` | raw `fd_t` writer (`writeAllFd`) | The HTTP server's raw-fd write path, moved out of `cli.zig` |
 | `src/sandbox/host.zig` (`ck_http`-adjacent socket read) | `std.posix.read` | Same shape as above: raw socket byte pump for the sandboxed HTTP path |
 | `src/llm/mock_server.zig` | `std.posix.read`, raw `fd_t` writer | Test-only mock HTTP server, same shape as the real one |
 | `src/main.zig` | `std.posix.setrlimit(.STACK, ...)` | No `std.Io` equivalent for process rlimits; this is the correct "go lower" case |

@@ -52,7 +52,7 @@ already closed.
 | `docs/reviews/webui.md` | The polish/animation work already shipped, turn by turn — do not re-propose anything logged here as done |
 | `docs/prds/0006-webui.md` | Phase plan, the named reference products, what's still marked Open |
 | `docs/prds/0005-repl-tui.md` | TUI acceptance criteria, the widget-mapping table, what's still marked Open |
-| `ui/app/index.html` | The 11 real views: chat, board, goals, runs, fleet, rooms, knowledge, prompts, tools, system, plus rail/header structure |
+| `ui/app/index.html` | The 11 real views: chat, kanban, runs, fleet, arena, rooms, models, knowledge, prompts, tools, system, plus rail/header structure (`#board`/`#goals` are legacy aliases of kanban) |
 | `ui/app/app.css` | Design tokens (`--accent`/`--surface`/`--fg-muted`), existing motion (`@keyframes suggestion-in`, `.skeleton`, lamp states), `prefers-reduced-motion` gating |
 | `ui/app/app.js` + `core/*.js` + `lib/*.js` | What actually drives interaction: composer, streaming, toasts, palette |
 | `src/tui/repl.zig` (module doc comment, `command_registry`, `printHelp`, `completeSlashCommand`, `handlePickerKey`) | The TUI's whole interaction surface — one file, single `Model` widget |

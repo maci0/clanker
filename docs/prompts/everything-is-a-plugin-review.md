@@ -50,7 +50,7 @@ guest owns listing/name-check/tail, pure helper host-tested. The reference
 recorder split is `model_stats` / `autolearn` / `reasoning`: native writer
 at the choke point, guest reader.
 
-Dated findings live in `docs/reviews/everything-is-a-plugin-review.md` and
+Dated findings live in `docs/reviews/everything-is-a-plugin-findings.md` and
 the ROADMAP "Everything-is-a-plugin audit" item. Do not re-propose a row
 those already mark shipped.
 
@@ -59,7 +59,7 @@ those already mark shipped.
 | Source | Why |
 |---|---|
 | `AGENTS.md` "Everything is a plugin" and "WASM by default" | The house rule and what stays native on purpose |
-| `docs/reviews/everything-is-a-plugin-review.md` | Prior findings; skip anything already logged as done |
+| `docs/reviews/everything-is-a-plugin-findings.md` | Prior findings; skip anything already logged as done |
 | `docs/ROADMAP.md` "Everything-is-a-plugin audit" | The live migration list |
 | `docs/manifest.md` | What a descriptor actually grants |
 | `src/cli.zig` (`toolJson` / `toolText` / `/api/*`) | The HTTP/CLI bridge: guest vs reimplemented |

@@ -157,7 +157,12 @@ blindly: it rots):
 | Site (re-verify line numbers) | Call | Why it's residual, not a bug |
 |---|---|---|
 | `src/cli.zig` (REPL stdin read) | `std.posix.read(stdin_file.handle, &tmp)` | Needs "whatever is available right now" TTY semantics; documented inline in the surrounding comment |
-| `src/cli.zig` (HTTP server accept/read loops, `writeAllFd`) | `std.posix.read`, raw `fd_t` | Minimal hand-rolled HTTP server; below the request/response abstraction the rest of the codebase uses |
+| `src/cli.zig` (HTTP server accept/read loops, `getrlimit(.NOFILE)`) | `std.posix.read`, `setsockopt(SO.RCVTIMEO)`, raw `fd_t`, `getrlimit` | Minimal hand-rolled HTTP server; below the request/response abstraction the rest of the codebase uses; no `std.Io` equivalent for rlimits |
+| `src/serve/mesh_net.zig` | `std.posix.read`, `setsockopt(SO.RCVTIMEO)`, raw `fd_t` | Mesh wire pump; same raw-socket shape as the HTTP server |
+| `src/serve/live.zig` | `std.posix.poll` (`POLLRDHUP`) | Idle SSE tick polls hangup; `std.posix.POLL` has no `RDHUP` on libc (maps to `EPOLL`) and `POLLHUP` is not a substitute (it needs both halves shut) |
+| `src/agent/subprocess.zig`, `src/sandbox/jobs.zig` | `std.posix.pid_t`, `std.posix.kill` | Session-keyed process table and job kill; no `std.Io` equivalent for pids/signals |
+| `src/util/run_lock.zig` | `std.posix.kill(pid, 0)` | Stale-owner probe for a pid-file lock; no `std.Io` equivalent |
+| `src/util/raw_http.zig` | raw `fd_t` writer (`writeAllFd`) | The HTTP server's raw-fd write path, moved out of `cli.zig` |
 | `src/sandbox/host.zig` (`ck_http`-adjacent socket read) | `std.posix.read` | Same raw-socket-pump shape as the HTTP server |
 | `src/llm/mock_server.zig` | `std.posix.read`, raw `fd_t` writer | Test-only mock server mirroring the real one's shape |
 | `src/main.zig` | `std.posix.setrlimit(.STACK, ...)` | No `std.Io` equivalent for process rlimits; correct "go lower" case |
@@ -199,9 +204,11 @@ blindly: it rots):
 - `indexOf*` -> `find*` family (`find`, `findPos`, `findScalar`, `findAny`,
   `findNone`, ...). The `indexOf*` names remain as aliases, so they compile;
   new/touched code should prefer `find*`. clanker's current code uses
-  `std.mem.indexOfScalar`/`indexOf` in several places (`src/cli.zig`,
-  `src/mcp/server.zig`, `src/gate/checks.zig`, `src/util/dotenv.zig`,
-  `src/main.zig`): these all still work, so this is a **P2/P3 rename
+  `std.mem.indexOfScalar`/`indexOf` in several places (`src/config.zig`,
+  `src/preset/preset.zig`, `src/serve/live.zig`, `src/peers/chatrooms.zig`,
+  `src/llm/registry.zig`, and test blocks in `src/records/common.zig`,
+  `src/agent/private_todos.zig`, `src/sandbox/host.zig`): these all still
+  work, so this is a **P2/P3 rename
   opportunity, not urgent**, unless the user asks for a full sweep.
 - New `cut`/`cutPrefix`/`cutSuffix`/`cutScalar`/`cutLast`/`cutLastScalar` are
   the idiom for split-at-substring; prefer them in new code (e.g. the next
@@ -229,10 +236,12 @@ src/config.zig            jsonInt(): @intFromFloat(f)                    -> @tru
 src/agent/loop.zig         float tool-arg formatting: @intFromFloat(f)    -> @trunc(f)/@floor(f), same trap
 ```
 
-Both confirmed present via `rg -n '@intFromFloat' src --type zig` at the
-time this prompt was written. Re-run the search yourself before fixing : 
-the codebase self-modifies (`clanker improve-self`) and these may have
-already moved, or new hits may have appeared elsewhere.
+Both were present via `rg -n '@intFromFloat' src --type zig` when this
+prompt was written, but have since migrated (verified 2026-08-19: no
+`@intFromFloat(` call sites remain; the only hits are comment text in
+`src/sandbox/host.zig`'s gate-denial fixture). Re-run the search yourself
+before fixing: the codebase self-modifies (`clanker improve-self`) and new
+hits may have appeared elsewhere.
 
 Already clean at that same scan (spot-check only, do not re-search for
 hours): no `@Type(`, no `@cImport`, no `std.time.Instant/Timer/timestamp`,

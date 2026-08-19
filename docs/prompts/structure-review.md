@@ -78,7 +78,8 @@ pairing), `docs/` (numbering, stale cross-references), and the repository root
 ### A. Placement against the stated convention
 
 - [ ] Every file directly in `src/` is one the convention allows (per
-      `AGENTS.md`: `main.zig`, `cli.zig`, `config.zig`, `doctor.zig`). Any other
+      `AGENTS.md`: `main.zig`, `cli.zig`, `config.zig`, `doctor.zig`,
+      `proxy_main.zig`). Any other
       top-level `src/*.zig` is either misplaced (move it under a subsystem) or
       the convention in `AGENTS.md` is stale and should be updated to match.
       Name which. (As of writing, `src/agent/workflows.zig` has been moved
