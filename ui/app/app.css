@@ -1938,6 +1938,15 @@ button.header-model[aria-expanded="true"] .model-chip__chevron {
 .model-picker__option:focus-visible {
   outline: 2px solid var(--accent); outline-offset: -1px;
 }
+/* Theme rows carry a colour dot, so they lay out across instead of down.
+   Must stay after .model-picker__option, whose flex-direction it overrides. */
+.theme-picker__option {
+  flex-direction: row; align-items: center; gap: var(--space-2);
+}
+.theme-picker__swatch {
+  flex: none; width: 10px; height: 10px; border-radius: 50%;
+  border: 1px solid var(--rule); background: transparent;
+}
 @media (prefers-reduced-motion: reduce) {
   .model-picker__panel { transition: none; }
 }

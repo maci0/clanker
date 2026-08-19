@@ -7,6 +7,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The web UI's theme picker is keyboard-operable and shows each palette's
+  colour. ArrowUp/ArrowDown walk the option list and wrap at both ends (the
+  modulo walk `core/modelpicker.js` already used), closing the picker hands
+  focus back to the theme toggle instead of dropping it to `<body>`, and every
+  row carries a dot filled with that theme's `--bg` (`system` keeps an empty
+  ring, so labels stay aligned). Enter and Space activate a row through the
+  option's own `<button>`, not a hand-rolled key handler.
+
 - Tool descriptors may declare `prompt_guidance`: binding usage rules the
   harness injects into the system prompt's new `## Tool guidance` section
   (ahead of the catalog, for every enabled non-internal tool that declares
