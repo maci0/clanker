@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** Two improve-self promotions to src/doctor.zig merged from the engine's worktree; mergeBack moved main's ref without resyncing the invoking checkout, which then showed the inverse diff as an unstaged change blocking git pull. Committing that diff to unblock the pull pushed 124d592e, deleting both promotions from origin/main. Reapplied on reapply-doctor-improvements, gate green.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-19. mechanism fixed as 53b26a9e (mergeBack resyncs the invoking checkout when clean, warns and never resets a dirty one; unit-tested in worktree.zig) on top of the reopened bug record; the deleted promotions were reapplied via PR #266 (820b61de), on main. Recovery for any stale diff met in the wild is in the linked bug: restore, never commit it
+- **Resolution:** Resolved on 2026-08-19. mechanism fixed as 53b26a9e (mergeBack resyncs the invoking checkout when clean, warns and never resets a dirty one; unit-tested in worktree.zig) on top of the reopened bug record; the deleted promotions were reapplied via PR #266 (820b61de), on main. Recovery for any stale diff met in the wild is in the linked bug: restore, never commit it
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-19. mechanism fixed as 53b26a9e (mergeBack resyncs the invoking checkout when clean, warns and never resets a dirty one; unit-tested in worktree.zig) on top of the reopened bug record; the deleted promotions were reapplied via PR #266 (820b61de), on main. Recovery for any stale diff met in the wild is in the linked bug: restore, never commit it
 
 ## Trigger and scope
 

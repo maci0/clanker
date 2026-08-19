@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** An escalation run (run-1787001820) that was repairing a failed repair exited 1: repo_search returned malformed JSON, the DeepSeek stream failed with ReadFailed, and the fallback chain then tried openai which has no credential (MissingApiKey). Tracing whether repo_search is a code defect and whether fallback should skip unconfigured providers.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-19. both code defects fixed: bugs/2026-08-18-exec-truncated-note-is-not-json.md and bugs/2026-08-18-fallback-tries-unconfigured-providers.md; re-verified on main a99a052d: the chain filters rows with providers.unconfiguredReason (loop.zig), so a run fails on the real transport error instead of MissingApiKey. The DeepSeek ReadFailed itself was a mid-stream transport drop, no defect
+- **Resolution:** Resolved on 2026-08-19. both code defects fixed: bugs/2026-08-18-exec-truncated-note-is-not-json.md and bugs/2026-08-18-fallback-tries-unconfigured-providers.md; re-verified on main a99a052d: the chain filters rows with providers.unconfiguredReason (loop.zig), so a run fails on the real transport error instead of MissingApiKey. The DeepSeek ReadFailed itself was a mid-stream transport drop, no defect
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-19. both code defects fixed: bugs/2026-08-18-exec-truncated-note-is-not-json.md and bugs/2026-08-18-fallback-tries-unconfigured-providers.md; re-verified on main a99a052d: the chain filters rows with providers.unconfiguredReason (loop.zig), so a run fails on the real transport error instead of MissingApiKey. The DeepSeek ReadFailed itself was a mid-stream transport drop, no defect
 
 ## Trigger and scope
 

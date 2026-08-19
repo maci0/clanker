@@ -202,14 +202,14 @@ Project agents receive this workflow through the harness prompt and
 - [google-vertex-anthropic returns HTTP 400 on every request, blocking improve-self](investigations/2026-08-19-vertex-anthropic-400.md) — Resolved
 
 - [zig build test intermittently hangs forever in the bounded-chat abort test](investigations/2026-08-18-bounded-chat-abort-test-hangs.md) — Resolved
-- [Stale post-promotion checkout diff on doctor.zig was committed and pushed as revert 124d592e](investigations/2026-08-19-stale-checkout-diff-pushed-as-revert.md) — Investigating
+- [Stale post-promotion checkout diff on doctor.zig was committed and pushed as revert 124d592e](investigations/2026-08-19-stale-checkout-diff-pushed-as-revert.md) — Resolved
 
 - [The REPL had no /rfc although clanker rfc exists](investigations/2026-08-17-missing-clanker-tool-rfc-slash-command-in-tui.md) — Resolved
-- [Escalation run died AnswerTruncatedToEmpty after 34 iterations](investigations/2026-08-18-escalation-run-answer-truncated-to-empty.md) — Investigating
+- [Escalation run died AnswerTruncatedToEmpty after 34 iterations](investigations/2026-08-18-escalation-run-answer-truncated-to-empty.md) — Resolved
 
-- [improve-self staging compile errors and recent_commits test failed the gate](investigations/2026-08-18-improve-self-staging-and-recent-commits.md) — Investigating
+- [improve-self staging compile errors and recent_commits test failed the gate](investigations/2026-08-18-improve-self-staging-and-recent-commits.md) — Resolved
 
-- [Escalation run died on DeepSeek ReadFailed and an unconfigured OpenAI fallback](investigations/2026-08-18-escalation-run-failed-on-llm-fallback.md) — Investigating
+- [Escalation run died on DeepSeek ReadFailed and an unconfigured OpenAI fallback](investigations/2026-08-18-escalation-run-failed-on-llm-fallback.md) — Resolved
 
 - [pty e2e text assertions race vaxis's cell diff](investigations/2026-08-17-pty-text-assertions-race-the-cell-diff.md) — Resolved
 
