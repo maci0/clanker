@@ -1415,7 +1415,7 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
         var msit = cfg.mcp_servers.iterator();
         while (msit.next()) |mskv| {
             try s.objectField(mskv.key_ptr.*);
-            try s.write(mskv.value_ptr.*);
+            try writeMcpServerJson(&s, mskv.value_ptr);
         }
         try s.endObject();
     }

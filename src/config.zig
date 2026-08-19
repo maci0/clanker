@@ -1230,9 +1230,13 @@ pub const Config = struct {
         // Named profile overlay: `profiles/<name>.toml` between local and env/flags.
         if (profile) |prof| if (prof.len > 0) {
             const prof_path = try std.fmt.allocPrint(arena, "profiles/{s}.toml", .{prof});
-            if (try loadFile(io, arena, dir, prof_path, .required)) |loaded| {
+            if (try loadFile(io, arena, dir, prof_path, .overlay)) |loaded| {
                 try merge(&cfg, loaded.cfg, arena);
+                // Deferred like the local file's: read against the merged
+                // config, so a profile can add a model to a provider only the
+                // base file declares without redeclaring the provider.
                 if (loaded.models_table) |models| try distributeModels(arena, &cfg, models);
+                if (loaded.cfg.default_provider_present) cfg.default_provider_from = loaded.path;
             }
         };
         // Checked on the merged result rather than per file. A local override
@@ -1336,7 +1340,13 @@ pub const Config = struct {
         }
     }
 
-    const LoadMode = enum { required, optional };
+    /// How one file in the overlay stack is read. `required` is the base
+    /// file: it must exist, and its `[models."..."]` table is distributed
+    /// against its own `[providers]` right away. `optional` (the local
+    /// override) and `overlay` (a named profile) both defer that table to
+    /// `loadInner`, so either file can add a model to a provider only the
+    /// base declares; they differ only in whether a missing file is an error.
+    const LoadMode = enum { required, optional, overlay };
 
     /// A parsed config file plus the path it came from, kept so
     /// default_provider provenance can name its source file. For the optional
@@ -1357,7 +1367,7 @@ pub const Config = struct {
     fn loadFile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, mode: LoadMode) !?Loaded {
         const raw = dir.readFileAlloc(io, file_name, arena, .limited(1 << 20)) catch |err| switch (err) {
             error.FileNotFound => return switch (mode) {
-                .required => error.MissingConfig,
+                .required, .overlay => error.MissingConfig,
                 .optional => null,
             },
             else => return err,
@@ -1396,7 +1406,7 @@ pub const Config = struct {
         return .{
             .cfg = cfg,
             .path = file_name,
-            .models_table = if (mode == .optional) models_table else null,
+            .models_table = if (mode == .required) null else models_table,
         };
     }
 
@@ -3286,6 +3296,92 @@ test "config.local.toml can add a model without repeating providers" {
     try std.testing.expect(ds.models.get("deepseek-chat") != null);
     try std.testing.expect(ds.models.get("deepseek-v4-flash") != null);
     try std.testing.expectEqual(@as(u32, 2048), ds.models.get("deepseek-chat").?.max_tokens);
+}
+
+test "a --profile overlay can add a model without repeating providers" {
+    // The profile is the third file in the overlay stack and must read like
+    // the local override: its [models."..."] table is applied to the *merged*
+    // config, not to the profile's own (empty) provider map. Distributing it
+    // against the profile alone rejected every such entry with
+    // ModelUnknownProvider, so a profile could only add a model by repeating
+    // the whole [providers.<name>] stanza.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = env.tmp.dir;
+    const io = env.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\api_key_env = "DEEPSEEK_API_KEY"
+        \\
+        \\[models."deepseek/deepseek-chat"]
+        \\provider = "deepseek"
+        \\
+        ,
+    });
+    try dir.createDirPath(io, "profiles");
+    try dir.writeFile(io, .{
+        .sub_path = "profiles/fast.toml",
+        .data =
+        \\[models."deepseek/deepseek-v4-flash"]
+        \\provider = "deepseek"
+        \\max_tokens = 4096
+        \\
+        ,
+    });
+
+    const cfg = try Config.loadWithProfile(io, arena, dir, "config.toml", "config.local.toml", "fast");
+    const ds = cfg.providers.getPtr("deepseek").?;
+    try std.testing.expectEqual(@as(usize, 2), ds.models.count());
+    try std.testing.expectEqual(@as(u32, 4096), ds.models.get("deepseek-v4-flash").?.max_tokens);
+    // The base file still names the default, so the provenance stays on it.
+    try std.testing.expectEqualStrings("config.toml", cfg.default_provider_from.?);
+}
+
+test "a --profile overlay that names a default_provider owns the provenance" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = env.tmp.dir;
+    const io = env.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\
+        \\[providers.local]
+        \\base_url = "http://127.0.0.1:11434"
+        \\
+        \\[models."deepseek/deepseek-chat"]
+        \\provider = "deepseek"
+        \\
+        \\[models."local/qwen"]
+        \\provider = "local"
+        \\
+        ,
+    });
+    try dir.createDirPath(io, "profiles");
+    try dir.writeFile(io, .{
+        .sub_path = "profiles/offline.toml",
+        .data =
+        \\default_provider = "local"
+        \\
+        ,
+    });
+
+    const cfg = try Config.loadWithProfile(io, arena, dir, "config.toml", "config.local.toml", "offline");
+    try std.testing.expectEqualStrings("local", cfg.default_provider);
+    try std.testing.expectEqualStrings("profiles/offline.toml", cfg.default_provider_from.?);
 }
 
 test "config.local.toml [instance] is not re-persisted when base lacks one" {
