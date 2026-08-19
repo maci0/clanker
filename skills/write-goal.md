@@ -1,9 +1,8 @@
 # Writing a goal
 
-Use this skill only when the caller asks to draft, define, or refine a
-structured goal. Do not intercept `clanker goal "<intent>"` or `/goal
-<intent>`: those start the supplied goal loop. Do not make a draft a
-prerequisite for `goal_add`; persistence is a separate explicit choice.
+Use this skill only when the caller asks to draft, define, or refine a structured goal — never for `clanker goal "<intent>"` or `/goal <intent>`, which start the supplied goal loop.
+
+Do not make a draft a prerequisite for `goal_add`; persistence is a separate explicit choice.
 
 Call `goal_write` with the intent (and any workspace facts you already
 inspected). It asks only the material forks via `ask_user`, or records
@@ -11,12 +10,14 @@ assumptions when nobody is reachable. It never writes `state/goals.json` or
 creates a card.
 
 Present the returned markdown. If the caller explicitly wants it saved, call
-the `goal_add` tool with the selected fields. `goal_add` creates a goal-card on
-the board; `state/goals.json` is only an index over those cards. Map the draft
-onto the `goal_add` tool's field names (`completion_criterion`, `proof`,
-`stop_rule`, not the `goal_write` record's `completion_criteria` /
-`verification` / `stop_rules`). A well-formed goal-card carries these fields
-(`objective, completion_criterion, proof, boundaries, stop_rule`):
+the `goal_add` tool with the selected fields. `goal_add` appends the durable
+record to `state/goals.json`; the board card appears when the web UI mirrors
+goals onto the board (`mirrorGoalsToBoard`), so a headless save shows no card
+until the Goals view syncs. Map the draft onto the `goal_add` tool's field
+names (`completion_criterion`, `proof`, `stop_rule`, not the `goal_write`
+record's `completion_criteria` / `verification` / `stop_rules`). A well-formed
+goal record carries these fields (`objective, completion_criterion, proof,
+boundaries, stop_rule`):
 
 - `objective`: what will be true afterwards, not what you will do. "Runs survive
   a restart", not "add persistence to runs".
@@ -40,7 +41,7 @@ measurable one (and a test script when measurable) rather than left blank. A
 goal that stops at objective + criterion is worth keeping when the rest is
 genuinely unknown. Prefer a short honest goal to a padded one.
 
-Read the board and the goals index first. `goal_add` creates a card; it cannot
-update an existing entry. If the intent restates an open goal, do not create a
-duplicate card. Return that goal's id and explain that it already covers the
-intent.
+Read the board and the goals index first. `goal_add` only appends the durable
+record — it cannot update an existing entry, and it does not create the board
+card itself. If the intent restates an open goal, do not create a duplicate
+card. Return that goal's id and explain that it already covers the intent.

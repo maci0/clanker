@@ -1,7 +1,6 @@
 # Autoresearch
 
-When asked to run autoresearch, optimize a scalar metric, or drive `/autoresearch`
-from the REPL: the measurement loop runs only through the host CLI, not WASM tools.
+When asked to run autoresearch, optimize a scalar metric, or drive `/autoresearch` from the REPL: the measurement loop runs only through the host CLI, not WASM tools.
 
 Run it with `clanker autoresearch` to search for a better version of any measurable
 target (a Zig micro-bench, a WASM tool's throughput, a prompt's eval score).

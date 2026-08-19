@@ -1,8 +1,7 @@
 # Adding an MCP server integration
 
-When asked to add/configure/remove an external MCP server ("add the
-github MCP server"), edit `config.local.toml` (never `config.toml`) with
-`edit_file`: append or update an `[mcp_servers.<name>]` table. stdio
+When asked to add/configure/remove an external MCP server ("add the github MCP server"), edit `config.local.toml` (never `config.toml`) with `edit_file`:
+append or update an `[mcp_servers.<name>]` table. stdio
 shape: `transport = "stdio"`, `command = "..."`, optional `args`/`env`
 (`"KEY=value"` strings)/`cwd`. http shape: `transport = "http"`,
 `url = "https://..."`, optional `headers` (`"Name: value"` strings).
