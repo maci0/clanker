@@ -50,7 +50,15 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
-    const repro_lang = lib.optStr(parsed, "repro_lang") orelse "sh";
+    var repro_lang: []const u8 = "sh";
+    if (lib.optStr(parsed, "repro_lang")) |rl| {
+        if (rl.len > 0 and std.mem.indexOf(u8, rl, "\n") == null and
+            std.mem.indexOf(u8, rl, "`") == null and
+            std.mem.indexOf(u8, rl, "\r") == null)
+        {
+            repro_lang = rl;
+        }
+    }
 
     const priority = mapSeverity(severity) orelse {
         var buf: [128]u8 = undefined;
