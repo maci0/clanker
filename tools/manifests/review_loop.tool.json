@@ -1,0 +1,20 @@
+{
+  "name": "review_loop",
+  "description": "Cycles through review prompts from two sources — this project's own docs/prompts/*-review.md, and a local mirror of github.com/maci0/review-prompts' prompts/*-review.md — entirely inside clanker, replacing that repo's review-loop.py as the driver. Actions: {\"action\":\"sync\"} mirrors the external repo's prompts/ into state/review-prompts/ (run this first, and again whenever it gains new reviews); {\"action\":\"list\"} returns the merged, sorted rotation of review names (a name present in both sources counts once, local wins the resolve); {\"action\":\"next\"} advances state/review_loop.json to the following name in rotation and returns its {name, source, path, prompt}; {\"action\":\"current\"} returns the same shape for whichever name state/review_loop.json already points at, without advancing. Nothing here runs a review — the caller (a plain clanker run with the returned prompt as the instruction) does that, and repetition comes from clanker schedule, not a loop inside this tool.",
+  "llm_description": "Cycle review prompts from docs/prompts/*-review.md + a synced mirror of github.com/maci0/review-prompts. {action:sync} mirrors the external repo locally. {action:list} = merged rotation of names. {action:next} advances state and returns {name,source,path,prompt} to run via clanker run. {action:current} = same without advancing.",
+  "wasm": "zig-out/tools/review_loop.wasm",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["sync", "list", "next", "current"],
+        "description": "next is the default."
+      }
+    }
+  },
+  "fs_prefixes": ["docs/prompts", "state/review-prompts", "state/review_loop.json"],
+  "network_allow": ["raw.githubusercontent.com", "api.github.com"],
+  "confirm": false,
+  "category": "agent"
+}
