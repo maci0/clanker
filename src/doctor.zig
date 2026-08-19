@@ -149,6 +149,15 @@ fn runChecks(
         const p = entry.value_ptr;
         const is_default = std.mem.eql(u8, p.name, cfg.default_provider);
         const label = if (is_default) try std.fmt.allocPrint(arena, "{s} (default)", .{p.name}) else p.name;
+        // A base_url without a scheme produces an opaque runtime connection
+        // failure; surface the typo at startup instead.
+        if (!std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://")) {
+            rep.line(
+                if (is_default) .fail else .warn,
+                label,
+                try std.fmt.allocPrint(arena, "{s} lacks http(s):// scheme", .{p.base_url}),
+            );
+        }
         if (p.api_key_env) |env_name| {
             const set = if (environ_map.get(env_name)) |v| v.len > 0 else false;
             if (set) usable += 1;
