@@ -2843,6 +2843,12 @@ fn cmdEvalShapeBroken(src: []const u8) ?[]const u8 {
 
     const run_all = "const results = try r.runAll(list.items);";
     const run_at = std.mem.find(u8, body, run_all) orelse return run_all;
+    // Wrapping the run in dead code (`if (false) { ... }`, green stub after)
+    // keeps the line and every other needle below while making the run
+    // unreachable: the staged cli.zig is zig-fmt-clean here, so indentation
+    // is canonical and the wrapped line sits one level deeper than this
+    // function's current 4-space one.
+    if (lineIndent(body, run_at) != 4) return "cmdEval's eval run must not be wrapped in dead code";
 
     var lines = std.mem.splitScalar(u8, body[0..run_at], '\n');
     while (lines.next()) |line| {
@@ -2866,6 +2872,17 @@ fn cmdEvalShapeBroken(src: []const u8) ?[]const u8 {
     if (std.mem.find(u8, body, "if (!all_ok) return error.EvalsFailed") == null)
         return "if (!all_ok) return error.EvalsFailed";
     return null;
+}
+
+/// Leading-space count of the line containing offset `at` in `text`, or null
+/// when the offset is on the first line. Used to pin a load-bearing line to
+/// its canonical zig-fmt indentation; see cmdEvalShapeBroken's wrap check.
+fn lineIndent(text: []const u8, at: usize) ?usize {
+    const line_start = std.mem.lastIndexOfScalar(u8, text[0..at], '\n') orelse return null;
+    var i = line_start + 1;
+    var n: usize = 0;
+    while (i < text.len and text[i] == ' ') : (i += 1) n += 1;
+    return n;
 }
 
 /// build.zig is writable. The host runs `zig build test` / `zig build
@@ -2901,14 +2918,24 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         sig: []const u8,
         required: []const u8,
         allow: []const []const u8,
+        /// Leading spaces of the required-call line as zig fmt renders the
+        /// current source. The staged file is auto-formatted before this
+        /// check runs (formatFiles rewrites every changed .zig file), so
+        /// indentation is canonical and a `if (false) { ... }` wrapper that
+        /// nests the call one level deeper re-indents it, breaking the
+        /// match. Without this, the wrap-with-trailing-stub shape -- dead
+        /// branch holding the real body and every needle, live green stub
+        /// after it -- passes gateReturnsBefore, whose early-return scan
+        /// never looks past the wrapped block.
+        indent: usize,
     }{
-        .{ .sig = "fn buildGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")", .allow = &.{} },
-        .{ .sig = "fn testGate(", .required = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")", .allow = &.{} },
-        .{ .sig = "fn toolsGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")", .allow = &.{} },
-        .{ .sig = "fn fmtGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig fmt --check\")", .allow = &.{ "changed_files.len == 0", "argv.items.len == 3" } },
-        .{ .sig = "fn lintGate(", .required = "hits += 1", .allow = &.{} },
-        .{ .sig = "fn toolDescriptorGate(", .required = "if (problems.items.len > 0)", .allow = &.{"FileNotFound"} },
-        .{ .sig = "fn gitDenyGuardGate(", .required = "hasGitInExecAllow(", .allow = &.{} },
+        .{ .sig = "fn buildGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig build\")", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn testGate(", .required = "return runZig(gpa, io, dir, &.{ \"build\", \"test\", \"--summary\", \"all\" }, \"zig build test\")", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn toolsGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig build tools\")", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn fmtGate(", .required = "return runZigArgs(gpa, io, dir, argv.items, \"zig fmt --check\")", .allow = &.{ "changed_files.len == 0", "argv.items.len == 3" }, .indent = 4 },
+        .{ .sig = "fn lintGate(", .required = "hits += 1", .allow = &.{}, .indent = 16 },
+        .{ .sig = "fn toolDescriptorGate(", .required = "if (problems.items.len > 0)", .allow = &.{"FileNotFound"}, .indent = 4 },
+        .{ .sig = "fn gitDenyGuardGate(", .required = "hasGitInExecAllow(", .allow = &.{}, .indent = 20 },
         // The one engine-called gate with no needle of its own in
         // gate_invariants; its only protection used to be its unit tests,
         // which sit in this same writable file and a patch can delete in the
@@ -2916,15 +2943,33 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         // detection logic (the catch-block failure return is an allowed
         // `.{ .ok = false }`), so an early green return is caught the same
         // way as the zig-spawning gates.
-        .{ .sig = "fn providerKindLeakGate(", .required = "hits += 1", .allow = &.{} },
-        .{ .sig = "fn configWeakeningGate(", .required = "weakensImprove(", .allow = &.{} },
-        .{ .sig = "fn runZigArgs(", .required = "std.process.run(", .allow = &.{} },
+        .{ .sig = "fn providerKindLeakGate(", .required = "hits += 1", .allow = &.{}, .indent = 16 },
+        .{ .sig = "fn configWeakeningGate(", .required = "weakensImprove(", .allow = &.{}, .indent = 20 },
+        .{ .sig = "fn runZigArgs(", .required = "std.process.run(", .allow = &.{}, .indent = 4 },
     };
     for (gates) |g| {
         const body = fnBody(src, g.sig) orelse return g.sig;
         if (gateReturnsBefore(body, g.required, g.allow)) |detail| return detail;
+        if (requiredIndent(body, g.required)) |indent| {
+            if (indent != g.indent) return "a load-bearing gate call must not be wrapped in dead code";
+        }
     }
     return null;
+}
+
+/// Leading-space count of the line holding the first executable occurrence of
+/// `required` in `body`, or null when it is not found (which gateReturnsBefore
+/// already reported). The staged file is zig-fmt-clean when the shape checks
+/// run, so a call moved one nesting level deeper -- the `if (false) { ... }`
+/// wrap whose green stub follows the dead branch -- is one indent step off
+/// from the expected `indent` in the table above.
+fn requiredIndent(body: []const u8, required: []const u8) ?usize {
+    const at = findCodeLine(body, required) orelse return null;
+    const line_start = std.mem.lastIndexOfScalar(u8, body[0..at], '\n') orelse return null;
+    var i = line_start + 1;
+    var n: usize = 0;
+    while (i < body.len and body[i] == ' ') : (i += 1) n += 1;
+    return n;
 }
 
 fn fnBody(src: []const u8, sig: []const u8) ?[]const u8 {
@@ -3392,6 +3437,28 @@ test "the live cmdEval still runs every task and prints its real result" {
         \\fn next() void {}
     ;
     try std.testing.expectEqualStrings("cmdEval mutates eval results", cmdEvalShapeBroken(mutate_renamed).?);
+
+    // The wrap-with-trailing-stub shape: the real run is dead inside an
+    // `if (false)` branch (every pinned string survives there), and a live
+    // stub prints a fake PASS line per loaded eval afterwards. The exit-code
+    // and print pins cannot see it; the canonical-indent pin on the run line
+    // is what catches it.
+    const wrapped =
+        \\fn cmdEval() !void {
+        \\    if (false) {
+        \\        const results = try r.runAll(list.items);
+        \\        for (results) |res| {
+        \\            try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "{s}: {d:.2} {s}\n", .{ res.name, res.score, if (res.ok) "PASS" else "FAIL" }));
+        \\        }
+        \\        if (!all_ok) return error.EvalsFailed;
+        \\    }
+        \\    for (evals) |e| {
+        \\        try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "{s}: 1.00 PASS\n", .{e.name}));
+        \\    }
+        \\}
+        \\fn next() void {}
+    ;
+    try std.testing.expectEqualStrings("cmdEval's eval run must not be wrapped in dead code", cmdEvalShapeBroken(wrapped).?);
 }
 
 test "improve-self still verifies the merged result after the run" {
@@ -3529,19 +3596,19 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
         \\}
         \\pub fn lintGate() !GateResult {
-        \\    hits += 1
+        \\                hits += 1
         \\}
         \\pub fn toolDescriptorGate() !GateResult {
         \\    if (problems.items.len > 0) {}
         \\}
         \\pub fn gitDenyGuardGate() GateResult {
-        \\    hasGitInExecAllow(
+        \\                    hasGitInExecAllow(
         \\}
         \\pub fn providerKindLeakGate() GateResult {
-        \\    hits += 1
+        \\                hits += 1
         \\}
         \\pub fn configWeakeningGate() GateResult {
-        \\    weakensImprove(
+        \\                    weakensImprove(
         \\}
         \\fn runZigArgs() !GateResult {
         \\    return .{ .ok = true, .label = label };
@@ -3549,6 +3616,49 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\}
     ;
     try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_run).?);
+
+    // The wrap-with-trailing-stub shape: the real body is dead inside an
+    // `if (false)` branch -- where every needle string still lives -- and a
+    // live green stub follows it. gateReturnsBefore only scans *before* the
+    // call, so the stub's return, sitting after the wrapped block, is never
+    // seen; the canonical-indent pin on the call's line is what catches it.
+    const wrapped_run =
+        \\pub fn buildGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build");
+        \\}
+        \\pub fn testGate() !GateResult {
+        \\    return runZig(gpa, io, dir, &.{ "build", "test", "--summary", "all" }, "zig build test");
+        \\}
+        \\pub fn toolsGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build tools");
+        \\}
+        \\pub fn fmtGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
+        \\}
+        \\pub fn lintGate() !GateResult {
+        \\                hits += 1
+        \\}
+        \\pub fn toolDescriptorGate() !GateResult {
+        \\    if (problems.items.len > 0) {}
+        \\}
+        \\pub fn gitDenyGuardGate() GateResult {
+        \\                    hasGitInExecAllow(
+        \\}
+        \\pub fn providerKindLeakGate() GateResult {
+        \\                hits += 1
+        \\}
+        \\pub fn configWeakeningGate() GateResult {
+        \\                    weakensImprove(
+        \\}
+        \\fn runZigArgs() !GateResult {
+        \\    if (false) {
+        \\        const result = try std.process.run(gpa, io, .{
+        \\        });
+        \\    }
+        \\    return .{ .ok = true, .label = label };
+        \\}
+    ;
+    try std.testing.expectEqualStrings("a load-bearing gate call must not be wrapped in dead code", checksZigShapeBroken(wrapped_run).?);
 }
 
 test "gate shape requirements must occur in executable source" {
