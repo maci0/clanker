@@ -2,7 +2,7 @@
 
 ## Status
 
-Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17, distributed-ledger family added as option R 2026-08-19 (Draft 5). Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
+Current — searched 2026-08-16, option B and its evidence rows corrected 2026-08-17, distributed-ledger family added as option R 2026-08-19 (Draft 5), options S and T — TigerBeetle applied as an event spine, and a clanker-native spine scoped to a starting mesh — added the same day. Draft 4: names the topology axis (central store vs full replication per host) and the CP/AP axis, and surveys 17 candidates across both. No recommendation -- the choice belongs in an RFC. The 2026-08-17 pass changed no verdict: it records that the in-tree CAS the note measures against was itself defective until then, so "already works" under option B now means what the note assumed it meant.
 
 Research is evidence, not a decision: it records what exists, how good it is,
 and how confident the finding is. The decision that follows belongs in an
@@ -219,6 +219,21 @@ candidates rather than above them.
   strongest survivor — is **BUSL 1.1, not open source**, and its replication
   is read-only replicas pulling from a primary with no documented failover —
   `medium` for QLDB (press), `high` for the rest (read at source 2026-08-19).
+- **TigerBeetle's schema can be repurposed as a spine, and its architecture is
+  the argument for building our own (options S and T, 2026-08-19).** A
+  `Transfer` is fixed-width integers — immutable, undeletable, no payload
+  field — so clanker events can ride it only as counts plus 128-bit content
+  hashes, never as bodies: TigerBeetle as a replicated, totally ordered,
+  immutable index beside a bulk store, which is TigerBeetle's own prescribed
+  OLGP pairing, with clanker hosts as clients of a static 6-replica cluster
+  and **no official Zig client**. The fixed schema is also what enables its
+  simplicity, so "TigerBeetle but general-purpose" is not a fork — option T
+  instead scopes an in-tree Zig spine to what a starting mesh needs:
+  single-writer-per-stream logs (the home-instance rule) replicate with no
+  consensus at all — fan-out plus id-dedup, which `chatrooms.fanOut` already
+  does — and a staged growth path adds machinery only when a measurement
+  demands it, so setup cost below fleet scale stays "run clanker" — `high` on
+  the schema facts, `medium` on the design reasoning.
 
 ## Scope and method
 
@@ -256,7 +271,10 @@ candidates rather than above them.
   distributed-ledger family, decomposed into its parts rather than adopted or
   rejected whole; no earlier verdict changed. Its leads were gathered by
   direct web search and verified with fetches, because the sweep web backend
-  failed again (see rejected leads).
+  failed again (see rejected leads). The same day's operator exchange added
+  options S and T: TigerBeetle's Transfer schema, client list, OLGP pairing
+  and cluster model fetched at source, and the build-it-ourselves row
+  promoted and scoped to a staged growth path.
 - **Known gaps, stated so the next reader does not mistake breadth for depth.**
   Licences for Consul, CockroachDB, YugabyteDB and Turso are unverified, as is
   the Loro per-character figure (its source 403s). No candidate was compiled, deployed or
@@ -1175,7 +1193,9 @@ anything else. The honest answer is that it does not exist for this use case.
   or a hand-written LWW/OR-set layer, gossiped over the mesh transport PRD 0011
   is already building — and it is the only option that keeps everything in-tree.
   Its cost is that clanker would own a distributed-systems problem, which is the
-  category of work most likely to be subtly wrong.
+  category of work most likely to be subtly wrong. Promoted to its own scoped
+  candidate as option T (2026-08-19); TigerBeetle's schema applied directly
+  rather than as blueprint is option S.
 - **Evidence:** [TigerBeetle architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md),
   [TigerBeetle on dbdb.io](https://dbdb.io/db/tigerbeetle),
   [awesome-zig](https://github.com/zigcc/awesome-zig), read 2026-08-16.
@@ -1323,6 +1343,152 @@ reasoning, with the caveat that it rests on the single-operator premise
 (see "What would change the answer"). Fabric's identity machinery falls with
 it, and the public-chain variants add token economics on top (rejected leads).
 
+### S. TigerBeetle applied — accounts and transfers as clanker entities and events
+
+Asked explicitly by the operator (2026-08-19): option P rules TigerBeetle out
+because nothing in `state/` is a debit or a credit — but can the schema be
+*repurposed*, accounts as clanker ids and transfers as the appended events
+(runs, autolearn entries, token stats)?
+
+**The schema fact that decides the shape.** A `Transfer` is fixed-width
+integers only — `id`, `debit_account_id`, `credit_account_id`, `amount` and
+`user_data_128` are u128, plus `user_data_64`, `user_data_32`, `ledger` (u32),
+`code`/`flags` (u16) and a u64 timestamp. **There is no variable-length or
+blob field**, and transfers can be neither modified nor deleted after
+creation. So an event *body* — a run record, an autolearn entry — cannot live
+in TigerBeetle under any mapping. What a transfer can carry is a count and a
+reference: the docs themselves describe the `user_data` fields as "optional
+secondary identifiers to link this transfer to an external entity or event".
+
+**What the mapping degrades to, and it is still interesting.** Not
+TigerBeetle-as-the-store but TigerBeetle-as-the-spine: `amount` = tokens,
+bytes or a record count; `user_data_128` = a 128-bit content hash of the
+appended record; accounts per (instance, stream, provider@model). Double
+entry is satisfiable with natural pairs — provider credits, instance debits
+for token accounting; stream/writer pairs for the logs — and account balances
+then *are* the aggregates `clanker stats` currently computes by scanning
+JSONL, replicated and strictly serialized. The result is a totally ordered,
+immutable, undeletable index over append-only logs whose bodies stay in a
+bulk store. That immutability is enforced by the state machine at the API,
+which is a different (and in some ways stronger) property than a hash chain's
+cryptographic detectability — but it is not a proof an external verifier can
+check, so it complements rather than replaces open question 14.
+
+**This is TigerBeetle's own prescribed architecture, not an abuse.** The docs
+are explicit that TigerBeetle "works alongside your general purpose database"
+(their OLGP), which stores "metadata about ledgers and accounts (such as
+string names or descriptions)" while TigerBeetle holds transfers and
+balances, and that "initiating a transfer should not require fetching
+metadata from the general purpose database". Option S therefore *composes
+with* a tier-2 bulk store rather than competing with one — the same
+composition observation 4 makes for etcd and S3.
+
+**Topology correction.** Repurposing TigerBeetle does not make clanker peers
+into replicas. A cluster is its own fixed set of replicas — six recommended,
+membership static, size unchangeable after creation for now — and every
+clanker host would be a *client* of that cluster. On the tier-2 axes this is
+a central replicated service, not full-state-per-host.
+
+- **Pros:** the strongest ordering + immutability combination available for
+  the event spine; balances as free replicated aggregates; single binary,
+  operationally the simplest cluster in the note; Zig reference code.
+- **Cons:** bodies need a second store by design; cluster membership is
+  static; **no official Zig client** — the supported list is .NET, Go, Java,
+  Node.js, Python, Ruby, Rust, so a Zig caller presumably binds the C
+  `tb_client` library, which is `unverified` for Zig 0.16; double-entry
+  ergonomics for non-financial events are untested anywhere.
+- **Unknowns:** whether `tb_client` links cleanly into a musl Zig 0.16 build;
+  write batching/latency for the spine's append rate; whether 128 bits of
+  hash is an acceptable integrity anchor for the logs.
+- **Evidence:**
+  [Transfer reference](https://docs.tigerbeetle.com/reference/transfer/),
+  [clients](https://docs.tigerbeetle.com/coding/clients/),
+  [system architecture](https://docs.tigerbeetle.com/coding/system-architecture/),
+  [deploying](https://docs.tigerbeetle.com/operating/deploying/), all fetched
+  2026-08-19.
+
+### T. A clanker-native replicated spine — the build-it-ourselves row, promoted
+
+Also asked explicitly (2026-08-19): the operator's observation is that the
+surveyed products answer scale the starting point does not have — Fabric
+exists for mutually distrusting organizations, Corrosion was built for 800+
+nodes, CockroachDB for geo-distribution — while a starting clanker mesh is
+PRD 0011's "handful of instances" under one operator, capped at
+`max_members = 32`. Option P already names the build-it-ourselves row; this
+section promotes it to a candidate and scopes it, with TigerBeetle as the
+design reference rather than the dependency.
+
+**The decomposition that makes it small.** What makes the heavyweight
+candidates hard is multi-writer consensus — and clanker's data is mostly
+single-writer *by construction*. The home-instance rule (PRD 0011) gives
+every session, run and log stream exactly one writing host; ADR 0001's board
+is already a log folded deterministically into state. A single-writer,
+self-ordered stream replicates with **no consensus at all**: reliable fan-out
+plus id-dedup, which is precisely what `src/peers/chatrooms.zig` `fanOut`
+does today. So the owned distributed-systems problem is not "a database"; it
+is (a) at-least-once delivery of per-owner ordered streams with dedup —
+already prototyped in-tree — plus (b) the ~16 KB of genuinely contended
+documents, which the narrow-the-requirement analysis isolated, and which the
+home-instance rule already sidesteps by assigning each document an owner. A
+consensus round only becomes necessary if ownerless multi-writer documents
+are ever required; until then the spine is AP for streams and single-owner
+for documents, and the PRD's "no CRDT, no merge" non-goal is honored rather
+than fought.
+
+**The growth path is the point.** The operator's requirement (2026-08-19) is
+a store that grows and scales naturally as a mesh grows, without a large
+upfront resource, setup or maintenance cost — and the decomposition above
+yields exactly that as stages, each adopted only when a measurement demands
+it:
+
+0. **One host** — the status quo: files under `state/`, with tier 1's channel
+   as the only change.
+1. **2–32 members** — replicate owner streams by fan-out with id-dedup:
+   `chatrooms.fanOut` generalized from chat messages to state streams.
+   Nothing new to run, no consensus, and joining stays PRD 0011's admission
+   flow.
+2. **Measured contention on shared documents** — owner leases plus the
+   existing CAS over the ~16 KB contended-document subset. Still no
+   consensus.
+3. **A fleet past the 32-member cap** — the first stage that needs a real
+   engine decision (consensus for membership and contended documents, or a
+   hub topology), and the first stage at which the surveyed heavyweight
+   products earn their weight.
+
+Setup cost at every stage below 3 is "run clanker", which no external
+candidate in this note matches.
+
+**What TigerBeetle contributes as a blueprint — and what it does not.** Its
+discipline transfers: fixed-width spine records (an event header of ids,
+counts and a content hash — option S's transfer, minus the double-entry
+framing), deterministic fold, allocation bounded up front. Its storage engine
+does not: static allocation, zero-deserialization and single-core determinism
+are *enabled by* the fixed schema, so "TigerBeetle but general-purpose" would
+surrender exactly the properties that make TigerBeetle simple. And its VSR
+consensus is only needed for the contended-document slice, if ever — adopting
+it first would be building for the fleet the mesh does not yet have, the same
+overkill the operator is naming in Fabric. Open question 12 (cr-sqlite over
+the mesh transport, no Corrosion) is one concrete engine choice for that
+slice; a hand-rolled owner-lease CAS is another.
+
+- **Pros:** nothing new to operate — the transport is PRD 0011's, the fan-out
+  exists, the fold exists; full state per host for the streams each host
+  follows; in-tree and improvable by the loop; right-sized for 2–32 members
+  with a growth path (add consensus only when a measurement demands it).
+- **Cons:** clanker owns delivery, retention and backfill semantics — option
+  P's warning stands ("the category of work most likely to be subtly wrong");
+  no external community hardening; cross-host queries need building; the
+  32-member ceiling is inherited from the PRD until that is revisited.
+- **Unknowns:** backfill/catch-up cost for a host that was down; whether the
+  contended-document slice ever outgrows single-owner + CAS; retention policy
+  for replicated streams on small hosts.
+- **Evidence:** in-tree — `src/peers/chatrooms.zig` (append + fan-out +
+  dedup), [PRD 0011](../prds/0011-clanker-mesh.md) (home-instance rule,
+  `max_members`, non-goals), [ADR
+  0001](../adrs/0001-board-is-a-chatroom.md) (log-fold state); TigerBeetle
+  design docs as cited under option S. Design reasoning, not measurement —
+  `medium` confidence.
+
 ## Out-of-the-box options
 
 Each prompt answered explicitly, including the ones that do not apply.
@@ -1421,6 +1587,8 @@ know everything".
 | R. Hyperledger Fabric | Full per org | CP | none (SDKs: Go/Node/Java) | Orderers + peers + CAs/MSP | No | Inter-org identity machinery the fleet does not have |
 | R. immudb | Central + read replicas | n/a — primary is SPOF | none found (gRPC / pg wire / REST gw) | 1 server | KV+SQL+docs | **BUSL 1.1**; replicas reject writes; ledger without the "distributed" |
 | R. Hypercore/Autobase, OrbitDB | **Full per host** | **AP** | none (JS runtime) | Node daemon per host | Logs + docs + KV | Eventual total order that may retroactively reorder |
+| S. TigerBeetle as event spine | Central 6-replica service (hosts are clients) | CP | none official (C tb_client, unverified for Zig 0.16) | Cluster, static membership | No — counts + hashes only | Immutable ordered spine; bodies need a second store |
+| T. Clanker-native spine (build it) | **Full per host** (followed streams) | AP for streams; single-owner docs | n/a — in-tree | **Nothing new** | Spine + docs; bodies local | Owns a deliberately small distributed-systems problem; staged growth |
 
 Five observations for whoever writes the RFC, none of them a recommendation:
 
@@ -1521,6 +1689,10 @@ Five observations for whoever writes the RFC, none of them a recommendation:
 | OrbitDB is MIT, JS (Go implementation by Berty), 8.8k stars, Merkle-CRDTs over Helia/libp2p, eventually consistent; event/document/KV types | [repo](https://github.com/orbitdb/orbitdb), fetched | 2026-08-19 | high |
 | Autobase linearizes multi-writer Hypercores into an eventually consistent view; may reorder previously seen nodes as causal info arrives; `apply` must be a pure deterministic reducer; Node.js runtime | [Pears docs](https://docs.pears.com/building-blocks/autobase), fetched | 2026-08-19 | high |
 | Trillian is a centrally operated Merkle-log gRPC service over MySQL/MariaDB, Apache-2.0, 3.7k stars, in maintenance mode; recommends Tessera for new logs | [repo](https://github.com/google/trillian), fetched | 2026-08-19 | high |
+| A TigerBeetle `Transfer` is fixed-width integers only (id, account ids, amount, user_data_128 all u128; user_data_64/32; ledger u32; code/flags u16; timestamp u64) with no blob field; transfers can be neither modified nor deleted; user_data fields are "optional secondary identifiers to link this transfer to an external entity or event" | [Transfer reference](https://docs.tigerbeetle.com/reference/transfer/), fetched | 2026-08-19 | high |
+| TigerBeetle's official clients are .NET, Go, Java, Node.js, Python, Ruby, Rust — no Zig client listed | [clients](https://docs.tigerbeetle.com/coding/clients/), fetched | 2026-08-19 | high |
+| TigerBeetle prescribes running beside a general-purpose (OLGP) database: names/metadata there, transfers and balances in TigerBeetle; "initiating a transfer should not require fetching metadata from the general purpose database" | [system architecture](https://docs.tigerbeetle.com/coding/system-architecture/), fetched | 2026-08-19 | high |
+| A TigerBeetle cluster's size is fixed at creation (six replicas recommended for production); membership is static, add/remove at runtime not yet supported | [deploying](https://docs.tigerbeetle.com/operating/deploying/), fetched | 2026-08-19 | high |
 
 ### Rejected leads, kept deliberately
 
@@ -1635,7 +1807,8 @@ only ones that block choosing a tier-2 backend.
     clanker's own gossip over the mesh transport PRD 0011 is already building?
     That would give multi-writer full replication with no second daemon and no
     Rust, which is the combination nothing else in this note offers. Entirely
-    unexplored, and the most interesting loose end here.
+    unexplored, and the most interesting loose end here. Now also one concrete
+    engine choice for option T's contended-document slice.
 13. **Is Marmot production-ready?** Its repo, licence, architecture and conflict
     semantics were fetched 2026-08-16 (see option M, which corrected the earlier
     discussion-thread description of v1), but v2 is a young rewrite: 2PC
@@ -1743,6 +1916,7 @@ only ones that block choosing a tier-2 backend.
 **Zig-native landscape**
 
 - [TigerBeetle architecture](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/ARCHITECTURE.md) · [dbdb.io entry](https://dbdb.io/db/tigerbeetle)
+- [TigerBeetle Transfer reference](https://docs.tigerbeetle.com/reference/transfer/) · [clients](https://docs.tigerbeetle.com/coding/clients/) · [system architecture — the OLGP pairing](https://docs.tigerbeetle.com/coding/system-architecture/) · [deploying](https://docs.tigerbeetle.com/operating/deploying/) — options S and T
 - [awesome-zig](https://github.com/zigcc/awesome-zig)
 
 **NATS alternatives**
