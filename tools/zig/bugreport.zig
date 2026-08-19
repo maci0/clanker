@@ -17,6 +17,8 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
+    if (input.len > 256 * 1024)
+        return lib.fail(out, "input exceeds 256 KiB limit");
     const parsed = lib.object(input) catch
         return lib.fail(out, "expected a JSON object");
 
