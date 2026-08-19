@@ -247,6 +247,8 @@ pub fn renderSearch(
         try w.writer.writeAll("An ADR matched: this is already decided. Read it before re-opening the\nquestion, and supersede it rather than editing it if it has to change.\n\n");
     } else if (rfcs.len > 0) {
         try w.writer.writeAll("Only RFCs matched: the question is open, not settled. Write the ADR once\nit is decided.\n\n");
+    } else if (prds.len > 0) {
+        try w.writer.writeAll("Only PRDs matched: a feature already specifies around this ground. Read\nit before opening an RFC over the same territory.\n\n");
     }
     try w.writer.writeAll("NEXT\n\n");
     try w.writer.writeAll("  clanker adr open <path>          read the record before trusting it\n");
