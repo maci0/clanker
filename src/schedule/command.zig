@@ -100,14 +100,20 @@ fn nextText(buf: []u8, e: store.Entry, now: i64) []const u8 {
 
 fn showLog(io: std.Io, arena: std.mem.Allocator, tool: Tool, count_text: ?[]const u8) !void {
     const result = try callTool(arena, tool, "{\"action\":\"list\"}");
-    const recs = try parseLog(arena, result);
-    const limit: usize = if (count_text) |text| blk: {
-        const n = std.fmt.parseInt(usize, text, 10) catch {
-            log.log(.error_, "schedule log count '{s}' is not a number", .{text});
-            return Error.BadSubcommand;
-        };
-        break :blk n;
-    } else std.math.maxInt(usize);
+    var recs = try parseLog(arena, result);
+    var limit: usize = std.math.maxInt(usize);
+    if (count_text) |text| {
+        const n = std.fmt.parseInt(usize, text, 10) catch null;
+        if (n) |val| {
+            limit = val;
+        } else {
+            var filtered_list: std.ArrayList(store.Record) = .empty;
+            for (recs) |r| {
+                if (std.mem.eql(u8, r.id, text)) try filtered_list.append(arena, r);
+            }
+            recs = try filtered_list.toOwnedSlice(arena);
+        }
+    }
     try out(io, try renderLog(arena, recs, @min(recs.len, limit)));
 }
 
