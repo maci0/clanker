@@ -32,6 +32,10 @@ fn linkedHelperImports(
     return imports;
 }
 
+fn lessThanUtf8(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.lessThan(u8, a, b);
+}
+
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
@@ -369,11 +373,7 @@ pub fn build(b: *std.Build) void {
         if (is_helper) continue;
         names.append(b.allocator, b.dupe(stem)) catch @panic("OOM");
     }
-    std.mem.sort([]const u8, names.items, {}, struct {
-        fn lt(_: void, a: []const u8, bb: []const u8) bool {
-            return std.mem.lessThan(u8, a, bb);
-        }
-    }.lt);
+    std.mem.sort([]const u8, names.items, {}, lessThanUtf8);
 
     for (names.items) |stem| {
         const tool = b.addExecutable(.{
@@ -453,11 +453,7 @@ pub fn build(b: *std.Build) void {
             if (!std.mem.endsWith(u8, entry.name, lang.ext)) continue;
             lang_names.append(b.allocator, b.dupe(entry.name[0 .. entry.name.len - lang.ext.len])) catch @panic("OOM");
         }
-        std.mem.sort([]const u8, lang_names.items, {}, struct {
-            fn lt(_: void, a: []const u8, bb: []const u8) bool {
-                return std.mem.lessThan(u8, a, bb);
-            }
-        }.lt);
+        std.mem.sort([]const u8, lang_names.items, {}, lessThanUtf8);
 
         for (lang_names.items) |stem| {
             const tool = b.addExecutable(.{
