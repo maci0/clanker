@@ -78,12 +78,20 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
     try common.out(io, try renderList(arena, reports_index, runbooks_index));
 }
 
+fn searchKindAllowed(kind: []const u8) bool {
+    return std.mem.eql(u8, kind, "all") or std.mem.eql(u8, kind, "report") or std.mem.eql(u8, kind, "runbook");
+}
+
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
     const query = opts.arg1 orelse {
         common.usageError("reports search needs a query: clanker reports search \"worktree symlink\"", .{});
         return Error.MissingArg;
     };
     const kind = opts.kind orelse "all";
+    if (!searchKindAllowed(kind)) {
+        common.usageError("reports search --kind must be all, report or runbook, not '{s}'", .{kind});
+        return Error.BadSubcommand;
+    }
 
     const input = try common.request(arena, &.{
         .{ .name = "action", .value = .{ .text = "search" } },
@@ -591,4 +599,12 @@ test "a refused tool call fails with the tool's own sentence, not a generic erro
     var fine: Canned = .{ .answer = "{\"ok\":true,\"path\":\"docs/reports/bugs/a.md\"}" };
     const parsed = try common.callTool(arena, "reports", .{ .ctx = &fine, .call = Canned.call }, "{}");
     try std.testing.expectEqualStrings("docs/reports/bugs/a.md", json_util.strFieldOrEmpty(parsed.object, "path"));
+}
+
+test "search kind accepts only all, report and runbook" {
+    try std.testing.expect(searchKindAllowed("all"));
+    try std.testing.expect(searchKindAllowed("report"));
+    try std.testing.expect(searchKindAllowed("runbook"));
+    try std.testing.expect(!searchKindAllowed("prd"));
+    try std.testing.expect(!searchKindAllowed(""));
 }
