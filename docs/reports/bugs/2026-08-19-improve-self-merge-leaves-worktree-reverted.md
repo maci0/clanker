@@ -4,11 +4,11 @@
 
 - **What failed:** After imp-1787081817304037321 promoted and fast-forwarded main to 136e80b2 (adding a test to graph.zig), the actual working tree file and index still lacked the new test - git show HEAD had it, git diff HEAD did not. A blind commit-as-is pass right after promotion would have re-deleted the just-verified test. Fixed by git restore --source=HEAD --worktree, not yet root-caused in the merge-back code path.
 - **Impact:** To be confirmed.
-- **Resolution:** Reopened on 2026-08-19. Fifth occurrence 2026-08-19, and the warned-about hazard fired for real: the invoking checkout's stale pre-promotion copy of src/doctor.zig was committed and pushed as 124d592e, deleting promoted imp-1787102961990565171 and imp-1787104236888936691 from origin/main. The prior resolution documented guidance only; mergeBack still resyncs nothing but its own throwaway worktree, so every promotion leaves the invoking checkout showing the inverse diff. Reapplied on branch reapply-doctor-improvements.
+- **Resolution:** Resolved on 2026-08-19. mergeBack now resyncs the checkout holding the base branch when its index and files match the pre-merge base SHA, and warns instead of resetting a dirty one (resyncBaseCheckout); verified by a real-repo integration test plus the checkoutOf unit test, full gate green on the rebased branch
 
 ## Status
 
-Reopened on 2026-08-19. Fifth occurrence 2026-08-19, and the warned-about hazard fired for real: the invoking checkout's stale pre-promotion copy of src/doctor.zig was committed and pushed as 124d592e, deleting promoted imp-1787102961990565171 and imp-1787104236888936691 from origin/main. The prior resolution documented guidance only; mergeBack still resyncs nothing but its own throwaway worktree, so every promotion leaves the invoking checkout showing the inverse diff. Reapplied on branch reapply-doctor-improvements.
+Resolved on 2026-08-19. mergeBack now resyncs the checkout holding the base branch when its index and files match the pre-merge base SHA, and warns instead of resetting a dirty one (resyncBaseCheckout); verified by a real-repo integration test plus the checkoutOf unit test, full gate green on the rebased branch
 
 ## Symptom and impact
 
@@ -18,9 +18,57 @@ Reopened on 2026-08-19. Fifth occurrence 2026-08-19, and the warned-about hazard
 
 ## Resolution
 
+Fixed at the source on 2026-08-19, taking the resync side of the tradeoff the
+fourth-occurrence investigation left open — with the guard that answers its
+objection. `Worktree.mergeBack` now calls `resyncBaseCheckout` after every
+successful CAS (both the fast-forward and the merge-commit branch): it finds
+the checkout that has the base branch checked out via
+`git worktree list --porcelain` (`checkoutOf`, a pure parser), and runs a
+bare `git -C <checkout> reset --hard` there **only when that checkout's index
+and working tree are both byte-identical to the pre-merge base commit**
+(`matchesCommit`: `diff --cached --quiet <old-sha>` and
+`diff --quiet <old-sha>` both clean). A checkout carrying its own
+work-in-progress is never reset; it gets a warning naming the checkout, the
+do-not-commit-the-inverse hazard, and the manual sync. The reset is
+deliberately bare: HEAD already points at the moved ref and a no-argument
+reset cannot move a ref, so a concurrent commit landing between the CAS and
+the resync is not rewound.
+
+The uncommitted-work hazard that made the investigation defer this is exactly
+what the clean-vs-pre-merge-SHA guard removes: a checkout that was clean at
+the old base loses nothing to `reset --hard`, because everything it held is
+what the promotion replaced, and untracked files are untouched by definition.
+
 ## Verification
 
+- Host test `checkoutOf finds the one worktree holding a branch`
+  (`src/improve/worktree.zig`): porcelain parsing, including a detached entry
+  and a branch-name prefix that must not match.
+- Integration test
+  `mergeBack's resync reaches the invoking checkout only when it is clean`
+  (`src/improve/worktree.zig`): builds a real repository plus a linked
+  worktree, moves the base ref exactly the way `mergeBack` does
+  (`update-ref`, no checkout touched), and asserts the clean primary is
+  synced to the promoted content with no tracked diff — then dirties the
+  primary, moves the ref again, and asserts the file is left alone.
+- Full gate green on the fix branch rebased onto main:
+  `zig build`, `zig build tools`, `zig build test --summary all` —
+  320/320 steps, 1673/1684 passed, 11 skipped, 0 failed; exit code read
+  directly, not through a pipe. (Three runs before the green one wedged in
+  the known intermittent never-answering-provider hangs —
+  [2026-08-18-bounded-chat-abort-test-hangs](../investigations/2026-08-18-bounded-chat-abort-test-hangs.md)
+  — and were killed and rerun per that investigation.)
+- Not re-verified end-to-end with a live `improve-self` promotion: driving
+  the improve loop to a promotion needs the model to produce a promotable
+  change on cue. The integration test reproduces the exact ref-move the live
+  failures performed, against real git.
+
 ## Follow-up
+
+- AGENTS.md's improve section still tells an operator to expect the inverse
+  diff and restore by hand; once this fix has survived a few live
+  promotions, that paragraph can be softened to cover only the
+  dirty-checkout case the warning now names.
 
 ## References
 

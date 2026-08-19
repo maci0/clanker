@@ -335,6 +335,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- After `clanker improve-self` promotes a change, the checkout the command
+  was invoked from no longer sits on the promotion's inverse diff.
+  `mergeBack` fast-forwards the shared branch ref and used to resync only
+  its own throwaway worktree, so the invoking checkout's index and files
+  stayed at pre-promotion content — presented by git as a staged change
+  whose commit deletes the promotion (how 124d592e removed two verified
+  improvements from origin/main). The merge-back now finds the checkout
+  holding the base branch and, when its index and files are byte-identical
+  to the pre-merge base, resyncs it with a bare `reset --hard`; a checkout
+  with its own work in progress is left alone with a warning naming the
+  danger and the manual sync
+  (docs/reports/bugs/2026-08-19-improve-self-merge-leaves-worktree-reverted.md).
 - `clanker research sweep` and the `web_search` tool no longer return pages
   unrelated to the query. Bing's RSS endpoint has decayed upstream and answers
   a multi-word query with items matching at most one of its words (thesaurus
