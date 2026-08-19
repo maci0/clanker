@@ -2848,18 +2848,15 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
     // `[WARN]/[ERROR] ts_ms=...` record on stderr; those would interleave
     // with the report lines below in a timestamped machinery voice, and the
     // report already carries each provider's outcome. Drop the records for
-    // the sweep unless the operator asked for verbose logs.
+    // the sweep unless the operator asked for verbose logs. The saved level
+    // is restored in a function-scope defer, not inside the `if`: a defer
+    // runs when its own block ends, so a defer nested in the `if` would
+    // re-arm warn before the first probe ever ran.
+    const saved_log_level = log.getLevel();
     if (!opts.verbose) {
-        // The probe reaches the LLM client, which logs every retry failure
-        // as a `[WARN]/[ERROR] ts_ms=...` record on stderr; those would
-        // interleave with the report lines below in a timestamped machinery
-        // voice, and the report already carries each provider's outcome.
-        // Silence records for the sweep unless the operator asked for
-        // verbose logs; the report's own lines are std.debug.print, not log
-        // records, so they are unaffected.
         log.setLevel(.none);
-        defer log.setLevel(.warn);
     }
+    defer log.setLevel(saved_log_level);
 
     if (cfg.default_provider_from) |from|
         std.debug.print("default provider: {s} (from {s})\n", .{ cfg.default_provider, from })
