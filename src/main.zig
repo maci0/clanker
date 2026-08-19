@@ -389,7 +389,7 @@ pub fn main(init: std.process.Init) !void {
             error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
             error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
             error.ModuleDisabled => "this module is disabled in config.toml",
-            error.UnknownProvider => "no provider by that name in config.toml; run `clanker providers check` for the list",
+            error.UnknownProvider => "no provider by that name in the merged config (config.toml + config.local.toml); run `clanker providers check` for the list",
             error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
             error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",
             error.TerminalSizeUnavailable => "terminal size is unavailable; resize the terminal and try again",
