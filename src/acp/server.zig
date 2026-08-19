@@ -57,7 +57,7 @@ pub const Connection = struct {
             const requested = protocolVersion(req.params) orelse
                 return responseError(alloc, req.id.?, -32602, "initialize requires integer protocolVersion");
             self.initialized = true;
-            return initializeResponse(alloc, req.id.?, requested);
+            return responseInitialize(alloc, req.id.?, requested);
         }
         if (!self.initialized) {
             return responseError(alloc, req.id.?, -32002, "initialize must be the first request");
@@ -191,7 +191,7 @@ fn protocolVersion(params: ?json.Value) ?u32 {
     };
 }
 
-fn initializeResponse(alloc: std.mem.Allocator, id: json.Value, requested: u32) ![]u8 {
+fn responseInitialize(alloc: std.mem.Allocator, id: json.Value, requested: u32) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
     var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
