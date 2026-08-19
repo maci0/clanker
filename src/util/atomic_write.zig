@@ -33,7 +33,15 @@ pub fn writeFile(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, data: []cons
         if (link.len > 0 and link[0] == '/') break :blk link;
         const dir_end = std.mem.lastIndexOfScalar(u8, sub_path, '/') orelse break :blk link;
         break :blk std.fmt.bufPrint(&joined_buf, "{s}/{s}", .{ sub_path[0..dir_end], link }) catch break :blk link;
-    } else |_| sub_path; // not a link (NotLink), or does not exist yet
+    } else |err| switch (err) {
+        // Only a path that is provably not a symlink may be replaced
+        // directly. Any other readLink failure (permissions, NameTooLong on a
+        // too-large target) must abort rather than let the rename below land
+        // on the link itself and detach it — the exact failure this function
+        // exists to prevent.
+        error.NotLink, error.FileNotFound => sub_path,
+        else => return err,
+    };
 
     var af = try dir.createFileAtomic(io, target, .{ .replace = true, .make_path = true });
     defer af.deinit(io);
