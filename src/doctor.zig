@@ -300,12 +300,12 @@ fn runChecks(
         if (pair[1].len == 0) {
             rep.line(.fail, pair[0], "zero-length array: no command can ever execute");
         } else {
-            var empty_count: usize = 0;
+            var wildcard_count: usize = 0;
             for (pair[1]) |p| {
-                if (p.len == 0) empty_count += 1;
+                if (p.len == 0 or std.mem.eql(u8, p, "*")) wildcard_count += 1;
             }
-            if (empty_count > 0) {
-                rep.line(.warn, pair[0], try std.fmt.allocPrint(arena, "{d} empty-string entr{s} weaken the exec boundary", .{ empty_count, if (empty_count == 1) "y" else "ies" }));
+            if (wildcard_count > 0) {
+                rep.line(.warn, pair[0], try std.fmt.allocPrint(arena, "{d} entr{s} wildcard-match every command", .{ wildcard_count, if (wildcard_count == 1) "y" else "ies" }));
             }
         }
     }
