@@ -38,3 +38,17 @@ Investigating on 2026-08-18.
 ## Control run (2026-08-19)
 
 A pristine detached worktree of a64bd7e2 (origin/main, no diff at all) wedged the same way: 'zig build test' parked in llm.client.test.bounded chat aborts a provider that never sends a response at ~0% CPU, confirmed by 'sample' after the 10-minute threshold. That makes the score on a64bd7e2 four hangs in four runs (three on a webui-only diff, one on pristine main), against three completed green runs earlier the same day on 15c9138c/20fe5628 bases. The hang therefore lives on current main independent of any working diff, and became much more frequent (possibly deterministic) somewhere in 20fe5628..a64bd7e2 — af6703e2 ('toolhost registry, cli updates') and 317c257b/cecb96f8 are the commits in that window. Not bisected further; recovery remains kill-by-cwd and rerun, but on a64bd7e2 reruns no longer converge.
+
+## Evidence — 2026-08-19 session, four more wedges, both offender tests sampled
+
+Four wedges across five gate runs in one session, three of them consecutive
+in one worktree while two sibling worktrees on the same base passed. Each
+sampled at ~0% CPU with the stack pinned in the test:
+
+- `cli.test.a provider that never answers costs the sweep its budget, not the OS connect timeout` (cli.zig:17179), sampled twice, 6+ and 9+ minutes in.
+- `llm.client.test.bounded chat aborts a provider that never sends a response` (client.zig:1575), sampled once, unchanged across two samples 90s apart.
+
+Kill-and-rerun converged on the fifth attempt (320/320, 0 failed). The
+consecutive wedges in one directory and none in its siblings look like a
+streak, not a property of the directory: the fifth run in that same
+directory passed with no change to the tree.
