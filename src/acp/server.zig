@@ -121,11 +121,14 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
     conn.session_counter += 1;
     const sid = try std.fmt.allocPrint(arena, "acp-{d}", .{conn.session_counter});
     const owned = try alloc.dupe(u8, sid);
+    const owned_cwd = try alloc.dupe(u8, cwd);
     {
-        // If the first put fails, the key is still ours to free; once it is
-        // in the map the map owns it, so the errdefer must not outlive the put.
+        // If the first put fails, the key and value are still ours to free;
+        // once both are in the map it owns them, so the errdefers must not
+        // outlive the put.
         errdefer alloc.free(owned);
-        try conn.sessions.put(alloc, owned, {});
+        errdefer alloc.free(owned_cwd);
+        try conn.sessions.put(alloc, owned, owned_cwd);
     }
     try conn.prompt_busy.put(alloc, owned, false);
     var out: std.Io.Writer.Allocating = .init(alloc);
@@ -290,6 +293,8 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator) !void {
     defer gpa.free(read_buf);
     var stdin_file = std.Io.File.stdin();
     var reader = stdin_file.reader(io, read_buf);
+    var stdout_file = std.Io.File.stdout();
+    var out_buf: [64 * 1024]u8 = undefined;
     var conn = Connection{};
     // The session map is the one thing in this struct that outlives a
     // request; free it when the stdio session ends.
