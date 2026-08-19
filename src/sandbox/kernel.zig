@@ -257,9 +257,15 @@ fn roundTrip(opts: EvalOpts, line: []const u8) EvalError![]u8 {
         pid: std.posix.pid_t,
         ms: u32,
         cancel: *std.atomic.Value(bool),
+        /// Set once the clock has run out, before the SIGTERM below, so the
+        /// reader can tell a timeout-induced exit from a supervisor that
+        /// exited on its own: the latter is a plain kernel failure, not a
+        /// timeout.
+        timed_out: *std.atomic.Value(bool),
         fn run(self: @This()) void {
             if (self.ms == 0) return;
             self.io.sleep(.{ .nanoseconds = @as(i96, self.ms) * std.time.ns_per_ms }, .awake) catch return;
+            self.timed_out.store(true, .monotonic);
             if (!self.cancel.load(.monotonic)) {
                 // Residual posix: signal delivery has no std.Io equivalent.
                 std.posix.kill(self.pid, std.posix.SIG.TERM) catch {};
@@ -268,12 +274,14 @@ fn roundTrip(opts: EvalOpts, line: []const u8) EvalError![]u8 {
     };
 
     var cancel = std.atomic.Value(bool).init(false);
+    var timed_out = std.atomic.Value(bool).init(false);
     const pid = opts.reg.get(opts.session_id, opts.kind) orelse return error.NotRegistered;
     const thread = std.Thread.spawn(.{}, Killer.run, .{Killer{
         .io = opts.io,
         .pid = pid,
         .ms = opts.timeout_ms,
         .cancel = &cancel,
+        .timed_out = &timed_out,
     }}) catch null;
     defer {
         cancel.store(true, .monotonic);
@@ -286,7 +294,7 @@ fn roundTrip(opts: EvalOpts, line: []const u8) EvalError![]u8 {
     };
     const raw = opts.reg.readStdoutLine(opts.arena, opts.session_id, opts.kind) catch |err| {
         opts.reg.terminate(opts.session_id, opts.kind);
-        if (err == error.KernelExited and cancel.load(.monotonic)) return error.Timeout;
+        if (err == error.KernelExited and timed_out.load(.monotonic)) return error.Timeout;
         return error.KernelExited;
     };
     const parsed = try parseResponse(opts.arena, raw);
