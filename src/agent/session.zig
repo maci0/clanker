@@ -727,6 +727,15 @@ pub fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, matc
             if (std.mem.findScalarLast(u8, text[tail_from..end], ' ')) |sp| end = tail_from + sp;
         }
     }
+    // A radius cut can land mid-codepoint. Snap both cuts to codepoint
+    // boundaries so the snippet stays valid UTF-8: it is re-encoded as JSON
+    // for the web UI, where a split character renders as U+FFFD.
+    if (start > 0 and start < end) {
+        while (start < end and (text[start] & 0xC0) == 0x80) start += 1;
+    }
+    if (end < text.len) {
+        while (end > start and (text[end] & 0xC0) == 0x80) end -= 1;
+    }
     var out: std.ArrayList(u8) = .empty;
     if (start > 0) out.appendSlice(arena, "\u{2026}") catch return text[start..end];
     for (text[start..end]) |c| {
@@ -1852,6 +1861,16 @@ test "snippetAround keeps context, marks both cuts, and flattens the line" {
     // line of safe text however the message was written.
     const messy = snippetAround(arena, "first\nsecond\ttab\x07bell", 0, 5);
     try std.testing.expectEqualStrings("first second tab" ++ "bell", messy);
+
+    // A radius cut can land mid-codepoint. Each é is two bytes, so a radius
+    // of 90 from a match at 201 cuts inside a character at both ends; the
+    // snippet must stay valid UTF-8 whatever the cut position.
+    const uni = "é" ** 100 ++ " needle " ++ "é" ** 100;
+    const ucut = snippetAround(arena, uni, 201, 6);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(ucut));
+    try std.testing.expect(std.mem.find(u8, ucut, "needle") != null);
+    try std.testing.expect(std.mem.startsWith(u8, ucut, "\u{2026}"));
+    try std.testing.expect(std.mem.endsWith(u8, ucut, "\u{2026}"));
 }
 
 test "searchSessions finds conversations by message text, newest first" {

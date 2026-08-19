@@ -1,9 +1,11 @@
 //! Truncate a byte slice on a UTF-8 codepoint boundary.
 //!
 //! Several surfaces (graph previews, autolearn JSONL, confirm prompts,
-//! stream events, schedule tables) cap untrusted or long text before it is
-//! re-encoded. A mid-codepoint cut is not a shorter string: it is invalid
-//! UTF-8. One helper so those sites cannot drift.
+//! stream events, schedule tables, board/goal titles and reason logs, memory
+//! and repo_search hit text, session-search snippets) cap untrusted or long
+//! text before it is re-encoded or stored. A mid-codepoint cut is not a
+//! shorter string: it is invalid UTF-8. One helper so those sites cannot
+//! drift.
 
 const std = @import("std");
 
