@@ -27,6 +27,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker config get <key>` / `clanker config set <key> <value>` read and
+  pin one dotted key of the merged config; bare `clanker config` dumps
+  config.toml + config.local.toml raw. The `config` tool gains the same
+  `get`/`set` actions, so the agent can pin a setting too.
+
+  Every flag with a persistent twin in config (say `--reasoning-effort` and
+  `[agent] reasoning_effort`) previously needed config.local.toml edited by
+  hand, and `--dump-config` could show the merged result but not write
+  anything back. `set` writes config.local.toml only — never config.toml —
+  replacing one line and leaving the rest of the file byte-identical,
+  comments included. It refuses a key the loader's schema does not know
+  (where a typo'd TOML key is silently ignored), refuses a value that does
+  not parse as the key's type, and refuses the quoted-key table sections
+  (`providers`, `models`, `mcp_servers`). The CLI verb additionally reloads
+  the config after the write and restores the file when the loader's
+  semantic validation refuses the value (an enum spelling the type check
+  cannot catch would otherwise fail every next invocation at load time).
+  Closes the missing-tool report
+  `docs/reports/investigations/2026-08-17-missing-clanker-tool-no-verb-reads-or-sets-a-config-key.md`.
+
 - `GET /api/metrics` reports background jobs and LLM latency. Two blind
   spots on the serving path close with it.
 

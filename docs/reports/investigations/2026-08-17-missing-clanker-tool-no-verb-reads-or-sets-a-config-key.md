@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Missing tool:** Pinning a setting persistently (hit while adding --reasoning-effort: the flag covers one invocation, the [agent] reasoning_effort key needs config.local.toml edited by hand) has no clanker verb. There is no 'clanker config get/set <key>'; --dump-config prints the merged config as a Zig struct debug dump, not TOML, so it cannot even be pasted back. Checked 2026-08-17: clanker --help lists no config verb and rg 'config get' over src/cli.zig has no hit.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-19. clanker config get/set shipped: CLI verb over the config tool's new get/set actions; set writes config.local.toml only, refuses unknown keys, mistyped values and table sections, and the CLI reloads + rolls back a value the loader's validation refuses. Verified live: get/set round trip, rollback on invalid enum, refusals. Unit tests in tools/zig/config_logic.zig.
+- **Resolution:** Resolved on 2026-08-19. clanker config get/set shipped: CLI verb over the config tool's new get/set actions; set writes config.local.toml only, refuses unknown keys, mistyped values and table sections, and the CLI reloads + rolls back a value the loader's validation refuses. Verified live: get/set round trip, rollback on invalid enum, refusals. Unit tests in tools/zig/config_logic.zig.
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-19. clanker config get/set shipped: CLI verb over the config tool's new get/set actions; set writes config.local.toml only, refuses unknown keys, mistyped values and table sections, and the CLI reloads + rolls back a value the loader's validation refuses. Verified live: get/set round trip, rollback on invalid enum, refusals. Unit tests in tools/zig/config_logic.zig.
 
 ## What is missing
 

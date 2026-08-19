@@ -215,7 +215,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [Record search matches one exact substring, so multi-word queries miss existing records](investigations/2026-08-17-missing-clanker-tool-record-search-has-no-multi-word-semantics.md) — Resolved
 
-- [No verb reads or sets a single config key](investigations/2026-08-17-missing-clanker-tool-no-verb-reads-or-sets-a-config-key.md) — Investigating
+- [No verb reads or sets a single config key](investigations/2026-08-17-missing-clanker-tool-no-verb-reads-or-sets-a-config-key.md) — Resolved
 
 - [Record stores have no rename or move action](investigations/2026-08-17-missing-clanker-tool-record-stores-cannot-rename-a-record.md) — Resolved
 
