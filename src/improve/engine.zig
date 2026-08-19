@@ -213,9 +213,22 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "build.zig", .needle = ".root_source_file = b.path(\"src/main.zig\")," },
     // Dropping these comptime imports makes the gate/engine test blocks
     // invisible to `zig build test` while the files themselves still exist.
+    // The promote path does not run testRootCoverageGate (that is a
+    // `clanker gate` check), so nothing else notices a module falling out of
+    // the test root. worktree/inert_check/history/reverts join the three
+    // pinned above because their test blocks are the only backstop for a
+    // patch that keeps a needle's text but early-returns past the code it
+    // pins: the call-site needles still match, no shape check inspects these
+    // files, and the tests that would catch the gutting no longer run once
+    // the import is gone. Dropping the import itself is the tell, so the
+    // import line is what has to survive.
     .{ .file = "src/main.zig", .needle = "_ = @import(\"gate/checks.zig\");" },
     .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/engine.zig\");" },
     .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/proposal.zig\");" },
+    .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/worktree.zig\");" },
+    .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/inert_check.zig\");" },
+    .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/history.zig\");" },
+    .{ .file = "src/main.zig", .needle = "_ = @import(\"improve/reverts.zig\");" },
     // The worktree's load-bearing state sharing keeps getting reverted by
     // proposals that reconstruct linkSharedState's arrays from memory
     // instead of the current source (twice in one afternoon, both times a
@@ -4325,6 +4338,15 @@ test "a patch that bypasses merge-back CAS is rejected" {
 
 test "a patch that flips improve defaults in src/config.zig is rejected" {
     try expectInvariantCaught("src/config.zig", "capability_gate: bool = true", "capability_gate: bool = false");
+}
+
+test "a patch that drops a load-bearing module from the test root is rejected" {
+    // `zig build test` runs only the test blocks in src/main.zig's comptime
+    // block, and the promote path does not run testRootCoverageGate, so
+    // deleting an import is how a proposal makes another module's tests
+    // silently vanish -- the first half of a two-pass gutting of that
+    // module's implementation.
+    try expectInvariantCaught("src/main.zig", "_ = @import(\"improve/worktree.zig\");", "");
 }
 
 test "uncoveredCapabilityTasks fails closed on empty eval output" {
