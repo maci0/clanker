@@ -194,9 +194,7 @@ pub const Registry = struct {
             const h = self.items.items[i];
             if (std.mem.eql(u8, h.session_id, session_id) and std.mem.eql(u8, h.kind, kind)) {
                 var removed = self.items.orderedRemove(i);
-                removed.leftover.deinit(self.gpa);
-                self.gpa.free(removed.session_id);
-                self.gpa.free(removed.kind);
+                self.destroyHandle(&removed);
                 return;
             }
             i += 1;
@@ -280,6 +278,12 @@ pub const Registry = struct {
         }
     }
 
+    fn destroyHandle(self: *Registry, h: *Handle) void {
+        h.leftover.deinit(self.gpa);
+        self.gpa.free(h.session_id);
+        self.gpa.free(h.kind);
+    }
+
     fn killAtLocked(self: *Registry, i: usize) void {
         var h = self.items.orderedRemove(i);
         if (h.child) |*c| {
@@ -288,9 +292,7 @@ pub const Registry = struct {
             // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(h.pid, std.posix.SIG.TERM) catch {};
         }
-        h.leftover.deinit(self.gpa);
-        self.gpa.free(h.session_id);
-        self.gpa.free(h.kind);
+        self.destroyHandle(&h);
     }
 };
 
