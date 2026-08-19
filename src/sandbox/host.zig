@@ -2531,8 +2531,19 @@ pub fn ckPublish(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     // Refuse non-JSON so a subscriber never sees a broken `data` splice.
-    _ = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return Err.invalid;
-    live_mod.notePlugin(h.sandbox.tool_self_name, raw);
+    // The value is then re-encoded rather than spliced raw: a guest can hand
+    // over a valid document that still contains literal newlines (JSON
+    // whitespace between tokens), and a raw `\n` inside the SSE `data:` line
+    // terminates the frame, letting the guest inject fake `event:`/`data:`
+    // pairs and spoof topics (chat/mesh/run/metrics) the host reserves to
+    // itself. Compact re-encoding is newline-free and semantically identical.
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return Err.invalid;
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.write(parsed) catch return Err.invalid;
+    const encoded = w.written();
+    if (encoded.len == 0 or encoded.len > live_mod.event_cap / 2) return Err.too_large;
+    live_mod.notePlugin(h.sandbox.tool_self_name, encoded);
     return Err.ok;
 }
 

@@ -52,7 +52,19 @@ pub fn stripProxyPrefix(path: []const u8, surface: Surface) []const u8 {
 
 pub fn authorize(headers_raw: []const u8, expected: []const u8) AuthResult {
     const presented = presentedToken(headers_raw) orelse return .missing;
-    if (!std.mem.eql(u8, presented, expected)) return .mismatch;
+    // Constant-time comparison of the proxy secret: std.mem.eql returns at the
+    // first differing byte, and each early return is a timing oracle an
+    // attacker who can measure response latency can use to recover the key
+    // byte by byte. Both sides are hashed first so the comparison runs over
+    // fixed-size digests; a length mismatch is still rejected up front, which
+    // leaks only the length (the caller can already observe that by sending
+    // tokens of their own choosing).
+    if (presented.len != expected.len) return .mismatch;
+    var presented_digest: [32]u8 = undefined;
+    var expected_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(presented, &presented_digest, .{});
+    std.crypto.hash.sha2.Sha256.hash(expected, &expected_digest, .{});
+    if (!std.crypto.timing_safe.eql([32]u8, presented_digest, expected_digest)) return .mismatch;
     return .ok;
 }
 

@@ -108,9 +108,6 @@ pub fn unixMilliseconds() i128 {
 
 pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
     if (@intFromEnum(level) < current_level.load(.acquire)) return;
-    if (level == .warn) {
-        std.debug.print("LEVEL-PEEK level={s} cur={d}\n", .{ @tagName(level), current_level.load(.acquire) });
-    }
     const prefix = switch (level) {
         .debug => "DEBUG",
         .info => "INFO",

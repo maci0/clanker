@@ -142,6 +142,13 @@ pub fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
     const prefix = "event: live\ndata: ";
     const suffix = "\n\n";
     if (out.len < prefix.len + json.len + suffix.len) return null;
+    // A raw newline inside the payload terminates the frame early and the
+    // bytes after it are read as fabricated SSE fields (`event:`, `data:`).
+    // Every publisher emits compact JSON, which never contains bare `\n`/`\r`
+    // bytes, so one here is an injection attempt: drop the event, do not ship
+    // a broken or spoofable frame. (An escaped `\\n` inside a JSON string is
+    // two characters and passes through untouched.)
+    if (std.mem.indexOfAny(u8, json, "\n\r") != null) return null;
     @memcpy(out[0..prefix.len], prefix);
     @memcpy(out[prefix.len .. prefix.len + json.len], json);
     @memcpy(out[prefix.len + json.len .. prefix.len + json.len + suffix.len], suffix);
@@ -328,6 +335,17 @@ test "writeSse frames one event" {
     var buf: [64]u8 = undefined;
     const got = writeSse(&buf, "{\"t\":\"ping\"}") orelse return error.Short;
     try std.testing.expectEqualStrings("event: live\ndata: {\"t\":\"ping\"}\n\n", got);
+}
+
+test "writeSse refuses a payload with a raw newline" {
+    var buf: [128]u8 = undefined;
+    // A literal \n inside the payload would terminate the data: line and let
+    // the following bytes be read as fabricated SSE fields.
+    try std.testing.expect(writeSse(&buf, "{\"a\":1}\n\nevent: live\ndata: spoof") == null);
+    try std.testing.expect(writeSse(&buf, "{\"a\":1}\r\n") == null);
+    // An escaped newline inside a JSON string is two characters and is fine.
+    const escaped = writeSse(&buf, "{\"a\":\"\\n\"}") orelse return error.Short;
+    try std.testing.expect(std.mem.find(u8, escaped, "\\n") != null);
 }
 
 test "noteMesh publishes on the mesh topic" {
