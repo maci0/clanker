@@ -27,7 +27,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const steps = lib.optStr(parsed, "steps_to_reproduce");
     const expected = lib.optStr(parsed, "expected");
     const actual = lib.optStr(parsed, "actual");
-    const severity = lib.optStr(parsed, "severity") orelse "normal";
+    var severity = lib.optStr(parsed, "severity") orelse "";
+    if (severity.len == 0) severity = "normal";
     const environment = lib.optStr(parsed, "environment");
     const impact = lib.optStr(parsed, "impact");
     const component = lib.optStr(parsed, "component") orelse inferComponent(title_raw);
