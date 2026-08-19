@@ -337,12 +337,14 @@ Automatically observed from usage patterns (state/autolearn.jsonl, last 7 days).
 - Fix 'zig_std' tool errors (6 failure(s), last: looking up the std symbol: not found)
 - Fix 'git' tool errors (5 failure(s), last: git 'push' is refused by the sandbox (denied token 'push'). Allowed: status, diff, log, show, add, commit, ls-files, rev-parse, branch, worktree. Remote/history-rewriting verbs need a human at a real )
 - Fix 'web_fetch' tool errors (2 failure(s), last: fetching the page: the request did not complete)
+- Fix 'skills' tool errors (1 failure(s), last: skill is disabled in its frontmatter)
+- Fix 'gauntlet' tool errors (1 failure(s), last: listing gauntlet's prompts/ directory: the request did not complete)
 - Re-evaluate default model: 'claude-opus-4-6' used in 5 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 - Re-evaluate default model: 'deepseek-v4-flash' used in 1 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 - Re-evaluate default model: 'kimi-k3' used in 1 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 - Re-evaluate default model: 'z-ai/glm-5.2' used in 1 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 - Re-evaluate default model: 'glm-5.2' used in 3 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 - Re-evaluate default model: 'claude-opus-5@default' used in 12 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
-- Re-evaluate default model: 'deepseek-v4-pro' used in 18 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
+- Re-evaluate default model: 'deepseek-v4-pro' used in 36 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 - Re-evaluate default model: 'muse-spark-1.2' used in 4 run(s) — tune its config (temperature, max_tokens, cost) or make it the default.
 
