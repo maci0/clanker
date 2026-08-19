@@ -51,6 +51,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [Push a diverged main when fetch is denied](push-diverged-main-fetch-denied.md) — Current
+
 - [A build failure that is not yours](build-failure-not-yours.md) — Current
 
 - [Several agent sessions share one checkout](concurrent-agent-sessions-on-one-checkout.md) — Current
