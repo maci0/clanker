@@ -1,7 +1,7 @@
 {
   "name": "bugreport",
-  "description": "File a structured bug report that lands on the Kanban board as a prioritised backlog card. Collects title, description, steps to reproduce, expected/actual behaviour, severity and environment into a formatted body, prefixes the title with [BUG], maps severity to board priority, and calls kanban_add. Use this instead of kanban_add when the work item is a bug: the template keeps reports consistent and searchable.",
-  "llm_description": "File a bug as a prioritized Kanban card (prefixes title with [BUG], maps severity to priority, calls kanban_add). Use instead of kanban_add for bugs. Input: {title (required, max 500 chars), description?, steps_to_reproduce?, expected?, actual?, severity?:'critical'|'high'|'normal'(default)|'medium'|'low'|'minor', component?, environment?, repro?, fix_hint?, room?(default 'board')}. Returns {ok, card_id, board}.",
+  "description": "File a structured bug report that lands on the Kanban board as a prioritised backlog card. Collects title, description, steps to reproduce, expected/actual behaviour, severity, environment and impact into a formatted body, prefixes the title with [BUG], maps severity to board priority, and calls kanban_add. repro_lang selects the language of the repro command's fenced block. Use this instead of kanban_add when the work item is a bug: the template keeps reports consistent and searchable.",
+  "llm_description": "File a bug as a prioritized Kanban card (prefixes title with [BUG], maps severity to priority, calls kanban_add). Use instead of kanban_add for bugs. Input: {title (required, max 500 chars), description?, steps_to_reproduce?, expected?, actual?, severity?:'critical'|'high'|'normal'(default)|'medium'|'low'|'minor', component?, environment?, impact?, repro?, repro_lang?(default 'sh'), fix_hint?, room?(default 'board')}. Returns {ok, card_id, board}.",
   "wasm": "zig-out/tools/bugreport.wasm",
   "input_schema": {
     "type": "object",
@@ -46,9 +46,17 @@
         "type": "string",
         "description": "OS, Zig version, config, or anything else that matters for reproducing"
       },
+      "impact": {
+        "type": "string",
+        "description": "What the bug breaks and how badly: which users or workflows are affected, what they cannot do"
+      },
       "repro": {
         "type": "string",
-        "description": "A runnable shell command that reproduces the bug; the verifier runs it to confirm the bug and later to confirm a fix"
+        "description": "A runnable command that reproduces the bug; the verifier runs it to confirm the bug and later to confirm a fix. Pairs with repro_lang for non-shell commands"
+      },
+      "repro_lang": {
+        "type": "string",
+        "description": "Language of the repro command's fenced block; defaults to \"sh\". No newlines or backticks"
       },
       "fix_hint": {
         "type": "string",
