@@ -288,6 +288,13 @@ clanker.registerView({
         var row = mk("div","files-row");
         row.setAttribute("role","option");
         row.setAttribute("aria-selected","false");
+        /* Rows carry tabindex=-1 so setFocus()'s .focus() actually moves
+           focus: without it the div never becomes focusable, arrows moved the
+           highlight and aria-selected but neither the visible focus ring nor
+           a screen reader's focus followed, so the listbox read as
+           "no selection feedback" to keyboard and AT users. Same roving-focus
+           contract as the run list's role=option rows. */
+        row.setAttribute("tabindex","-1");
 
         var iconCell = mk("span","files-icon-col");
         iconCell.appendChild(fileIcon(e.name, e.is_dir));

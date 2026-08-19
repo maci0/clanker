@@ -1037,6 +1037,18 @@ function showCardDetail(id) {
     // preserve card id for trap handlers; don't clear content on close until next open
     openOverlay(el.cardDetail, null);
     el.cardDetail.setAttribute("aria-labelledby", "card-detail-title");
+    /* Focus must move into the dialog when it opens: aria-modal="true" claims
+       the rest of the page inert, but without this focus stayed on the card
+       button behind the scrim, so a keyboard/screen-reader user got nothing
+       from the panel that just opened (2.4.3 focus order, dialog pattern).
+       Deferred past the synchronous panel build below — the close button does
+       not exist yet at this point. No-op if the modal was closed again first. */
+    window.setTimeout(function () {
+      if (el.cardDetail.hidden) return;
+      var first = el.cardDetail.querySelector(
+        ".card-detail-close, button, input, select, textarea, a[href]");
+      if (first) first.focus();
+    }, 0);
   }
   // scrim click closes
   el.cardDetail.onclick = function(e){ if (e.target === el.cardDetail) { delete cardDrafts[c.id]; openCardId = null; closeCardDetail(); renderBoard(board); } };
