@@ -40,5 +40,5 @@
   ],
   "network_allow": [],
   "category": "agent",
-  "confirm": false
+  "confirm": true
 }
