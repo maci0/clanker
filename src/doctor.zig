@@ -327,6 +327,12 @@ pub fn cmdDoctor(init: std.process.Init) !void {
     } else {
         rep.w.writeAll("Everything looks good. Run `clanker providers check` for connectivity.\n") catch {};
     }
+    // Compact diagnostic line designed for copy-paste into bug reports and
+    // support threads: version, platform, and outcome in one string.
+    rep.w.print(
+        "diagnostic: clanker/{s} {s}/{s} failures={d} warnings={d}\n",
+        .{ build_options.version, plat_os, plat_arch, rep.failures, rep.warnings },
+    ) catch {};
     out.interface.flush() catch {};
     // A non-zero exit lets `clanker doctor` guard a script or a CI step.
     if (rep.failures > 0) std.process.exit(1);
