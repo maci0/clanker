@@ -184,6 +184,22 @@ function makeViewShell(id, title, group) {
   return section;
 }
 
+/* A plugin's mount (or refresh) is third-party code running inside the page's
+   tab switch: a throw that rides up through the view loader breaks the switch
+   itself and the page looks dead. Contain it to the plugin's own panel — the
+   tab stays, the panel names the plugin and the exception, Retry re-runs the
+   loader — and let the rest of the page carry on. */
+function runPluginHook(section, label, retryFn, fn) {
+  try {
+    return fn();
+  } catch (e) {
+    section.textContent = "";
+    var msg = e && e.message ? e.message : String(e);
+    showLoadError(section, "The " + label + " plugin failed: " + msg, retryFn);
+    return null;
+  }
+}
+
 /* Addons whose tab exists but whose script has not been fetched yet, keyed by
    view id. `spec` is filled in when that script runs `clanker.registerView`. */
 var pluginShells = {};
@@ -211,12 +227,22 @@ function registerDeferredView(meta) {
         });
         return null;
       }
+      var retry = function () {
+        mounted = false;
+        return _viewLoaders[meta.name]();
+      };
       if (!mounted) {
         mounted = true;
         section.textContent = "";
-        return spec.mount.call(spec, section, pluginApi(spec));
+        return runPluginHook(section, meta.title || meta.name, retry, function () {
+          return spec.mount.call(spec, section, pluginApi(spec));
+        });
       }
-      if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi(spec));
+      if (typeof spec.refresh === "function") {
+        return runPluginHook(section, meta.title || meta.name, retry, function () {
+          return spec.refresh.call(spec, section, pluginApi(spec));
+        });
+      }
       return null;
     });
   };
@@ -396,11 +422,21 @@ export function bindPlugins(ctx) {
       pluginViews[spec.id] = { spec: spec, section: section };
       var mounted = false;
       _viewLoaders[spec.id] = function () {
+        var retry = function () {
+          mounted = false;
+          return _viewLoaders[spec.id]();
+        };
         if (!mounted) {
           mounted = true;
-          return spec.mount.call(spec, section, pluginApi(spec));
+          return runPluginHook(section, spec.title || spec.id, retry, function () {
+            return spec.mount.call(spec, section, pluginApi(spec));
+          });
         }
-        if (typeof spec.refresh === "function") return spec.refresh.call(spec, section, pluginApi(spec));
+        if (typeof spec.refresh === "function") {
+          return runPluginHook(section, spec.title || spec.id, retry, function () {
+            return spec.refresh.call(spec, section, pluginApi(spec));
+          });
+        }
         return null;
       };
       if (typeof spec.boot === "function") {
