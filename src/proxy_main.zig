@@ -3,7 +3,14 @@
 //! loop, TUI, or WASM tool host. The binary reads the same `config.toml` /
 //! `config.local.toml` pair (only `[providers.*]`, `[models.*]`, and
 //! `[serve]`'s proxy keys matter) and mounts `/v1` at the root, exactly like
-//! `clanker serve --proxy-port` does on its dedicated listener.
+//! `clanker serve --proxy-port` does on its dedicated listener. Besides `/v1`
+//! it serves `GET /health/live` and `GET /metrics` (process-local RED
+//! counters, same fields and buckets as the full server's `/api/metrics`).
+//!
+//! Every connection logs a completion line with method/path/status/duration
+//! for failed requests (and per-request `proxy method=...` lines for
+//! forwarded calls) under a `request_id` that is also echoed in the
+//! `X-Request-ID` response header, so a client-provided id traces through.
 //!
 //! Flags: `--host <addr>` (default 127.0.0.1) and `--port <port>` (default
 //! 17922), plus `--version` and `--help`/`-h`. `CLANKER_HOST` /
@@ -30,6 +37,18 @@ const default_port: u16 = 17922;
 const max_request_bytes = 32 * 1024 * 1024;
 
 var conn_gpa: std.mem.Allocator = undefined;
+
+/// Monotonic per-connection request id, the fallback correlation id when the
+/// caller sends no `X-Request-ID`. Mirrors the full server's `http-{d}`
+/// sequence in handleConnection.
+var request_sequence = std.atomic.Value(u64).init(1);
+
+/// Thread-local request accounting, filled in by `handleRequest` and read by
+/// its completion defer (and by `respond`). Thread-local because connection
+/// threads run concurrently and a plain global would interleave requests.
+threadlocal var request_status: u16 = 0;
+threadlocal var request_method: []const u8 = "unknown";
+threadlocal var request_path: []const u8 = "unknown";
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -171,14 +190,41 @@ fn serveConn(conn: *Conn) void {
 
 fn handleRequest(conn: *Conn) !void {
     const io = conn.io;
+    var request_id_buf: [24]u8 = undefined;
+    const request_id = std.fmt.bufPrint(&request_id_buf, "proxy-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "proxy-unknown";
+    log.setContext(request_id);
+    // Defers run LIFO: clearContext last, so the completion log below still
+    // carries this request's id. `data` is declared and its free defer placed
+    // before the completion defer so `request_path` (a slice into
+    // `data.items`) is still allocated when the completion line reads it —
+    // the same ordering handleConnection relies on in cli.zig.
+    defer log.clearContext();
     var data: std.ArrayList(u8) = .empty;
     defer data.deinit(conn_gpa);
+    const started_at = std.Io.Timestamp.now(io, .awake);
+    request_status = 0;
+    request_method = "unknown";
+    request_path = "unknown";
+    // A connection that closes before completing a request line (EOF, or a
+    // read error) is the protocol winding down, not a request that failed:
+    // only log and count the connections that actually produced one.
+    var saw_request = false;
+    defer {
+        if (saw_request) {
+            const elapsed_ms = proxy.elapsedMs(io, started_at);
+            proxy.recordRequestMetrics(request_status, elapsed_ms);
+            if (proxy.requestLogLevel(request_status)) |level| {
+                log.log(level, "proxy request complete method={s} path={s} status={d} duration_ms={d}", .{ request_method, request_path, request_status, elapsed_ms });
+            }
+        }
+    }
     var chunk: [16 * 1024]u8 = undefined;
     while (!raw_http.requestComplete(data.items)) {
         // Residual posix: raw proxy socket pump, same hand-rolled HTTP family
         // as the webui server in cli.zig.
         const n = try std.posix.read(conn.stream.socket.handle, &chunk);
         if (n == 0) return;
+        saw_request = true;
         if (data.items.len + n > max_request_bytes) {
             respond(conn.stream, 413, "Payload Too Large", "{\"ok\":false,\"error\":\"request too large\"}");
             return;
@@ -198,9 +244,23 @@ fn handleRequest(conn: *Conn) !void {
     const qmark = std.mem.findScalar(u8, target, '?');
     const path = if (qmark) |i| target[0..i] else target;
     const query = if (qmark) |i| target[i + 1 ..] else "";
+    request_method = method;
+    request_path = path;
+    // Preserve a caller's correlation id across proxies and peer agents: it
+    // lands in the completion logs and the `X-Request-ID` response header,
+    // mirroring the full server's handleConnection.
+    if (proxy.correlationId(headers_raw)) |upstream_id| log.setContext(upstream_id);
 
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/live")) {
         respond(conn.stream, 200, "OK", "{\"ok\":true,\"status\":\"live\"}");
+        return;
+    }
+    // Process-local RED counters, same field names and buckets as the full
+    // server's `/api/metrics`, so one collector parses both binaries.
+    if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/metrics")) {
+        var mbuf: [1024]u8 = undefined;
+        const mbody = proxy.snapshotRequestMetrics(&mbuf) orelse "{\"ok\":false,\"error\":\"metrics unavailable\"}";
+        respond(conn.stream, 200, "OK", mbody);
         return;
     }
     if (!proxy.isProxyPath(path, .proxy)) {
@@ -212,14 +272,14 @@ fn handleRequest(conn: *Conn) !void {
             switch (proxy.authorize(headers_raw, expected)) {
                 .ok => {},
                 .missing, .mismatch => {
-                    _ = proxy.writeAuthError(conn.stream, path, headers_raw);
+                    request_status = proxy.writeAuthError(conn.stream, path, headers_raw);
                     return;
                 },
             }
         }
     }
 
-    _ = proxy.handle(.{
+    request_status = proxy.handle(.{
         .io = io,
         .gpa = conn_gpa,
         .cfg = conn.cfg,
@@ -234,8 +294,13 @@ fn handleRequest(conn: *Conn) !void {
 }
 
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
+    request_status = status;
     var hbuf: [256]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
+    const request_id = log.getContext();
+    const hdr = if (request_id.len > 0)
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Request-ID: {s}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len, request_id }) catch return
+    else
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, body);
 }

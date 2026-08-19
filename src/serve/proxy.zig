@@ -718,9 +718,66 @@ fn timeoutNs(configured: ?u32, default_s: u32) u64 {
     return @as(u64, s) * std.time.ns_per_s;
 }
 
-fn elapsedMs(io: std.Io, t0: std.Io.Timestamp) u64 {
+pub fn elapsedMs(io: std.Io, t0: std.Io.Timestamp) u64 {
     const ns = t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
     return @intCast(@max(@divTrunc(ns, std.time.ns_per_ms), 0));
+}
+
+/// Process-local RED counters for the standalone `clanker-proxy` binary
+/// (`zig build proxy`). The full `clanker serve --proxy` surface counts the
+/// same signals through cli.zig's `recordHttpRequest` instead, so only
+/// `proxy_main.zig` calls these and they are never double-counted.
+///
+/// Deliberately no path/model/provider labels, matching the main server's
+/// `/api/metrics` contract: bounded cardinality, with the correlated
+/// per-request completion log carrying the detail for diagnosis.
+const StandaloneMetrics = struct {
+    requests: std.atomic.Value(u64) = .init(0),
+    errors: std.atomic.Value(u64) = .init(0),
+    client_errors: std.atomic.Value(u64) = .init(0),
+    latency_ms_sum: std.atomic.Value(u64) = .init(0),
+    latency_le_10ms: std.atomic.Value(u64) = .init(0),
+    latency_le_100ms: std.atomic.Value(u64) = .init(0),
+    latency_le_1s: std.atomic.Value(u64) = .init(0),
+    latency_le_10s: std.atomic.Value(u64) = .init(0),
+};
+
+var standalone_metrics = StandaloneMetrics{};
+
+pub fn recordRequestMetrics(status: u16, duration_ms: u64) void {
+    _ = standalone_metrics.requests.fetchAdd(1, .monotonic);
+    _ = standalone_metrics.latency_ms_sum.fetchAdd(duration_ms, .monotonic);
+    if (status == 0 or status >= 500) _ = standalone_metrics.errors.fetchAdd(1, .monotonic);
+    if (status >= 400 and status < 500) _ = standalone_metrics.client_errors.fetchAdd(1, .monotonic);
+    if (duration_ms <= 10) _ = standalone_metrics.latency_le_10ms.fetchAdd(1, .monotonic);
+    if (duration_ms <= 100) _ = standalone_metrics.latency_le_100ms.fetchAdd(1, .monotonic);
+    if (duration_ms <= 1000) _ = standalone_metrics.latency_le_1s.fetchAdd(1, .monotonic);
+    if (duration_ms <= 10_000) _ = standalone_metrics.latency_le_10s.fetchAdd(1, .monotonic);
+}
+
+/// Level at which a finished request earns a completion line, or null to stay
+/// silent. Forwarded /v1 requests already log their own `proxy method=...`
+/// line at info with provider/model/duration; only failures get a second
+/// line, mirroring the full server's `completionLogLevel`.
+pub fn requestLogLevel(status: u16) ?log.Level {
+    if (status >= 500 or status == 0) return .error_;
+    if (status >= 400) return .warn;
+    return null;
+}
+
+/// Same bucket boundaries and field names as the main server's `/api/metrics`
+/// `http` block, so one dashboard or scrape parses both binaries.
+pub fn snapshotRequestMetrics(buf: []u8) ?[]const u8 {
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}}", .{
+        standalone_metrics.requests.load(.monotonic),
+        standalone_metrics.errors.load(.monotonic),
+        standalone_metrics.client_errors.load(.monotonic),
+        standalone_metrics.latency_ms_sum.load(.monotonic),
+        standalone_metrics.latency_le_10ms.load(.monotonic),
+        standalone_metrics.latency_le_100ms.load(.monotonic),
+        standalone_metrics.latency_le_1s.load(.monotonic),
+        standalone_metrics.latency_le_10s.load(.monotonic),
+    }) catch null;
 }
 
 fn peekAndRecord(ctx: Ctx, provider: *const config.Provider, status: u16, body: []const u8, stream: bool) void {
@@ -1209,6 +1266,18 @@ pub fn headerValue(headers_raw: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// A caller-supplied correlation id, accepted only as a deliberately narrow,
+/// single-line value because it is reflected into both logs and the response
+/// headers.
+pub fn correlationId(headers_raw: []const u8) ?[]const u8 {
+    const value = headerValue(headers_raw, "x-request-id") orelse return null;
+    if (value.len == 0 or value.len > 128) return null;
+    for (value) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == ':')) return null;
+    }
+    return value;
+}
+
 fn isWebsocketUpgrade(headers_raw: []const u8) bool {
     const u = headerValue(headers_raw, "upgrade") orelse return false;
     return std.ascii.eqlIgnoreCase(u, "websocket");
@@ -1457,6 +1526,37 @@ test "sseFrameEnd finds both LF and CRLF frame separators" {
     try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\n\nrest"));
     try std.testing.expectEqual(@as(?usize, 3), sseFrameEnd("abc\r\n\r\nrest"));
     try std.testing.expect(sseFrameEnd("abc\r\n") == null);
+}
+
+test "correlation ids are safe for logs and response headers" {
+    try std.testing.expectEqualStrings("edge-17:abc", correlationId("GET / HTTP/1.1\r\nX-Request-ID: edge-17:abc\r\n").?);
+    try std.testing.expect(correlationId("GET / HTTP/1.1\r\nX-Request-ID: bad value\r\n") == null);
+    try std.testing.expect(correlationId("GET / HTTP/1.1\r\nX-Request-ID: bad\rvalue\r\n") == null);
+}
+
+test "standalone request metrics count RED signals with bounded buckets" {
+    recordRequestMetrics(200, 5);
+    recordRequestMetrics(200, 500);
+    recordRequestMetrics(404, 1);
+    recordRequestMetrics(502, 120_000);
+    var buf: [512]u8 = undefined;
+    const body = snapshotRequestMetrics(&buf) orelse return error.NoBody;
+    try std.testing.expect(std.mem.find(u8, body, "\"requests_total\":4") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"errors_total\":1") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"client_errors_total\":1") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"le_10\":2") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"le_100\":2") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"le_1000\":3") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"le_10000\":3") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"latency_ms_sum\":120506") != null);
+}
+
+test "requestLogLevel mirrors the full server's completion levels" {
+    try std.testing.expectEqual(@as(?log.Level, null), requestLogLevel(200));
+    try std.testing.expectEqual(@as(?log.Level, .warn), requestLogLevel(401));
+    try std.testing.expectEqual(@as(?log.Level, .warn), requestLogLevel(404));
+    try std.testing.expectEqual(@as(?log.Level, .error_), requestLogLevel(500));
+    try std.testing.expectEqual(@as(?log.Level, .error_), requestLogLevel(0));
 }
 
 test "usageFromValue saturates sums instead of wrapping huge upstream counts" {

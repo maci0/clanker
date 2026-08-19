@@ -7273,7 +7273,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // Preserve a caller's correlation id across proxies and peer agents.
         // Only a deliberately narrow, single-line value is accepted because
         // this field is reflected into both logs and the response headers.
-        if (requestCorrelationId(headers_raw)) |upstream_id| log.setContext(upstream_id);
+        if (proxy.correlationId(headers_raw)) |upstream_id| log.setContext(upstream_id);
         // Binding to loopback prevents direct remote connections, but does not
         // stop DNS rebinding: a hostile hostname can resolve to 127.0.0.1 and
         // make the browser treat this control plane as its own origin. Require
@@ -15480,21 +15480,6 @@ fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, cache_control, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, out);
-}
-
-fn requestCorrelationId(headers_raw: []const u8) ?[]const u8 {
-    const value = proxy.headerValue(headers_raw, "x-request-id") orelse return null;
-    if (value.len == 0 or value.len > 128) return null;
-    for (value) |c| {
-        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == ':')) return null;
-    }
-    return value;
-}
-
-test "request correlation ids are safe for logs and response headers" {
-    try std.testing.expectEqualStrings("edge-17:abc", requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: edge-17:abc\r\n").?);
-    try std.testing.expect(requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: bad value\r\n") == null);
-    try std.testing.expect(requestCorrelationId("GET / HTTP/1.1\r\nX-Request-ID: bad\rvalue\r\n") == null);
 }
 
 /// True when `value`, an HTTP authority, `host` or `host:port`, is one this
