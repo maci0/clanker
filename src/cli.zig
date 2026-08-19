@@ -15102,7 +15102,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .on_decision = serverGoalLoopDecision,
             }) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
-                const failed_ms: i64 = @divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+                const failed_ms: i64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
                 // The HTTP status was already sent as 200 when the stream
                 // opened, so a stream-level failure never reaches the generic
                 // completion log (which only reports >= 400): without this line
@@ -15118,7 +15118,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         } else blk: {
             const resp = a.run(&messages, final_task, &err_detail) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
-                const failed_ms: i64 = @divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+                const failed_ms: i64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
                 log.log(.error_, "run failed duration_ms={d} phase=agent: {s}", .{ failed_ms, detail });
                 writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
                 return;
@@ -15245,7 +15245,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     s.objectField("served_by") catch return;
     s.write(a.provider.name) catch return;
     s.endObject() catch return;
-    const elapsed_ms: i64 = @divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+    const elapsed_ms: i64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
     log.log(.info, "run complete provider={s} duration_ms={d} prompt_tokens={d} completion_tokens={d}", .{ a.provider.name, elapsed_ms, a.stats.total_prompt_tokens, a.stats.total_completion_tokens });
     respond(stream, 200, "OK", rbuf[0..w.end]);
 }
