@@ -76,6 +76,9 @@ fn parseResponse(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]co
 }
 
 fn parseErrorDetail(arena: std.mem.Allocator, body: []const u8) ?[]const u8 {
+    // Google's envelope first: it covers the array-wrapped platform errors
+    // neither publisher codec parses, and carries the status label.
+    if (common.parseGoogleErrorMessage(arena, body)) |m| return m;
     if (gemini.provider.parseErrorDetail(arena, body)) |m| return m;
     return anthropic.provider.parseErrorDetail(arena, body);
 }

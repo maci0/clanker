@@ -14,6 +14,7 @@
 const std = @import("std");
 const api = @import("api.zig");
 const anthropic = @import("anthropic.zig");
+const common = @import("common.zig");
 const auth = @import("../auth.zig");
 const config = @import("../../config.zig");
 const vertex_token = @import("../vertex_token.zig");
@@ -45,7 +46,7 @@ pub const provider: api.Provider = .{
     .buildRequest = buildRequest,
     // The codec is Anthropic's, unchanged.
     .parseResponse = anthropic.provider.parseResponse,
-    .parseErrorDetail = anthropic.provider.parseErrorDetail,
+    .parseErrorDetail = parseErrorDetail,
     .parseStreamEvent = anthropic.provider.parseStreamEvent,
     // A GCP access token is a bearer token, and the anthropic version lives in
     // the body, so none of Anthropic's header juggling applies.
@@ -55,6 +56,34 @@ pub const provider: api.Provider = .{
 
 fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildError![]u8 {
     return anthropic.buildBody(gpa, params, .{ .anthropic_version = body_version });
+}
+
+/// A Vertex deployment answers in two error dialects: the platform refuses in
+/// Google's envelope (`{"error":{"message","status"}}`, sometimes
+/// array-wrapped), the model publisher in Anthropic's. Trying only Anthropic's
+/// left every platform-side 400 as a bare "HTTP 400".
+fn parseErrorDetail(arena: std.mem.Allocator, body: []const u8) ?[]const u8 {
+    if (common.parseGoogleErrorMessage(arena, body)) |m| return m;
+    return anthropic.provider.parseErrorDetail(arena, body);
+}
+
+test "vertex parseErrorDetail reads Google's envelope and Anthropic's" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const google =
+        \\{"error":{"code":404,"message":"Publisher Model was not found","status":"NOT_FOUND"}}
+    ;
+    try std.testing.expectEqualStrings(
+        "NOT_FOUND: Publisher Model was not found",
+        parseErrorDetail(arena, google).?,
+    );
+
+    const anthropic_shape =
+        \\{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: required"}}
+    ;
+    try std.testing.expect(std.mem.find(u8, parseErrorDetail(arena, anthropic_shape).?, "max_tokens: required") != null);
 }
 
 fn mint(env: auth.Env, p: *const config.Provider) anyerror![]const u8 {

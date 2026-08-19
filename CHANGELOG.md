@@ -376,6 +376,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A failing Vertex provider now says why. The vertex kinds parsed error
+  bodies with their model publisher's codec only, which cannot read Google's
+  platform envelope in the array-wrapped form `rawPredict` answers with, and
+  a body no codec recognised was discarded outright — so every
+  platform-side refusal (quota, IAM, addressing) reached the operator as a
+  bare "HTTP 400" and google-vertex-anthropic's every-request failure could
+  not be root-caused. Both vertex kinds now read Google's
+  `{"error":{"message","status"}}` envelope (object and array forms, with
+  the status label kept), and an HTTP error body no codec recognises is
+  logged capped at warn instead of vanishing; caller-facing error strings
+  still never carry raw body bytes
+  (docs/reports/bugs/2026-08-19-vertex-error-bodies-discarded.md).
+
 - A lapsed LLM deadline can no longer wedge the caller forever. The abort
   that unblocks a stalled provider read fired exactly once, so a deadline
   that lapsed before the request had armed it (or pooled its connection)
