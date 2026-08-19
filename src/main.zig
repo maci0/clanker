@@ -285,6 +285,7 @@ pub fn main(init: std.process.Init) !void {
                 cli.printUsageError(init.io, "`clanker arena` needs a question", .{})
             else
                 cli.printUsageError(init.io, "'{s}' needs a value", .{shown}),
+            error.BadSeed => cli.printUsageError(init.io, "--seed wants a non-negative integer, got '{s}'", .{shown}),
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{shown}),
             error.BadReasoningEffort => cli.printUsageError(init.io, "--reasoning-effort wants none, low, medium, high, or max, got '{s}'", .{shown}),
             error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{shown}),
