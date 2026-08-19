@@ -191,7 +191,11 @@ fn runChecks(
             rep.line(.ok, label, "no credential needed");
         }
     }
-    if (usable == 0) rep.line(.fail, "any usable provider", "no provider has a credential");
+    if (cfg.providers.count() == 0) {
+        rep.line(.fail, "providers declared", "none; add at least one provider to config.toml or config.local.toml");
+    } else if (usable == 0) {
+        rep.line(.fail, "any usable provider", "no provider has a credential");
+    }
 
     rep.section("directories");
     for (cfg.agent.tools_dir) |tools_dir| {
