@@ -85,7 +85,7 @@ pub fn renderValue(alloc: std.mem.Allocator, existing: std.json.Value, raw: []co
 }
 
 /// TOML basic string: backslash, quote and the control characters that have
-/// short escapes get them; any other control character is escaped \uXXXX.
+/// short escapes get them; any other control character is escaped with a four-hex-digit \u escape.
 fn quoteString(alloc: std.mem.Allocator, raw: []const u8) RenderError![]const u8 {
     var text: std.ArrayList(u8) = .empty;
     errdefer text.deinit(alloc);
