@@ -4,11 +4,11 @@
 
 - **What failed:** findTldrField returns the end of the bullet's first physical line, so replaceTldrField writes the new value and then re-emits every continuation line of the old one. A record whose TL;DR Resolution bullet wraps ends a status change with two contradictory accounts stacked under one bullet, and nothing reports it.
 - **Impact:** silent damage to the record store, at the moment a reader is most likely to trust the summary and stop there — the tool reports success and the two accounts read as deliberate prose. Two other records were found already carrying it and have been repaired.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-19. fixed in 872c00d1: findTldrField consumes a bullet's continuation lines so replaceTldrField rewrites the whole bullet; verified by host tests 'replaceTldrField drops a wrapped bullet's continuation lines' and 'stops a wrapped bullet at the next bullet' in tools/zig/doc_scaffold.zig
 
 ## Status
 
-Open.
+Resolved on 2026-08-19. fixed in 872c00d1: findTldrField consumes a bullet's continuation lines so replaceTldrField rewrites the whole bullet; verified by host tests 'replaceTldrField drops a wrapped bullet's continuation lines' and 'stops a wrapped bullet at the next bullet' in tools/zig/doc_scaffold.zig
 
 ## Symptom and impact
 
@@ -98,27 +98,33 @@ part of it.
 
 ## Resolution
 
-Open. The mechanism is established and one fix is suggested; no code has
-changed.
+Resolved on 2026-08-19, by the fix this section suggested when the report was
+open: `findTldrField` in `tools/zig/doc_scaffold.zig` now extends `line_end`
+over the bullet's continuation lines — non-blank lines indented deeper than
+the bullet's marker — before returning, so `replaceTldrField` consumes the
+whole bullet and `tldrField` reads it whole. The change landed in `872c00d1`
+(the records refactor commit); this report's status was left saying Open,
+which is how the 2026-08-19 re-evaluation found it.
 
-Extend `findTldrField`'s `line_end` over the bullet's continuation lines
-before returning: from the end of the first line, keep consuming lines while a
-line is non-blank, indented, and does not itself start a new `- ` item or a
-heading. `tldrField` reads the same struct and would then return the whole
-bullet, which suits its caller too — that caller asks "is this still the
-scaffold's placeholder", and a placeholder is one line, so a multi-line value
-is by definition not one.
-
-The helper is pure and lives in `tools/zig/doc_scaffold.zig`, which `build.zig`
-lists in `host_tested_helpers`, so a failing test can be written against it
-without the guest ABI.
+The paragraph that used to sit here suggesting the fix is preserved above in
+spirit: extend from the end of the first line while a line is non-blank,
+indented, and not itself a new `- ` item or heading — which is what shipped.
 
 Note for whoever resolves this record: its own TL;DR bullets are deliberately
 kept to one line each, so closing it does not reproduce the defect.
 
 ## Verification
 
-Run in this checkout on 2026-08-17.
+Of the fix, 2026-08-19: host tests
+`replaceTldrField drops a wrapped bullet's continuation lines` and
+`replaceTldrField stops a wrapped bullet at the next bullet` in
+`tools/zig/doc_scaffold.zig` assert exactly this report's damage shape — a
+wrapped Resolution bullet whose tail used to survive a rewrite — and both run
+green on main (`zig build test`, checked during the 2026-08-19 re-evaluation).
+The `tldrField` reader returns the whole wrapped bullet, covered by the same
+tests.
+
+Of the original diagnosis, run in this checkout on 2026-08-17:
 
 The mechanism was read from `tools/zig/doc_scaffold.zig` at the lines quoted
 under Root cause, not inferred from the output.

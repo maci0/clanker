@@ -4,11 +4,11 @@
 
 - **What failed:** llmChat and the streaming path set ChatParams.max_tokens to agent.max_tokens_per_turn (default 4096). That key is the per-turn input/compaction cap. On a reasoning model the 4096 is spent on reasoning_content, the final reply is length-stopped and empty, and the run dies AnswerTruncatedToEmpty. Escalation run-1787011404 used deepseek-v4-pro configured at 32768 and still requested 4096.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-19. fixed in 1751becb: turnCompletionBudget sends the model's max_tokens as the completion grant and max_tokens_per_turn stays the compaction floor; verified by host test 'turnCompletionBudget uses the model grant, not max_tokens_per_turn'; status was left Open when the fix landed
 
 ## Status
 
-Open.
+Resolved on 2026-08-19. fixed in 1751becb: turnCompletionBudget sends the model's max_tokens as the completion grant and max_tokens_per_turn stays the compaction floor; verified by host test 'turnCompletionBudget uses the model grant, not max_tokens_per_turn'; status was left Open when the fix landed
 
 ## Symptom and impact
 

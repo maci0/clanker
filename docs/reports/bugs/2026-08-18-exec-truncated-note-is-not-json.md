@@ -4,11 +4,11 @@
 
 - **What failed:** writeExecResult adds a truncation note with Stringify.print, which writes raw text, so a search whose stdout exceeds 56 KiB returns invalid JSON. repo_search then writeAlls that blob and the agent warns malformed JSON. Escalation run-1787001820, repo_search query repair, 65148 bytes.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-19. fixed in 1751becb: writeExecResult emits the note via s.write so it is a JSON string; verified by host test 'writeExecResult truncation note is a JSON string' in src/sandbox/host.zig; status was left Open when the fix landed
 
 ## Status
 
-Open.
+Resolved on 2026-08-19. fixed in 1751becb: writeExecResult emits the note via s.write so it is a JSON string; verified by host test 'writeExecResult truncation note is a JSON string' in src/sandbox/host.zig; status was left Open when the fix landed
 
 ## Symptom and impact
 

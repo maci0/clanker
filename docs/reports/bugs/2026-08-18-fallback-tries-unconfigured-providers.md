@@ -4,11 +4,11 @@
 
 - **What failed:** nextFallbackProvider skips unknown names but not a configured provider whose api_key_env is unset. A deepseek ReadFailed then tries openai, which fails MissingApiKey and exhausts the chain. TUI /model already uses unconfiguredReason; the chain does not.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-19. fixed in 1751becb: nextFallbackProvider takes the environ map and skips rows unconfiguredReason rejects; verified by host test 'nextFallbackProvider skips a configured provider that has no credential' in src/agent/loop.zig; status was left Open when the fix landed
 
 ## Status
 
-Open.
+Resolved on 2026-08-19. fixed in 1751becb: nextFallbackProvider takes the environ map and skips rows unconfiguredReason rejects; verified by host test 'nextFallbackProvider skips a configured provider that has no credential' in src/agent/loop.zig; status was left Open when the fix landed
 
 ## Symptom and impact
 

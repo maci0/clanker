@@ -88,21 +88,23 @@ Project agents receive this workflow through the harness prompt and
 
 - [zigLibDir spawns bare zig with no PATH search or environment, always failing](bugs/2026-08-19-zig-lib-dir-never-resolves-in-sandbox.md) — Resolved
 
+- [zig_std returns not-found: zigLibDir runs zig env without the live environment](bugs/2026-08-19-zig-std-missing-environ-map.md) — Resolved
+
 - [improve-self hangs when a provider goes quiet: proposal/plan LLM calls have no deadline](bugs/2026-08-18-improve-engine-llm-calls-have-no-deadline.md) — Resolved
 
 - [improve-self staging tests fail on peers.notifications unreadable-log test](bugs/2026-08-18-improve-self-notifications-test-assertion.md) — Resolved
 
-- [The agent loop sends max_tokens_per_turn as the completion grant](bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md) — Open
+- [The agent loop sends max_tokens_per_turn as the completion grant](bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md) — Resolved
 
-- [recent_commits test fails when a commit subject contains the two characters backslash-n](bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md) — Open
+- [recent_commits test fails when a commit subject contains the two characters backslash-n](bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md) — Resolved
 
-- [The fallback chain attempts providers that have no credentials](bugs/2026-08-18-fallback-tries-unconfigured-providers.md) — Open
+- [The fallback chain attempts providers that have no credentials](bugs/2026-08-18-fallback-tries-unconfigured-providers.md) — Resolved
 
-- [A truncated ck_exec result emits an unquoted note and is not JSON](bugs/2026-08-18-exec-truncated-note-is-not-json.md) — Open
+- [A truncated ck_exec result emits an unquoted note and is not JSON](bugs/2026-08-18-exec-truncated-note-is-not-json.md) — Resolved
 
 - [improve-self stalls re-asking for a granted file too large to include](bugs/2026-08-17-improve-self-stalls-asking-for-too-large-file.md) — Resolved
 
-- [A status change keeps the old text of a multi-line TL;DR bullet](bugs/2026-08-17-status-truncates-a-multi-line-tldr-bullet.md) — Open
+- [A status change keeps the old text of a multi-line TL;DR bullet](bugs/2026-08-17-status-truncates-a-multi-line-tldr-bullet.md) — Resolved
 
 - [clanker commit --yes auto-applies the degraded fallback plan](bugs/2026-08-17-commit-yes-applies-a-degraded-fallback-plan.md) — Resolved
 

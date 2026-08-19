@@ -4,11 +4,11 @@
 
 - **What failed:** The test searches the raw JSON for the two-byte sequence backslash-n, which is meant to catch a trailing newline. A subject that literally mentions \n (improve-self commit 83784944) JSON-encodes as \\n and matches, so zig build test fails on a healthy tool.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-19. fixed in 1751becb: the test parses the tool JSON and asserts the text field holds no raw newline (src/sandbox/runtime.zig), so a subject quoting backslash-n no longer matches; status was left Open when the fix landed
 
 ## Status
 
-Open.
+Resolved on 2026-08-19. fixed in 1751becb: the test parses the tool JSON and asserts the text field holds no raw newline (src/sandbox/runtime.zig), so a subject quoting backslash-n no longer matches; status was left Open when the fix landed
 
 ## Symptom and impact
 
