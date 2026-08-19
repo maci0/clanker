@@ -263,6 +263,8 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator) !void {
     var stdin_file = std.Io.File.stdin();
     var reader = stdin_file.reader(io, read_buf);
     var conn = Connection{};
+    var stdout_file = std.Io.File.stdout();
+    var out_buf: [64 * 1024]u8 = undefined;
     while (true) {
         const raw = reader.interface.takeDelimiter('\n') catch |err| switch (err) {
             error.StreamTooLong => {
@@ -276,8 +278,6 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator) !void {
         const response = try conn.handleLine(gpa, line);
         defer gpa.free(response);
         if (response.len == 0) continue;
-        var stdout_file = std.Io.File.stdout();
-        var out_buf: [64 * 1024]u8 = undefined;
         var writer = stdout_file.writerStreaming(io, &out_buf);
         try writer.interface.writeAll(response);
         try writer.interface.writeByte('\n');
