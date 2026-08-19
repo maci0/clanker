@@ -1775,3 +1775,114 @@ test "testRootCoverageGate names a module whose tests would never run" {
     try std.testing.expect(!result.ok);
     try std.testing.expect(std.mem.find(u8, result.detail, "gate/checks.zig") != null);
 }
+
+/// Every capability a sandboxed WASM guest can reach is a `pub fn ck…` in
+/// `src/sandbox/host.zig` that `src/sandbox/runtime.zig` hands to the zwasm
+/// linker. A host function nobody registers is not a capability waiting to be
+/// granted: it is unreachable. No guest can import it, no descriptor can name
+/// it, and nothing compiles it, so it rots against zwasm API changes in
+/// silence while reading like a live part of the ABI. `zig build` stays green
+/// either way, which is why this is a gate and not something a test can find.
+pub fn sandboxAbiGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    const host_src = dir.readFileAlloc(io, "src/sandbox/host.zig", gpa, .limited(8 << 20)) catch {
+        return .{ .ok = false, .label = "sandbox-abi", .detail = "src/sandbox/host.zig could not be read" };
+    };
+    defer gpa.free(host_src);
+    const runtime_src = dir.readFileAlloc(io, "src/sandbox/runtime.zig", gpa, .limited(8 << 20)) catch {
+        return .{ .ok = false, .label = "sandbox-abi", .detail = "src/sandbox/runtime.zig could not be read" };
+    };
+    defer gpa.free(runtime_src);
+    return scanUnregisteredHostFns(gpa, host_src, runtime_src);
+}
+
+/// The gate's body with both sources passed in, so a test can drive it
+/// without a checkout.
+fn scanUnregisteredHostFns(gpa: std.mem.Allocator, host_src: []const u8, runtime_src: []const u8) !GateResult {
+    const decl = "pub fn ck";
+    var misses: usize = 0;
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+
+    var lines = std.mem.splitScalar(u8, host_src, '\n');
+    while (lines.next()) |line| {
+        // Column zero only: an indented `pub fn ck…` is a method on some
+        // struct, not a host function the linker could ever see.
+        if (!std.mem.startsWith(u8, line, decl)) continue;
+        const name_start = decl.len - "ck".len;
+        const rest = line[name_start..];
+        var end: usize = 0;
+        while (end < rest.len and (std.ascii.isAlphanumeric(rest[end]) or rest[end] == '_')) end += 1;
+        const name = rest[0..end];
+        if (name.len == 0) continue;
+        if (registeredInRuntime(runtime_src, name)) continue;
+        misses += 1;
+        miss_w.print("{s}; ", .{name}) catch {};
+    }
+
+    if (misses == 0) return .{ .ok = true, .label = "sandbox-abi" };
+    // miss_buf is this frame's stack. Same aliasing convention as lintGate
+    // and providerKindLeakGate: detail and stderr share one owned copy, freed
+    // exactly once by deinit.
+    const owned = try std.fmt.allocPrint(
+        gpa,
+        "these host functions are never registered with the zwasm linker, so no guest can reach them; register them in src/sandbox/runtime.zig or delete them: {s}",
+        .{miss_w.buffered()},
+    );
+    return .{ .ok = false, .label = "sandbox-abi", .detail = owned, .stderr = owned };
+}
+
+/// True when `runtime_src` names `host.<name>` as a whole identifier. The
+/// trailing-character check is what keeps `host.ckFs` from matching the
+/// registration of `host.ckFsRead`.
+fn registeredInRuntime(runtime_src: []const u8, name: []const u8) bool {
+    var buf: [128]u8 = undefined;
+    const needle = std.fmt.bufPrint(&buf, "host.{s}", .{name}) catch return true;
+    var from: usize = 0;
+    while (std.mem.find(u8, runtime_src[from..], needle)) |rel| {
+        const at = from + rel;
+        const after = at + needle.len;
+        if (after >= runtime_src.len) return true;
+        const c = runtime_src[after];
+        if (!std.ascii.isAlphanumeric(c) and c != '_') return true;
+        from = at + 1;
+    }
+    return false;
+}
+
+test "registeredInRuntime matches a whole identifier, not a prefix" {
+    const src = "&host.ckFsRead);\n&host.ckLog);\n";
+    try std.testing.expect(registeredInRuntime(src, "ckFsRead"));
+    try std.testing.expect(registeredInRuntime(src, "ckLog"));
+    try std.testing.expect(!registeredInRuntime(src, "ckFs"));
+    try std.testing.expect(!registeredInRuntime(src, "ckDocker"));
+}
+
+test "scanUnregisteredHostFns names an unreachable host function" {
+    const gpa = std.testing.allocator;
+    const host_src =
+        \\pub fn ckLog(caller: *zwasm.Caller) void {}
+        \\pub fn ckOrphan(caller: *zwasm.Caller) u32 {}
+        \\    pub fn ckNested(self: *Foo) void {}
+        \\
+    ;
+    const runtime_src = "try lk.defineFuncCtx(\"env\", \"ck_log\", h, T, &host.ckLog);\n";
+
+    var result = try scanUnregisteredHostFns(gpa, host_src, runtime_src);
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expectEqualStrings("sandbox-abi", result.label);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ckOrphan") != null);
+    // Indented declarations are struct methods, never linker entries.
+    try std.testing.expect(std.mem.find(u8, result.detail, "ckNested") == null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ckLog") == null);
+}
+
+test "sandboxAbiGate passes on the live checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var result = try sandboxAbiGate(gpa, io, std.Io.Dir.cwd());
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}

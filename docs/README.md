@@ -381,6 +381,11 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   runs test blocks only in the root file, so a module missing from that list
   compiles and its tests never run; `zig build test` stays green either way,
   which is why this is a gate and not a convention.
+- `sandbox-abi`: every `pub fn ck…` in `src/sandbox/host.zig` is registered
+  with the zwasm linker in `src/sandbox/runtime.zig`. An unregistered one is
+  not a capability waiting to be granted, it is unreachable: no guest can
+  import it and nothing compiles it, so it rots against zwasm API changes in
+  silence while reading like a live part of the ABI.
 - plus `zig fmt`, a lint check, a release-contract check (CHANGELOG,
   RELEASES.md, and README links stay aligned with `build.zig.zon`), and — in
   the improve loop — the capability

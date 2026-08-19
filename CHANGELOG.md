@@ -7,6 +7,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker gate` runs a `sandbox-abi` gate: every `pub fn ck…` in
+  `src/sandbox/host.zig` must be registered with the zwasm linker in
+  `src/sandbox/runtime.zig`. An unregistered host function is not a
+  capability waiting to be granted, it is unreachable: no guest can import
+  it, no descriptor can name it, and nothing compiles it, so it rots against
+  zwasm API changes while still reading like a live part of the ABI.
+  `zig build` stays green either way, which is why this is a gate.
+
 - `gauntlet` tool: cycles through review prompts from two sources —
   this project's own `docs/prompts/*-review.md`, and a local mirror of
   github.com/maci0/gauntlet's `prompts/*-review.md` — entirely
