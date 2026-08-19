@@ -224,7 +224,7 @@ repeat_tool_exclude = ["todo_add", "todo_close", "todo_list"]
 # Consecutive identical calls after which the turn fails instead of being
 # reminded again. The reminders above are advice; this is the terminal
 # counterpart. 0 disables it.
-repeat_tool_abort_threshold = 0
+repeat_tool_abort_threshold = 5
 # Deadlines on the model call itself. Without them a provider that accepts the
 # connection and then says nothing hangs the run forever: std.http.Client has
 # no read timeout, and no retry fires because a call that never returns never
@@ -282,7 +282,7 @@ repl_exec_allow = []
 # allow/deny. Only the serve path reads it today, so `always` behaves like
 # `browser` until the REPL grows a prompt for it. Runs with no human channel
 # (headless, improve, sub-agents) are never gated whatever this says.
-# confirm_writes = "never"
+confirm_writes = "browser"
 #
 # Ordered providers tried after the selected one cannot serve a request.
 # Either spelling works; a bare string becomes a one-entry chain.
@@ -456,6 +456,18 @@ buffer_bytes = 4096
 name = "no-such-tool"
 pattern = "unknown tool"
 inject = "That tool does not exist. List the tools you have and pick one."
+max_fires = 1
+
+[[ttsr.rules]]
+name = "invalid-schema"
+pattern = "invalid"
+inject = "Re-check your available tool schemas before retrying. Verify the exact parameter names and types each tool expects."
+max_fires = 1
+
+[[ttsr.rules]]
+name = "zig-compile-error"
+pattern = "error:*expected"
+inject = "That is a Zig compile error. Read the full diagnostic, identify the syntax or type issue it names, and correct the source before retrying."
 max_fires = 1
 
 # Persistent eval kernels: a long-lived subprocess an eval can talk to instead

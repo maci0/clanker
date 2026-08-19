@@ -27,12 +27,15 @@ const Request = struct {
 pub const Connection = struct {
     initialized: bool = false,
     session_counter: u32 = 0,
-    sessions: std.StringArrayHashMapUnmanaged(void) = .empty,
+    sessions: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
     prompt_busy: std.StringArrayHashMapUnmanaged(bool) = .empty,
 
     pub fn deinit(self: *Connection, gpa: std.mem.Allocator) void {
         var it = self.sessions.iterator();
-        while (it.next()) |kv| gpa.free(kv.key_ptr.*);
+        while (it.next()) |kv| {
+            gpa.free(kv.key_ptr.*);
+            gpa.free(kv.value_ptr.*);
+        }
         self.sessions.deinit(gpa);
         self.prompt_busy.deinit(gpa);
     }
@@ -149,9 +152,7 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
         .string => |s| s,
         else => return responseError(alloc, id, -32602, "session/prompt requires sessionId"),
     };
-    if (conn.sessions.get(sid) == null) {
-        return responseError(alloc, id, -32602, "unknown sessionId");
-    }
+    const cwd = conn.sessions.get(sid) orelse return responseError(alloc, id, -32602, "unknown sessionId");
     const busy = conn.prompt_busy.getPtr(sid) orelse return responseError(alloc, id, -32602, "unknown sessionId");
     if (busy.*) {
         return responseError(alloc, id, -32603, "session already has an in-flight prompt");
@@ -159,7 +160,10 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     const prompt_val = obj.get("prompt") orelse return responseError(alloc, id, -32602, "session/prompt requires prompt");
     const prompt_text = (try promptText(arena, prompt_val)) orelse
         return responseError(alloc, id, -32602, "session/prompt requires prompt");
-    _ = prompt_text;
+    if (std.mem.trim(u8, prompt_text, " \t\r\n").len == 0) {
+        return responseError(alloc, id, -32602, "prompt text must not be empty or whitespace-only");
+    }
+    const prompt_len: u32 = if (prompt_text.len > std.math.maxInt(u32)) std.math.maxInt(u32) else @intCast(prompt_text.len);
     // v1 stub: report end_turn without running the model; real Agent wiring lands next
     // turn once sessions own an Agent + cwd. This already satisfies the ACP shape
     // (sessionId must exist, no concurrent prompt) and is testable without a provider.
@@ -173,6 +177,10 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     try s.beginObject();
     try s.objectField("stopReason");
     try s.write("end_turn");
+    try s.objectField("promptLength");
+    try s.write(prompt_len);
+    try s.objectField("cwd");
+    try s.write(cwd);
     try s.endObject();
     try s.endObject();
     return out.toOwnedSlice();
@@ -299,8 +307,6 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator) !void {
         const response = try conn.handleLine(gpa, line);
         defer gpa.free(response);
         if (response.len == 0) continue;
-        var stdout_file = std.Io.File.stdout();
-        var out_buf: [64 * 1024]u8 = undefined;
         var writer = stdout_file.writerStreaming(io, &out_buf);
         try writer.interface.writeAll(response);
         try writer.interface.writeByte('\n');
