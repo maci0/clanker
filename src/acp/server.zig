@@ -137,20 +137,8 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
         return responseError(alloc, id, -32603, "session already has an in-flight prompt");
     }
     const prompt_val = obj.get("prompt") orelse return responseError(alloc, id, -32602, "session/prompt requires prompt");
-    const prompt_text: []const u8 = switch (prompt_val) {
-        .string => |s| s,
-        .array => |arr| blk: {
-            var buf: std.ArrayList(u8) = .empty;
-            for (arr.items) |item| {
-                if (item == .object) if (item.object.get("text")) |t| if (t == .string) {
-                    if (buf.items.len > 0) try buf.append(arena, '\n');
-                    try buf.appendSlice(arena, t.string);
-                };
-            }
-            break :blk buf.items;
-        },
-        else => return responseError(alloc, id, -32602, "session/prompt requires prompt"),
-    };
+    const prompt_text = (try promptText(arena, prompt_val)) orelse
+        return responseError(alloc, id, -32602, "session/prompt requires prompt");
     _ = prompt_text;
     // v1 stub: report end_turn without running the model; real Agent wiring lands next
     // turn once sessions own an Agent + cwd. This already satisfies the ACP shape
@@ -168,6 +156,26 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     try s.endObject();
     try s.endObject();
     return out.toOwnedSlice();
+}
+
+/// Normalizes ACP prompt payloads to plain text. String prompts pass through;
+/// content-block arrays concatenate their `text` entries with newlines. Returns
+/// null for any other shape, leaving the caller to report the typed error.
+fn promptText(arena: std.mem.Allocator, value: json.Value) !?[]const u8 {
+    return switch (value) {
+        .string => |s| s,
+        .array => |arr| blk: {
+            var buf: std.ArrayList(u8) = .empty;
+            for (arr.items) |item| {
+                if (item == .object) if (item.object.get("text")) |t| if (t == .string) {
+                    if (buf.items.len > 0) try buf.append(arena, '\n');
+                    try buf.appendSlice(arena, t.string);
+                };
+            }
+            break :blk buf.items;
+        },
+        else => null,
+    };
 }
 
 fn protocolVersion(params: ?json.Value) ?u32 {
