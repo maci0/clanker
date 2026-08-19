@@ -279,6 +279,10 @@ def build() -> dict:
         m = re.fullmatch(r"r(\d+)\s*(.*)", version_cell)
         if m:
             version, kind = m.group(1), m.group(2).strip()
+            # three.js releases are named r180 but npm versions are 0.180.0;
+            # a purl like pkg:npm/three@180 resolves to nothing on the registry.
+            if name == "three":
+                version = f"0.{version}.0"
         else:
             m = re.fullmatch(r"([0-9]+\.x|[0-9][0-9A-Za-z._]*)\s*(.*)", version_cell)
             if m:
