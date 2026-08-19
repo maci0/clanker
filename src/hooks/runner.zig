@@ -42,6 +42,11 @@ pub fn run(
                     decoded.decision = .deny;
                     decoded.reason = try arena.dupe(u8, std.mem.trim(u8, outcome.stderr, " \t\r\n"));
                 }
+                // Copy decoded strings out of outcome.stdout before the
+                // outcome is deinitialized below; decode's reason/context
+                // slices point into that buffer.
+                if (decoded.reason.len > 0) decoded.reason = try arena.dupe(u8, decoded.reason);
+                if (decoded.context.len > 0) decoded.context = try arena.dupe(u8, decoded.context);
                 if (@intFromEnum(decoded.decision) > @intFromEnum(result.decision)) {
                     result.decision = decoded.decision;
                     result.reason = decoded.reason;
