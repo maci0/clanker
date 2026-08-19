@@ -1201,7 +1201,7 @@ Fields:
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
-- `modules`: feature on/off flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`). All default to `true` except `acp` and `mesh`, which default `false`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
+- `modules`: feature on/off flags (`mcp`, `mcp_client`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`). All default to `true` except `acp`, `mesh`, and `mcp_client`, which default `false`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
 - `improve`: settings for self-improvement.
   - `max_context_bytes`: byte budget for the proposal context slice.
   - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).
@@ -1213,7 +1213,7 @@ Fields:
   - `max_consecutive_test_only`: how many test-only changes may land in a row before one must touch behavior (default 3).
   - `max_cache_bytes`: cap on the build cache before it is dropped, applied at the start of `improve-self` and of `clanker gate` — the two commands that compile repeatedly.
 - `serve`: what `clanker serve` binds — `host` (default `127.0.0.1`), `webui_port` (default `17921`), and `serve_as` (an array of hostnames the server may present itself as). `proxy` enables the OpenAI/Anthropic compatibility surface; `proxy_port` can put it on a dedicated listener, `proxy_token_env` names its optional local token, `proxy_aliases` maps client-facing model names to configured models, and `proxy_first_byte_timeout_s`/`proxy_idle_timeout_s` tune its 300s/60s upstream deadlines (`0` disables either). Field-merged, and the weakest of three layers: `CLANKER_HOST`/`CLANKER_WEBUI_PORT`/`CLANKER_PROXY_PORT` override it, and `--host`/`--webui-port`/`--serve-as`/`--proxy`/`--no-proxy`/`--proxy-port` override those. See [Binding and the trust model](#binding-and-the-trust-model).
-- `tui`: REPL decoration. `mascot` accepts `off`, `type`, `loop`, `place`, or `input`; `mascot_size` accepts `mini`, `xsmall`, `small`, `medium`, or `large`; and `mascot_facing` accepts `left` or `right`. The detailed behavior and terminal sizes are in [docs/configuration.md](configuration.md#tui).
+- `tui`: REPL decoration. `mascot` accepts `off`, `type`, `loop`, `place`, or `input`; `mascot_size` accepts `mini`, `xsmall`, `small`, `medium`, or `large`; and `mascot_facing` accepts `default` or `inverted`. The detailed behavior and terminal sizes are in [docs/configuration.md](configuration.md#tui).
 - `advisor`: optional fail-open post-turn critique (`enabled`, `provider`, `model`, `scope`, `context_turns`, `timeout_ms`).
 - `ttsr`: optional turn-time self-repair (`max_retries_per_turn`, `buffer_bytes`, and `[[ttsr.rules]]`).
 - `kernel`: persistent eval-kernel controls (`enabled`, `max_output_bytes`, `cleanup_delay_ms`); it remains off by default because a kernel is an unsandboxed subprocess.

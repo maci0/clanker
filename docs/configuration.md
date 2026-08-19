@@ -79,6 +79,9 @@ unconfigured one.
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
 | `rpm` | int | Self-imposed requests per minute for every model on this provider. Omit or `0` = no cap. A model's own `rpm` is a separate cap on that name, not an override. |
+| `tool_schema` | string | Wire shape for tool calls: `openai` (default) or `none` (endpoint with no tool support). A model entry can override. |
+| `thinking_schema` | string | How the reasoning knob is encoded on the wire: `reasoning_effort` (default, the flat OpenAI field), `reasoning` (OpenRouter-style `{"reasoning":{"effort":...}}`), `thinking` (GLM/Zhipu `{"thinking":{"type":"enabled"}}`), or `none` (omit every reasoning field for endpoints that 400 on unknown keys). A model entry can override. |
+| `reasoning_format` | string | How reasoning is read *out* of a response: `auto` (default, the provider's native field), `think_tag` (extract a leading `<think>...</think>` block from the content), or `none` (discard). The same model can differ by host, so this is the parse-side counterpart of `thinking_schema`. A model entry can override. |
 | `project`, `location`, `service_account_file` | string | `vertex` and `vertex_anthropic` (see below). `service_account_file` is optional when gcloud ADC is present. |
 | `api_version` | string | `azure_openai` only. The `api-version` query. Empty uses `2024-10-21`. |
 
@@ -256,6 +259,11 @@ alias can keep its own `max_tokens` while inheriting the SKU's window.
 | `temperature` | float | unset | Sampling temperature. |
 | `top_p` | float | unset | Nucleus cutoff; best set *instead of* temperature, not alongside. |
 | `reasoning_effort` | string | unset | For reasoning models, sent as `reasoning_effort` on the OpenAI-compatible wire (Ollama, DeepSeek, OpenAI, …). One of `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`; keeps chain-of-thought short so `content` stays populated. Unset omits the field; `"none"` disables reasoning explicitly. Invalid values are rejected at load. `[agent] reasoning_effort` (or the CLI's `--reasoning-effort`) overrides it. |
+| `base_url` | string | unset | Endpoint override for this model only, replacing the provider's `base_url` — for URL building only, auth stays the provider's. Use it when one SKU is routed through a different host than its siblings. |
+| `path` | string | unset | Endpoint path override for this model only, replacing the provider's `path`. |
+| `tool_schema` | string | provider's, else `openai` | Wire shape for tool calls: `openai` or `none`. Overrides the provider's value for this model. |
+| `thinking_schema` | string | provider's, else `reasoning_effort` | How the reasoning knob is encoded on the wire: `reasoning_effort`, `reasoning`, `thinking`, or `none`. Overrides the provider's value for this model. |
+| `reasoning_format` | string | provider's, else `auto` | How reasoning is read out of a response: `auto`, `think_tag`, or `none`. Overrides the provider's value for this model. |
 | `display` | string | models.dev `name` | UI label when the wire id is not what a person calls it (e.g. `kimi-k3` shown as `moonshotai/kimi-k3`). Display only. Omit to take the snapshot. |
 | `cost_per_1m_input` | float | models.dev `cost.input` | USD per 1M input tokens, for run cost accounting. Omit to take the snapshot. |
 | `cost_per_1m_output` | float | models.dev `cost.output` | USD per 1M output tokens. Omit to take the snapshot. |
@@ -430,8 +438,8 @@ retry, and it retries somewhere else. A stream that already delivered tokens
 fails outright rather than falling back, since the caller has seen part of an
 answer.
 
-Both default to `0`, which is unbounded and preserves the historical behaviour.
-The shipped `config.toml` sets real values.
+Both default to bounded values (15 and 2 minutes, the same numbers the shipped
+`config.toml` spells out); `0` is the explicit opt-out and is unbounded.
 
 ## `[hooks]`
 
@@ -500,9 +508,10 @@ unsandboxed subprocess (ADR 0010 / 0011 carve-out). Do not flip
 
 ## `[modules]`
 
-Feature toggles, all boolean. All default `true` except `acp` and `mesh`, which
-default `false`. Turning
-one off removes its tools, endpoints, and prompt surface: `mcp`, `peers`,
+Feature toggles, all boolean. All default `true` except `acp`, `mesh`, and
+`mcp_client`, which default `false`. Turning
+one off removes its tools, endpoints, and prompt surface: `mcp`, `mcp_client`,
+`peers`,
 `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`,
 `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`,
 `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`.
@@ -700,6 +709,20 @@ A second process on the same host uses another `id`, `listen_port`,
   mascot_size = "small"
   mascot_speed = 6
   ```
+- **`[mcp_servers.<name>]`** — external MCP servers, parsed and validated at
+  load and manageable from the web UI; the client bridge that actually
+  connects to them is gated behind `modules.mcp_client` (off by default).
+  `transport` is `"stdio"` (spawn `command`, with optional `args`/`env`/`cwd`)
+  or `"http"` (streamable HTTP at `url`, with optional `headers`);
+  `tool_call_timeout_ms` defaults to `60000`. `env` entries are
+  `"NAME=value"` strings and `headers` entries `"Name: value"` — the value
+  half carries a token, so the whole-file `config` dump (and
+  `ck_harness_config`) redacts those values while keeping the names.
+- **`[notify]`** — peer notifications from the improve loop: `on` (default
+  `true`) and `topic` (default `"clanker"`). When a proposal is promoted, the
+  engine sends a `notify` message with this topic to every `[[peers]]` entry
+  via the sandboxed `peers` tool; each reachable peer records it in its own
+  `state/notifications.jsonl` through `POST /api/notify`.
 
 ## Minimal working config
 

@@ -41,7 +41,7 @@ author wrote, which is the one failure mode a version key exists to prevent.
 |---|---|---|
 | `name` | string | What the model writes to call the tool. Lowercase letters, digits and underscores only. Also the registry key, so it must be unique across the tools directory |
 | `description` | string | Human-facing description — what a person reads in the web UI's Tools view or the REPL's tool detail. The model only ever sees it as the loader's fallback when `llm_description` is absent |
-| `llm_description` | string | Optional compressed variant of `description`, sent to the model instead of it. Its first line (up to 160 characters) is what the catalog shows, and the catalog line is paid on nearly every request, so a long human-facing `description` costs tokens every turn; this is where you keep the short one. Omitted, the loader falls back to `description`, so an unmigrated manifest still works — just not as cheaply |
+| `llm_description` | string | Optional compressed variant of `description`, sent to the model instead of it. Its first line (up to 160 bytes) is what the catalog shows, and the catalog line is paid on nearly every request, so a long human-facing `description` costs tokens every turn; this is where you keep the short one. Omitted, the loader falls back to `description`, so an unmigrated manifest still works — just not as cheaply |
 | `prompt_guidance` | string | Optional binding usage rules for this tool. Injected into the system prompt's `## Tool guidance` section (one `### name` block per declaring tool, ahead of the catalog) whenever the tool is enabled and non-internal, and echoed as `guidance` in the `load_tools` reply so a model that just loaded the tool reads the rules at the moment of use. For workflow constraints the model must follow — the descriptions say what the tool does, this says how it must be used |
 | `wasm` | string | The module. See [Where the module lives](#where-the-module-lives) |
 
@@ -98,7 +98,7 @@ itself is.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `internal` | bool | `false` | Hidden from the model's tool catalog. Used by the `cmd_*` slash commands, the web UI, and transforms — reachable through a REPL command or an HTTP route, never chosen by the agent |
-| `enabled` | bool | `true` | The manifest's own default on/off state. Ships `false` for anything that spends tokens unasked. `state/plugins.json` overrides it either way |
+| `enabled` | bool | `true` | The manifest's own default on/off state. Ships `false` for anything that spends tokens unasked. `state/plugins.json` overrides it either way — except an `internal` tool with no `transform`, which cannot be toggled and keeps its shipped state |
 | `sequential` | bool | `false` | Never runs on the parallel worker pool. For tools over host-shared state (the chatroom log) — each call waits its turn on the main thread |
 | `check` | bool | `false` | This tool answers pass/fail about something (a gate, an eval, a lint). Its verdict is recorded in the run graph as a check |
 | `statusline` | bool | `false` | Contributes a segment to the REPL status line, invoked with empty input after each turn. Pair with `"internal": true` |
@@ -109,12 +109,15 @@ itself is.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `config` | object | `{}` | Free-form per-plugin settings, handed to the guest verbatim through `ck_config` |
+| `config` | object | `{}` | Free-form per-plugin settings, handed to the guest through `ck_config`. Not verbatim for every tool: an `exec_allow` tool gets a harness-generated exec policy in place of its own config, and a `kanban_*` tool in a workspace gets `room` injected — see below |
 | `config_editable` | string[] | `[]` | Which `config` keys may be changed at runtime, from the web UI or `state/plugin_config.json` |
 
 The harness reads exactly three keys out of `config` for itself — `provider`,
 `model` and `max_tokens` — to aim `ck_llm` at a specific backend. Everything
-else reaches the guest untouched.
+else reaches the guest untouched, with two exceptions: a tool with `exec_allow`
+has its whole `config` replaced by the harness's exec policy (`git_remote_ops`,
+`exec_pattern_allow`), and a `kanban_*` tool in a workspace gets
+`room: "ws:<id>"` injected with its own keys kept.
 
 `max_tokens` is the grant, and a guest may only lower it (`clampCkLlmMaxTokens`
 takes the smaller of the request and the grant), never raise it: otherwise a
@@ -144,7 +147,7 @@ and ignores the completion entirely, and `rlm`, `subagent` and `swarm` reach a
 model through `ck_subagent`/`ck_swarm`, whole agent turns the harness budgets.
 
 Editability is opt-in per key on purpose. A plugin's config is often
-structural, not tunable: the nine `chat_*` descriptors share one `chat.wasm` and
+structural, not tunable: the ten `chat_*` descriptors share one `chat.wasm` and
 select their behaviour with `"op"`, so letting a machine-local override reach
 that key would turn `chat_send` into `chat_rooms`. Only the tool knows which of
 its settings are safe to change, so only the tool declares them.
