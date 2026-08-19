@@ -358,6 +358,14 @@ pub fn build(b: *std.Build) void {
     // dependency belongs here so the same holds for anyone typing the command
     // by hand. Declared after tools_step exists, further down.
 
+    // -------------------------------------------------------------- fmt gate
+    // `zig build fmt`: format-check the checkout without the agent loop or an
+    // API key. Uses the interpreter running this build (b.graph.zig_exe), so
+    // no PATH lookup and no version drift.
+    const fmt_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "--check" });
+    const fmt_step = b.step("fmt", "Format-check all Zig source");
+    fmt_step.dependOn(&fmt_cmd.step);
+
     // ------------------------------------------------------- wasm tool builds
     // `zig build tools` compiles every guest tool under tools/zig/ (lib.zig
     // and the host-tested helpers listed above are skipped) into a
