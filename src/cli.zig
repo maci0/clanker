@@ -7159,7 +7159,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         if (connectionSawRequest(received_any)) {
             const elapsed_ns = started_at.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
             const elapsed_ms: i128 = @divTrunc(elapsed_ns, std.time.ns_per_ms);
-            recordHttpRequest(request_status, @intCast(@max(elapsed_ms, 0)));
+            recordHttpRequest(io, request_status, @intCast(@max(elapsed_ms, 0)));
             if (completionLogLevel(request_path, request_status)) |level| {
                 log.log(level, "http request complete method={s} path={s} status={d} duration_ms={d}", .{ request_method, request_path, request_status, elapsed_ms });
             }
@@ -7419,7 +7419,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             request_keep_alive = false;
             // serveSse writes its own response bytes, so it -- not `respond` --
             // is what knows this request's status.
-            request_status = live.serveSse(stream.socket.handle, live.topicsFromTarget(target));
+            request_status = live.serveSse(io, stream.socket.handle, live.topicsFromTarget(target));
         } else if (is_live_publish) {
             handleLivePublish(gpa, body, stream);
         } else if (is_mesh_map) {
@@ -8240,7 +8240,7 @@ fn completionLogLevel(path: []const u8, status: u16) ?log.Level {
     return null;
 }
 
-fn recordHttpRequest(status: u16, duration_ms: u64) void {
+fn recordHttpRequest(io: std.Io, status: u16, duration_ms: u64) void {
     _ = http_requests_total.fetchAdd(1, .monotonic);
     _ = http_latency_total_ms.fetchAdd(duration_ms, .monotonic);
     if (status == 0 or status >= 500) _ = http_errors_total.fetchAdd(1, .monotonic);
@@ -8249,7 +8249,7 @@ fn recordHttpRequest(status: u16, duration_ms: u64) void {
     if (duration_ms <= 100) _ = http_latency_le_100ms.fetchAdd(1, .monotonic);
     if (duration_ms <= 1000) _ = http_latency_le_1s.fetchAdd(1, .monotonic);
     if (duration_ms <= 10_000) _ = http_latency_le_10s.fetchAdd(1, .monotonic);
-    publishMetricsSnapshot();
+    publishMetricsSnapshot(io);
 }
 
 var last_metrics_pub_ms = std.atomic.Value(i64).init(0);
@@ -8321,10 +8321,8 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     }
 }
 
-fn publishMetricsSnapshot() void {
-    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
-    _ = std.c.clock_gettime(.REALTIME, &ts);
-    const now: i64 = @intCast(@as(i128, ts.sec) * 1000 + @divTrunc(@as(i128, ts.nsec), 1_000_000));
+fn publishMetricsSnapshot(io: std.Io) void {
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
     const prev = last_metrics_pub_ms.load(.monotonic);
     if (now - prev < 1000) return;
     if (last_metrics_pub_ms.cmpxchgStrong(prev, now, .monotonic, .monotonic) != null) return;

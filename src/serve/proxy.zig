@@ -691,7 +691,9 @@ const Watch = struct {
 };
 
 /// Monotonic now in ns (std.time.nanoTimestamp is gone in 0.16; the Io
-/// clock is the one source of time this codebase uses).
+/// clock is the one source of time this codebase uses, the residual posix
+/// exceptions being the pthread_cond_timedwait deadline reads in cli.zig /
+/// tui/repl.zig, the mascot's presentation pacing, and log-line timestamps).
 fn nowNs(io: std.Io) i64 {
     // i64 rather than the clock's i96: atomics cap at 64 bits, and 2^63 ns
     // of uptime is ~292 years.

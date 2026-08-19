@@ -3606,7 +3606,7 @@ fn writeLockHolder(sb: *Sandbox, file: std.Io.File, target: []const u8) void {
     cas_lock_record.render(
         &buf,
         @as(u32, @intCast(std.c.getpid())),
-        @as(i64, @intCast(log.unixMilliseconds())),
+        @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(sb.io, .real).nanoseconds, std.time.ns_per_ms))),
         sb.tool_self_name,
         target,
     );
@@ -3706,7 +3706,7 @@ const cas_lock_sweep_interval_ms: i64 = 60 * 60 * 1000;
 /// write, and no failure here may fail that write.
 fn sweepAgedLocks(sb: *Sandbox, state_base: std.Io.Dir, dir: []const u8) void {
     const io = sb.io;
-    const now: i64 = @intCast(log.unixMilliseconds());
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
 
     var d = state_base.openDir(io, dir, .{ .iterate = true }) catch return;
     defer d.close(io);
@@ -7468,7 +7468,7 @@ test "a CAS write sweeps aged lock files and keeps fresh or held ones" {
     const io = fixture.io();
     try fixture.tmp.dir.createDirPath(io, "state/locks");
 
-    const now: i64 = @intCast(log.unixMilliseconds());
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
     const aged_ms = now - 13 * 60 * 60 * 1000;
     const aged = "state/locks/" ++ "0" ** 64 ++ ".lock";
     const fresh = "state/locks/" ++ "1" ** 64 ++ ".lock";
@@ -7523,7 +7523,7 @@ test "a recordless lock file is swept once settled, never while fresh or held" {
     }
     try fixture.tmp.dir.writeFile(io, .{ .sub_path = garbage, .data = "not a record at all\n" });
 
-    const now: i64 = @intCast(log.unixMilliseconds());
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
     const old_ns: i128 = @as(i128, now - 2 * 60 * 60 * 1000) * std.time.ns_per_ms;
     for ([_][]const u8{ settled, held, garbage }) |p| {
         try fixture.tmp.dir.setTimestamps(io, p, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = @intCast(old_ns) } } });
@@ -7555,7 +7555,7 @@ test "the lock sweep is rate limited by its marker, not run on every CAS write" 
     try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&sb, fixture.tmp.dir, "docs/one.md", "", "1"));
     _ = try fixture.tmp.dir.statFile(io, "state/locks/" ++ cas_lock_sweep_marker, .{});
 
-    const now: i64 = @intCast(log.unixMilliseconds());
+    const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
     const aged = "state/locks/" ++ "3" ** 64 ++ ".lock";
     var rec: [cas_lock_record.record_len]u8 = undefined;
     cas_lock_record.render(&rec, 1, now - 13 * 60 * 60 * 1000, "reports", "docs/gone.md");

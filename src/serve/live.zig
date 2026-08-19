@@ -229,14 +229,13 @@ const poll_dead: i16 = poll_hangup | std.posix.POLL.HUP | std.posix.POLL.ERR | s
 /// keepalive ping -- and the web UI opens two streams per page load (a probe
 /// fetch it cancels, then the EventSource), so reloads stacked up dead slots.
 /// Returns true when the peer is gone. Residual posix: raw-fd SSE push bus.
-fn idleTickSawHangup(fd: std.posix.fd_t) bool {
+fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
     var pfd = [1]std.posix.pollfd{.{ .fd = fd, .events = poll_hangup, .revents = 0 }};
     // poll retries EINTR itself, so what is left is NetworkDown /
     // SystemResources / Unexpected. None of those prove the peer is gone;
     // pace the tick on the clock instead and look again next time round.
     const ready = std.posix.poll(&pfd, 50) catch {
-        const ts: std.posix.timespec = .{ .sec = 0, .nsec = 50 * std.time.ns_per_ms };
-        _ = std.c.nanosleep(&ts, null);
+        std.Io.sleep(io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake) catch {};
         return false;
     };
     return ready > 0 and (pfd[0].revents & poll_dead) != 0;
@@ -251,7 +250,7 @@ fn idleTickSawHangup(fd: std.posix.fd_t) bool {
 /// `request_status`: a subscription that ran to a client hangup is an ordinary
 /// 200, and leaving the status at 0 logged every one of them at ERROR and
 /// counted it in `/api/metrics`' `http.errors_total`.
-pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) u16 {
+pub fn serveSse(io: std.Io, fd: std.posix.fd_t, topics: []const u8) u16 {
     const id = subscribe(parseTopics(topics)) orelse {
         const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
         raw_http.writeAll(fd, body) catch {};
@@ -269,7 +268,7 @@ pub fn serveSse(fd: std.posix.fd_t, topics: []const u8) u16 {
             idle = 0;
             continue;
         }
-        if (idleTickSawHangup(fd)) return 200;
+        if (idleTickSawHangup(io, fd)) return 200;
         idle += 1;
         if (idle >= 300) {
             raw_http.writeAll(fd, ": ping\n\n") catch return 200;
