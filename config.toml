@@ -224,7 +224,7 @@ repeat_tool_exclude = ["todo_add", "todo_close", "todo_list"]
 # Consecutive identical calls after which the turn fails instead of being
 # reminded again. The reminders above are advice; this is the terminal
 # counterpart. 0 disables it.
-repeat_tool_abort_threshold = 0
+repeat_tool_abort_threshold = 5
 # Deadlines on the model call itself. Without them a provider that accepts the
 # connection and then says nothing hangs the run forever: std.http.Client has
 # no read timeout, and no retry fires because a call that never returns never
