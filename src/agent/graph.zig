@@ -121,6 +121,7 @@ pub const Graph = struct {
                 // successful attempt actually ran.
                 last.arguments = node.arguments;
                 last.output = node.output;
+                last.detail = node.detail;
                 return;
             }
         }
@@ -256,11 +257,12 @@ test "a repeat in a later iteration collapses and reports the latest iteration" 
     // ultimately ran at. Summed duration/tokens are already covered above;
     // this pins the iteration bookkeeping that a naive collapse could get
     // wrong (reporting the first attempt's iteration).
-    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "gate" });
-    try g.add(gpa, .{ .kind = .tool, .iteration = 2, .label = "gate" });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 1, .label = "gate", .detail = "first" });
+    try g.add(gpa, .{ .kind = .tool, .iteration = 2, .label = "gate", .detail = "second" });
     try std.testing.expectEqual(@as(usize, 1), g.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 2), g.nodes.items[0].repeats);
     try std.testing.expectEqual(@as(u32, 2), g.nodes.items[0].iteration);
+    try std.testing.expectEqualStrings("second", g.nodes.items[0].detail);
 }
 
 test "consecutive final nodes are never collapsed" {
