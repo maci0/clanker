@@ -252,7 +252,7 @@ fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
 /// counted it in `/api/metrics`' `http.errors_total`.
 pub fn serveSse(io: std.Io, fd: std.posix.fd_t, topics: []const u8) u16 {
     const id = subscribe(parseTopics(topics)) orelse {
-        const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
+        const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 48\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
         raw_http.writeAll(fd, body) catch {};
         return 503;
     };
