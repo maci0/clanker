@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [schedule list rendered rows after the first as garbage from a freed buffer](bugs/2026-08-19-schedule-list-second-row-garbled.md) — Resolved
+
 - [A capped scheduled run takes the whole run-due sweep down with it](bugs/2026-08-19-schedule-sweep-dies-with-capped-entry.md) — Resolved
 
 - [The UnknownProvider hint pointed at config.toml although providers merge from config.toml + config.local.toml](bugs/2026-08-19-unknownprovider-hint-names-only-config-toml.md) — Resolved
@@ -201,6 +203,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [zig build test crashed once with an ISCONN panic in the peers connect path](investigations/2026-08-19-peers-connect-isconn-panic.md) — Investigating
+
 - [google-vertex-anthropic returns HTTP 400 on every request, blocking improve-self](investigations/2026-08-19-vertex-anthropic-400.md) — Resolved
 
 - [zig build test intermittently hangs forever in the bounded-chat abort test](investigations/2026-08-18-bounded-chat-abort-test-hangs.md) — Resolved
