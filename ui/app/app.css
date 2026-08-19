@@ -26,20 +26,29 @@
   --fg: #1b1c18;
   --fg-muted: #4f534b;
 
-  --accent: #0b57d0;
-  --accent-dim: #0b57d014;
-  --accent-text: #0b57d0;
+  /* Operator action blue and the IEC 60073 signal colours, as RAL Classic
+     readings — the same enamels as the card covers and chat hues, not a
+     framework ramp. The interactive blue used to be Material's #0b57d0 while
+     RAL 5017 traffic blue sat two dozen lines below it in --card-blue, and
+     the lamps drew Tailwind's red-700/amber-700/green-600; a cabinet whose
+     whole argument is that one blue means one thing cannot carry two blues. */
+  --accent: #1d5c9e;    /* RAL 5017 traffic blue */
+  --accent-dim: #1d5c9e14;
+  --accent-text: #1d5c9e;
   --on-accent: #ffffff;
   --ok: #117a3a;
-  --ok-fill: #16a34a;
+  --ok-fill: #2c6b34;   /* RAL 6002 leaf green */
   /* Goals and jumps are operator action: same blue as the actuators. */
   --violet: var(--accent);
   --violet-text: var(--accent-text);
-  --danger: #b91c1c;
+  --danger: #a72920;    /* RAL 3001 signal red */
   --on-danger: #ffffff;
   --scrim: rgba(27, 28, 24, 0.32);
-  --warn: #b45309;
-  --warn-text: #92400e;
+  /* Golden yellow is the abnormal lamp; on the day face it is darkened so
+     white legend text on it still clears 4.5, and the text reading darker
+     still for its own 4.5 on the panel. */
+  --warn: #8a6d00;      /* RAL 1004 golden yellow, darkened */
+  --warn-text: #6b5200; /* RAL 1004, darker reading */
   /* Code wells stay in the page's luminance family so hljs tokens
      (--fg / --ok / --accent-text / --warn-text) keep contrast. A
      GitHub-dark well on a light page made every token unreadable. */
@@ -249,19 +258,21 @@
     --rule: #353934;
     --fg: #e8eae5;
     --fg-muted: #a3aaa1;
-    --accent: #7aa7ff;
+    /* Night readings of the same RAL signals — each enamel tinted for the
+       cabinet interior, the derivation the sender hues below show. */
+    --accent: #7aa7ff;  /* RAL 5017 traffic blue, tinted */
     --accent-dim: #7aa7ff1f;
     --accent-text: #8fb5ff;
     --on-accent: #171916;
-    --ok: #4ade80;
-    --ok-fill: #22c55e;
+    --ok: #a0d8a7;      /* RAL 6002 leaf green, tinted */
+    --ok-fill: #a0d8a7;
     --violet: var(--accent);
     --violet-text: var(--accent-text);
-    --danger: #f87171;
+    --danger: #e58079;  /* RAL 3001 signal red, tinted */
     --on-danger: #171916;
     --scrim: rgba(0, 0, 0, 0.56);
-    --warn: #fbbf24;
-    --warn-text: #fcd34d;
+    --warn: #c19a00;    /* RAL 1004 golden yellow */
+    --warn-text: #e6cf87; /* RAL 1004, tinted */
     --chat-hue-0: #62a1e2;  /* RAL 5017 traffic blue */
     --chat-hue-1: #d385ac;  /* RAL 4003 heather violet */
     --chat-hue-2: #a0d8a7;  /* RAL 6002 leaf green */

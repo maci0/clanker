@@ -88,7 +88,7 @@ test("shipped Chat markup is a session-first PF column", function () {
   assert.match(html, /class="conversation-header"/);
   assert.match(html, /class="conversation-scroll"/);
   assert.match(html, /id="task-form" class="composer"/);
-  assert.match(css, /--accent:\s*#0b57d0/);
+  assert.match(css, /--accent:\s*#1d5c9e/);
   assert.match(css, /#view-chat \.conversation-scroll/);
   assert.match(css, /#view-chat \.composer/);
 });

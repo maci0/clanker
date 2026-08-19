@@ -737,9 +737,9 @@ function drawRun(g) {
       if (!ctx) return;
       ctx.clearRect(0,0,mmCanvas.width, mmCanvas.height);
       var sw = mmSW, sh = mmSH;
-      var accent = mmToken("--accent", "#0b57d0");
+      var accent = mmToken("--accent", "#1d5c9e");
       var ok = mmToken("--ok", "#117a3a");
-      var danger = mmToken("--danger", "#dc2626");
+      var danger = mmToken("--danger", "#a72920");
       var fg = mmToken("--fg", "#111");
       var muted = mmToken("--fg-muted", "#888");
       ctx.strokeStyle = muted;
