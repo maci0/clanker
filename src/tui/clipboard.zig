@@ -62,16 +62,32 @@ pub fn copyBestEffort(
             .stdout = .ignore,
             .stderr = .ignore,
         }) catch continue;
-        defer child.kill(io);
+        var waited = false;
+        defer {
+            // Every failure path above `continue`s past `child.wait`, leaving
+            // the tool signaled-but-unreaped (a zombie per failed candidate)
+            // with the stdin pipe still open in the parent. Kill blocks until
+            // the process is gone and cleans its resources, so this reaps the
+            // stragglers the same way a `wait` would.
+            if (!waited) child.kill(io);
+        }
         if (child.stdin) |stdin_file| {
             var wbuf: [4096]u8 = undefined;
             var writer = stdin_file.writer(io, &wbuf);
-            writer.interface.writeAll(text) catch continue;
-            writer.interface.flush() catch continue;
+            const wrote = blk: {
+                writer.interface.writeAll(text) catch break :blk false;
+                writer.interface.flush() catch break :blk false;
+                break :blk true;
+            };
+            // Close the write end on every path, not just the happy one:
+            // skipping it on failure leaked a pipe handle per candidate, and
+            // EOF is also what tells the tool its input is complete.
             stdin_file.close(io);
             child.stdin = null;
+            if (!wrote) continue;
         }
         const term = child.wait(io) catch continue;
+        waited = true;
         if (term == .exited and term.exited == 0) return;
     }
 }

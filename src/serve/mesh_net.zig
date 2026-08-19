@@ -292,9 +292,21 @@ fn handleInbound(rt: *Runtime, raw: []const u8) void {
     var arena_state = std.heap.ArenaAllocator.init(rt.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const header = mesh.parseHeader(arena, raw) catch return;
+    // A decoded frame that is not a valid mesh message is a peer sending
+    // garbage, not a framing problem (that already closed the connection).
+    // Dropping it silently makes a missing chat message undiagnosable: the
+    // sender saw it leave, the receiver never saw it arrive, and nothing on
+    // either side logged why. One debug line per bad frame is cheap, and the
+    // payload is never logged, only its size.
+    const header = mesh.parseHeader(arena, raw) catch {
+        log.log(.debug, "mesh: dropped an undecodable frame from a peer ({d} bytes)", .{raw.len});
+        return;
+    };
     if (header.kind != .chat) return;
-    const p = payloadObj(arena, raw) catch return;
+    const p = payloadObj(arena, raw) catch {
+        log.log(.debug, "mesh: dropped a chat frame whose payload is not valid JSON ({d} bytes)", .{raw.len});
+        return;
+    };
     if (rt.on_chat) |cb| cb(.{
         .room = json_util.strFieldOrEmpty(p, "room"),
         .from = json_util.strFieldOrEmpty(p, "from"),
