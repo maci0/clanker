@@ -5,6 +5,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- `DELETE /api/sessions/<id>` now deletes the conversation's spills and its
+  exported transcript, not only `state/sessions/<id>.json`.
+
+  Both stores hold the same conversation text under the session's own name:
+  `state/spills/<session>/` keeps the verbatim middles of tool results the
+  request pruner dropped, and `state/exports/<id>.html` is the whole
+  transcript rendered for sharing. Deleting a session left both on disk, so
+  a deletion did not delete the content it was asked to. `janitor` ages
+  spills out but deletes nothing on its own (ADR 0008) and never looked at
+  exports. The deletes go through the guests that own those paths, as new
+  host-internal ops (`spill` `forget`, `session_export` `forget`).
+
+- Two log lines stopped echoing payloads onto stderr: a malformed `ck_docker`
+  tool call logged the whole guest input (container names, mounted host
+  paths, exec argv) and a failed synchronous subagent logged the operator's
+  task prose. Both now log the byte count beside the error, as `ck_chat`
+  already did.
+
 ### Added
 
 - `GET /api/metrics` reports background jobs and LLM latency. Two blind

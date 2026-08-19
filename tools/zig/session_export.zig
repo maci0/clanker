@@ -21,16 +21,41 @@ const validId = logic.validId;
 const render = logic.render;
 const defaultPath = logic.defaultPath;
 
-const Request = struct { id: []const u8, return_html: bool = false };
+const Request = struct { id: []const u8, return_html: bool = false, forget: bool = false };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, toolMain);
+}
+
+/// Deletes the export of one session, called when its transcript is deleted.
+///
+/// An export is the whole conversation rendered to HTML, so erasing the
+/// session while `state/exports/<id>.html` stays behind erases nothing. A
+/// session that was never exported has no file, which is success rather than
+/// an error: the caller is a delete path that has already dropped the
+/// transcript and cannot know whether an export was ever taken.
+fn forget(out: *lib.Out, id: []const u8) !void {
+    const path = try defaultPath(lib.alloc, id);
+    lib.fsDelete(path) catch |err| switch (err) {
+        error.NotFound => {},
+        else => return lib.failErr(out, err, "deleting export"),
+    };
+    var writer = lib.writer(out);
+    var json = lib.json(&writer);
+    try json.beginObject();
+    try json.objectField("ok");
+    try json.write(true);
+    try json.objectField("forgot");
+    try json.write(path);
+    try json.endObject();
+    lib.commit(out, &writer);
 }
 
 fn toolMain(input: []const u8, out: *lib.Out) !void {
     const req = std.json.parseFromSliceLeaky(Request, lib.alloc, input, .{ .ignore_unknown_fields = true }) catch
         return lib.fail(out, "expected a session id");
     if (!validId(req.id)) return lib.fail(out, "invalid session id");
+    if (req.forget) return forget(out, req.id);
     const source = try std.fmt.allocPrint(lib.alloc, "state/sessions/{s}.json", .{req.id});
     const raw = lib.fsRead(source) catch |err| return lib.failErr(out, err, "reading session");
     const value = std.json.parseFromSliceLeaky(Session, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch |err|

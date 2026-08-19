@@ -1,13 +1,18 @@
 //! spill: persist and read back a tool result the request pruner omitted.
 //! Input: {"write":{"session","id","content"}} (host-internal) |
+//!         {"forget":{"session"}} (host-internal) |
 //!         {"id":"<8hex>"} | {"id":"...","session":"..."} | {"list":true}
 //! Output: {"ok":true,"id":"...","text":"..."} | {"ok":true,"bytes":N} |
+//!         {"ok":true,"forgot":"<session>"} |
 //!         {"ok":true,"spills":["<session>/<id>.txt", ...]}.
 //!
 //! `write` is what the agent loop calls when the request-only pruner drops a
 //! tool result's middle: the content lands under state/spills/<session>/ so
-//! the model can read it back with `id`/`text` later. The same fs grant
-//! covers both halves; the host never writes state/spills/ itself.
+//! the model can read it back with `id`/`text` later. `forget` is the other
+//! end of that: deleting a saved conversation must take its spills with it,
+//! because a spill file is the verbatim middle of a tool result from that
+//! conversation and outlives the transcript otherwise. The same fs grant
+//! covers all three; the host never writes state/spills/ itself.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -28,6 +33,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (req.object.get("write")) |w| {
         if (w != .object) return lib.fail(out, "write must be an object");
         return writeOne(out, w);
+    }
+    if (req.object.get("forget")) |f| {
+        if (f != .object) return lib.fail(out, "forget must be an object");
+        return forgetSession(out, f);
     }
     if (lib.optBool(req, "list", false)) return listSpills(out);
 
@@ -70,6 +79,23 @@ fn writeOne(out: *lib.Out, w: std.json.Value) !void {
     try std.json.Stringify.value(content.len, .{}, &wout);
     try wout.writeAll("}");
     lib.commit(out, &wout);
+}
+
+/// Removes every spill of one session. Deleting a directory that was never
+/// created is success, not an error: a session that never spilled anything is
+/// exactly as erased as one whose spills this just removed, and the caller is
+/// a delete path that has already dropped the transcript.
+fn forgetSession(out: *lib.Out, f: std.json.Value) !void {
+    const session_id = lib.optStr(f, "session") orelse return lib.fail(out, "missing session");
+    if (!logic.validSessionId(session_id)) return lib.fail(out, "invalid session");
+    var dir_buf: [96]u8 = undefined;
+    const dir = logic.dirFor(session_id, &dir_buf) catch return lib.fail(out, "bad session");
+    lib.fsDeleteTree(lib.alloc, dir);
+    var w = lib.writer(out);
+    try w.writeAll("{\"ok\":true,\"forgot\":");
+    try std.json.Stringify.value(session_id, .{}, &w);
+    try w.writeAll("}");
+    lib.commit(out, &w);
 }
 
 fn listSpills(out: *lib.Out) !void {

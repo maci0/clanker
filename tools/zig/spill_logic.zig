@@ -71,6 +71,14 @@ pub fn pathFor(session_id: []const u8, id: []const u8, buf: []u8) ![]u8 {
     return std.fmt.bufPrint(buf, "state/spills/{s}/{s}.txt", .{ session_id, id });
 }
 
+/// The directory holding one session's spills, which is what erasing that
+/// session has to remove: a spill file is the verbatim middle of a tool result
+/// from that conversation, so deleting only `state/sessions/<id>.json` leaves
+/// the same content readable under this path.
+pub fn dirFor(session_id: []const u8, buf: []u8) ![]u8 {
+    return std.fmt.bufPrint(buf, "state/spills/{s}", .{session_id});
+}
+
 /// How long a spilled tool result is kept after it was last written.
 ///
 /// A spill is run-scoped scratch, not history. The locator that names one is
@@ -101,6 +109,16 @@ pub fn isSpillFileName(name: []const u8) bool {
 pub fn spillAgedOut(now_ms: i64, mtime_ms: i64, keep_ms: i64) bool {
     if (mtime_ms > now_ms) return false;
     return now_ms - mtime_ms >= keep_ms;
+}
+
+test "dirFor names the session directory pathFor writes into" {
+    var dir_buf: [96]u8 = undefined;
+    var path_buf: [96]u8 = undefined;
+    const dir = try dirFor("sess01ab", &dir_buf);
+    const path = try pathFor("sess01ab", "deadbeef", &path_buf);
+    try std.testing.expectEqualStrings("state/spills/sess01ab", dir);
+    try std.testing.expect(std.mem.startsWith(u8, path, dir));
+    try std.testing.expectEqual(@as(u8, '/'), path[dir.len]);
 }
 
 test "only 8-hex .txt names under a spill directory are sweepable" {

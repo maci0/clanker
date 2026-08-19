@@ -10,7 +10,8 @@
       "text": { "type": "string", "description": "Text containing [spill id=........]" },
       "session": { "type": "string" },
       "list": { "type": "boolean" },
-      "write": { "type": "object", "description": "Host-internal: persist a pruned tool result under state/spills/<session>/<id>.txt (fields: session, id, content)" }
+      "write": { "type": "object", "description": "Host-internal: persist a pruned tool result under state/spills/<session>/<id>.txt (fields: session, id, content)" },
+      "forget": { "type": "object", "description": "Host-internal: delete every spill of one session, called when its transcript is deleted (field: session)" }
     }
   },
   "fs_prefixes": ["state/spills/"],

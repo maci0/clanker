@@ -11503,6 +11503,56 @@ fn handleLogs(
     respondCompressible(arena, stream, accepts_gzip, raw);
 }
 
+/// Deletes what a conversation left outside its transcript, once that
+/// transcript has been deleted.
+///
+/// Two stores hold the same conversation text under the session's own name and
+/// neither is reached by deleting `state/sessions/<id>.json`:
+/// `state/spills/<session>/` (the verbatim middles of tool results the request
+/// pruner dropped) and `state/exports/<id>.html` (the whole transcript
+/// rendered for sharing). `janitor` ages spills out but deletes nothing on its
+/// own (ADR 0008) and never looks at exports, so nothing else closes the gap.
+/// Each store's writes belong to a guest, and so do these deletes.
+///
+/// Best effort: the transcript is already gone, so a missing tool or a refused
+/// delete must not turn a completed deletion into an error for the caller. It
+/// is logged instead, because leftover conversation content is worth noticing.
+fn forgetSessionArtifacts(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    id: []const u8,
+) void {
+    var spill_buf: [256]u8 = undefined;
+    const spill_input = std.fmt.bufPrint(&spill_buf, "{{\"forget\":{{\"session\":{f}}}}}", .{std.json.fmt(id, .{})}) catch return;
+    forgetVia(io, gpa, arena, cfg, environ_map, "spill", spill_input, id, "spilled tool results");
+
+    var export_buf: [256]u8 = undefined;
+    const export_input = std.fmt.bufPrint(&export_buf, "{{\"id\":{f},\"forget\":true}}", .{std.json.fmt(id, .{})}) catch return;
+    forgetVia(io, gpa, arena, cfg, environ_map, "session_export", export_input, id, "exported HTML transcript");
+}
+
+fn forgetVia(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    tool_name: []const u8,
+    input: []const u8,
+    id: []const u8,
+    what: []const u8,
+) void {
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, tool_name, input) catch |err| {
+        log.log(.warn, "session '{s}' deleted, but its {s} could not be removed: {s}", .{ id, what, @errorName(err) });
+        return;
+    };
+    if (toolResultFailed(raw))
+        log.log(.warn, "session '{s}' deleted, but the {s} tool refused to remove its {s}", .{ id, tool_name, what });
+}
+
 fn handleSessions(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -11615,6 +11665,7 @@ fn handleSessions(
                 respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
                 return;
             };
+            forgetSessionArtifacts(io, gpa, arena, cfg, environ_map, id);
             respond(stream, 200, "OK", "{\"ok\":true}");
             return;
         }

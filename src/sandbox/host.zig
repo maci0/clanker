@@ -1629,7 +1629,11 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(), json_input, .{}) catch {
-        log.log(.warn, "[docker] json parse failed: '{s}'", .{json_input});
+        // Log only the length, never the input (same rule as ck_chat): a
+        // docker tool call carries container names, mounted host paths and
+        // exec argv, so the whole payload on stderr is user data in a log a
+        // collector keeps.
+        log.log(.warn, "[docker] json parse failed ({d} bytes)", .{json_input.len});
         return Err.invalid;
     };
     const obj = switch (parsed) {
@@ -4688,7 +4692,10 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
     th.join();
     if (call.err) |e| {
-        log.log(.error_, "subagent '{s}' failed: {s}", .{ task, @errorName(e) });
+        // The task is the operator's own prose, so it stays out of the log
+        // line the way a chat payload does; its size is what a reader of this
+        // record actually needs next to the error.
+        log.log(.error_, "subagent failed: {s} (task {d} bytes)", .{ @errorName(e), task.len });
         return Err.invalid;
     }
     const result = call.result orelse "";
