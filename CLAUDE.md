@@ -232,7 +232,13 @@ Adding one is one file, one registry row, one `ProviderKind` tag — never a new
 `clanker commit` is not `git commit`: it groups a staged (or `--all`) diff
 into conventional commits, validates the messages, and topo-sorts them on a
 grep graph, falling back to one commit on a degenerate cycle
-([PRD 0021](docs/prds/0021-smart-commit.md)). It dry-runs, confirms, and then
+([PRD 0021](docs/prds/0021-smart-commit.md)). The writing form holds a
+non-blocking flock on `state/commit.lock` across plan, confirm and write, so
+a second `clanker commit` on the same checkout is refused with the lock named
+rather than raced
+([bug](docs/reports/bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md));
+raw `git` writers are outside it, see the concurrent-sessions runbook.
+It dry-runs, confirms, and then
 writes *that* plan: the previewed `commits` list is handed back to the write,
 so the grouping model is called once and what lands is what was shown. It used
 to group again for the write, and a truncated second reply turned a confirmed
