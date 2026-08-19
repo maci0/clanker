@@ -100,8 +100,15 @@ fn findMember(rt: *Runtime, key: []const u8) ?*Member {
     return null;
 }
 
+/// Monotonic now in ns. Every caller measures *elapsed* time — how long a
+/// pending join has been waiting, whether it has outlived its prompt timeout,
+/// and the age shown in the pending snapshot — so a wall-clock step (NTP, a
+/// manual change, a suspend) must not expire joins early or keep them alive
+/// past their window. The same choice as this file's own `connectBounded`
+/// deadline and proxy.zig's `nowNs`; `.real` is only for instants that get
+/// displayed or stored.
 fn nowNs(rt: *Runtime) i64 {
-    return @intCast(std.Io.Timestamp.now(rt.io, .real).nanoseconds);
+    return @intCast(std.Io.Timestamp.now(rt.io, .awake).nanoseconds);
 }
 
 pub fn pendingTimedOut(arrived_ns: i64, now_ns: i64, timeout_ns: i64) bool {

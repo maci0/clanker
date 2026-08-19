@@ -21,6 +21,27 @@ var _renderBoardList = null;
 export var board = { columns: [], cards: [] };
 var openCardId = null;
 
+/* Deadline instants are stored as local end-of-day (the date input parses
+   "YYYY-MM-DDT23:59:59" in the browser's own zone). The input must therefore
+   be filled from the same zone: toISOString() would render a UTC-5 user's
+   2026-08-14 deadline as "2026-08-15" (23:59:59-05:00 is 04:59:59Z the next
+   day), and saving the card unchanged would move the deadline a day later. */
+function deadlineToDateInput(deadline) {
+  var d = typeof deadline === "number" ? new Date(deadline * 1000) : new Date(deadline);
+  if (isNaN(d.getTime())) return "";
+  var y = d.getFullYear();
+  var m = String(d.getMonth() + 1).padStart(2, "0");
+  var day = String(d.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + day;
+}
+
+/* The inverse of deadlineToDateInput, in the same (local) zone: the end-of-day
+   instant the input's date means, as epoch seconds. 0 when unparseable. */
+function dateInputToDeadline(value) {
+  var parsed = Date.parse(value + "T23:59:59");
+  return isNaN(parsed) ? 0 : Math.floor(parsed / 1000);
+}
+
 /* Whether a board fetch has completed at least once. The goals module asks
    before mirroring goals onto the board: matching against a card list that
    was never fetched (always empty) is what used to create a duplicate card
@@ -1357,18 +1378,19 @@ function showCardDetail(id) {
   deadlineInput.type = "date";
   deadlineInput.className = "card-detail-date-hit";
   if (c.deadline) {
-    // Convert deadline to YYYY-MM-DD if it's a unix timestamp
-    try {
-      var dDate = typeof c.deadline === "number" ? new Date(c.deadline * 1000) : new Date(c.deadline);
-      if (!isNaN(dDate.getTime())) deadlineInput.value = dDate.toISOString().slice(0, 10);
-    } catch(e) {}
+    // Convert deadline to YYYY-MM-DD if it's a unix timestamp. Local, not
+    // UTC: toISOString() would show a local end-of-day deadline as the next
+    // day for zones west of UTC (see deadlineToDateInput).
+    deadlineInput.value = deadlineToDateInput(c.deadline);
   }
   deadlineInput.addEventListener("change", function() {
     var val = deadlineInput.value;
     if (!val) {
       postBoard({ op: "update", id: c.id, deadline: null }, "Deadline cleared.");
     } else {
-      postBoard({ op: "update", id: c.id, deadline: val }, "Due " + val);
+      // The board tool takes epoch seconds, not a date string; posting the
+      // raw input used to fail the whole update against the guest's ?i64.
+      postBoard({ op: "update", id: c.id, deadline: dateInputToDeadline(val) }, "Due " + val);
     }
   });
   deadlineWrap.appendChild(deadlineBtn);
@@ -1502,9 +1524,10 @@ function showCardDetail(id) {
   mainCol.appendChild(hiddenFields);
 
   // A date input, because a deadline typed as a unix timestamp is not a
-  // deadline anyone will set twice.
+  // deadline anyone will set twice. Filled in the local zone, matching how
+  // the save button below parses it back.
   var dueIn = input("card-f-deadline", "date", "");
-  bindDraft(dueIn, c.id, "deadline", c.deadline ? new Date(c.deadline * 1000).toISOString().slice(0, 10) : "");
+  bindDraft(dueIn, c.id, "deadline", c.deadline ? deadlineToDateInput(c.deadline) : "");
   hiddenFields.appendChild(dueIn);
 
   // ---- Inline title editing (click header to rename) ----
@@ -1528,10 +1551,7 @@ function showCardDetail(id) {
   save.textContent = "Save changes";
   save.addEventListener("click", function () {
     var deadline = 0;
-    if (dueIn.value) {
-      var parsed = Date.parse(dueIn.value + "T23:59:59");
-      if (!isNaN(parsed)) deadline = Math.floor(parsed / 1000);
-    }
+    if (dueIn.value) deadline = dateInputToDeadline(dueIn.value);
     delete cardDrafts[c.id];
     postBoard({
       op: "update", id: c.id,
