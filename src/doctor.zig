@@ -252,6 +252,23 @@ fn runChecks(
             .{ missing, first_missing },
         ));
     }
+
+    // An empty-string entry in exec_pattern_allow or repl_exec_allow would
+    // wildcard-match every command (or be silently ignored), weakening the
+    // exec permission boundary. Surface it as a warning rather than letting
+    // it pass unnoticed.
+    inline for (.{
+        .{ "exec_pattern_allow", cfg.agent.exec_pattern_allow },
+        .{ "repl_exec_allow", cfg.agent.repl_exec_allow },
+    }) |pair| {
+        var empty_count: usize = 0;
+        for (pair[1]) |p| {
+            if (p.len == 0) empty_count += 1;
+        }
+        if (empty_count > 0) {
+            rep.line(.warn, pair[0], try std.fmt.allocPrint(arena, "{d} empty-string entr{s} weaken the exec boundary", .{ empty_count, if (empty_count == 1) "y" else "ies" }));
+        }
+    }
 }
 
 pub fn cmdDoctor(init: std.process.Init) !void {
