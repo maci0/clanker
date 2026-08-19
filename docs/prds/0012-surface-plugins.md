@@ -303,11 +303,13 @@ throw → tab error) if not already true in code.
   into an empty state with no trace. It now warns through `ck_log` (a `[tool]`
   warn line in the server log) naming the file, what failed, and the error,
   while keeping the empty-enabled-list fallback the Failure modes require.
-- **Plugin `mount` throw is uncaught.** `registerView`'s view loader calls
-  `spec.mount` with no try/catch (`ui/app/core/plugins.js`), so a
-  throwing mount can break the tab switch rather than show the tab error
-  Failure modes describe. Fix belongs in the view loader: catch, render an
-  error into the panel, keep the rest of the page alive.
+- **(Fixed) Plugin `mount` throw used to be uncaught.** Both view loaders in
+  `ui/app/core/plugins.js` called `spec.mount` (and `spec.refresh`) bare, so
+  a throwing mount broke the tab switch rather than showing the tab error
+  Failure modes describe. `runPluginHook` now contains the throw to the
+  plugin's own panel — named plugin, exception message, Retry that re-runs
+  the loader — and the rest of the page stays alive. Pinned by
+  `ui/app/webui-load.test.mjs`.
 
 ## Failure modes
 
