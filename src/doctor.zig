@@ -227,6 +227,7 @@ fn runChecks(
             if (present) tools_dir else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{tools_dir}),
         );
     }
+    const broad_sandbox = std.mem.eql(u8, cfg.agent.sandbox_root, "/") or cfg.agent.sandbox_root.len == 0;
     inline for (.{
         .{ "skills_dir", cfg.agent.skills_dir },
         .{ "state_dir", cfg.agent.state_dir },
@@ -236,16 +237,20 @@ fn runChecks(
         // A sandbox root of "/" or "" grants every tool unrestricted filesystem
         // access; surface that as a warning rather than silently reporting OK.
         const broad_grant = std.mem.eql(u8, pair[0], "sandbox_root") and (std.mem.eql(u8, pair[1], "/") or pair[1].len == 0);
-        rep.line(
-            if (broad_grant) .warn else if (present) .ok else .fail,
-            pair[0],
-            if (broad_grant) "grants unrestricted filesystem access to every tool" else if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
-        );
+        if (broad_grant and cfg.agent.sandbox_follow_symlinks) {
+            rep.line(.fail, "sandbox_root", "unrestricted filesystem access combined with symlink following makes every path on the system reachable");
+        } else {
+            rep.line(
+                if (broad_grant) .warn else if (present) .ok else .fail,
+                pair[0],
+                if (broad_grant) "grants unrestricted filesystem access to every tool" else if (present) pair[1] else try std.fmt.allocPrint(arena, "{s} missing; run `clanker setup`", .{pair[1]}),
+            );
+        }
     }
     // sandbox_follow_symlinks lets a link inside a granted prefix reach its
     // target outside the sandbox; surface that at startup rather than letting it
-    // silently weaken the boundary.
-    if (cfg.agent.sandbox_follow_symlinks) {
+    // silently weaken the boundary. Suppressed when already escalated to FAIL above.
+    if (cfg.agent.sandbox_follow_symlinks and !broad_sandbox) {
         rep.line(.warn, "sandbox_follow_symlinks", "enabled: symlinks inside granted prefixes escape the sandbox");
     }
     rep.line(
