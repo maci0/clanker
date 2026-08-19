@@ -188,6 +188,10 @@ pub const Command = enum {
     prd,
     /// `preset list|show|new`: named tool + persona bundles (PRD 0033).
     preset,
+    /// `config [get <key>|set <key> <value>]`: read or pin one dotted key of
+    /// the merged config, through the same `config` tool the agent uses.
+    /// `set` writes config.local.toml only. Bare `config` dumps both files.
+    config,
 };
 
 pub const Options = struct {
@@ -419,6 +423,11 @@ pub const Options = struct {
     reports_arg4: ?[]const u8 = null,
     /// `reports search --kind`: "all" (default), "report" or "runbook".
     reports_kind: ?[]const u8 = null,
+    /// `config <sub> [args...]`: "get" takes a key, "set" a key and a value.
+    /// Absent sub means "dump".
+    config_sub: ?[]const u8 = null,
+    config_key: ?[]const u8 = null,
+    config_value: ?[]const u8 = null,
     /// `research <sub> [args...]`: "plan"/"sweep" take a topic, "search" a
     /// query, "open"/"append"/"update"/"status" a path, "create" a slug, title
     /// and question. Absent sub means "list". Same four positionals as
@@ -930,6 +939,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .schedule;
             } else if (std.mem.eql(u8, a, "reports") or std.mem.eql(u8, a, "report")) {
                 opts.command = .reports;
+            } else if (std.mem.eql(u8, a, "config")) {
+                opts.command = .config;
             } else if (std.mem.eql(u8, a, "mesh")) {
                 opts.command = .mesh;
             } else if (std.mem.eql(u8, a, "research")) {
@@ -1104,6 +1115,19 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.reports_arg3 = a;
             } else if (opts.reports_arg4 == null) {
                 opts.reports_arg4 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .config) {
+            // Positional-only, same shape as reports: <sub> then its
+            // arguments (get takes a key, set a key and a value).
+            if (opts.config_sub == null) {
+                opts.config_sub = a;
+            } else if (opts.config_key == null) {
+                opts.config_key = a;
+            } else if (opts.config_value == null) {
+                opts.config_value = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -2073,6 +2097,7 @@ const specs = [_]Spec{
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, tools-ts-toolchain and the release\ncontract (CHANGELOG/RELEASES.md) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
+    .{ .command = .config, .usage = "config [get <key>|set <key> <value>]", .blurb = "read or pin one key of the merged config", .group = .maintain, .detail = "Reads and writes through the same `config` tool the agent uses. Every\nCLI flag with a persistent twin in config (say --reasoning-effort and\n[agent] reasoning_effort) can be pinned here instead of hand-editing\nconfig.local.toml.\n\n  (no subcommand)      dump config.toml + config.local.toml raw, local last\n  get <key>            print one dotted key of the merged config\n  set <key> <value>    pin the key in config.local.toml -- never config.toml\n\nset refuses a key the loader does not know (a typo'd TOML key would be\nsilently ignored; this is the checked path), refuses a value that does not\nparse as the key's merged type, and refuses the table sections (providers,\nmodels, mcp_servers), whose quoted-key disk shape a line edit does not\nspeak: edit config.local.toml by hand there. The write replaces one line\nand leaves the rest of the file byte-identical, comments included. A\nchange applies from the next command, not to processes already running.\n\nEXAMPLES\n  clanker config get agent.reasoning_effort\n  clanker config set agent.reasoning_effort high\n  clanker config set default_provider deepseek\n  clanker config set tui.mascot_size mini" },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
     .{ .command = .autolearn, .usage = "autolearn [reset] [--model <model>]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .flags = &.{ .provider, .model }, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing.\n\n--provider <name>  run the item synthesis with this provider instead of the\n                   configured default\n--model, -m        run the item synthesis with this model, or\n                   <provider>/<model>. Default is the deterministic local\n                   aggregation; passing a model instead has the chosen model\n                   review the raw observations and write the Autolearn section." },
@@ -2210,6 +2235,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .plugins => try cmdPlugins(init, opts),
         .schedule => try cmdSchedule(init, opts),
         .reports => try cmdReports(init, opts),
+        .config => try cmdConfig(init, opts),
         .research => try cmdResearch(init, opts),
         .rfc => try cmdRfc(init, opts),
         .adr => try cmdAdr(init, opts),
@@ -5405,6 +5431,76 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
 /// reimplementing the store beside it. Printing lives in
 /// `src/records/reports.zig`; what stays here is the tool call, which needs
 /// the config, the registry and the sandbox this file owns.
+/// `clanker config [get <key>|set <key> <value>]`: the operator surface over
+/// the sandboxed `config` tool, the way `cmdReports` fronts `reports`. The
+/// tool owns the semantics (schema check, type check, the surgical
+/// config.local.toml edit); this relays and prints.
+fn cmdConfig(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    const sub = opts.config_sub orelse "dump";
+    var input: []const u8 = undefined;
+    if (std.mem.eql(u8, sub, "dump")) {
+        input = "{\"action\":\"dump\"}";
+    } else if (std.mem.eql(u8, sub, "get") or std.mem.eql(u8, sub, "set")) {
+        const key = opts.config_key orelse {
+            records_common.usageError("config {s} needs a key: clanker config {s} agent.reasoning_effort{s}", .{ sub, sub, if (std.mem.eql(u8, sub, "set")) " high" else "" });
+            printUsageHintFor(io, "config");
+            std.process.exit(2);
+        };
+        if (std.mem.eql(u8, sub, "get")) {
+            input = try records_common.request(arena, &.{
+                .{ .name = "action", .value = .{ .text = "get" } },
+                .{ .name = "key", .value = .{ .text = key } },
+            });
+        } else {
+            const value = opts.config_value orelse {
+                records_common.usageError("config set needs a value: clanker config set {s} <value>", .{key});
+                printUsageHintFor(io, "config");
+                std.process.exit(2);
+            };
+            input = try records_common.request(arena, &.{
+                .{ .name = "action", .value = .{ .text = "set" } },
+                .{ .name = "key", .value = .{ .text = key } },
+                .{ .name = "value", .value = .{ .text = value } },
+            });
+        }
+    } else {
+        records_common.usageError("config's subcommands are get, set and dump; '{s}' is none of them", .{sub});
+        printUsageHintFor(io, "config");
+        std.process.exit(2);
+    }
+
+    // Kept for rollback: the guest checks the key and the value's type
+    // against the merged schema, but it cannot run the loader's semantic
+    // validation (enum spellings, ranges) — a wasm guest has no TOML
+    // parser, let alone the validator. An invalid value would fail every
+    // next invocation of clanker at load time.
+    const is_set = std.mem.eql(u8, sub, "set");
+    const before: ?[]const u8 = if (is_set)
+        std.Io.Dir.cwd().readFileAlloc(io, "config.local.toml", arena, .limited(1 << 20)) catch null
+    else
+        null;
+
+    var caller: ConfigCmdTool = .{ .init = init, .cfg = &cfg };
+    const result = records_common.callTool(arena, "config", caller.tool(), input) catch std.process.exit(1);
+    const text = json_util.strFieldOrEmpty(result.object, "text");
+
+    if (is_set) {
+        _ = config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch {
+            if (before) |b|
+                try atomic_write.writeFile(io, std.Io.Dir.cwd(), "config.local.toml", b)
+            else
+                std.Io.Dir.cwd().deleteFile(io, "config.local.toml") catch {};
+            records_common.usageError("the loader refuses that value (the diagnostic above names it); config.local.toml was restored", .{});
+            std.process.exit(1);
+        };
+    }
+    try records_common.out(io, if (std.mem.endsWith(u8, text, "\n")) text else try std.mem.concat(arena, u8, &.{ text, "\n" }));
+}
+
 fn cmdReports(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -5674,6 +5770,7 @@ const PrdTool = RecordTool("prd");
 const RfcTool = RecordTool("rfc");
 const ResearchTool = RecordTool("research");
 const ReportsTool = RecordTool("reports");
+const ConfigCmdTool = RecordTool("config");
 
 /// Toggle responses are otherwise ordinary rendered tool text. Keeping the
 /// failure marker explicit lets the interactive REPL render it inline while
@@ -16599,6 +16696,24 @@ test "parse reports the offending token via the diag out-param" {
 
     try std.testing.expectError(error.BadIters, parse(&.{ "clanker", "improve-self", "--iters", "abc", "x" }, &diag));
     try std.testing.expectEqualStrings("abc", diag);
+}
+
+test "config takes a subcommand, a key and a value positionally" {
+    const got = try parse(&.{ "clanker", "config", "set", "agent.reasoning_effort", "high" }, null);
+    try std.testing.expectEqual(Command.config, got.command);
+    try std.testing.expectEqualStrings("set", got.config_sub.?);
+    try std.testing.expectEqualStrings("agent.reasoning_effort", got.config_key.?);
+    try std.testing.expectEqualStrings("high", got.config_value.?);
+
+    // Bare `config` is the dump; the default sub is cmdConfig's, not the
+    // parser's, so nothing is filled in here.
+    const bare = try parse(&.{ "clanker", "config" }, null);
+    try std.testing.expectEqual(Command.config, bare.command);
+    try std.testing.expect(bare.config_sub == null);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.UnknownArg, parse(&.{ "clanker", "config", "set", "a.b", "c", "d" }, &diag));
+    try std.testing.expectEqualStrings("d", diag);
 }
 
 test "--worktree is accepted by run and refused elsewhere" {
