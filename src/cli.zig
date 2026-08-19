@@ -4840,7 +4840,7 @@ fn cliGoalLoopEvaluate(context: *anyopaque, _: u32, answer: []const u8) anyerror
 }
 
 fn cliGoalLoopDecision(_: *anyopaque, turn: u32, decision: goal_loop.Decision) void {
-    const capped = decision.reason[0..@min(decision.reason.len, goal_loop.reason_log_bytes)];
+    const capped = utf8.cap(decision.reason, goal_loop.reason_log_bytes);
     log.log(.info, "goal loop turn {d}: {s}: {s}", .{ turn, @tagName(decision.verdict), capped });
 }
 
@@ -4880,7 +4880,7 @@ fn serverGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.De
         writeStreamEvent(fd, "goal", .{
             .turn = turn,
             .status = @tagName(decision.verdict),
-            .reason = decision.reason[0..@min(decision.reason.len, goal_loop.reason_log_bytes)],
+            .reason = utf8.cap(decision.reason, goal_loop.reason_log_bytes),
         });
     }
 }
@@ -5173,7 +5173,7 @@ fn memorySearch(
     try is.objectField("action");
     try is.write("search");
     try is.objectField("query");
-    try is.write(query[0..@min(query.len, 4000)]);
+    try is.write(utf8.cap(query, 4000));
     try is.objectField("mode");
     try is.write(mode);
     try is.objectField("top_k");
@@ -5253,7 +5253,7 @@ fn appendMemoryHits(mem_buf: *std.ArrayList(u8), arena: std.mem.Allocator, resul
         if (mem_buf.items.len > 0) mem_buf.appendSlice(arena, "\n\n") catch continue;
         const mlimit = @min(text_v.string.len, 100_000 - mem_buf.items.len);
         if (mlimit == 0) continue;
-        const safe = neutralizeRetrievalMarkers(arena, text_v.string[0..mlimit]);
+        const safe = neutralizeRetrievalMarkers(arena, utf8.cap(text_v.string, mlimit));
         mem_buf.appendSlice(arena, safe) catch continue;
     }
 }
@@ -6187,7 +6187,9 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
         }
     }
     if (created_goal_id) |gid| {
-        const title = if (intent.len > 512) intent[0..512] else intent;
+        // A byte cut can split a multi-byte codepoint, and this title lands in
+        // the board store as JSON; cap on a codepoint boundary instead.
+        const title = utf8.cap(intent, 512);
         const board_input = std.fmt.allocPrint(arena, "{{\"op\":\"create\",\"title\":{f},\"column\":\"ready\",\"goal\":{f}}}", .{ std.json.fmt(title, .{}), std.json.fmt(gid, .{}) }) catch null;
         if (board_input) |bi| {
             if (toolJson(io, init.gpa, arena, &cfg, init.environ_map, "kanban", bi) catch null) |braw| {
@@ -14574,7 +14576,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                         if (parsed.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
                             if (parsed.object.get("goal")) |g| if (g == .object) {
                                 if (g.object.get("id")) |id| if (id == .string) {
-                                    const title = if (cond.len > 512) cond[0..512] else cond;
+                                    const title = utf8.cap(cond, 512);
                                     const bi = std.fmt.allocPrint(arena, "{{\"op\":\"create\",\"title\":{f},\"column\":\"ready\",\"goal\":{f}}}", .{ std.json.fmt(title, .{}), std.json.fmt(id.string, .{}) }) catch null;
                                     if (bi) |bin| _ = toolJson(io, gpa, arena, cfg, environ_map, "kanban", bin) catch null;
                                 };
@@ -14662,7 +14664,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 }) catch continue;
                 kb_buf.appendSlice(arena, header) catch continue;
                 const limit = @min(d.content.len, 100_000 - kb_buf.items.len);
-                const safe = neutralizeRetrievalMarkers(arena, d.content[0..limit]);
+                const safe = neutralizeRetrievalMarkers(arena, utf8.cap(d.content, limit));
                 kb_buf.appendSlice(arena, safe) catch continue;
             }
         }

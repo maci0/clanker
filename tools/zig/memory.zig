@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 const memory_embed = @import("memory_embed.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -259,7 +260,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 // The reply truncates to `max_hit_text` anyway, so copying the
                 // rest of a chunk only to throw it away is arena the search
                 // does not have.
-                const dup_text = lib.alloc.dupe(u8, text_v.string[0..@min(text_v.string.len, max_hit_text)]) catch continue;
+                const dup_text = lib.alloc.dupe(u8, utf8.cap(text_v.string, max_hit_text)) catch continue;
                 ranked_len = memory_embed.rankInsert(ranked, ranked_len, slot, .{ .id = dup_id, .text = dup_text, .score = sc });
             }
         };

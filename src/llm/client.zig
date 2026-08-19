@@ -8,6 +8,7 @@
 //! [ADR 0004](../../docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md).
 
 const std = @import("std");
+const utf8 = @import("../util/utf8.zig");
 const types = @import("types.zig");
 const providers = @import("registry.zig");
 const auth = @import("auth.zig");
@@ -899,7 +900,7 @@ fn httpErrorDetail(
     body: []const u8,
 ) ![]const u8 {
     if (impl.parseErrorDetail(arena, body)) |msg| {
-        const capped = redact.forCaller(arena, msg) catch msg[0..@min(msg.len, redact.max_caller_detail_len)];
+        const capped = redact.forCaller(arena, msg) catch utf8.cap(msg, redact.max_caller_detail_len);
         return std.fmt.allocPrint(arena, "HTTP {d}: {s}", .{ status_code, capped });
     }
     const trimmed = std.mem.trim(u8, body, " \t\r\n");

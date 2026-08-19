@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -123,7 +124,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.objectField("error");
             if (ag_stderr.len > 0) {
                 const cap: usize = 2048;
-                try s.write(if (ag_stderr.len > cap) ag_stderr[0..cap] else ag_stderr);
+                try s.write(utf8.cap(ag_stderr, cap));
             } else {
                 try s.write("ast-grep exited with non-zero status");
             }
@@ -200,7 +201,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 }
             }
 
-            const display = if (text.len > 500) text[0..500] else text;
+            const display = utf8.cap(text, 500);
 
             try s.beginObject();
             try s.objectField("file");
@@ -303,7 +304,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             // Trim trailing newlines/carriage returns from the matched text.
             const trimmed = std.mem.trimEnd(u8, line_text, "\r\n");
             // Cap individual line length to keep output compact.
-            const display = if (trimmed.len > 500) trimmed[0..500] else trimmed;
+            const display = utf8.cap(trimmed, 500);
 
             try s.beginObject();
             try s.objectField("file");

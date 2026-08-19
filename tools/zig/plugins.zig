@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 const plugin_config_logic = @import("plugin_config_logic.zig");
 
 const state_path = "state/plugins.json";
@@ -308,7 +309,7 @@ fn configure(out: *lib.Out, alloc: std.mem.Allocator, input: std.json.ObjectMap,
 
 fn clipDesc(desc: []const u8) []const u8 {
     const first = desc[0 .. std.mem.findScalar(u8, desc, '\n') orelse desc.len];
-    return first[0..@min(first.len, 96)];
+    return utf8.cap(first, 96);
 }
 
 fn listJson(out: *lib.Out, alloc: std.mem.Allocator, plugins: []const Plugin) !void {

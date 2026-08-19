@@ -11,6 +11,7 @@
 //!      on failure: record and feed the error tail back for a retry.
 
 const std = @import("std");
+const utf8 = @import("../util/utf8.zig");
 const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
@@ -769,8 +770,15 @@ pub const Engine = struct {
             // usual cause is a file whose own content is full of quotes and
             // braces (a .tool.json descriptor), escaped wrongly inside the
             // proposal, so say that and show what actually arrived.
-            const head = json_text[0..@min(json_text.len, 400)];
-            const tail = if (json_text.len > 400) json_text[json_text.len - @min(json_text.len - 400, 200) ..] else "";
+            const head = utf8.cap(json_text, 400);
+            const tail = if (json_text.len > 400) blk: {
+                // A tail that starts mid-codepoint is invalid UTF-8; step
+                // forward over continuation bytes to the next boundary. This
+                // text goes back to the model as feedback.
+                var start = json_text.len - @min(json_text.len - 400, 200);
+                while (start < json_text.len and (json_text[start] & 0xC0) == 0x80) start += 1;
+                break :blk json_text[start..];
+            } else "";
             self.feedback = try std.fmt.allocPrint(
                 self.arena,
                 "Your previous response was not a valid patch proposal: {s}.\n" ++

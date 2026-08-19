@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 
 const learnings_path = "state/learnings.md";
 
@@ -91,7 +92,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.objectField("dry_run");
         try s.write(dry_run);
         try s.objectField("text");
-        try s.write(if (n_removed == 0) "nothing matched" else removed.items[0..@min(removed.items.len, 4000)]);
+        try s.write(if (n_removed == 0) "nothing matched" else utf8.cap(removed.items, 4000));
         try s.endObject();
         return out.writeAll(buf[0..w.end]);
     }

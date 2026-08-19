@@ -1285,7 +1285,7 @@ pub const Agent = struct {
         }
         if (reason.len == 0) {
             if (parsed.object.get("text")) |t| {
-                if (t == .string) reason = t.string[0..@min(t.string.len, 120)];
+                if (t == .string) reason = utf8.cap(t.string, 120);
             }
         }
         return .{ .ok = ok, .reason = reason };
@@ -3152,7 +3152,7 @@ fn parentAnswerPrompt(
             try buf.appendSlice(arena, "- ");
             try buf.appendSlice(arena, @tagName(m.role));
             try buf.appendSlice(arena, ": ");
-            try buf.appendSlice(arena, content[0..@min(content.len, parent_answer_max_msg_bytes)]);
+            try buf.appendSlice(arena, utf8.cap(content, parent_answer_max_msg_bytes));
             try buf.appendSlice(arena, "\n");
         }
     }

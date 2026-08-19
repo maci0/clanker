@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 const scan = @import("manifest_scan.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -117,7 +118,7 @@ fn writeGrouped(alloc: std.mem.Allocator, buf: *std.ArrayList(u8), entries: anyt
                 const pad = if (e.name.len < name_col) name_col - e.name.len else 1;
                 try buf.appendNTimes(alloc, ' ', pad);
                 const first = desc[0 .. std.mem.findScalar(u8, desc, '\n') orelse desc.len];
-                const clipped = first[0..@min(first.len, desc_max)];
+                const clipped = utf8.cap(first, desc_max);
                 try buf.appendSlice(alloc, clipped);
                 if (clipped.len < first.len) try buf.appendSlice(alloc, "\u{2026}");
             }

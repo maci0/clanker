@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const utf8 = @import("utf8");
 const model_reply = @import("model_reply.zig");
 const budget = @import("llm_budget.zig");
 
@@ -153,7 +154,7 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
             const cleaned = model_reply.stripFence(answer);
             if (std.mem.eql(u8, m.mode, "json")) {
                 const vv = std.json.parseFromSliceLeaky(std.json.Value, alloc, cleaned, .{}) catch {
-                    const msg = try std.fmt.allocPrint(alloc, "mutate returned non-JSON: {s}", .{cleaned[0..@min(cleaned.len, 300)]});
+                    const msg = try std.fmt.allocPrint(alloc, "mutate returned non-JSON: {s}", .{utf8.cap(cleaned, 300)});
                     try trace.append(alloc, .{ .index = idx, .kind = "mutate", .ok = false, .output = msg, .tool = "" });
                     if (st.stop_on_error orelse true) break else continue;
                 };

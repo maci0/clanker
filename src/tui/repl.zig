@@ -498,7 +498,7 @@ fn tuiGoalLoopDecision(context: *anyopaque, turn: u32, decision: goal_loop.Decis
     const self = loop_ctx.model;
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
-    const reason = decision.reason[0..@min(decision.reason.len, goal_loop.reason_log_bytes)];
+    const reason = utf8.cap(decision.reason, goal_loop.reason_log_bytes);
     const line = std.fmt.allocPrint(self.arena, "goal loop turn {d}: {s}: {s}", .{ turn, @tagName(decision.verdict), reason }) catch return;
     self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
 }

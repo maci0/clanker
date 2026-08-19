@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const json = std.json;
+const utf8 = @import("../util/utf8.zig");
 const log = @import("../util/log.zig");
 const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
@@ -694,7 +695,7 @@ pub const History = struct {
 fn firstLine(s: []const u8, max: usize) []const u8 {
     const trimmed = std.mem.trim(u8, s, " \t\r\n");
     const end = std.mem.findScalar(u8, trimmed, '\n') orelse trimmed.len;
-    return trimmed[0..@min(end, max)];
+    return utf8.cap(trimmed[0..end], max);
 }
 
 fn copyFile(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, src: []const u8, dst: []const u8) !void {
