@@ -68,3 +68,32 @@ test("a failed chunk import is not cached: every lazy view loader drops its prom
   const rethrows = app.match(/catch\(function \(err\) \{[\s\S]*?throw err;\s*\}\)|function \(err\) \{[\s\S]*?null; \/\/ a failed chunk import[\s\S]*?throw err;/g) || [];
   assert.ok(rethrows.length >= 11, "every loader rethrows after resetting");
 });
+
+test("a plugin's mount or refresh throw is contained to its own panel", function () {
+  // A plugin's mount is third-party code running inside the tab switch: a
+  // throw that rides up through the view loader breaks the switch itself and
+  // the whole page looks dead (PRD 0012 Known issues / Failure modes). Every
+  // spec.mount / spec.refresh invocation in plugins.js must go through
+  // runPluginHook, which catches, names the plugin and the exception in the
+  // panel via showLoadError, and offers a retry that re-runs the loader.
+  const plugins = readFileSync(join(here, "core", "plugins.js"), "utf8");
+  const hookBody = plugins.match(/function runPluginHook\([\s\S]*?\n\}/);
+  assert.ok(hookBody, "runPluginHook exists");
+  assert.match(hookBody[0], /try \{[\s\S]*?\} catch \(e\) \{/);
+  assert.match(hookBody[0], /showLoadError\(section, "The " \+ label \+ " plugin failed: " \+ msg, retryFn\)/);
+  // No bare hook invocation survives outside the guard.
+  const bare = plugins
+    .split("\n")
+    .filter((l) => /spec\.(mount|refresh)\.call\(/.test(l) && !/runPluginHook/.test(l));
+  for (const line of bare) {
+    assert.match(
+      plugins,
+      new RegExp("runPluginHook\\([^)]*function \\(\\) \\{\\s*\\n\\s*" + line.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      "unguarded plugin hook call: " + line.trim()
+    );
+  }
+  assert.ok(
+    (plugins.match(/runPluginHook\(section,/g) || []).length >= 4,
+    "both loaders guard both mount and refresh"
+  );
+});
