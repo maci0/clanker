@@ -264,11 +264,17 @@ fn runChecks(
     };
     var missing: usize = 0;
     var first_missing: []const u8 = "";
+    var abs_count: usize = 0;
+    var first_abs: []const u8 = "";
     var tools_it = reg.tools.iterator();
     while (tools_it.next()) |entry| {
         if (!fileExists(io, entry.value_ptr.wasm)) {
             missing += 1;
             if (first_missing.len == 0) first_missing = entry.value_ptr.wasm;
+        }
+        if (std.mem.startsWith(u8, entry.value_ptr.wasm, "/")) {
+            abs_count += 1;
+            if (first_abs.len == 0) first_abs = entry.value_ptr.wasm;
         }
     }
     const tool_count = reg.tools.count();
@@ -287,6 +293,13 @@ fn runChecks(
             arena,
             "{d} missing (e.g. {s}); run `zig build tools`",
             .{ missing, first_missing },
+        ));
+    }
+    if (abs_count > 0) {
+        rep.line(.warn, "absolute wasm paths", try std.fmt.allocPrint(
+            arena,
+            "{d} manifest{s} point outside the project tree (e.g. {s}); another local user could swap the binary",
+            .{ abs_count, if (abs_count == 1) "" else "s", first_abs },
         ));
     }
 
