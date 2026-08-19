@@ -33,6 +33,10 @@ const refresh_margin_s: i64 = 5 * 60;
 
 var cached_token: ?[]const u8 = null;
 var cached_for: []const u8 = "";
+/// Fingerprint (size + mtime) of the credentials file `cached_for` was minted
+/// from, so a rotation that rewrites the file in place is seen as a new
+/// account rather than served from until expiry.
+var cached_stamp: u64 = 0;
 var expires_at: i64 = 0;
 
 /// Guards the three variables above.
@@ -118,8 +122,9 @@ pub fn classifyFile(c: anytype) error{ UnsupportedAdcType, IncompleteCredentials
 }
 
 /// Returns a bearer token for the resolved credentials file, minting one if
-/// the cache is empty, stale, or for a different account. The returned slice
-/// is a fresh `gpa`-owned copy the caller must free: the cache entry it was
+/// the cache is empty, stale, or for a different account (another path, or
+/// the same path rewritten in place — a rotation). The returned slice is a
+/// fresh `gpa`-owned copy the caller must free: the cache entry it was
 /// copied from can be freed by a later refresh the instant this call releases
 /// the lock, so handing back a borrowed pointer into the cache would let that
 /// refresh free memory a caller is still reading.
@@ -144,8 +149,13 @@ pub fn get(
         log.log(.error_, "vertex: no credentials file (set service_account_file, GOOGLE_APPLICATION_CREDENTIALS, or run gcloud auth application-default login)", .{});
         return error.VertexTokenFailed;
     };
+    // Stamp the credentials file as it is on disk right now: a rotation that
+    // rewrites the file in place (gcloud's `application-default login` does)
+    // must not keep serving a token minted from the old account until it
+    // expires. A failed stat reads as 0, which can only force a renewal.
+    const stamp = credentialsStamp(io, path) catch 0;
     if (cached_token) |tok| {
-        if (cacheHit(now, expires_at, cached_for, path)) return try gpa.dupe(u8, tok);
+        if (cacheHit(now, expires_at, cached_for, cached_stamp, path, stamp)) return try gpa.dupe(u8, tok);
     }
 
     const raw = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch |err| {
@@ -173,6 +183,7 @@ pub fn get(
     if (cached_for.len > 0) gpa.free(cached_for);
     cached_token = try gpa.dupe(u8, reply.access_token);
     cached_for = try gpa.dupe(u8, path);
+    cached_stamp = stamp;
     expires_at = now + @max(0, reply.expires_in - refresh_margin_s);
     log.log(.debug, "vertex: access token minted, valid ~{d}s", .{reply.expires_in});
     return try gpa.dupe(u8, cached_token.?);
@@ -196,6 +207,21 @@ fn mintServiceAccount(
     };
     const body = try std.fmt.allocPrint(arena, "grant_type={s}&assertion={s}", .{ grant_type, jwt });
     return postToken(io, gpa, arena, sa.token_uri, body);
+}
+
+/// Fingerprint of the credentials file (size + mtime), the same shape the
+/// wasm caches use, so an in-place rotation changes the key and the next
+/// call mints from the new file instead of reusing the old token.
+fn credentialsStamp(io: std.Io, path: []const u8) !u64 {
+    const st = try std.Io.Dir.cwd().statFile(io, path, .{});
+    var h = std.hash.Wyhash.init(0x7A3C1E5F9B2D4A68);
+    h.update(std.mem.asBytes(&st.size));
+    // Nanoseconds as i64, not `asBytes(&st.mtime)`: `i96` is stored in 16
+    // bytes whose top 4 are unspecified, so the struct form hashes
+    // uninitialized stack memory and the stamp changes between calls.
+    const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+    h.update(std.mem.asBytes(&mtime_ns));
+    return h.final();
 }
 
 fn mintAuthorizedUser(
@@ -408,33 +434,38 @@ pub fn deinit(io: std.Io, gpa: std.mem.Allocator) void {
     if (cached_for.len > 0) gpa.free(cached_for);
     cached_token = null;
     cached_for = "";
+    cached_stamp = 0;
     expires_at = 0;
 }
 
 // ------------------------------------------------------------------- tests --
 
 /// The renewal decision, split out so it can be tested without a network call:
-/// a cached token is reused only while it belongs to this account and has not
-/// reached its refresh deadline (expiry minus the margin).
-fn cacheHit(now: i64, expires: i64, cached_account: []const u8, want_account: []const u8) bool {
-    return now < expires and std.mem.eql(u8, cached_account, want_account);
+/// a cached token is reused only while it belongs to this account — same
+/// credentials path AND the same file it was minted from (size + mtime) — and
+/// has not reached its refresh deadline (expiry minus the margin).
+fn cacheHit(now: i64, expires: i64, cached_path: []const u8, cached_file_stamp: u64, want_path: []const u8, want_file_stamp: u64) bool {
+    return now < expires and cached_file_stamp == want_file_stamp and std.mem.eql(u8, cached_path, want_path);
 }
 
-test "token cache renews on expiry and on a different account" {
+test "token cache renews on expiry, on a different account, and on rotated credentials" {
     const expiry = 1000 + (3600 - refresh_margin_s);
 
-    // Fresh: reused.
-    try std.testing.expect(cacheHit(1000, expiry, "sa.json", "sa.json"));
+    // Fresh, same account and same file: reused.
+    try std.testing.expect(cacheHit(1000, expiry, "sa.json", 11, "sa.json", 11));
     // A second before the refresh deadline: still reused.
-    try std.testing.expect(cacheHit(expiry - 1, expiry, "sa.json", "sa.json"));
+    try std.testing.expect(cacheHit(expiry - 1, expiry, "sa.json", 11, "sa.json", 11));
     // At the deadline, five minutes before Google expires it: renewed.
-    try std.testing.expect(!cacheHit(expiry, expiry, "sa.json", "sa.json"));
+    try std.testing.expect(!cacheHit(expiry, expiry, "sa.json", 11, "sa.json", 11));
     // Past it: renewed.
-    try std.testing.expect(!cacheHit(expiry + 60, expiry, "sa.json", "sa.json"));
+    try std.testing.expect(!cacheHit(expiry + 60, expiry, "sa.json", 11, "sa.json", 11));
     // Same clock, different service account: renewed rather than reused.
-    try std.testing.expect(!cacheHit(1000, expiry, "sa.json", "other.json"));
+    try std.testing.expect(!cacheHit(1000, expiry, "sa.json", 11, "other.json", 11));
+    // Credentials rotated in place: the file's stamp changed, so renewed
+    // rather than serving the old account's token until it expires.
+    try std.testing.expect(!cacheHit(1000, expiry, "sa.json", 11, "sa.json", 12));
     // Cold start (deinit or first call): renewed.
-    try std.testing.expect(!cacheHit(1000, 0, "", "sa.json"));
+    try std.testing.expect(!cacheHit(1000, 0, "", 0, "sa.json", 11));
 }
 
 test "classifyFile tells service_account from authorized_user" {

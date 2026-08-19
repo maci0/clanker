@@ -280,7 +280,12 @@ fn cachedWasm(io: std.Io, path: []const u8) ![]const u8 {
     const st = try base.statFile(io, path, .{});
     var h = std.hash.Wyhash.init(0x1F83D9ABFB41BD6B);
     h.update(std.mem.asBytes(&st.size));
-    h.update(std.mem.asBytes(&st.mtime));
+    // The mtime's nanoseconds, not the Timestamp struct: `i96` is stored in
+    // 16 bytes and the top 4 are unspecified, so hashing `asBytes(&st.mtime)`
+    // folded uninitialized stack memory into every stamp, which changed
+    // between calls and made the cache miss on every lookup.
+    const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+    h.update(std.mem.asBytes(&mtime_ns));
     const stamp = h.final();
 
     WasmCache.lock();

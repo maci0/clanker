@@ -334,7 +334,12 @@ pub const Registry = struct {
                     continue;
                 };
                 h.update(std.mem.asBytes(&st.size));
-                h.update(std.mem.asBytes(&st.mtime));
+                // Nanoseconds as i64, not `asBytes(&st.mtime)`: `i96` occupies
+                // 16 bytes whose top 4 are unspecified, so the struct form
+                // hashed uninitialized stack memory and the stamp changed
+                // between calls (cache never hit).
+                const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+                h.update(std.mem.asBytes(&mtime_ns));
             }
         }
         for ([_][]const u8{ plugins_state_path, plugin_config_state_path }) |p| {
@@ -344,7 +349,8 @@ pub const Registry = struct {
                 continue;
             };
             h.update(std.mem.asBytes(&st.size));
-            h.update(std.mem.asBytes(&st.mtime));
+            const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+            h.update(std.mem.asBytes(&mtime_ns));
         }
         return h.final();
     }

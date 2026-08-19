@@ -217,11 +217,13 @@ pub const Agent = struct {
     /// re-instantiating per call).
     modules: std.StringArrayHashMapUnmanaged(*runtime.ToolModule) = .empty,
     /// Loaded tool wasm bytes, keyed by the tool's wasm path (gpa-owned):
-    /// read from disk once per distinct path per session, then reused for
-    /// every execution, worker spawn, and transform invocation so repeated
-    /// calls skip the filesystem read.  Allocated on gpa (not the per-run
-    /// arena) so the cache survives across turns in a multi-turn session.
-    wasm_cache: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
+    /// read from disk once per distinct (path, size, mtime) — a module
+    /// rebuilt under a long-running process (a `zig build tools` in another
+    /// terminal) replaces its entry on the next use — then reused for every
+    /// execution, worker spawn, and transform invocation so repeated calls
+    /// skip the filesystem read.  Allocated on gpa (not the per-run arena)
+    /// so the cache survives across turns in a multi-turn session.
+    wasm_cache: std.StringArrayHashMapUnmanaged(WasmEntry) = .empty,
     /// Cumulative token usage across all LLM calls in this agent run.
     stats: RunStats = .{},
     /// Compaction progress for the run in flight, reset by `run()` alongside
@@ -357,7 +359,7 @@ pub const Agent = struct {
         var it = self.wasm_cache.iterator();
         while (it.next()) |kv| {
             self.ctx.gpa.free(kv.key_ptr.*);
-            self.ctx.gpa.free(kv.value_ptr.*);
+            self.ctx.gpa.free(kv.value_ptr.*.bytes);
         }
         self.wasm_cache.deinit(self.ctx.gpa);
     }
@@ -2246,22 +2248,64 @@ pub const Agent = struct {
         return if (p == .string) p.string else null;
     }
 
+    /// One cached wasm file: the bytes and the fingerprint they were read
+    /// under, so a rebuild on disk is detected on the next call.
+    const WasmEntry = struct { stamp: u64, bytes: []const u8 };
+
     /// Returns the wasm bytes for `tool`, reading the file from disk only on
-    /// the first call for a given wasm path; the bytes are gpa-allocated
-    /// and cached so repeated tool calls, worker spawns, and transform runs
-    /// against the same module skip the filesystem.  Using gpa (not the
-    /// per-run arena) lets the cache survive across turns in a multi-turn
-    /// session, the files are immutable during a session.
+    /// the first call for a given (path, size, mtime); the bytes are
+    /// gpa-allocated and cached so repeated tool calls, worker spawns, and
+    /// transform runs against the same module skip the filesystem.  Using
+    /// gpa (not the per-run arena) lets the cache survive across turns in a
+    /// multi-turn session.
+    ///
+    /// A module is not pinned to the first version this session saw: the
+    /// path is re-stamped on every call (one stat), and a file that changed
+    /// since it was cached — `zig build tools` from another terminal, a
+    /// plugin whose .wasm was rebuilt in place — drops the superseded copy
+    /// and reloads, matching `runtime.cachedWasm`'s freshness for the
+    /// stateless callers so the two layers never disagree about which build
+    /// of a tool is current. Every caller here is the main thread, so a
+    /// worker holding a slice from a previous batch has always been joined
+    /// before a replacement can free it.
     fn wasmBytes(self: *Agent, tool: *const registry.Tool) ![]const u8 {
-        if (self.wasm_cache.get(tool.wasm)) |bytes| return bytes;
-        const bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, tool.wasm, self.ctx.gpa, .limited(1 << 20));
-        const key = try self.ctx.gpa.dupe(u8, tool.wasm);
-        self.wasm_cache.put(self.ctx.gpa, key, bytes) catch |err| {
+        const path = tool.wasm;
+        const stamp = wasmStamp(self.ctx.io, path) catch 0;
+        if (self.wasm_cache.getPtr(path)) |e| {
+            if (e.stamp == stamp) return e.bytes;
+            // Superseded generation: free it and fall through to the read.
+            self.ctx.gpa.free(e.bytes);
+            e.bytes = &.{};
+        }
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(self.ctx.io, path, self.ctx.gpa, .limited(1 << 20));
+        if (self.wasm_cache.getPtr(path)) |e| {
+            e.stamp = stamp;
+            e.bytes = bytes;
+            return bytes;
+        }
+        const key = try self.ctx.gpa.dupe(u8, path);
+        self.wasm_cache.put(self.ctx.gpa, key, .{ .stamp = stamp, .bytes = bytes }) catch |err| {
             self.ctx.gpa.free(bytes);
             self.ctx.gpa.free(key);
             return err;
         };
         return bytes;
+    }
+
+    /// Fingerprint of a tool's wasm file: size and mtime, the same shape
+    /// `runtime.cachedWasm` uses, so both caches agree on what "changed"
+    /// means. A stat failure (file vanished) folds in as a fresh miss rather
+    /// than a hit on whatever is cached.
+    fn wasmStamp(io: std.Io, path: []const u8) !u64 {
+        const st = try std.Io.Dir.cwd().statFile(io, path, .{});
+        var h = std.hash.Wyhash.init(0x1F83D9ABFB41BD6B);
+        h.update(std.mem.asBytes(&st.size));
+        // Nanoseconds as i64, not `asBytes(&st.mtime)`: `i96` is stored in 16
+        // bytes whose top 4 are unspecified, so the struct form hashes
+        // uninitialized stack memory and the stamp changes between calls.
+        const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+        h.update(std.mem.asBytes(&mtime_ns));
+        return h.final();
     }
 
     /// Pre-loads the wasm bytes of every tool in `calls` and compiles every
@@ -3470,7 +3514,10 @@ const WorkerHandle = struct {
     slot: usize,
     thread: std.Thread,
     worker: *ToolWorker,
-    /// Arena-owned cached bytes (Agent.wasm_cache); never freed per call.
+    /// Cached bytes (Agent.wasm_cache, gpa-owned); never freed per call. A
+    /// replacement on invalidation happens on the main thread after the
+    /// batch's workers have been joined, so the slice stays valid for the
+    /// whole worker lifetime.
     wasm_bytes: []const u8,
 };
 
@@ -3828,11 +3875,59 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
     var tool: registry.Tool = undefined;
     tool.wasm = path;
 
+    // Regression pin for the stamp half: an untouched file's stamp must be
+    // byte-stable across calls. It used to hash the `Timestamp` struct
+    // (i96 in 16 bytes, top 4 unspecified), so every call folded different
+    // stack garbage into the stamp and the cache could never hit.
+    const s1 = try Agent.wasmStamp(io, path);
+    const s2 = try Agent.wasmStamp(io, path);
+    try std.testing.expectEqual(s1, s2);
+
     const first = try agent.wasmBytes(&tool);
     const second = try agent.wasmBytes(&tool);
     try std.testing.expect(first.ptr == second.ptr);
     try std.testing.expect(first.len == second.len);
     try std.testing.expectEqualStrings("fake-wasm-bytes", second);
+}
+
+test "wasmBytes drops a module whose file changed mid-session instead of serving the old bytes" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(arena_state.allocator(), ".zig-cache/tmp/{s}/test_wasm_bytes_rotate.tmp", .{tmp.sub_path});
+    // The replacement has a different length, so the size half of the stamp
+    // differs even on a filesystem with coarse mtime resolution.
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = "fake-wasm-bytes" });
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    var ctx: client.Ctx = undefined;
+    ctx.io = io;
+    ctx.gpa = std.testing.allocator;
+    var agent: Agent = undefined;
+    agent.ctx = &ctx;
+    agent.arena = arena_state.allocator();
+    agent.wasm_cache = .empty;
+    defer agent.deinit();
+
+    var tool: registry.Tool = undefined;
+    tool.wasm = path;
+
+    const first = try agent.wasmBytes(&tool);
+    try std.testing.expectEqualStrings("fake-wasm-bytes", first);
+
+    // The rebuild a long-running session never sees coming: the file on disk
+    // is replaced while the Agent still holds the old copy.
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = "rebuilt-wasm-bytes" });
+    const second = try agent.wasmBytes(&tool);
+    try std.testing.expectEqualStrings("rebuilt-wasm-bytes", second);
+    // A third read is served from the cache again: one slice, no re-read.
+    const third = try agent.wasmBytes(&tool);
+    try std.testing.expect(second.ptr == third.ptr);
 }
 
 test "the parallel-tool stack reservation stays above the observed crash floor" {
