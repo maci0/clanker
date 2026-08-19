@@ -33,6 +33,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const room = lib.optStr(parsed, "room");
     const repro = lib.optStr(parsed, "repro");
     const fix_hint = lib.optStr(parsed, "fix_hint");
+    const repro_lang = lib.optStr(parsed, "repro_lang") orelse "sh";
 
     const priority = mapSeverity(severity) orelse {
         var buf: [128]u8 = undefined;
@@ -51,7 +52,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try appendSection(&body_buf, "Steps to Reproduce", steps, null);
     try appendSection(&body_buf, "Expected Behaviour", expected, null);
     try appendSection(&body_buf, "Actual Behaviour", actual, null);
-    try appendSection(&body_buf, "Reproduce", repro, "sh");
+    try appendSection(&body_buf, "Reproduce", repro, repro_lang);
     try appendSection(&body_buf, "Fix hint", fix_hint, "");
 
     const prefix = "[BUG] ";
