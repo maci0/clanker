@@ -176,6 +176,7 @@ Two checks, because both have caught real errors in finished notes:
 ## Inventory
 
 <!-- inventory:research:start -->
+- [Stage-1 spike — replicating one owner stream between two instances](t-stage1-stream-replication-spike.md) — Draft
 - [Decentralized state store for isolated worktrees and mesh peers](decentralized-state-store.md) — Current
 - [Free LLM endpoints for testing](free-llm-endpoints.md) — Current
 - [OmniRoute ideas clanker could adopt](omniroute-adoption.md) — Current

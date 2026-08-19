@@ -294,7 +294,7 @@ Ordered by what blocks a decision, most blocking first.
 - [ ] Run the two cheap experiments: pg.zig against YugabyteDB (question 3) and the unix-socket transport spike (question 7).
 - [ ] Put the two product questions (1 and 2) to the operator via ask_user; the answers select the tier-2 row.
 - [ ] Adopt "narrow the requirement" staging regardless of which tier-2 backend wins; option T is that staging expressed in-tree.
-- [ ] Run option T's stage-1 spike: replicate one stream (`improvements.jsonl`) between two instances by generalizing `chatrooms.fanOut`, behind `ck_state`; measure delivery and backfill.
+- [ ] Run option T's stage-1 spike: replicate one stream (`improvements.jsonl`) between two instances by generalizing `chatrooms.fanOut`, behind `ck_state`; measure delivery and backfill. Protocol and results: [the spike note](../research/t-stage1-stream-replication-spike.md).
 - [ ] Write the ADR once the decision is made.
 
 ## References
