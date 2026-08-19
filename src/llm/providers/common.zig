@@ -190,3 +190,58 @@ test "writeSamplingParams sends reasoning_effort for thinking models" {
     try std.testing.expect(std.mem.find(u8, out.written(), "\"reasoning_effort\":\"medium\"") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "temperature") == null);
 }
+
+/// Google API error envelope: `{"error":{"code":400,"message":"...","status":
+/// "INVALID_ARGUMENT"}}`, which Vertex `rawPredict`/`generateContent` sometimes
+/// wrap in a one-element array. Shared by the vertex kinds' `parseErrorDetail`:
+/// their platform errors arrive in this shape, not the model publisher's, and
+/// a 400 whose body no codec recognised used to reach the operator as a bare
+/// "HTTP 400" with the one line naming the problem discarded
+/// (docs/reports/investigations/2026-08-19-vertex-anthropic-400.md).
+pub fn parseGoogleErrorMessage(arena: std.mem.Allocator, body: []const u8) ?[]const u8 {
+    const GoogleError = struct {
+        @"error": ?struct {
+            message: []const u8 = "",
+            status: []const u8 = "",
+        } = null,
+    };
+    const trimmed = std.mem.trimStart(u8, body, " \t\r\n");
+    const parsed: GoogleError = if (std.mem.startsWith(u8, trimmed, "[")) blk: {
+        const arr = json.parseFromSliceLeaky([]GoogleError, arena, trimmed, .{ .ignore_unknown_fields = true }) catch return null;
+        for (arr) |entry| {
+            if (entry.@"error" != null) break :blk entry;
+        }
+        return null;
+    } else json.parseFromSliceLeaky(GoogleError, arena, trimmed, .{ .ignore_unknown_fields = true }) catch return null;
+    const e = parsed.@"error" orelse return null;
+    if (e.message.len == 0 and e.status.len == 0) return null;
+    if (e.status.len == 0) return e.message;
+    if (e.message.len == 0) return e.status;
+    return std.fmt.allocPrint(arena, "{s}: {s}", .{ e.status, e.message }) catch e.message;
+}
+
+test "parseGoogleErrorMessage reads the object and array envelopes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const object_form =
+        \\{"error":{"code":400,"message":"Project is not allowed to use Publisher Model","status":"FAILED_PRECONDITION"}}
+    ;
+    try std.testing.expectEqualStrings(
+        "FAILED_PRECONDITION: Project is not allowed to use Publisher Model",
+        parseGoogleErrorMessage(arena, object_form).?,
+    );
+
+    const array_form =
+        \\[{"error":{"code":400,"message":"Invalid JSON payload received.","status":"INVALID_ARGUMENT"}}]
+    ;
+    try std.testing.expectEqualStrings(
+        "INVALID_ARGUMENT: Invalid JSON payload received.",
+        parseGoogleErrorMessage(arena, array_form).?,
+    );
+
+    try std.testing.expect(parseGoogleErrorMessage(arena, "{\"candidates\":[]}") == null);
+    try std.testing.expect(parseGoogleErrorMessage(arena, "not json at all") == null);
+    try std.testing.expect(parseGoogleErrorMessage(arena, "[]") == null);
+}
