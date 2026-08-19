@@ -17,8 +17,20 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 dest="${repo_root}/vendor/python-wasi"
 wasm_binary="${dest}/bin/python-3.12.0.wasm"
 
+# sha256sum is GNU coreutils; macOS ships the Perl Digest::SHA shasum instead,
+# with the same --check/--status interface and <hash>  <file> input format, so
+# pick whichever exists rather than requiring the GNU tool on a macOS checkout.
+if command -v sha256sum >/dev/null 2>&1; then
+    check_cmd=(sha256sum --check --status)
+elif command -v shasum >/dev/null 2>&1; then
+    check_cmd=(shasum -a 256 --check --status)
+else
+    echo "setup-python-wasi: sha256sum (Linux) or shasum (macOS) is required" >&2
+    exit 1
+fi
+
 verify() {
-    printf '%s  %s\n' "$sha256" "$1" | sha256sum --check --status
+    printf '%s  %s\n' "$sha256" "$1" | "${check_cmd[@]}"
 }
 
 if [ -f "$wasm_binary" ]; then
@@ -26,7 +38,6 @@ if [ -f "$wasm_binary" ]; then
     exit 0
 fi
 
-command -v sha256sum >/dev/null || { echo "setup-python-wasi: sha256sum is required" >&2; exit 1; }
 command -v tar >/dev/null || { echo "setup-python-wasi: tar is required" >&2; exit 1; }
 
 work=$(mktemp -d)
