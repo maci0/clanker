@@ -224,6 +224,11 @@ recorder splits (native writer at the choke point, guest reader:
   contract; live `/models` fill for an empty map stays native).
 - `/api/goals` GET — done (`goal_update` `action:list`; `running` overlay stays native).
 - `/api/schedule` — done (guest owns list/toggle/add/remove; Fire stays native).
+- `POST /api/plugins/config` — done. The `plugins` guest owns
+  `state/plugin_config.json` (read and write); the merge and the
+  `config_editable` refusal are host-tested in
+  `tools/zig/plugin_config_logic.zig`. The native writer in `src/cli.zig`
+  was the last second opinion about that store.
 - `/api/files` (~200 native lines, hand-rolled `..` clamp instead of the
   sandbox's `safeJoin`) duplicates `list_files`/`read_file`/`find_files`.
   Real pin: workspace roots can sit outside the sandbox root, and the

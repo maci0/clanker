@@ -58,6 +58,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `POST /api/plugins/config` now relays to the `plugins` guest instead of
+  writing `state/plugin_config.json` itself. The guest already read every
+  descriptor and that file to answer `GET /api/plugins`, so the native writer
+  was a second opinion about which keys `config_editable` opens; a refusal is
+  now the guest's, and the merge is host-tested in
+  `tools/zig/plugin_config_logic.zig`. The `plugins` tool takes
+  `{"name":…,"config":{…}}`, so an agent can change a plugin's settings too,
+  not just the web UI.
+
 - `clanker doctor`'s header line now carries the clanker version and target
   platform (`clanker doctor 0.x.y (linux/x86_64)`), so its output is usable as
   a bug-report attachment without asking for those separately, and its

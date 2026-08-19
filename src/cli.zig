@@ -7407,7 +7407,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_stats) {
             handleStats(io, gpa, cfg, environ_map, stream);
         } else if (is_plugin_config) {
-            handlePluginConfig(io, gpa, cfg, body, stream);
+            handlePluginConfig(io, gpa, cfg, environ_map, body, stream);
         } else if (is_config_model) {
             handleConfigModel(io, gpa, body, stream);
         } else if (is_config_model_set) {
@@ -13018,116 +13018,29 @@ const PluginToggleBody = struct {
 /// `POST /api/plugins/config {"name":…,"config":{…}}`, change a plugin's
 /// tunable settings.
 ///
-/// Written to `state/plugin_config.json` rather than the descriptor: the
-/// manifest is committed project configuration and the improve loop rewrites
-/// it, so a machine-local preference does not belong there. The registry
-/// layers this file over the descriptor at load, and drops any key the
-/// descriptor did not list in `config_editable`, so a tool's structural
-/// settings cannot be reached from here. This endpoint refuses them outright
-/// too, rather than accepting a write it knows will be ignored.
-fn handlePluginConfig(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, body: []const u8, stream: std.Io.net.Stream) void {
+/// The `plugins` guest owns the store: it already reads every descriptor and
+/// `state/plugin_config.json` to answer `GET /api/plugins`, so a second writer
+/// here would be a second opinion about which keys `config_editable` opens and
+/// about what happens to an unreadable file. The body is the guest's input
+/// verbatim, and its refusals map to a status the same way every other relayed
+/// route's do.
+fn handlePluginConfig(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{}) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
+    const result = toolJson(io, gpa, arena, cfg, environ_map, "plugins", body) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"plugins tool unavailable\"}");
         return;
     };
-    if (parsed != .object) {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
-        return;
-    }
-    const name = switch (parsed.object.get("name") orelse std.json.Value{ .null = {} }) {
-        .string => |s| s,
-        else => {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing name\"}");
-            return;
-        },
-    };
-    const wanted = switch (parsed.object.get("config") orelse std.json.Value{ .null = {} }) {
-        .object => |o| o,
-        else => {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"config must be an object\"}");
-            return;
-        },
-    };
-
-    var reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
-        log.log(.error_, "POST /api/plugins/config: registry load failed: {s}", .{@errorName(err)});
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"registry unavailable\"}");
-        return;
-    };
-    const tool = reg.get(name) orelse {
-        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such tool\"}");
-        return;
-    };
-    var it = wanted.iterator();
-    while (it.next()) |entry| {
-        if (!tool.configKeyEditable(entry.key_ptr.*)) {
-            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"that setting is not editable\"}");
-            return;
-        }
-    }
-
-    // Read-modify-write of the whole file: other plugins' overrides live here
-    // too and must survive an edit to this one.
-    // A file that exists but cannot be read or parsed is not an empty one:
-    // the write below replaces the whole document, so treating either failure
-    // as "no overrides yet" deletes every other plugin's settings and reports
-    // success. Only a missing file starts from empty.
-    var store: std.json.Value = .{ .object = .{} };
-    if (std.Io.Dir.cwd().readFileAlloc(io, registry.plugin_config_state_path, arena, .limited(256 * 1024))) |raw| {
-        const existing = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch |err| {
-            log.log(.error_, "plugin config: {s} is not valid JSON ({s}); refusing to replace it", .{ registry.plugin_config_state_path, @errorName(err) });
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the saved plugin config is not valid JSON; it was left untouched\"}");
-            return;
-        };
-        if (existing != .object) {
-            log.log(.error_, "plugin config: {s} is not a JSON object; refusing to replace it", .{registry.plugin_config_state_path});
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the saved plugin config is not a JSON object; it was left untouched\"}");
-            return;
-        }
-        store = existing;
-    } else |err| switch (err) {
-        error.FileNotFound => {},
-        else => {
-            log.log(.error_, "plugin config: could not read {s} ({s}); refusing to replace it", .{ registry.plugin_config_state_path, @errorName(err) });
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"the saved plugin config could not be read; it was left untouched\"}");
-            return;
-        },
-    }
-    var merged: std.json.ObjectMap = .empty;
-    if (store.object.get(name)) |prev| {
-        if (prev == .object) merged = prev.object.clone(arena) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-            return;
-        };
-    }
-    var set = wanted.iterator();
-    while (set.next()) |entry| {
-        merged.put(arena, entry.key_ptr.*, entry.value_ptr.*) catch {
-            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-            return;
-        };
-    }
-    var out_store = store.object.clone(arena) catch store.object;
-    out_store.put(arena, name, .{ .object = merged }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-        return;
-    };
-
-    var doc: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &doc.writer, .options = .{} };
-    s.write(std.json.Value{ .object = out_store }) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-        return;
-    };
-    atomic_write.writeFile(io, std.Io.Dir.cwd(), registry.plugin_config_state_path, doc.written()) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not save\"}");
-        return;
-    };
-    respond(stream, 200, "OK", "{\"ok\":true}");
+    respondTool(stream, result);
 }
 
 /// `GET /api/goals` lists through the `goal_update` guest (`action:list`).

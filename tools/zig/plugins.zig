@@ -1,5 +1,7 @@
-//! plugins: list WASM plugins and switch the optional ones on or off.
-//! Input:  {"args": "" | "on <name>" | "off <name>"}
+//! plugins: list WASM plugins, switch the optional ones on or off, and save a
+//! plugin's machine-local settings.
+//! Input:  {"args": "" | "json" | "on <name>" | "off <name>"}
+//!         {"name": "<tool>", "config": {"<key>": <value>, …}}
 //! Output: {"ok": true, "text": "<listing or confirmation>"}
 //!
 //! Tools marked `"internal": true` in their descriptor are core: they back the
@@ -9,6 +11,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const plugin_config_logic = @import("plugin_config_logic.zig");
 
 const state_path = "state/plugins.json";
 const config_state_path = "state/plugin_config.json";
@@ -69,6 +72,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
     var args: []const u8 = "";
     if (parsed == .object) {
+        // A settings save names its keys, so it arrives as an object rather
+        // than a word in `args`.
+        if (parsed.object.get("config")) |wanted| return configure(out, alloc, parsed.object, wanted);
         if (parsed.object.get("args")) |a| {
             if (a == .string) args = std.mem.trim(u8, a.string, " \t");
         }
@@ -244,6 +250,60 @@ fn writeDisabled(plugins: []const Plugin) !void {
     try s.endArray();
     try s.endObject();
     try lib.fsWrite(state_path, buf[0..w.end]);
+}
+
+/// Save a plugin's machine-local settings into state/plugin_config.json.
+///
+/// The overrides live here rather than in the descriptor because the manifest
+/// is committed project configuration that the improve loop rewrites. The
+/// registry layers this file over the descriptor at load and drops any key the
+/// descriptor did not list in `config_editable`; refusing those keys here too
+/// is what keeps a save from reporting success for a write that is ignored.
+fn configure(out: *lib.Out, alloc: std.mem.Allocator, input: std.json.ObjectMap, wanted: std.json.Value) !void {
+    const name_value = input.get("name") orelse return lib.fail(out, "a settings save needs a name");
+    if (name_value != .string or name_value.string.len == 0)
+        return lib.fail(out, "a settings save needs a name");
+    if (wanted != .object) return lib.fail(out, "config must be an object");
+
+    const plugins = readPlugins(alloc) catch |err| return lib.failErr(out, err, "reading the plugin list");
+    var target: ?*const Plugin = null;
+    for (plugins) |*p| {
+        if (std.mem.eql(u8, p.name, name_value.string)) target = p;
+    }
+    const plugin = target orelse
+        return lib.fail(out, try std.fmt.allocPrint(alloc, "no such tool: {s}", .{name_value.string}));
+
+    // A file that exists but cannot be read or parsed is not an empty one: the
+    // write below replaces the whole document, so treating either failure as
+    // "no overrides yet" would delete every other plugin's settings and report
+    // success. Only a missing file starts from empty.
+    var store: std.json.Value = .{ .null = {} };
+    if (lib.fsRead(config_state_path)) |raw| {
+        store = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{}) catch
+            return lib.fail(out, "the saved plugin config is not valid JSON; it was left untouched");
+        if (store != .object)
+            return lib.fail(out, "the saved plugin config is not a JSON object; it was left untouched");
+    } else |err| switch (err) {
+        error.NotFound => {},
+        else => return lib.failErr(out, err, "reading the saved plugin config"),
+    }
+
+    const outcome = plugin_config_logic.apply(alloc, store, plugin.name, wanted.object, plugin.config_editable) catch |err|
+        return lib.failErr(out, err, "updating the saved plugin config");
+    switch (outcome) {
+        .not_editable => |key| return lib.fail(
+            out,
+            try std.fmt.allocPrint(alloc, "that setting is not editable: {s}", .{key}),
+        ),
+        .store => |doc| {
+            var w: std.Io.Writer.Allocating = .init(alloc);
+            var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+            s.write(doc) catch |err| return lib.failErr(out, err, "updating the saved plugin config");
+            lib.fsWrite(config_state_path, w.written()) catch |err|
+                return lib.failErr(out, err, "saving the plugin config");
+            return textJson(out, alloc, "configured: ", plugin.name);
+        },
+    }
 }
 
 fn clipDesc(desc: []const u8) []const u8 {
