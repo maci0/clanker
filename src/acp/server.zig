@@ -18,7 +18,7 @@ const Request = struct {
 
 pub const Connection = struct {
     initialized: bool = false,
-    session_counter: u64 = 0,
+    session_counter: u32 = 0,
     sessions: std.StringArrayHashMapUnmanaged(void) = .empty,
     prompt_busy: std.StringArrayHashMapUnmanaged(bool) = .empty,
 
