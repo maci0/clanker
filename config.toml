@@ -282,7 +282,7 @@ repl_exec_allow = []
 # allow/deny. Only the serve path reads it today, so `always` behaves like
 # `browser` until the REPL grows a prompt for it. Runs with no human channel
 # (headless, improve, sub-agents) are never gated whatever this says.
-# confirm_writes = "never"
+confirm_writes = "browser"
 #
 # Ordered providers tried after the selected one cannot serve a request.
 # Either spelling works; a bare string becomes a one-entry chain.
