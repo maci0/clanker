@@ -213,11 +213,28 @@ pub fn parseGoogleErrorMessage(arena: std.mem.Allocator, body: []const u8) ?[]co
         }
         return null;
     } else json.parseFromSliceLeaky(GoogleError, arena, trimmed, .{ .ignore_unknown_fields = true }) catch return null;
-    const e = parsed.@"error" orelse return null;
-    if (e.message.len == 0 and e.status.len == 0) return null;
-    if (e.status.len == 0) return e.message;
-    if (e.message.len == 0) return e.status;
-    return std.fmt.allocPrint(arena, "{s}: {s}", .{ e.status, e.message }) catch e.message;
+    if (parsed.@"error") |e| {
+        if (e.message.len == 0 and e.status.len == 0) return null;
+        if (e.status.len == 0) return e.message;
+        if (e.message.len == 0) return e.status;
+        return std.fmt.allocPrint(arena, "{s}: {s}", .{ e.status, e.message }) catch e.message;
+    }
+    // Flat envelope: {"code":403,"message":"...","status":"PERMISSION_DENIED"} —
+    // the shape GCP returns when the error is not nested under "error".
+    const FlatError = struct {
+        message: []const u8 = "",
+        status: []const u8 = "",
+    };
+    if (!std.mem.startsWith(u8, trimmed, "[")) {
+        const flat: ?FlatError = json.parseFromSliceLeaky(FlatError, arena, trimmed, .{ .ignore_unknown_fields = true }) catch null;
+        if (flat) |f| {
+            if (f.message.len == 0 and f.status.len == 0) return null;
+            if (f.status.len == 0) return f.message;
+            if (f.message.len == 0) return f.status;
+            return std.fmt.allocPrint(arena, "{s}: {s}", .{ f.status, f.message }) catch f.message;
+        }
+    }
+    return null;
 }
 
 test "parseGoogleErrorMessage reads the object and array envelopes" {
