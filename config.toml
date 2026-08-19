@@ -70,6 +70,11 @@ kind = "openai_compat"
 base_url = "https://integrate.api.nvidia.com/v1"
 api_key_env = "NVIDIA_API_KEY"
 
+# Table key is <our provider name>/<NVIDIA's own catalog SKU>. NVIDIA's NIM
+# catalog hosts many vendors under one namespace and prefixes each model with
+# its own vendor slug ("z-ai/", "meta/", "nvidia/" for their first-party
+# models), so a three-segment key like this is normal, not a typo — see
+# config.local.toml's nvidia/nvidia/nemotron-... entry for the same shape.
 [models."nvidia/z-ai/glm-5.2"]
 provider = "nvidia"
 context_window = 131072
@@ -590,7 +595,9 @@ python_wasi_max_memory_bytes = 268435456
 # pace, 5. Overridden by `--mascot-speed`.
 # mascot_speed = 5
 
+# capability_gate and inert_gate are omitted here on purpose: both already
+# default to true in src/config.zig, so writing them out does nothing except
+# invite drift if the struct default ever changes and this file is not
+# updated to match.
 [improve]
 max_context_requests = 5
-capability_gate = true
-inert_gate = true
