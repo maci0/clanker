@@ -160,6 +160,9 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     const prompt_val = obj.get("prompt") orelse return responseError(alloc, id, -32602, "session/prompt requires prompt");
     const prompt_text = (try promptText(arena, prompt_val)) orelse
         return responseError(alloc, id, -32602, "session/prompt requires prompt");
+    if (std.mem.trim(u8, prompt_text, " \t\r\n").len == 0) {
+        return responseError(alloc, id, -32602, "prompt text must not be empty or whitespace-only");
+    }
     const prompt_len: u32 = if (prompt_text.len > std.math.maxInt(u32)) std.math.maxInt(u32) else @intCast(prompt_text.len);
     // v1 stub: report end_turn without running the model; real Agent wiring lands next
     // turn once sessions own an Agent + cwd. This already satisfies the ACP shape
