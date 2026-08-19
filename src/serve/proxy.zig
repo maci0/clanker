@@ -16,7 +16,7 @@ const rate_limit = @import("../llm/rate_limit.zig");
 const log = @import("../util/log.zig");
 const raw_http = @import("../util/raw_http.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
-const vertex_ai = @import("../llm/providers/vertex_ai.zig");
+const vertex = @import("../llm/providers/vertex.zig");
 const xcode = @import("proxy_transcode.zig");
 const build_options = @import("build_options");
 
@@ -215,7 +215,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
     if (!impl.proxy.enabled) {
         return writeEnvelope(ctx, 400, "protocol_mismatch", "this provider is not available on the OpenAI/Anthropic proxy");
     }
-    if (resolved.provider.kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.wireModelName())) {
+    if (resolved.provider.kind == .vertex and !vertex.isAnthropicModel(resolved.provider.wireModelName())) {
         return writeEnvelope(ctx, 400, "protocol_mismatch", "Vertex Gemini is not available on the OpenAI/Anthropic proxy");
     }
 

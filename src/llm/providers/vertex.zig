@@ -1,33 +1,23 @@
-//! `vertex_anthropic`: Anthropic models served through Google Vertex AI.
+//! `vertex`: Google Vertex AI.
 //!
-//! Same wire codec as `anthropic.zig` (re-exported below, not copied) with
-//! three deployment differences, which is exactly the split the vtable is for:
-//!
-//!   - the model is addressed in the URL, so the body carries
-//!     `anthropic_version` instead of `model`;
-//!   - streaming is a different verb (`:streamRawPredict`), not a body flag
-//!     alone;
-//!   - the credential is a GCP OAuth access token minted from a service
-//!     account or gcloud ADC (`authorized_user`) and renewed in-process,
-//!     `oauth_refresh` in ADR 0005's terms.
+//! One provider, two wires, same GCP credential. A Claude model id uses the
+//! existing Anthropic Vertex path (`:rawPredict`). Everything else uses
+//! Gemini generateContent on `publishers/google`. `vertex_anthropic` remains
+//! the Anthropic-only kind for configs that never want Gemini.
 
 const std = @import("std");
 const api = @import("api.zig");
-const anthropic = @import("anthropic.zig");
 const common = @import("common.zig");
+const anthropic = @import("anthropic.zig");
+const gemini = @import("gemini.zig");
+const vertex_anthropic = @import("vertex_anthropic.zig");
 const auth = @import("../auth.zig");
 const config = @import("../../config.zig");
 const vertex_token = @import("../vertex_token.zig");
 
-/// Vertex pins the message-format version in the body rather than a header.
-pub const body_version = "vertex-2023-10-16";
-
 pub const provider: api.Provider = .{
-    .kind = .vertex_anthropic,
+    .kind = .vertex,
     .auth = .{
-        // An access token in `api_key_env` still wins (handy for a
-        // short-lived token pasted in by hand); otherwise it is minted from
-        // the service account or gcloud ADC and cached until it nears expiry.
         .default = .api_key,
         .mint = mint,
         .required = true,
@@ -37,74 +27,67 @@ pub const provider: api.Provider = .{
     },
     .proxy = .{
         .family = .anthropic,
+        .speaks = false,
         .chat_only = true,
+        .vtable_chat = true,
         .vtable_messages = true,
         .always_vtable_url = true,
         .rewrite_vertex_body = true,
-        .vertex_body = true,
     },
     .buildRequest = buildRequest,
-    // The codec is Anthropic's, unchanged.
-    .parseResponse = anthropic.provider.parseResponse,
+    .parseResponse = parseResponse,
     .parseErrorDetail = parseErrorDetail,
-    .parseStreamEvent = anthropic.provider.parseStreamEvent,
-    // A GCP access token is a bearer token, and the anthropic version lives in
-    // the body, so none of Anthropic's header juggling applies.
-    .authHeaders = authHeaders,
+    .parseStreamEvent = parseStreamEvent,
+    .authHeaders = vertex_anthropic.authHeaders,
     .endpointUrl = endpointUrl,
 };
-
-fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildError![]u8 {
-    return anthropic.buildBody(gpa, params, .{ .anthropic_version = body_version });
-}
-
-/// A Vertex deployment answers in two error dialects: the platform refuses in
-/// Google's envelope (`{"error":{"message","status"}}`, sometimes
-/// array-wrapped), the model publisher in Anthropic's. Trying only Anthropic's
-/// left every platform-side 400 as a bare "HTTP 400".
-fn parseErrorDetail(arena: std.mem.Allocator, body: []const u8) ?[]const u8 {
-    if (common.parseGoogleErrorMessage(arena, body)) |m| return m;
-    return anthropic.provider.parseErrorDetail(arena, body);
-}
-
-test "vertex parseErrorDetail reads Google's envelope and Anthropic's" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const google =
-        \\{"error":{"code":404,"message":"Publisher Model was not found","status":"NOT_FOUND"}}
-    ;
-    try std.testing.expectEqualStrings(
-        "NOT_FOUND: Publisher Model was not found",
-        parseErrorDetail(arena, google).?,
-    );
-
-    const anthropic_shape =
-        \\{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: required"}}
-    ;
-    try std.testing.expect(std.mem.find(u8, parseErrorDetail(arena, anthropic_shape).?, "max_tokens: required") != null);
-}
 
 fn mint(env: auth.Env, p: *const config.Provider) anyerror![]const u8 {
     return vertex_token.get(env.io, env.gpa, env.environ_map, p.service_account_file);
 }
 
-/// Bearer plus `x-goog-user-project`. User ADC (and some org policies) bill
-/// against that project; `provider.project` is already required for the URL.
-pub fn authHeaders(
-    cred: auth.Credential,
-    headers: *std.http.Client.Request.Headers,
-    extra: *api.ExtraHeaders,
-) usize {
-    if (cred.bearer) |b| headers.authorization = .{ .override = b };
-    if (cred.quota_project.len == 0) return 0;
-    extra[0] = .{ .name = "x-goog-user-project", .value = cred.quota_project };
-    return 1;
+/// Claude (and any id that already names the Anthropic publisher) uses the
+/// Anthropic Vertex wire. Gemini, Gemma, and anything else go through
+/// generateContent.
+pub fn isAnthropicModel(name: []const u8) bool {
+    if (name.len >= 6 and std.ascii.startsWithIgnoreCase(name, "claude")) return true;
+    var i: usize = 0;
+    while (i + 9 <= name.len) : (i += 1) {
+        if (std.ascii.startsWithIgnoreCase(name[i..], "anthropic")) return true;
+    }
+    return false;
 }
 
-/// Vertex addresses the model in the path, so the URL cannot be a constant:
-/// `.../locations/<region>/publishers/anthropic/models/<model>:rawPredict`.
+fn looksLikeGemini(body: []const u8) bool {
+    return std.mem.find(u8, body, "\"candidates\"") != null or
+        std.mem.find(u8, body, "\"usageMetadata\"") != null;
+}
+
+fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildError![]u8 {
+    if (isAnthropicModel(params.provider.wireModelName())) {
+        return anthropic.buildBody(gpa, params, .{ .anthropic_version = vertex_anthropic.body_version });
+    }
+    return gemini.provider.buildRequest(gpa, params);
+}
+
+fn parseResponse(arena: std.mem.Allocator, body: []const u8, err_detail: ?*?[]const u8) anyerror!@import("../types.zig").ChatResponse {
+    if (looksLikeGemini(body)) return gemini.provider.parseResponse(arena, body, err_detail);
+    return anthropic.provider.parseResponse(arena, body, err_detail);
+}
+
+fn parseErrorDetail(arena: std.mem.Allocator, body: []const u8) ?[]const u8 {
+    // Google's envelope first: it covers the array-wrapped platform errors
+    // neither publisher codec parses, and carries the status label.
+    if (common.parseGoogleErrorMessage(arena, body)) |m| return m;
+    if (gemini.provider.parseErrorDetail(arena, body)) |m| return m;
+    return anthropic.provider.parseErrorDetail(arena, body);
+}
+
+fn parseStreamEvent(chunk_arena: std.mem.Allocator, payload: []const u8) api.StreamParseError!?api.StreamEvent {
+    if (looksLikeGemini(payload)) return gemini.provider.parseStreamEvent(chunk_arena, payload);
+    return anthropic.provider.parseStreamEvent(chunk_arena, payload);
+}
+
 fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, streaming: bool) anyerror![]u8 {
     if (p.project.len == 0 or p.location.len == 0) return error.VertexProjectMissing;
     var owned_base: ?[]u8 = null;
@@ -113,128 +96,101 @@ fn endpointUrl(gpa: std.mem.Allocator, p: *const config.Provider, streaming: boo
         owned_base = try std.fmt.allocPrint(gpa, "https://{s}-aiplatform.googleapis.com", .{p.location});
         break :blk owned_base.?;
     };
-    // Streaming is a different verb on Vertex, not a body flag.
-    const verb = if (streaming) "streamRawPredict" else "rawPredict";
+
+    const model = p.wireModelName();
+    if (p.path) |path| {
+        const joined = try common.joinBaseAndPath(gpa, p, path);
+        defer gpa.free(joined);
+        return gpa.dupe(u8, joined);
+    }
+
+    if (isAnthropicModel(model)) {
+        const verb = if (streaming) "streamRawPredict" else "rawPredict";
+        return std.fmt.allocPrint(
+            gpa,
+            "{s}/v1/projects/{s}/locations/{s}/publishers/anthropic/models/{s}:{s}",
+            .{ base, p.project, p.location, model, verb },
+        );
+    }
+
+    const verb = if (streaming) "streamGenerateContent?alt=sse" else "generateContent";
+    if (std.mem.startsWith(u8, model, "publishers/")) {
+        return std.fmt.allocPrint(
+            gpa,
+            "{s}/v1/projects/{s}/locations/{s}/{s}:{s}",
+            .{ base, p.project, p.location, model, verb },
+        );
+    }
     return std.fmt.allocPrint(
         gpa,
-        "{s}/v1/projects/{s}/locations/{s}/publishers/anthropic/models/{s}:{s}",
-        .{ base, p.project, p.location, p.wireModelName(), verb },
+        "{s}/v1/projects/{s}/locations/{s}/publishers/google/models/{s}:{s}",
+        .{ base, p.project, p.location, model, verb },
     );
 }
 
 // ------------------------------------------------------------------- tests --
 
-const types = @import("../types.zig");
-const json = std.json;
-
-test "vertex request body replays tool calls without leaking the parsed input" {
-    // Regression: the tool-call arguments were re-parsed with the caller's
-    // general-purpose allocator using the *Leaky variant, so every replayed
-    // tool call leaked its parsed JSON. The body is built with the testing
-    // allocator here, which fails the test if that comes back.
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var p = try config.Provider.single(arena, "vertex-opus", "", .vertex_anthropic, "claude-opus-4-6", .{
-        .context_window = 1_048_576,
-        .max_tokens = 32768,
-    });
-    p.project = "my-project";
-    p.location = "us-east5";
-
-    const calls = [_]types.ToolCall{
-        .{ .id = "toolu_1", .name = "history", .arguments = "{\"n\":3}" },
-        .{ .id = "toolu_2", .name = "roadmap", .arguments = "{}" },
-    };
-    const messages = [_]types.Message{
-        .{ .role = .system, .content = "sys" },
-        .{ .role = .user, .content = "what next?" },
-        .{ .role = .assistant, .tool_calls = &calls },
-        .{ .role = .tool, .tool_call_id = "toolu_1", .content = "recent history" },
-        .{ .role = .tool, .tool_call_id = "toolu_2", .content = "(no planned items)" },
-    };
-
-    const body = try buildRequest(std.testing.allocator, .{ .provider = &p, .messages = &messages });
-    defer std.testing.allocator.free(body);
-
-    const parsed = try json.parseFromSliceLeaky(json.Value, arena, body, .{});
-    const obj = parsed.object;
-    // Vertex takes the model in the URL and the version in the body.
-    try std.testing.expectEqualStrings("vertex-2023-10-16", obj.get("anthropic_version").?.string);
-    try std.testing.expect(obj.get("model") == null);
-    // max_tokens is clamped to half the context window, so the configured
-    // 32768 passes through untouched on a 1M-token model.
-    try std.testing.expectEqual(@as(i64, 32768), obj.get("max_tokens").?.integer);
-
-    const msgs = obj.get("messages").?.array.items;
-    try std.testing.expectEqual(@as(usize, 4), msgs.len);
-    const blocks = msgs[1].object.get("content").?.array.items;
-    try std.testing.expectEqualStrings("tool_use", blocks[0].object.get("type").?.string);
-    try std.testing.expectEqualStrings("history", blocks[0].object.get("name").?.string);
-    try std.testing.expectEqual(@as(i64, 3), blocks[0].object.get("input").?.object.get("n").?.integer);
-    // A no-argument call must serialize as an empty object, not a bare string.
-    try std.testing.expectEqual(@as(usize, 0), blocks[1].object.get("input").?.object.count());
+test "claude and anthropic ids select the Anthropic Vertex wire" {
+    try std.testing.expect(isAnthropicModel("claude-opus-5@default"));
+    try std.testing.expect(isAnthropicModel("claude-sonnet-5"));
+    try std.testing.expect(isAnthropicModel("publishers/anthropic/models/claude-opus-4-6"));
+    try std.testing.expect(!isAnthropicModel("gemini-2.5-flash"));
+    try std.testing.expect(!isAnthropicModel("gemini-3.6-flash"));
+    try std.testing.expect(!isAnthropicModel("gemma-4-31b-it"));
 }
 
-test "vertex endpoint url carries project, location, model and verb" {
+test "vertex AI Gemini URL uses generateContent on publishers/google" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-
-    var p = try config.Provider.single(arena, "vertex-opus", "", .vertex_anthropic, "claude-opus-4-6", .{});
+    var p = try config.Provider.single(arena, "vertex", "", .vertex, "gemini-2.5-flash", .{});
     p.project = "my-project";
     p.location = "us-east5";
-
-    const streaming = try endpointUrl(std.testing.allocator, &p, true);
-    defer std.testing.allocator.free(streaming);
+    const url = try endpointUrl(arena, &p, false);
     try std.testing.expectEqualStrings(
-        "https://us-east5-aiplatform.googleapis.com/v1/projects/my-project/locations/us-east5/publishers/anthropic/models/claude-opus-4-6:streamRawPredict",
-        streaming,
+        "https://us-east5-aiplatform.googleapis.com/v1/projects/my-project/locations/us-east5/publishers/google/models/gemini-2.5-flash:generateContent",
+        url,
     );
-
-    const blocking = try endpointUrl(std.testing.allocator, &p, false);
-    defer std.testing.allocator.free(blocking);
-    try std.testing.expect(std.mem.endsWith(u8, blocking, ":rawPredict"));
-
-    // A provider missing the GCP coordinates must fail loudly, not build a
-    // URL with empty path segments.
-    var bare = try config.Provider.single(arena, "vertex-bad", "", .vertex_anthropic, "claude-opus-4-6", .{});
-    try std.testing.expectError(error.VertexProjectMissing, endpointUrl(std.testing.allocator, &bare, true));
+    const stream = try endpointUrl(arena, &p, true);
+    try std.testing.expectEqualStrings(
+        "https://us-east5-aiplatform.googleapis.com/v1/projects/my-project/locations/us-east5/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse",
+        stream,
+    );
 }
 
-test "vertex mints when no token is pasted in" {
-    var p = config.Provider{ .name = "v", .base_url = "", .default_model = "m" };
-    p.kind = .vertex_anthropic;
-
-    try std.testing.expectEqual(auth.Strategy.oauth_refresh, auth.selectStrategy(provider.auth, &p, null));
-    try std.testing.expectEqual(auth.Strategy.api_key, auth.selectStrategy(provider.auth, &p, "ya29.pasted"));
-
-    // No file, no GAC, no HOME: mint is selected but cannot resolve a
-    // credentials path, so resolve fails rather than send unauthenticated.
-    var no_sa = config.Provider{ .name = "v2", .base_url = "", .default_model = "m" };
-    no_sa.kind = .vertex_anthropic;
-    var env_map = std.process.Environ.Map.init(std.testing.allocator);
-    defer env_map.deinit();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    try std.testing.expectError(error.VertexTokenFailed, auth.resolve(
-        .{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map },
-        provider.auth,
-        &no_sa,
-    ));
+test "vertex AI Claude URL uses the Anthropic rawPredict verb" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var p = try config.Provider.single(arena, "vertex", "", .vertex, "claude-opus-5@default", .{});
+    p.project = "my-project";
+    p.location = "us-east5";
+    const url = try endpointUrl(arena, &p, true);
+    try std.testing.expectEqualStrings(
+        "https://us-east5-aiplatform.googleapis.com/v1/projects/my-project/locations/us-east5/publishers/anthropic/models/claude-opus-5@default:streamRawPredict",
+        url,
+    );
 }
 
-test "vertex auth headers carry the quota project" {
-    var headers: std.http.Client.Request.Headers = .{};
-    var extra: api.ExtraHeaders = undefined;
-    const n = authHeaders(.{
-        .value = "tok",
-        .bearer = "Bearer tok",
-        .quota_project = "my-gcp-project",
-    }, &headers, &extra);
-    try std.testing.expectEqual(@as(usize, 1), n);
-    try std.testing.expectEqualStrings("x-goog-user-project", extra[0].name);
-    try std.testing.expectEqualStrings("my-gcp-project", extra[0].value);
-    try std.testing.expectEqualStrings("Bearer tok", headers.authorization.override);
+test "vertex AI Gemini body is generateContent, Claude body is Anthropic Vertex" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]@import("../types.zig").Message{
+        .{ .role = .user, .content = "hi" },
+    };
+
+    var gem = try config.Provider.single(arena, "vertex", "", .vertex, "gemini-2.5-flash", .{ .max_tokens = 256 });
+    gem.project = "p";
+    gem.location = "us-east5";
+    const gem_body = try buildRequest(arena, .{ .provider = &gem, .messages = &messages });
+    try std.testing.expect(std.mem.find(u8, gem_body, "\"contents\"") != null);
+    try std.testing.expect(std.mem.find(u8, gem_body, "anthropic_version") == null);
+
+    var claude = try config.Provider.single(arena, "vertex", "", .vertex, "claude-opus-5@default", .{ .max_tokens = 256 });
+    claude.project = "p";
+    claude.location = "us-east5";
+    const claude_body = try buildRequest(arena, .{ .provider = &claude, .messages = &messages });
+    try std.testing.expect(std.mem.find(u8, claude_body, "\"anthropic_version\"") != null);
+    try std.testing.expect(std.mem.find(u8, claude_body, "\"contents\"") == null);
 }

@@ -68,13 +68,13 @@ in `src/config.zig` (which is the `kind = "..."` config surface, so it has to
 live there; `fromStr` is reflective and needs no change). Nothing else in the
 tree learns about it. Where a new provider mostly matches an existing one,
 re-export that provider's function pointers rather than copying the codec —
-`vertex.zig` does exactly this with `anthropic.zig` and differs only in a body
+`vertex_anthropic.zig` does exactly this with `anthropic.zig` and differs only in a body
 header, the URL verb and the credential.
 
 - **openai_compat** (`src/llm/providers/openai.zig`): works with any OpenAI-compatible endpoint.
 - **anthropic** (`src/llm/providers/anthropic.zig`): Anthropic's native Messages API.
-- **vertex_anthropic** (`src/llm/providers/vertex.zig`): the Anthropic codec on Google Vertex AI (details below).
-- **vertex** (`src/llm/providers/vertex_ai.zig`): Vertex AI. Gemini generateContent, or the Anthropic Vertex wire when the model id is Claude.
+- **vertex_anthropic** (`src/llm/providers/vertex_anthropic.zig`): the Anthropic codec on Google Vertex AI (details below).
+- **vertex** (`src/llm/providers/vertex.zig`): Vertex AI. Gemini generateContent, or the Anthropic Vertex wire when the model id is Claude.
 - **azure_openai** (`src/llm/providers/azure.zig`): Azure OpenAI chat completions. Same body as openai_compat; deployment in the URL; key on `api-key`.
 - **gemini** (`src/llm/providers/gemini.zig`): Google Gemini generateContent (AI Studio). Key on `x-goog-api-key`.
 - **deepseek**: OpenAI-compatible provider at `https://api.deepseek.com`.

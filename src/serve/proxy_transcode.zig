@@ -12,7 +12,7 @@ const providers = @import("../llm/registry.zig");
 const types = @import("../llm/types.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
 const openai = @import("../llm/providers/openai.zig");
-const vertex = @import("../llm/providers/vertex.zig");
+const vertex_anthropic = @import("../llm/providers/vertex_anthropic.zig");
 
 /// Drop `model` (Vertex addresses it in the URL) and set `anthropic_version`.
 /// Other keys are kept: this is a field swap, not a rebuild.
@@ -21,7 +21,7 @@ pub fn rewriteVertexBody(gpa: std.mem.Allocator, body: []const u8) ![]u8 {
     defer parsed.deinit();
     if (parsed.value != .object) return error.Malformed;
     _ = parsed.value.object.swapRemove("model");
-    try parsed.value.object.put(gpa, "anthropic_version", .{ .string = vertex.body_version });
+    try parsed.value.object.put(gpa, "anthropic_version", .{ .string = vertex_anthropic.body_version });
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
     try json.Stringify.value(parsed.value, .{}, &out.writer);
@@ -39,7 +39,7 @@ pub fn openaiToAnthropic(
     const arena = arena_state.allocator();
     const params = try parseOpenaiChat(arena, provider, body);
     const opts: anthropic.BodyOptions = if (vertex_body)
-        .{ .anthropic_version = vertex.body_version }
+        .{ .anthropic_version = vertex_anthropic.body_version }
     else
         .{};
     return anthropic.buildBody(gpa, params, opts);
@@ -909,7 +909,7 @@ test "openai chat transcodes to anthropic messages and vertex body" {
     const vtx = try openaiToAnthropic(gpa, &provider, body, true);
     defer gpa.free(vtx);
     try std.testing.expect(std.mem.find(u8, vtx, "anthropic_version") != null);
-    try std.testing.expect(std.mem.find(u8, vtx, vertex.body_version) != null);
+    try std.testing.expect(std.mem.find(u8, vtx, vertex_anthropic.body_version) != null);
     try std.testing.expect(std.mem.find(u8, vtx, "\"model\"") == null);
 }
 

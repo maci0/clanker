@@ -275,7 +275,7 @@ test "providerKindLeakGate: vtable, forKind and tagName pass; comparisons and sw
     try tmp.dir.writeFile(io, .{ .sub_path = "src/cli.zig", .data = "const impl = providers.forKind(provider.kind);\nlog(@tagName(provider.kind));\n" });
     // The proxy's Vertex Gemini model-name sniff is the one legal comparison:
     // it decides on the model name, not the kind.
-    try serve_dir.writeFile(io, .{ .sub_path = "proxy.zig", .data = "if (resolved.provider." ++ "kind == .vertex and !vertex_ai.isAnthropicModel(resolved.provider.wireModelName())) {}\n" });
+    try serve_dir.writeFile(io, .{ .sub_path = "proxy.zig", .data = "if (resolved.provider." ++ "kind == .vertex and !vertex.isAnthropicModel(resolved.provider.wireModelName())) {}\n" });
 
     const clean = try providerKindLeakGate(gpa, io, tmp.dir, &.{ "src/llm/providers/openai.zig", "src/cli.zig", "src/serve/proxy.zig" });
     try std.testing.expect(clean.ok);
