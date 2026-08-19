@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** Escalation run-1787011404 (repairing a failed repair) spent 34 iterations then the final reply used exactly 4096 completion tokens, finish_reason length, empty content. deepseek-v4-pro is configured at max_tokens 32768; the agent loop sent agent.max_tokens_per_turn (default 4096) as ChatParams.max_tokens. That knob is an input/compaction cap, not the completion grant.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-19. root cause fixed as bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md: turnCompletionBudget sends the model's max_tokens grant, never agent.max_tokens_per_turn, pinned by the loop.zig unit test 'turnCompletionBudget uses the model grant, not max_tokens_per_turn'; re-verified on main a99a052d 2026-08-19
+- **Resolution:** Resolved on 2026-08-19. root cause fixed as bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md: turnCompletionBudget sends the model's max_tokens grant, never agent.max_tokens_per_turn, pinned by the loop.zig unit test 'turnCompletionBudget uses the model grant, not max_tokens_per_turn'; re-verified on main a99a052d 2026-08-19
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-19. root cause fixed as bugs/2026-08-18-turn-sends-compaction-cap-as-completion-grant.md: turnCompletionBudget sends the model's max_tokens grant, never agent.max_tokens_per_turn, pinned by the loop.zig unit test 'turnCompletionBudget uses the model grant, not max_tokens_per_turn'; re-verified on main a99a052d 2026-08-19
 
 ## Trigger and scope
 

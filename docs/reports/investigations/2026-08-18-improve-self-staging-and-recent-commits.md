@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** The improve-self batch that the repair/escalation runs were sent to fix failed its staging build on year % 4 in schedule_cron.zig (need @rem/@mod), then staging tests on utf8Valid/InvalidUtf8 in schedule_logic, then zig build test on recent_commits expecting no literal backslash-n in git history. Tracing whether those live in HEAD or only in rejected staging patches.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-19. finding stood: the year%4 and utf8Valid errors lived only in rejected staging patches, and the one real HEAD defect was fixed as bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md; re-verified on main a99a052d: the runtime.zig test parses the tool JSON and asserts the text field has no raw newline
+- **Resolution:** Resolved on 2026-08-19. finding stood: the year%4 and utf8Valid errors lived only in rejected staging patches, and the one real HEAD defect was fixed as bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md; re-verified on main a99a052d: the runtime.zig test parses the tool JSON and asserts the text field has no raw newline
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-19. finding stood: the year%4 and utf8Valid errors lived only in rejected staging patches, and the one real HEAD defect was fixed as bugs/2026-08-18-recent-commits-test-false-positive-on-backslash-n.md; re-verified on main a99a052d: the runtime.zig test parses the tool JSON and asserts the text field has no raw newline
 
 ## Trigger and scope
 
