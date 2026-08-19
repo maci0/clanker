@@ -245,6 +245,10 @@ pub const Options = struct {
     /// build gates. What a capability check wants; the build gates are already
     /// covered on their own.
     eval_tasks_only: bool = false,
+    /// `eval --seed <n>`: pin the tool-RNG seed (agent.seed) for the run so
+    /// the agent-driven evals draw the identical ck_random stream and a
+    /// failing eval can be re-run byte-identically.
+    eval_seed: ?u64 = null,
     iters: u32 = 3,
     dry_run: bool = false,
     /// `run --worktree`: isolate the run in its own git worktree and branch
@@ -744,6 +748,13 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     return error.BadIters;
                 };
                 used = .iters;
+            } else if (std.mem.eql(u8, a, "--seed")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                opts.eval_seed = std.fmt.parseInt(u64, v, 10) catch {
+                    setDiag(diag, v);
+                    return error.BadSeed;
+                };
+                used = .seed;
             } else if (std.mem.eql(u8, a, "--webui-port")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.webui_port = std.fmt.parseInt(u16, v, 10) catch {
@@ -1849,6 +1860,7 @@ const Flag = enum {
     dry_run,
     worktree,
     tasks,
+    seed,
     webui_port,
     host,
     serve_as,
@@ -1904,6 +1916,7 @@ const Flag = enum {
             .dry_run => "--dry-run",
             .worktree => "--worktree",
             .tasks => "--tasks",
+            .seed => "--seed <n>",
             .webui_port => "--webui-port",
             .host => "--host",
             .serve_as => "--serve-as",
@@ -1965,6 +1978,7 @@ const Flag = enum {
             .dry_run => "propose changes without applying them",
             .worktree => "run in a private git worktree and branch, leaving the checkout untouched (--no-worktree opts out where it is the default)",
             .tasks => "run only the agent-driven evals, skipping the build gates",
+            .seed => "pin the tool-RNG seed for a reproducible run",
             .webui_port => "web UI listen port (default 17921; also [serve].webui_port, CLANKER_WEBUI_PORT)",
             .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
             .serve_as => "a hostname this server may present itself as; repeatable",
@@ -2105,7 +2119,7 @@ const specs = [_]Spec{
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\nsandbox-abi, tools-ts-toolchain and the release contract\n(CHANGELOG/RELEASES.md) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
     .{ .command = .config, .usage = "config [get <key>|set <key> <value>]", .blurb = "read or pin one key of the merged config", .group = .maintain, .detail = "Reads and writes through the same `config` tool the agent uses. Every\nCLI flag with a persistent twin in config (say --reasoning-effort and\n[agent] reasoning_effort) can be pinned here instead of hand-editing\nconfig.local.toml.\n\n  (no subcommand)      dump config.toml + config.local.toml raw, local last\n  get <key>            print one dotted key of the merged config\n  set <key> <value>    pin the key in config.local.toml -- never config.toml\n\nset refuses a key the loader does not know (a typo'd TOML key would be\nsilently ignored; this is the checked path), refuses a value that does not\nparse as the key's merged type, and refuses the table sections (providers,\nmodels, mcp_servers), whose quoted-key disk shape a line edit does not\nspeak: edit config.local.toml by hand there. The write replaces one line\nand leaves the rest of the file byte-identical, comments included. A\nchange applies from the next command, not to processes already running.\n\nEXAMPLES\n  clanker config get agent.reasoning_effort\n  clanker config set agent.reasoning_effort high\n  clanker config set default_provider deepseek\n  clanker config set tui.mascot_size mini" },
-    .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model" },
+    .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model, .seed }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model\n--seed <n>          pin the tool-RNG seed (agent.seed) so the evals draw the\n                    identical ck_random stream and a failure can be re-run\n                    byte-identically" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
     .{ .command = .autolearn, .usage = "autolearn [reset] [--model <model>]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .flags = &.{ .provider, .model }, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing.\n\n--provider <name>  run the item synthesis with this provider instead of the\n                   configured default\n--model, -m        run the item synthesis with this model, or\n                   <provider>/<model>. Default is the deterministic local\n                   aggregation; passing a model instead has the chosen model\n                   review the raw observations and write the Autolearn section." },
     .{ .command = .workflow, .usage = "workflow [list|show <name>|run <name> [args]]", .blurb = "list, inspect, or run reusable prompt workflows", .group = .work, .flags = &.{ .provider, .model, .session, .continue_last }, .detail = "Workflows are markdown files in workflows/ (agent.workflows_dir).\n\nlist              list every workflow\nshow <name>       print the workflow body\nrun <name> [args] expand the workflow with args and run the agent on it\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session" },
@@ -6020,11 +6034,19 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     const gpa = init.gpa;
     const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    var cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
+
+    // --seed pins the tool-RNG seed for this run, beating whatever config.toml
+    // says, so `clanker eval --seed 42` and a failing run re-run the identical
+    // ck_random stream. The sandbox reads cfg.agent.seed per tool call.
+    if (opts.eval_seed) |s| {
+        cfg.agent.seed = s;
+        log.log(.info, "eval: tool-RNG seed pinned to {d} (agent.seed)", .{s});
+    }
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
         log.log(.warn, "cmdEval: mkdir '{s}' failed: {s}", .{ cfg.agent.sandbox_root, @errorName(err) });

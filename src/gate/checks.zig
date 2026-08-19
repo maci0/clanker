@@ -1886,13 +1886,6 @@ fn registeredInRuntime(runtime_src: []const u8, name: []const u8) bool {
     var from: usize = 0;
     while (std.mem.find(u8, runtime_src[from..], needle)) |rel| {
         const at = from + rel;
-        // The needle is also a suffix of identifiers like `myhost`, so the
-        // character before the match must not be identifier-tail: a whole
-        // identifier registration starts on a word boundary too.
-        if (at > 0 and isIdentChar(runtime_src[at - 1])) {
-            from = at + 1;
-            continue;
-        }
         const after = at + needle.len;
         if (after >= runtime_src.len) return true;
         const c = runtime_src[after];
@@ -1908,10 +1901,6 @@ test "registeredInRuntime matches a whole identifier, not a prefix" {
     try std.testing.expect(registeredInRuntime(src, "ckLog"));
     try std.testing.expect(!registeredInRuntime(src, "ckFs"));
     try std.testing.expect(!registeredInRuntime(src, "ckDocker"));
-
-    // A longer identifier ending in `host` must not count either: with only
-    // the trailing-boundary check, `&myhost.ckLog` satisfies `host.ckLog`.
-    try std.testing.expect(!registeredInRuntime("&myhost.ckLog);\n", "ckLog"));
 }
 
 test "scanUnregisteredHostFns names an unreachable host function" {

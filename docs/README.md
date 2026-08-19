@@ -794,7 +794,7 @@ iter 2
 | `graph answer [run-id]` | Print a recorded run's final answer (64 KiB retained per run) |
 | `tools list` | List registered tools |
 | `plugins [list\|validate [path]\|new <name>]` | List plugins, check a manifest, or scaffold a new tool |
-| `eval [name] [--tasks]` | Run evals |
+| `eval [name] [--tasks] [--seed N]` | Run evals; `--seed` pins the tool-RNG seed so a run replays byte-identically |
 | `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint/release-contract) on the current checkout |

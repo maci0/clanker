@@ -118,9 +118,19 @@ pub const ToolModule = struct {
         errdefer self.deinit();
 
         self.h = try gpa.create(host.Host);
+        const rng_seed = seedRng(sb.seed, wasm_bytes, io);
+        if (sb.seed == 0) {
+            // The default seed is time-mixed (see seedRng), so the effective
+            // value below is the only record of what this run drew. Log it at
+            // info: replay the run by setting agent.seed to the logged value
+            // (same module bytes ⇒ same ck_random stream).
+            log.log(.info, "sandbox rng: agent.seed=0 was time-seeded, effective seed 0x{x}; replay with agent.seed=0x{x}", .{ rng_seed, rng_seed });
+        } else {
+            log.log(.debug, "sandbox rng: effective seed 0x{x} (agent.seed=0x{x})", .{ rng_seed, sb.seed });
+        }
         self.h.* = .{
             .sandbox = sb,
-            .rng = std.Random.DefaultPrng.init(seedRng(sb.seed, wasm_bytes, io)),
+            .rng = std.Random.DefaultPrng.init(rng_seed),
         };
 
         self.engine = try zwasm.Engine.init(gpa, .{});
@@ -300,6 +310,22 @@ fn seedRng(seed: u64, salt: []const u8, io: std.Io) u64 {
     }
     h.update(salt);
     return h.final();
+}
+
+test "seedRng with a nonzero seed is clock-independent (same seed ⇒ same stream)" {
+    var tp_a = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer tp_a.deinit();
+    var tp_b = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer tp_b.deinit();
+    const salt = "module bytes";
+    // Two independent Io instances carry two different clocks. A pinned
+    // (nonzero) seed must derive the identical effective seed anyway, or
+    // `agent.seed` could not replay a run; the seed-0 branch exists precisely
+    // so the nonzero branch never has to touch the clock.
+    try std.testing.expectEqual(
+        seedRng(0x1234_5678_9abc_def0, salt, tp_a.io()),
+        seedRng(0x1234_5678_9abc_def0, salt, tp_b.io()),
+    );
 }
 
 // ------------------------------------------------------------------- tests --
