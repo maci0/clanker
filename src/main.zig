@@ -41,6 +41,14 @@ fn claimTerminalRecovery() bool {
 
 fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
     if (claimTerminalRecovery()) vaxis.recover();
+    // One structured record before the trace. Zig's default panic writes a
+    // multi-line dump with no level, no timestamp and no correlation id, so in
+    // `clanker serve` a crash is unparseable by the collector that would raise
+    // the alert -- and the request id, being threadlocal, is only still
+    // readable here on the thread that panicked. Logged after the terminal
+    // reset so a repl crash does not write it into the alt-screen it is about
+    // to pop. See `log.logPanic` for why this does not go through `log.log`.
+    log.logPanic(msg);
     std.debug.defaultPanic(msg, ret_addr);
 }
 

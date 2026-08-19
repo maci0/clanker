@@ -8244,6 +8244,18 @@ test "metricsSnapshot stays parseable and reports background job counters" {
         const v = jobs_obj.get(field) orelse return error.MissingJobField;
         try std.testing.expect(v == .integer);
     }
+    // A timeout is the one provider failure a retry cannot fix, and latency is
+    // the only signal that separates "slow" from "down": both must reach the
+    // endpoint, not just token_stats.jsonl.
+    const llm_obj = (parsed.value.object.get("llm").?).object;
+    for ([_][]const u8{ "requests_total", "errors_total", "retries_total", "timeouts_total", "latency_ms_sum" }) |field| {
+        const v = llm_obj.get(field) orelse return error.MissingLlmField;
+        try std.testing.expect(v == .integer);
+    }
+    const llm_buckets = (llm_obj.get("latency_buckets") orelse return error.MissingLlmBuckets).object;
+    for ([_][]const u8{ "le_1000", "le_5000", "le_15000", "le_60000" }) |field| {
+        try std.testing.expect(llm_buckets.get(field) != null);
+    }
 }
 
 fn publishMetricsSnapshot() void {
