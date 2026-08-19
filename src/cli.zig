@@ -7622,7 +7622,10 @@ fn handleNotify(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, e
     const arena = arena_state.allocator();
 
     const tool_input = notifyRouteToToolInput(arena, body) orelse {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"malformed request\"}");
+        // The shared body-parse refusal, same wording `jsonBody` answers.
+        // "malformed request" is reserved for the framing check above (a
+        // request that is not HTTP at all), not for an unparseable body.
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     const result = toolJson(io, gpa, arena, cfg, environ_map, "notifications", tool_input) catch {
@@ -9014,7 +9017,7 @@ fn handleAsk(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const req = std.json.parseFromSliceLeaky(AskAnswerBody, arena_state.allocator(), body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     if (req.id == 0 or req.answer.len == 0) {
@@ -9211,7 +9214,7 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const req = std.json.parseFromSliceLeaky(SteerBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     const msg = std.mem.trim(u8, req.message, " \t\r\n");
@@ -13422,7 +13425,7 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         return;
     }
     const req = std.json.parseFromSliceLeaky(struct { path: []const u8 = "", prune: bool = false }, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     if (req.path.len == 0) {
@@ -14583,7 +14586,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     const arena = arena_state.allocator();
 
     const req = std.json.parseFromSliceLeaky(RunRequestBody, arena, body, .{ .ignore_unknown_fields = true }) catch {
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
     };
     // This id becomes both a lock-file name and
