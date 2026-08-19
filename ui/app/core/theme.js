@@ -117,28 +117,6 @@ function ensurePicker() {
       e.preventDefault();
       closePicker();
       if (_anchor && _anchor.focus) _anchor.focus();
-    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      var opts = _list.querySelectorAll("button[data-theme]");
-      if (!opts.length) return;
-      var idx = -1;
-      for (var i = 0; i < opts.length; i++) {
-        if (opts[i] === document.activeElement) { idx = i; break; }
-      }
-      e.preventDefault();
-      if (e.key === "ArrowDown") {
-        var next = idx < 0 ? 0 : Math.min(idx + 1, opts.length - 1);
-        opts[next].focus();
-      } else {
-        var prev = idx <= 0 ? opts.length - 1 : idx - 1;
-        opts[prev].focus();
-      }
-    } else if (e.key === "Enter" || e.key === " ") {
-      var focused = document.activeElement;
-      if (!focused || !focused.hasAttribute("data-theme")) return;
-      e.preventDefault();
-      var anchor = _anchor;
-      choose(focused.getAttribute("data-theme"));
-      if (anchor && anchor.focus) anchor.focus();
     }
   });
   window.addEventListener("resize", function () {
@@ -176,13 +154,6 @@ function renderList(current) {
     row.setAttribute("data-theme", name);
     row.setAttribute("aria-selected", name === current ? "true" : "false");
     if (name === current) row.classList.add("is-current");
-    var rec = CATALOG[name];
-    if (rec && rec.tokens && rec.tokens["--bg"]) {
-      var swatch = document.createElement("span");
-      swatch.style.cssText = "display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-right:6px";
-      swatch.style.background = rec.tokens["--bg"];
-      row.appendChild(swatch);
-    }
     var label = document.createElement("span");
     label.className = "model-picker__option-label";
     label.textContent = name;
