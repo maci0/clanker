@@ -1,4 +1,5 @@
-//! Pure document-scaffolding logic shared by the `research` and `rfc` guests.
+//! Pure document-scaffolding logic shared by the record-store guests
+//! (`research`, `rfc`, `adr`, `prd`, `reports` and `records_grep`).
 //!
 //! This module imports nothing from the guest ABI (lib.zig), so it compiles on
 //! the host and its `test` blocks actually run in `zig build test` — the

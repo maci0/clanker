@@ -1,10 +1,11 @@
 //! janitor: sweep up what old runs left behind.
 //!
 //! Scans state/ for orphaned staging directories, excess run graphs, excess
-//! improve logs, and compare-and-swap lock files nothing has re-acquired in
-//! half a day. Returns a summary (scan) or deletes and reports (prune).
+//! improve logs, compare-and-swap lock files nothing has re-acquired in half a
+//! day, and spilled tool results past their retention. Returns a summary (scan)
+//! or deletes and reports (prune).
 //!
-//! Input:  {"op": "scan"|"prune", "state_dir": "state"}
+//! Input:  {"op": "scan"|"prune"|"json", "state_dir": "state"}
 //! Output: {"ok": true, "text": "...", "items": N, "bytes": N}
 //!
 //! Moved from src/janitor.zig: bounded fs work, rare invocation, fully

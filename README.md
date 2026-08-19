@@ -297,6 +297,6 @@ command, while `clanker <option> -h` explains that option (for example,
 | `autolearn` | Aggregate usage into roadmap items |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs |
-| `janitor [--yes]` | Sweep up what old runs left behind: staging copies, old run graphs and improve logs, and compare-and-swap lock files unused for 12h (also `clanker prune`) |
+| `janitor [--yes]` | Sweep up what old runs left behind: staging copies, old run graphs and improve logs, compare-and-swap lock files unused for 12h, and spilled tool results (also `clanker prune`) |
 
 For full documentation, see [docs/README.md](docs/README.md).

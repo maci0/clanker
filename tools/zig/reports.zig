@@ -18,6 +18,7 @@
 //!          "old":"old text", "new":"new text"}
 //!         {"action":"status", "path":"docs/reports/bugs/foo.md",
 //!          "status":"resolved", "note":"Fixed in <commit>."}
+//!         {"action":"rename", "path":"docs/reports/bugs/foo.md", "slug":"2026-08-15-topic"}
 //! Output: {"ok":true, ...}
 
 const std = @import("std");
@@ -44,7 +45,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "update")) return update(obj, out);
     if (std.mem.eql(u8, action, "status")) return status(obj, out);
     if (std.mem.eql(u8, action, "rename")) return rename(obj, out);
-    return lib.fail(out, "action must be search, list, open, create, append, update, or status");
+    return lib.fail(out, "action must be search, list, open, create, append, update, status, or rename");
 }
 
 /// Return both indexes so the caller learns the available report/runbook kinds

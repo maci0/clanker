@@ -28,9 +28,9 @@
 //!     dependency add/remove): highest (ts, id) wins. Last writer wins is what
 //!     an edit means, and it is decided on message content rather than arrival
 //!     order so replicas agree.
-//!   - log entries and cost: grow-only. Entries union by message id, tokens and
-//!     dollars sum. Re-folding the same log twice cannot double-count because
-//!     each contribution is one message.
+//!   - log entries and cost: grow-only. Entries union on the (ts, who, what)
+//!     triple; tokens and dollars sum. Re-folding the same log twice cannot
+//!     double-count because each contribution is one message.
 //! `closed` is gone: `column` is the only status, and close folds as
 //! `column := "done"`. A board has to be able to move work back out of done,
 //! which the old latch made unrepresentable.
@@ -49,6 +49,7 @@
 //!   @todo {"action":"subtask_add","todo":"<id>","text":"...","parent":"<subtask-id>"}
 //!   @todo {"action":"subtask_toggle","todo":"<id>","subtask":"<id>","done":true}
 //!   @todo {"action":"subtask_remove","todo":"<id>","subtask":"<id>"}
+//!   @todo {"action":"subtask_depend","todo":"<id>","subtask":"<id>","on":"<id>","off":false}
 //!   @todo {"action":"depend","todo":"<id>","on":"<id>","off":false}
 //!   @todo {"action":"delete","todo":"<id>"}     a tombstone, never undone
 //!   @todo {"action":"log","todo":"<id>","what":"..."}

@@ -5,8 +5,9 @@
 //! handleWebui/handleWebuiVendor in cli.zig — rather than routed through this
 //! tool, because those files are not ours to edit and never change.
 //! Internal tool: it is never offered to the LLM; the `clanker serve` HTTP
-//! server calls it to render GET /, /webui, /webui/app.css and /webui/app.js.
-//! Input:  {"path": "/" | "/webui/app.css" | "/webui/app.js"}
+//! server calls it to render GET / and every /webui/<asset> path (the app's
+//! css and js modules, one file per view).
+//! Input:  {"path": "/" | "/webui/app.js" | "/webui/core/ui.js" | ...}
 //! Output: {"ok": true, "content_type": "text/html", "body": "..."}
 
 const std = @import("std");

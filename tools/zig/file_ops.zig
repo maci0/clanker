@@ -15,8 +15,10 @@
 //!         {"op": "mkdir",  "path": "src/new"}
 //!         {"op": "stat",   "path": "src/main.zig"}
 //!         {"op": "append", "path": "notes.md", "content": "one more line\n"}
+//!         {"op": "hash",   "path": "notes.md"}
 //! Output: {"ok": true, "op": "move", "path": "a.zig", "to": "b.zig"}
 //!         {"ok": true, "op": "stat", "path": "...", "kind": "file", "size": 1234}
+//!         {"ok": true, "op": "hash", "path": "...", "sha256": "<hex digest>"}
 
 const std = @import("std");
 const lib = @import("lib.zig");

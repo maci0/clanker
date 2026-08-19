@@ -4945,7 +4945,8 @@ el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value
 wireRefresh(el.logsRefresh, loadLogList);
 
 // Phase 5 progress streaming — reuses /api/run event channel shape via fetch + reader.
-// History + revert are read from state/history and improve loop artifacts where available.
+// History lists recent runs from /api/runs (the same graph guest the Gate view reads);
+// the Revert button only confirms — the actual revert is the CLI's `clanker revert <run-id>`.
 (function(){
   var progCtrl=null, progEl=document.getElementById("progress-log"), progStatus=document.getElementById("progress-status"), progHist=document.getElementById("progress-history");
   var stopBtn=document.getElementById("progress-stop");
