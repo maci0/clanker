@@ -28,6 +28,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `clanker doctor`'s header line now carries the clanker version and target
+  platform (`clanker doctor 0.x.y (linux/x86_64)`), so its output is usable as
+  a bug-report attachment without asking for those separately, and its
+  manifests check FAILs when zero tools are registered instead of reporting
+  OK with a count of 0 — an empty registry means the tool build or manifest
+  directory is broken, not healthy.
+
 - Catalog specs are applied from the models.dev snapshot without parsing the
   matched provider. `Config.load` used to build a `std.json.Value` tree of the
   whole provider member -- for an aggregator that is hundreds of models and the
