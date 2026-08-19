@@ -56,6 +56,7 @@ config.local.toml
 *.out
 run.json
 chatrooms.jsonl
+/backups
 
 # tree-sitter grammars built by tools/grammars/build.sh
 tools/grammars/*.so

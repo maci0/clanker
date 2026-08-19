@@ -11,6 +11,26 @@ timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 staging="$backup_root/.${timestamp}.incomplete"
 snapshot="$backup_root/$timestamp"
 latest="$backup_root/latest"
+copied=""
+
+# The snapshot root is derived from wherever `state` resolves to. When that
+# is a real directory inside the checkout (state was never pointed at an
+# external storage root), the "backups" land in the same tree on the same
+# disk as the data they protect: a disk or checkout loss takes both, and a
+# re-clone or `git clean` deletes the snapshots outright. Refusing here turns
+# that silent false backup into an explicit failure instead of blessing it
+# with a success exit code twice an hour.
+case "$backup_root" in
+    "$repo_root"/*)
+        printf '%s\n' \
+            "backup root $backup_root is inside the checkout: state is not a symlink" \
+            "to an external storage root, so a snapshot there would protect nothing" \
+            "(same disk; a re-clone or git clean deletes it). Point state (and .local," \
+            ".agents) at sibling directories under an external storage root, then re-run." \
+            "See scripts/README.md and docs/runbooks/state-backups-not-running.md." >&2
+        exit 1
+        ;;
+esac
 
 mkdir -p "$backup_root"
 # If the script dies mid-backup, the incomplete staging directory is garbage
@@ -25,23 +45,26 @@ for entry in state:state agents:.agents local:.local; do
     repo_name=${entry#*:}
     source=$(readlink -f -- "$repo_root/$repo_name")
     expected="$storage_root/$name"
-    # `state` and `.local` are the shared stores and must be where they are
-    # declared: backing up some other directory under their name would produce
-    # a snapshot that silently restores the wrong data. `.agents` is different.
-    # It is checkout-private (AGENTS.md), so a real directory inside the
-    # checkout is a legitimate arrangement, and its contents are worth keeping
-    # wherever they live -- the point is to preserve them, not to enforce a
-    # layout. Requiring it to resolve into the shared storage aborted the whole
-    # run on the first entry, so a checkout-local `.agents` stopped `state` and
-    # `.local` from being backed up at all.
-    if [ "$source" != "$expected" ] && [ "$repo_name" != ".agents" ]; then
+    # `state` is the shared store and must be where it is declared: backing up
+    # some other directory under its name would produce a snapshot that
+    # silently restores the wrong data. `.agents` (checkout-private agent
+    # rules) and `.local` (checkout-private coordination state) are different:
+    # a real directory inside the checkout is a legitimate arrangement for
+    # either, and its contents are worth keeping wherever they live -- the
+    # point is to preserve them, not to enforce a layout. Requiring them to
+    # resolve into the shared storage aborted the whole run on the first
+    # entry, so a checkout-local or absent `.agents`/`.local` stopped `state`
+    # from being backed up at all.
+    if [ "$source" != "$expected" ] && [ "$repo_name" != ".agents" ] && [ "$repo_name" != ".local" ]; then
         printf '%s\n' "$repo_name must resolve to $expected" >&2
         exit 1
     fi
-    # A missing `.agents` is a soft skip, the same way the agent rules treat
-    # it; a missing shared store is a failure.
-    if [ ! -d "$source" ] && [ "$repo_name" = ".agents" ]; then
-        printf '%s\n' "note: $repo_name is absent; skipping it" >&2
+    # A missing `.agents` or `.local` is a soft skip, the same way the agent
+    # rules treat `.agents`: a coordination directory that does not exist must
+    # not block the store that actually holds the transcripts. A missing
+    # `state` stays a failure.
+    if [ ! -d "$source" ] && { [ "$repo_name" = ".agents" ] || [ "$repo_name" = ".local" ]; }; then
+        printf '%s\n' "note: $repo_name is absent; skipping it (backed up once it exists)" >&2
         continue
     fi
     [ -d "$source" ] || {
@@ -53,6 +76,18 @@ for entry in state:state agents:.agents local:.local; do
         rsync_args+=(--link-dest="$latest/$name")
     fi
     rsync "${rsync_args[@]}" "$source/" "$staging/$name/"
+    copied="$copied $name"
+done
+
+# rsync's exit code is the only success signal so far; a run that copied
+# nothing would still rotate `latest` onto a hollow snapshot and read as
+# healthy in every later check. Refuse to promote a staging dir whose
+# entries did not materialize.
+for name in $copied; do
+    [ -d "$staging/$name" ] || {
+        printf 'error: snapshot entry %s/ did not materialize; refusing to promote an empty backup\n' "$name" >&2
+        exit 1
+    }
 done
 mv "$staging" "$snapshot"
 ln -sfn "$timestamp" "$latest"

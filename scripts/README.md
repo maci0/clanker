@@ -33,17 +33,24 @@ local configuration and is not committed.
 
 Snapshots older than `CLANKER_BACKUP_RETENTION_DAYS` (default 30) are pruned
 on each successful backup; set it to `0` to keep every snapshot. Staging
-directories from runs that died mid-backup are always cleaned up.
+directories from runs that died mid-backup are always cleaned up, and a
+snapshot whose entries did not materialize is refused rather than promoted.
 
-To restore, pick a snapshot and copy its `state/`, `agents/`, and `local/`
-trees back over the current targets, e.g.:
+`.agents` and `.local` are checkout-private and may be real directories inside
+the checkout; when either is absent the backup skips it instead of aborting.
+`state` must resolve into the shared storage root. A run whose resolved backup
+root would land inside the checkout itself (state never pointed at an external
+root) is refused: a snapshot next to the data it protects is on the same disk
+and dies with it, so it would only fake a backup. Point the three links at
+sibling directories under an external storage root first.
 
-```bash
-cp -a "$(readlink -f state)/../backups/<timestamp>/state/." state/
-```
-
-Stopping the service or `clanker` first avoids overwriting a live tree
-mid-write.
+**RPO / RTO.** RPO is bounded by the timer interval: at most 30 minutes of
+writes are lost, and `Persistent=true` runs a catch-up snapshot after downtime.
+Retention (default 30 days) also bounds how far back a point-in-time restore
+can go — restore any snapshot up to the retention window, not just the latest.
+RTO is the time to copy a chosen snapshot back; it is currently unmeasured,
+because no restore drill has been run. Restore is a copy-out, never an edit of
+`backups/`: see [docs/runbooks/state-restore.md](../docs/runbooks/state-restore.md).
 
 ## Software bill of materials
 

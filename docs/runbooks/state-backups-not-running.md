@@ -29,9 +29,19 @@ If the newest snapshot is older than the timer interval, read why:
 
 The script's own diagnostics are one line each and name the entry at fault:
 
-- `<name> must resolve to <path>` — `state` or `.local` is not the shared
-  store the snapshot expects.
+- `<name> must resolve to <path>` — `state` is not the shared store the
+  snapshot expects. `.agents` and `.local` are exempt from this check: either
+  may be a real directory inside the checkout, and a missing one is skipped,
+  not a failure.
 - `<path> is not a directory` — the resolved target is missing or is a file.
+  Applies to `state` always, and to `.local`/`.agents` only when they exist.
+- `backup root <path> is inside the checkout: state is not a symlink to an
+  external storage root` — `state` was never pointed at a sibling directory
+  under an external storage root, so the snapshot would land next to the data
+  it protects (same disk; a re-clone or `git clean` deletes it). The run
+  refuses rather than fake a backup.
+- `snapshot entry <name>/ did not materialize` — rsync copied nothing usable;
+  the run refuses to promote an empty snapshot over `latest`.
 
 Reproduce outside systemd, which prints the same line without the journal:
 
@@ -41,11 +51,14 @@ Reproduce outside systemd, which prints the same line without the journal:
 
 Point the offending entry back at the shared store. `state` and `.local`
 are normally symlinks into `storage_root`; recreate the symlink rather than
-copying, so one directory does not become two diverging ones.
+copying, so one directory does not become two diverging ones. When the refusal
+says the backup root is inside the checkout, `state` is a real directory in
+the checkout (or points at one): create the external storage root, move the
+store there, and symlink `state` (and `.local`, `.agents`) to it.
 
-`.agents` is deliberately exempt: it is checkout-private, may be a real
-directory in the checkout, and is skipped when absent, so it never blocks a
-backup.
+`.agents` and `.local` are deliberately exempt: they are checkout-private, may
+be real directories in the checkout, and are skipped when absent, so neither
+ever blocks a backup.
 
 Run the backup by hand once the layout is right, then let the timer resume:
 
