@@ -7,6 +7,7 @@ const types = @import("../llm/types.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const test_env = @import("../util/test_env.zig");
+const utf8 = @import("../util/utf8.zig");
 
 pub const Session = struct {
     id: []const u8,
@@ -37,7 +38,6 @@ pub fn validSessionId(id: []const u8) bool {
 
 /// Writes a session to `base_dir/state/sessions/<id>.json`.
 pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, session: Session) !void {
-    _ = arena;
     if (!validSessionId(session.id)) return error.InvalidSessionId;
     try ensure_dir.ensureDir(base, io, store_dir);
 
@@ -49,11 +49,20 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     defer out.deinit();
     var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
 
+    // The transcript is parsed back as UTF-8 JSON on load (std.json rejects
+    // invalid UTF-8 in strings with SyntaxError), but the writer passes bytes
+    // >= 0x80 through verbatim. A single non-UTF-8 byte in any untrusted text
+    // field (argv, pasted input, subprocess output) used to make the file
+    // unloadable, and listings silently dropped it. Sanitize at the write
+    // boundary so what we store is what the reader can read; the valid
+    // fast path is a validation pass, no copy.
+    const clean_title = try utf8.sanitize(arena, session.title);
+
     try s.beginObject();
     try s.objectField("id");
     try s.write(session.id);
     try s.objectField("title");
-    try s.write(session.title);
+    try s.write(clean_title);
     try s.objectField("created");
     try s.write(session.created);
     try s.objectField("updated");
@@ -81,7 +90,7 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         try s.write(m.role.asStr());
         if (m.content) |c| {
             try s.objectField("content");
-            try s.write(c);
+            try s.write(try utf8.sanitize(arena, c));
         }
         // Attachments are model-visible input, so they belong in the log the
         // next request is derived from. Dropping them here let `--continue`
@@ -112,18 +121,18 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
             for (calls) |tc| {
                 try s.beginObject();
                 try s.objectField("id");
-                try s.write(tc.id);
+                try s.write(try utf8.sanitize(arena, tc.id));
                 try s.objectField("name");
-                try s.write(tc.name);
+                try s.write(try utf8.sanitize(arena, tc.name));
                 try s.objectField("arguments");
-                try s.write(tc.arguments);
+                try s.write(try utf8.sanitize(arena, tc.arguments));
                 try s.endObject();
             }
             try s.endArray();
         }
         if (m.tool_call_id) |tid| {
             try s.objectField("tool_call_id");
-            try s.write(tid);
+            try s.write(try utf8.sanitize(arena, tid));
         }
         try s.endObject();
     }
@@ -312,6 +321,11 @@ pub fn branchSession(
 pub const title_max = 28;
 
 fn isTitleWordByte(c: u8) bool {
+    // Bytes >= 0x80 are (or start) a UTF-8 sequence: treat a run of them as
+    // one word, so a non-Latin task ("修复登录 bug") earns a title instead of
+    // "(untitled)". ASCII separators still break words inside CJK text that
+    // spaces them ("修复 登录").
+    if (c >= 0x80) return true;
     return std.ascii.isAlphanumeric(c) or c == '-' or c == '\'';
 }
 
@@ -388,7 +402,9 @@ fn appendTitleWord(out: []u8, used: *usize, word: []const u8) bool {
         out[used.*] = ' ';
         used.* += 1;
     }
-    const take = @min(word.len, out.len - used.*);
+    // A multibyte word cut mid-sequence would write invalid UTF-8 into the
+    // title; snap the take to a codepoint boundary. ASCII words are unchanged.
+    const take = utf8.cap(word, @min(word.len, out.len - used.*)).len;
     if (take == 0) return false;
     @memcpy(out[used.*..][0..take], word[0..take]);
     used.* += take;
@@ -478,6 +494,21 @@ test "titleFromTask is a couple of content words" {
     try std.testing.expect(keepTitle("fork of Original"));
     try std.testing.expect(!keepTitle("left bar chat title should be a couple word summary of the"));
     try std.testing.expectEqualStrings("Mesh map", nextTitle(&buf, "Mesh map", "something else entirely"));
+}
+
+test "titleFromTask handles non-Latin tasks" {
+    var buf: [title_max]u8 = undefined;
+    // Space-separated CJK words earn a title like Latin text does (up to 3).
+    try std.testing.expectEqualStrings("修复 登录 bug", titleFromTask(&buf, "修复 登录 bug 页面"));
+    // An unsplit CJK sentence is one long word: the title is its start,
+    // truncated on a codepoint boundary (never mid-character).
+    const long_cjk = "这是一个很长的中文句子用于测试标题截断";
+    const t = titleFromTask(&buf, long_cjk);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(t));
+    try std.testing.expect(t.len <= title_max);
+    try std.testing.expectEqualStrings("这是一个很长的中文", t);
+    // A mixed run keeps its non-ASCII characters whole.
+    try std.testing.expectEqualStrings("héllo world", titleFromTask(&buf, "héllo world"));
 }
 
 /// Retitles a conversation in place, leaving its messages untouched.
@@ -1027,6 +1058,40 @@ test "session load rejects an unknown persisted message role" {
         \\{"id":"bad-role","title":"bad","created":0,"updated":0,"messages":[{"role":"operator","content":"do not reinterpret me"}]}
     });
     try std.testing.expectError(error.InvalidRole, loadSession(io, std.testing.allocator, arena, env.tmp.dir, "bad-role"));
+}
+
+test "a session with invalid UTF-8 in untrusted text still round-trips" {
+    // The storage format is UTF-8 JSON and the loader rejects invalid UTF-8
+    // with SyntaxError, but the writer used to pass stray bytes through
+    // verbatim. One latin-1 byte in a message or title then bricked the file:
+    // loadSession failed and listings silently dropped the session. The write
+    // boundary now replaces invalid bytes with U+FFFD so what is stored always
+    // parses back.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    const dirty_title = [_]u8{ 'c', 'a', 'f', 0xE9 };
+    const dirty_content = [_]u8{ 'p', 'a', 's', 't', 'e', 'd', ' ', 0xFF, ' ', 0xF0, 0x9F };
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = &dirty_content },
+        .{ .role = .assistant, .content = "valid \u{E9}" },
+    };
+    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
+        .id = "dirty",
+        .title = &dirty_title,
+        .messages = &messages,
+        .created = 0,
+        .updated = 0,
+    });
+
+    const loaded = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, "dirty");
+    try std.testing.expectEqualStrings("caf\u{FFFD}", loaded.title);
+    // The truncated 0xF0 0x9F emoji pair is two invalid bytes -> two U+FFFDs.
+    try std.testing.expectEqualStrings("pasted \u{FFFD} \u{FFFD}\u{FFFD}", loaded.messages[0].content.?);
+    try std.testing.expectEqualStrings("valid \u{E9}", loaded.messages[1].content.?);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(loaded.messages[0].content.?));
 }
 
 test "compactMessages counts short content and tool-call arguments" {
