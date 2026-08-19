@@ -104,7 +104,10 @@ pub fn acquiredMs(record: []const u8) ?i64 {
 /// in the future, which is a clock that moved rather than a lock that aged.
 pub fn agedOut(record: []const u8, now_ms: i64, window_ms: i64) bool {
     const acquired = acquiredMs(record) orelse return false;
-    if (now_ms < acquired) return false;
+    // A negative stamp is garbage, not a timestamp: `now - acquired` below
+    // would overflow i64 for an extreme value and panic the sweep. Like an
+    // unreadable record it reads as unknown, so it is deliberately not old.
+    if (now_ms < acquired or acquired < 0) return false;
     return now_ms - acquired >= window_ms;
 }
 
@@ -159,6 +162,48 @@ test "an empty or malformed record reads as unknown rather than as old" {
     try std.testing.expectEqual(@as(?i64, null), acquiredMs("pid=1 tool=x target=y\n"));
     try std.testing.expectEqual(@as(?i64, null), acquiredMs("acquired_ms=notanumber\n"));
     try std.testing.expectEqual(@as(?[]const u8, null), targetPath("pid=1\n"));
+}
+
+test "a record stamped with an extreme value cannot panic the sweep" {
+    // acquired_ms parses as any i64. A corrupted record reading as i64.min
+    // would make `now - acquired` overflow the window arithmetic below: in
+    // Debug that is a panic inside the janitor sweep, in ReleaseFast it is
+    // undefined behavior.
+    const extreme = "pid=1 acquired_ms=-9223372036854775808 tool=x target=y\n";
+    try std.testing.expect(!agedOut(extreme, 1_000_000_000_000, 1000));
+    try std.testing.expect(!agedOut("pid=1 acquired_ms=-1 tool=x target=y\n", 1_000_000_000_000, 1000));
+    // A stamp at i64.max is a moved clock, not an aged lock.
+    try std.testing.expect(!agedOut("pid=1 acquired_ms=9223372036854775807 tool=x target=y\n", 1_000_000_000_000, 1000));
+}
+
+test "fuzz: no record bytes can make the sweep call a lock old" {
+    // The sweep's whole hazard is deleting a lock it should not, and its whole
+    // panic path is an overflow in the age arithmetic. The property: a record
+    // that parses to a real, sufficiently old stamp may be swept; anything
+    // unreadable, garbage, or stamped in the future may not.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [512]u8 = undefined;
+            const len = smith.slice(&buf);
+            const record = buf[0..len];
+            const now_ms = smith.value(i64);
+            const window_ms = smith.valueRangeAtMost(i64, 0, 30 * 24 * 60 * 60 * 1000);
+            _ = targetPath(record);
+            const aged = agedOut(record, now_ms, window_ms);
+            const acquired = acquiredMs(record);
+            if (acquired == null or acquired.? < 0 or now_ms < acquired.?) {
+                // unreadable is unknown (never old), a negative stamp is
+                // garbage (never old), a future stamp is a moved clock (never
+                // old): sweeping on any of them could delete a live lock.
+                try std.testing.expect(!aged);
+            } else {
+                // age is the whole verdict: exactly past the window.
+                const diff = now_ms - acquired.?; // safe: now >= acquired >= 0
+                try std.testing.expectEqual(aged, diff >= window_ms);
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
 }
 
 test "the sweep keeps a fresh lock, an unreadable one, and one stamped ahead" {

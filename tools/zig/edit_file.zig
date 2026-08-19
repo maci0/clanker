@@ -152,6 +152,7 @@ fn applyHashline(obj: std.json.ObjectMap, path: []const u8, out: *lib.Out) !void
         const msg: []const u8 = switch (err) {
             error.AnchorNotFound => "hashline mismatch: anchor hash not found within ±10 lines of the given line (file may have changed since it was read)",
             error.PastEnd => "hashline mismatch: old_count extends past the end of the file",
+            error.OverlappingHunks => "hashline mismatch: hunks replace overlapping line ranges",
             error.HashMismatch => "hashline mismatch: a line hash did not match (file may have changed since it was read)",
             error.OutOfMemory => "out of memory",
         };

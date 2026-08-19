@@ -104,6 +104,7 @@ pub const ApplyError = error{
     AnchorNotFound,
     HashMismatch,
     PastEnd,
+    OverlappingHunks,
     OutOfMemory,
 };
 
@@ -133,6 +134,20 @@ pub fn apply(
         try resolved.append(alloc, .{ .start = start, .hunk = h });
     }
     std.mem.sort(Resolved, resolved.items, {}, resolvedLess);
+
+    // Reject overlapping replacement ranges. Hunks are applied last-to-first
+    // at offsets taken from the *original* line layout, so once a hunk's range
+    // has been spliced, a later-applied hunk whose range reaches into it reads
+    // stale offsets and consumes the earlier edit -- or slices past the end of
+    // the shrunk buffer. The model derives hunks from distinct `read_file`
+    // regions, so an overlap is a malformed request, not a legitimate edit.
+    // Ranges that merely touch (this one ends where the previous begins) are
+    // fine: the boundary byte is not shared.
+    for (resolved.items, 0..) |r, i| {
+        if (i == 0) continue;
+        const prev = resolved.items[i - 1]; // larger start: applied earlier
+        if (r.start + r.hunk.old_count > prev.start) return error.OverlappingHunks;
+    }
 
     var text = try alloc.dupe(u8, src);
     var applied: std.ArrayList(Applied) = .empty;
@@ -263,6 +278,112 @@ test "apply rejects when old_count walks past the end" {
         .new_text = "x\n",
     }};
     try std.testing.expectError(error.PastEnd, apply(arena_state.allocator(), src, &hunks, 10));
+}
+
+test "apply rejects overlapping hunks instead of silently dropping an edit" {
+    // Hunks are applied last-to-first at offsets taken from the original line
+    // layout. When one hunk's replacement range reaches into another's, the
+    // later splice consumes the earlier edit and the request reports success
+    // while the edit is gone. The model derives hunks from distinct
+    // `read_file` regions, so an overlap is a malformed request, not a
+    // legitimate edit.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const src = "one\ntwo\nthree\nfour\n";
+    const hunks = [_]Hunk{
+        .{ .anchor_hash = lineHash("two"), .anchor_line = 2, .old_count = 2, .new_text = "TWO\n" },
+        .{ .anchor_hash = lineHash("three"), .anchor_line = 3, .old_count = 1, .new_text = "THREE\n" },
+    };
+    try std.testing.expectError(error.OverlappingHunks, apply(arena_state.allocator(), src, &hunks, 10));
+}
+
+test "apply allows hunks that merely touch at the boundary" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const src = "one\ntwo\nthree\nfour\n";
+    const hunks = [_]Hunk{
+        .{ .anchor_hash = lineHash("two"), .anchor_line = 2, .old_count = 1, .new_text = "TWO\n" },
+        .{ .anchor_hash = lineHash("three"), .anchor_line = 3, .old_count = 1, .new_text = "THREE\n" },
+    };
+    const result = try apply(arena_state.allocator(), src, &hunks, 10);
+    try std.testing.expectEqualStrings("one\nTWO\nTHREE\nfour\n", result.text);
+    try std.testing.expectEqual(@as(usize, 2), result.applied.len);
+}
+
+test "fuzz: arbitrary source and hunks never crash or drop an edit" {
+    // `apply` re-splices a byte buffer at offsets taken from the original line
+    // layout, so the interesting failure modes are a panic on malformed ranges
+    // and an edit silently vanishing. Both are turned into invariants the
+    // fuzzer must keep: any returned success must carry every hunk's new lines
+    // in the output.
+    const Ctx = struct {
+        fn linesEqualBodies(a: []const []const u8, b: []const []const u8) bool {
+            if (a.len != b.len) return false;
+            for (a, b) |x, y| {
+                if (!std.mem.eql(u8, trimEnding(x), trimEnding(y))) return false;
+            }
+            return true;
+        }
+
+        fn blockInOut(out: []const []const u8, block: []const []const u8) bool {
+            if (block.len == 0 or out.len < block.len) return false;
+            var i: usize = 0;
+            while (i + block.len <= out.len) : (i += 1) {
+                if (linesEqualBodies(out[i..][0..block.len], block)) return true;
+            }
+            return false;
+        }
+
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            var src_buf: [2048]u8 = undefined;
+            const src_len = smith.slice(&src_buf);
+            const src = src_buf[0..src_len];
+
+            var line_count: usize = 1;
+            for (src) |c| {
+                if (c == '\n') line_count += 1;
+            }
+
+            var hunk_storage: [3]Hunk = undefined;
+            const n_hunks = smith.valueRangeAtMost(u8, 0, 3);
+            for (hunk_storage[0..n_hunks]) |*h| {
+                h.anchor_hash = smith.value(u16);
+                h.anchor_line = @intCast(smith.valueRangeAtMost(u32, 0, @intCast(line_count + 2)));
+                h.old_count = @intCast(smith.valueRangeAtMost(u32, 0, @intCast(line_count + 2)));
+                var text_buf: [256]u8 = undefined;
+                const text_len = smith.slice(&text_buf);
+                h.new_text = try arena.dupe(u8, text_buf[0..text_len]);
+            }
+
+            const result = apply(arena, src, hunk_storage[0..n_hunks], 10) catch return;
+            try std.testing.expectEqual(@as(usize, n_hunks), result.applied.len);
+
+            const src_lines = try splitLines(arena, src);
+            const out_lines = try splitLines(arena, result.text);
+            if (n_hunks == 0) {
+                try std.testing.expectEqualStrings(src, result.text);
+                return;
+            }
+            if (n_hunks == 1) {
+                const start = result.applied[0].start_line - 1;
+                const new_lines = try splitLines(arena, hunk_storage[0].new_text);
+                try std.testing.expect(start + new_lines.len <= out_lines.len);
+                try std.testing.expect(linesEqualBodies(out_lines[0..start], src_lines[0..start]));
+                try std.testing.expect(linesEqualBodies(out_lines[start..][0..new_lines.len], new_lines));
+                try std.testing.expect(linesEqualBodies(out_lines[start + new_lines.len ..], src_lines[start + hunk_storage[0].old_count ..]));
+            } else {
+                for (hunk_storage[0..n_hunks]) |h| {
+                    const new_lines = try splitLines(arena, h.new_text);
+                    try std.testing.expect(blockInOut(out_lines, new_lines));
+                }
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
 }
 
 test "apply applies later hunks first so earlier offsets stay valid" {
