@@ -56,9 +56,11 @@ jobs:
 
       # Glob from the index instead of a hand-kept list: a new script is
       # checked from its first commit, not from when someone remembers to
-      # add it here.
+      # add it here. `.githooks/pre-commit` is a tracked shell script with no
+      # .sh suffix and nothing ever executes it in CI, so it would rot
+      # silently if this glob left it out.
       - name: Check shell scripts
-        run: git ls-files -z '*.sh' | xargs -0 -r shellcheck
+        run: git ls-files -z '*.sh' '.githooks/pre-commit' | xargs -0 -r shellcheck
 
       - name: Audit AssemblyScript toolchain
         working-directory: tools/ts
@@ -71,6 +73,13 @@ jobs:
       # surfaces here instead of at release time.
       - name: Check SBOM generation
         run: python3 scripts/sbom.py -o /tmp/sbom.cdx.json
+
+      # Python is a secondary language here (sbom.py, gen_frames.py, ...),
+      # and nothing in CI executes most of it, so a syntax error would merge
+      # unseen. Compile-check every tracked .py with ast.parse: py_compile
+      # would litter the checkout with __pycache__ dirs (not gitignored).
+      - name: Compile-check Python scripts
+        run: git ls-files -z '*.py' | xargs -0 -r python3 -c 'import ast,pathlib,sys; [ast.parse(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]'
 
       - name: Run deterministic gate
         run: |
