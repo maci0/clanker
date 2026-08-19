@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const subprocess = @import("../agent/subprocess.zig");
+const utf8 = @import("../util/utf8.zig");
 
 pub const supervisor_src =
     \\import ast, io, json, os, subprocess, sys, time, traceback
@@ -323,8 +324,14 @@ fn render(opts: EvalOpts, parsed: Response) ![]u8 {
 }
 
 fn cap(s: []const u8, max: u32) []const u8 {
-    if (s.len <= max) return s;
-    return s[0..max];
+    return utf8.cap(s, @as(usize, max));
+}
+
+test "cap is UTF-8 safe at the output limit" {
+    try std.testing.expectEqualStrings("", cap("é", 1));
+    try std.testing.expectEqualStrings("a", cap("aé", 1));
+    try std.testing.expectEqualStrings("a", cap("aé", 2));
+    try std.testing.expectEqualStrings("aé", cap("aé", 3));
 }
 
 pub fn errorJson(arena: std.mem.Allocator, msg: []const u8) []const u8 {
