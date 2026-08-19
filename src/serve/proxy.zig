@@ -981,7 +981,7 @@ fn uniqueWire(cfg: *const config.Config, family: ?Family, id: []const u8) Lookup
         const p = kv.value_ptr;
         if (family) |f| if (!speaks(p.kind, f)) continue;
         if (p.models.get(id) == null) continue;
-        if (found != null) return null;
+        if (found != null) return error.AmbiguousProvider;
         var copy = p.*;
         copy.default_model = id;
         const sku = copy.modelSku(id);
@@ -1419,6 +1419,17 @@ test "lookup unique wire id, composite, alias, protocol mismatch" {
     const mapped = try lookup(&cfg, null, "claude-3-5-sonnet-20241022");
     try std.testing.expectEqualStrings("kimi-k3", mapped.wire_id);
     try std.testing.expectEqualStrings("kimi-k3", mapped.provider.name);
+}
+
+test "lookup reports ambiguous when a bare wire id is configured twice" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "kimi-k3-a", try config.Provider.single(arena, "kimi-k3-a", "http://x1/v1", .openai_compat, "kimi-k3", .{}));
+    try cfg.providers.put(arena, "kimi-k3-b", try config.Provider.single(arena, "kimi-k3-b", "http://x2/v1", .openai_compat, "kimi-k3", .{}));
+
+    try std.testing.expectError(error.AmbiguousProvider, lookup(&cfg, .openai, "kimi-k3"));
 }
 
 test "lookup splices a local alias to its wire SKU" {
