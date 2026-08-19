@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [rfc recommend replaces existing Why-this-confidence and Reversibility text with template placeholders](bugs/2026-08-19-rfc-recommend-replaces-fields-it-was-not-given.md) — Open
+
+- [research sweep's web backend returns only unrelated pages](bugs/2026-08-19-research-sweep-web-backend-returns-unrelated-results.md) — Open
+
 - [improve-self fast-forwards main's ref but leaves the working tree/index reverted to pre-promotion content](bugs/2026-08-19-improve-self-merge-leaves-worktree-reverted.md) — Resolved
 
 - [zigLibDir spawns bare zig with no PATH search or environment, always failing](bugs/2026-08-19-zig-lib-dir-never-resolves-in-sandbox.md) — Resolved
