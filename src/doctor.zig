@@ -106,6 +106,16 @@ fn runChecks(
             rep.line(.ok, "zig-out/tools/", "present (tools were previously built)")
         else
             rep.line(.warn, "zig-out/tools/", "absent; `zig build tools` has not been run");
+        // skills/ and state/ are scaffolded by setup; their absence alongside a
+        // missing config.toml means first-run initialization never completed.
+        if (!dirExists(io, "skills"))
+            rep.line(.warn, "skills/", "absent; run `clanker setup` to scaffold")
+        else
+            rep.line(.ok, "skills/", "");
+        if (!dirExists(io, "state"))
+            rep.line(.warn, "state/", "absent; run `clanker setup` to scaffold")
+        else
+            rep.line(.ok, "state/", "");
         return;
     }
     rep.line(.ok, "config.toml", "");
