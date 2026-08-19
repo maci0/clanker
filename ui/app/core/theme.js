@@ -132,6 +132,13 @@ function ensurePicker() {
         var prev = idx <= 0 ? opts.length - 1 : idx - 1;
         opts[prev].focus();
       }
+    } else if (e.key === "Enter" || e.key === " ") {
+      var focused = document.activeElement;
+      if (!focused || !focused.hasAttribute("data-theme")) return;
+      e.preventDefault();
+      var anchor = _anchor;
+      choose(focused.getAttribute("data-theme"));
+      if (anchor && anchor.focus) anchor.focus();
     }
   });
   window.addEventListener("resize", function () {
