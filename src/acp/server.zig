@@ -362,3 +362,21 @@ test "ACP session/new validates cwd and mints a sessionId" {
     defer std.testing.allocator.free(bad);
     try std.testing.expect(std.mem.find(u8, bad, "\"code\":-32602") != null);
 }
+
+test "ACP session/prompt rejects whitespace-only text" {
+    var conn = Connection{};
+    defer conn.deinit(std.testing.allocator);
+    const init = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+    );
+    defer std.testing.allocator.free(init);
+    const new_s = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/tmp"}}
+    );
+    defer std.testing.allocator.free(new_s);
+    const ws = try conn.handleLine(std.testing.allocator,
+        \\{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"acp-1","prompt":"   "}}
+    );
+    defer std.testing.allocator.free(ws);
+    try std.testing.expect(std.mem.find(u8, ws, "\"code\":-32602") != null);
+}
