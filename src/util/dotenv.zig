@@ -28,7 +28,12 @@ pub fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process
     while (it.next()) |raw| {
         var line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
-        if (std.mem.startsWith(u8, line, "export ")) line = std.mem.trimStart(u8, line["export ".len..], " ");
+        if (std.mem.startsWith(u8, line, "export")) {
+            const after_export = line["export".len..];
+            if (after_export.len > 0 and (after_export[0] == ' ' or after_export[0] == '\t')) {
+                line = std.mem.trimStart(u8, after_export, " \t");
+            }
+        }
         const eq = std.mem.findScalar(u8, line, '=') orelse continue;
         const key = std.mem.trim(u8, line[0..eq], " \t");
         if (key.len == 0) continue;
@@ -83,4 +88,24 @@ test "dotenv parses and fills the environ map without overriding" {
     try std.testing.expectEqualStrings("", env.get("EMPTY").?);
     try std.testing.expectEqualStrings("single quoted", env.get("SINGLE").?);
     try std.testing.expectEqualStrings("from-real-env", env.get("ALREADY").?);
+}
+
+test "dotenv accepts a tab after export" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const saved_level = log.getLevel();
+    log.setLevel(.warn);
+    defer log.setLevel(saved_level);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = ".env", .data = "export\tTABBED='tab value'\n" });
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    loadFromDir(io, std.testing.allocator, &env, tmp.dir);
+
+    try std.testing.expectEqualStrings("tab value", env.get("TABBED").?);
 }
