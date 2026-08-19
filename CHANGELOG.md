@@ -396,6 +396,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Two `clanker commit` invocations on one checkout no longer interleave
+  their index writes: the writing form takes a non-blocking exclusive flock
+  on `state/commit.lock` for the whole plan → confirm → write window (the
+  same kernel-held lock `clanker schedule run-due` uses, released whenever
+  the holder dies, so it is never stale), and a second writer is refused
+  with a message naming the lock instead of silently racing the first. A
+  dry run reads only and takes no lock. This is the enforcement half of
+  docs/reports/bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md;
+  sessions that bypass clanker with raw `git` remain covered only by the
+  concurrent-sessions runbook, since nothing in this process can lock them.
+
 - A failing Vertex provider now says why. The vertex kinds parsed error
   bodies with their model publisher's codec only, which cannot read Google's
   platform envelope in the array-wrapped form `rawPredict` answers with, and
