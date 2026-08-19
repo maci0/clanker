@@ -867,43 +867,80 @@ var replayedSpans = [];
 
 /* Replays a saved conversation into the transcript. Reuses the same turn
    card the live stream builds, so history and a just-finished turn are the
-   same object rather than two renderings of the same thing that drift. */
+   same object rather than two renderings of the same thing that drift.
+
+   The replay is chunked: each turn card costs a markdown parse of the
+   question, a fence pass and a card of buttons over the answer, and a long
+   session is hundreds of turns. Building them all in one synchronous forEach
+   froze the page for the whole load — the status line kept saying "Loading
+   conversation…" while every card of a 500-message session was rebuilt in a
+   single main-thread task. A time-boxed batch per tick yields to paint and
+   input between batches, so the transcript visibly fills in and the page
+   stays live. Resolves when the last card is in the DOM; callers that jump
+   to a search hit or report "Loaded N messages." must chain on it. */
 function renderSessionHistory(messages) {
   el.transcript.textContent = "";
   replayedSpans = [];
   var pendingTurn = null;
   var lastTask = null;
   var span = null;
-  messages.forEach(function (m, idx) {
-    if (m.role === "user") {
-      // A question with no reply before the next one: close it off rather
-      // than letting the next answer attach to the wrong question.
-      if (pendingTurn) markTurnUnanswered(pendingTurn);
-      lastTask = m.content;
-      pendingTurn = createTurn(m.content);
-      span = { from: idx, to: idx };
-      replayedSpans.push(span);
-      return;
+  var idx = 0;
+  return new Promise(function (resolve, reject) {
+    function step() {
+      var until = performance.now() + replay_chunk_ms;
+      try {
+        while (idx < messages.length && performance.now() < until) {
+          var m = messages[idx];
+          if (m.role === "user") {
+            // A question with no reply before the next one: close it off
+            // rather than letting the next answer attach to the wrong one.
+            if (pendingTurn) markTurnUnanswered(pendingTurn);
+            lastTask = m.content;
+            pendingTurn = createTurn(m.content);
+            span = { from: idx, to: idx };
+            replayedSpans.push(span);
+          } else {
+            if (!pendingTurn) {
+              lastTask = null;
+              pendingTurn = createTurn("(question not in this transcript)");
+              span = { from: idx, to: idx };
+              replayedSpans.push(span);
+              var head = pendingTurn.root.querySelector(".turn-you");
+              head.setAttribute("data-orphan", "true");
+              head.querySelector(".turn-author").textContent = "unknown  ·  ";
+            }
+            if (span) span.to = idx;
+            appendText(pendingTurn, m.content, false);
+            finalizeAnswer(pendingTurn);
+            // The task is passed back so Run again and Edit & resend survive
+            // a reload; the numbers cannot, because they were never saved
+            // with the session.
+            renderStats(pendingTurn, {}, lastTask);
+            pendingTurn = null;
+          }
+          idx += 1;
+        }
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      if (idx < messages.length) {
+        window.setTimeout(step, 0);
+      } else {
+        if (pendingTurn) markTurnUnanswered(pendingTurn);
+        resolve();
+      }
     }
-    if (!pendingTurn) {
-      lastTask = null;
-      pendingTurn = createTurn("(question not in this transcript)");
-      span = { from: idx, to: idx };
-      replayedSpans.push(span);
-      var head = pendingTurn.root.querySelector(".turn-you");
-      head.setAttribute("data-orphan", "true");
-      head.querySelector(".turn-author").textContent = "unknown  ·  ";
-    }
-    if (span) span.to = idx;
-    appendText(pendingTurn, m.content, false);
-    finalizeAnswer(pendingTurn);
-    // The task is passed back so Run again and Edit & resend survive a reload;
-    // the numbers cannot, because they were never saved with the session.
-    renderStats(pendingTurn, {}, lastTask);
-    pendingTurn = null;
+    step();
   });
-  if (pendingTurn) markTurnUnanswered(pendingTurn);
 }
+
+/* Cap on synchronous work per tick while a saved conversation is rebuilt
+   into the DOM: long enough to make real progress per frame, short enough
+   that the longest session never blocks a frame for more than a fraction of
+   it. Browsers budget ~50 ms before a task counts as long; 12 ms leaves the
+   rest of the frame for paint and input. */
+var replay_chunk_ms = 12;
 
 /* Scrolls the transcript to the turn holding message `index` and says which
    one it is: the card is flagged for a moment, and the text that was searched
@@ -986,12 +1023,17 @@ function switchSession(id, jump) {
   fetch("/api/sessions/" + encodeURIComponent(id))
     .then(readJson)
     .then(function (data) {
-      renderSessionHistory(data.messages || []);
-      syncTranscriptEmpty();
-      var n = (data.messages || []).length;
-      el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
-      restoreDraft();
-      if (jump) jumpToMessage(jump.index, jump.query);
+      // The tail runs once the last card is in the DOM: the empty-state, the
+      // "Loaded N messages." line, the draft and a search jump all assume the
+      // replay finished. Chaining here also means a replay failure lands in
+      // the same catch below that a synchronous one did.
+      return renderSessionHistory(data.messages || []).then(function () {
+        syncTranscriptEmpty();
+        var n = (data.messages || []).length;
+        el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
+        restoreDraft();
+        if (jump) jumpToMessage(jump.index, jump.query);
+      });
     })
     .catch(function (err) {
       var p = document.createElement("p");
@@ -4750,7 +4792,7 @@ el.sessionCompact.addEventListener("click", function () {
           el.transcript.textContent = "";
           return fetch("/api/sessions/" + encodeURIComponent(sessionId))
             .then(function (r) { return r.json(); })
-            .then(function (data) { renderSessionHistory(data.messages || []); });
+            .then(function (data) { return renderSessionHistory(data.messages || []); });
         });
       })
       .catch(function (err) { el.sessionStatus.textContent = "Compact failed: " + err.message; })

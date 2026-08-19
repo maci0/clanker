@@ -40,6 +40,29 @@ test("critical-path modulepreloads name modules the page actually loads", functi
   }
 });
 
+test("a long saved conversation replays in chunks, not one long task", function () {
+  // Opening a conversation rebuilds every turn card: a markdown parse of the
+  // question, a fence pass and a card of buttons over each answer. A
+  // 500-message session did all of it in one synchronous forEach — a
+  // main-thread block during which the page was frozen and the status line
+  // still said "Loading conversation…". The replay must return a promise and
+  // yield between time-boxed chunks, and the callers that report status or
+  // jump to a search hit afterwards must chain on it.
+  const fn = app.match(/function renderSessionHistory\([\s\S]*?\n\}/);
+  assert.ok(fn, "renderSessionHistory exists");
+  assert.match(fn[0], /return new Promise\(/);
+  assert.match(fn[0], /performance\.now\(\) < until/);
+  assert.match(fn[0], /window\.setTimeout\(step, 0\)/);
+  // switchSession's tail (empty-state, "Loaded N messages.", draft restore,
+  // search jump) runs after the replay resolves, not while cards are still
+  // being built; a replay failure reaches the same catch a sync one did.
+  assert.match(
+    app,
+    /return renderSessionHistory\(data\.messages \|\| \[\]\)\.then\(function \(\) \{/,
+    "switchSession must chain its post-replay tail on the replay promise"
+  );
+});
+
 test("a failed view load surfaces an error with a retry instead of a blank panel", function () {
   // The loader rejection handler must not just clear the skeleton: a dead
   // chunk (dynamic import 404, failed API call) looked identical to an
