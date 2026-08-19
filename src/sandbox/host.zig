@@ -4106,14 +4106,62 @@ fn execArgPathDenied(cmd: []const u8, argv: []const []const u8) ?[]const u8 {
     return null;
 }
 
-/// `git --exec-path=...` points git at a helper directory the guest chose.
-/// That is a program-execution grant, not a repo path, so it is refused even
-/// when the value is relative.
-fn gitExecPathArg(argv: []const []const u8) ?[]const u8 {
+/// Git global options that hand git a program to run, or a git dir other than
+/// the run's own. All are refused even when their value is a relative path
+/// inside the sandbox, because git is granted as a version-control verb, not
+/// as a code-execution grant:
+///
+///   - `-c <key>=<value>` / `--config-env=<key>=<env>` inject config that
+///     names programs git will run: `core.hooksPath` executes hook scripts on
+///     commit (verified: a guest can place `hooks/pre-commit` inside its
+///     writable prefixes and commit), and `core.fsmonitor`, `core.sshCommand`,
+///     `core.editor`, `core.pager`, `credential.helper`, `diff.external` all
+///     spawn a config-named command. On git before 2.43 an `alias.*` can also
+///     shadow a builtin verb and run a `!` shell command. The deny-token scan
+///     skips `-c` values (they are not argv verbs), so the flag itself is
+///     refused.
+///   - `--exec-path=...` points git at a helper directory the guest chose
+///     (the original refusal; git runs the helpers it finds there).
+///   - `--git-dir=<path>` / `--git-common-dir=<path>` select a different git
+///     dir. A guest can fabricate one (plain files) with a `pre-commit` hook
+///     and have `git commit` execute it as a host process; only the run's own
+///     `.git` may ever be used, and it is reachable without the flag.
+///
+/// Residual (not closed here): `-C <subdir>` is still allowed, and a guest
+/// that can write inside a prefix could plant `<subdir>/.git` (a gitfile) plus
+/// a fabricated git dir, then commit with `git -C <subdir>`. Closing that
+/// needs a gitdir provenance check (spawn `git rev-parse --git-dir` before
+/// exec and require the run's own `.git`), which the `-C` grant's
+/// worktree-spelling use does not justify by itself.
+fn gitExecDeniedArg(argv: []const []const u8) ?[]const u8 {
     for (argv[1..]) |arg| {
         if (std.mem.eql(u8, arg, "--exec-path") or std.mem.startsWith(u8, arg, "--exec-path=")) return arg;
+        if (std.mem.eql(u8, arg, "-c")) return arg;
+        if (std.mem.eql(u8, arg, "--config-env") or std.mem.startsWith(u8, arg, "--config-env=")) return arg;
+        if (std.mem.eql(u8, arg, "--git-dir") or std.mem.startsWith(u8, arg, "--git-dir=")) return arg;
+        if (std.mem.eql(u8, arg, "--git-common-dir") or std.mem.startsWith(u8, arg, "--git-common-dir=")) return arg;
     }
     return null;
+}
+
+test "sandboxed git may not inject config or select a git dir" {
+    // `-c core.hooksPath=<dir>` runs hook scripts on commit (verified: a
+    // guest-placed pre-commit hook executes as a host process), and `-c`
+    // values are exempt from the deny-token scan, so the flag itself is the
+    // refused shape. On git before 2.43 an `alias.*` could also shadow a
+    // builtin verb with a `!` shell command.
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "-c", "core.hooksPath=src/hooks", "commit", "-m", "x" }) != null);
+    // core.fsmonitor runs on plain status; --config-env is the same injection.
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "--config-env=core.fsmonitor=GIT_FSMONITOR", "status" }) != null);
+    // An alternate git dir can carry a pre-commit hook a guest fabricated.
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "--git-dir=./evil.git", "--work-tree=./evil", "commit", "-m", "x" }) != null);
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "--git-common-dir", "./evil.git", "status" }) != null);
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "--exec-path=./helpers", "status" }) != null);
+    // The legitimate forms stay: -C changes the cwd (path-checked by
+    // execArgPathDenied) and --work-tree keeps the run's own git dir.
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "-C", "src", "status" }) == null);
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "--work-tree=src", "status" }) == null);
+    try std.testing.expect(gitExecDeniedArg(&.{ "git", "status", "--porcelain" }) == null);
 }
 
 /// Whether `pattern` names `cmd`, i.e. its first whitespace-delimited token
@@ -4242,6 +4290,11 @@ pub const ExecDenial = union(enum) {
     /// An argument that names a host-absolute path or walks `..`. Carries the
     /// offending argument. See `execArgPathDenied`.
     host_path: []const u8,
+    /// A git global option that would make git run a guest-chosen program or
+    /// open a guest-fabricated git dir (`-c`, `--config-env`, `--exec-path`,
+    /// `--git-dir`, `--git-common-dir`). Carries the offending argument. See
+    /// `gitExecDeniedArg`.
+    git_config: []const u8,
 };
 
 /// The argv-level half of the ck_exec gate, factored out of `ckExec` so the
@@ -4277,7 +4330,7 @@ pub fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8)
     var join_buf: [4096]u8 = undefined;
     const policy = execPolicyFor(sb, argv, &join_buf);
     if (std.mem.eql(u8, cmd, "git")) {
-        if (gitExecPathArg(argv)) |arg| return .{ .host_path = arg };
+        if (gitExecDeniedArg(argv)) |arg| return .{ .git_config = arg };
         if (rewindGitAllowed(sb.tool_self_name, argv)) return null;
         if (!gitVerbAllowed(argv, sb.git_remote_ops)) return .git_verb;
     }
@@ -5161,6 +5214,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
             .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, x.arg }),
             .foreign_worktree => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': it reaches into another run's worktree", .{a}),
             .host_path => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': path is outside the sandbox", .{a}),
+            .git_config => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': git config injection / alternate git dir would run guest-chosen code", .{a}),
         }
         return Err.denied;
     }
@@ -5986,6 +6040,10 @@ test "git exec permits named local verbs and blocks network plumbing" {
     // and denied.
     try std.testing.expect(gitVerbAllowed(&.{ "git", "-C", ".local/worktrees/wt", "status" }, false));
     try std.testing.expect(gitVerbAllowed(&.{ "git", "-C", ".local/worktrees/wt", "commit", "-m", "msg" }, false));
+    // The verb-level check is not the final word: execDenial refuses
+    // --git-dir/--git-common-dir outright (a fabricated git dir carries hooks
+    // that run on commit), so the -C spelling above is the supported way to
+    // address a worktree. These rows only pin that the verb is not the reason.
     try std.testing.expect(gitVerbAllowed(&.{ "git", "--git-dir=.local/worktrees/wt/.git", "--work-tree=.local/worktrees/wt", "add", "x" }, false));
     try std.testing.expect(gitVerbAllowed(&.{ "git", "--git-dir", ".local/worktrees/wt/.git", "--work-tree", ".local/worktrees/wt", "push", "origin", "branch" }, true));
     try std.testing.expect(!gitVerbAllowed(&.{ "git", "-C", ".local/worktrees/wt", "ls-remote" }, false));
@@ -6177,7 +6235,24 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expect(execDenial(&sb, "uv", &uv_ok) == null);
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "pip", "install", "pwn" }).? == .uv_verb);
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "run", "python3", "-c", "print(1)" }).? == .uv_verb);
+    // A host-absolute --exec-path is refused as a path first (execArgPathDenied
+    // runs ahead of the git block); a relative one reaches gitExecDeniedArg.
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--exec-path=/tmp/evil", "status" }).? == .host_path);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--exec-path=./helpers", "status" }).? == .git_config);
+    // execDenial-level assertions (git_config): `-c core.hooksPath=<dir>`
+    // executes hook scripts on commit (verified), and `-c` values are exempt
+    // from the deny-token scan, so the flag itself is the refused shape; a
+    // git dir other than the run's own can carry a hook a caller fabricated.
+    // (On git before 2.43 an `alias.*` could also shadow a builtin verb with a
+    // `!` shell command.)
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-c", "core.hooksPath=src/hooks", "commit", "-m", "x" }).? == .git_config);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--config-env=core.fsmonitor=GIT_FSMONITOR", "status" }).? == .git_config);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--git-dir=./evil.git", "--work-tree=./evil", "commit", "-m", "x" }).? == .git_config);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--git-common-dir", "./evil.git", "status" }).? == .git_config);
+    // -C and --work-tree stay allowed: they keep the run's own git dir, and
+    // their path arguments are checked by execArgPathDenied.
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", ".", "status" }) == null);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--work-tree=src", "status" }) == null);
 }
 
 test "ck_job start gate: execDenial alone passes an unlisted command, so the allowlist half must refuse it" {

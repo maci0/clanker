@@ -3530,6 +3530,7 @@ const Model = struct {
                     .shell_operator => |x| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, shell operator '{s}' in '{s}'; ! does not run a shell", .{ argv[0], x.token, x.arg }),
                     .foreign_worktree => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' reaches into another run's worktree; this run's tree is '.'", .{ argv[0], a }),
                     .host_path => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' is a path outside the sandbox", .{ argv[0], a }),
+                    .git_config => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' would make git run guest-chosen code (config injection / alternate git dir); -C and --work-tree are the supported forms", .{ argv[0], a }),
                 };
                 self.lines.append(self.arena, .{ .text = msg catch "error: ! denied", .dim = true }) catch {};
             },

@@ -42,10 +42,22 @@ const allowed_verbs = [_][]const u8{
 /// flags the sandbox refuses for git. Kept in step so the in-tool message
 /// names the same verbs the host denies. If a verb is not here and not in
 /// `allowed_verbs` the host's deny list is still the final word.
+///
+/// `-c`, `--config-env`, `--git-dir` and `--git-common-dir` are the second
+/// mirror (of the host's `gitExecDeniedArg`): `-c core.hooksPath=<dir>`
+/// executes hook scripts on commit (a caller can place a hook inside its
+/// writable prefixes), and `core.fsmonitor`, `core.sshCommand`, `core.editor`,
+/// `core.pager`, `credential.helper`, `diff.external` all spawn a
+/// config-named program (on git before 2.43 an `alias.*` could also shadow a
+/// builtin verb with a `!` shell command); an alternate git dir can carry a
+/// hook a caller fabricated. They are refused even though the flag's value
+/// would be skipped by the verb scan below.
 const denied_tokens = [_][]const u8{
-    "push",   "reset",  "rebase",    "checkout", "clean",   "rm",            "fetch",
-    "merge",  "revert", "stash",     "remote",   "tag",     "filter-branch", "gc",
-    "repack", "prune",  "submodule", "-f",       "--force", "--exec",
+    "push",   "reset",        "rebase",        "checkout",         "clean",
+    "rm",     "fetch",        "merge",         "revert",           "stash",
+    "remote", "tag",          "filter-branch", "gc",               "repack",
+    "prune",  "submodule",    "-f",            "--force",          "--exec",
+    "-c",     "--config-env", "--git-dir",     "--git-common-dir",
 };
 
 fn isWordChar(c: u8) bool {
