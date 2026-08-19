@@ -133,9 +133,7 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
         .string => |s| s,
         else => return responseError(alloc, id, -32602, "session/prompt requires sessionId"),
     };
-    if (conn.sessions.get(sid) == null) {
-        return responseError(alloc, id, -32602, "unknown sessionId");
-    }
+    const cwd = conn.sessions.get(sid) orelse return responseError(alloc, id, -32602, "unknown sessionId");
     const busy = conn.prompt_busy.getPtr(sid) orelse return responseError(alloc, id, -32602, "unknown sessionId");
     if (busy.*) {
         return responseError(alloc, id, -32603, "session already has an in-flight prompt");
@@ -159,6 +157,8 @@ fn handleSessionPrompt(conn: *Connection, alloc: std.mem.Allocator, arena: std.m
     try s.write("end_turn");
     try s.objectField("promptLength");
     try s.write(prompt_len);
+    try s.objectField("cwd");
+    try s.write(cwd);
     try s.endObject();
     try s.endObject();
     return out.toOwnedSlice();
