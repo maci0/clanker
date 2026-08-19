@@ -83,7 +83,23 @@ fn decode(arena: std.mem.Allocator, stdout: []const u8) Result {
         if (v == .object) {
             const specific = v.object;
             if (specific.get("permissionDecision")) |d| {
-                if (d == .string) result.decision = parseDecision(d.string);
+                if (d == .string) {
+                    const nested = parseDecision(d.string);
+                    // A run of hooks folds to the most restrictive verdict;
+                    // one payload that carries both the flat and the nested
+                    // Claude shapes must do the same, not let a nested
+                    // "allow" soften a top-level "deny" (or vice versa).
+                    if (@intFromEnum(nested) > @intFromEnum(result.decision)) {
+                        result.decision = nested;
+                        // The stricter verdict replaces the less strict
+                        // one's reason; otherwise the reply can pair a deny
+                        // with "allowed because...".
+                        result.reason = "";
+                        if (specific.get("permissionDecisionReason")) |r| {
+                            if (r == .string and r.string.len > 0) result.reason = r.string;
+                        }
+                    }
+                }
             }
             if (specific.get("permissionDecisionReason")) |r| {
                 if (r == .string and result.reason.len == 0) result.reason = r.string;
@@ -164,4 +180,26 @@ test "matching hooks run serially and fold deny over context" {
     try std.testing.expectEqual(Decision.deny, result.decision);
     try std.testing.expectEqualStrings("policy", result.reason);
     try std.testing.expectEqualStrings("checked", result.context);
+}
+
+test "nested permissionDecision cannot soften a top-level deny" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const result = decode(arena,
+        \\{"decision":"deny","reason":"top","hookSpecificOutput":{"permissionDecision":"allow","permissionDecisionReason":"nested"}}
+    );
+    try std.testing.expectEqual(Decision.deny, result.decision);
+    try std.testing.expectEqualStrings("top", result.reason);
+}
+
+test "nested deny hardens a top-level allow and takes the nested reason" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const result = decode(arena,
+        \\{"decision":"allow","reason":"looks safe","hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":"policy"}}
+    );
+    try std.testing.expectEqual(Decision.deny, result.decision);
+    try std.testing.expectEqualStrings("policy", result.reason);
 }
