@@ -81,8 +81,14 @@ fn matchesPattern(pattern: []const u8, name: []const u8) bool {
     return name.len >= prefix.len + suffix.len and std.mem.startsWith(u8, name, prefix) and std.mem.endsWith(u8, name, suffix);
 }
 
+/// How much of a tool call's arguments the loop-guard warning shows the
+/// model. Bigger than the confirm prompt's `args_preview_cap` in
+/// `loop.zig`: the model decides what to change, so it gets more of the
+/// offending arguments than the human needs to approve or deny one call.
+pub const args_preview_cap: usize = 512;
+
 pub fn argsPreview(arguments: []const u8) []const u8 {
-    return utf8.cap(arguments, 512);
+    return utf8.cap(arguments, args_preview_cap);
 }
 
 test "canonicalization recursively sorts object keys" {
