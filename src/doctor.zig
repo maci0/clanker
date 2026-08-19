@@ -69,6 +69,14 @@ fn fileExists(io: std.Io, path: []const u8) bool {
     return true;
 }
 
+fn dirHasEntries(io: std.Io, path: []const u8) bool {
+    var d = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch return false;
+    defer d.close(io);
+    var it = d.iterate();
+    const entry = it.next(io) catch null;
+    return entry != null;
+}
+
 /// Every check doctor runs, so `setup` can end with the same report rather
 /// than a second, drifting copy of it.
 fn runChecks(
@@ -192,6 +200,9 @@ fn runChecks(
         "system prompt",
         cfg.agent.system_prompt_file,
     );
+    if (dirExists(io, cfg.agent.skills_dir) and !dirHasEntries(io, cfg.agent.skills_dir)) {
+        rep.line(.warn, "skills", try std.fmt.allocPrint(arena, "{s} is empty; no skill files found", .{cfg.agent.skills_dir}));
+    }
 
     rep.section("tools");
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch |err| {
