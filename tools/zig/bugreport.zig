@@ -136,7 +136,7 @@ fn mapSeverity(sev: []const u8) ?[]const u8 {
 }
 
 fn inferComponent(title: []const u8) ?[]const u8 {
-    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools", "webui", "chat", "memory", "auth", "config" };
+    const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools", "webui", "chat", "memory", "auth", "config", "agent", "evals", "improve", "peers", "records", "hooks", "mcp" };
     for (tokens) |tok| {
         if (std.ascii.indexOfIgnoreCase(title, tok)) |_| return tok;
     }
