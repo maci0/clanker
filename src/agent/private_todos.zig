@@ -181,7 +181,7 @@ pub fn listJson(list: *List, arena: std.mem.Allocator) ![]const u8 {
 
 /// Renders the list's final state for the parent, or "" when the run never
 /// added anything (the common case; no list means no noise in the result).
-pub fn summary(list: *List, arena: std.mem.Allocator) ![]const u8 {
+pub fn summary(list: *const List, arena: std.mem.Allocator) ![]const u8 {
     if (list.items.items.len == 0) return "";
 
     var closed: usize = 0;
