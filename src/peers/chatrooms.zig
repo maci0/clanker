@@ -143,6 +143,15 @@ pub const RoomInfo = struct {
     topic: ?[]const u8 = null,
 };
 
+/// Newest activity first. The underlying string map iterates in insertion
+/// order, which for an append-only JSONL log is oldest room first; callers
+/// documented listRooms as newest-first, so sort the enriched rows before
+/// returning them.
+fn roomInfoLessThan(_: void, a: RoomInfo, b: RoomInfo) bool {
+    if (a.last_ts != b.last_ts) return a.last_ts > b.last_ts;
+    return std.mem.lessThan(u8, a.room, b.room);
+}
+
 /// Durable inbox position. Message identity is the primary cursor because
 /// timestamps are supplied by independent peers and are neither unique nor
 /// monotonic. `ts` remains as a recovery cursor for legacy state and for when
@@ -350,6 +359,7 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_d
         }
         idx += 1;
     }
+    std.mem.sort(RoomInfo, out, {}, roomInfoLessThan);
     return out;
 }
 
@@ -1931,4 +1941,45 @@ test "serialiseMessage scales past the former 64 KiB stack buffer" {
     const parsed = try std.json.parseFromSlice(std.json.Value, gpa, out.items[0 .. out.items.len - 1], .{});
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, reaction_count), parsed.value.object.get("reactions").?.array.items.len);
+}
+test "listRooms orders rooms newest-first by last activity" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.max_history = 100;
+
+    // Appended in chronological order. Without the sort, listRooms returns
+    // hash-map insertion order (oldest room first), contradicting its
+    // "newest-first by last activity" contract.
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "a",
+        .text = "old dev",
+        .ts = 1000,
+        .id = "m1",
+    });
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "ops",
+        .from = "b",
+        .text = "latest ops",
+        .ts = 5000,
+        .id = "m2",
+    });
+    try append(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, .{
+        .room = "dev",
+        .from = "a",
+        .text = "newer dev",
+        .ts = 3000,
+        .id = "m3",
+    });
+
+    const rooms = try listRooms(env.tmp.dir, io, arena, "", &cfg);
+    try std.testing.expectEqual(@as(usize, 2), rooms.len);
+    try std.testing.expectEqualStrings("ops", rooms[0].room);
+    try std.testing.expectEqualStrings("dev", rooms[1].room);
 }
