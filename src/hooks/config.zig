@@ -74,6 +74,7 @@ pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, path: []const
                     .string => |s| s,
                     else => return error.HookCommandNotString,
                 } else return error.HookCommandMissing;
+                if (std.mem.trim(u8, command, " \\t\\r\\n").len == 0) return error.HookCommandMissing;
                 var timeout_ms = default_timeout_ms;
                 if (handler.get("timeout")) |v| {
                     const seconds: i64 = switch (v) {
