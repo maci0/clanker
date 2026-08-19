@@ -301,6 +301,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker research sweep` and the `web_search` tool no longer return pages
+  unrelated to the query. Bing's RSS endpoint has decayed upstream and answers
+  a multi-word query with items matching at most one of its words (thesaurus
+  entries, hardware-vendor sites); parsed hits are now checked against the
+  query's vocabulary (`search_parse.keepRelevant`), an all-junk page reads as
+  empty so the sweep falls through to the keyed backends and Marginalia, and
+  the sweep notes once when that happened
+  (docs/reports/bugs/2026-08-19-research-sweep-web-backend-returns-unrelated-results.md).
 - `clanker rfc recommend` (and the `rfc` tool's `recommend` action) keeps an
   RFC's existing **Why this confidence** and **Reversibility** paragraphs when
   the caller does not pass `moves_confidence`/`reversibility`, instead of
