@@ -402,7 +402,13 @@ pub fn build(b: *std.Build) void {
     while (it.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
-        if (std.mem.eql(u8, entry.name, "lib.zig")) continue; // shared guest library
+        // Shared guest libraries, imported by other guests rather than shipped
+        // as tools of their own: lib.zig is the ABI half every guest imports;
+        // records_grep.zig is pulled into the five record-store guests by
+        // relative path and has no descriptor, so neither gets a standalone
+        // wasm built here.
+        if (std.mem.eql(u8, entry.name, "lib.zig")) continue;
+        if (std.mem.eql(u8, entry.name, "records_grep.zig")) continue;
         const stem = entry.name[0 .. entry.name.len - 4];
         const is_helper = for (host_tested_helpers) |h| {
             if (std.mem.eql(u8, stem, h)) break true;

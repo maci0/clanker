@@ -4,7 +4,7 @@
 
 In progress. Persistent Python supervisor, session subprocess registry,
 disabled-by-default guest, magic prefixes, and ADR 0010/0011 are in.
-Sources of truth: `src/agent/subprocess.zig`, `src/agent/kernel.zig`,
+Sources of truth: `src/agent/subprocess.zig`, `src/sandbox/kernel.zig`,
 `src/config.zig` (`Kernel`), `tools/zig/kernel.zig`,
 `tools/zig/kernel_magic.zig`,
 [ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md).
@@ -221,7 +221,7 @@ the feature default-on without quotas is not.
   ADR 0010 (revised) disagrees: it frames `runPythonCell`
   (`src/sandbox/host.zig`) as the WASI-primary Python path, but that function
   has no production caller — the `kernel` guest reaches `ck_kernel` →
-  `kernel_mod.eval` (`src/agent/kernel.zig`), a host `python3` subprocess,
+  `kernel_mod.eval` (`src/sandbox/kernel.zig`), a host `python3` subprocess,
   and never `runPythonCell`. Resolution belongs in ADR 0010 (correct the
   description) or `src/sandbox/host.zig` (wire `runPythonCell` into
   `ck_kernel`).
