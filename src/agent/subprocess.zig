@@ -8,6 +8,10 @@ const session = @import("session.zig");
 
 /// Blocking lock around `std.atomic.Mutex` for structures that do not carry
 /// an `std.Io` handle (the process-global registry is touched at first use).
+/// Bounds each pipe read; the leftover assembly above handles arbitrary
+/// line lengths, so this only caps how much is read per syscall.
+const stdout_chunk_bytes: usize = 4096;
+
 const SpinMutex = struct {
     raw: std.atomic.Mutex = .unlocked,
 
@@ -104,7 +108,7 @@ pub const Registry = struct {
     pub fn readStdoutLine(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8) ![]u8 {
         while (true) {
             if (try self.takeLine(arena, session_id, kind)) |line| return line;
-            var tmp: [4096]u8 = undefined;
+            var tmp: [stdout_chunk_bytes]u8 = undefined;
             const n = try self.readStdoutInto(session_id, kind, &tmp);
             if (n == 0) return error.KernelExited;
             try self.appendLeftover(session_id, kind, tmp[0..n]);
@@ -115,7 +119,7 @@ pub const Registry = struct {
     /// least one byte or EOF. Used by DAP framing, which is not line-oriented.
     pub fn readStdout(self: *Registry, arena: std.mem.Allocator, session_id: []const u8, kind: []const u8, max: usize) ![]u8 {
         if (try self.takeLeftover(arena, session_id, kind, max)) |got| return got;
-        var tmp: [4096]u8 = undefined;
+        var tmp: [stdout_chunk_bytes]u8 = undefined;
         const n = try self.readStdoutInto(session_id, kind, tmp[0..@min(max, tmp.len)]);
         if (n == 0) return error.KernelExited;
         return arena.dupe(u8, tmp[0..n]);
