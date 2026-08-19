@@ -301,7 +301,9 @@ way its own non-goal requires.
 
 - **Arena v2: the 3D stage (shipped 2026-08-14).** A `3D` toggle in the
   view's header swaps the pixel canvas for a three.js scene
-  (`features/arena3d.js`), per-browser via `localStorage`, defaulting off.
+  (`ui/plugins/arena3d/app.js`, the `arena3d` module plugin; before the
+  2026-08-19 migration it was `features/arena3d.js` inside app.wasm),
+  per-browser via `localStorage`, defaulting off.
   Same decorative contract, inherited rather than restated: the scene lives
   inside the same `aria-hidden` `#arena-stage`, carries nothing the
   transcript and status line do not, renders one still frame under reduced

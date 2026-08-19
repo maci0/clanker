@@ -24,7 +24,6 @@ const script = @embedFile("app/app.js");
 const preact_boot = @embedFile("app/preact-boot.js");
 const fleet = @embedFile("app/features/fleet.js");
 const arena_view = @embedFile("app/features/arena.js");
-const arena3d_view = @embedFile("app/features/arena3d.js");
 const board_view = @embedFile("app/features/board.js");
 const goals_view = @embedFile("app/features/goals.js");
 const knowledge_view = @embedFile("app/features/knowledge.js");
@@ -88,8 +87,8 @@ comptime {
     // branches this entire comptime evaluation may spend, not a per-call
     // budget, so sizing it off one asset runs out once the assets together
     // exceed it — which is what adding a view used to do to the build.
-    const assets = [_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, arena3d_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
-    const names = [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/arena3d.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
+    const assets = [_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
+    const names = [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
     var total: usize = 0;
     for (assets) |a| total += a.len;
     @setEvalBranchQuota(4 * total);
@@ -147,7 +146,6 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/features/runs.js")) return .{ .body = runs_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/fleet.js")) return .{ .body = fleet, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/arena.js")) return .{ .body = arena_view, .content_type = "text/javascript; charset=utf-8" };
-    if (std.mem.endsWith(u8, path, "/features/arena3d.js")) return .{ .body = arena3d_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/board.js")) return .{ .body = board_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/goals.js")) return .{ .body = goals_view, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/features/knowledge.js")) return .{ .body = knowledge_view, .content_type = "text/javascript; charset=utf-8" };

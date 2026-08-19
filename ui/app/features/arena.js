@@ -432,7 +432,12 @@ function syncStageMode() {
 
 function ensure3d() {
   if (arena3d) return Promise.resolve(arena3d);
-  return import("./arena3d.js").then(function (mod) {
+  // The 3D stage is the arena3d disk plugin (`module` shape): the Arena view
+  // imports its app.js directly so the bytes stay off a chat-only visit, and
+  // the System → Web UI plugins checkbox gates the server side. A missing or
+  // disabled plugin 404s here and the catch falls back to 2D, same as a
+  // browser without WebGL.
+  return import("/webui/plugins/arena3d/app.js").then(function (mod) {
     arena3d = mod;
     var host = byId("arena-stage3d");
     return mod.mountArena3D(host).then(function () { return mod; });

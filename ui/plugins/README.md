@@ -31,8 +31,13 @@ dock, a live subscription — and its script will load with the page instead. It
 is then on every visit's critical path, so it needs a reason; `boot` below only
 runs once the script has loaded.
 
+The third shape is `"module": true` — not a view at all. Its `app.js` is an ES
+module a core view imports on demand (`arena3d` is loaded by the Arena view on
+first 3D toggle), so the page builds no tab and never fetches it as a classic
+script; the System → Web UI plugins checkbox still gates its assets.
+
 `capabilities` names the `api` members the view actually uses. Known names:
-`get`, `post`, `live`, `emit`, `confirm`, `prompt`, `toast`, `workspace`, `icon`,
+`get`, `post`, `del`, `live`, `emit`, `confirm`, `prompt`, `toast`, `workspace`, `icon`,
 `storage`, `render`, `session`. An unknown name is refused on write. The field is a
 declaration, not a grant: the page still hands every plugin the whole
 `pluginApi()`.
@@ -63,7 +68,7 @@ clanker.registerView({
 From chat, the `webui_addon` tool writes these files and can enable the
 addon. Ask for a view ("build me a music player") and it should call that
 tool rather than edit `ui/app/`. `music` is the shipped demo; `schedule`,
-`search`, `compare`, and `mesh` are on by default.
+`search`, `compare`, `mesh`, and `arena3d` are on by default.
 
 `api` is the small surface the page offers plugins:
 

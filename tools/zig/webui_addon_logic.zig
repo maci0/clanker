@@ -20,17 +20,17 @@ pub const capabilities = [_][]const u8{
 
 /// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
 /// (workspace browser) and ships on, Music is the demo addon, and Schedule,
-/// Search, and Compare are the migrated built-in views. A written file —
-/// including an empty enabled list after the operator turned them all off —
-/// is respected; only a missing file seeds. `inherit_on` covers names that
-/// used to be built-in and must stay on after an older file that only
+/// Search, Compare, and Arena 3D are the migrated built-in views. A written
+/// file — including an empty enabled list after the operator turned them all
+/// off — is respected; only a missing file seeds. `inherit_on` covers names
+/// that used to be built-in and must stay on after an older file that only
 /// listed files+music.
-pub const default_enabled = [_][]const u8{ "files", "music", "schedule", "search", "compare", "mesh" };
+pub const default_enabled = [_][]const u8{ "files", "music", "schedule", "search", "compare", "mesh", "arena3d" };
 
 /// Shipped-as-core views that stay on after a pre-migration
 /// `state/webui_plugins.json` listed only files+music. An operator who
 /// turns one off is recorded in `disabled`.
-pub const inherit_on = [_][]const u8{ "schedule", "search", "compare", "mesh" };
+pub const inherit_on = [_][]const u8{ "schedule", "search", "compare", "mesh", "arena3d" };
 
 pub fn isListed(names: []const []const u8, name: []const u8) bool {
     for (names) |n| {
@@ -185,18 +185,19 @@ test "mergeEnabled toggles a name without duplicating it" {
 
 test "first toggle on the fresh-checkout seed keeps the default addons on" {
     // The registry lives in one place (the webui_addon guest). A fresh
-    // checkout seeds files+music+schedule+search+compare+mesh; enabling a brand-new addon must
+    // checkout seeds files+music+schedule+search+compare+mesh+arena3d; enabling a brand-new addon must
     // not drop them, or the page would silently turn Files off on first use.
     const a = try mergeEnabled(std.testing.allocator, &default_enabled, "office", true);
     defer std.testing.allocator.free(a);
-    try std.testing.expectEqual(@as(usize, 7), a.len);
+    try std.testing.expectEqual(@as(usize, 8), a.len);
     try std.testing.expectEqualStrings("files", a[0]);
     try std.testing.expectEqualStrings("music", a[1]);
     try std.testing.expectEqualStrings("schedule", a[2]);
     try std.testing.expectEqualStrings("search", a[3]);
     try std.testing.expectEqualStrings("compare", a[4]);
     try std.testing.expectEqualStrings("mesh", a[5]);
-    try std.testing.expectEqualStrings("office", a[6]);
+    try std.testing.expectEqualStrings("arena3d", a[6]);
+    try std.testing.expectEqualStrings("office", a[7]);
 }
 
 test "inherit_on keeps schedule after a pre-migration enabled list" {
@@ -205,6 +206,7 @@ test "inherit_on keeps schedule after a pre-migration enabled list" {
     try std.testing.expect(addonEnabled(&old, &.{}, "search"));
     try std.testing.expect(addonEnabled(&old, &.{}, "compare"));
     try std.testing.expect(addonEnabled(&old, &.{}, "mesh"));
+    try std.testing.expect(addonEnabled(&old, &.{}, "arena3d"));
     try std.testing.expect(addonEnabled(&old, &.{}, "files"));
     try std.testing.expect(!addonEnabled(&old, &.{}, "office"));
     const off = [_][]const u8{"schedule"};

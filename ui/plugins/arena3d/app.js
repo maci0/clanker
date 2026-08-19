@@ -17,9 +17,9 @@
 // avatar, and an elimination shatters it into particles that drain into the
 // centre — the compactor's job, done as a vortex.
 
-import { reducedMotion } from "../core/vendor.js";
-import { hashName, themeToken } from "../core/utils.js";
-import { lastMove } from "./arena.js";
+import { reducedMotion } from "/webui/core/vendor.js";
+import { hashName, themeToken } from "/webui/core/utils.js";
+import { lastMove } from "/webui/features/arena.js";
 
 var THREE = null;
 var S = null; // live scene state, null when unmounted

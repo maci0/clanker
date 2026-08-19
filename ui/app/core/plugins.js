@@ -290,11 +290,17 @@ function loadPluginCss(name) {
    its own view — the music dock is the shipped case. Everything else stays off
    the wire until asked for: the nine shipped addons are ~200 KB of script and
    CSS and ~18 requests that every visit, chat-only ones included, used to pay
-   for on load. */
+   for on load.
+
+   `module: true` is the third shape: not a view at all. Its app.js is an ES
+   module a core view imports on demand (arena3d), so the page must not build a
+   tab for it or fetch it as a classic script — the manifest row only carries
+   the name so the System → Web UI plugins checkbox gates its assets. */
 export function loadPluginAssets(list) {
   var pending = [];
   list.forEach(function (p) {
     if (!p.enabled) return;
+    if (p.module) return;
     if (p.eager) {
       if (p.has_css) loadPluginCss(p.name);
       pending.push(loadPluginScript(p.name));

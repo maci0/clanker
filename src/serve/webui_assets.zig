@@ -13,8 +13,7 @@ const std = @import("std");
 /// any other path that lands there serves app.js at the wrong URL, and the
 /// browser then requests `/webui/core/core/utils.js` (and the rest of app.js's
 /// relative imports) as 404s. Feature views carry their directory so they
-/// cannot alias `core/goals.js` / `lib/board.js`. `arena3d` is checked before
-/// `arena` so a suffix match cannot steal the shorter name.
+/// cannot alias `core/goals.js` / `lib/board.js`.
 ///
 /// Adding a first-party module is one edit per list in this file: a tag here,
 /// its suffix in `kindFor`, and its request path in `asset_paths`. The caches
@@ -30,7 +29,6 @@ pub const Kind = enum {
     knowledge_view,
     prompts_view,
     arena_view,
-    arena3d_view,
     todos_view,
     models_view,
     runs_view,
@@ -75,7 +73,6 @@ pub fn kindFor(target: []const u8) Kind {
     if (std.mem.endsWith(u8, target, "features/goals.js")) return .goals_view;
     if (std.mem.endsWith(u8, target, "features/knowledge.js")) return .knowledge_view;
     if (std.mem.endsWith(u8, target, "features/prompts.js")) return .prompts_view;
-    if (std.mem.endsWith(u8, target, "features/arena3d.js")) return .arena3d_view;
     if (std.mem.endsWith(u8, target, "features/arena.js")) return .arena_view;
     if (std.mem.endsWith(u8, target, "features/todos.js")) return .todos_view;
     if (std.mem.endsWith(u8, target, "features/models.js")) return .models_view;
@@ -164,7 +161,6 @@ pub const asset_paths = [_][]const u8{
     "/webui/lib/markdown.js",
     "/webui/lib/runs-list.js",
     "/webui/features/arena.js",
-    "/webui/features/arena3d.js",
     "/webui/features/board.js",
     "/webui/features/fleet.js",
     "/webui/features/goals.js",

@@ -275,6 +275,18 @@ recorder splits (native writer at the choke point, guest reader:
   toy) is the cheapest remaining weight loss; `board`/`goals` stay
   built-in (the goal/board reconciliation is declared core).
 
+**Resolved 2026-08-19 (arena3d module plugin):** the 3D stage is now
+`ui/plugins/arena3d/` (`"module": true` in plugin.json). It is not a
+rail view: the Arena view imports
+`/webui/plugins/arena3d/app.js` on first toggle, so chat-only visits
+still never download it, and the System → Web UI plugins checkbox gates
+the assets. `default_enabled`/`inherit_on` cover it like schedule; a
+disabled plugin 404s the import and the existing catch falls back to
+2D. Removed `arena3d_view` from `ui/webui.zig` and
+`src/serve/webui_assets.zig` (Kind tag, kindFor, asset_paths). The
+addon guest now carries `module` in Manifest/Listed/answer so the page
+host skips view registration for module addons.
+
 **Provider vtable leaks (the registry abolished kind-switches; these
 crept back outside `providers/`)**
 

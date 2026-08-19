@@ -77,6 +77,7 @@ fn actionList(out: *lib.Out) !void {
                 .has_css = hasCss(name),
                 .capabilities = m.capabilities,
                 .eager = m.eager,
+                .module = m.module,
             });
         }
     }
@@ -92,6 +93,7 @@ const Listed = struct {
     has_css: bool,
     capabilities: []const []const u8 = &.{},
     eager: bool = false,
+    module: bool = false,
 };
 
 fn hasCss(name: []const u8) bool {
@@ -129,6 +131,8 @@ fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
         try s.endArray();
         try s.objectField("eager");
         try s.write(a.eager);
+        try s.objectField("module");
+        try s.write(a.module);
         try s.endObject();
     }
     try s.endArray();
@@ -153,6 +157,11 @@ const Manifest = struct {
     /// script on first open. Nine shipped addons at ~200 KB of script and CSS
     /// used to load on every visit, chat-only ones included.
     eager: bool = false,
+    /// True when the addon is not a view at all: its `app.js` is an ES module
+    /// loaded by a core view that needs it (arena3d), so the page must not
+    /// build a tab for it or fetch it as a classic script. The System →
+    /// Web UI plugins checkbox still gates its assets.
+    module: bool = false,
 };
 
 fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {

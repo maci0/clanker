@@ -1,0 +1,8 @@
+{
+  "name": "arena3d",
+  "title": "Arena 3D",
+  "description": "The judged-debate arena's 3D stage: one geometric avatar per combatant, HP arcs, and move effects. Loaded by the Arena view on first toggle; sessions that never open 3D never download it.",
+  "group": "Watch",
+  "capabilities": ["get"],
+  "module": true
+}
