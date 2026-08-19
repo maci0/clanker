@@ -197,7 +197,7 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
-- [google-vertex-anthropic returns HTTP 400 on every request, blocking improve-self](investigations/2026-08-19-vertex-anthropic-400.md) — Investigating
+- [google-vertex-anthropic returns HTTP 400 on every request, blocking improve-self](investigations/2026-08-19-vertex-anthropic-400.md) — Closed
 
 - [zig build test intermittently hangs forever in the bounded-chat abort test](investigations/2026-08-18-bounded-chat-abort-test-hangs.md) — Resolved
 - [Stale post-promotion checkout diff on doctor.zig was committed and pushed as revert 124d592e](investigations/2026-08-19-stale-checkout-diff-pushed-as-revert.md) — Investigating
