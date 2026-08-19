@@ -4,8 +4,7 @@
   "llm_description": "Fetch a YouTube video's transcript/captions as plain text. Input: {video_id} (the id after v= in the URL).",
   "wasm": "zig-out/tools/youtube_transcript.wasm",
   "network_allow": [
-    "www.youtube.com",
-    "video.google.com"
+    "www.youtube.com"
   ],
   "input_schema": {
     "type": "object",

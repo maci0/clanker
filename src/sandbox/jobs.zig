@@ -252,6 +252,7 @@ pub fn startExec(
     reg: *subprocess.Registry,
     session_id: []const u8,
     root_dir: []const u8,
+    environ_map: *const std.process.Environ.Map,
     argv: []const []const u8,
 ) ![]const u8 {
     if (argv.len == 0) return error.InvalidArg;
@@ -266,6 +267,11 @@ pub fn startExec(
             .{ .path = root_dir }
         else
             .inherit,
+        // Explicit, never inherited: a job child would otherwise carry the
+        // harness's whole environment, API keys included. ck_job hands over
+        // the same envAllowed-filtered map ck_exec uses, so a job process
+        // holds no credential the guest itself could not read.
+        .environ_map = environ_map,
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
@@ -593,7 +599,9 @@ test "startExec reaps true and wait returns exit 0" {
     const io = threaded.io();
     var reg = subprocess.Registry.init(std.testing.allocator, io);
     defer reg.deinit();
-    const id = startExec(io, std.testing.allocator, &reg, "sess-job", ".", &.{"true"}) catch |err| switch (err) {
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const id = startExec(io, std.testing.allocator, &reg, "sess-job", ".", &env, &.{"true"}) catch |err| switch (err) {
         error.InvalidArg => return error.SkipZigTest,
         else => return err,
     };

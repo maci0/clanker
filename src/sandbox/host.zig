@@ -4747,8 +4747,24 @@ pub fn ckJob(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             if (item != .string) return Err.invalid;
             argv.append(arena, item.string) catch return Err.invalid;
         }
+        // The same gate ck_exec applies before execDenial: argv[0] must be one
+        // of the commands the tool's manifest names. Without it, `jobs`
+        // (exec_allow: git/zig/rg/ast-grep/semcode/uv) could start any binary
+        // on PATH -- curl, python3, a shell -- because execDenial only refuses
+        // deny tokens and unlisted git/zig/uv verbs; a bare "curl" passes it.
+        if (!execAllowed(h.sandbox.exec_allow, argv.items[0])) {
+            log.log(.warn, "[sandbox] ck_job denied command '{s}'; its manifest lists {d} command(s)", .{ argv.items[0], h.sandbox.exec_allow.len });
+            return Err.denied;
+        }
         if (execDenial(h.sandbox, argv.items[0], argv.items) != null) return Err.denied;
-        const kind = jobs_mod.startExec(h.sandbox.io, h.sandbox.gpa, reg, sid, h.sandbox.root_dir, argv.items) catch return Err.invalid;
+        // The child inherits nothing of the harness environment: same filter
+        // as ck_exec (execEnvironment), so a job process cannot read API keys
+        // that the same guest is denied through ck_env. startExec used to
+        // spawn with the full process environment, letting an allowed
+        // executable print every key the harness loaded from .env.
+        var child_env = execEnvironment(h.sandbox.gpa, h.sandbox) catch return Err.invalid;
+        defer child_env.deinit();
+        const kind = jobs_mod.startExec(h.sandbox.io, h.sandbox.gpa, reg, sid, h.sandbox.root_dir, &child_env, argv.items) catch return Err.invalid;
         defer h.sandbox.gpa.free(kind);
         var out_buf: [160]u8 = undefined;
         const out = std.fmt.bufPrint(&out_buf, "{{\"ok\":true,\"id\":{f}}}", .{std.json.fmt(kind, .{})}) catch return Err.invalid;
@@ -6105,6 +6121,33 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "pip", "install", "pwn" }).? == .uv_verb);
     try std.testing.expect(execDenial(&sb, "uv", &.{ "/usr/bin/uv", "run", "python3", "-c", "print(1)" }).? == .uv_verb);
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--exec-path=/tmp/evil", "status" }).? == .host_path);
+}
+
+test "ck_job start gate: execDenial alone passes an unlisted command, so the allowlist half must refuse it" {
+    // The `jobs` tool's manifest names git/zig/rg/ast-grep/semcode/uv. execDenial
+    // only refuses deny tokens and unlisted git/zig/uv verbs: a bare "curl" or
+    // "python3" argv passes it. The ck_job start op therefore must run
+    // execAllowed first, exactly like ckExec does, or the exec_allow grant is
+    // decorative and the guest can start any binary on PATH.
+    var sb = Sandbox{
+        .gpa = undefined,
+        .io = undefined,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = undefined,
+        .exec_allow = &.{ "git", "zig", "rg", "ast-grep", "semcode", "uv" },
+    };
+    try std.testing.expect(execDenial(&sb, "curl", &.{"curl"}) == null);
+    try std.testing.expect(!execAllowed(sb.exec_allow, "curl"));
+    try std.testing.expect(execDenial(&sb, "python3", &.{ "python3", "-c", "print(1)" }) == null);
+    try std.testing.expect(!execAllowed(sb.exec_allow, "python3"));
+
+    // The commands the manifest does grant still pass both halves.
+    try std.testing.expect(execAllowed(sb.exec_allow, "git"));
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "status" }) == null);
+    try std.testing.expect(execAllowed(sb.exec_allow, "rg"));
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "src" }) == null);
 }
 
 test "execUnderPolicyInput carries stdin and enforces one wall-clock deadline" {
