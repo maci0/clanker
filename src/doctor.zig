@@ -132,6 +132,7 @@ fn runChecks(
     while (it.next()) |entry| {
         const p = entry.value_ptr;
         const is_default = std.mem.eql(u8, p.name, cfg.default_provider);
+        const label = if (is_default) try std.fmt.allocPrint(arena, "{s} (default)", .{p.name}) else p.name;
         if (p.api_key_env) |env_name| {
             const set = if (environ_map.get(env_name)) |v| v.len > 0 else false;
             if (set) usable += 1;
@@ -139,7 +140,7 @@ fn runChecks(
             // issues. Only whether the variable holds something.
             rep.line(
                 if (set) .ok else if (is_default) .fail else .warn,
-                p.name,
+                label,
                 if (set) env_name else try std.fmt.allocPrint(arena, "{s} is not set", .{env_name}),
             );
         } else if (llm_registry.forKind(p.kind).auth.file_credential) {
@@ -154,7 +155,7 @@ fn runChecks(
                     "gcloud ADC";
                 rep.line(
                     if (present) .ok else if (is_default) .fail else .warn,
-                    p.name,
+                    label,
                     if (present)
                         try std.fmt.allocPrint(arena, "{s} present", .{kind_label})
                     else
@@ -163,7 +164,7 @@ fn runChecks(
             } else {
                 rep.line(
                     if (is_default) .fail else .warn,
-                    p.name,
+                    label,
                     "no service_account_file or gcloud ADC",
                 );
             }
@@ -175,13 +176,13 @@ fn runChecks(
             // the file is there is the whole answer.
             rep.line(
                 if (present) .ok else if (is_default) .fail else .warn,
-                p.name,
+                label,
                 if (present) "service account file present" else "service account file missing",
             );
         } else {
             // A local runtime (ollama, vllm) needs no credential.
             usable += 1;
-            rep.line(.ok, p.name, "no credential needed");
+            rep.line(.ok, label, "no credential needed");
         }
     }
     if (usable == 0) rep.line(.fail, "any usable provider", "no provider has a credential");
