@@ -113,7 +113,8 @@ pub fn joinBaseAndPath(gpa: std.mem.Allocator, provider: *const config.Provider,
 /// The SSE sentinel that ends an OpenAI-style stream. Anthropic never sends
 /// it, but a proxy in front of one might, so both codecs honour it.
 pub fn isDoneSentinel(payload: []const u8) bool {
-    return std.mem.eql(u8, payload, "[DONE]");
+    const trimmed = std.mem.trim(u8, payload, " \t\r\n");
+    return std.ascii.eqlIgnoreCase(trimmed, "[DONE]");
 }
 
 /// The one auth application shared by every kind that presents its credential
