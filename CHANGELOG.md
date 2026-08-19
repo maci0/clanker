@@ -7,6 +7,47 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `GET /api/metrics` reports background jobs and LLM latency. Two blind
+  spots on the serving path close with it.
+
+  `jobs` (`starts_total`, `completions_total`, `errors_total`, `active`)
+  covers `ck_job` exec children and background subagents, which had no
+  counter and no log line of any kind. `ck_job` is start-and-forget, so
+  nothing is obliged to call `wait`, and a completed row is dropped once it
+  ages past `max_retained_done` — a background job that failed left no
+  trace anywhere. `active` is a gauge, so a job that starts and never
+  finishes is visible as drift rather than only as a missing completion.
+
+  `llm` gains `timeouts_total` and a seconds-scale latency histogram
+  (`latency_ms_sum` plus `le_1000`/`le_5000`/`le_15000`/`le_60000`). The
+  per-call duration already reached `state/token_stats.jsonl`, but no
+  aggregate reached the endpoint, so "is the provider slow or down?" could
+  only be answered by parsing a log file. Timeouts are counted apart from
+  errors because a lapsed deadline is the one provider failure retrying the
+  same endpoint cannot fix. Both are recorded ahead of the
+  `modules.token_stats` guard: turning that module off no longer also turns
+  off the latency signal.
+
+- Background job state transitions are logged: start (`info`, with the
+  session and `argv[0]`), clean exit (`debug`), and non-zero exit, signal,
+  failed reap, or subagent error (`warn`). Each line carries the log
+  context of whoever started the job, captured at start — the correlation
+  id is threadlocal and does not survive `std.Thread.spawn`, so a waiter
+  thread reading it live would report nothing. A reap failure used to
+  return silently, leaving `wait` to answer a bare "wait failed" with the
+  reason recorded nowhere.
+
+### Changed
+
+- A panic writes one structured `[ERROR] ts_ms=… request_id=… panic: …`
+  line before the usual trace. Zig's default panic output has no level, no
+  timestamp and no correlation id, and spans many lines, so a `clanker
+  serve` crash was unparseable by the collector that would raise the alert.
+  The request id is threadlocal, so a panic on a connection thread names
+  the request that caused it. The line is written without `log_mutex`
+  (`log.logPanic`): a panic can land on a thread already holding it, and
+  deadlocking there would turn a crash into a hang.
+
 - `clanker gate` runs a `sandbox-abi` gate: every `pub fn ck…` in
   `src/sandbox/host.zig` must be registered with the zwasm linker in
   `src/sandbox/runtime.zig`. An unregistered host function is not a

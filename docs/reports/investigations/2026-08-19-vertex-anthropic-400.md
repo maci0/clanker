@@ -24,3 +24,4 @@ Investigating.
 
 - Related bug: none yet
 A third improve-self attempt (targeting tools/zig/) failed differently: both the plan and proposal calls to google-vertex-anthropic got WriteFailed after 3 retries each (network-level, never got a response to classify as HTTP 400), not the earlier fast ~150ms HTTP 400. Two distinct failure modes on the same provider in one session (HTTP 400 vs WriteFailed) points more toward an intermittent connectivity or token-refresh problem than a single fixed bad-request bug.
+A fourth improve-self attempt (targeting src/gate/) reverted to the original fast HTTP 400 (~150-400ms), same as the first two occurrences. So far: run 1 HTTP 400, run 2 HTTP 400, run 3 WriteFailed, run 4 HTTP 400 -- google-vertex-anthropic has now failed every clanker improve-self attempt made this session, 4/4, with no successful call recorded in that window.
