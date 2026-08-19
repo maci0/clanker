@@ -221,8 +221,13 @@ pub fn renderList(arena: std.mem.Allocator, rfcs: []const std.json.Value, next_n
         return w.written();
     }
 
-    try w.writer.print("{d} RFC(s)\n\n", .{rfcs.len});
-    try common.renderStatusRows(&w.writer, rfcs, 6, status_column_max, title_column_bytes, common.titleAsIs);
+    // The tool reports whatever order the directory listing came back in; an
+    // RFC store is numbered, so sorting on the path is sorting on the number.
+    const sorted = try arena.dupe(std.json.Value, rfcs);
+    std.mem.sort(std.json.Value, sorted, {}, common.byPath);
+
+    try w.writer.print("{d} RFC(s)\n\n", .{sorted.len});
+    try common.renderStatusRows(&w.writer, sorted, 6, status_column_max, title_column_bytes, common.titleAsIs);
 
     try w.writer.print("\nNEXT\n\n  next free number is {d:0>4}\n", .{next_number});
     try w.writer.writeAll("  clanker rfc open <path>          read one in full\n");
