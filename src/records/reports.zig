@@ -216,6 +216,7 @@ const Section = struct {
 const sections = [_]Section{
     .{ .heading = "BUGS", .kind = "bug", .base_dir = "docs/reports" },
     .{ .heading = "INVESTIGATIONS", .kind = "investigation", .base_dir = "docs/reports" },
+    .{ .heading = "MISSING TOOLS", .kind = "missing-tool", .base_dir = "docs/reports" },
     .{ .heading = "RUNBOOKS", .kind = "runbook", .base_dir = "docs/runbooks", .runbooks = true },
 };
 
@@ -506,6 +507,7 @@ test "the listing keeps status, title and path each where they can be read" {
     const text = try renderList(arena, test_reports_index, test_runbooks_index);
     try std.testing.expect(std.mem.find(u8, text, "BUGS\n") != null);
     try std.testing.expect(std.mem.find(u8, text, "INVESTIGATIONS\n") != null);
+    try std.testing.expect(std.mem.find(u8, text, "MISSING TOOLS\n") != null);
     try std.testing.expect(std.mem.find(u8, text, "RUNBOOKS\n") != null);
     // Status column, then the title, then the path on its own line under it.
     try std.testing.expect(std.mem.find(u8, text, "  Open      Unknown goal id runs unscoped task\n") != null);
