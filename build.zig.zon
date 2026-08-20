@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .zwasm = .{
-            .url = "https://github.com/clojurewasm/zwasm/archive/refs/tags/v2.4.1.tar.gz",
-            .hash = "zwasm-2.4.1-FT1Fv0J0jQDowvbJuWRyBg6N0aX7lj52ldrm7T7HWzBr",
+            .url = "https://github.com/zwasm/zwasm/archive/refs/tags/v2.5.0.tar.gz",
+            .hash = "zwasm-2.5.0-FT1Fv4KPkgCaKsDmsn05BTYsoEhH7RCUreSX8a3mwFha",
         },
         .vaxis = .{
             .url = "git+https://github.com/rockorager/libvaxis#82cec0db8fc57c32f2ce4c1c3fc377052f4c86ba",

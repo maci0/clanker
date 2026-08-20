@@ -10,7 +10,7 @@ files; replace from upstream releases and update this table.
 | `htm.module.js` | [htm](https://www.npmjs.com/package/htm) `dist/htm.module.js` | 3.x ESM | Apache-2.0 |
 | `signals-core.module.js` | [@preact/signals-core](https://www.npmjs.com/package/@preact/signals-core) | 1.x ESM | MIT |
 | `d3-dag.min.js` | [d3-dag](https://www.npmjs.com/package/d3-dag) | 1.x | ISC |
-| `hljs.min.js` | [highlight.js](https://www.npmjs.com/package/highlight.js) | 11.10.0 | BSD-3-Clause |
+| `hljs.min.js` | [highlight.js](https://www.npmjs.com/package/highlight.js) | 11.12.0 | BSD-3-Clause |
 | `mermaid.min.js` | [mermaid](https://www.npmjs.com/package/mermaid) UMD `dist/mermaid.min.js` | 11.16.1 | MIT |
 | `three.module.min.js` | [three](https://www.npmjs.com/package/three) | r180 module | MIT |
 | `three.core.min.js` | [three](https://www.npmjs.com/package/three) | r180 core split | MIT |
