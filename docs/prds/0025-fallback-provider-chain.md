@@ -12,6 +12,14 @@ pre-emptive. Sources of truth: `src/config.zig`
 `src/agent/loop.zig` (`chatWithFallbackChain`, `nextFallbackProvider`),
 `src/cli.zig` (`visionFallbackProvider`).
 
+The improve engine's proposal and plan LLM calls (`src/improve/engine.zig`)
+also route through `chatWithFallbackChain` (with `on_delta == null`, so the
+caller-thread `chatWithDeadline` ceiling still applies), so a down primary
+provider fails the improve-self run only after the whole fallback chain is
+exhausted instead of on the first provider's timeout
+(`docs/reports/bugs/2026-08-18-improve-engine-llm-calls-have-no-deadline.md`).
+
+
 ## Problem
 
 `agent.fallback_provider` is one name, and it is wired to exactly one

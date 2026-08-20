@@ -14,6 +14,7 @@ comptime {
     _ = @import("webui_assets_test.zig");
     _ = @import("commit_apply_test.zig");
     _ = @import("fallback_graph_test.zig");
+    _ = @import("improve_fallback_test.zig");
     _ = @import("pty_resize_test.zig");
     _ = @import("pty.zig");
     _ = @import("pty_preview_test.zig");

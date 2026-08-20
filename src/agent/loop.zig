@@ -3412,7 +3412,7 @@ fn streamTallyWrap(delta: []const u8) void {
     stream_tally.wrap(delta);
 }
 
-fn chatWithFallbackChain(
+pub fn chatWithFallbackChain(
     ctx: *client.Ctx,
     arena: std.mem.Allocator,
     cfg: *const config.Config,
