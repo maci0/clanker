@@ -79,6 +79,8 @@ const schedule_runner = @import("schedule/runner.zig");
 const jobs = @import("sandbox/jobs.zig");
 const schedule_store = @import("schedule/store.zig");
 const cli_plugins = @import("cli_plugins.zig");
+const session_sync = @import("peers/session_sync.zig");
+const session_events = @import("agent/session_events.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
 // WASM "webui" tool, its shared output buffer, lib.zig's out_cap, is 64 KiB,
@@ -12070,6 +12072,108 @@ fn forgetVia(
         log.log(.warn, "session '{s}' deleted, but the {s} tool refused to remove its {s}", .{ id, tool_name, what });
 }
 
+/// `GET /api/sessions/<id>/events?after=<seq>` — the owner's append-only
+/// event stream from `after` onward, for a replica's backfill.
+fn handleSessionEvents(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    id: []const u8,
+    target: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    _ = io;
+    if (!session.validSessionId(id)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
+        return;
+    }
+    const after = std.fmt.parseInt(i64, queryParam(arena, target, "after") orelse "0", 10) catch 0;
+    const path = dbPathZ(arena, id) catch {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+        return;
+    };
+    var store = session_events.Store.open(arena, path) catch {
+        respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
+        return;
+    };
+    defer store.close();
+    const events = store.since(after) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read events\"}");
+        return;
+    };
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(true) catch return;
+    s.objectField("id") catch return;
+    s.write(id) catch return;
+    s.objectField("events") catch return;
+    s.beginArray() catch return;
+    for (events) |e| {
+        s.beginObject() catch return;
+        s.objectField("seq") catch return;
+        s.write(e.seq) catch return;
+        s.objectField("ts_ms") catch return;
+        s.write(e.ts_ms) catch return;
+        s.objectField("kind") catch return;
+        s.write(e.kind) catch return;
+        s.objectField("payload") catch return;
+        s.write(e.payload) catch return;
+        s.endObject() catch return;
+    }
+    s.endArray() catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
+}
+
+/// `POST /api/sessions/<id>/events` — a replica pushes appends for the
+/// owner's session; the owner (or another replica) accepts only at cursor+1.
+fn handleSessionEventsPost(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    id: []const u8,
+    body: []const u8,
+    stream: std.Io.net.Stream,
+) void {
+    _ = gpa;
+    if (!session.validSessionId(id)) {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
+        return;
+    }
+    const parsed = std.json.parseFromSliceLeaky(AppendRequest, arena, body, .{ .ignore_unknown_fields = true }) catch {
+        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
+        return;
+    };
+    const result = session_sync.receive(io, arena, parsed.owner, id, parsed.events) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not store events\"}");
+        return;
+    };
+    switch (result) {
+        .accepted => |last| {
+            var buf: [64]u8 = undefined;
+            respond(stream, 200, "OK", std.fmt.bufPrint(&buf, "{{\"ok\":true,\"last_seq\":{d}}}", .{last}) catch return);
+        },
+        .gap => |have| {
+            var buf: [96]u8 = undefined;
+            respond(stream, 409, "Conflict", std.fmt.bufPrint(&buf, "{{\"ok\":false,\"gap\":true,\"have\":{d},\"need\":{d}}}", .{ have, have + 1 }) catch return);
+        },
+    }
+}
+
+const AppendRequest = struct {
+    owner: []const u8,
+    events: []const session_events.Event = &.{},
+};
+
+/// The sentinel-terminated path to a session's database.
+fn dbPathZ(arena: std.mem.Allocator, id: []const u8) ![:0]const u8 {
+    const rel = try std.fmt.allocPrint(arena, "state/sessions/{s}.db", .{id});
+    return arena.dupeZ(u8, rel);
+}
+
 fn handleSessions(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -12095,6 +12199,21 @@ fn handleSessions(
     // Answered before the id branch below, because "search" is not an id.
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, rest, "/search")) {
         handleSessionSearch(io, arena, target, stream);
+        return;
+    }
+
+    // `GET|POST /api/sessions/<id>/events` — the mesh event stream: the
+    // owner serves its append-only tail for backfill, replicas push appends.
+    if (eventsSuffix(rest)) |sid| {
+        if (std.mem.eql(u8, method, "GET")) {
+            handleSessionEvents(io, gpa, arena, sid, target, stream);
+            return;
+        }
+        if (std.mem.eql(u8, method, "POST")) {
+            handleSessionEventsPost(io, gpa, arena, sid, body, stream);
+            return;
+        }
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
         return;
     }
 
@@ -12285,6 +12404,16 @@ const BranchRef = struct { src: []const u8, turn: usize };
 /// not an integer. The source id is returned unchecked, `validSessionId`
 /// is the caller's job, since it must reject traversal attempts the same
 /// way the fork suffix does.
+/// "<id>/events" splits into the session id; everything else is null.
+fn eventsSuffix(rest: []const u8) ?[]const u8 {
+    const suffix = "/events";
+    if (rest.len <= suffix.len) return null;
+    if (!std.mem.endsWith(u8, rest, suffix)) return null;
+    const id = rest[0 .. rest.len - suffix.len];
+    if (id.len == 0 or id[0] != '/') return null;
+    return id[1..];
+}
+
 fn branchSuffix(id: []const u8) ?BranchRef {
     const marker = "/branch/";
     const at = std.mem.find(u8, id, marker) orelse return null;
