@@ -3695,6 +3695,12 @@ const ToolWorker = struct {
             // tool with an empty name, so peers/std_api/status were denied
             // their own channels in capability evals and the improve loop.
             .tool_self_name = self.tool.name,
+            // Same omission class as exec_allow below: ck_session gates on the
+            // descriptor's `session: true`, and leaving it off the worker's
+            // sandbox denied the session tools (session_search, sessions,
+            // session_export) their own store whenever they ran in parallel —
+            // which is every agent run, since none of them is llm/sequential.
+            .session = self.tool.session,
             // Copied like every other policy field. Omitting them here did not
             // make a worker safer, it made it wrong: a tool ran with no
             // commands and no environment on the parallel path and the same

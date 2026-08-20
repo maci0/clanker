@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Parallel tool worker omits descriptor `session: true`, denying session tools](bugs/2026-08-20-parallel-worker-drops-session-flag.md) — Resolved
+
 - [janitor reports removing orphaned staging dirs but large ones survive](bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md) — Open
 
 - [lsp capability eval fails on large files, blocking every improve-self promotion](bugs/2026-08-20-lsp-eval-blocks-improve-self.md) — Resolved
