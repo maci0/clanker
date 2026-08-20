@@ -1826,7 +1826,7 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
   flex: none; min-width: 4.5rem; color: var(--fg-muted);
   text-transform: uppercase; letter-spacing: 0.1em; font-size: var(--step-0);
 }
-.palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .palette-hint { margin: var(--space-3) 0 0; color: var(--fg-muted); font-size: var(--step-0); }
 .shortcuts { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; margin: 0; font-size: var(--step-0); }
 .shortcuts dt { font-family: var(--sans); font-weight: 600; color: var(--fg); white-space: nowrap; }
