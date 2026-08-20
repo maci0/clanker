@@ -101,6 +101,7 @@ and Implementation lists checkable file-level phases.
 | [0041](0041-repl-image-multimodal-input-attach-and-drag-drop-to-image-in.md) | REPL image/multimodal input: /attach and drag-drop to image_in | In progress | `/attach` + image_in plumbing shipped; drag-drop/image paste external follow-up |
 | [0042](0042-config-profiles-profile-and-dump-config-file-overlay.md) | Config profiles: --profile and --dump-config (file overlay) | Shipped | `profiles/<name>.toml` overlay + merged dump |
 | [0043](0043-external-coding-agent-driver-acp-client-headless-fallback.md) | External coding-agent driver (ACP client, headless fallback) | Draft | Draft; driver is not built yet — phases name files to create |
+| [0044](0044-per-session-sqlite-store-with-an-append-only-event-stream.md) | Per-session SQLite store with an append-only event stream and mesh replication | Shipped |  |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts and open in-progress work)
