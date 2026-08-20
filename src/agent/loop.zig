@@ -34,6 +34,7 @@ const ttsr = @import("ttsr.zig");
 const sampling = @import("../llm/sampling_profiles.zig");
 const session = @import("session.zig");
 const preset_mod = @import("../preset/preset.zig");
+const test_env = @import("../util/test_env.zig");
 
 /// How many iterations before the budget runs out the wrap-up warning is
 /// injected. Skipped entirely on budgets small enough that the warning
@@ -1413,7 +1414,12 @@ pub const Agent = struct {
             try out.appendSlice(gpa, ln);
             try out.append(gpa, '\n');
         }
-        try base.writeFile(io, .{ .sub_path = reasoning_path, .data = out.items });
+        // Rewrite via temp + rename, re-applying the owner-only mode the
+        // append path creates the file with. An in-place truncate+write loses
+        // the whole log if the process dies mid-rewrite, and a plain writeFile
+        // inherits whatever mode the truncated inode happened to carry rather
+        // than stating it. Same shape as the autolearn log's trim.
+        try atomic_write.writeFilePerms(io, base, reasoning_path, out.items, atomic_write.private_file);
     }
 
     /// Estimates the total token count across all messages in the conversation.
@@ -4661,4 +4667,48 @@ test "tool metrics count invocations and error JSON" {
     const snap = snapshotToolMetrics();
     try std.testing.expect(snap.requests_total >= start_req + 2);
     try std.testing.expect(snap.errors_total >= start_err + 1);
+}
+
+test "the reasoning trim is atomic and keeps the log owner-only" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    try env.tmp.dir.createDirPath(io, "state");
+
+    // More lines than the trim keeps, so the rewrite path actually drops a
+    // prefix and rewrites the file rather than copying it verbatim.
+    var contents: std.ArrayList(u8) = .empty;
+    defer contents.deinit(std.testing.allocator);
+    var i: usize = 0;
+    while (i < Agent.reasoning_keep_lines + 10) : (i += 1) {
+        const line = try std.fmt.allocPrint(arena, "{{\"ts\":{d},\"reasoning\":\"r\"}}\n", .{i});
+        try contents.appendSlice(std.testing.allocator, line);
+    }
+    try env.tmp.dir.writeFile(io, .{ .sub_path = Agent.reasoning_path, .data = contents.items });
+
+    try Agent.trimReasoningLog(env.tmp.dir, io, std.testing.allocator);
+
+    // The rewrite re-applies the append path's owner-only mode instead of
+    // inheriting whatever the pre-existing file had.
+    const st = try env.tmp.dir.statFile(io, Agent.reasoning_path, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+
+    const raw = try env.tmp.dir.readFileAlloc(io, Agent.reasoning_path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+    var lines: usize = 0;
+    var first_ts: ?usize = null;
+    var it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        lines += 1;
+        if (first_ts == null) {
+            const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, line, .{});
+            defer parsed.deinit();
+            first_ts = @intCast(parsed.value.object.get("ts").?.integer);
+        }
+    }
+    try std.testing.expectEqual(Agent.reasoning_keep_lines, lines);
+    // The oldest 10 lines (ts 0..9) were dropped, newest kept.
+    try std.testing.expectEqual(@as(usize, 10), first_ts.?);
 }
