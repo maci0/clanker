@@ -58,6 +58,12 @@ Two improve-self commits, each duplicated across the history:
   the staging gate did not reject them before merge (stale build cache, or the
   duplicate-commit pattern visible in `git log --graph` where the same change
   appears under two hashes).
+- The repo owner independently fixed the same two defects on `origin/main` in
+  commit `b8e192c9` ("fix(acp): restore stdout handle/buffer hoist and store
+  the session cwd"), so this checkout's fix is equivalent but landed on a
+  diverged local `main` (26 commits ahead of the stale `origin/main` ref, 7
+  behind the real remote). Reconcile with `git fetch` + merge/rebase from a
+  terminal (fetch is denied inside the sandbox).
 
 ## References
 
