@@ -2736,6 +2736,7 @@ pub const Config = struct {
                     .object => |o| o,
                     else => return error.TtsrRuleNotObject,
                 };
+                warnUnknownKeys(ro, &.{ "name", "pattern", "inject", "max_fires" }, "ttsr.rules[]");
                 var rule = TtsrRule{};
                 if (ro.get("name")) |n| rule.name = try jsonStr(n, "rules[].name");
                 if (ro.get("pattern")) |p| rule.pattern = try jsonStr(p, "rules[].pattern");
