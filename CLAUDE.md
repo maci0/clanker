@@ -289,10 +289,12 @@ clanker janitor --yes
 ```
 
 It removes staging copies from killed improve runs, run graphs past the newest
-200, improve logs past the newest 20, and worktrees of archived or abandoned
-goals whose branch is already merged. Sessions, goals, learnings, and chat
-history are never touched, and neither is a worktree whose branch still holds
-commits the base does not. `clanker prune` is the same command.
+200, improve logs past the newest 20, compare-and-swap lock files under
+`state/locks/` nothing has re-acquired in 12 hours, spilled tool results older
+than 12 hours, and worktrees of archived or abandoned goals whose branch is
+already merged. Sessions, goals, learnings, and chat history are never
+touched, and neither is a worktree whose branch still holds commits the base
+does not. `clanker prune` is the same command.
 
 ## Talking to other instances
 
@@ -316,8 +318,8 @@ opens a mesh socket itself. A notification is not a chat message.
 
 ## Catalog tools with no top-level verb
 
-`clanker tools list` ends with a count — 98 tools and 22 plugins as of
-2026-08-19 — and only some of them have their own command. The rest are
+`clanker tools list` ends with a count of the registered tools and
+plugins, and only some of them have their own command. The rest are
 reached through the agent:
 
 ```bash
