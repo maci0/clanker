@@ -78,6 +78,7 @@ const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const jobs = @import("sandbox/jobs.zig");
 const schedule_store = @import("schedule/store.zig");
+const cli_plugins = @import("cli_plugins.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
 // WASM "webui" tool, its shared output buffer, lib.zig's out_cap, is 64 KiB,
@@ -192,6 +193,11 @@ pub const Command = enum {
     /// the merged config, through the same `config` tool the agent uses.
     /// `set` writes config.local.toml only. Bare `config` dumps both files.
     config,
+    /// A CLI plugin subcommand (PRD 0012): `clanker <name> [args...]` where
+    /// <name> is neither a built-in Command nor a bare prompt. Tier 1
+    /// dispatches to a sandboxed tool from an enabled cli-plugins/ manifest;
+    /// Tier 2 execs `clanker-<name>` from PATH or ~/.clanker/plugins/.
+    plugin,
 };
 
 pub const Options = struct {
@@ -212,6 +218,14 @@ pub const Options = struct {
     /// not a provider 400 mid-run. Null means the config decides.
     reasoning_effort: ?config.ReasoningEffort = null,
     task: ?[]const u8 = null,
+    /// CLI plugin subcommand name (PRD 0012): set by parse when the first
+    /// positional is a short single word that is neither a Command nor a
+    /// bare multi-word prompt. Resolved by cmdPlugin against Tier 1
+    /// manifests then Tier 2 PATH binaries.
+    plugin_command: ?[]const u8 = null,
+    /// Everything after the plugin subcommand name, verbatim (never parsed as
+    /// clanker flags). Borrowed from the process argv, so it outlives parse.
+    plugin_argv: []const []const u8 = &.{},
     /// `graph` only: the run id following an `answer` (or other mode) word,
     /// so `clanker graph answer run-<s>` reaches the guest as one args string.
     graph_arg2: ?[]const u8 = null,
@@ -980,8 +994,18 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 // Only when it cannot be a command name, so a typo'd command
                 // is still reported rather than silently run as a prompt.
                 if (std.mem.findScalar(u8, a, ' ') == null and a.len < 24) {
-                    setDiag(diag, a);
-                    return error.UnknownCommand;
+                    // A short single word is a CLI plugin candidate (PRD
+                    // 0012): neither a built-in Command nor a multi-word
+                    // prompt. Defer the final verdict to cmdPlugin, which
+                    // resolves Tier 1 (enabled cli-plugins/ manifest) then
+                    // Tier 2 (clanker-<name> on PATH), and only then reports
+                    // "unknown command" — so a typo still errors, but a
+                    // plugin command is not eaten as a prompt. Everything
+                    // after the name is the plugin's argv, verbatim.
+                    opts.command = .plugin;
+                    opts.plugin_command = a;
+                    opts.plugin_argv = args[idx + 1 ..];
+                    break;
                 }
                 // A multi-word prompt whose FIRST word is a command name is a
                 // quoting accident ("clanker 'workflow list'" via a script
@@ -2101,6 +2125,7 @@ const specs = [_]Spec{
     .{ .command = .stats, .usage = "stats", .blurb = "token usage per provider and model", .group = .inspect, .detail = "Totals across all runs in state/token_stats.jsonl: call count, failed calls,\nprompt and completion tokens, cache hit rate, throughput and estimated cost.\nPipe-safe: no ANSI codes, aligned columns, parseable with awk." },
     .{ .command = .tools_list, .usage = "tools [list]", .blurb = "list the registered WASM tools", .group = .inspect },
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
+    .{ .command = .plugin, .usage = "<plugin-command> [args...]", .blurb = "run a CLI plugin from cli-plugins/ or PATH", .group = .work, .detail = "A short single word that is not a built-in Command resolves against PRD\n0012's two tiers, in order: Tier 1 is an enabled {command, description,\ntool}.json in agent.cli_plugins_dir, dispatching to a sandboxed tool with\nthe remaining argv passed as {\"args\":[...]} - no new trust surface. Tier\n2 is a clanker-<name> executable on PATH or under ~/.clanker/plugins/,\nexec'd with the remaining argv and inherited stdio, trusted like anything\nelse the operator put on their PATH. A bare clanker help lists both\nsources, marked external with their origin." },
     .{ .command = .preset, .usage = "preset [list|show <name>|new <name>]", .blurb = "list, inspect, or scaffold presets", .group = .inspect, .detail = "A preset is one preset.toml from presets/ (plus configured roots).\nFilters the already-loaded Registry, no recompile. Examples: research\n(read/search only) and full (no filter).\n\nlist              every preset with its description\nshow <name>       print the preset.toml\nnew <name>        scaffold presets/<name>.toml" },
     .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status|rename]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n  rename <path> <new-slug>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, missing-tool, or runbook. Report slugs start\nYYYY-MM-DD-, runbook slugs are lowercase and hyphenated. missing-tool records\na basic verb clanker lacks: it lands in the investigations store and the tool\nitself inserts `missing-clanker-tool-` into the filename after the date, so\nthe record is findable by name without trusting the caller to mark it.\nappend adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead. rename moves a\nrecord to a new filename in its own store, rewrites its inventory link, and\nlists every file in the two stores still naming the old record; a\nmissing-clanker-tool- marker survives the rename whether or not the new slug\ncarries it.\n\nAll of these are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
     .{ .command = .research, .usage = "research [list|plan|sweep|search|open|create|append|update|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
@@ -2201,6 +2226,10 @@ pub fn run(init: std.process.Init, opts: Options) !void {
             } else {
                 var buf: [8192]u8 = undefined;
                 try writeStdOut(init.io, renderUsage(&buf));
+                // CLI plugins are local, so a bare `clanker help` lists them
+                // beside the built-ins, marked external with their origin
+                // (PRD 0012 Goal 3).
+                printPluginCommandHelp(init);
             }
         },
         .version => try writeStdOut(init.io, "clanker " ++ version ++ "\n"),
@@ -2269,6 +2298,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .schedule => try cmdSchedule(init, opts),
         .reports => try cmdReports(init, opts),
         .config => try cmdConfig(init, opts),
+        .plugin => try cmdPlugin(init, opts),
         .research => try cmdResearch(init, opts),
         .rfc => try cmdRfc(init, opts),
         .adr => try cmdAdr(init, opts),
@@ -5515,6 +5545,142 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
 /// the sandboxed `config` tool, the way `cmdReports` fronts `reports`. The
 /// tool owns the semantics (schema check, type check, the surgical
 /// config.local.toml edit); this relays and prints.
+/// `clanker <name> [args...]` for a CLI plugin (PRD 0012 Goal 3). Resolves
+/// in order: an enabled Tier 1 manifest in agent.cli_plugins_dir (the named
+/// sandboxed tool gets the remaining argv as {"args":[...]}), then a Tier 2
+/// `clanker-<name>` binary on PATH or under ~/.clanker/plugins/ (exec'd with
+/// the remaining argv, stdio inherited). Only when neither exists does it
+/// report "unknown command", so a typo still errors instead of silently
+/// starting an agent run.
+fn cmdPlugin(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const name = opts.plugin_command orelse return error.UnknownCommand;
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+
+    // Tier 1: an enabled manifest dispatching to a sandboxed tool. The tool
+    // is resolved against whatever agent.tools_dir names; no new tool
+    // discovery path, no new trust surface.
+    const enabled = cli_plugins.loadEnabled(io, arena);
+    if (cli_plugins.resolveTier1(io, arena, std.Io.Dir.cwd(), cfg.agent.cli_plugins_dir, name, enabled)) |m| {
+        // The remaining argv goes to the sandboxed tool as {"args":[...]} —
+        // the same array shape chain/gh/git tools take — and the tool's
+        // "text" answer is printed, newline-terminated.
+        return printPluginTool(init, &cfg, m.tool, opts.plugin_argv);
+    }
+
+    // Tier 2: an external `clanker-<name>` binary, operator-trusted the same
+    // way anything else on PATH is. Exec'd with the remaining argv verbatim,
+    // stdio inherited, so the plugin behaves exactly like a subcommand.
+    if (cli_plugins.findTier2(io, arena, init.environ_map, name)) |exe_path| {
+        var argv: std.ArrayList([]const u8) = .empty;
+        try argv.append(arena, exe_path);
+        try argv.appendSlice(arena, opts.plugin_argv);
+        var child = std.process.spawn(io, .{
+            .argv = argv.items,
+            .stdin = .inherit,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        }) catch |err| {
+            printUsageError(io, "could not run plugin '{s}': {s}", .{ name, @errorName(err) });
+            std.process.exit(1);
+        };
+        const term = child.wait(io) catch |err| {
+            printUsageError(io, "plugin '{s}' failed: {s}", .{ name, @errorName(err) });
+            std.process.exit(1);
+        };
+        switch (term) {
+            .exited => |code| {
+                if (code != 0) std.process.exit(code);
+                return;
+            },
+            else => std.process.exit(1),
+        }
+    }
+
+    // Neither a plugin nor a built-in Command: the same diagnostic a typo'd
+    // command always got, now produced here since parse defers the verdict.
+    printUsageError(io, "unknown command: '{s}'; try `clanker --help`", .{name});
+    std.process.exit(1);
+}
+
+/// Prints a plugin tool's "text" answer, passing the remaining argv to the
+/// sandboxed tool as {"args":[...]} (an array, unlike toolText's single
+/// string) and relaying ok/error like toolText does.
+fn printPluginTool(init: std.process.Init, cfg: *const config.Config, tool_name: []const u8, argv: []const []const u8) !void {
+    const arena = init.arena.allocator();
+    var iw: std.Io.Writer.Allocating = .init(init.gpa);
+    defer iw.deinit();
+    var is = std.json.Stringify{ .writer = &iw.writer, .options = .{} };
+    try is.beginObject();
+    try is.objectField("args");
+    try is.write(argv);
+    try is.endObject();
+    const raw = try toolJson(init.io, init.gpa, arena, cfg, init.environ_map, tool_name, iw.written());
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+    if (parsed != .object) return error.ToolBadOutput;
+    var ok = false;
+    if (parsed.object.get("ok")) |k| {
+        if (k == .bool) ok = k.bool;
+    }
+    if (!ok) {
+        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
+        log.log(.error_, "{s}: {s}", .{ tool_name, detail });
+        return error.ToolFailed;
+    }
+    const text = parsed.object.get("text") orelse return error.ToolBadOutput;
+    if (text != .string) return error.ToolBadOutput;
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(init.io, text.string);
+    if (!std.mem.endsWith(u8, text.string, "\n")) try out.writeStreamingAll(init.io, "\n");
+}
+
+/// The `.help` handler's plugin listing: every Tier 1 manifest in
+/// agent.cli_plugins_dir and every Tier 2 `clanker-*` binary on PATH,
+/// marked external with its origin, so an operator can tell "ships with
+/// clanker" from "this machine added it" (PRD 0012 Goal 3).
+fn printPluginCommandHelp(init: std.process.Init) void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const out = std.Io.File.stdout();
+    const cfg = config.Config.loadQuiet(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch return;
+
+    // Tier 1: cli-plugins/ manifests, with the enabled-list mark.
+    const enabled = cli_plugins.loadEnabled(io, arena);
+    var dir = std.Io.Dir.cwd().openDir(io, cfg.agent.cli_plugins_dir, .{ .iterate = true }) catch null;
+    if (dir) |*d| {
+        defer d.close(io);
+        var it = d.iterate();
+        while (it.next(io) catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
+            const raw = d.readFileAlloc(io, entry.name, arena, .limited(16 * 1024)) catch continue;
+            const m = std.json.parseFromSliceLeaky(cli_plugins.Manifest, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
+            if (m.tool.len == 0) continue;
+            const mark: []const u8 = if (cli_plugins.isEnabled(enabled, m.command)) "on" else "off";
+            const line = std.fmt.allocPrint(arena, "  {s}  (cli plugin, tier 1 [{s}], tool {s}) — {s}\n", .{ m.command, mark, m.tool, m.description }) catch continue;
+            out.writeStreamingAll(io, line) catch {};
+        }
+    }
+
+    // Tier 2: clanker-* executables on PATH.
+    if (init.environ_map.get("PATH")) |path_var| {
+        var pit = std.mem.splitScalar(u8, path_var, ':');
+        while (pit.next()) |dir_name| {
+            if (dir_name.len == 0) continue;
+            var dit = std.Io.Dir.cwd().openDir(io, dir_name, .{ .iterate = true }) catch continue;
+            defer dit.close(io);
+            var nit = dit.iterate();
+            while (nit.next(io) catch null) |entry| {
+                if (entry.kind != .file) continue;
+                if (!std.mem.startsWith(u8, entry.name, "clanker-")) continue;
+                const line = std.fmt.allocPrint(arena, "  {s}  (external plugin, tier 2, PATH: {s})\n", .{ entry.name, dir_name }) catch continue;
+                out.writeStreamingAll(io, line) catch {};
+            }
+        }
+    }
+}
+
 fn cmdConfig(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -16661,9 +16827,14 @@ test "a bare prompt runs, a mistyped command does not" {
     const opts = try parse(&.{ "clanker", "fix the failing eval please" }, null);
     try std.testing.expectEqual(Command.run, opts.command);
     try std.testing.expectEqualStrings("fix the failing eval please", opts.task.?);
-    // A single short word is a command that does not exist, not a prompt:
-    // silently running "relp" as a task would hide the typo.
-    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "relp" }, null));
+    // A single short word is a CLI plugin candidate (PRD 0012), not a
+    // prompt: parse defers the verdict to cmdPlugin, which resolves Tier 1
+    // manifests then Tier 2 PATH binaries before reporting "unknown command",
+    // so a typo still errors instead of silently running as a task.
+    const plugin = try parse(&.{ "clanker", "relp" }, null);
+    try std.testing.expectEqual(Command.plugin, plugin.command);
+    try std.testing.expectEqualStrings("relp", plugin.plugin_command.?);
+    try std.testing.expectEqual(@as(usize, 0), plugin.plugin_argv.len);
 }
 
 test "-m and -c are the short forms every other agent CLI uses" {
@@ -16903,8 +17074,9 @@ test "a bare invocation starts the REPL, and --help still asks for help" {
     try std.testing.expectEqual(Command.run, (try parse(&.{ "clanker", "run", "hi" }, null)).command);
     try std.testing.expectEqual(Command.help, (try parse(&.{ "clanker", "--help" }, null)).command);
     try std.testing.expectEqual(Command.version, (try parse(&.{ "clanker", "--version" }, null)).command);
-    // A typo is still a typo, not a silent REPL start.
-    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }, null));
+    // A short single word is a plugin candidate now (PRD 0012); the verdict
+    // moves to cmdPlugin, which errors before running anything.
+    try std.testing.expectEqual(Command.plugin, (try parse(&.{ "clanker", "runn" }, null)).command);
 }
 
 test "version matches build.zig.zon" {
@@ -16951,8 +17123,9 @@ test "workflow run joins extra positional args without leaking prior joins" {
 
 test "parse reports the offending token via the diag out-param" {
     var diag: []const u8 = "";
-    try std.testing.expectError(error.UnknownCommand, parse(&.{ "clanker", "runn" }, &diag));
-    try std.testing.expectEqualStrings("runn", diag);
+    // A short single word is a plugin candidate now (PRD 0012); the diag
+    // contract still holds for a flag that no command accepts.
+    try std.testing.expectEqual(Command.plugin, (try parse(&.{ "clanker", "runn" }, &diag)).command);
 
     try std.testing.expectError(error.UnknownArg, parse(&.{ "clanker", "--bogus" }, &diag));
     try std.testing.expectEqualStrings("--bogus", diag);
