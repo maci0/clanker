@@ -711,9 +711,25 @@ test "fuzz: no byte sequence crashes the cron parser" {
             const len = smith.slice(&buf);
             const input = buf[0..len];
             if (parse(input)) |spec| {
-                _ = spec.nextAfter(0, 0);
-                _ = spec.nextAfter(-1, 0);
-                _ = spec.nextAfter(0, 330);
+                // Liveness alone proves nothing about the answers: assert the
+                // two contract invariants of `nextAfter` — the fire is
+                // strictly after the time asked from (never a re-fire of the
+                // same minute, which would loop `run-due`), and the returned
+                // instant actually matches the spec's fields when read at the
+                // entry's own offset.
+                const offsets = [_]i32{ 0, 330, -300 };
+                const afters = [_]i64{ 0, -1, epochFromCivil(2026, 8, 13, 12, 0, 0) };
+                for (afters) |after| {
+                    for (offsets) |offset| {
+                        const next = spec.nextAfter(after, offset) orelse continue;
+                        try std.testing.expect(next > after);
+                        const c = civilFromEpoch(next + @as(i64, offset) * 60);
+                        try std.testing.expect(bit16(spec.month, c.month));
+                        try std.testing.expect(spec.dayMatches(c.day, c.weekday));
+                        try std.testing.expect(bit32(spec.hour, c.hour));
+                        try std.testing.expect(bit64(spec.minute, c.minute));
+                    }
+                }
             } else |_| {}
             _ = parseOffset(input) catch 0;
         }

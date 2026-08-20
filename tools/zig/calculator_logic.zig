@@ -223,3 +223,248 @@ test "evalExpr reports the exact malformed-input error" {
     try std.testing.expectError(error.MissingOperand, evalExpr("sqrt()"));
     try std.testing.expectError(error.InvalidExpression, evalExpr("."));
 }
+
+// ------------------------------------------------------- fuzz targets --
+
+/// Structure-aware expression generator for the oracle fuzz target below. It
+/// renders a valid `+ - * / %` expression into a fixed buffer while an
+/// independent tree evaluator computes the value the parser must produce, so
+/// a precedence or associativity bug shows up as an oracle mismatch rather
+/// than as a crash. The node budget and depth cap bound every run no matter
+/// what the fuzzer feeds the generator.
+const ExprGen = struct {
+    smith: *std.testing.Smith,
+    buf: []u8,
+    pos: usize = 0,
+    nodes: u8 = 0,
+
+    const max_nodes: u8 = 20;
+    const max_depth: u8 = 6;
+
+    const Result = struct {
+        val: f64 = 0,
+        /// Some division or modulo in the expression divides by zero, so the
+        /// parser must fail with `DivisionByZero` (and `val` is not computed).
+        div_zero: bool = false,
+        /// The generated expression did not fit the fixed buffers; skip the
+        /// iteration, there is nothing to assert.
+        abort: bool = false,
+    };
+
+    const digits = [_]std.testing.Smith.Weight{.rangeAtMost(u8, '0', '9', 1)};
+    const add_ops = [_]std.testing.Smith.Weight{
+        .value(u8, '+', 1),
+        .value(u8, '-', 1),
+    };
+    const mul_ops = [_]std.testing.Smith.Weight{
+        .value(u8, '*', 1),
+        .value(u8, '/', 1),
+        .value(u8, '%', 1),
+    };
+    // Rarely-true, so the generated text stays mostly plain arithmetic while
+    // still exercising unary minus, parens, fractions and scientific notation.
+    const rarely = [_]std.testing.Smith.Weight{
+        .value(bool, false, 4),
+        .value(bool, true, 1),
+    };
+
+    fn put(g: *ExprGen, bytes: []const u8) bool {
+        if (g.pos + bytes.len > g.buf.len) return false;
+        @memcpy(g.buf[g.pos .. g.pos + bytes.len], bytes);
+        g.pos += bytes.len;
+        return true;
+    }
+
+    fn spend(g: *ExprGen) bool {
+        if (g.nodes >= max_nodes) return false;
+        g.nodes += 1;
+        return true;
+    }
+
+    fn digit(g: *ExprGen, nonzero: bool) u8 {
+        const d = if (nonzero) g.smith.valueRangeLessThan(u8, 1, 10) else g.smith.valueRangeLessThan(u8, 0, 10);
+        return d + '0';
+    }
+
+    /// Up to 12 more digits into `num[n..]`, leaving room in the buffer for
+    /// the rest of the literal. Returns the number of digits appended. The
+    /// length weight is bounded by `run.len` because `sliceWeighted` asserts
+    /// its max fits the slice it fills.
+    fn extraDigits(g: *ExprGen, num: []u8, n: usize) usize {
+        if (n >= num.len) return 0;
+        const run = num[n..@min(num.len, n + 12)];
+        return g.smith.sliceWeighted(run, &.{.rangeAtMost(u32, 1, @intCast(run.len), 1)}, &digits);
+    }
+
+    fn genNumber(g: *ExprGen) Result {
+        if (!g.spend()) return .{ .abort = true };
+        var num: [64]u8 = undefined;
+        var n: usize = 0;
+        num[n] = g.digit(true);
+        n += 1;
+        if (!g.smith.eos()) n += g.extraDigits(&num, n);
+        if (!g.smith.eos() and g.smith.valueWeighted(bool, &rarely)) {
+            num[n] = '.';
+            n += 1;
+            num[n] = g.digit(false);
+            n += 1;
+            if (!g.smith.eos()) n += g.extraDigits(&num, n);
+        }
+        if (!g.smith.eos() and g.smith.valueWeighted(bool, &rarely)) {
+            num[n] = if (g.smith.value(bool)) 'e' else 'E';
+            n += 1;
+            if (!g.smith.eos() and g.smith.valueWeighted(bool, &rarely)) {
+                num[n] = if (g.smith.value(bool)) '+' else '-';
+                n += 1;
+            }
+            num[n] = g.digit(false);
+            n += 1;
+            if (!g.smith.eos()) n += g.extraDigits(&num, n);
+        }
+        if (!g.put(num[0..n])) return .{ .abort = true };
+        // Generated literals are valid by construction; the same parseFloat
+        // the parser calls, so the oracle and the parser agree on the leaf
+        // before any operator is applied.
+        const val = std.fmt.parseFloat(f64, num[0..n]) catch return .{ .abort = true };
+        return .{ .val = val, .div_zero = false, .abort = false };
+    }
+
+    fn genPrimary(g: *ExprGen, depth: u8) Result {
+        if (depth < max_depth and !g.smith.eos() and g.smith.valueWeighted(bool, &rarely)) {
+            if (!g.put("(")) return .{ .abort = true };
+            const inner = g.genAdd(depth + 1);
+            if (inner.abort) return inner;
+            if (!g.put(")")) return .{ .abort = true };
+            return inner;
+        }
+        return g.genNumber();
+    }
+
+    fn genUnary(g: *ExprGen, depth: u8) Result {
+        if (g.smith.eos() or !g.smith.valueWeighted(bool, &rarely)) return g.genPrimary(depth);
+        if (!g.spend() or !g.put("-")) return .{ .abort = true };
+        const inner = g.genUnary(depth);
+        if (inner.abort) return inner;
+        if (inner.div_zero) return inner;
+        return .{ .val = -inner.val, .div_zero = false, .abort = false };
+    }
+
+    fn genMul(g: *ExprGen, depth: u8) Result {
+        var left = g.genUnary(depth);
+        if (left.abort) return left;
+        while (g.spend()) {
+            if (g.smith.eos()) break;
+            const op = g.smith.valueWeighted(u8, &mul_ops);
+            if (!g.put(&.{op})) return .{ .abort = true };
+            const right = g.genUnary(depth);
+            if (right.abort) return .{ .abort = true };
+            if (left.div_zero or right.div_zero) {
+                left.div_zero = true;
+            } else switch (op) {
+                '*' => left.val *= right.val,
+                '/' => {
+                    if (right.val == 0) {
+                        left.div_zero = true;
+                    } else {
+                        left.val /= right.val;
+                    }
+                },
+                '%' => {
+                    if (right.val == 0) {
+                        left.div_zero = true;
+                    } else {
+                        left.val = @rem(left.val, right.val);
+                    }
+                },
+                else => unreachable,
+            }
+        }
+        return left;
+    }
+
+    fn genAdd(g: *ExprGen, depth: u8) Result {
+        var left = g.genMul(depth);
+        if (left.abort) return left;
+        while (g.spend()) {
+            if (g.smith.eos()) break;
+            const op = g.smith.valueWeighted(u8, &add_ops);
+            if (!g.put(&.{op})) return .{ .abort = true };
+            const right = g.genMul(depth);
+            if (right.abort) return .{ .abort = true };
+            if (left.div_zero or right.div_zero) {
+                left.div_zero = true;
+            } else {
+                left.val = if (op == '+') left.val + right.val else left.val - right.val;
+            }
+        }
+        return left;
+    }
+};
+
+test "fuzz: no byte sequence crashes the expression parser" {
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [256]u8 = undefined;
+            const len = smith.slice(&buf);
+            const input = buf[0..len];
+
+            // Liveness plus two invariants: evaluating the same input twice is
+            // bit-for-bit deterministic (a NaN payload would defeat `==`), and
+            // a trailing space, which `evalExpr` skips before its end-of-input
+            // check, never changes the result.
+            const first = evalExpr(input) catch return;
+            const second = evalExpr(input) catch return;
+            try std.testing.expect(@as(u64, @bitCast(first)) == @as(u64, @bitCast(second)));
+            if (len < buf.len) {
+                buf[len] = ' ';
+                const padded = evalExpr(buf[0 .. len + 1]) catch return;
+                try std.testing.expect(@as(u64, @bitCast(first)) == @as(u64, @bitCast(padded)));
+            }
+        }
+    };
+    // Corpus entries are Smith byte seeds, not expressions handed to the
+    // parser; they steer the generator toward the shapes listed.
+    try std.testing.fuzz({}, Ctx.one, .{
+        .corpus = &.{
+            "2+3*4",
+            "(1+2)^3",
+            "sqrt(16)",
+            "1/0",
+            ".",
+            "(((((((((((((((((1)))))))))))))))))",
+            "1e3",
+            "0x10",
+            "",
+        },
+    });
+}
+
+test "fuzz: evalExpr agrees with an independent evaluator on generated expressions" {
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [1024]u8 = undefined;
+            var g = ExprGen{ .smith = smith, .buf = &buf };
+            const r = g.genAdd(0);
+            if (r.abort) return;
+            const text = buf[0..g.pos];
+            if (r.div_zero) {
+                // The generator only reports div_zero when a division or
+                // modulo actually divides by zero, and the parser walks the
+                // same left-to-right order, so it must fail with exactly this
+                // error rather than returning a value.
+                try std.testing.expectError(error.DivisionByZero, evalExpr(text));
+            } else {
+                const got = evalExpr(text) catch |e| {
+                    std.debug.print("parser rejected a generated expression: {s}\n", .{text});
+                    return e;
+                };
+                // Generated text is a strict subset of the grammar, so a
+                // successful parse is mandatory and must produce the oracle
+                // value: a precedence or associativity slip changes the
+                // operand order and the bits.
+                try std.testing.expectEqual(r.val, got);
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}
