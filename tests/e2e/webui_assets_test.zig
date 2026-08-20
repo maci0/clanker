@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const harness = @import("harness.zig");
+const raw_http = @import("raw_http");
 
 fn url(buf: []u8, port: u16, path: []const u8) ![]const u8 {
     return std.fmt.bufPrint(buf, "http://127.0.0.1:{d}{s}", .{ port, path });
@@ -82,4 +83,78 @@ test "every webui asset path renders its own body from the shared guest" {
             try std.testing.expect(!std.mem.eql(u8, bodies[i], bodies[j]));
         }
     }
+}
+
+test "a HEAD request answers headers and no body" {
+    // RFC 9110 §9.3.2: a HEAD response carries the headers (including the
+    // Content-Length of what GET would return) but no content. The asset,
+    // static and JSON responders used to write the full gzipped body anyway —
+    // a HEAD of /webui/vendor/mermaid.min.js pushed ~950 KB down the wire and
+    // discarded it, and on a kept-alive connection those bytes were read back
+    // as the next response. The document responder already skipped the body;
+    // this pins that every other one does too.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const webui = try harness.pickPort(io);
+    const mesh_p = try harness.pickPort(io);
+    try harness.writeMeshConfig(io, tmp.dir, gpa, .{
+        .id = "head",
+        .webui_port = webui,
+        .mesh_port = mesh_p,
+        .mesh = false,
+    });
+    try harness.linkZigOut(io, tmp.dir);
+
+    var srv = try harness.spawnServe(io, tmp.dir, webui);
+    defer srv.stop(io);
+
+    var buf: [128]u8 = undefined;
+    try harness.waitHttp(io, gpa, try url(&buf, webui, "/webui/app.js"), 8000);
+
+    const addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", webui);
+    const stream = try addr.connect(io, .{ .mode = .stream });
+    defer stream.close(io);
+    const fd = stream.socket.handle;
+
+    var req_buf: [160]u8 = undefined;
+    const req = try std.fmt.bufPrint(&req_buf, "HEAD /webui/app.js HTTP/1.1\r\nHost: 127.0.0.1:{d}\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n", .{webui});
+    try raw_http.writeAll(fd, req);
+
+    // Read the header block: poll before each read so a silent server cannot
+    // hang the test, and give the whole exchange a bounded budget.
+    var resp: [4096]u8 = undefined;
+    var got: usize = 0;
+    const start = std.Io.Timestamp.now(io, .awake).nanoseconds;
+    const budget = 8000 * std.time.ns_per_ms;
+    while (std.mem.find(u8, resp[0..got], "\r\n\r\n") == null) {
+        if (std.Io.Timestamp.now(io, .awake).nanoseconds - start > budget) return error.HeadTimeout;
+        var pfd = [1]std.posix.pollfd{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
+        const ready = std.posix.poll(&pfd, 2000) catch return error.PollFailed;
+        if (ready == 0) return error.HeadTimeout;
+        if (got == resp.len) return error.HeaderOverflow;
+        const n = std.posix.read(fd, resp[got..]) catch return error.ReadFailed;
+        if (n == 0) return error.ServedNoHeaders;
+        got += n;
+    }
+
+    const header_block = resp[0..got];
+    try std.testing.expect(std.mem.startsWith(u8, header_block, "HTTP/1.1 200"));
+    try std.testing.expect(std.mem.find(u8, header_block, "Content-Length:") != null);
+    try std.testing.expect(std.mem.find(u8, header_block, "Content-Encoding: gzip") != null);
+
+    // Any bytes after the header block are the body this request must not have.
+    // The server was asked Connection: close, so a compliant answer reaches
+    // EOF here; the poll catches the fixed server's nothing and the unfixed
+    // server's ~66 KB of gzipped app.js.
+    var pfd = [1]std.posix.pollfd{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
+    const ready = std.posix.poll(&pfd, 2000) catch return error.PollFailed;
+    if (ready == 0) return error.HeadBodySuspense; // server neither closed nor sent a body
+    var tail: [256]u8 = undefined;
+    const n = std.posix.read(fd, &tail) catch return error.ReadFailed;
+    try std.testing.expectEqual(@as(usize, 0), n);
 }

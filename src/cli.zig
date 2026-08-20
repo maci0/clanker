@@ -7398,11 +7398,11 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_webui_plugins = std.mem.eql(u8, path, "/api/webui/plugins") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
-        const is_webui_plugin_asset = std.mem.eql(u8, method, "GET") and
+        const is_webui_plugin_asset = isWebuiRead(method) and
             std.mem.startsWith(u8, path, "/webui/plugins/");
-        const is_webui_theme_asset = std.mem.eql(u8, method, "GET") and
+        const is_webui_theme_asset = isWebuiRead(method) and
             std.mem.startsWith(u8, path, "/webui/themes/");
-        const is_webui_command_asset = std.mem.eql(u8, method, "GET") and
+        const is_webui_command_asset = isWebuiRead(method) and
             std.mem.startsWith(u8, path, "/webui/commands/");
         const is_files = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/files");
         const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
@@ -7448,30 +7448,30 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleHttpMetrics(stream);
         } else if (isWebuiRead(method) and isWebuiIndexPath(path)) {
             handleWebui(io, gpa, cfg, environ_map, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/preact.module.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/preact.module.js")) {
             respondJs(gpa, stream, webui_vendor_preact, &gzip_preact, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/htm.module.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/htm.module.js")) {
             respondJs(gpa, stream, webui_vendor_htm, &gzip_htm, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/signals-core.module.js")) {
             respondJs(gpa, stream, webui_vendor_signals, &gzip_signals, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and isWebuiAssetPath(path)) {
+        } else if (isWebuiRead(method) and isWebuiAssetPath(path)) {
             // Same tool, same comptime size guard, one file per language.
             // Use the stripped path: a `/webui/~<tag>/` prefix is only for the
             // browser cache key and must not reach the webui tool's asset table.
             handleWebuiAsset(io, gpa, cfg, environ_map, path, acceptsGzip(headers_raw), headers_raw, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/d3-dag.min.js")) {
             respondJs(gpa, stream, webui_vendor_d3dag, &gzip_d3dag, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/hljs.min.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/hljs.min.js")) {
             respondJs(gpa, stream, webui_vendor_hljs, &gzip_hljs, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js")) {
             respondJs(gpa, stream, webui_vendor_mermaid, &gzip_mermaid, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/three.module.min.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/three.module.min.js")) {
             respondJs(gpa, stream, webui_vendor_three, &gzip_three, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/three.core.min.js")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/three.core.min.js")) {
             respondJs(gpa, stream, webui_vendor_three_core, &gzip_three_core, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/patternfly.min.css")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/patternfly.min.css")) {
             respondCss(gpa, stream, webui_vendor_patternfly, &gzip_patternfly, acceptsGzip(headers_raw), headers_raw);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/webui/vendor/patternfly-addons.css")) {
+        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/patternfly-addons.css")) {
             respondCss(gpa, stream, webui_vendor_patternfly_addons, &gzip_patternfly_addons, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
@@ -9977,7 +9977,10 @@ fn handleWebuiAsset(
     var hbuf: [512]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, webuiAssetCacheControl("no-cache"), connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, out);
+    // HEAD carries the same headers and length as GET but no body (RFC 9110
+    // §9.3.2). Without the guard the full gzipped asset went down the wire on
+    // a kept-alive HEAD and was read back as the next response.
+    if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, accepts_gzip: bool, headers_raw: []const u8, stream: std.Io.net.Stream) void {
@@ -11397,7 +11400,7 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config
     request_status = 200;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, cache_control, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, out);
+    if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 const webui_themes_dir = "themes";
@@ -15495,7 +15498,7 @@ fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, acce
     var hbuf: [4096]u8 = undefined;
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}Vary: Accept-Encoding\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ out.len, encoding, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, out);
+    if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 /// Serves a vendored, build-time-embedded JS asset (webui/vendor/*). They are
@@ -15539,7 +15542,7 @@ fn respondStatic(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     const encoding = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: {s}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, cache_control, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, out);
+    if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
 /// True when `value`, an HTTP authority, `host` or `host:port`, is one this
@@ -15778,7 +15781,14 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
 
 /// True when the request's Accept-Encoding lists gzip. Scoped to that header's
 /// own line so a request target that happens to contain "gzip" cannot flip it.
+/// A `*` wildcard (RFC 9110 §12.5.3) also makes gzip acceptable, unless an
+/// explicit `gzip;q=0` in the same header refuses it: some hand-rolled clients
+/// (curl with `--compressed` among them) negotiate with `*`, and those used to
+/// get identity bytes for every asset. A q=0 on some *other* coding does not
+/// matter — this server only ever offers gzip.
 fn acceptsGzip(headers_raw: []const u8) bool {
+    var wildcard_ok = false;
+    var gzip_refused = false;
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
         const colon = std.mem.findScalar(u8, line, ':') orelse continue;
@@ -15787,17 +15797,27 @@ fn acceptsGzip(headers_raw: []const u8) bool {
         while (codings.next()) |coding_raw| {
             var parts = std.mem.splitScalar(u8, coding_raw, ';');
             const coding = std.mem.trim(u8, parts.next() orelse continue, " \t");
-            if (!std.ascii.eqlIgnoreCase(coding, "gzip")) continue;
-            while (parts.next()) |parameter_raw| {
-                const parameter = std.mem.trim(u8, parameter_raw, " \t");
-                const equals = std.mem.findScalar(u8, parameter, '=') orelse continue;
-                const name = std.mem.trim(u8, parameter[0..equals], " \t");
-                const value = std.mem.trim(u8, parameter[equals + 1 ..], " \t");
-                if (std.ascii.eqlIgnoreCase(name, "q") and isZeroQuality(value)) break;
-            } else return true;
+            const q_zero = blk: {
+                while (parts.next()) |parameter_raw| {
+                    const parameter = std.mem.trim(u8, parameter_raw, " \t");
+                    const equals = std.mem.findScalar(u8, parameter, '=') orelse continue;
+                    const name = std.mem.trim(u8, parameter[0..equals], " \t");
+                    const value = std.mem.trim(u8, parameter[equals + 1 ..], " \t");
+                    if (std.ascii.eqlIgnoreCase(name, "q") and isZeroQuality(value)) break :blk true;
+                }
+                break :blk false;
+            };
+            if (std.ascii.eqlIgnoreCase(coding, "gzip")) {
+                if (q_zero) {
+                    // An explicit refusal beats a wildcard elsewhere in the header.
+                    gzip_refused = true;
+                } else return true;
+            } else if (std.ascii.eqlIgnoreCase(coding, "*") and !q_zero) {
+                wildcard_ok = true;
+            }
         }
     }
-    return false;
+    return wildcard_ok and !gzip_refused;
 }
 
 fn isZeroQuality(value: []const u8) bool {
@@ -15817,6 +15837,19 @@ test "acceptsGzip only matches the header's own line" {
     try std.testing.expect(!acceptsGzip("GET /gzip.js HTTP/1.1\r\nHost: x\r\n"));
     try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, zstd\r\n"));
     try std.testing.expect(!acceptsGzip(""));
+}
+
+test "acceptsGzip honors a * wildcard but never over an explicit refusal" {
+    try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: *\r\n"));
+    try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: br, zstd, *\r\n"));
+    try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: *\r\nAccept-Encoding: gzip\r\n"));
+    try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: *;q=0\r\n"));
+    try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: gzip;q=0, *\r\n"));
+    // Multiple header lines combine as if comma-joined; the explicit refusal
+    // there beats the wildcard just as it does on one line.
+    try std.testing.expect(!acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: *\r\nAccept-Encoding: gzip;q=0\r\n"));
+    // A wildcard with a nonzero quality is still a wildcard.
+    try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: *;q=0.5, br\r\n"));
 }
 
 /// A weak content hash formatted as a quoted ETag value. Cheap enough (CRC32
