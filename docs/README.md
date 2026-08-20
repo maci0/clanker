@@ -1104,6 +1104,7 @@ The pre-`models`-table form is **rejected**, not silently accepted:
 | a `models` entry naming a `provider` that isn't declared under `providers` | `ModelUnknownProvider` |
 | a provider ending up with no models at all | `ProviderMissingModel` |
 | `default_model` naming an absent entry | `ProviderDefaultModelUnknown` |
+| a provider with several models and no `default_model` | `ProviderDefaultModelMissing` — the active model is only inferred when there is exactly one |
 | `default_provider` naming a provider that isn't defined | `DefaultProviderUnknown` |
 
 Each names the provider (or model key) and the fix. All fail at startup rather than on the first request, and a settings key on the provider is an error rather than a silent default, because a config that reads one way and behaves another is worse than one that refuses to load.

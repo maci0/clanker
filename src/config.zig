@@ -1788,7 +1788,17 @@ pub const Config = struct {
             }
             if (p.default_model.len == 0) {
                 // One model is unambiguous, so naming it twice is noise.
-                p.default_model = p.models.keys()[0];
+                // With several, the loader must not guess: `keys()[0]` is
+                // hash-bucket order (the TOML bridge parses tables into a
+                // StringHashMap), not document order or author intent, so a
+                // provider with two models silently served whichever one the
+                // map happened to see first.
+                if (p.models.count() == 1) {
+                    p.default_model = p.models.keys()[0];
+                } else {
+                    log.log(.error_, "provider '{s}': several models declared but no \"default_model\" set; set \"default_model\" on [providers.{s}] to pick the active one", .{ name, name });
+                    return error.ProviderDefaultModelMissing;
+                }
             }
             if (p.models.get(p.default_model) == null) {
                 log.log(.error_, "provider '{s}': default_model '{s}' is not in its models", .{ name, p.default_model });
@@ -3345,6 +3355,7 @@ test "config.local.toml can add a model without repeating providers" {
         \\[providers.deepseek]
         \\base_url = "https://api.deepseek.com"
         \\api_key_env = "DEEPSEEK_API_KEY"
+        \\default_model = "deepseek-v4-flash"
         \\
         \\[models."deepseek/deepseek-v4-flash"]
         \\provider = "deepseek"
@@ -3389,6 +3400,7 @@ test "a --profile overlay can add a model without repeating providers" {
         \\[providers.deepseek]
         \\base_url = "https://api.deepseek.com"
         \\api_key_env = "DEEPSEEK_API_KEY"
+        \\default_model = "deepseek-chat"
         \\
         \\[models."deepseek/deepseek-chat"]
         \\provider = "deepseek"
@@ -4154,6 +4166,7 @@ test "rpm is accepted on a provider and on a model" {
         \\[providers.n]
         \\base_url = "https://n.test/v1"
         \\rpm = 40
+        \\default_model = "fast"
         \\[models."n/fast"]
         \\provider = "n"
         \\rpm = 10
@@ -4181,6 +4194,7 @@ test "tool_schema and thinking_schema parse on providers and models, model wins"
         \\[providers.n]
         \\base_url = "https://n.test/v1"
         \\thinking_schema = "thinking"
+        \\default_model = "plain"
         \\[models."n/plain"]
         \\provider = "n"
         \\[models."n/bare"]
@@ -5196,6 +5210,32 @@ test "a default_model with no matching entry is rejected at load" {
     // Caught at startup rather than at the first request.
     try std.testing.expectError(
         error.ProviderDefaultModelUnknown,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
+    );
+}
+
+test "several models with no default_model are rejected, not guessed" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://x.test" } }
+        \\models = { "p/alpha" = { provider = "p" }, "p/beta" = { provider = "p" } }
+        ,
+    });
+    // With two models and no default_model the loader has nothing to pick:
+    // a hash-order first key is not author intent, so it must fail at load
+    // naming the fix, exactly like a missing or unresolvable default_model.
+    try std.testing.expectError(
+        error.ProviderDefaultModelMissing,
         Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
 }
