@@ -14,6 +14,7 @@ const cron = @import("schedule_cron");
 const store = @import("store.zig");
 const runner = @import("runner.zig");
 const log = @import("../util/log.zig");
+const diag = @import("../util/diag.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 
@@ -77,7 +78,7 @@ pub fn cmd(init: std.process.Init, opts: Options, fire: runner.Fire, tool: Tool)
     if (std.mem.eql(u8, sub, "run-due")) return runDue(io, gpa, arena, base, now, fire);
     if (std.mem.eql(u8, sub, "run")) return runNow(io, gpa, arena, base, opts, now, fire);
 
-    log.log(.error_, "unknown schedule subcommand '{s}' (expected list, add, remove, enable, disable, run, run-due or log)", .{sub});
+    diag.errorLine("unknown schedule subcommand '{s}' (expected list, add, remove, enable, disable, run, run-due or log)", .{sub});
     return Error.BadSubcommand;
 }
 
@@ -121,15 +122,15 @@ fn showLog(io: std.Io, arena: std.mem.Allocator, tool: Tool, count_text: ?[]cons
 
 fn add(io: std.Io, arena: std.mem.Allocator, opts: Options, now: i64, tool: Tool) !void {
     const spec_text = opts.arg1 orelse {
-        log.log(.error_, "schedule add needs a cron spec and a task: clanker schedule add \"0 9 * * 1-5\" \"review yesterday's runs\"", .{});
+        diag.errorLine("schedule add needs a cron spec and a task: clanker schedule add \"0 9 * * 1-5\" \"review yesterday's runs\"", .{});
         return Error.MissingArg;
     };
     const task_raw = opts.arg2 orelse {
-        log.log(.error_, "schedule add needs a task after the cron spec", .{});
+        diag.errorLine("schedule add needs a task after the cron spec", .{});
         return Error.MissingArg;
     };
     const task = store.validateTask(task_raw) catch |err| {
-        log.log(.error_, "schedule add: {s}", .{switch (err) {
+        diag.errorLine("schedule add: {s}", .{switch (err) {
             store.Error.TaskEmpty => "the task is empty",
             store.Error.TaskTooLong => "the task is too long to schedule",
             else => @errorName(err),
@@ -138,11 +139,11 @@ fn add(io: std.Io, arena: std.mem.Allocator, opts: Options, now: i64, tool: Tool
     };
 
     const spec = cron.parse(spec_text) catch |err| {
-        log.log(.error_, "'{s}' is not a usable cron spec ({s}). Five fields: minute hour day-of-month month day-of-week, each `*`, a number, `a-b`, `*/n` or a comma-separated list", .{ spec_text, @errorName(err) });
+        diag.errorLine("'{s}' is not a usable cron spec ({s}). Five fields: minute hour day-of-month month day-of-week, each `*`, a number, `a-b`, `*/n` or a comma-separated list", .{ spec_text, @errorName(err) });
         return Error.BadCron;
     };
     const offset = if (opts.tz_offset) |t| cron.parseOffset(t) catch {
-        log.log(.error_, "--tz-offset wants something like +02:00, -05:00, UTC, or a number of minutes; got '{s}'", .{t});
+        diag.errorLine("--tz-offset wants something like +02:00, -05:00, UTC, or a number of minutes; got '{s}'", .{t});
         return Error.BadCron;
     } else 0;
 
@@ -150,7 +151,7 @@ fn add(io: std.Io, arena: std.mem.Allocator, opts: Options, now: i64, tool: Tool
     // list forever looking scheduled. Refuse it at the point the mistake was
     // made rather than at the fire that never comes.
     const first = spec.nextAfter(now, offset) orelse {
-        log.log(.error_, "'{s}' parses but never comes around (a date that does not exist, like February 30th)", .{spec_text});
+        diag.errorLine("'{s}' parses but never comes around (a date that does not exist, like February 30th)", .{spec_text});
         return Error.NeverFires;
     };
 
@@ -277,7 +278,7 @@ fn runNow(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: st
 
 fn requireId(opts: Options, verb: []const u8) Error![]const u8 {
     const id = opts.arg1 orelse {
-        log.log(.error_, "schedule {s} needs an entry id; `clanker schedule list` shows them", .{verb});
+        diag.errorLine("schedule {s} needs an entry id; `clanker schedule list` shows them", .{verb});
         return Error.MissingArg;
     };
     if (id.len == 0) return Error.MissingArg;
@@ -285,7 +286,7 @@ fn requireId(opts: Options, verb: []const u8) Error![]const u8 {
 }
 
 fn noSuchEntry(id: []const u8) store.Error {
-    log.log(.error_, "no scheduled entry '{s}'; `clanker schedule list` shows them", .{id});
+    diag.errorLine("no scheduled entry '{s}'; `clanker schedule list` shows them", .{id});
     return store.Error.NoSuchEntry;
 }
 
@@ -303,7 +304,7 @@ fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.V
     if (ok == null or ok.? != .bool or !ok.?.bool) {
         const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
         if (std.mem.eql(u8, detail, "no such entry") or std.mem.eql(u8, detail, "bad entry id")) {
-            log.log(.error_, "no scheduled entry; `clanker schedule list` shows them", .{});
+            diag.errorLine("no scheduled entry; `clanker schedule list` shows them", .{});
             return store.Error.NoSuchEntry;
         }
         log.log(.error_, "schedule: {s}", .{detail});

@@ -2342,7 +2342,17 @@ fn cmdSchedule(init: std.process.Init, opts: Options) !void {
             printUsageHintFor(io, "schedule");
             std.process.exit(2);
         },
+        // The refusal line was already printed as a diagnostic; exit without
+        // falling through to main.zig's re-print of the bare error name.
+        schedule_cmd.Error.BadCron, schedule_cmd.Error.NeverFires => std.process.exit(2),
         schedule_cmd.Error.ToolFailed => std.process.exit(1),
+        schedule_store.Error.NoSuchEntry => std.process.exit(1),
+        // `add` already printed the refusal as a diagnostic; bad task text is
+        // a usage error like a bad cron spec.
+        schedule_store.Error.TaskEmpty, schedule_store.Error.TaskTooLong => std.process.exit(2),
+        // `run-due`/`run` printed per-entry lines above; the non-zero exit is
+        // the signal to the cron that invoked us to look.
+        schedule_cmd.Error.ScheduledRunFailed => std.process.exit(1),
         else => return err,
     };
 }
