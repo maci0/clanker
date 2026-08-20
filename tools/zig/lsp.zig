@@ -212,12 +212,14 @@ fn collectLocations(alloc: std.mem.Allocator, stdout: []const u8, out: *std.Arra
         rest = rest[at + "\"file://".len ..];
         const uri_end = std.mem.findScalar(u8, rest, '"') orelse break;
         const path = rest[0..uri_end];
+        // Advance past this URI so a malformed entry cannot poison later ones.
+        rest = rest[uri_end + 1 ..];
 
         const line_key = "\"line\":";
-        const line_at = std.mem.find(u8, rest, line_key) orelse break;
+        const line_at = std.mem.find(u8, rest, line_key) orelse continue;
         const line = parseUint(rest[line_at + line_key.len ..]);
         const char_key = "\"character\":";
-        const char_at = std.mem.find(u8, rest, char_key) orelse break;
+        const char_at = std.mem.find(u8, rest, char_key) orelse continue;
         const character = parseUint(rest[char_at + char_key.len ..]);
 
         const entry = try std.fmt.allocPrint(alloc, "{s}:{d}:{d}", .{ path, line + 1, character + 1 });
