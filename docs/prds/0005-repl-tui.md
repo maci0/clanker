@@ -320,8 +320,11 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       the composer renders one row per line (`drawComposer`), `⏎` is the
       `newline_marker`, and `takeComposerText` joins the buffer on submit;
       `vxfw.TextField` itself stays single-line.
-- [ ] **Image / multimodal input.** The web UI has an attachment path (webui
-      1.3); this REPL has no route for a task that needs one.
+- [x] **Image / multimodal input.** Thin slice shipped as
+      [PRD 0041](0041-repl-image-multimodal-input-attach-and-drag-drop-to-image-in.md):
+      `/attach <path>` validates and queues images that ride the agent's
+      existing `image_in` channel on submit. Drag-drop / image paste onto the
+      composer is still open (vaxis drag events not yet wired).
 - [x] **Plan mode toggle.** `/plan [on|off]` updates `Agent.plan_mode`; bare
       `/plan` toggles it, matching the web UI's propose-then-apply control.
 - [ ] **Truecolor autodetection.** `/theme` shipped (registered in

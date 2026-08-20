@@ -6,9 +6,12 @@ In progress. `clanker acp` (`cmdAcp` in `src/cli.zig`) and
 `src/acp/server.zig` exist: stdio JSON-RPC framing, `initialize`
 (protocol v1, baseline-only prompt capabilities), `authenticate` (empty
 success), and `session/cancel` as a silent notification. Gated by
-`modules.acp` (default false). `session/new`,
-`session/prompt`, `session/update`, and `session/request_permission` are
-not wired; unknown methods return `-32601`. Modeled on
+`modules.acp` (default false). `session/new` mints a validated session
+row and `session/prompt` is wired through validation plus the
+one-in-flight guard, but reports `end_turn` without running a model —
+binding sessions to a real `Agent` and `session/update` /
+`session/request_permission` are the remaining work. Unknown methods
+return `-32601`. Modeled on
 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)'s
 `packages/acp/acp/`, a minimal, automation-only reference implementation of
 the [Agent Client Protocol](https://agentclientprotocol.com).

@@ -62,11 +62,11 @@ and Implementation lists checkable file-level phases.
 | [0002](0002-kanban-board.md) | Shared kanban board | Shipped | |
 | [0003](0003-run-todos.md) | Run todo checklists | Shipped | Private vs shared; room todos removed |
 | [0004](0004-autoresearch.md) | Autoresearch | Shipped | |
-| [0005](0005-repl-tui.md) | REPL / TUI | Shipped (gaps) | Ask/confirm shipped; multi-line input etc. still open |
+| [0005](0005-repl-tui.md) | REPL / TUI | Shipped (gaps) | Multi-line (0040) and `/attach` (0041) shipped; iteration-limit landing, truecolor autodetection, drag-drop open |
 | [0006](0006-webui.md) | Web UI | Shipped | |
 | [0007](0007-memory.md) | Memory layer | In progress | Builtin path shipped; pluggable config remains open |
 | [0008](0008-arena.md) | Arena | In progress | Phase 3 (multi-instance) open |
-| [0009](0009-schedule.md) | Scheduled runs | Shipped | Sweep-exit Known issue |
+| [0009](0009-schedule.md) | Scheduled runs | Shipped | (Fixed) sweep-exit Known issue |
 | [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
 | [0011](0011-clanker-mesh.md) | Clanker mesh | In progress | Serve listener + `clanker mesh` + HTTP join/leave/status/pending in; `ck_mesh` guests and Phase 3 share open |
 | [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
@@ -87,9 +87,9 @@ and Implementation lists checkable file-level phases.
 | [0027](0027-write-goal.md) | write-goal drafting | Shipped | Draft-only; persistence and execution live in 0035 |
 | [0028](0028-hooks-bridge.md) | Lifecycle hooks (Claude Code bridge) | Shipped | Five events, bounded policy runner, black-box fixture |
 | [0029](0029-loop-hygiene-guard.md) | Loop-hygiene guard | Shipped | Consecutive canonical-call reminders; configurable thresholds/exclusions |
-| [0030](0030-acp-server.md) | ACP server (`clanker acp`) | In progress | stdio stub + initialize live; session methods open |
+| [0030](0030-acp-server.md) | ACP server (`clanker acp`) | In progress | initialize/authenticate + session/new/prompt/cancel framing live; Agent binding, `session/update`, `session/request_permission` open |
 | [0031](0031-tool-result-pruning.md) | Deterministic tool-result pruning | Shipped | Request-only head/tail pruning; saved transcripts stay exact |
-| [0032](0032-mcp-client-bridge.md) | MCP client bridge | In progress | needs a new registry dispatch kind |
+| [0032](0032-mcp-client-bridge.md) | MCP client bridge | In progress | `[mcp_servers.*]` parsing + `modules.mcp_client` gate landed; transport/dispatch/reconnect/list open |
 | [0033](0033-agent-presets.md) | Agent presets | Shipped | supersedes the Feynman "role prompt files" note |
 | [0034](0034-session-subprocs.md) | Session subprocess inspector | Draft | Lists/kills 0016 registry rows from doctor + a guest |
 | [0035](0035-goal-lifecycle.md) | Goal lifecycle capabilities | Shipped | Draft, persist, and execute are independent |
@@ -98,21 +98,20 @@ and Implementation lists checkable file-level phases.
 | [0038](0038-http-endpoints-for-the-record-stores.md) | HTTP endpoints for the record stores | Shipped |  |
 | [0039](0039-repl-block-level-markdown-tables-block-quotes-nested-lists.md) | REPL block-level markdown: tables, block quotes, nested lists | Shipped |  |
 | [0040](0040-repl-multi-line-input-shift-enter-newline-enter-submits.md) | REPL multi-line input: Shift+Enter newline, Enter submits | Shipped |  |
-| [0041](0041-repl-image-multimodal-input-attach-and-drag-drop-to-image-in.md) | REPL image/multimodal input: /attach and drag-drop to image_in | Draft |  |
-| [0042](0042-config-profiles-profile-and-dump-config-file-overlay.md) | Config profiles: --profile and --dump-config (file overlay) | Draft |  |
+| [0041](0041-repl-image-multimodal-input-attach-and-drag-drop-to-image-in.md) | REPL image/multimodal input: /attach and drag-drop to image_in | In progress | `/attach` + image_in plumbing shipped; drag-drop/image paste external follow-up |
+| [0042](0042-config-profiles-profile-and-dump-config-file-overlay.md) | Config profiles: --profile and --dump-config (file overlay) | Shipped | `profiles/<name>.toml` overlay + merged dump |
 | [0043](0043-external-coding-agent-driver-acp-client-headless-fallback.md) | External coding-agent driver (ACP client, headless fallback) | Draft | Draft; driver is not built yet — phases name files to create |
 <!-- inventory:prd:end -->
 
-## Recommended build order (Drafts)
+## Recommended build order (Drafts and open in-progress work)
 
 Packaging and reliability first, then agent-loop quality, then heavy
-optional subsystems:
+optional subsystems. Shipped PRDs (0021, 0033, …) are not listed.
 
-1. **0016** supervisors / **0017** DAP
-2. **0018** / **0021** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
-3. **0030** — ACP server (mirrors the already-shipped `clanker mcp` shape)
-4. **0033** — agent presets (filter-only v1; independent of 0032)
-5. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
+1. **0016** supervisors / **0017** DAP — the remaining 0016 phases (JS kernel, venv bridge) and 0017's live-lldb follow-up
+2. **0018** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+3. **0030** — ACP server session methods (`session/update`, `session/request_permission`, and the Agent binding for `session/new` + `session/prompt`)
+4. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
 
 ## Editing rules (short)
 
