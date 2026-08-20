@@ -1,0 +1,11 @@
+# Minimal preset: shell + file editing only, the DeepSeek Harness "Minimal
+# mode" shape (two-tool coding agent: persistent shell + file editor).
+description = "Minimal: shell and file editing only (DSH Minimal mode shape)"
+system_prompt_append = "You are in the minimal preset: only a shell (exec) and file tools (read, list, edit, diff) are available. Work entirely through them; nothing else exists in this session."
+
+# An allowlist, not a deny list: everything except these tools is hidden, so
+# the model cannot drift into delegation, state mutation, or web research.
+# exec carries its own sandbox policy (exec_allow gates argv[0] exactly) and
+# edit_file/file_ops are bounded by fs_prefixes like every other tool.
+tools_allow = ["read_file", "list_files", "find_files", "edit_file", "file_ops", "exec", "text_diff", "spill"]
+tools_deny = []
