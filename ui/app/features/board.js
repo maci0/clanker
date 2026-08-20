@@ -579,8 +579,6 @@ function boardColumn(col, s) {
 }
 
 
-
-
 /* ---- Trello-style label colours ---- */
 var LABEL_COLORS = ["green","yellow","orange","red","purple","blue","sky","pink","lime","black"];
 
@@ -2004,7 +2002,6 @@ function showCardDetail(id) {
   // focus the notes textarea (Trello: opening a card gives you the description)
   try { setTimeout(function(){ bodyIn.focus(); }, 0); } catch(_){}
 }
-
 
 
 /* The card modal's keyboard contract, called first from app.js's document

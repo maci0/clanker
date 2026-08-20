@@ -9870,11 +9870,10 @@ fn webuiAssetTag(
     inline for (vendor_tag_files) |entry| {
         mixed ^= std.hash.Crc32.hash(entry[1]);
     }
-    const printed = std.fmt.bufPrint(&webui_asset_tag_buf, "{x:0>8}", .{mixed}) catch {
+    _ = std.fmt.bufPrint(&webui_asset_tag_buf, "{x:0>8}", .{mixed}) catch {
         _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
         return null;
     };
-    _ = printed;
     webui_asset_tag_state.store(.ready, .release);
     return webui_asset_tag_buf[0..];
 }

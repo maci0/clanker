@@ -1048,7 +1048,6 @@ function switchSession(id, jump) {
 }
 
 
-
 /* Workspaces are created by naming one: there is no separate "new folder"
    step, because a folder with nothing in it is not yet a folder. */
 if (el.workspacePick) {
@@ -2996,7 +2995,6 @@ function rememberChatId(id) {
 }
 
 
-
 /* Room messages use the same markdown renderer as the agent transcript
    (`renderMarkdownWithFences`). Shortcodes expand first so :rocket: is
    text the renderer does not have to know about. */
@@ -4373,7 +4371,6 @@ function setTabCount(view, n) {
 }
 
 
-
 /* ---------- model picker and sampling — delegated ---------- */
 var loadProviders = mpLoadProviders;
 var runOptions = mpRunOptions;
@@ -4469,8 +4466,6 @@ SUGGESTIONS.forEach(function (text) {
   });
   el.suggestions.appendChild(b);
 });
-
-
 
 
 /* ---------- status, said out loud and shown ---------- */

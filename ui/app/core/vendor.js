@@ -97,7 +97,6 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
 }
 
 
-
 // Backward-compat: app.js classic script expects globals; keep duplicated there
 // for now — mirror so future modules can import while app.js still works.
 if (typeof window !== "undefined") {
