@@ -56,8 +56,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const action = lib.optStr(req, "action") orelse "list";
     if (std.mem.eql(u8, action, "list")) {
         const has_filter = req.object.get("enabled") != null;
-        if (has_filter) return doList(out, lib.optBool(req, "enabled", true));
-        return doList(out, null);
+        if (has_filter) return doList(out, "list", lib.optBool(req, "enabled", true));
+        return doList(out, "list", null);
     }
     if (std.mem.eql(u8, action, "set_enabled")) return doSetEnabled(req, out);
     if (std.mem.eql(u8, action, "add")) return doAdd(req, out);
@@ -66,7 +66,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     return lib.fail(out, "action must be list, set_enabled, add, remove, or update");
 }
 
-fn doList(out: *lib.Out, enabled_filter: ?bool) !void {
+fn doList(out: *lib.Out, action: []const u8, enabled_filter: ?bool) !void {
     const loaded = try load();
     if (enabled_filter) |f| {
         var filtered: std.ArrayList(Entry) = .empty;
@@ -74,9 +74,9 @@ fn doList(out: *lib.Out, enabled_filter: ?bool) !void {
         for (loaded.entries.items) |e| {
             if (e.enabled == f) filtered.append(lib.alloc, e) catch continue;
         }
-        return writeList(out, filtered.items);
+        return writeList(out, action, filtered.items);
     }
-    return writeList(out, loaded.entries.items);
+    return writeList(out, action, loaded.entries.items);
 }
 
 fn doSetEnabled(req: std.json.Value, out: *lib.Out) !void {
@@ -92,7 +92,7 @@ fn doSetEnabled(req: std.json.Value, out: *lib.Out) !void {
         const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
         if (enabled and !e.enabled) e.last_run = now;
         e.enabled = enabled;
-        if (try store(loaded)) return writeOne(out, e.*);
+        if (try store(loaded)) return writeOne(out, "set_enabled", e.*);
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
@@ -134,7 +134,7 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
             .created = now,
         };
         try loaded.entries.append(lib.alloc, entry);
-        if (try store(loaded)) return writeOne(out, entry);
+        if (try store(loaded)) return writeOne(out, "add", entry);
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
@@ -156,7 +156,7 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
             } else i += 1;
         }
         const entry_val = removed_entry orelse return lib.fail(out, "no such entry");
-        if (try store(loaded)) return writeOne(out, entry_val);
+        if (try store(loaded)) return writeOne(out, "remove", entry_val);
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
@@ -219,7 +219,7 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
         if (has_provider) e.provider = lib.optStr(req, "provider");
         if (has_model) e.model = lib.optStr(req, "model");
         if (has_tz) e.tz_offset_minutes = new_tz;
-        if (try store(loaded)) return writeOne(out, e.*);
+        if (try store(loaded)) return writeOne(out, "update", e.*);
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
@@ -260,12 +260,14 @@ fn store(loaded: Loaded) !bool {
     return true;
 }
 
-fn writeList(out: *lib.Out, entries: []const Entry) !void {
+fn writeList(out: *lib.Out, action: []const u8, entries: []const Entry) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
+    try s.objectField("action");
+    try s.write(action);
     try s.objectField("entries");
     try s.beginArray();
     for (entries) |e| try writeEntry(&s, e);
@@ -278,12 +280,14 @@ fn writeList(out: *lib.Out, entries: []const Entry) !void {
     lib.commit(out, &w);
 }
 
-fn writeOne(out: *lib.Out, e: Entry) !void {
+fn writeOne(out: *lib.Out, action: []const u8, e: Entry) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
+    try s.objectField("action");
+    try s.write(action);
     try s.objectField("entry");
     try writeEntry(&s, e);
     try s.endObject();
