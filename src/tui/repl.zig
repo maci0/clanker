@@ -3750,7 +3750,7 @@ const Model = struct {
             };
             if (all.len == 0) {
                 self.lines.append(self.arena, .{
-                    .text = std.fmt.allocPrint(self.arena, "notice: no TUI plugins in {s}; drop a {command, help, tool}.json there and enable it with /tui-plugins on <name>", .{self.cfg.agent.tui_plugins_dir}) catch "notice: no TUI plugins found",
+                    .text = std.fmt.allocPrint(self.arena, "notice: no TUI plugins in {s}; drop a JSON manifest (command, help, tool keys) there and enable it with /tui-plugins on <name>", .{self.cfg.agent.tui_plugins_dir}) catch "notice: no TUI plugins found",
                     .dim = true,
                 }) catch {};
                 return;

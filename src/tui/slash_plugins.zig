@@ -65,7 +65,7 @@ pub fn saveEnabled(io: std.Io, gpa: std.mem.Allocator, enabled: []const []const 
     for (enabled) |name| try s.write(name);
     try s.endArray();
     try s.endObject();
-    try std.Io.Dir.cwd().makePath(io, "state");
+    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
     try atomic_write.writeFilePerms(io, std.Io.Dir.cwd(), state_path, out.written(), atomic_write.private_file);
 }
 
