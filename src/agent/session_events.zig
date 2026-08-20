@@ -1,6 +1,6 @@
 //! Per-session append-only event store (SQLite).
 //!
-//! One SQLite database per session, `state/sessions/<id>.events.db`, holding
+//! One SQLite database per session, `state/sessions/<id>.db`, holding
 //! an INSERT-only `events` stream — the traceable record of what the model
 //! saw: system prompt snapshots, the task, assistant replies, tool calls and
 //! results, LLM calls, reasoning, subagent launches and context injections —
@@ -11,15 +11,14 @@
 //! Stream semantics follow RFC 0019 option T / the stage-1 spike: the owner
 //! instance appends locally and the dense `seq` is the per-session cursor; a
 //! replica accepts a record only at cursor+1 and backfills gaps over the mesh
-//! HTTP API. Replicas live at `state/mesh/<owner>/sessions/<id>.events.db`.
+//! HTTP API. Replicas live at `state/mesh/<owner>/sessions/<id>.db`.
 
 const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
 
 /// The suffix appended to a session id to name its event database. The JSON
-/// transcript is `<id>.json`; the event store is `<id>.events.db`.
-pub const db_suffix = ".events.db";
-
+/// The events table lives in the session's own database (`<id>.db`); this
+/// module is the append-only writer for it.
 /// One event in a session's stream. `payload` is a JSON object; the exact
 /// fields are per-kind and recorded in EventKind's docs.
 pub const Event = struct {
@@ -185,7 +184,7 @@ const test_env = @import("../util/test_env.zig");
 /// Path for a store test database, inside the test env's tmp tree
 /// (`.zig-cache/tmp/<sub>`), so a failing test leaves nothing in state/.
 fn dbPath(arena: std.mem.Allocator, env: *test_env.Env, name: []const u8) ![:0]const u8 {
-    const s = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/{s}.events.db", .{ &env.tmp.sub_path, name });
+    const s = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/{s}.db", .{ &env.tmp.sub_path, name });
     return arena.dupeZ(u8, s);
 }
 
@@ -262,7 +261,7 @@ test "meta round-trips the session record" {
 }
 
 /// A fail-open recorder the agent loop holds for the duration of a run.
-/// Events land in the per-session database `<session_id>.events.db` under
+/// Events land in the per-session database `<session_id>.db` under
 /// the session store directory; any error (disk full, unreadable dir) is
 /// logged at debug and dropped — recording must never fail a run.
 ///
@@ -290,8 +289,9 @@ pub const Recorder = struct {
     fn openIfNeeded(self: *Recorder) void {
         if (self.opened) return;
         self.opened = true;
-        // state/sessions/<id>.events.db, sentinel-terminated for sqlite.
-        const rel = std.fmt.allocPrint(self.arena, "state/sessions/{s}{s}", .{ self.session_id, db_suffix }) catch return;
+        // The session's own database: the events table and its append-only
+        // triggers are part of the session schema (session.zig).
+        const rel = std.fmt.allocPrint(self.arena, "state/sessions/{s}.db", .{self.session_id}) catch return;
         const path = self.arena.dupeZ(u8, rel) catch return;
         std.Io.Dir.cwd().createDirPath(self.io, "state/sessions") catch {};
         self.store = Store.open(self.arena, path) catch return;
