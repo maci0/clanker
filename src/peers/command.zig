@@ -9,6 +9,7 @@
 const std = @import("std");
 const diag = @import("../util/diag.zig");
 const json_util = @import("../util/json.zig");
+const http_client = @import("../util/http_client.zig");
 
 pub const version = @import("build_options").version;
 
@@ -126,44 +127,7 @@ fn writeOk(io: std.Io, raw: []const u8, comptime fmt: []const u8, args: anytype)
     try writeStdOut(io, line);
 }
 
-/// Wall-clock ceiling for one mesh control call.
-///
-/// `std.http.Client` has no read timeout of its own (`ConnectTcpOptions.timeout`
-/// is declared and never referenced -- see `llm/client.zig`'s `Abort`), so a
-/// local `clanker serve` that accepts the connection and then goes quiet
-/// blocks this command forever, with nothing printed and no error to report.
-/// Every call here is loopback to a process on the same host, so 15s is far
-/// past a healthy answer and well short of "never".
-const call_timeout_ms: i64 = 15_000;
-
-/// The fetch half of `call`, as a concurrent task so the caller can put a
-/// deadline on it. Every exit sets `done`, cancelation included, or the waiter
-/// is never woken. `body` outlives the task: `call` only returns after the
-/// future is awaited or cancelled (which joins).
-fn fetchTask(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    url: []const u8,
-    method: std.http.Method,
-    payload: []const u8,
-    body: *std.Io.Writer.Allocating,
-    done: *std.Io.Event,
-) anyerror!u16 {
-    defer done.set(io);
-    var http: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer http.deinit();
-    const res = try http.fetch(.{
-        .location = .{ .url = url },
-        .method = method,
-        .payload = if (method == .POST) payload else null,
-        .headers = .{
-            .user_agent = .{ .override = "clanker/" ++ version },
-            .content_type = .{ .override = "application/json" },
-        },
-        .response_writer = &body.writer,
-    });
-    return @intFromEnum(res.status);
-}
+const call_timeout_ms: i64 = http_client.default_timeout_ms;
 
 fn call(
     io: std.Io,
@@ -190,53 +154,28 @@ fn callWithTimeout(
     timeout_ms: i64,
 ) ![]const u8 {
     const url = try controlUrl(arena, host, port, path);
-    var body: std.Io.Writer.Allocating = .init(gpa);
-    defer body.deinit();
-
-    var done: std.Io.Event = .unset;
-    var fut = io.concurrent(fetchTask, .{ io, gpa, url, method, payload, &body, &done }) catch {
-        // Waiting without a ceiling is the thing being avoided, so a missing
-        // worker is a refusal rather than a fall back to an unbounded call.
-        diag.errorLine("mesh: no spare worker to run the request under a timeout", .{});
-        return Error.RequestFailed;
-    };
-    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
-        .clock = .awake,
-        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
-    });
-    while (!done.isSet()) {
-        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
-            // Spurious wakeups report Timeout too, so the deadline decides
-            // whether the budget is really spent, not this return.
-            error.Timeout => {
-                if (done.isSet()) break;
-                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                // cancel() interrupts the blocking syscall and joins the task,
-                // so nothing is left writing into `body` after this returns.
-                if (fut.cancel(io)) |_| {} else |_| {}
-                diag.errorLine("clanker serve at {s} accepted the connection and did not answer within {d}ms", .{ url, timeout_ms });
-                return Error.ServeNotRunning;
-            },
-            error.Canceled => {
-                if (fut.cancel(io)) |_| {} else |_| {}
-                return Error.RequestFailed;
-            },
-        };
-    }
-    const status_n = fut.await(io) catch |err| {
+    const res = http_client.fetchStatus(io, gpa, arena, method, url, payload, timeout_ms) catch |err| {
+        if (err == error.Timeout or err == error.Canceled) {
+            diag.errorLine("clanker serve at {s} accepted the connection and did not answer within {d}ms", .{ url, timeout_ms });
+            return Error.ServeNotRunning;
+        }
+        if (err == error.ConcurrencyUnavailable) {
+            diag.errorLine("mesh: no spare worker to run the request under a timeout", .{});
+            return Error.RequestFailed;
+        }
         diag.errorLine("clanker serve is not reachable at {s} ({s}); start `clanker serve` with modules.mesh = true", .{ url, @errorName(err) });
         return Error.ServeNotRunning;
     };
-    const text = try arena.dupe(u8, body.written());
-    if (status_n == 404) {
+    const text = res.body;
+    if (res.status == 404) {
         diag.errorLine("modules.mesh is off; set it and restart `clanker serve`", .{});
         return Error.MeshOff;
     }
-    if (status_n >= 400) {
+    if (res.status >= 400) {
         if (jsonError(arena, text)) |msg| {
             diag.errorLine("{s}", .{msg});
         } else {
-            diag.errorLine("mesh request failed (HTTP {d})", .{status_n});
+            diag.errorLine("mesh request failed (HTTP {d})", .{res.status});
         }
         return Error.RequestFailed;
     }

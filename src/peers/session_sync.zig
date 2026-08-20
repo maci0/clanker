@@ -64,29 +64,13 @@ pub fn receive(
 }
 
 const config_mod = @import("../config.zig");
+const http_client = @import("../util/http_client.zig");
 
 fn httpFetch(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) ![]const u8 {
-    var client: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer client.deinit();
-    const uri = std.Uri.parse(url) catch return error.InvalidUrl;
-    var req = try client.request(method, uri, .{ .redirect_behavior = .unhandled });
-    defer req.deinit();
-    if (body) |b| {
-        req.transfer_encoding = .{ .content_length = b.len };
-        var w = try req.sendBodyUnflushed(&.{});
-        try w.writer.writeAll(b);
-        try w.end();
-        try req.connection.?.flush();
-    }
-    var redirect_buffer: [1024]u8 = undefined;
-    var resp = try req.receiveHead(&redirect_buffer);
-    if (resp.head.status.class() != .success) return error.HttpStatus;
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
-    var transfer_buffer: [64]u8 = undefined;
-    const reader = resp.reader(&transfer_buffer);
-    _ = reader.streamRemaining(&out.writer) catch return error.HttpStatus;
-    return arena.dupe(u8, out.written());
+    return http_client.fetch(io, gpa, arena, method, url, body, http_client.default_timeout_ms) catch |err| switch (err) {
+        error.HttpStatus => return error.HttpStatus,
+        else => return error.HttpStatus,
+    };
 }
 
 fn ownerId(cfg: *const config_mod.Config) []const u8 {
