@@ -9785,6 +9785,37 @@ fn isWebuiRead(method: []const u8) bool {
 var webui_asset_tag_buf: [8]u8 = undefined;
 var webui_asset_tag_state: std.atomic.Value(enum(u8) { idle, ready, failed }) = .init(.idle);
 
+/// Every vendored file the page can fetch, paired with its embedded bytes.
+///
+/// The cache-bust tag is the *whole* vendor set, not just the two files the
+/// page's head names: the import map (`webuiImportMapJson`) routes preact, htm
+/// and signals to tagged URLs, and `loadVendor` resolves the lazy libs
+/// (d3-dag, hljs, mermaid, three) against the calling module's `import.meta.url`,
+/// which is itself tagged. All of those are served `immutable, max-age=
+/// 31536000` under the tag, so a tag that hashed only wasm + patternfly +
+/// preact left a vendored upgrade of any other file with the old URL unchanged:
+/// a returning browser kept the stale bytes for up to a year, unvalidated. A
+/// vendor file changing must change the tag, and then the old URL is simply
+/// unreachable — `normalizePath` serves the live bytes under any well-formed
+/// tag, and the served HTML always carries the current one.
+///
+/// `webui_assets.vendor_files` is the route list (what the server will answer);
+/// this tuple is the hash list (what a change to those bytes must bust). A test
+/// below pins the two to the same set, so adding a vendored file to one list
+/// without the other fails the build instead of shipping a stale-cache hole.
+const vendor_tag_files = .{
+    .{ "preact.module.js", webui_vendor_preact },
+    .{ "htm.module.js", webui_vendor_htm },
+    .{ "signals-core.module.js", webui_vendor_signals },
+    .{ "d3-dag.min.js", webui_vendor_d3dag },
+    .{ "hljs.min.js", webui_vendor_hljs },
+    .{ "mermaid.min.js", webui_vendor_mermaid },
+    .{ "three.module.min.js", webui_vendor_three },
+    .{ "three.core.min.js", webui_vendor_three_core },
+    .{ "patternfly.min.css", webui_vendor_patternfly },
+    .{ "patternfly-addons.css", webui_vendor_patternfly_addons },
+};
+
 fn webuiAssetTag(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -9811,9 +9842,13 @@ fn webuiAssetTag(
         return null;
     };
     defer gpa.free(wasm_bytes);
-    const mixed = std.hash.Crc32.hash(wasm_bytes) ^
-        std.hash.Crc32.hash(webui_vendor_patternfly) ^
-        std.hash.Crc32.hash(webui_vendor_preact);
+    // XOR of per-file crc32s: not a content hash in any cryptographic sense,
+    // but a change to any covered byte flips the tag with certainty, which is
+    // all the cache key needs.
+    var mixed = std.hash.Crc32.hash(wasm_bytes);
+    inline for (vendor_tag_files) |entry| {
+        mixed ^= std.hash.Crc32.hash(entry[1]);
+    }
     const printed = std.fmt.bufPrint(&webui_asset_tag_buf, "{x:0>8}", .{mixed}) catch {
         _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
         return null;
@@ -15467,10 +15502,17 @@ fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, acce
 /// gzipped when the client asks, they are the two largest bodies this server
 /// sends, and the page is routinely opened from another machine on the LAN.
 ///
-/// Cached for an hour and revalidated by ETag after that, rather than the
-/// `immutable, max-age=31536000` this used to send: that path is not content-
-/// hashed, so a vendored library upgrade would have left a returning browser
-/// serving the old file, unvalidated, for up to a year.
+/// The cache lifetime depends on the URL, not the asset: every fetch the
+/// shipped page makes goes through the cache-bust tag (the import map for
+/// preact/htm/signals, `loadVendor`'s `import.meta.url` resolution for the
+/// rest), and `webuiAssetCacheControl` answers those with
+/// `immutable, max-age=31536000` — safe because `webuiAssetTag` hashes every
+/// vendored file into the tag, so a library upgrade changes the URL and the
+/// old entry is unreachable. An *untagged* request (bookmark, curl, a browser
+/// that never got the rewritten page) gets `max-age=3600, must-revalidate`
+/// instead: it is not content-hashed, so revalidation after an hour is what
+/// stops a vendored library upgrade from leaving that browser serving the old
+/// file for up to a year.
 fn respondJs(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, cache: *GzipCache, accepts_gzip: bool, headers_raw: []const u8) void {
     respondStatic(gpa, stream, body, cache, "text/javascript; charset=utf-8", accepts_gzip, headers_raw);
 }
@@ -18227,6 +18269,28 @@ test "webui import map keys do not match an already-tagged URL" {
     // A tagged module URL must not be a prefix hit for any key.
     try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/core/utils.js", "/webui/core/"));
     try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/app.js", "/webui/app.js"));
+}
+
+test "the cache-bust tag hashes every servable vendor file" {
+    // The tag is the cache key for `immutable, max-age=31536000` on every
+    // /webui/~<tag>/ response, and the import map plus `loadVendor`'s
+    // import.meta.url resolution send every vendored file — the lazy d3/hljs/
+    // mermaid/three included — to tagged URLs. A vendored file the tag does
+    // not hash can change on disk while its URL stays the same, and returning
+    // browsers then serve the old bytes for up to a year, unvalidated (the
+    // hole the untagged max-age=3600 fallback exists to close). `vendor_tag_files`
+    // must therefore name exactly the files the routes serve.
+    try std.testing.expectEqual(webui_vendor_files.len, vendor_tag_files.len);
+    var covered: usize = 0;
+    for (webui_vendor_files) |name| {
+        inline for (vendor_tag_files) |entry| {
+            if (std.mem.eql(u8, name, entry[0])) {
+                covered += 1;
+                break;
+            }
+        }
+    }
+    try std.testing.expectEqual(webui_vendor_files.len, covered);
 }
 
 test "no webui module file exists that the asset route has never heard of" {
