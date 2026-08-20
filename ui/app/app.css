@@ -1224,9 +1224,9 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
    labeled pill so the control still names the action while a turn runs. */
 .composer .toolbar #cancel {
   display: inline-flex; align-items: center; justify-content: center;
-  gap: 0.35rem; min-height: 36px; padding-inline: 1rem; border-radius: var(--radius-pill);
+  gap: var(--space-1); min-height: 36px; padding-inline: 1rem; border-radius: var(--radius-pill);
 }
-.composer .toolbar #submit { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; }
+.composer .toolbar #submit { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
 .composer .toolbar #submit svg,
 .composer .toolbar #cancel svg { display: block; }
 /* The author display above beats the UA [hidden] rule (same trap as
