@@ -1553,7 +1553,7 @@ h2 {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-}.run-row:last-child { border-bottom: 0; }.run-row:hover { background: var(--accent-dim); }.run-row.is-selected { background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }.run-row.is-nested { padding-left: calc(var(--space-3) + 1rem); }.run-row-top { display: flex; align-items: baseline; gap: var(--space-3); }.run-row-task {
+}.run-row:last-child { border-bottom: 0; }.run-row:hover { background: var(--accent-dim); }.run-row.is-selected { background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }.run-row.is-nested { padding-left: calc(var(--space-3) + 1rem); }.run-row-top { display: flex; align-items: center; gap: var(--space-3); }.run-row-task {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }.run-row-when { flex: 0 0 auto; font-size: var(--step-0); color: var(--fg-muted); }.run-row-meta {
