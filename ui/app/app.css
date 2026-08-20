@@ -412,7 +412,7 @@ body {
 }
 @media (max-width: 40rem) {
   #app-masthead.pf-v6-c-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
-  #app-masthead .pf-v6-c-masthead__content { gap: 0.35rem 0.45rem; flex-wrap: nowrap; }
+  #app-masthead .pf-v6-c-masthead__content { gap: var(--space-1) var(--space-2); flex-wrap: nowrap; }
   /* Phone chrome is Menu, model, Jump, theme. Lamps and help live in
      System / the palette so they cannot wrap and clip here. */
   #instance-chip, #peers-chip, #session-chip, #help-open { display: none; }
@@ -1828,7 +1828,7 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
 }
 .palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .palette-hint { margin: var(--space-3) 0 0; color: var(--fg-muted); font-size: var(--step-0); }
-.shortcuts { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; margin: 0; font-size: var(--step-0); }
+.shortcuts { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-3); margin: 0; font-size: var(--step-0); }
 .shortcuts dt { font-family: var(--sans); font-weight: 600; color: var(--fg); white-space: nowrap; }
 .shortcuts dd { margin: 0; color: var(--fg-muted); }
 
