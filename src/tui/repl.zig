@@ -518,6 +518,9 @@ fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
     const started = std.Io.Timestamp.now(self.io, .awake);
     const resp = loop_ctx.agent.run(&self.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
     const answer = resp.message.content orelse "";
+    // Goal-loop turns build their own agent; capture its prompt so the save
+    // after the loop records what the evaluator's target actually saw.
+    self.session_system_prompt = loop_ctx.agent.system_prompt_text;
     self.finishTurn(answer, self.turnStats(loop_ctx.agent, started, self.messages.items));
     return answer;
 }
@@ -600,6 +603,10 @@ fn runThreadMain(args: RunThreadArgs) void {
     }
     a.research_mode = self.research_mode;
     if (args.pending_images) |imgs| a.pending_images = imgs;
+    // Capture what the model will see so persistSession can record it: the
+    // system prompt, preset persona included. Arena-owned (the agent borrows
+    // self.arena), so the slice stays valid for the Model's lifetime.
+    self.session_system_prompt = a.system_prompt_text;
 
     if (args.goal_condition) |condition| {
         var goal_ctx = TuiGoalLoopContext{ .model = self, .agent = &a, .condition = condition };
@@ -2408,6 +2415,10 @@ const Model = struct {
     /// First task of the conversation, trimmed, the line `clanker sessions`
     /// shows. Kept from a loaded session; set once on the first submit.
     session_title: []const u8 = "",
+    /// The system prompt the agent last built (with the preset persona
+    /// appended), captured after each turn so `persistSession` can record
+    /// what the model actually saw. Arena-owned, same lifetime as the Model.
+    session_system_prompt: ?[]const u8 = null,
 
     lines: std.ArrayList(Line) = .empty,
     /// Foldable replies (see `Fold`), sorted by `.start` (creation order).
@@ -2873,6 +2884,7 @@ const Model = struct {
             .messages = self.messages.items,
             .created = self.session_created,
             .updated = updated,
+            .system_prompt = self.session_system_prompt,
         }) catch |err| {
             log.log(.error_, "session '{s}' save failed: {s}", .{ sid, @errorName(err) });
         };
@@ -3900,6 +3912,7 @@ const Model = struct {
             .messages = transcript.items,
             .created = if (self.session_created != 0) self.session_created else updated,
             .updated = updated,
+            .system_prompt = self.session_system_prompt,
         }) catch |err| {
             log.log(.error_, "repl: session '{s}' not saved: {s}", .{ id, @errorName(err) });
             return;
@@ -8226,6 +8239,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     var session_created: i64 = now_s;
     var session_title: []const u8 = "";
     var loaded_messages: []const types.Message = &.{};
+    var loaded_system_prompt: ?[]const u8 = null;
     if (session_id) |sid| {
         const maybe_s: ?session_mod.Session = session_mod.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
             error.FileNotFound => null,
@@ -8235,6 +8249,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
             session_created = s.created;
             session_title = s.title;
             loaded_messages = s.messages;
+            loaded_system_prompt = s.system_prompt;
         }
     }
 
@@ -8263,6 +8278,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         .session_id = session_id,
         .session_created = session_created,
         .session_title = session_title,
+        .session_system_prompt = loaded_system_prompt,
         .theme_override = opts.theme,
     };
     // The easter egg. `--mascot` beats `tui.mascot`; both off is the default

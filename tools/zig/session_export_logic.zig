@@ -45,6 +45,10 @@ pub const Session = struct {
     updated: i64 = 0,
     workspace: []const u8 = "",
     archived: bool = false,
+    /// The system prompt snapshot the session records (see
+    /// src/agent/session.zig). Rendered as its own section so an exported
+    /// transcript shows what the model saw, not just the visible chat.
+    system_prompt: ?[]const u8 = null,
     messages: []const Message = &.{},
 };
 
@@ -191,6 +195,19 @@ pub fn render(gpa: std.mem.Allocator, s: Session) ![]u8 {
     }
     if (s.archived) try w.writeAll("<dt>State</dt><dd>archived</dd>\n");
     try w.writeAll("</dl>\n");
+
+    // The system prompt is the largest thing the model saw that the visible
+    // chat omits; render it before the transcript so the export reads top-down
+    // as what the model was told, then what it did. Same escaping and same
+    // <pre> treatment as a message body: it is harness-owned text, but it
+    // embeds untrusted learned context, so it is not markup.
+    if (s.system_prompt) |sp| {
+        if (sp.len > 0) {
+            try w.writeAll("<section class=\"msg system\">\n<h2>System prompt</h2>\n<pre>");
+            try escape(w, sp);
+            try w.writeAll("</pre>\n</section>\n");
+        }
+    }
 
     if (s.messages.len == 0) {
         try w.writeAll("<p class=\"empty\">This conversation has no messages.</p>\n");

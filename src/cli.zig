@@ -4351,6 +4351,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             .messages = messages.items,
             .created = created,
             .updated = updated,
+            .system_prompt = a.system_prompt_text,
         });
     }
 }
@@ -15261,6 +15262,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .messages = messages.items,
                 .created = created,
                 .updated = updated,
+                .system_prompt = a.system_prompt_text,
             }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
         }
         const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
@@ -15342,6 +15344,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .messages = messages.items,
             .created = created,
             .updated = updated,
+            .system_prompt = a.system_prompt_text,
         }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
     }
 

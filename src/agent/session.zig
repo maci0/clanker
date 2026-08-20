@@ -22,6 +22,12 @@ pub const Session = struct {
     /// Whether this chat is archived / hidden from the default listing.
     /// False absences still decode as false, so pre-archive sessions need no migration.
     archived: bool = false,
+    /// The system prompt (and the context built from it) the model was
+    /// actually running against when this session was last saved. DSH-style
+    /// traceability: the saved transcript is what the *model saw*, and the
+    /// system prompt is the biggest part of that that the visible chat omits.
+    /// Null on sessions written before this field existed.
+    system_prompt: ?[]const u8 = null,
 };
 
 const store_dir = "state/sessions";
@@ -74,6 +80,13 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     if (session.archived) {
         try s.objectField("archived");
         try s.write(true);
+    }
+    // The system prompt snapshot: what the model saw beyond the visible chat.
+    // Written as one field, sanitized like every other untrusted text, so a
+    // reader (listings included) can skip it when it only needs the header.
+    if (session.system_prompt) |sp| {
+        try s.objectField("system_prompt");
+        try s.write(try utf8.sanitize(arena, sp));
     }
     // Listing fields sit in front of the transcript so a picker can score a
     // row from the first few kilobytes. Without them every GET /api/sessions
@@ -177,6 +190,7 @@ pub const StoredSession = struct {
     updated: i64,
     workspace: []const u8 = "",
     archived: bool = false,
+    system_prompt: ?[]const u8 = null,
     messages: []const StoredMessage = &.{},
 };
 
@@ -220,6 +234,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         .updated = stored.updated,
         .workspace = stored.workspace,
         .archived = stored.archived,
+        .system_prompt = stored.system_prompt,
         .messages = try messages.toOwnedSlice(arena),
     };
 }
