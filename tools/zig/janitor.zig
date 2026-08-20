@@ -410,7 +410,20 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             continue;
         }
         switch (c.kind) {
-            .staging => lib.fsDeleteTree(a, c.path),
+            .staging => {
+                lib.fsDeleteTree(a, c.path);
+                // fsDeleteTree is best-effort against a truncating ck_fs_list
+                // page, so a large staging tree can survive its own deletion
+                // (docs/reports/bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md).
+                // Re-stat before crediting the bytes: a directory that is still
+                // there is a failure, not a reclaim. NotFound is the expected
+                // result of a real removal; any other stat outcome is treated
+                // conservatively as a survivor.
+                if (lib.fsStat(c.path)) |_| {
+                    failed += 1;
+                    continue;
+                } else |_| {}
+            },
             .run, .improve_log, .cas_lock, .spill => lib.fsDelete(c.path) catch {
                 failed += 1;
                 continue;
