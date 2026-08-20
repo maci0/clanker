@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve-self session_search capability eval failed with session:true not granted, stopping the batch](bugs/2026-08-21-session-eval-session-grant.md) — Resolved
+
 - [janitor reports removing orphaned staging dirs but large ones survive](bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md) — Open
 
 - [lsp capability eval fails on large files, blocking every improve-self promotion](bugs/2026-08-20-lsp-eval-blocks-improve-self.md) — Resolved

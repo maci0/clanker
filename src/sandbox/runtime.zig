@@ -1133,6 +1133,22 @@ test "sessions and graph report empty when the state dir does not exist" {
         try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
         try std.testing.expect(std.mem.find(u8, out, c.want) != null);
     }
+
+    // The capability eval's assertion path: session_search with a query must
+    // return ok:true and a hits array when the grant is present. This is the
+    // exact shape the improve capability gate checks; pinning it here keeps a
+    // guest-side break from silently failing every improve batch through the
+    // expensive LLM-backed eval instead of this cheap unit test.
+    {
+        const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/sessions.wasm", std.testing.allocator, .limited(1 << 20));
+        defer std.testing.allocator.free(wasm);
+        const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+        defer mod.deinit();
+        const out = try mod.executeTool("{\"q\":\"the\"}");
+        defer std.testing.allocator.free(out);
+        try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+        try std.testing.expect(std.mem.find(u8, out, "\"hits\":[") != null);
+    }
 }
 
 test "roadmap wasm tool lists planned items from the real bullet format" {

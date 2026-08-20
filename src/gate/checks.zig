@@ -388,6 +388,21 @@ pub fn toolDescriptorGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, t
                 };
             };
         }
+
+        // A session tool that loses `"session": true` stops every session
+        // capability eval from running: ck_session denies, the guest returns a
+        // hard error, the eval scores 0. Because the improve capability gate
+        // runs the evals after the cheap build/tools/test gates, a dropped
+        // grant wasted a whole batch (every proposal rejected on a grant the
+        // proposal never touched) before it was traced back to the manifest.
+        // Pin it here, at cheap manifest inspection, so a regression is caught
+        // before any LLM-backed eval runs.
+        if (name.len > 0 and std.mem.startsWith(u8, name, "session_")) {
+            const grants_session = if (obj.get("session")) |sv| sv == .bool and sv.bool else false;
+            if (!grants_session) {
+                try problems.append(gpa, try std.fmt.allocPrint(arena, "{s} reads the session store through ck_session, which requires session: true in the descriptor", .{entry.name}));
+            }
+        }
     }
 
     if (problems.items.len > 0) {
@@ -493,6 +508,39 @@ test "toolDescriptorGate refuses an llm grant with no room to reason" {
 
     // A budget on a descriptor with no llm grant is some other tool's setting.
     try tmp.dir.writeFile(io, .{ .sub_path = "manifests/t.tool.json", .data = "{\"name\":\"t\",\"wasm\":\"zig-out/tools/good.wasm\",\"config\":{\"max_tokens\":8}}" });
+    const unrelated = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    try std.testing.expect(unrelated.ok);
+}
+
+test "toolDescriptorGate requires session tools to grant session" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "manifests");
+    try tmp.dir.createDirPath(io, "zig-out/tools");
+    try tmp.dir.writeFile(io, .{ .sub_path = "zig-out/tools/good.wasm", .data = "{}" });
+
+    // A session tool without the grant is refused: ck_session denies, the
+    // guest hard-fails, and every session capability eval scores 0, which the
+    // improve loop reads as a broken proposal even when the patch never
+    // touched sessions.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/session_search.tool.json", .data = "{\"name\":\"session_search\",\"wasm\":\"zig-out/tools/good.wasm\"}" });
+    var bad = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    defer bad.deinit(gpa);
+    try std.testing.expect(!bad.ok);
+    try std.testing.expect(std.mem.find(u8, bad.detail, "requires session") != null);
+
+    // With the grant it passes.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/session_search.tool.json", .data = "{\"name\":\"session_search\",\"wasm\":\"zig-out/tools/good.wasm\",\"session\":true}" });
+    const ok = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
+    try std.testing.expect(ok.ok);
+
+    // A non-session tool is not forced to declare the grant.
+    try tmp.dir.writeFile(io, .{ .sub_path = "manifests/other.tool.json", .data = "{\"name\":\"other\",\"wasm\":\"zig-out/tools/good.wasm\"}" });
     const unrelated = try toolDescriptorGate(gpa, io, tmp.dir, "manifests");
     try std.testing.expect(unrelated.ok);
 }
