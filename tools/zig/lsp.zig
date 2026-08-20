@@ -247,8 +247,10 @@ fn collectSymbols(alloc: std.mem.Allocator, stdout: []const u8, out: *std.ArrayL
 }
 
 fn parseUint(s: []const u8) usize {
+    var i: usize = 0;
+    while (i < s.len and (s[i] == ' ' or s[i] == '\t')) i += 1;
     var n: usize = 0;
-    for (s) |c| {
+    for (s[i..]) |c| {
         if (c < '0' or c > '9') break;
         n = n *| 10 +| (c - '0');
     }
