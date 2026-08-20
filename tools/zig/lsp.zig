@@ -34,8 +34,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         "textDocument/definition"
     else if (std.mem.eql(u8, action, "references"))
         "textDocument/references"
+    else if (std.mem.eql(u8, action, "diagnose"))
+        "textDocument/documentSymbol"
     else
-        return lib.fail(out, "action must be \"definition\" or \"references\"");
+        return lib.fail(out, "action must be \"definition\", \"references\", or \"diagnose\"");
 
     const file = str(parsed.object, "file") orelse return lib.fail(out, "missing required field: file");
     const line = uint(parsed.object, "line") orelse return lib.fail(out, "missing required field: line (0-based)");
@@ -71,6 +73,32 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         break :blk if (v == .string) v.string else "";
     } else "";
     if (stdout.len == 0) return lib.fail(out, "zls produced no output; is it the right version for this Zig?");
+
+    if (std.mem.eql(u8, action, "diagnose")) {
+        var symbols: std.ArrayList([]const u8) = .empty;
+        defer symbols.deinit(alloc);
+        try collectSymbols(alloc, stdout, &symbols);
+
+        var buf: [16384]u8 = undefined;
+        var w: std.Io.Writer = .fixed(&buf);
+        var s = std.json.Stringify{ .writer = &w, .options = .{} };
+        try s.beginObject();
+        try s.objectField("ok");
+        try s.write(true);
+        try s.objectField("action");
+        try s.write(action);
+        try s.objectField("symbols");
+        try s.beginArray();
+        for (symbols.items) |sym| try s.write(sym);
+        try s.endArray();
+        if (symbols.items.len == 0) {
+            try s.objectField("note");
+            try s.write("zls returned no symbols; the file may be empty or zls could not parse it");
+        }
+        try s.endObject();
+        try out.writeAll(buf[0..w.end]);
+        return;
+    }
 
     var locations: std.ArrayList([]const u8) = .empty;
     defer locations.deinit(alloc);
@@ -190,6 +218,24 @@ fn collectLocations(alloc: std.mem.Allocator, stdout: []const u8, out: *std.Arra
         const character = parseUint(rest[char_at + char_key.len ..]);
 
         const entry = try std.fmt.allocPrint(alloc, "{s}:{d}:{d}", .{ path, line + 1, character + 1 });
+        try out.append(alloc, entry);
+        if (out.items.len >= 50) break;
+    }
+}
+
+/// Extracts symbol names and their start lines from a documentSymbol response.
+fn collectSymbols(alloc: std.mem.Allocator, stdout: []const u8, out: *std.ArrayList([]const u8)) !void {
+    var rest = stdout;
+    while (std.mem.find(u8, rest, "\"name\":\"")) |at| {
+        rest = rest[at + "\"name\":\"".len ..];
+        const name_end = std.mem.findScalar(u8, rest, '"') orelse break;
+        const name = rest[0..name_end];
+
+        const line_key = "\"line\":";
+        const line_at = std.mem.find(u8, rest, line_key) orelse break;
+        const start_line = parseUint(rest[line_at + line_key.len ..]);
+
+        const entry = try std.fmt.allocPrint(alloc, "{s}:{d}", .{ name, start_line + 1 });
         try out.append(alloc, entry);
         if (out.items.len >= 50) break;
     }
