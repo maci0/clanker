@@ -87,9 +87,9 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     try common.out(io, try renderSearch(
         arena,
         query,
-        common.arrayField(result, "adrs"),
-        common.arrayField(result, "rfcs"),
-        common.arrayField(result, "prds"),
+        try common.sortedMatches(arena, common.arrayField(result, "adrs")),
+        try common.sortedMatches(arena, common.arrayField(result, "rfcs")),
+        try common.sortedMatches(arena, common.arrayField(result, "prds")),
     ));
 }
 

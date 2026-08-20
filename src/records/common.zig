@@ -465,6 +465,32 @@ pub fn renderStatusRows(
     }
 }
 
+/// Sort predicate over search matches: by their `file` field, then by
+/// `line`, so a record's hits render as one contiguous group whatever order
+/// the tool's grep walked the store in.
+pub fn matchBefore(_: void, a: std.json.Value, b: std.json.Value) bool {
+    const fa = if (a == .object) json_util.strFieldOrEmpty(a.object, "file") else "";
+    const fb = if (b == .object) json_util.strFieldOrEmpty(b.object, "file") else "";
+    switch (std.mem.order(u8, fa, fb)) {
+        .lt => return true,
+        .gt => return false,
+        .eq => {},
+    }
+    return unsignedField(a, "line") < unsignedField(b, "line");
+}
+
+/// A copy of a tool's match array sorted by file then line. `renderMatchRows`
+/// groups on "the file changed", so an unsorted array splits one record's
+/// hits into several groups and restarts the per-file line cap each time the
+/// file reappears — a fragmented record could print every hit while another
+/// was capped. Sorting before rendering is the fix; the tool keeps whatever
+/// order it likes.
+pub fn sortedMatches(arena: std.mem.Allocator, matches: []const std.json.Value) ![]const std.json.Value {
+    const sorted = try arena.dupe(std.json.Value, matches);
+    std.mem.sort(std.json.Value, sorted, {}, matchBefore);
+    return sorted;
+}
+
 /// Title transform for a store whose titles carry no number of their own.
 pub fn titleAsIs(title: []const u8) []const u8 {
     return title;
@@ -569,6 +595,37 @@ test "renderMatchRows caps one file and says how many it refused" {
     // The rows past the cap are the ones dropped, not the rows before it.
     try testing.expect(std.mem.indexOf(u8, rendered, "   50  hit") != null);
     try testing.expect(std.mem.indexOf(u8, rendered, "   51  hit") == null);
+}
+
+test "sortedMatches orders by file then line so a record's hits stay one group" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Interleaved the way an unsorted grep answer arrives: each file appears
+    // twice, and one file's lines are out of order.
+    const input = try parseValue(arena,
+        \\[{"file":"docs/b.md","line":7,"text":"x"},
+        \\ {"file":"docs/a.md","line":40,"text":"x"},
+        \\ {"file":"docs/a.md","line":12,"text":"x"},
+        \\ {"file":"docs/b.md","line":3,"text":"x"}]
+    );
+    const sorted = try sortedMatches(arena, input.array.items);
+    try testing.expectEqualStrings("docs/a.md", json_util.strFieldOrEmpty(sorted[0].object, "file"));
+    try testing.expectEqual(@as(u64, 12), unsignedField(sorted[0], "line"));
+    try testing.expectEqual(@as(u64, 40), unsignedField(sorted[1], "line"));
+    try testing.expectEqualStrings("docs/b.md", json_util.strFieldOrEmpty(sorted[2].object, "file"));
+    try testing.expectEqual(@as(u64, 3), unsignedField(sorted[2], "line"));
+    try testing.expectEqual(@as(u64, 7), unsignedField(sorted[3], "line"));
+
+    // Rendering the sorted array names each file exactly once: no fragmented
+    // group, no restarted per-file counter.
+    var w: std.Io.Writer.Allocating = .init(arena);
+    try renderMatchRows(&w.writer, sorted);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, w.written(), "docs/a.md"));
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, w.written(), "docs/b.md"));
+    // The input itself is left untouched.
+    try testing.expectEqualStrings("docs/b.md", json_util.strFieldOrEmpty(input.array.items[0].object, "file"));
 }
 
 test "renderMatchGroup prints nothing for an empty group" {

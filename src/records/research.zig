@@ -96,7 +96,7 @@ fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ .name = "query", .value = .{ .text = query } },
     });
     const result = try common.callTool(arena, "research", tool, input);
-    return renderSearch(arena, query, common.arrayField(result, "matches"));
+    return renderSearch(arena, query, try common.sortedMatches(arena, common.arrayField(result, "matches")));
 }
 
 fn open(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
