@@ -479,6 +479,12 @@ pattern = "no member named"
 inject = "That symbol does not exist on the referenced type. Verify the exact field or method name against the declaration, check for a missing import, and correct the reference before retrying."
 max_fires = 1
 
+[[ttsr.rules]]
+name = "provider-rate-limit"
+pattern = "rate limit"
+inject = "The provider is applying rate limits. Reduce request frequency or wait before retrying; if another model is available, switch to it."
+max_fires = 2
+
 # Persistent eval kernels: a long-lived subprocess an eval can talk to instead
 # of paying process startup per case. Off by default and worth leaving off
 # unless you need it -- a kernel is unsandboxed, with the host's own ambient
