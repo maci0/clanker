@@ -3291,7 +3291,7 @@ h2#session-title {
   .card:hover { transform: none; box-shadow: var(--lift); }
   .card[data-dragging="true"] { transform: none; }
 }
-@media (max-width: 900px) {
+@media (max-width: 56.25rem) {
   #view-fleet .runs { margin-top: var(--space-4); }
   .fleet-card { flex-direction: column; align-items: flex-start; }
   .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }

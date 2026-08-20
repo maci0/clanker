@@ -1485,7 +1485,7 @@ button.tool-name:hover { color: var(--accent-text); }
   .mesh-node--working .mesh-node-halo { animation: none; opacity: 0.35; }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 45rem) {
   .mesh-map, .mesh-map svg { min-height: 16rem; height: 16rem; }
 }
 
