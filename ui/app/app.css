@@ -594,7 +594,7 @@ main.pf-v6-c-page__main {
    Everything used to be stacked in one column, so reaching Tools meant
    scrolling past the whole transcript, the run graph and every room. */
 .rail-nav,
-.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: visible; }
+.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: clip; }
 .pf-v6-c-nav.rail-nav .pf-v6-c-nav__list { list-style: none; margin: 0; padding: 0; }
 .pf-v6-c-nav.rail-nav .pf-v6-c-nav__item { margin: 0; }
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the
