@@ -62,7 +62,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "set_enabled")) return doSetEnabled(req, out);
     if (std.mem.eql(u8, action, "add")) return doAdd(req, out);
     if (std.mem.eql(u8, action, "remove")) return doRemove(req, out);
-    return lib.fail(out, "action must be list, set_enabled, add, or remove");
+    if (std.mem.eql(u8, action, "update")) return doUpdate(req, out);
+    return lib.fail(out, "action must be list, set_enabled, add, remove, or update");
 }
 
 fn doList(out: *lib.Out, enabled_filter: ?bool) !void {
@@ -150,6 +151,60 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
         }
         const entry_val = removed_entry orelse return lib.fail(out, "no such entry");
         if (try store(loaded)) return writeOne(out, entry_val);
+    }
+    return lib.fail(out, "schedule file kept changing underneath; try again");
+}
+
+/// Modify fields of an existing entry without losing its identity (id,
+/// created timestamp, run/failure counters). At least one mutable field must
+/// be supplied; omitted fields are left untouched.
+fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
+    const id = lib.optStr(req, "id") orelse return lib.fail(out, "update needs an id");
+    if (!logic.validId(id)) return lib.fail(out, "bad entry id");
+
+    const has_cron = req.object.get("cron") != null;
+    const has_task = req.object.get("task") != null;
+    const has_provider = req.object.get("provider") != null;
+    const has_model = req.object.get("model") != null;
+    const has_tz = req.object.get("tz_offset_minutes") != null;
+    if (!has_cron and !has_task and !has_provider and !has_model and !has_tz)
+        return lib.fail(out, "update needs at least one of: cron, task, provider, model, tz_offset_minutes");
+
+    // Resolve the effective tz before validating the cron so firstFire sees
+    // the correct offset.
+    var new_tz: i32 = 0;
+    if (has_tz) {
+        const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse return lib.fail(out, "tz_offset_minutes must be numeric");
+        new_tz = @trunc(n_f);
+    }
+
+    var cron_text: []const u8 = "";
+    if (has_cron) {
+        cron_text = lib.optStr(req, "cron") orelse return lib.fail(out, "cron must be a string");
+        const now: i64 = @trunc(lib.nowSeconds());
+        if (logic.firstFire(cron_text, now, new_tz) == null)
+            return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
+    }
+
+    var task_val: []const u8 = "";
+    if (has_task) {
+        const raw = lib.optStr(req, "task") orelse return lib.fail(out, "task must be a string");
+        task_val = logic.validateTask(raw) catch |err| return lib.fail(out, switch (err) {
+            error.TaskEmpty => "the task is empty",
+            error.TaskTooLong => "the task is too long to schedule",
+        });
+    }
+
+    var attempt: u32 = 0;
+    while (attempt < 3) : (attempt += 1) {
+        var loaded = try load();
+        const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
+        if (has_cron) e.cron = cron_text;
+        if (has_task) e.task = task_val;
+        if (has_provider) e.provider = lib.optStr(req, "provider");
+        if (has_model) e.model = lib.optStr(req, "model");
+        if (has_tz) e.tz_offset_minutes = new_tz;
+        if (try store(loaded)) return writeOne(out, e.*);
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
