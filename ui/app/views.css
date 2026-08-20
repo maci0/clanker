@@ -691,7 +691,7 @@
 
 /* ── Typing indicator ── */
 .slack-typing-indicator {
-  padding: 0.15rem 1rem; font-size: var(--step--1); color: var(--fg-muted);
+  padding: var(--space-1) 1rem; font-size: var(--step--1); color: var(--fg-muted);
   min-height: 1.25rem; flex-shrink: 0;
 }
 
