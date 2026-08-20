@@ -44,6 +44,11 @@ pub fn validateTask(task: []const u8) TaskError![]const u8 {
     return trimmed;
 }
 
+/// Timezone offsets are whole minutes from UTC; ±1440 covers every real zone.
+pub fn validTzOffset(minutes: i32) bool {
+    return minutes >= -1440 and minutes <= 1440;
+}
+
 /// The next free `sch-N`. Sequential, never reused, so a removed id keeps
 /// meaning the job the ledger already recorded.
 pub fn nextId(arena: std.mem.Allocator, ids: []const []const u8) ![]const u8 {

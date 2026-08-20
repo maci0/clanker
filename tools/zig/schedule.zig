@@ -108,6 +108,8 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
         break :blk @trunc(n_f);
     };
+    if (!logic.validTzOffset(tz))
+        return lib.fail(out, "tz_offset_minutes out of range (-1440..+1440)");
     const now: i64 = @trunc(lib.nowSeconds());
     if (logic.firstFire(cron_text, now, tz) == null)
         return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
@@ -176,6 +178,8 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
     if (has_tz) {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse return lib.fail(out, "tz_offset_minutes must be numeric");
         new_tz = @trunc(n_f);
+        if (!logic.validTzOffset(new_tz))
+            return lib.fail(out, "tz_offset_minutes out of range (-1440..+1440)");
     }
 
     var cron_text: []const u8 = "";
