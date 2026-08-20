@@ -4,11 +4,11 @@
 
 - **What failed:** Two improve-self commits broke `zig build`: d8cbf2da/cb2c95e0 ("Hoist stdout File handle...") deleted the `stdout_file`/`out_buf` declarations in `serve()` without re-adding them, and ce3af5c1/faa57166 ("Store the validated cwd...") changed the `sessions` map value type to `[]const u8` while leaving `handleSessionNew` calling `sessions.put(alloc, owned, {})` with a `void` value. Restored the declarations and made the map store an owned copy of cwd. Verified build/test/tools/fmt green.
 - **Impact:** To be confirmed.
-- **Resolution:** Reopened on 2026-08-20. Reopened: the operator's parallel fix merge (7e218e41) reintroduced the duplicates (sessions member, deinit loop, owned_cwd, stdout_file/out_buf), breaking zig build again.
+- **Resolution:** Resolved on 2026-08-20. Resolved: removed the duplicate declarations (sessions member, deinit loop, owned_cwd, stdout_file/out_buf) reintroduced by the bad parallel-fix merge 7e218e41; verified with clanker gate build/tools/test/fmt green and merged to main via PR #288.
 
 ## Status
 
-Reopened on 2026-08-20. Reopened: the operator's parallel fix merge (7e218e41) reintroduced the duplicates (sessions member, deinit loop, owned_cwd, stdout_file/out_buf), breaking zig build again.
+Resolved on 2026-08-20. Resolved: removed the duplicate declarations (sessions member, deinit loop, owned_cwd, stdout_file/out_buf) reintroduced by the bad parallel-fix merge 7e218e41; verified with clanker gate build/tools/test/fmt green and merged to main via PR #288.
 
 ## Symptom and impact
 
