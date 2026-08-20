@@ -81,13 +81,6 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         try s.objectField("archived");
         try s.write(true);
     }
-    // The system prompt snapshot: what the model saw beyond the visible chat.
-    // Written as one field, sanitized like every other untrusted text, so a
-    // reader (listings included) can skip it when it only needs the header.
-    if (session.system_prompt) |sp| {
-        try s.objectField("system_prompt");
-        try s.write(try utf8.sanitize(arena, sp));
-    }
     // Listing fields sit in front of the transcript so a picker can score a
     // row from the first few kilobytes. Without them every GET /api/sessions
     // parsed every message of every conversation (each file up to 16 MiB).
@@ -150,6 +143,15 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         try s.endObject();
     }
     try s.endArray();
+    // The system prompt snapshot: what the model saw beyond the visible chat.
+    // Written AFTER the transcript on purpose: the listing prefix parser reads
+    // only the first 4096 bytes to score a row, and a long system prompt must
+    // not push message_count/bytes out of that window. Loaded with
+    // ignore_unknown_fields, so old sessions decode unchanged.
+    if (session.system_prompt) |sp| {
+        try s.objectField("system_prompt");
+        try s.write(try utf8.sanitize(arena, sp));
+    }
     try s.endObject();
 
     const path = try std.fmt.allocPrint(gpa, "{s}/{s}.json", .{ store_dir, session.id });
@@ -1060,6 +1062,42 @@ test "a saved session round-trips its image attachments, including through a for
         if (!std.mem.eql(u8, m.id, "vision")) continue;
         try std.testing.expectEqual(transcriptBytes(&messages), m.bytes);
     }
+}
+
+test "a long system prompt round-trips and does not break the listing prefix" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    // A built system prompt (skills + learnings + injected context) is far
+    // larger than the 4096-byte listing header window; the field must sit
+    // after the transcript so message_count/bytes stay scannable.
+    var prompt_buf: std.ArrayList(u8) = .empty;
+    for (0..2000) |_| try prompt_buf.appendSlice(arena, "prompt ");
+    const big_prompt = prompt_buf.items;
+    const messages = [_]types.Message{.{ .role = .user, .content = "hello" }};
+    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
+        .id = "bigprompt",
+        .title = "big",
+        .messages = &messages,
+        .created = 1,
+        .updated = 1,
+        .system_prompt = big_prompt,
+    });
+
+    // The field round-trips through load.
+    const loaded = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, "bigprompt");
+    try std.testing.expectEqualStrings(big_prompt, loaded.system_prompt.?);
+
+    // The listing still scores the row (counters are reachable in the
+    // header window) despite the long prompt after the transcript.
+    const metas = try listSessions(io, arena, env.tmp.dir);
+    var found = false;
+    for (metas) |m| {
+        if (std.mem.eql(u8, m.id, "bigprompt")) found = true;
+    }
+    try std.testing.expect(found);
 }
 
 test "session load rejects an unknown persisted message role" {

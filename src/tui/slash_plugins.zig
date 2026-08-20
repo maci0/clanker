@@ -158,26 +158,10 @@ test "loadEnabledManifests honors the enabled-list and refuses built-in collisio
     const io = env.io();
     const arena = env.arena();
 
-    try env.tmp.dir.makePath(io, "tui-plugins");
-    const good = try std.json.stringifyAlloc(arena, .{
-        .command = "myreport",
-        .help = "Summarize the last N runs",
-        .tool = "graph",
-        .args = "list",
-    }, .{});
-    try env.tmp.dir.writeFile(io, "tui-plugins/good.json", good);
-    const off = try std.json.stringifyAlloc(arena, .{
-        .command = "disabledcmd",
-        .help = "not enabled",
-        .tool = "status",
-    }, .{});
-    try env.tmp.dir.writeFile(io, "tui-plugins/off.json", off);
-    const clash = try std.json.stringifyAlloc(arena, .{
-        .command = "help",
-        .help = "collides with a built-in",
-        .tool = "status",
-    }, .{});
-    try env.tmp.dir.writeFile(io, "tui-plugins/clash.json", clash);
+    try env.tmp.dir.createDirPath(io, "tui-plugins");
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "tui-plugins/good.json", .data = "{\"command\":\"myreport\",\"help\":\"Summarize the last N runs\",\"tool\":\"graph\",\"args\":\"list\"}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "tui-plugins/off.json", .data = "{\"command\":\"disabledcmd\",\"help\":\"not enabled\",\"tool\":\"status\"}" });
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "tui-plugins/clash.json", .data = "{\"command\":\"help\",\"help\":\"collides with a built-in\",\"tool\":\"status\"}" });
 
     const builtin_names = [_][]const u8{"/help"};
     const enabled = [_][]const u8{"myreport"};
