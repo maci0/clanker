@@ -213,7 +213,7 @@ fn forward(ctx: Ctx, family: Family) u16 {
     const filter: ?Family = if (chat_route) null else family;
     const resolved = lookup(ctx.cfg, filter, peek.model) catch |err| switch (err) {
         error.MissingModel => return writeEnvelope(ctx, 400, "missing_required_parameter", "model is required when more than one provider is configured"),
-        error.ModelNotFound => return writeEnvelope(ctx, 400, "model_not_found", "Unknown model for this route"),
+        error.ModelNotFound => return writeEnvelope(ctx, 404, "model_not_found", modelNotFoundMessage(arena, peek.model, ctx.cfg)),
         error.ProtocolMismatch => return writeEnvelope(ctx, 400, "protocol_mismatch", "Model does not speak this protocol"),
         error.AmbiguousProvider => return writeEnvelope(ctx, 400, "missing_required_parameter", "Send a model or configure a single provider for this protocol"),
     };
@@ -1010,6 +1010,27 @@ fn aliasOf(cfg: *const config.Config, name: []const u8) ?[]const u8 {
     return cfg.serve.proxy_aliases.map.get(name);
 }
 
+/// The configured [serve.proxy_aliases] keys as a comma-separated list, so a
+/// lookup miss can name what is actually available. Capped well under
+/// writeEnvelope's fixed header buffer so a large alias table cannot truncate
+/// the error body mid-JSON.
+fn aliasList(arena: std.mem.Allocator, cfg: *const config.Config) []const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    var it = cfg.serve.proxy_aliases.map.iterator();
+    while (it.next()) |kv| {
+        if (buf.items.len > 1000) break;
+        if (buf.items.len > 0) buf.appendSlice(arena, ", ") catch break;
+        buf.appendSlice(arena, kv.key_ptr.*) catch break;
+    }
+    return if (buf.items.len == 0) "(none configured)" else buf.items;
+}
+
+/// The 404 diagnostic for an unmatched model: what was asked for and what the
+/// aliases are, instead of a generic miss the caller cannot act on.
+fn modelNotFoundMessage(arena: std.mem.Allocator, requested: ?[]const u8, cfg: *const config.Config) []const u8 {
+    return std.fmt.allocPrint(arena, "Unknown model \"{s}\" for this route; known aliases: {s}", .{ requested orelse "", aliasList(arena, cfg) }) catch "Unknown model for this route";
+}
+
 fn claudeSizeKey(name: []const u8) ?[]const u8 {
     if (std.ascii.findIgnoreCase(name, "haiku") != null) return "haiku";
     if (std.ascii.findIgnoreCase(name, "sonnet") != null) return "sonnet";
@@ -1426,6 +1447,24 @@ test "lookup unique wire id, composite, alias, protocol mismatch" {
     const mapped = try lookup(&cfg, null, "claude-3-5-sonnet-20241022");
     try std.testing.expectEqualStrings("kimi-k3", mapped.wire_id);
     try std.testing.expectEqualStrings("kimi-k3", mapped.provider.name);
+}
+
+test "modelNotFoundMessage names the requested model and the known aliases" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var cfg = config.Config{};
+    try cfg.serve.proxy_aliases.map.put(arena, "sonnet", "kimi-k3/kimi-k3");
+    try cfg.serve.proxy_aliases.map.put(arena, "haiku", "kimi-k3/kimi-k3");
+    const msg = modelNotFoundMessage(arena, "claude-3-5-sonnet-x", &cfg);
+    try std.testing.expect(std.mem.find(u8, msg, "claude-3-5-sonnet-x") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "sonnet") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "haiku") != null);
+
+    var bare = config.Config{};
+    const none = modelNotFoundMessage(arena, "nope", &bare);
+    try std.testing.expect(std.mem.find(u8, none, "nope") != null);
+    try std.testing.expect(std.mem.find(u8, none, "(none configured)") != null);
 }
 
 test "lookup reports ambiguous when a bare wire id is configured twice" {
