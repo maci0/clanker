@@ -40,6 +40,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "action must be \"definition\", \"references\", or \"diagnose\"");
 
     const file = str(parsed.object, "file") orelse return lib.fail(out, "missing required field: file");
+    if (std.mem.startsWith(u8, file, "/")) return lib.fail(out, "file must be a relative path within the project root");
     const line = uint(parsed.object, "line") orelse return lib.fail(out, "missing required field: line (0-based)");
     const character = uint(parsed.object, "character") orelse 0;
 
