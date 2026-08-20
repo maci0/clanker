@@ -446,6 +446,17 @@ pub const Agent = struct {
     workspace_id: []const u8 = "",
     /// Directory holding reusable prompt templates ("workflows", Cursor-style).
     workflows_dir: []const u8 = "workflows",
+    /// Directory of one-file TUI slash-command plugin manifests (PRD 0012):
+    /// {command, help, tool, args}.json entries append slash commands to the
+    /// REPL, each dispatching to a sandboxed tool. Enabled via
+    /// state/tui_plugins.json (enabled-list, default off).
+    tui_plugins_dir: []const u8 = "tui-plugins",
+    /// Directory of one-file CLI plugin manifests (PRD 0012 Tier 1):
+    /// {command, description, tool}.json entries become `clanker <command>`
+    /// subcommands dispatching to a sandboxed tool with the remaining argv.
+    /// Tier 2 (clanker-<name> on PATH) needs no directory. Enabled via
+    /// state/cli_plugins.json (enabled-list, default off).
+    cli_plugins_dir: []const u8 = "cli-plugins",
     /// Directory for shared chain pipelines (tool-level, not prompt-level).
     /// When equal to workflows_dir, chains are stored as workflows/*.json
     /// alongside the prompt templates for a single place to manage them.
@@ -641,6 +652,8 @@ pub const AgentFields = struct {
     sandbox_follow_symlinks: bool = false,
     workflows_dir: bool = false,
     chains_dir: bool = false,
+    tui_plugins_dir: bool = false,
+    cli_plugins_dir: bool = false,
     git_commit: bool = false,
     git_remote_ops: bool = false,
     exec_pattern_allow: bool = false,
@@ -2250,18 +2263,18 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",               "max_goal_turns",               "compact_threshold_bytes",        "tool_result_prune_bytes",
-            "tool_result_prune_head_bytes", "tool_result_prune_tail_bytes", "repeat_tool_thresholds",         "repeat_tool_exclude",
-            "max_total_tokens",             "max_tokens_per_turn",          "max_history_tokens",             "tool_catalog",
-            "hot_tools",                    "tools_dir",                    "skills_dir",                     "system_prompt_file",
-            "learnings_file",               "global_instructions_file",     "state_dir",                      "sandbox_root",
-            "sandbox_follow_symlinks",      "workflows_dir",                "chains_dir",                     "git_commit",
-            "git_remote_ops",               "exec_pattern_allow",           "repl_exec_allow",                "seed",
-            "ask_timeout_seconds",          "confirm_writes",               "provider_check_timeout_seconds", "fallback_provider",
-            "fallback_providers",           "auto_thinking",                "thinking_classifier_model",      "thinking_classifier_timeout_ms",
-            "worktree",                     "goal_worktree",                "git_worktree_on",                "isolated_cli",
-            "isolated_tui",                 "isolated_webui",               "reasoning_effort",               "repeat_tool_abort_threshold",
-            "request_timeout_ms",           "stream_idle_timeout_ms",
+            "max_iterations",                 "max_goal_turns",                 "compact_threshold_bytes", "tool_result_prune_bytes",
+            "tool_result_prune_head_bytes",   "tool_result_prune_tail_bytes",   "repeat_tool_thresholds",  "repeat_tool_exclude",
+            "max_total_tokens",               "max_tokens_per_turn",            "max_history_tokens",      "tool_catalog",
+            "hot_tools",                      "tools_dir",                      "skills_dir",              "system_prompt_file",
+            "learnings_file",                 "global_instructions_file",       "state_dir",               "sandbox_root",
+            "sandbox_follow_symlinks",        "workflows_dir",                  "chains_dir",              "tui_plugins_dir",
+            "cli_plugins_dir",                "git_commit",                     "git_remote_ops",          "exec_pattern_allow",
+            "repl_exec_allow",                "seed",                           "ask_timeout_seconds",     "confirm_writes",
+            "provider_check_timeout_seconds", "fallback_provider",              "fallback_providers",      "auto_thinking",
+            "thinking_classifier_model",      "thinking_classifier_timeout_ms", "worktree",                "goal_worktree",
+            "git_worktree_on",                "isolated_cli",                   "isolated_tui",            "isolated_webui",
+            "reasoning_effort",               "repeat_tool_abort_threshold",    "request_timeout_ms",      "stream_idle_timeout_ms",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -2372,6 +2385,14 @@ pub const Config = struct {
         if (obj.get("chains_dir")) |k| {
             a.chains_dir = try jsonStr(k, "chains_dir");
             f.chains_dir = true;
+        }
+        if (obj.get("tui_plugins_dir")) |k| {
+            a.tui_plugins_dir = try jsonStr(k, "tui_plugins_dir");
+            f.tui_plugins_dir = true;
+        }
+        if (obj.get("cli_plugins_dir")) |k| {
+            a.cli_plugins_dir = try jsonStr(k, "cli_plugins_dir");
+            f.cli_plugins_dir = true;
         }
         if (obj.get("git_commit")) |k| {
             a.git_commit = try jsonBool(k, "git_commit");
@@ -2534,6 +2555,8 @@ pub const Config = struct {
         if (fields.sandbox_follow_symlinks) dst.sandbox_follow_symlinks = src.sandbox_follow_symlinks;
         if (fields.workflows_dir) dst.workflows_dir = src.workflows_dir;
         if (fields.chains_dir) dst.chains_dir = src.chains_dir;
+        if (fields.tui_plugins_dir) dst.tui_plugins_dir = src.tui_plugins_dir;
+        if (fields.cli_plugins_dir) dst.cli_plugins_dir = src.cli_plugins_dir;
         if (fields.git_commit) dst.git_commit = src.git_commit;
         if (fields.git_remote_ops) dst.git_remote_ops = src.git_remote_ops;
         if (fields.exec_pattern_allow) dst.exec_pattern_allow = src.exec_pattern_allow;

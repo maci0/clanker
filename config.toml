@@ -200,6 +200,15 @@ system_prompt_file = "skills/SYSTEM.md"
 learnings_file = "state/learnings.md"
 workflows_dir = "workflows"
 chains_dir = "chains"
+# TUI slash-command plugins (PRD 0012): {command, help, tool}.json files that
+# append slash commands to the REPL, each dispatching to a sandboxed tool.
+# Enabled via state/tui_plugins.json (enabled-list, default off).
+tui_plugins_dir = "tui-plugins"
+# CLI plugins (PRD 0012 Tier 1): {command, description, tool}.json files that
+# become `clanker <command>` subcommands dispatching to a sandboxed tool with
+# the remaining argv. Enabled via state/cli_plugins.json (enabled-list,
+# default off). Tier 2 (clanker-<name> on PATH) needs no directory.
+cli_plugins_dir = "cli-plugins"
 sandbox_root = "."
 # Allow a component of an already-granted sandbox path to be a symlink.
 # Following a link out of the sandbox root is a known security risk, so this is

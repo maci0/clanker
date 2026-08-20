@@ -72,6 +72,7 @@ const stats_mod = @import("turn_stats.zig");
 const mascot = @import("mascot.zig");
 const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");
+const slash_plugins = @import("slash_plugins.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
@@ -1239,6 +1240,9 @@ const CommandAction = union(enum) {
     rfc,
     /// Queue an image path for the next task submit (`/attach <path>`).
     attach,
+    /// List TUI slash-command plugins, or enable/disable one in
+    /// state/tui_plugins.json (PRD 0012). A plugin is off until enabled.
+    tui_plugins,
     /// Runs the named internal `cmd_*` tool via `runInternalTool`.
     tool: struct {
         name: []const u8,
@@ -1292,7 +1296,14 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/rfc", .takes_args = true, .arg_hint = "<sub> [args]", .help = "open decisions, same store as clanker rfc: list, search, open, checklist, create, append, update, recommend, status", .action = .rfc },
     .{ .name = "/attach", .takes_args = true, .arg_hint = "<path>", .help = "queue an image for the next task submit", .action = .attach },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
+    .{ .name = "/tui-plugins", .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list TUI slash-command plugins, or enable/disable one (PRD 0012)", .action = .tui_plugins },
 };
+
+/// Slash commands appended from tui-plugins/*.json at REPL startup (PRD 0012
+/// Goal 2). Each dispatches to a sandboxed tool, so there is no new trust
+/// surface; see slash_plugins.zig. Empty (comptime-known) in tests, so every
+/// existing registry test keeps its exact expectations.
+var plugin_command_specs: []const CommandSpec = &.{};
 
 const arena_command_help =
     \\usage: /arena "<question>" --for "<stance>" --against "<stance>"
@@ -1375,29 +1386,34 @@ const CommandCandidate = struct {
 /// runtime.
 fn buildCommandCandidates(arena: std.mem.Allocator) ![]const CommandCandidate {
     var out: std.ArrayList(CommandCandidate) = .empty;
-    for (&command_registry) |*spec| {
-        var names: std.ArrayList(u8) = .empty;
-        try names.appendSlice(arena, spec.name);
-        for (spec.aliases) |alias| {
-            try names.appendSlice(arena, ", ");
-            try names.appendSlice(arena, alias);
-        }
-        if (spec.arg_hint.len > 0) {
-            try names.append(arena, ' ');
-            try names.appendSlice(arena, spec.arg_hint);
-        }
-        var label: std.ArrayList(u8) = .empty;
-        try label.appendSlice(arena, names.items);
-        var col = width_mod.displayWidth(names.items);
-        while (col < help_names_width + 2) : (col += 1) try label.append(arena, ' ');
-        try label.appendSlice(arena, spec.help);
-        try out.append(arena, .{
-            .spec = spec,
-            .label = try label.toOwnedSlice(arena),
-            .haystack = try std.fmt.allocPrint(arena, "{s} {s}", .{ names.items, spec.help }),
-        });
-    }
+    for (&command_registry) |*spec| try appendCommandCandidate(arena, &out, spec);
+    for (plugin_command_specs) |*spec| try appendCommandCandidate(arena, &out, spec);
     return out.toOwnedSlice(arena);
+}
+
+/// One palette row, shared by the static registry and TUI plugin commands so
+/// a plugin row is byte-identical in shape to a built-in one.
+fn appendCommandCandidate(arena: std.mem.Allocator, out: *std.ArrayList(CommandCandidate), spec: *const CommandSpec) !void {
+    var names: std.ArrayList(u8) = .empty;
+    try names.appendSlice(arena, spec.name);
+    for (spec.aliases) |alias| {
+        try names.appendSlice(arena, ", ");
+        try names.appendSlice(arena, alias);
+    }
+    if (spec.arg_hint.len > 0) {
+        try names.append(arena, ' ');
+        try names.appendSlice(arena, spec.arg_hint);
+    }
+    var label: std.ArrayList(u8) = .empty;
+    try label.appendSlice(arena, names.items);
+    var col = width_mod.displayWidth(names.items);
+    while (col < help_names_width + 2) : (col += 1) try label.append(arena, ' ');
+    try label.appendSlice(arena, spec.help);
+    try out.append(arena, .{
+        .spec = spec,
+        .label = try label.toOwnedSlice(arena),
+        .haystack = try std.fmt.allocPrint(arena, "{s} {s}", .{ names.items, spec.help }),
+    });
 }
 
 test "buildCommandCandidates covers the registry and matches on name or description" {
@@ -1466,6 +1482,12 @@ fn parseCommand(task: []const u8) ?ParsedCommand {
         for (spec.aliases) |alias| {
             if (matchSpelling(spec, alias, input)) |args| return .{ .spec = spec, .args = args };
         }
+    }
+    // TUI plugin commands (PRD 0012) are matched after the built-ins, so a
+    // plugin can never shadow one; dispatch needs no new arm, it rides the
+    // same `.tool` action a built-in tool-dispatching command uses.
+    for (plugin_command_specs) |*spec| {
+        if (matchSpelling(spec, spec.name, input)) |args| return .{ .spec = spec, .args = args };
     }
     return null;
 }
@@ -1787,6 +1809,13 @@ fn suggestSlashCommand(input: []const u8) ?[]const u8 {
             }
         }
     }
+    for (plugin_command_specs) |*spec| {
+        const d = edit_distance.typoDistance(trimmed, spec.name);
+        if (d < best_distance) {
+            best = spec.name;
+            best_distance = d;
+        }
+    }
     return best;
 }
 
@@ -1826,6 +1855,12 @@ fn matchingSpellings(prefix: []const u8, out: *[max_completions]SpellingMatch) [
             }
         }
     }
+    for (plugin_command_specs) |*spec| {
+        if (n < out.len and std.mem.startsWith(u8, spec.name, prefix)) {
+            out[n] = .{ .spelling = spec.name, .spec = spec };
+            n += 1;
+        }
+    }
     return out[0..n];
 }
 
@@ -1857,7 +1892,7 @@ const max_preview_rows = 8;
 /// a signature hint while its arguments are being typed. A draft holding a
 /// line break is a task in the making, never a command (`submit` would not
 /// dispatch it), so it previews nothing.
-fn commandPreviewSpecs(input: []const u8, out: *[command_registry.len]*const CommandSpec) []const *const CommandSpec {
+fn commandPreviewSpecs(input: []const u8, out: *[max_completions]*const CommandSpec) []const *const CommandSpec {
     if (std.mem.find(u8, input, newline_marker) != null) return out[0..0];
     const trimmed = std.mem.trimStart(u8, input, " \t");
     if (!looksLikeSlashCommand(trimmed)) return out[0..0];
@@ -1901,47 +1936,61 @@ fn buildCommandHelp(alloc: std.mem.Allocator) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
     try out.appendSlice(alloc, "Commands:");
-    for (command_registry) |spec| {
-        try out.appendSlice(alloc, "\n  ");
-        // Include the row's two-space indent in the display-column budget;
-        // omitting it let nominally 80-column rows render at 82.
-        var col: usize = 2 + spec.name.len;
-        try out.appendSlice(alloc, spec.name);
-        for (spec.aliases) |alias| {
-            try out.appendSlice(alloc, ", ");
-            try out.appendSlice(alloc, alias);
-            col += 2 + alias.len;
-        }
-        if (spec.arg_hint.len > 0) {
-            try out.append(alloc, ' ');
-            try out.appendSlice(alloc, spec.arg_hint);
-            col += 1 + spec.arg_hint.len;
-        }
-        while (col < 2 + help_names_width + 2) : (col += 1) try out.append(alloc, ' ');
-        var words = std.mem.tokenizeScalar(u8, spec.help, ' ');
-        var first = true;
-        while (words.next()) |word| {
-            const word_width = width_mod.displayWidth(word);
-            const gap: usize = if (first) 0 else 1;
-            if (!first and col + gap + word_width > 80) {
-                // Continuations use a shallow hanging indent rather than the
-                // full command column. On a 40-column terminal this leaves
-                // 36 useful columns instead of wrapping prose eight columns
-                // at a time beneath the wide spelling column.
-                try out.appendSlice(alloc, "\n    ");
-                col = 4;
-                first = true;
-            }
-            if (!first) {
-                try out.append(alloc, ' ');
-                col += 1;
-            }
-            try out.appendSlice(alloc, word);
-            col += word_width;
-            first = false;
-        }
+    // A plugin command's wider name must not misalign the help column, so the
+    // width is the max over built-ins *and* loaded plugins, not the comptime
+    // built-in-only constant. Cheaper than it looks: once per /help.
+    var help_width = help_names_width;
+    for (plugin_command_specs) |spec| {
+        var n = spec.name.len;
+        for (spec.aliases) |a| n += 2 + a.len;
+        if (spec.arg_hint.len > 0) n += 1 + spec.arg_hint.len;
+        if (n > help_width) help_width = n;
     }
+    for (&command_registry) |*spec| try appendHelpRow(alloc, &out, spec, help_width);
+    for (plugin_command_specs) |*spec| try appendHelpRow(alloc, &out, spec, help_width);
     return out.toOwnedSlice(alloc);
+}
+
+/// One /help row, shared by the static registry and TUI plugin commands.
+fn appendHelpRow(alloc: std.mem.Allocator, out: *std.ArrayList(u8), spec: *const CommandSpec, help_width: usize) !void {
+    try out.appendSlice(alloc, "\n  ");
+    // Include the row's two-space indent in the display-column budget;
+    // omitting it let nominally 80-column rows render at 82.
+    var col: usize = 2 + spec.name.len;
+    try out.appendSlice(alloc, spec.name);
+    for (spec.aliases) |alias| {
+        try out.appendSlice(alloc, ", ");
+        try out.appendSlice(alloc, alias);
+        col += 2 + alias.len;
+    }
+    if (spec.arg_hint.len > 0) {
+        try out.append(alloc, ' ');
+        try out.appendSlice(alloc, spec.arg_hint);
+        col += 1 + spec.arg_hint.len;
+    }
+    while (col < 2 + help_width + 2) : (col += 1) try out.append(alloc, ' ');
+    var words = std.mem.tokenizeScalar(u8, spec.help, ' ');
+    var first = true;
+    while (words.next()) |word| {
+        const word_width = width_mod.displayWidth(word);
+        const gap: usize = if (first) 0 else 1;
+        if (!first and col + gap + word_width > 80) {
+            // Continuations use a shallow hanging indent rather than the
+            // full command column. On a 40-column terminal this leaves
+            // 36 useful columns instead of wrapping prose eight columns
+            // at a time beneath the wide spelling column.
+            try out.appendSlice(alloc, "\n    ");
+            col = 4;
+            first = true;
+        }
+        if (!first) {
+            try out.append(alloc, ' ');
+            col += 1;
+        }
+        try out.appendSlice(alloc, word);
+        col += word_width;
+        first = false;
+    }
 }
 
 test "every command registry entry is documented" {
@@ -2301,7 +2350,7 @@ test "looksLikeSlashCommand separates typo'd commands from tasks" {
 }
 
 test "commandPreviewSpecs previews prefix matches, dedupes spellings, and hints signatures" {
-    var buf: [command_registry.len]*const CommandSpec = undefined;
+    var buf: [max_completions]*const CommandSpec = undefined;
 
     // "/go" narrows to /goal alone, carrying its spec (and so its help).
     const go = commandPreviewSpecs("/go", &buf);
@@ -3188,6 +3237,9 @@ const Model = struct {
             .workflows => {
                 _ = self.runWorkflowsTool("");
             },
+            .tui_plugins => {
+                self.runTuiPlugins(pc.args);
+            },
             .workflow => {
                 if (pc.args.len == 0) {
                     self.lines.append(self.arena, .{ .text = "usage: /workflow <name> [args]: try /workflows to list", .dim = true }) catch {};
@@ -3628,6 +3680,135 @@ const Model = struct {
             return true;
         }
         return true;
+    }
+
+    /// (Re)builds plugin_command_specs from agent.tui_plugins_dir, honoring
+    /// the enabled-list in state/tui_plugins.json (PRD 0012). Called at REPL
+    /// startup and after every /tui-plugins toggle, so a plugin's commands
+    /// appear and disappear live, without a restart.
+    fn reloadTuiPlugins(self: *Model) void {
+        plugin_command_specs = &.{};
+        // The built-in spellings (leading slash included) a plugin may not
+        // shadow; a manifest colliding with one is refused at scan time.
+        var builtin_names: std.ArrayList([]const u8) = .empty;
+        for (&command_registry) |*spec| {
+            builtin_names.append(self.arena, spec.name) catch return;
+            for (spec.aliases) |alias| builtin_names.append(self.arena, alias) catch return;
+        }
+        const enabled = slash_plugins.loadEnabled(self.io, self.arena);
+        const manifests = slash_plugins.loadEnabledManifests(
+            self.io,
+            self.arena,
+            std.Io.Dir.cwd(),
+            self.cfg.agent.tui_plugins_dir,
+            enabled,
+            builtin_names.items,
+        ) catch |err| {
+            log.log(.warn, "repl: could not load TUI plugins from {s}: {s}", .{ self.cfg.agent.tui_plugins_dir, @errorName(err) });
+            return;
+        };
+        var specs: std.ArrayList(CommandSpec) = .empty;
+        for (manifests) |m| {
+            const name = std.fmt.allocPrint(self.arena, "/{s}", .{m.command}) catch continue;
+            // The same .tool action a built-in tool-dispatching command uses:
+            // fixed args when the user typed none, forwarded args otherwise.
+            // Dispatch needs no new arm.
+            specs.append(self.arena, .{
+                .name = name,
+                .help = m.help,
+                .takes_args = true,
+                .arg_hint = "[args]",
+                .action = .{ .tool = .{ .name = m.tool, .args = m.args, .forward_args = true } },
+            }) catch continue;
+        }
+        plugin_command_specs = specs.toOwnedSlice(self.arena) catch return;
+    }
+
+    /// /tui-plugins: list every discovered plugin with its on/off state, or
+    /// toggle one in state/tui_plugins.json and reload the command set.
+    fn runTuiPlugins(self: *Model, args: []const u8) void {
+        const trimmed = std.mem.trim(u8, args, " \t");
+        if (trimmed.len == 0) {
+            var builtin_names: std.ArrayList([]const u8) = .empty;
+            for (&command_registry) |*spec| {
+                builtin_names.append(self.arena, spec.name) catch return;
+                for (spec.aliases) |alias| builtin_names.append(self.arena, alias) catch return;
+            }
+            const enabled = slash_plugins.loadEnabled(self.io, self.arena);
+            const all = slash_plugins.scanAll(
+                self.io,
+                self.arena,
+                std.Io.Dir.cwd(),
+                self.cfg.agent.tui_plugins_dir,
+                builtin_names.items,
+            ) catch |err| {
+                self.lines.append(self.arena, .{
+                    .text = std.fmt.allocPrint(self.arena, "error: could not scan {s}: {s}", .{ self.cfg.agent.tui_plugins_dir, @errorName(err) }) catch "error: could not scan TUI plugins",
+                    .dim = true,
+                }) catch {};
+                return;
+            };
+            if (all.len == 0) {
+                self.lines.append(self.arena, .{
+                    .text = std.fmt.allocPrint(self.arena, "notice: no TUI plugins in {s}; drop a {command, help, tool}.json there and enable it with /tui-plugins on <name>", .{self.cfg.agent.tui_plugins_dir}) catch "notice: no TUI plugins found",
+                    .dim = true,
+                }) catch {};
+                return;
+            }
+            for (all) |m| {
+                const state: []const u8 = if (slash_plugins.isEnabled(enabled, m.command)) "on" else "off";
+                self.lines.append(self.arena, .{
+                    .text = std.fmt.allocPrint(self.arena, "  /{s} [{s}] -> {s}  {s}", .{ m.command, state, m.tool, m.help }) catch continue,
+                    .dim = true,
+                }) catch {};
+            }
+            self.lines.append(self.arena, .{ .text = "  toggle with /tui-plugins on|off <name>", .dim = true }) catch {};
+            return;
+        }
+        const space = std.mem.findScalar(u8, trimmed, ' ');
+        const verb = if (space) |i| trimmed[0..i] else trimmed;
+        const name = if (space) |i| std.mem.trim(u8, trimmed[i + 1 ..], " \t") else "";
+        const want: ?bool = if (std.mem.eql(u8, verb, "on"))
+            true
+        else if (std.mem.eql(u8, verb, "off"))
+            false
+        else
+            null;
+        if (want == null or name.len == 0) {
+            self.lines.append(self.arena, .{ .text = "usage: /tui-plugins [on|off <name>]  (bare lists plugins)", .dim = true }) catch {};
+            return;
+        }
+        var enabled_list: std.ArrayList([]const u8) = .empty;
+        const current = slash_plugins.loadEnabled(self.io, self.arena);
+        for (current) |n| enabled_list.append(self.arena, n) catch return;
+        if (want.?) {
+            if (!slash_plugins.isEnabled(current, name))
+                enabled_list.append(self.arena, self.arena.dupe(u8, name) catch return) catch return;
+        } else {
+            var i: usize = 0;
+            while (i < enabled_list.items.len) {
+                if (std.mem.eql(u8, enabled_list.items[i], name)) {
+                    _ = enabled_list.orderedRemove(i);
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        slash_plugins.saveEnabled(self.io, self.gpa, enabled_list.items) catch |err| {
+            self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "error: could not write state/tui_plugins.json: {s}", .{@errorName(err)}) catch "error: could not write TUI plugin state",
+                .dim = true,
+            }) catch {};
+            return;
+        };
+        self.reloadTuiPlugins();
+        // The palette was built at startup; rebuild it so Ctrl-P reflects the
+        // change without a restart.
+        self.command_candidates = buildCommandCandidates(self.arena) catch self.command_candidates;
+        self.lines.append(self.arena, .{
+            .text = std.fmt.allocPrint(self.arena, "tui plugin /{s}: {s}", .{ name, if (want.?) "on" else "off" }) catch "tui plugin toggled",
+            .dim = true,
+        }) catch {};
     }
 
     fn expandWorkflow(self: *Model, name: []const u8, args: []const u8) !?[]u8 {
@@ -5359,7 +5540,7 @@ const Model = struct {
         // because vaxis cells borrow their slices past this frame's return.
         // Suppressed while a modal picker owns the screen; capped so a
         // short terminal keeps a readable transcript.
-        var preview_buf: [command_registry.len]*const CommandSpec = undefined;
+        var preview_buf: [max_completions]*const CommandSpec = undefined;
         const preview_specs: []const *const CommandSpec = if (self.picker_open)
             preview_buf[0..0]
         else
@@ -8382,6 +8563,10 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         }
     }
     model.model_candidates = buildModelCandidates(arena, &model.cfg, init.environ_map, init.io) catch &.{};
+    // TUI plugin commands must load before the palette is built, or Ctrl-P
+    // would never see them; a plugin toggled mid-session reloads here via
+    // /tui-plugins and rebuilds the candidates on its own.
+    model.reloadTuiPlugins();
     model.command_candidates = buildCommandCandidates(arena) catch &.{};
     // A resumed conversation already occupies part of the window, so the
     // meter and the mid-turn compaction baseline start from what was loaded
