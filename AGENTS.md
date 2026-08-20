@@ -50,7 +50,7 @@ Write failing test first, beside shipped function (`test` in `src/`, `host_teste
 
 ## Everything is a plugin
 
-Whatever can be a drop-in unit with a declared surface is one. Tools are guests + manifest; providers one vtable file + registry row; web UI views dirs under `ui/plugins/`; skills, prompts, themes, slash-command catalogs are data. Most units are sandboxed WASM, so plugin boundary doubles as security boundary. Before hardcoding capability, ask its plugin shape — sections below are that question for specific surfaces.
+Whatever can be a drop-in unit with a declared surface is one. Tools are guests + manifest; providers one vtable file + registry row; web UI views dirs under `ui/plugins/`; skills, prompts, themes, slash-command catalogs are data; REPL `/command`s and `clanker <command>` subcommands are manifests under `tui-plugins/` and `cli-plugins/` (PRD 0012) dispatching to sandboxed tools — add one there instead of editing `command_registry` or the `Command` enum (both are closed sets plus the plugin scan). Most units are sandboxed WASM, so plugin boundary doubles as security boundary. Before hardcoding capability, ask its plugin shape — sections below are that question for specific surfaces.
 
 ## WASM by default
 

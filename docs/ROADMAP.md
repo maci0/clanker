@@ -133,6 +133,20 @@
 
 ## Everything-is-a-plugin audit (2026-08-16)
 
+**Resolved 2026-08-20 (TUI + CLI plugins):** PRD 0012's TUI and CLI halves
+shipped. The REPL's `command_registry` gains a directory scan
+(`agent.tui_plugins_dir`, `tui-plugins/*.json`, `/tui-plugins` list/toggle,
+built-in collision refusal) and the CLI's closed `Command` enum gains a
+`.plugin` resolution (Tier 1 `cli-plugins/*.json` manifest -> sandboxed tool
+with `{"args":[...]}`, Tier 2 `clanker-<name>` on PATH or
+`~/.clanker/plugins/`; `clanker help` lists both). This resolves the audit's
+"REPL `command_registry` stays native" tension in favour of PRD 0012's
+plugin shape. Sessions now also record the system prompt snapshot, closing
+part of ADR 0015's "system prompts not stored" gap; `presets/minimal.toml`
+ships the DSH Minimal-mode shape. See
+[docs/digests/cordis-paper.md](digests/cordis-paper.md) and the investigation
+[docs/reports/investigations/2026-08-20-plugin-philosophy-alignment.md](reports/investigations/2026-08-20-plugin-philosophy-alignment.md).
+
 **Resolved same day:** the webui plugin registry now lives in one place —
 `webui_addon.zig` seeds `files`+`music` on a missing `state/webui_plugins.json`
 (host-pinned in `webui_addon_logic.zig`), and `/api/webui/plugins` +

@@ -19,11 +19,19 @@ covered the web UI half before this one; its prior documentation was
 trust, no declared-capability sandboxing) were never written down where a
 future editor would find them.
 
-**TUI plugins / CLI plugins: Draft.** Confirmed absent by grepping for any
-directory-scan, config-driven, or PATH-based extension point feeding
-`command_registry` (`src/tui/repl.zig:492-507`, a hardcoded array) or
-the `Command` enum (`src/cli.zig:68-105`, a closed compile-time set). Designed
-below; do not treat TUI/CLI acceptance criteria as shipped.
+**TUI plugins / CLI plugins: Shipped — 2026-08-20.** TUI: a directory scan
+(`agent.tui_plugins_dir`, default `tui-plugins/`) feeds the command set at
+REPL start (`src/tui/slash_plugins.zig` + `repl.zig`'s
+`reloadTuiPlugins`/`runTuiPlugins`), each enabled manifest appending one
+`CommandSpec` that dispatches to a sandboxed tool; `/tui-plugins` lists and
+toggles. CLI: `clanker <name>` resolves an enabled Tier 1 manifest
+(`agent.cli_plugins_dir`, default `cli-plugins/`, tool invoked with the
+remaining argv as `{"args":[...]}`), then a Tier 2 `clanker-<name>` binary
+on PATH or `~/.clanker/plugins/`, never shadowing a built-in `Command`
+(`src/cli_plugins.zig` + `cmdPlugin`); `clanker help` lists both tiers
+marked external. Enable via `state/tui_plugins.json` / `state/cli_plugins.json`
+enabled-lists, default off. Both follow the Design below; acceptance criteria
+are checked.
 
 ## Problem
 
@@ -337,13 +345,17 @@ throw → tab error) if not already true in code.
       just absent from the nav (`src/cli.zig:10076-10078`). (G1)
 - [x] Web UI plugins are discovered by scanning `ui/plugins/` at request
       time (the `webui_addon` guest's `list`), not compiled in. (G4)
-- [ ] A TUI plugin manifest naming an existing tool becomes a working slash
-      command with no code change to `repl.zig`. (G2, G4)
-- [ ] A TUI plugin cannot name a command that collides with a built-in. (G2)
-- [ ] `clanker <name>` resolves a Tier 1 manifest before falling through to
-      a Tier 2 `PATH` binary, and never shadows a built-in `Command`. (G3)
-- [ ] `clanker help` lists discovered Tier 2 external plugins, marked as
-      external. (G3, G4)
+- [x] A TUI plugin manifest naming an existing tool becomes a working slash
+      command with no code change to `repl.zig` beyond the loader itself
+      (a plugin author only drops a manifest in `tui-plugins/`). (G2, G4)
+- [x] A TUI plugin cannot name a command that collides with a built-in;
+      the scan refuses and logs it (`slash_plugins.zig`). (G2)
+- [x] `clanker <name>` resolves a Tier 1 manifest before falling through to
+      a Tier 2 `PATH` binary, and never shadows a built-in `Command`
+      (parse sets `.plugin` only for a short word no built-in matches;
+      `cmdPlugin` tries Tier 1 then Tier 2). (G3)
+- [x] `clanker help` lists discovered Tier 2 external plugins (and Tier 1
+      manifests), marked as external with their origin. (G3, G4)
 
 ## Open questions / future work
 

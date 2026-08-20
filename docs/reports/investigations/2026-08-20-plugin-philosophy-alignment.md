@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** Does clanker align with the DeepSeek Harness everything-is-a-plugin philosophy
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-20. Gaps fixed and verified (zig build + test green): system prompt recorded in sessions, TUI slash-command plugins and CLI plugins shipped per PRD 0012, minimal runtime-mode preset added, Cordis paper digested. Open items stay documented in the record: provider plugin registration, sandbox backend, storage backend (RFC 0019) incl. state_dir, loop registry, schedule triggers.
+- **Resolution:** Resolved on 2026-08-20. Gaps fixed and verified (zig build + test green): system prompt recorded in sessions, TUI slash-command plugins and CLI plugins shipped per PRD 0012, minimal runtime-mode preset added, Cordis paper digested. Open items stay documented in the record: provider plugin registration, sandbox backend, storage backend (RFC 0019) incl. state_dir, loop registry, schedule triggers.
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-20. Gaps fixed and verified (zig build + test green): system prompt recorded in sessions, TUI slash-command plugins and CLI plugins shipped per PRD 0012, minimal runtime-mode preset added, Cordis paper digested. Open items stay documented in the record: provider plugin registration, sandbox backend, storage backend (RFC 0019) incl. state_dir, loop registry, schedule triggers.
 
 ## Trigger and scope
 
@@ -219,7 +219,7 @@ Fixed in this record:
    for CLI.
 4. A minimal runtime-mode preset (presets/minimal.toml) ships DSH Minimal-mode shape
    (shell + file-edit tools only).
-5. state_dir consistency: the session store now honors cfg.agent.state_dir.
+5. state_dir consistency: stays open — the host-side session store still writes to cwd/state/sessions (store_dir const), and the sessions/search/export guests hardcode the same path, so a full fix needs both halves plus exposing state_dir via ck_harness_config. Tracked with the storage backend item (RFC 0019).
 
 Docs updated: PRD 0012, CHANGELOG.md, docs/README.md, docs/configuration.md,
 docs/ROADMAP.md, this investigation. Cordis paper digested at

@@ -23,7 +23,7 @@ The agent loop is a think-act-observe cycle:
 2. *Act*: if the response contains tool calls, execute them in the sandbox.
 3. *Observe*: feed the tool results back into the conversation.
 
-Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
+Sessions are stateful: messages persist across turns and can be saved/restored via `state/sessions/*.json`, and each save records the `system_prompt` snapshot the model was running against (built with the preset persona and injected context), so a session or an exported transcript shows what the model saw, not just the visible chat. Token usage is tracked cumulatively per run. The `Agent.on_token` hook streams content deltas as they arrive; `Agent.on_tool_call` / `Agent.on_tool_result` fire around each tool batch so a caller can show live status instead of going silent while tools run. `Agent.on_todos` fires after a batch that changed the run's private todo list (`src/agent/private_todos.zig`), and only then, so a viewer can watch the run's own checklist without polling it.
 
 ### Interactive UX (REPL, `clanker run`)
 
@@ -676,6 +676,29 @@ they stand.
 `/plugins` in the REPL lists every tool with its state; `/plugins off <name>` and `/plugins on <name>` toggle one. The choice is written to `state/plugins.json` (`{"disabled": [...], "enabled": [...]}`, machine-local, gitignored) and the running REPL reloads its registry immediately.
 
 Core tools cannot be switched off: those are the `internal` tools with no `transform`, since they back the REPL slash commands and the HTTP routes. Transforms are internal too, but toggling them is the point, so they stay switchable.
+
+### TUI and CLI plugins (PRD 0012)
+
+Two more surfaces take drop-in plugins, both tool-backed and both opt-in via
+an enabled-list, matching the web UI plugins' stance (presence on disk is not
+consent to run).
+
+- **TUI slash commands.** One `{command, help, tool, args}.json` in
+  `agent.tui_plugins_dir` (default `tui-plugins/`) becomes a `/command` that
+  dispatches to a sandboxed tool — the same `.tool` action a built-in
+  command uses, so `/help`, Tab-complete, Ctrl-P and dispatch see it exactly
+  like a built-in. Enable per name in `state/tui_plugins.json` (`{"enabled":
+  [...]}`, default off); the REPL's `/tui-plugins` lists and toggles, and a
+  manifest colliding with a built-in command is refused at scan time.
+- **CLI subcommands.** `clanker <name> [args...]` for a short word that is
+  not a built-in `Command` resolves two tiers in order: Tier 1, an enabled
+  `{command, description, tool}.json` in `agent.cli_plugins_dir` (default
+  `cli-plugins/`), which invokes the sandboxed tool with the remaining argv
+  as `{"args":[...]}`; then Tier 2, a `clanker-<name>` executable on `PATH`
+  or under `~/.clanker/plugins/`, exec'd with the remaining argv and
+  inherited stdio (git/cargo-style external subcommands). A built-in
+  `Command` is never shadowed, and `clanker help` lists both tiers marked
+  external with their origin.
 
 ### Tools that reach outside the sandbox
 

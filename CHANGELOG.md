@@ -33,6 +33,32 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Sessions record the **system prompt snapshot** the model was running
+  against (`system_prompt` on the stored session, saved from the agent's
+  built prompt on every save path: REPL, `run --session`, serve). Session
+  export renders it as a System prompt section, so an exported transcript
+  shows what the model saw, not just the visible chat. Old sessions decode
+  unchanged (the field is absent).
+
+- **TUI slash-command plugins** (PRD 0012): one `{command, help, tool,
+  args}.json` in `tui-plugins/` (config `agent.tui_plugins_dir`) becomes a
+  `/command` that dispatches to a sandboxed tool, listed in `/help` and the
+  palette like a built-in. Enabled via `state/tui_plugins.json` (default
+  off); `/tui-plugins` lists and toggles.
+
+- **CLI plugins** (PRD 0012): `clanker <name> [args...]` for a short word
+  that is not a built-in command resolves an enabled Tier 1 manifest in
+  `cli-plugins/` (config `agent.cli_plugins_dir`; the named sandboxed tool
+  receives the remaining argv as `{"args":[...]}`), then a Tier 2
+  `clanker-<name>` binary on PATH or `~/.clanker/plugins/` (exec'd, stdio
+  inherited). A built-in `Command` is never shadowed; `clanker help` lists
+  both tiers marked external.
+
+- **`presets/minimal.toml`** ships the DeepSeek Harness Minimal-mode shape:
+  an allowlist of shell + file tools only (`exec`, `read_file`,
+  `edit_file`, `list_files`, `find_files`, `file_ops`, `text_diff`,
+  `spill`), runnable with `clanker run --preset minimal`.
+
 - `clanker config get <key>` / `clanker config set <key> <value>` read and
   pin one dotted key of the merged config; bare `clanker config` dumps
   config.toml + config.local.toml raw. The `config` tool gains the same
