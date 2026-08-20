@@ -86,10 +86,7 @@ fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
 }
 
 fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    const query = opts.arg1 orelse {
-        common.usageError("research search needs a query: clanker research search \"embedded kv\"", .{});
-        return Error.MissingArg;
-    };
+    const query = try common.requireQuery("research", opts.arg1);
 
     const input = try common.request(arena, &.{
         .{ .name = "action", .value = .{ .text = "search" } },
