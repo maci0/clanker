@@ -767,26 +767,47 @@ pub fn fsMkdir(path: []const u8) FsError!void {
     return fsPathOp(ck_fs_mkdir(p.ptr, p.len));
 }
 
+/// Bound on list-and-delete passes per directory in `fsDeleteTree`.
+/// `ck_fs_list` deliberately truncates a listing whose JSON would overflow
+/// the host's buffer and returns a valid-but-partial array (the right
+/// contract for a read), so one pass over a large staging tree deletes only
+/// the first page and the parent removal then fails with ENOTEMPTY. The
+/// loop re-lists until a listing's worth of names has actually gone; the
+/// cap stops a directory growing under the sandbox from making that loop
+/// unbounded. Each pass deletes at least one full host-buffer page of
+/// entries, so 64 passes covers a directory four billion entries deep in
+/// pages before giving up.
+pub const fs_delete_tree_max_passes: usize = 64;
+
 // Recursively deletes a directory tree. Lists contents, deletes files,
 // recurses into subdirectories, then removes the now-empty directory.
-// Best-effort: individual failures are skipped.
+// Individual failures are skipped, but the parent removal is retried with
+// a fresh listing (see fs_delete_tree_max_passes) so a truncated listing
+// page cannot leave most of a large directory alive behind a reported
+// success — the janitor staging bug of 2026-08-20.
 pub fn fsDeleteTree(a: std.mem.Allocator, path: []const u8) void {
-    const raw = fsList(path) catch return;
-    const names = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
-    if (names != .array) return;
-    for (names.array.items) |item| {
-        if (item != .string) continue;
-        const name = item.string;
-        if (name.len == 0) continue;
-        if (name[name.len - 1] == '/') {
-            const dir_path = std.fmt.allocPrint(a, "{s}/{s}", .{ path, name[0 .. name.len - 1] }) catch continue;
-            fsDeleteTree(a, dir_path);
-        } else {
-            const sub = std.fmt.allocPrint(a, "{s}/{s}", .{ path, name }) catch continue;
-            fsDelete(sub) catch {};
+    var pass: usize = 0;
+    while (pass < fs_delete_tree_max_passes) : (pass += 1) {
+        const raw = fsList(path) catch return;
+        const names = std.json.parseFromSliceLeaky(std.json.Value, a, raw, .{}) catch return;
+        if (names != .array) return;
+        for (names.array.items) |item| {
+            if (item != .string) continue;
+            const name = item.string;
+            if (name.len == 0) continue;
+            if (name[name.len - 1] == '/') {
+                const dir_path = std.fmt.allocPrint(a, "{s}/{s}", .{ path, name[0 .. name.len - 1] }) catch continue;
+                fsDeleteTree(a, dir_path);
+            } else {
+                const sub = std.fmt.allocPrint(a, "{s}/{s}", .{ path, name }) catch continue;
+                fsDelete(sub) catch {};
+            }
         }
+        // Everything this listing named is gone, so the directory itself
+        // can go. Success ends the loop here; ENOTEMPTY — the previous page
+        // was truncated — buys exactly one more pass, up to the cap.
+        if (fsDelete(path)) return else |_| {}
     }
-    fsDelete(path) catch {};
 }
 
 /// JSON: {"kind":"file"|"dir","size":N}
