@@ -27,6 +27,15 @@ const Member = struct {
     fd: std.posix.fd_t = -1,
 };
 
+/// Bound on concurrent inbound connection threads, mirroring
+/// `max_connection_threads` in cli.zig. A peer that connects and dribbles
+/// bytes -- never completing a JOIN and resetting the 10s read timeout each
+/// time -- would otherwise pin one thread and one fd for as long as it keeps
+/// talking, and enough such peers exhaust the process's descriptor table and
+/// make every later accept fail. Over the cap a new connection is closed at
+/// once; the peer can retry.
+const max_inbound_conns: u32 = 64;
+
 const Runtime = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -39,6 +48,10 @@ const Runtime = struct {
     max_pending: u16,
     prompt_timeout_ns: i64,
     on_chat: ?OnChat,
+    /// Live inbound connection threads (see `max_inbound_conns`). Incremented
+    /// in `acceptLoop` before a thread spawns, decremented by the thread on
+    /// its way out, so a flood of half-open connections cannot pile threads up.
+    conns: std.atomic.Value(u32) = .init(0),
     mu: struct {
         raw: std.atomic.Mutex = .unlocked,
         fn lock(self: *@This()) void {
@@ -372,6 +385,11 @@ fn acceptOne(arg: *Conn) void {
     const rt = arg.rt;
     const stream = arg.stream;
     rt.gpa.destroy(arg);
+    // Release this connection's slot in `rt.conns` (taken in `acceptLoop`
+    // before this thread spawned) on every exit path: joined members retire
+    // it when their readLoop ends, refused and pending joins when the
+    // handshake gives up.
+    defer _ = rt.conns.fetchSub(1, .acq_rel);
     var acc: std.ArrayList(u8) = .empty;
     defer acc.deinit(rt.gpa);
     var tmp: [4096]u8 = undefined;
@@ -438,12 +456,26 @@ fn acceptLoop(rt: *Runtime) void {
             if (rt.stop.load(.monotonic)) break;
             continue;
         };
+        // Cap on concurrent inbound connection threads. The join handshake is
+        // the only thing the count covers (joined members are bounded by
+        // `mesh.max_members`, pending joins by `max_pending`), but a peer that
+        // never completes a JOIN can hold a thread and a socket indefinitely
+        // by dribbling bytes inside the 10s read timeout, and without a bound
+        // enough of them exhaust the process's fds and threads.
+        const in_flight = rt.conns.fetchAdd(1, .acq_rel);
+        if (in_flight >= max_inbound_conns) {
+            _ = rt.conns.fetchSub(1, .acq_rel);
+            stream.close(rt.io);
+            continue;
+        }
         const arg = rt.gpa.create(Conn) catch {
+            _ = rt.conns.fetchSub(1, .acq_rel);
             stream.close(rt.io);
             continue;
         };
         arg.* = .{ .rt = rt, .stream = stream };
         const th = std.Thread.spawn(.{}, acceptOne, .{arg}) catch {
+            _ = rt.conns.fetchSub(1, .acq_rel);
             stream.close(rt.io);
             rt.gpa.destroy(arg);
             continue;
