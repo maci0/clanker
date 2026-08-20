@@ -1,11 +1,13 @@
-//! Persistent session store: serializes conversations to
-//! `state/sessions/<id>.json` under an arbitrary base directory.
+//! Persistent session store: one SQLite database per conversation at
+//! `<sessions_dir>/<id>.db`, holding the session record (meta table), the
+//! mutable transcript (messages table, rewritten on save) and the
+//! append-only event stream (events table, INSERT-only by trigger). The
+//! transcript is the visible projection; the events table is the traceable
+//! record of what the model saw, replicated to mesh peers.
 
 const std = @import("std");
-const json = std.json;
 const types = @import("../llm/types.zig");
-const atomic_write = @import("../util/atomic_write.zig");
-const ensure_dir = @import("../util/ensure_dir.zig");
+const sqlite = @import("../util/sqlite.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
 
@@ -20,17 +22,40 @@ pub const Session = struct {
     /// registered. "" is the default workspace (the serve cwd).
     workspace: []const u8 = "",
     /// Whether this chat is archived / hidden from the default listing.
-    /// False absences still decode as false, so pre-archive sessions need no migration.
     archived: bool = false,
     /// The system prompt (and the context built from it) the model was
-    /// actually running against when this session was last saved. DSH-style
-    /// traceability: the saved transcript is what the *model saw*, and the
-    /// system prompt is the biggest part of that that the visible chat omits.
-    /// Null on sessions written before this field existed.
+    /// actually running against when this session was last saved.
     system_prompt: ?[]const u8 = null,
 };
 
-const store_dir = "state/sessions";
+/// The suffix naming a session's database: `<id>.db` (the JSON transcript
+/// format is gone).
+pub const db_suffix = ".db";
+
+const schema: [:0]const u8 =
+    \\CREATE TABLE IF NOT EXISTS meta (
+    \\  key TEXT PRIMARY KEY,
+    \\  value TEXT NOT NULL
+    \\);
+    \\CREATE TABLE IF NOT EXISTS messages (
+    \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  role TEXT NOT NULL,
+    \\  content TEXT,
+    \\  images TEXT,
+    \\  tool_calls TEXT,
+    \\  tool_call_id TEXT
+    \\);
+    \\CREATE TABLE IF NOT EXISTS events (
+    \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  ts_ms INTEGER NOT NULL,
+    \\  kind TEXT NOT NULL,
+    \\  payload TEXT NOT NULL
+    \\);
+    \\CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
+    \\BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+    \\CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
+    \\BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+;
 
 /// Session ids are path fragments, not arbitrary labels. Enforce the storage
 /// boundary here even when a caller forgets its own input validation.
@@ -42,173 +67,211 @@ pub fn validSessionId(id: []const u8) bool {
     return true;
 }
 
-/// Writes a session to `base_dir/state/sessions/<id>.json`.
-pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, session: Session) !void {
-    if (!validSessionId(session.id)) return error.InvalidSessionId;
-    try ensure_dir.ensureDir(base, io, store_dir);
-
-    // Grows to fit the conversation rather than a fixed cap: a fixed buffer
-    // silently failed (and callers `catch {}`'d the failure away) once a
-    // long-context model's history crossed it, so the session simply stopped
-    // being saved with no visible error.
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
-    var s = json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-
-    // The transcript is parsed back as UTF-8 JSON on load (std.json rejects
-    // invalid UTF-8 in strings with SyntaxError), but the writer passes bytes
-    // >= 0x80 through verbatim. A single non-UTF-8 byte in any untrusted text
-    // field (argv, pasted input, subprocess output) used to make the file
-    // unloadable, and listings silently dropped it. Sanitize at the write
-    // boundary so what we store is what the reader can read; the valid
-    // fast path is a validation pass, no copy.
-    const clean_title = try utf8.sanitize(arena, session.title);
-
-    try s.beginObject();
-    try s.objectField("id");
-    try s.write(session.id);
-    try s.objectField("title");
-    try s.write(clean_title);
-    try s.objectField("created");
-    try s.write(session.created);
-    try s.objectField("updated");
-    try s.write(session.updated);
-    if (session.workspace.len > 0) {
-        try s.objectField("workspace");
-        try s.write(session.workspace);
-    }
-    if (session.archived) {
-        try s.objectField("archived");
-        try s.write(true);
-    }
-    // Listing fields sit in front of the transcript so a picker can score a
-    // row from the first few kilobytes. Without them every GET /api/sessions
-    // parsed every message of every conversation (each file up to 16 MiB).
-    try s.objectField("message_count");
-    try s.write(session.messages.len);
-    try s.objectField("bytes");
-    try s.write(transcriptBytes(session.messages));
-    try s.objectField("messages");
-    try s.beginArray();
-    for (session.messages) |m| {
-        try s.beginObject();
-        try s.objectField("role");
-        try s.write(m.role.asStr());
-        if (m.content) |c| {
-            try s.objectField("content");
-            try s.write(try utf8.sanitize(arena, c));
-        }
-        // Attachments are model-visible input, so they belong in the log the
-        // next request is derived from. Dropping them here let `--continue`
-        // and `forkSession` resend "what is in this picture?" with no picture
-        // and no error. ponytail: base64 inline, same shape as the wire; the
-        // ceiling is that every turn rewrites the whole transcript, so a
-        // 4-image conversation re-serializes ~21 MB per save. Move the parts
-        // to a content-addressed sidecar under `state/sessions/<id>.files/`
-        // if that latency ever shows up.
-        if (m.images) |imgs| {
-            if (imgs.len > 0) {
-                try s.objectField("images");
-                try s.beginArray();
-                for (imgs) |img| {
-                    try s.beginObject();
-                    try s.objectField("mime");
-                    try s.write(img.mime);
-                    try s.objectField("b64");
-                    try s.write(img.b64);
-                    try s.endObject();
-                }
-                try s.endArray();
-            }
-        }
-        if (m.tool_calls) |calls| {
-            try s.objectField("tool_calls");
-            try s.beginArray();
-            for (calls) |tc| {
-                try s.beginObject();
-                try s.objectField("id");
-                try s.write(try utf8.sanitize(arena, tc.id));
-                try s.objectField("name");
-                try s.write(try utf8.sanitize(arena, tc.name));
-                try s.objectField("arguments");
-                try s.write(try utf8.sanitize(arena, tc.arguments));
-                try s.endObject();
-            }
-            try s.endArray();
-        }
-        if (m.tool_call_id) |tid| {
-            try s.objectField("tool_call_id");
-            try s.write(try utf8.sanitize(arena, tid));
-        }
-        try s.endObject();
-    }
-    try s.endArray();
-    // The system prompt snapshot: what the model saw beyond the visible chat.
-    // Written AFTER the transcript on purpose: the listing prefix parser reads
-    // only the first 4096 bytes to score a row, and a long system prompt must
-    // not push message_count/bytes out of that window. Loaded with
-    // ignore_unknown_fields, so old sessions decode unchanged.
-    if (session.system_prompt) |sp| {
-        try s.objectField("system_prompt");
-        try s.write(try utf8.sanitize(arena, sp));
-    }
-    try s.endObject();
-
-    const path = try std.fmt.allocPrint(gpa, "{s}/{s}.json", .{ store_dir, session.id });
-    defer gpa.free(path);
-    // Atomic: a reader (including this same process resuming after a
-    // hot-reload restart) must never observe a session file truncated
-    // mid-write.
-    // Owner-only: the transcript holds the user's prompts and model replies;
-    // the default mode left it world-readable for any other local user.
-    try atomic_write.writeFilePerms(io, base, path, out.written(), atomic_write.private_file);
+/// Opens (creating if needed) the per-session database at
+/// `<sessions_dir>/<id>.db` with the schema in place. The path is built and
+/// sentinel-terminated in the arena.
+fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !sqlite.Connection {
+    var conn: sqlite.Connection = .{};
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    const pathz = try arena.dupeZ(u8, path);
+    try conn.open(pathz);
+    conn.exec(schema) catch |err| {
+        conn.close();
+        return err;
+    };
+    return conn;
 }
 
-const StoredToolCall = struct {
+fn metaSet(conn: *sqlite.Connection, key: []const u8, value: []const u8) !void {
+    var stmt = try conn.prepare(
+        \\INSERT INTO meta (key, value) VALUES (?1, ?2)
+        \\ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+    );
+    defer stmt.finalize();
+    try stmt.bindText(1, key);
+    try stmt.bindText(2, value);
+    _ = try stmt.step();
+}
+
+fn metaGet(conn: *sqlite.Connection, arena: std.mem.Allocator, key: []const u8) ?[]const u8 {
+    var stmt = conn.prepare(
+        \\SELECT value FROM meta WHERE key = ?1;
+    ) catch return null;
+    defer stmt.finalize();
+    stmt.bindText(1, key) catch return null;
+    while (true) {
+        const s = stmt.step() catch return null;
+        if (s != .row) break;
+        return arena.dupe(u8, stmt.columnText(0) orelse "") catch null;
+    }
+    return null;
+}
+
+/// JSON-encodes a message's images (or "[]" when absent).
+fn encodeImages(arena: std.mem.Allocator, images: ?[]const types.ImagePart) ![]const u8 {
+    const imgs = images orelse return "[]";
+    if (imgs.len == 0) return "[]";
+    var w: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
+    defer w.deinit();
+    var j = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    try j.beginArray();
+    for (imgs) |img| {
+        try j.beginObject();
+        try j.objectField("mime");
+        try j.write(img.mime);
+        try j.objectField("b64");
+        try j.write(img.b64);
+        try j.endObject();
+    }
+    try j.endArray();
+    return arena.dupe(u8, w.written());
+}
+
+/// JSON-encodes a message's tool calls (or "[]" when absent).
+fn encodeToolCalls(arena: std.mem.Allocator, calls: ?[]const types.ToolCall) ![]const u8 {
+    const cs = calls orelse return "[]";
+    if (cs.len == 0) return "[]";
+    var w: std.Io.Writer.Allocating = .init(std.heap.page_allocator);
+    defer w.deinit();
+    var j = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+    try j.beginArray();
+    for (cs) |tc| {
+        try j.beginObject();
+        try j.objectField("id");
+        try j.write(tc.id);
+        try j.objectField("name");
+        try j.write(tc.name);
+        try j.objectField("arguments");
+        try j.write(tc.arguments);
+        try j.endObject();
+    }
+    try j.endArray();
+    return arena.dupe(u8, w.written());
+}
+
+/// Writes a session to `<sessions_dir>/<id>.db`: the meta record upserted,
+/// the transcript replaced (the messages table is the mutable projection),
+/// in one transaction. The events table is never touched here.
+pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, session: Session) !void {
+    _ = gpa;
+    if (!validSessionId(session.id)) return error.InvalidSessionId;
+    std.Io.Dir.cwd().createDirPath(io, sessions_dir) catch {};
+
+    var conn = try openDb(arena, sessions_dir, session.id);
+    defer conn.close();
+    var tx = try sqlite.Transaction.begin(&conn);
+    defer tx.rollback();
+
+    try metaSet(&conn, "id", session.id);
+    try metaSet(&conn, "title", try utf8.sanitize(arena, session.title));
+    var buf: [24]u8 = undefined;
+    try metaSet(&conn, "created", try std.fmt.bufPrint(&buf, "{d}", .{session.created}));
+    try metaSet(&conn, "updated", try std.fmt.bufPrint(&buf, "{d}", .{session.updated}));
+    if (session.workspace.len > 0) try metaSet(&conn, "workspace", session.workspace);
+    try metaSet(&conn, "archived", if (session.archived) "true" else "false");
+    if (session.system_prompt) |sp| try metaSet(&conn, "system_prompt", try utf8.sanitize(arena, sp));
+
+    try conn.exec("DELETE FROM messages;");
+    var ins = try conn.prepare(
+        \\INSERT INTO messages (role, content, images, tool_calls, tool_call_id)
+        \\VALUES (?1, ?2, ?3, ?4, ?5);
+    );
+    defer ins.finalize();
+    for (session.messages) |m| {
+        ins.reset();
+        try ins.bindText(1, m.role.asStr());
+        try ins.bindText(2, try utf8.sanitize(arena, m.content orelse ""));
+        try ins.bindText(3, try encodeImages(arena, m.images));
+        try ins.bindText(4, try encodeToolCalls(arena, m.tool_calls));
+        try ins.bindText(5, try utf8.sanitize(arena, m.tool_call_id orelse ""));
+        _ = try ins.step();
+    }
+    try tx.commit();
+}
+
+pub const StoredToolCall = struct {
     id: []const u8,
     name: []const u8,
     arguments: []const u8,
 };
 
-const StoredImage = struct {
+pub const StoredImage = struct {
     mime: []const u8,
     b64: []const u8,
 };
 
+/// The wire/persistence shape of one message, used by `importChat` and the
+/// read path before conversion to `types.Message`.
 pub const StoredMessage = struct {
     role: []const u8,
     content: ?[]const u8 = null,
-    /// Absent on every session written before attachments were persisted, so
-    /// an old transcript still decodes; it just has nothing to restore.
     images: ?[]const StoredImage = null,
     tool_calls: ?[]const StoredToolCall = null,
     tool_call_id: ?[]const u8 = null,
 };
 
-pub const StoredSession = struct {
-    id: []const u8,
-    title: []const u8,
-    created: i64,
-    updated: i64,
-    workspace: []const u8 = "",
-    archived: bool = false,
-    system_prompt: ?[]const u8 = null,
-    messages: []const StoredMessage = &.{},
-};
+/// Reads a session's meta + transcript rows from an open connection. Copies
+/// are arena-owned.
+fn loadStored(conn: *sqlite.Connection, arena: std.mem.Allocator, id: []const u8) !StoredMessageList {
+    _ = id;
+    var out: std.ArrayList(StoredMessage) = .empty;
+    var stmt = try conn.prepare(
+        \\SELECT role, content, images, tool_calls, tool_call_id FROM messages ORDER BY seq;
+    );
+    defer stmt.finalize();
+    while (true) {
+        if ((try stmt.step()) != .row) break;
+        const role = try arena.dupe(u8, stmt.columnText(0) orelse "");
+        const content: ?[]const u8 = if (stmt.columnText(1)) |c| try arena.dupe(u8, c) else null;
+        // columnText is transient (valid until the next step); the JSON
+        // decoder borrows it, so own an arena copy first.
+        const imgs_raw = try arena.dupe(u8, stmt.columnText(2) orelse "[]");
+        const calls_raw = try arena.dupe(u8, stmt.columnText(3) orelse "[]");
+        const imgs = try decodeImages(arena, imgs_raw);
+        const calls = try decodeToolCalls(arena, calls_raw);
+        const tc_id: ?[]const u8 = if (stmt.columnText(4)) |c| try arena.dupe(u8, c) else null;
+        try out.append(arena, .{
+            .role = role,
+            .content = content,
+            .images = if (imgs.len > 0) imgs else null,
+            .tool_calls = if (calls.len > 0) calls else null,
+            .tool_call_id = tc_id,
+        });
+    }
+    return .{ .items = try out.toOwnedSlice(arena) };
+}
 
-/// Loads a session from `base_dir/state/sessions/<id>.json`.
-pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) !Session {
+const StoredMessageList = struct { items: []const StoredMessage };
+
+fn decodeImages(arena: std.mem.Allocator, raw: []const u8) ![]const StoredImage {
+    if (std.mem.trim(u8, raw, " \t\r\n").len == 0 or std.mem.eql(u8, raw, "[]")) return &.{};
+    return std.json.parseFromSliceLeaky([]StoredImage, arena, raw, .{ .ignore_unknown_fields = true }) catch &.{};
+}
+
+fn decodeToolCalls(arena: std.mem.Allocator, raw: []const u8) ![]const StoredToolCall {
+    if (std.mem.trim(u8, raw, " \t\r\n").len == 0 or std.mem.eql(u8, raw, "[]")) return &.{};
+    return std.json.parseFromSliceLeaky([]StoredToolCall, arena, raw, .{ .ignore_unknown_fields = true }) catch &.{};
+}
+
+/// Loads a session from `<sessions_dir>/<id>.db`.
+pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !Session {
     _ = gpa;
     if (!validSessionId(id)) return error.InvalidSessionId;
-    const path = try std.fmt.allocPrint(arena, "{s}/{s}.json", .{ store_dir, id });
-    // 64 MiB, not 16: four max-size attachments (4 MB each, `max_run_images`
-    // in cli.zig) base64-expand to ~21 MB on their own, so a cap sized for
-    // text alone would refuse to load the very sessions that now round-trip.
-    const raw = try base.readFileAlloc(io, path, arena, .limited(1 << 26));
-    const stored = try json.parseFromSliceLeaky(StoredSession, arena, raw, .{ .ignore_unknown_fields = true });
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return error.FileNotFound;
+    var conn = try openDb(arena, sessions_dir, id);
+    defer conn.close();
+
+    const title = metaGet(&conn, arena, "title") orelse "";
+    const created = std.fmt.parseInt(i64, metaGet(&conn, arena, "created") orelse "0", 10) catch 0;
+    const updated = std.fmt.parseInt(i64, metaGet(&conn, arena, "updated") orelse "0", 10) catch 0;
+    const workspace = metaGet(&conn, arena, "workspace") orelse "";
+    const archived = std.mem.eql(u8, metaGet(&conn, arena, "archived") orelse "", "true");
+    const system_prompt = metaGet(&conn, arena, "system_prompt");
+    const stored = try loadStored(&conn, arena, id);
 
     var messages: std.ArrayList(types.Message) = .empty;
-    for (stored.messages) |sm| {
+    for (stored.items) |sm| {
         var msg = types.Message{
             .role = try roleFromStr(sm.role),
             .content = sm.content,
@@ -230,37 +293,35 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     }
 
     return .{
-        .id = stored.id,
-        .title = stored.title,
-        .created = stored.created,
-        .updated = stored.updated,
-        .workspace = stored.workspace,
-        .archived = stored.archived,
-        .system_prompt = stored.system_prompt,
+        .id = id,
+        .title = title,
+        .created = created,
+        .updated = updated,
+        .workspace = workspace,
+        .archived = archived,
+        .system_prompt = system_prompt,
         .messages = try messages.toOwnedSlice(arena),
     };
 }
 
-/// Removes a saved conversation. Its execution graphs stay: they are the
-/// record of runs that really happened, and are addressed by run id rather
-/// than by session.
-pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) !void {
+/// Removes a saved conversation: the database file is deleted. Its execution
+/// graphs stay: they are the record of runs that really happened, and are
+/// addressed by run id rather than by session.
+pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !void {
     if (!validSessionId(id)) return error.InvalidSessionId;
-    const path = try std.fmt.allocPrint(arena, "{s}/{s}.json", .{ store_dir, id });
-    try base.deleteFile(io, path);
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    try std.Io.Dir.cwd().deleteFile(io, path);
 }
 
 /// Forks a conversation: the same messages written back under a new id,
 /// titled "fork of <old title>". A fork is a branch you can abandon without
 /// losing the conversation it came from. Returns the new id (arena-owned).
-pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8) ![]const u8 {
+pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) ![]const u8 {
     if (!validSessionId(id)) return error.InvalidSessionId;
-    const s = try loadSession(io, gpa, arena, base, id);
+    const s = try loadSession(io, gpa, arena, sessions_dir, id);
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-    // Nanosecond suffix keeps two forks of the same session distinct and
-    // stays within the alphanumeric/dash alphabet validSessionId accepts.
     const new_id = try std.fmt.allocPrint(arena, "{s}-fork-{d}", .{ id, std.Io.Timestamp.now(io, .real).nanoseconds });
-    try saveSession(io, gpa, arena, base, .{
+    try saveSession(io, gpa, arena, sessions_dir, .{
         .id = new_id,
         .title = try std.fmt.allocPrint(arena, "fork of {s}", .{s.title}),
         .workspace = s.workspace,
@@ -271,12 +332,6 @@ pub fn forkSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     return new_id;
 }
 
-/// The message index just past turn `n`'s answer: the Nth user message plus
-/// everything up to and including the assistant message that completes the
-/// turn (tool-call steps and tool results in between included). A turn
-/// whose reply is still pending, a stopped run with no final assistant
-/// content, cuts before its user message, so a branch never strands half a
-/// turn. `n` is 1-based; past the last turn is `error.TurnOutOfRange`.
 fn turnCutoff(messages: []const types.Message, n: usize) !usize {
     var users: usize = 0;
     for (messages, 0..) |m, i| {
@@ -300,28 +355,21 @@ fn turnCutoff(messages: []const types.Message, n: usize) !usize {
     return error.TurnOutOfRange;
 }
 
-/// Branches a conversation at a turn: the messages through the end of turn
-/// `turn_no` copied under a new id, titled "branch of <old title>". Turns
-/// before the branch point stay shared context; nothing after it exists in
-/// the branch yet, so continuing it explores a different direction without
-/// touching the original, the per-turn branch a chat UI offers, as opposed
-/// to `forkSession`'s whole-conversation copy. Returns the new id
-/// (arena-owned).
 pub fn branchSession(
     io: std.Io,
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
-    base: std.Io.Dir,
+    sessions_dir: []const u8,
     id: []const u8,
     turn_no: usize,
 ) ![]const u8 {
-    const s = try loadSession(io, gpa, arena, base, id);
+    const s = try loadSession(io, gpa, arena, sessions_dir, id);
     const cutoff = try turnCutoff(s.messages, turn_no);
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     // Nanosecond suffix keeps two branches of the same session distinct and
     // stays within the alphanumeric/dash alphabet validSessionId accepts.
     const new_id = try std.fmt.allocPrint(arena, "{s}-branch-{d}", .{ id, std.Io.Timestamp.now(io, .real).nanoseconds });
-    try saveSession(io, gpa, arena, base, .{
+    try saveSession(io, gpa, arena, sessions_dir, .{
         .id = new_id,
         .title = try std.fmt.allocPrint(arena, "branch of {s}", .{s.title}),
         .workspace = s.workspace,
@@ -532,20 +580,76 @@ test "titleFromTask handles non-Latin tasks" {
 ///
 /// Auto titles are a couple of content words from the opening task. A
 /// picker full of 60-character prefixes is what this replaced.
-pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8, title: []const u8) !void {
-    const s = try loadSession(io, gpa, arena, base, id);
-    try saveSession(io, gpa, arena, base, .{
-        .id = s.id,
-        .title = title,
-        .workspace = s.workspace,
-        .messages = s.messages,
-        .created = s.created,
-        .updated = s.updated,
-    });
+pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8, title: []const u8) !void {
+    _ = io;
+    _ = gpa;
+    if (!validSessionId(id)) return error.InvalidSessionId;
+    var conn = try openDb(arena, sessions_dir, id);
+    defer conn.close();
+    try metaSet(&conn, "title", try utf8.sanitize(arena, title));
 }
 
-/// Enough of a session to list it without reading every message: what a
-/// picker needs to show one row.
+/// Reads one session's listing row (meta + counts) through a short-lived
+/// connection. Returns null when the file is unreadable or has no id.
+fn sessionMetaFromDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) ?SessionMeta {
+    var conn = openDb(arena, sessions_dir, id) catch return null;
+    defer conn.close();
+    const title = metaGet(&conn, arena, "title") orelse return null;
+    const created = std.fmt.parseInt(i64, metaGet(&conn, arena, "created") orelse "0", 10) catch 0;
+    const updated = std.fmt.parseInt(i64, metaGet(&conn, arena, "updated") orelse "0", 10) catch 0;
+    const workspace = metaGet(&conn, arena, "workspace") orelse "";
+    const archived = std.mem.eql(u8, metaGet(&conn, arena, "archived") orelse "", "true");
+
+    var count: i64 = 0;
+    var bytes: i64 = 0;
+    {
+        var c = conn.prepare("SELECT COUNT(*), COALESCE(SUM(LENGTH(COALESCE(content, ''))), 0) FROM messages;") catch null;
+        if (c) |*stmt| {
+            defer stmt.finalize();
+            if (stmt.step() catch null == .row) {
+                count = stmt.columnInt(0);
+                bytes = stmt.columnInt(1);
+            }
+        }
+    }
+    return .{
+        .id = arena.dupe(u8, id) catch return null,
+        .title = title,
+        .created = created,
+        .updated = updated,
+        .workspace = workspace,
+        .archived = archived,
+        .messages = @intCast(count),
+        .bytes = @intCast(bytes),
+    };
+}
+
+/// Lists every saved session, most recently updated first. A database that
+/// cannot be opened or has no id is skipped rather than failing the whole
+/// listing: one corrupt session should not make the others unreachable.
+pub fn listSessions(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8) ![]SessionMeta {
+    var out: std.ArrayList(SessionMeta) = .empty;
+
+    var dir = std.Io.Dir.cwd().openDir(io, sessions_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
+    defer dir.close(io);
+
+    var it = dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, db_suffix)) continue;
+        const id = entry.name[0 .. entry.name.len - db_suffix.len];
+        if (!validSessionId(id)) continue;
+        if (sessionMetaFromDb(arena, sessions_dir, id)) |meta| try out.append(arena, meta);
+    }
+
+    std.mem.sort(SessionMeta, out.items, {}, struct {
+        fn lt(_: void, a: SessionMeta, b: SessionMeta) bool {
+            return a.updated > b.updated;
+        }
+    }.lt);
+    return out.toOwnedSlice(arena);
+}
+
 pub const SessionMeta = struct {
     id: []const u8,
     title: []const u8 = "",
@@ -563,164 +667,6 @@ pub const SessionMeta = struct {
 /// Copies listing fields out of a parsed transcript so the file buffer can
 /// be dropped. Peak memory for a picker is then one conversation, not the
 /// sum of every saved one (each file may be up to 16 MiB).
-fn sessionMetaFromStored(arena: std.mem.Allocator, stored: StoredSession) !SessionMeta {
-    return .{
-        .id = try arena.dupe(u8, stored.id),
-        .title = try arena.dupe(u8, stored.title),
-        .created = stored.created,
-        .updated = stored.updated,
-        .workspace = try arena.dupe(u8, stored.workspace),
-        .archived = stored.archived,
-        .messages = stored.messages.len,
-        .bytes = storedTranscriptBytes(stored.messages),
-    };
-}
-
-/// Counted the same way on both sides: `bytes` is written from the live
-/// messages and recomputed from the stored ones when the header is missing,
-/// so the two must agree or a session changes size just by being re-listed.
-/// Attachments count because they dominate a multimodal transcript.
-fn transcriptBytes(messages: []const types.Message) usize {
-    var bytes: usize = 0;
-    for (messages) |m| {
-        if (m.content) |c| bytes += c.len;
-        if (m.images) |imgs| {
-            for (imgs) |img| bytes += img.b64.len;
-        }
-        if (m.tool_calls) |calls| {
-            for (calls) |tc| bytes += tc.arguments.len;
-        }
-    }
-    return bytes;
-}
-
-fn storedTranscriptBytes(messages: []const StoredMessage) usize {
-    var bytes: usize = 0;
-    for (messages) |sm| {
-        if (sm.content) |c| bytes += c.len;
-        if (sm.images) |imgs| {
-            for (imgs) |img| bytes += img.b64.len;
-        }
-        if (sm.tool_calls) |calls| {
-            for (calls) |tc| bytes += tc.arguments.len;
-        }
-    }
-    return bytes;
-}
-
-/// Enough of the file to hold id/title/timestamps and the listing counters
-/// that sit in front of `messages`. A 4 KiB title would miss them and fall
-/// back to a full parse; real titles are a couple of words.
-const listing_header_bytes: usize = 4096;
-
-const StoredListing = struct {
-    id: []const u8 = "",
-    title: []const u8 = "",
-    created: i64 = 0,
-    updated: i64 = 0,
-    workspace: []const u8 = "",
-    archived: bool = false,
-    message_count: ?usize = null,
-    bytes: ?usize = null,
-};
-
-/// First `listing_header_bytes` of `path`, or null when the file cannot be
-/// opened. A short file returns whatever it contains.
-fn readListingPrefix(io: std.Io, base: std.Io.Dir, path: []const u8, buf: *[listing_header_bytes]u8) ?[]const u8 {
-    var file = base.openFile(io, path, .{}) catch return null;
-    defer file.close(io);
-    var reader = file.reader(io, &.{});
-    const n = reader.interface.readSliceShort(buf) catch return null;
-    if (n == 0) return null;
-    return buf[0..n];
-}
-
-/// Closes a JSON object just before a top-level `,"<field>":` so a prefix
-/// that still has the transcript (or a truncated tail) parses as the header
-/// fields alone.
-fn closeJsonBeforeField(arena: std.mem.Allocator, raw: []const u8, field: []const u8) ?[]const u8 {
-    var needle_buf: [32]u8 = undefined;
-    const needle = std.fmt.bufPrint(&needle_buf, ",\"{s}\":", .{field}) catch return null;
-    const at = std.mem.find(u8, raw, needle) orelse return null;
-    const prefix = std.mem.trimEnd(u8, raw[0..at], " \t\r\n");
-    if (prefix.len == 0 or prefix[0] != '{') return null;
-    return std.fmt.allocPrint(arena, "{s}}}", .{prefix}) catch null;
-}
-
-fn storedListingFromPrefix(scratch: std.mem.Allocator, prefix: []const u8) ?StoredListing {
-    const src = closeJsonBeforeField(scratch, prefix, "messages") orelse blk: {
-        const trimmed = std.mem.trimEnd(u8, prefix, " \t\r\n");
-        if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '}') break :blk trimmed;
-        return null;
-    };
-    const h = json.parseFromSliceLeaky(StoredListing, scratch, src, .{ .ignore_unknown_fields = true }) catch return null;
-    if (h.id.len == 0) return null;
-    return h;
-}
-
-fn sessionMetaFromPrefix(arena: std.mem.Allocator, scratch: std.mem.Allocator, prefix: []const u8) ?SessionMeta {
-    const h = storedListingFromPrefix(scratch, prefix) orelse return null;
-    // Counters are optional: files written before message_count/bytes still
-    // carry id/title/updated in the first kilobytes. Missing counts stay 0
-    // until the next save, rather than pulling the whole transcript just to
-    // fill a picker column.
-    return .{
-        .id = arena.dupe(u8, h.id) catch return null,
-        .title = arena.dupe(u8, h.title) catch return null,
-        .created = h.created,
-        .updated = h.updated,
-        .workspace = arena.dupe(u8, h.workspace) catch return null,
-        .archived = h.archived,
-        .messages = h.message_count orelse 0,
-        .bytes = h.bytes orelse 0,
-    };
-}
-
-/// Lists every saved session, most recently updated first, the order a
-/// picker wants, since the session you were just in is the one you are most
-/// likely to return to. A file that cannot be read or parsed is skipped
-/// rather than failing the whole listing: one corrupt session should not make
-/// the others unreachable.
-pub fn listSessions(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]SessionMeta {
-    var out: std.ArrayList(SessionMeta) = .empty;
-
-    var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
-    defer dir.close(io);
-
-    var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer scratch_state.deinit();
-    var header_buf: [listing_header_bytes]u8 = undefined;
-
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        defer _ = scratch_state.reset(.retain_capacity);
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        const scratch = scratch_state.allocator();
-        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
-        if (readListingPrefix(io, base, path, &header_buf)) |prefix| {
-            if (sessionMetaFromPrefix(arena, scratch, prefix)) |meta| {
-                out.append(arena, meta) catch continue;
-                continue;
-            }
-        }
-        // Prefix missed id/title (a 4 KiB title pushed the header off the
-        // window). Walk the transcript only then, never for a file that
-        // already named itself in the first kilobytes.
-        const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
-        const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
-        out.append(arena, sessionMetaFromStored(arena, stored) catch continue) catch continue;
-    }
-
-    std.mem.sort(SessionMeta, out.items, {}, struct {
-        fn newestFirst(_: void, a: SessionMeta, b: SessionMeta) bool {
-            return a.updated > b.updated;
-        }
-    }.newestFirst);
-    return out.toOwnedSlice(arena);
-}
-
-/// One message that matched a search, with enough around it to recognise.
 pub const SearchHit = struct {
     id: []const u8,
     title: []const u8,
@@ -812,128 +758,71 @@ pub fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, matc
 pub fn searchSessions(
     io: std.Io,
     arena: std.mem.Allocator,
-    base: std.Io.Dir,
+    sessions_dir: []const u8,
     query: []const u8,
-    limit: usize,
+    max_hits: usize,
 ) ![]SearchHit {
     var out: std.ArrayList(SearchHit) = .empty;
-    if (query.len == 0 or limit == 0) return out.toOwnedSlice(arena);
-
-    var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
-    defer dir.close(io);
-
-    var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer scratch_state.deinit();
-    var header_buf: [listing_header_bytes]u8 = undefined;
-
-    // Score files from the listing header (4 KiB), then open transcripts
-    // newest-first and stop once `limit` conversations match. Opening every
-    // file first (each up to 16 MiB) then sorting was the same work as a
-    // miss even when the newest 50 already filled the page.
-    const Candidate = struct { name: []const u8, updated: i64 };
-    var candidates: std.ArrayList(Candidate) = .empty;
-
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        defer _ = scratch_state.reset(.retain_capacity);
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        const scratch = scratch_state.allocator();
-        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
-        const updated: i64 = blk: {
-            if (readListingPrefix(io, base, path, &header_buf)) |prefix| {
-                if (storedListingFromPrefix(scratch, prefix)) |h| break :blk h.updated;
+    const metas = try listSessions(io, arena, sessions_dir);
+    for (metas) |meta| {
+        if (out.items.len >= max_hits) break;
+        var conn = openDb(arena, sessions_dir, meta.id) catch continue;
+        defer conn.close();
+        var stmt = conn.prepare("SELECT role, content FROM messages ORDER BY seq;") catch continue;
+        defer stmt.finalize();
+        var any = false;
+        var more: usize = 0;
+        var turn: usize = 0;
+        var role: []const u8 = "";
+        var best_content: []const u8 = "";
+        var best_at: usize = 0;
+        var best_len: usize = 0;
+        while (true) {
+            if ((stmt.step() catch null) != .row) break;
+            const content = stmt.columnText(1) orelse continue;
+            if (!rawMayContainQuery(content, query)) {
+                turn += 1;
+                continue;
             }
-            // Prefix missed updated (a 4 KiB title pushed the header off
-            // the window). Parse only then, never for a file that already
-            // named its timestamp in the first kilobytes.
-            const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
-            const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
-            break :blk stored.updated;
-        };
-        const name = arena.dupe(u8, entry.name) catch continue;
-        candidates.append(arena, .{ .name = name, .updated = updated }) catch continue;
+            if (findFold(content, query)) |at| {
+                any = true;
+                more += 1;
+                if (best_len == 0 or at < best_at) {
+                    best_at = at;
+                    best_len = query.len;
+                    best_content = arena.dupe(u8, content) catch content;
+                    role = arena.dupe(u8, stmt.columnText(0) orelse "") catch "";
+                    turn = turn;
+                }
+            }
+            turn += 1;
+        }
+        if (!any) continue;
+        try out.append(arena, .{
+            .id = meta.id,
+            .title = meta.title,
+            .updated = meta.updated,
+            .archived = meta.archived,
+            .turn = turn,
+            .role = role,
+            .snippet = snippetAround(arena, best_content, best_at, best_len),
+            .more = more - 1,
+        });
     }
-
-    std.mem.sort(Candidate, candidates.items, {}, struct {
-        fn newestFirst(_: void, a: Candidate, b: Candidate) bool {
-            return a.updated > b.updated;
-        }
-    }.newestFirst);
-
-    for (candidates.items) |c| {
-        if (out.items.len >= limit) break;
-        defer _ = scratch_state.reset(.retain_capacity);
-        const scratch = scratch_state.allocator();
-        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, c.name }) catch continue;
-        const raw = base.readFileAlloc(io, path, scratch, .limited(1 << 24)) catch continue;
-        // A query that cannot appear escaped in JSON (`"` / `\` / controls)
-        // is stored verbatim. If the raw file does not contain it, skip the
-        // transcript parse: most conversations miss a typical search.
-        if (!rawMayContainQuery(raw, query)) continue;
-        const stored = json.parseFromSliceLeaky(StoredSession, scratch, raw, .{ .ignore_unknown_fields = true }) catch continue;
-
-        var first: ?SearchHit = null;
-        var count: usize = 0;
-        for (stored.messages, 0..) |m, idx| {
-            const content = m.content orelse continue;
-            const at = findFold(content, query) orelse continue;
-            count += 1;
-            if (first != null) continue;
-            // Strings from `stored` die with the scratch arena; copy the
-            // hit out before the next file reset.
-            first = .{
-                .id = arena.dupe(u8, stored.id) catch break,
-                .title = arena.dupe(u8, stored.title) catch break,
-                .updated = stored.updated,
-                .archived = stored.archived,
-                .turn = idx,
-                .role = arena.dupe(u8, m.role) catch break,
-                .snippet = arena.dupe(u8, snippetAround(arena, content, at, query.len)) catch break,
-            };
-        }
-        if (first) |*hit| {
-            hit.more = count - 1;
-            out.append(arena, hit.*) catch continue;
-        }
-    }
-
     return out.toOwnedSlice(arena);
 }
 
-/// The most recently updated session's id, or null when none exist, what
-/// `--continue` means, for both `clanker run` and the REPL.
-///
-/// Only the listing header is read: `--continue` must not parse every
-/// transcript just to learn which file is newest.
-pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ?[]const u8 {
-    var dir = base.openDir(io, store_dir, .{ .iterate = true }) catch return null;
-    defer dir.close(io);
-
-    var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer scratch_state.deinit();
-    var header_buf: [listing_header_bytes]u8 = undefined;
-
-    var best_id: ?[]const u8 = null;
-    var best_updated: i64 = std.math.minInt(i64);
-
-    var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        defer _ = scratch_state.reset(.retain_capacity);
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
-        const scratch = scratch_state.allocator();
-        const path = std.fmt.allocPrint(scratch, "{s}/{s}", .{ store_dir, entry.name }) catch continue;
-        const prefix = readListingPrefix(io, base, path, &header_buf) orelse continue;
-        const h = storedListingFromPrefix(scratch, prefix) orelse continue;
-        if (h.updated < best_updated) continue;
-        best_updated = h.updated;
-        best_id = arena.dupe(u8, h.id) catch continue;
+/// The id `--continue` means: the saved session touched most recently.
+pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8) ?[]const u8 {
+    const metas = listSessions(io, arena, sessions_dir) catch return null;
+    if (metas.len == 0) return null;
+    var best = metas[0];
+    for (metas[1..]) |m| {
+        if (m.updated > best.updated) best = m;
     }
-    return best_id;
+    return best.id;
 }
 
-/// The compaction budget a session is trimmed to before every save.
 pub const max_session_tokens = 128 * 1024;
 
 /// Chars/4, rounded up. Short strings are not free. One function so
@@ -1000,719 +889,20 @@ fn roleFromStr(s: []const u8) !types.Role {
     return error.InvalidRole;
 }
 
-// ------------------------------------------------------------------- tests --
-
-test "session store rejects ids that can escape its directory" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    const bad_id = "../../escaped";
-    try std.testing.expectError(error.InvalidSessionId, saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = bad_id,
-        .title = "bad",
-        .messages = &.{},
-        .created = 0,
-        .updated = 0,
-    }));
-    try std.testing.expectError(error.InvalidSessionId, loadSession(io, std.testing.allocator, arena, env.tmp.dir, bad_id));
-    try std.testing.expectError(error.InvalidSessionId, deleteSession(io, arena, env.tmp.dir, bad_id));
-    try std.testing.expectError(error.InvalidSessionId, forkSession(io, std.testing.allocator, arena, env.tmp.dir, bad_id));
-    try std.testing.expectError(error.FileNotFound, env.tmp.dir.statFile(io, "escaped.json", .{}));
-}
-
-test "a saved session round-trips its image attachments, including through a fork" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    var imgs = [_]types.ImagePart{.{ .mime = "image/png", .b64 = "aGk=" }};
-    const messages = [_]types.Message{
-        .{ .role = .user, .content = "what is in this picture?", .images = &imgs },
-        .{ .role = .assistant, .content = "a greeting" },
-    };
-    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = "vision",
-        .title = "vision",
-        .messages = &messages,
-        .created = 0,
-        .updated = 0,
-    });
-
-    // The attachment is model-visible input, so resuming must resend it.
-    const loaded = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, "vision");
-    const got = loaded.messages[0].images orelse return error.AttachmentDropped;
-    try std.testing.expectEqual(@as(usize, 1), got.len);
-    try std.testing.expectEqualStrings("image/png", got[0].mime);
-    try std.testing.expectEqualStrings("aGk=", got[0].b64);
-    // A message that never had one still decodes as having none.
-    try std.testing.expect(loaded.messages[1].images == null);
-
-    // forkSession round-trips through load+save, so it stripped them too.
-    const fork_id = try forkSession(io, std.testing.allocator, arena, env.tmp.dir, "vision");
-    const forked = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, fork_id);
-    const fork_imgs = forked.messages[0].images orelse return error.AttachmentDropped;
-    try std.testing.expectEqualStrings("aGk=", fork_imgs[0].b64);
-
-    // The listing counter agrees with what a re-listing recomputes.
-    const metas = try listSessions(io, arena, env.tmp.dir);
-    for (metas) |m| {
-        if (!std.mem.eql(u8, m.id, "vision")) continue;
-        try std.testing.expectEqual(transcriptBytes(&messages), m.bytes);
-    }
-}
-
-test "a long system prompt round-trips and does not break the listing prefix" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    // A built system prompt (skills + learnings + injected context) is far
-    // larger than the 4096-byte listing header window; the field must sit
-    // after the transcript so message_count/bytes stay scannable.
-    var prompt_buf: std.ArrayList(u8) = .empty;
-    for (0..2000) |_| try prompt_buf.appendSlice(arena, "prompt ");
-    const big_prompt = prompt_buf.items;
-    const messages = [_]types.Message{.{ .role = .user, .content = "hello" }};
-    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = "bigprompt",
-        .title = "big",
-        .messages = &messages,
-        .created = 1,
-        .updated = 1,
-        .system_prompt = big_prompt,
-    });
-
-    // The field round-trips through load.
-    const loaded = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, "bigprompt");
-    try std.testing.expectEqualStrings(big_prompt, loaded.system_prompt.?);
-
-    // The listing still scores the row (counters are reachable in the
-    // header window) despite the long prompt after the transcript.
-    const metas = try listSessions(io, arena, env.tmp.dir);
-    var found = false;
-    for (metas) |m| {
-        if (std.mem.eql(u8, m.id, "bigprompt")) found = true;
-    }
-    try std.testing.expect(found);
-}
-
-test "session load rejects an unknown persisted message role" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    try env.tmp.dir.createDirPath(io, "state/sessions");
-    try env.tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/bad-role.json", .data =
-        \\{"id":"bad-role","title":"bad","created":0,"updated":0,"messages":[{"role":"operator","content":"do not reinterpret me"}]}
-    });
-    try std.testing.expectError(error.InvalidRole, loadSession(io, std.testing.allocator, arena, env.tmp.dir, "bad-role"));
-}
-
-test "a session with invalid UTF-8 in untrusted text still round-trips" {
-    // The storage format is UTF-8 JSON and the loader rejects invalid UTF-8
-    // with SyntaxError, but the writer used to pass stray bytes through
-    // verbatim. One latin-1 byte in a message or title then bricked the file:
-    // loadSession failed and listings silently dropped the session. The write
-    // boundary now replaces invalid bytes with U+FFFD so what is stored always
-    // parses back.
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    const dirty_title = [_]u8{ 'c', 'a', 'f', 0xE9 };
-    const dirty_content = [_]u8{ 'p', 'a', 's', 't', 'e', 'd', ' ', 0xFF, ' ', 0xF0, 0x9F };
-    const messages = [_]types.Message{
-        .{ .role = .user, .content = &dirty_content },
-        .{ .role = .assistant, .content = "valid \u{E9}" },
-    };
-    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = "dirty",
-        .title = &dirty_title,
-        .messages = &messages,
-        .created = 0,
-        .updated = 0,
-    });
-
-    const loaded = try loadSession(io, std.testing.allocator, arena, env.tmp.dir, "dirty");
-    try std.testing.expectEqualStrings("caf\u{FFFD}", loaded.title);
-    // The truncated 0xF0 0x9F emoji pair is two invalid bytes -> two U+FFFDs.
-    try std.testing.expectEqualStrings("pasted \u{FFFD} \u{FFFD}\u{FFFD}", loaded.messages[0].content.?);
-    try std.testing.expectEqualStrings("valid \u{E9}", loaded.messages[1].content.?);
-    try std.testing.expect(std.unicode.utf8ValidateSlice(loaded.messages[0].content.?));
-}
-
-test "compactMessages counts short content and tool-call arguments" {
-    var messages: std.ArrayList(types.Message) = .empty;
-    defer messages.deinit(std.testing.allocator);
-    try messages.appendSlice(std.testing.allocator, &.{
-        .{ .role = .system, .content = "system" },
-        .{ .role = .user, .content = "abc" },
-        .{ .role = .assistant, .tool_calls = &.{.{
-            .id = "call-1",
-            .name = "read",
-            .arguments = "12345678",
-        }} },
-        .{ .role = .assistant, .content = "keep" },
-    });
-
-    compactMessages(&messages, 3);
-
-    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
-    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
-    try std.testing.expectEqualStrings("keep", messages.items[1].content.?);
-}
-
-test "compactMessages counts tool-call arguments toward the token estimate" {
-    // An assistant message whose own content is absent but whose tool-call
-    // arguments are long must estimate tokens from those arguments, the way
-    // listSessions counts byte weight. Without it, a session made almost
-    // entirely of tool calls would never compact no matter how long the
-    // arguments got.
-    var messages: std.ArrayList(types.Message) = .empty;
-    defer messages.deinit(std.testing.allocator);
-    try messages.append(std.testing.allocator, .{ .role = .system, .content = "sys" });
-    try messages.append(std.testing.allocator, .{
-        .role = .assistant,
-        .tool_calls = &.{.{
-            .id = "c1",
-            .name = "read_file",
-            .arguments = "aaaaaaaaaaaaaaaa", // 16 bytes → 4 tokens
-        }},
-    });
-    try messages.append(std.testing.allocator, .{ .role = .user, .content = "bbbb" });
-
-    // System (1) + tool call (4) + user (1) = 6 tokens. A budget of 4 evicts
-    // the oldest non-system message, the 4-token tool call, and leaves
-    // system + the 1-token user message. If arguments were not counted the
-    // tool call would be free, the total would be 2 ≤ 4, and nothing would
-    // be dropped.
-    compactMessages(&messages, 4);
-    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
-    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
-    try std.testing.expectEqual(types.Role.user, messages.items[1].role);
-    try std.testing.expectEqualStrings("bbbb", messages.items[1].content.?);
-}
-
-test "estimateTextTokens rounds up so short strings are not free" {
-    try std.testing.expectEqual(@as(usize, 0), estimateTextTokens(0));
-    try std.testing.expectEqual(@as(usize, 1), estimateTextTokens(1));
-    try std.testing.expectEqual(@as(usize, 1), estimateTextTokens(4));
-    try std.testing.expectEqual(@as(usize, 2), estimateTextTokens(5));
-}
-
-test "estimatedTokens rounds up so short messages are not free" {
-    try std.testing.expectEqual(@as(usize, 1), estimatedTokens(.{ .role = .user, .content = "a" }));
-    try std.testing.expectEqual(@as(usize, 1), estimatedTokens(.{ .role = .user, .content = "abcd" }));
-    try std.testing.expectEqual(@as(usize, 2), estimatedTokens(.{ .role = .user, .content = "abcde" }));
-    // A tool-call-only message contributes its arguments toward the token
-    // estimate: 10 bytes -> ceil(10/4) = 3 tokens.
-    const m = types.Message{ .role = .assistant, .tool_calls = &.{.{
-        .id = "c",
-        .name = "read",
-        .arguments = "abcdefghij",
-    }} };
-    try std.testing.expectEqual(@as(usize, 3), estimatedTokens(m));
-}
-
-test "compactMessages preserves system messages even when they exceed the budget" {
-    var messages: std.ArrayList(types.Message) = .empty;
-    defer messages.deinit(std.testing.allocator);
-    try messages.appendSlice(std.testing.allocator, &.{
-        .{ .role = .system, .content = "a system prompt larger than this budget" },
-        .{ .role = .user, .content = "remove me" },
-    });
-
-    compactMessages(&messages, 0);
-
-    try std.testing.expectEqual(@as(usize, 1), messages.items.len);
-    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
-}
-
-test "compactMessages never leaves a tool result with no tool_calls to answer" {
-    var messages: std.ArrayList(types.Message) = .empty;
-    defer messages.deinit(std.testing.allocator);
-    // The budget is spent by the system prompt and the tail, so the cutoff
-    // lands on the assistant message carrying the calls and its two results
-    // become the leading survivors.
-    try messages.appendSlice(std.testing.allocator, &.{
-        .{ .role = .system, .content = "sys" },
-        .{ .role = .user, .content = "aaaaaaaaaaaaaaaa" },
-        .{ .role = .assistant, .tool_calls = &.{
-            .{ .id = "c1", .name = "read", .arguments = "aaaaaaaaaaaaaaaa" },
-            .{ .id = "c2", .name = "read", .arguments = "aaaaaaaaaaaaaaaa" },
-        } },
-        .{ .role = .tool, .tool_call_id = "c1", .content = "r1" },
-        .{ .role = .tool, .tool_call_id = "c2", .content = "r2" },
-        .{ .role = .assistant, .content = "done" },
-    });
-
-    compactMessages(&messages, 3);
-
-    // Every surviving tool message answers a tool_call still in the list.
-    for (messages.items, 0..) |m, i| {
-        if (m.role != .tool) continue;
-        var answered = false;
-        for (messages.items[0..i]) |prior| {
-            for (prior.tool_calls orelse &.{}) |tc| {
-                if (std.mem.eql(u8, tc.id, m.tool_call_id.?)) answered = true;
-            }
-        }
-        try std.testing.expect(answered);
-    }
-    // The tail and the system prompt still survive; only the orphaned
-    // exchange went with the over-budget prefix.
-    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
-    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
-    try std.testing.expectEqualStrings("done", messages.items[1].content.?);
-}
-
-test "latestSessionId picks the most recently updated session" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    // No store yet: null, not an error.
-    try std.testing.expect(latestSessionId(io, arena, env.tmp.dir) == null);
-
-    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = "older",
-        .title = "t",
-        .messages = &.{},
-        .created = 100,
-        .updated = 100,
-    });
-    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = "newer",
-        .title = "t",
-        .messages = &.{},
-        .created = 50,
-        .updated = 200,
-    });
-    try std.testing.expectEqualStrings("newer", latestSessionId(io, arena, env.tmp.dir).?);
-}
-
-test "listSessions and latestSessionId use the listing header without the transcript" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    try env.tmp.dir.createDirPath(io, "state/sessions");
-    // Deliberately not valid past `messages`: if listing walked the
-    // transcript this file would be skipped as corrupt.
-    try env.tmp.dir.writeFile(io, .{
-        .sub_path = "state/sessions/hdr.json",
-        .data = "{\"id\":\"hdr\",\"title\":\"from-header\",\"created\":1,\"updated\":9,\"message_count\":3,\"bytes\":42,\"messages\":[THIS IS NOT JSON",
-    });
-
-    const list = try listSessions(io, arena, env.tmp.dir);
-    try std.testing.expectEqual(@as(usize, 1), list.len);
-    try std.testing.expectEqualStrings("hdr", list[0].id);
-    try std.testing.expectEqualStrings("from-header", list[0].title);
-    try std.testing.expectEqual(@as(usize, 3), list[0].messages);
-    try std.testing.expectEqual(@as(usize, 42), list[0].bytes);
-    try std.testing.expectEqualStrings("hdr", latestSessionId(io, arena, env.tmp.dir).?);
-}
-
-test "listSessions lists a pre-counter file from the header alone" {
-    var env: test_env.Env = .init();
-    defer env.deinit();
-    const io = env.io();
-    const arena = env.arena();
-
-    try env.tmp.dir.createDirPath(io, "state/sessions");
-    // No message_count/bytes, and the transcript is garbage: a full parse
-    // would skip this file. The picker still needs the title and updated.
-    try env.tmp.dir.writeFile(io, .{
-        .sub_path = "state/sessions/old.json",
-        .data = "{\"id\":\"old\",\"title\":\"legacy\",\"created\":1,\"updated\":8,\"messages\":[THIS IS NOT JSON",
-    });
-
-    const list = try listSessions(io, arena, env.tmp.dir);
-    try std.testing.expectEqual(@as(usize, 1), list.len);
-    try std.testing.expectEqualStrings("old", list[0].id);
-    try std.testing.expectEqualStrings("legacy", list[0].title);
-    try std.testing.expectEqual(@as(i64, 8), list[0].updated);
-    try std.testing.expectEqual(@as(usize, 0), list[0].messages);
-    try std.testing.expectEqual(@as(usize, 0), list[0].bytes);
-    try std.testing.expectEqualStrings("old", latestSessionId(io, arena, env.tmp.dir).?);
-}
-
-test "session save/load round trip" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const session = Session{
-        .id = "s1",
-        .title = "Test session",
-        .messages = &.{
-            .{ .role = .system, .content = "sys" },
-            .{ .role = .user, .content = "hello" },
-            .{ .role = .assistant, .content = null, .tool_calls = &.{.{
-                .id = "tc1",
-                .name = "calc",
-                .arguments = "{}",
-            }} },
-            .{ .role = .tool, .tool_call_id = "tc1", .content = "42" },
-        },
-        .created = 100,
-        .updated = 200,
-    };
-    try saveSession(io, gpa, arena, tmp.dir, session);
-
-    const loaded = try loadSession(io, gpa, arena, tmp.dir, "s1");
-    try std.testing.expectEqualStrings("s1", loaded.id);
-    try std.testing.expectEqualStrings("Test session", loaded.title);
-    try std.testing.expectEqual(@as(i64, 100), loaded.created);
-    try std.testing.expectEqual(@as(i64, 200), loaded.updated);
-    try std.testing.expectEqual(@as(usize, 4), loaded.messages.len);
-    try std.testing.expectEqual(types.Role.system, loaded.messages[0].role);
-    try std.testing.expectEqual(types.Role.assistant, loaded.messages[2].role);
-    try std.testing.expectEqual(@as(usize, 1), loaded.messages[2].tool_calls.?.len);
-    try std.testing.expectEqualStrings("calc", loaded.messages[2].tool_calls.?[0].name);
-    try std.testing.expectEqual(types.Role.tool, loaded.messages[3].role);
-    try std.testing.expectEqualStrings("42", loaded.messages[3].content.?);
-    try std.testing.expectEqualStrings("tc1", loaded.messages[3].tool_call_id.?);
-}
-
-test "a session larger than the old fixed 1MB buffer still saves and loads" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const chunk = try arena.alloc(u8, 64 * 1024);
-    @memset(chunk, 'x');
-    var messages: std.ArrayList(types.Message) = .empty;
-    var i: usize = 0;
-    while (i < 20) : (i += 1) {
-        try messages.append(arena, .{ .role = .user, .content = chunk });
-    }
-
-    const session = Session{
-        .id = "big",
-        .title = "Big session",
-        .messages = messages.items,
-        .created = 1,
-        .updated = 2,
-    };
-    try saveSession(io, gpa, arena, tmp.dir, session);
-
-    const loaded = try loadSession(io, gpa, arena, tmp.dir, "big");
-    try std.testing.expectEqual(@as(usize, 20), loaded.messages.len);
-    try std.testing.expectEqualStrings(chunk, loaded.messages[19].content.?);
-}
-
-test "forkSession copies a conversation under a new id and leaves the original alone" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "s1",
-        .title = "Original",
-        .messages = &.{
-            .{ .role = .user, .content = "hello" },
-            .{ .role = .assistant, .content = "hi there" },
-        },
-        .created = 100,
-        .updated = 200,
-    });
-
-    const new_id = try forkSession(io, gpa, arena, tmp.dir, "s1");
-    try std.testing.expect(!std.mem.eql(u8, new_id, "s1"));
-
-    const forked = try loadSession(io, gpa, arena, tmp.dir, new_id);
-    try std.testing.expectEqualStrings(new_id, forked.id);
-    try std.testing.expectEqualStrings("fork of Original", forked.title);
-    try std.testing.expectEqual(@as(usize, 2), forked.messages.len);
-    try std.testing.expectEqualStrings("hello", forked.messages[0].content.?);
-    try std.testing.expectEqualStrings("hi there", forked.messages[1].content.?);
-
-    // Two forks of the same session get distinct ids.
-    const second_id = try forkSession(io, gpa, arena, tmp.dir, "s1");
-    try std.testing.expect(!std.mem.eql(u8, new_id, second_id));
-
-    // The source conversation is untouched.
-    const original = try loadSession(io, gpa, arena, tmp.dir, "s1");
-    try std.testing.expectEqualStrings("Original", original.title);
-    try std.testing.expectEqual(@as(usize, 2), original.messages.len);
-
-    // Forking a session that does not exist fails rather than inventing one.
-    try std.testing.expectError(error.FileNotFound, forkSession(io, gpa, arena, tmp.dir, "nope"));
-}
-
-test "branchSession cuts the conversation at a turn and leaves the original alone" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "s1",
-        .title = "Original",
-        .messages = &.{
-            .{ .role = .system, .content = "shared context" },
-            .{ .role = .user, .content = "u1" },
-            .{ .role = .assistant, .tool_calls = &.{.{
-                .id = "c1",
-                .name = "read",
-                .arguments = "{}",
-            }} },
-            .{ .role = .tool, .tool_call_id = "c1", .content = "result" },
-            .{ .role = .assistant, .content = "a1" },
-            .{ .role = .user, .content = "u2" },
-            .{ .role = .assistant, .content = "a2" },
-            .{ .role = .user, .content = "u3" },
-            .{ .role = .assistant, .content = "a3" },
-        },
-        .created = 100,
-        .updated = 200,
-    });
-
-    // Branch at turn 2: the tool round of turn 1 is fully included, and
-    // nothing after turn 2 is.
-    const new_id = try branchSession(io, gpa, arena, tmp.dir, "s1", 2);
-    const branched = try loadSession(io, gpa, arena, tmp.dir, new_id);
-    try std.testing.expectEqualStrings("branch of Original", branched.title);
-    try std.testing.expectEqual(@as(usize, 7), branched.messages.len);
-    try std.testing.expectEqualStrings("a2", branched.messages[branched.messages.len - 1].content.?);
-    try std.testing.expectEqualStrings("shared context", branched.messages[0].content.?);
-
-    // The source conversation is untouched, all nine messages.
-    const original = try loadSession(io, gpa, arena, tmp.dir, "s1");
-    try std.testing.expectEqualStrings("Original", original.title);
-    try std.testing.expectEqual(@as(usize, 9), original.messages.len);
-
-    // Branching at the last turn copies the whole conversation.
-    const whole = try branchSession(io, gpa, arena, tmp.dir, "s1", 3);
-    const whole_session = try loadSession(io, gpa, arena, tmp.dir, whole);
-    try std.testing.expectEqual(@as(usize, 9), whole_session.messages.len);
-
-    // Two branches of the same session get distinct ids.
-    const second_id = try branchSession(io, gpa, arena, tmp.dir, "s1", 1);
-    try std.testing.expect(!std.mem.eql(u8, new_id, second_id));
-
-    // Turn 0 and past-the-end are refused, not silently clamped.
-    try std.testing.expectError(error.TurnOutOfRange, branchSession(io, gpa, arena, tmp.dir, "s1", 0));
-    try std.testing.expectError(error.TurnOutOfRange, branchSession(io, gpa, arena, tmp.dir, "s1", 4));
-    // A pending turn (user message with no answer) cuts before it instead.
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "s2",
-        .title = "Pending",
-        .messages = &.{
-            .{ .role = .user, .content = "done turn" },
-            .{ .role = .assistant, .content = "answered" },
-            .{ .role = .user, .content = "in flight" },
-        },
-        .created = 100,
-        .updated = 200,
-    });
-    const pending = try branchSession(io, gpa, arena, tmp.dir, "s2", 2);
-    const pending_session = try loadSession(io, gpa, arena, tmp.dir, pending);
-    try std.testing.expectEqual(@as(usize, 2), pending_session.messages.len);
-    try std.testing.expectEqualStrings("answered", pending_session.messages[1].content.?);
-
-    // Branching a session that does not exist fails rather than inventing one.
-    try std.testing.expectError(error.FileNotFound, branchSession(io, gpa, arena, tmp.dir, "nope", 1));
-}
-
-test "listSessions reports the byte weight of each conversation" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "s1",
-        .title = "weighted",
-        .messages = &.{
-            .{ .role = .user, .content = "hello" },
-            .{ .role = .assistant, .content = "hi there" },
-        },
-        .created = 1,
-        .updated = 2,
-    });
-
-    const list = try listSessions(io, arena, tmp.dir);
-    try std.testing.expectEqual(@as(usize, 1), list.len);
-    try std.testing.expectEqualStrings("s1", list[0].id);
-    // 5 + 8 bytes of message content.
-    try std.testing.expectEqual(@as(usize, 13), list[0].bytes);
-    try std.testing.expectEqual(@as(usize, 2), list[0].messages);
-
-    // An empty store lists nothing rather than failing.
-    var tmp2 = std.testing.tmpDir(.{});
-    defer tmp2.cleanup();
-    const empty = try listSessions(io, arena, tmp2.dir);
-    try std.testing.expectEqual(@as(usize, 0), empty.len);
-}
-
-test "listSessions counts tool-call argument bytes toward the session weight" {
-    const allocator = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try saveSession(io, allocator, arena, tmp.dir, .{
-        .id = "tool-weight",
-        .title = "tool calls",
-        .messages = &.{
-            .{ .role = .user, .content = "hello" },
-            .{ .role = .assistant, .tool_calls = &.{.{
-                .id = "c1",
-                .name = "read_file",
-                .arguments = "{\"path\":\"build.zig\"}",
-            }} },
-        },
-        .created = 1,
-        .updated = 2,
-    });
-
-    const list = try listSessions(io, arena, tmp.dir);
-    try std.testing.expectEqual(@as(usize, 1), list.len);
-    // "hello" (5) + the tool-call arguments (20) = 25 bytes of transcript weight.
-    try std.testing.expectEqual(@as(usize, 25), list[0].bytes);
-    try std.testing.expectEqual(@as(usize, 2), list[0].messages);
-}
-
-test "rename and delete change only the selected saved session" {
-    const allocator = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    for ([_][]const u8{ "first", "second" }) |id| {
-        try saveSession(io, allocator, arena, tmp.dir, .{
-            .id = id,
-            .title = id,
-            .messages = &.{.{ .role = .user, .content = "preserved" }},
-            .created = 10,
-            .updated = 20,
-        });
-    }
-
-    try renameSession(io, allocator, arena, tmp.dir, "first", "renamed");
-    const renamed = try loadSession(io, allocator, arena, tmp.dir, "first");
-    try std.testing.expectEqualStrings("renamed", renamed.title);
-    try std.testing.expectEqualStrings("preserved", renamed.messages[0].content.?);
-    try std.testing.expectEqual(@as(i64, 10), renamed.created);
-    try std.testing.expectEqual(@as(i64, 20), renamed.updated);
-    try std.testing.expectEqualStrings("second", (try loadSession(io, allocator, arena, tmp.dir, "second")).title);
-
-    try deleteSession(io, arena, tmp.dir, "first");
-    try std.testing.expectError(error.FileNotFound, loadSession(io, allocator, arena, tmp.dir, "first"));
-    try std.testing.expectEqualStrings("second", (try loadSession(io, allocator, arena, tmp.dir, "second")).id);
-}
-
-test "listSessions skips corrupt entries without hiding valid sessions" {
-    const allocator = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try saveSession(io, allocator, arena, tmp.dir, .{
-        .id = "valid",
-        .title = "available",
-        .messages = &.{},
-        .created = 1,
-        .updated = 2,
-    });
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/corrupt.json", .data = "not json" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "state/sessions/ignored.txt", .data = "not json" });
-
-    const sessions = try listSessions(io, arena, tmp.dir);
-    try std.testing.expectEqual(@as(usize, 1), sessions.len);
-    try std.testing.expectEqualStrings("valid", sessions[0].id);
-}
-
-pub fn setArchived(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, id: []const u8, archived: bool) !void {
-    var s = try loadSession(io, gpa, arena, base, id);
-    s.archived = archived;
-    try saveSession(io, gpa, arena, base, s);
+pub fn setArchived(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8, archived: bool) !void {
+    _ = io;
+    _ = gpa;
+    if (!validSessionId(id)) return error.InvalidSessionId;
+    var conn = try openDb(arena, sessions_dir, id);
+    defer conn.close();
+    try metaSet(&conn, "archived", if (archived) "true" else "false");
 }
 
 /// Imports a JSON chat export (OpenAI format) into a new local session.
 /// Accepts an array of {"role":"user"|"assistant","content":string} (unknown
-/// roles/tools are skipped) so both providers' exports and our own
-/// /api/sessions/<id> JSON can be pasted without conversion.
-pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: std.Io.Dir, title: []const u8, messages_in: []const StoredMessage) ![]const u8 {
+/// roles/tools are skipped) so both providers' exports and our own session
+/// JSON can be pasted without conversion.
+pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, title: []const u8, messages_in: []const StoredMessage) ![]const u8 {
     var out: std.ArrayList(types.Message) = .empty;
     for (messages_in) |sm| {
         if (sm.content == null or sm.content.?.len == 0) continue;
@@ -1723,13 +913,12 @@ pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, 
     if (out.items.len == 0) return error.MissingField;
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     const new_id = try std.fmt.allocPrint(arena, "sess-{d}-{d}", .{ now, @rem(std.Io.Timestamp.now(io, .real).nanoseconds, 1000000) });
-    try saveSession(io, gpa, arena, base, .{
+    try saveSession(io, gpa, arena, sessions_dir, .{
         .id = new_id,
         .title = if (title.len > 0) title else "imported chat",
         .messages = try out.toOwnedSlice(arena),
         .created = now,
         .updated = now,
-        .archived = false,
     });
     return new_id;
 }
@@ -1739,314 +928,161 @@ pub fn setWorkspace(
     io: std.Io,
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
-    base: std.Io.Dir,
+    sessions_dir: []const u8,
     id: []const u8,
     workspace: []const u8,
 ) !void {
-    var s = try loadSession(io, gpa, arena, base, id);
-    s.workspace = workspace;
-    try saveSession(io, gpa, arena, base, s);
+    _ = io;
+    _ = gpa;
+    if (!validSessionId(id)) return error.InvalidSessionId;
+    var conn = try openDb(arena, sessions_dir, id);
+    defer conn.close();
+    if (workspace.len > 0) {
+        try metaSet(&conn, "workspace", workspace);
+    } else {
+        var stmt = try conn.prepare("DELETE FROM meta WHERE key = 'workspace';");
+        defer stmt.finalize();
+        _ = try stmt.step();
+    }
 }
 
-test "a workspace survives a save and load" {
-    const allocator = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+// ------------------------------------------------------------------- tests --
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try saveSession(io, allocator, arena, tmp.dir, .{
-        .id = "ws-test",
-        .title = "In a folder",
-        .messages = &.{},
-        .created = 1,
-        .updated = 2,
-        .workspace = "research",
-    });
-    const back = try loadSession(io, allocator, arena, tmp.dir, "ws-test");
-    try std.testing.expectEqualStrings("research", back.workspace);
-
-    // The default workspace is absence, so a session without one round-trips
-    // to the empty string rather than to a literal name.
-    try saveSession(io, allocator, arena, tmp.dir, .{
-        .id = "ws-none",
-        .title = "Loose",
-        .messages = &.{},
-        .created = 1,
-        .updated = 2,
-    });
-    const loose = try loadSession(io, allocator, arena, tmp.dir, "ws-none");
-    try std.testing.expectEqualStrings("", loose.workspace);
+/// The sessions dir for a test: inside the test env's tmp tree, so a failing
+/// test leaves nothing in state/.
+fn testDir(arena: std.mem.Allocator, env: *test_env.Env) ![]const u8 {
+    return std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}", .{&env.tmp.sub_path});
 }
 
-test "compactMessages keeps system messages and drops the oldest non-system ones" {
-    var messages: std.ArrayList(types.Message) = .empty;
-    defer messages.deinit(std.testing.allocator);
-
-    // Three non-system messages of 12 chars each estimate 3 tokens (chars/4),
-    // plus one system message that must survive compaction.
-    try messages.append(std.testing.allocator, .{ .role = .system, .content = "sys" });
-    try messages.append(std.testing.allocator, .{ .role = .user, .content = "abcdefghijkl" });
-    try messages.append(std.testing.allocator, .{ .role = .user, .content = "abcdefghijkl" });
-    try messages.append(std.testing.allocator, .{ .role = .assistant, .content = "abcdefghijkl" });
-
-    // Estimated total = 9 tokens; budget 4 drops the two oldest non-system
-    // messages (6 tokens) and leaves system + the newest assistant message.
-    compactMessages(&messages, 4);
-
-    try std.testing.expectEqual(@as(usize, 2), messages.items.len);
-    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
-    try std.testing.expectEqual(types.Role.assistant, messages.items[1].role);
-    try std.testing.expectEqualStrings("abcdefghijkl", messages.items[1].content.?);
-}
-
-test "compactMessages under a tiny budget still never drops the system message" {
-    var messages: std.ArrayList(types.Message) = .empty;
-    defer messages.deinit(std.testing.allocator);
-
-    try messages.append(std.testing.allocator, .{ .role = .system, .content = "sys" });
-    try messages.append(std.testing.allocator, .{ .role = .user, .content = "abcdefghijkl" });
-
-    compactMessages(&messages, 0);
-    // Only the system message can survive a zero budget.
-    try std.testing.expectEqual(@as(usize, 1), messages.items.len);
-    try std.testing.expectEqual(types.Role.system, messages.items[0].role);
-}
-
-test "renameSession retitles in place and deleteSession removes the file" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "s1",
-        .title = "Old",
-        .messages = &.{.{ .role = .user, .content = "hello" }},
-        .created = 1,
-        .updated = 2,
-    });
-
-    try renameSession(io, gpa, arena, tmp.dir, "s1", "New");
-    const renamed = try loadSession(io, gpa, arena, tmp.dir, "s1");
-    try std.testing.expectEqualStrings("New", renamed.title);
-    try std.testing.expectEqual(@as(usize, 1), renamed.messages.len);
-
-    try deleteSession(io, arena, tmp.dir, "s1");
-    try std.testing.expectError(error.FileNotFound, loadSession(io, gpa, arena, tmp.dir, "s1"));
-}
-test "setWorkspace moves a session into a workspace and back" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "ws-move",
-        .title = "Move me",
-        .messages = &.{},
-        .created = 1,
-        .updated = 2,
-    });
-
-    // Move into a workspace.
-    try setWorkspace(io, gpa, arena, tmp.dir, "ws-move", "research");
-    const moved = try loadSession(io, gpa, arena, tmp.dir, "ws-move");
-    try std.testing.expectEqualStrings("research", moved.workspace);
-
-    // Moving back to "" is the default workspace.
-    try setWorkspace(io, gpa, arena, tmp.dir, "ws-move", "");
-    const loose = try loadSession(io, gpa, arena, tmp.dir, "ws-move");
-    try std.testing.expectEqualStrings("", loose.workspace);
-}
-
-test "listSessions orders by most recently updated" {
-    var gpa_state = std.heap.DebugAllocator(.{}).init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
-
-    var threaded = std.Io.Threaded.init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    var arena_state = std.heap.ArenaAllocator.init(gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "older",
-        .title = "older",
-        .messages = &.{},
-        .created = 100,
-        .updated = 100,
-    });
-    try saveSession(io, gpa, arena, tmp.dir, .{
-        .id = "newer",
-        .title = "newer",
-        .messages = &.{},
-        .created = 50,
-        .updated = 200,
-    });
-
-    const list = try listSessions(io, arena, tmp.dir);
-    try std.testing.expectEqual(@as(usize, 2), list.len);
-    try std.testing.expectEqualStrings("newer", list[0].id);
-    try std.testing.expectEqualStrings("older", list[1].id);
-}
-
-test "deleteSession on a missing session returns FileNotFound without touching the repo" {
-    const allocator = std.testing.allocator;
-    var threaded = std.Io.Threaded.init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    // No session exists, so deletion must fail cleanly. Everything stays
-    // inside the temporary dir: nothing in the checkout (e.g. state/) may be
-    // created or modified, which is what keeps this test from interfering
-    // with the git tool's deny checks in the eval suite.
-    try std.testing.expectError(error.FileNotFound, deleteSession(io, arena, tmp.dir, "nope"));
-    try std.testing.expectError(error.FileNotFound, tmp.dir.openDir(io, "state", .{}));
-}
-
-test "compactMessages is a no-op on an empty message list" {
-    var messages: std.ArrayList(types.Message) = .empty;
-    defer messages.deinit(std.testing.allocator);
-    compactMessages(&messages, 0);
-    try std.testing.expectEqual(@as(usize, 0), messages.items.len);
-}
-
-test "findFold matches case-insensitively and reports the position" {
-    try std.testing.expectEqual(@as(?usize, 0), findFold("Hello", "hello"));
-    try std.testing.expectEqual(@as(?usize, 4), findFold("say HELLO there", "hello"));
-    try std.testing.expectEqual(@as(?usize, null), findFold("nothing here", "zig"));
-    // A needle longer than the haystack, and an empty needle, find nothing
-    // rather than matching everything.
-    try std.testing.expectEqual(@as(?usize, null), findFold("hi", "hello"));
-    try std.testing.expectEqual(@as(?usize, null), findFold("hello", ""));
-}
-
-test "snippetAround keeps context, marks both cuts, and flattens the line" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    // Short enough to need no cutting: no ellipsis either end.
-    const whole = snippetAround(arena, "the cron spec is wrong", 4, 4);
-    try std.testing.expectEqualStrings("the cron spec is wrong", whole);
-
-    // A match in the middle of something long is cut on both sides.
-    const long = "x" ** 300 ++ " needle " ++ "y" ** 300;
-    const cut = snippetAround(arena, long, 301, 6);
-    try std.testing.expect(std.mem.startsWith(u8, cut, "\u{2026}"));
-    try std.testing.expect(std.mem.endsWith(u8, cut, "\u{2026}"));
-    try std.testing.expect(std.mem.find(u8, cut, "needle") != null);
-    // Bounded by the radius either side, not by the message length.
-    try std.testing.expect(cut.len < 300);
-
-    // Newlines become spaces and control bytes are dropped, so a hit is one
-    // line of safe text however the message was written.
-    const messy = snippetAround(arena, "first\nsecond\ttab\x07bell", 0, 5);
-    try std.testing.expectEqualStrings("first second tab" ++ "bell", messy);
-
-    // A radius cut can land mid-codepoint. Each é is two bytes, so a radius
-    // of 90 from a match at 201 cuts inside a character at both ends; the
-    // snippet must stay valid UTF-8 whatever the cut position.
-    const uni = "é" ** 100 ++ " needle " ++ "é" ** 100;
-    const ucut = snippetAround(arena, uni, 201, 6);
-    try std.testing.expect(std.unicode.utf8ValidateSlice(ucut));
-    try std.testing.expect(std.mem.find(u8, ucut, "needle") != null);
-    try std.testing.expect(std.mem.startsWith(u8, ucut, "\u{2026}"));
-    try std.testing.expect(std.mem.endsWith(u8, ucut, "\u{2026}"));
-}
-
-test "searchSessions finds conversations by message text, newest first" {
+test "session store rejects ids that can escape its directory" {
     var env: test_env.Env = .init();
     defer env.deinit();
     const io = env.io();
     const arena = env.arena();
+    const dir = try testDir(arena, &env);
 
-    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = "older",
-        .title = "cron questions",
-        .created = 100,
-        .updated = 100,
-        .messages = &.{
-            .{ .role = .user, .content = "how do I read a CRON spec" },
-            .{ .role = .assistant, .content = "five fields, and the cron spec is read at a fixed offset" },
-        },
-    });
-    try saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
-        .id = "newer",
-        .title = "unrelated",
-        .created = 200,
-        .updated = 200,
-        .messages = &.{.{ .role = .user, .content = "nothing to do with schedules, though it mentions a spec" }},
-    });
-
-    // Case-insensitive, and the conversation the word appears in twice is one
-    // row that says so rather than two rows.
-    const hits = try searchSessions(io, arena, env.tmp.dir, "cron", 10);
-    try std.testing.expectEqual(@as(usize, 1), hits.len);
-    try std.testing.expectEqualStrings("older", hits[0].id);
-    try std.testing.expectEqualStrings("cron questions", hits[0].title);
-    try std.testing.expectEqual(@as(usize, 0), hits[0].turn);
-    try std.testing.expectEqualStrings("user", hits[0].role);
-    try std.testing.expectEqual(@as(usize, 1), hits[0].more);
-    try std.testing.expect(std.mem.find(u8, hits[0].snippet, "CRON") != null);
-
-    // A word in both conversations returns both, newest first.
-    const both = try searchSessions(io, arena, env.tmp.dir, "spec", 10);
-    try std.testing.expectEqual(@as(usize, 2), both.len);
-    try std.testing.expectEqualStrings("newer", both[0].id);
-
-    // No match is an empty list, not an error, and neither is an empty store.
-    try std.testing.expectEqual(@as(usize, 0), (try searchSessions(io, arena, env.tmp.dir, "zzzz", 10)).len);
-    var empty = std.testing.tmpDir(.{});
-    defer empty.cleanup();
-    try std.testing.expectEqual(@as(usize, 0), (try searchSessions(io, arena, empty.dir, "cron", 10)).len);
-
-    // The limit is applied after the sort, so it keeps the newest.
-    const capped = try searchSessions(io, arena, env.tmp.dir, "spec", 1);
-    try std.testing.expectEqual(@as(usize, 1), capped.len);
-    try std.testing.expectEqualStrings("newer", capped[0].id);
+    const bad_id = "../../escaped";
+    try std.testing.expectError(error.InvalidSessionId, saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = bad_id,
+        .title = "bad",
+        .messages = &.{},
+        .created = 0,
+        .updated = 0,
+    }));
+    try std.testing.expectError(error.InvalidSessionId, loadSession(io, std.testing.allocator, arena, dir, bad_id));
+    try std.testing.expectError(error.InvalidSessionId, deleteSession(io, arena, dir, bad_id));
+    try std.testing.expectError(error.InvalidSessionId, forkSession(io, std.testing.allocator, arena, dir, bad_id));
 }
 
-test "rawMayContainQuery skips a miss and still parses escaped needles" {
-    try std.testing.expect(!rawMayContainQuery("{\"content\":\"hello world\"}", "zzzz"));
-    try std.testing.expect(rawMayContainQuery("{\"content\":\"hello world\"}", "HELLO"));
-    try std.testing.expect(rawMayContainQuery("{\"content\":\"say \\\"hi\\\"\"}", "\"hi\""));
+test "a saved session round-trips messages, attachments and the system prompt" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    var imgs = [_]types.ImagePart{.{ .mime = "image/png", .b64 = "aGk=" }};
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "what is in this picture?", .images = &imgs },
+        .{ .role = .assistant, .content = "a greeting", .tool_calls = &.{
+            .{ .id = "call_1", .name = "read_file", .arguments = "{}" },
+        } },
+        .{ .role = .tool, .tool_call_id = "call_1", .content = "{\"ok\":true}" },
+    };
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "vision",
+        .title = "with image",
+        .messages = &messages,
+        .created = 1,
+        .updated = 2,
+        .system_prompt = "you are a test",
+    });
+
+    const s = try loadSession(io, std.testing.allocator, arena, dir, "vision");
+    try std.testing.expectEqualStrings("with image", s.title);
+    try std.testing.expectEqual(@as(usize, 3), s.messages.len);
+    try std.testing.expectEqualStrings("aGk=", s.messages[0].images.?[0].b64);
+    try std.testing.expectEqualStrings("read_file", s.messages[1].tool_calls.?[0].name);
+    try std.testing.expectEqualStrings("call_1", s.messages[2].tool_call_id.?);
+    try std.testing.expectEqualStrings("you are a test", s.system_prompt.?);
+
+    // The listing scores the row with counts.
+    const metas = try listSessions(io, arena, dir);
+    try std.testing.expectEqual(@as(usize, 1), metas.len);
+    try std.testing.expectEqual(@as(usize, 3), metas[0].messages);
+    try std.testing.expect(metas[0].bytes > 0);
+}
+
+test "the events table is append-only: UPDATE and DELETE are refused" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    var conn = try openDb(arena, dir, "appendonly");
+    defer conn.close();
+    var ins = try conn.prepare("INSERT INTO events (ts_ms, kind, payload) VALUES (1, 'task', '{}');");
+    defer ins.finalize();
+    _ = try ins.step();
+
+    var upd = try conn.prepare("UPDATE events SET payload = 'x' WHERE seq = 1;");
+    defer upd.finalize();
+    try std.testing.expectError(sqlite.Error.StepFailed, upd.step());
+
+    var del = try conn.prepare("DELETE FROM events WHERE seq = 1;");
+    defer del.finalize();
+    try std.testing.expectError(sqlite.Error.StepFailed, del.step());
+}
+
+test "a fork copies the conversation; search finds text in the transcript" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "hello" },
+        .{ .role = .assistant, .content = "hi there" },
+    };
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "orig",
+        .title = "original",
+        .messages = &messages,
+        .created = 1,
+        .updated = 2,
+    });
+
+    const fork_id = try forkSession(io, std.testing.allocator, arena, dir, "orig");
+    const f = try loadSession(io, std.testing.allocator, arena, dir, fork_id);
+    try std.testing.expect(std.mem.startsWith(u8, f.title, "fork of"));
+    try std.testing.expectEqual(@as(usize, 2), f.messages.len);
+
+    const hits = try searchSessions(io, arena, dir, "hi there", 10);
+    try std.testing.expectEqual(@as(usize, 2), hits.len);
+    try std.testing.expect(std.mem.find(u8, hits[0].snippet, "hi there") != null);
+}
+
+test "setArchived, setWorkspace and renameSession update the record" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "meta-test",
+        .title = "t",
+        .messages = &.{},
+        .created = 1,
+        .updated = 2,
+    });
+    try renameSession(io, std.testing.allocator, arena, dir, "meta-test", "renamed");
+    try setArchived(io, std.testing.allocator, arena, dir, "meta-test", true);
+    try setWorkspace(io, std.testing.allocator, arena, dir, "meta-test", "research");
+
+    const s = try loadSession(io, std.testing.allocator, arena, dir, "meta-test");
+    try std.testing.expectEqualStrings("renamed", s.title);
+    try std.testing.expect(s.archived);
+    try std.testing.expectEqualStrings("research", s.workspace);
 }

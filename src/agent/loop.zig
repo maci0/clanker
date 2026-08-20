@@ -13,6 +13,7 @@ const host = @import("../sandbox/host.zig");
 const private_todos = @import("private_todos.zig");
 const system_prompt = @import("system_prompt.zig");
 const graph_mod = @import("graph.zig");
+const session_events = @import("session_events.zig");
 const autolearn = @import("auto_learn.zig");
 const chatrooms = @import("../peers/chatrooms.zig");
 const file_lock = @import("../util/file_lock.zig");
@@ -342,6 +343,13 @@ pub const Agent = struct {
     /// Conversation id for session-scoped subprocesses (kernel, DAP). Empty
     /// becomes `"default"` in the sandbox.
     session_id: []const u8 = "",
+    /// Per-session append-only event recorder (SQLite), opened lazily on the
+    /// first recorded event and closed in deinit. Fail-open: recording never
+    /// fails a run. Gated by modules.session_events.
+    events: ?session_events.Recorder = null,
+    /// The system prompt last recorded as a system_prompt event, so a
+    /// multi-turn session does not append the same prompt once per turn.
+    last_recorded_prompt: []const u8 = "",
     /// Optional injected registry (tests). Null uses the process-global one.
     subprocs: ?*@import("subprocess.zig").Registry = null,
     /// Spill ids this run has already written. Pruning is request-only, so the
@@ -358,6 +366,7 @@ pub const Agent = struct {
     /// Frees session-scoped resources (gpa-owned wasm_cache). Call when the
     /// Agent is no longer needed (end of a REPL session / single-shot run).
     pub fn deinit(self: *Agent) void {
+        if (self.events) |*e| e.close();
         var it = self.wasm_cache.iterator();
         while (it.next()) |kv| {
             self.ctx.gpa.free(kv.key_ptr.*);
@@ -612,6 +621,23 @@ pub const Agent = struct {
         // Rebuild the system prompt so new skills/learnings from prior turns
         // (or external edits) are visible to the model on this turn.
         self.refreshSystemPrompt(messages);
+        // Per-session append-only event store: record what this turn
+        // actually saw (the system prompt once per change, plus the task).
+        if (self.cfg.modules.session_events and self.session_id.len > 0) {
+            if (self.events == null) {
+                self.events = session_events.Recorder.init(self.ctx.io, self.arena, self.ctx.gpa, self.session_id);
+            }
+            const rec = &(self.events.?);
+            if (!std.mem.eql(u8, self.last_recorded_prompt, self.system_prompt_text)) {
+                self.last_recorded_prompt = self.system_prompt_text;
+                rec.recordObject(session_events.EventKind.system_prompt, &.{
+                    .{ .name = "prompt", .value = .{ .text = self.system_prompt_text } },
+                });
+            }
+            rec.recordObject(session_events.EventKind.task, &.{
+                .{ .name = "task", .value = .{ .text = task } },
+            });
+        }
         const run_start = std.Io.Timestamp.now(self.ctx.io, .awake);
         var used_tools: std.ArrayList([]const u8) = .empty;
         defer used_tools.deinit(self.ctx.gpa);
@@ -934,7 +960,7 @@ pub const Agent = struct {
             // from its own chain-of-thought (reasoning tool / modules.rlm).
             if (self.cfg.modules.rlm) {
                 if (resp.reasoning) |r| {
-                    if (r.len > 0) recordReasoning(self.ctx.io, self.ctx.gpa, self.arena, self.provider.name, self.provider.activeModelName(), task, r);
+                    if (r.len > 0) self.recordReasoning(self.ctx.io, self.ctx.gpa, self.arena, self.provider.name, self.provider.activeModelName(), task, r);
                 }
             }
 
@@ -1337,7 +1363,15 @@ pub const Agent = struct {
     /// call, making per-call cost and total I/O grow with the log's size
     /// (quadratic over a session), and lost records under concurrent writers
     /// since it bypassed the lock other state logs use (see file_lock.zig).
-    fn recordReasoning(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
+    fn recordReasoning(self: *Agent, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) void {
+        if (self.events) |*rec| {
+            rec.recordObject(session_events.EventKind.reasoning, &.{
+                .{ .name = "provider", .value = .{ .text = provider } },
+                .{ .name = "model", .value = .{ .text = model } },
+                .{ .name = "task", .value = .{ .text = task } },
+                .{ .name = "reasoning", .value = .{ .text = reasoning } },
+            });
+        }
         _ = arena;
         ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state") catch |err| {
             log.log(.warn, "recordReasoning: state directory unusable: {s}", .{@errorName(err)});
@@ -1521,6 +1555,12 @@ pub const Agent = struct {
         if (self.compaction.consecutive >= max_consecutive_compactions) {
             log.log(.error_, "compacted on {d} iterations in a row and the history is still ~{d} tokens against a {d} threshold: the run is spending itself on compaction instead of the task", .{ self.compaction.consecutive, after, threshold });
             return error.CompactionStalled;
+        }
+        if (self.events) |*rec| {
+            const compaction_summary = messages.items[1].content orelse "";
+            rec.recordObject(session_events.EventKind.compaction, &.{
+                .{ .name = "replaced_with", .value = .{ .text = if (compaction_summary.len > 2000) compaction_summary[0..2000] else compaction_summary } },
+            });
         }
         return after;
     }
@@ -2572,7 +2612,7 @@ pub const Agent = struct {
         started: std.Io.Timestamp,
         effort: ?[]const u8,
     ) !types.ChatResponse {
-        return chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
+        const resp = chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = messages,
             .tools = self.iterTools(),
@@ -2582,6 +2622,16 @@ pub const Agent = struct {
             try self.recordFailedLlm(g, iteration, started, err, err_detail.*);
             return err;
         };
+        if (self.events) |*rec| {
+            rec.recordObject(session_events.EventKind.llm, &.{
+                .{ .name = "provider", .value = .{ .text = self.provider.name } },
+                .{ .name = "model", .value = .{ .text = self.provider.activeModelName() } },
+                .{ .name = "prompt_tokens", .value = .{ .int = @intCast(self.stats.total_prompt_tokens) } },
+                .{ .name = "completion_tokens", .value = .{ .int = @intCast(self.stats.total_completion_tokens) } },
+                .{ .name = "ok", .value = .{ .bool_ = true } },
+            });
+        }
+        return resp;
     }
 
     /// Tools offered this iteration: none on the budget's final one, so the
@@ -2611,6 +2661,15 @@ pub const Agent = struct {
             .duration_ms = ms,
             .ok = false,
         });
+        if (self.events) |*rec| {
+            rec.recordObject(session_events.EventKind.llm, &.{
+                .{ .name = "provider", .value = .{ .text = self.provider.name } },
+                .{ .name = "model", .value = .{ .text = self.provider.activeModelName() } },
+                .{ .name = "prompt_tokens", .value = .{ .int = @intCast(self.stats.total_prompt_tokens) } },
+                .{ .name = "completion_tokens", .value = .{ .int = @intCast(self.stats.total_completion_tokens) } },
+                .{ .name = "ok", .value = .{ .bool_ = false } },
+            });
+        }
     }
 
     /// Persists a finished run's graph through the sandboxed `graph`
@@ -2917,6 +2976,12 @@ pub const Agent = struct {
             // model keeps reaching for should get its schema loaded whether or
             // not the call succeeds.
             self.usage.record(self.arena, tc.name);
+            if (self.events) |*rec| {
+                rec.recordObject(session_events.EventKind.tool_call, &.{
+                    .{ .name = "name", .value = .{ .text = tc.name } },
+                    .{ .name = "arguments", .value = .{ .text = tc.arguments } },
+                });
+            }
             noteToolRequest();
             // load_tools is answered by this process rather than the sandbox:
             // it decides what the next request carries, which no wasm module
@@ -3163,6 +3228,17 @@ pub const Agent = struct {
         for (results) |maybe_content| {
             const content = maybe_content orelse continue;
             if (std.mem.startsWith(u8, content, "{\"ok\":false")) noteToolError();
+        }
+        // Append-only record of what each call came back with.
+        if (self.events) |*rec| {
+            for (calls, 0..) |tc, i| {
+                const out = if (results[i]) |r| r else "";
+                rec.recordObject(session_events.EventKind.tool_result, &.{
+                    .{ .name = "name", .value = .{ .text = tc.name } },
+                    .{ .name = "ok", .value = .{ .bool_ = !std.mem.startsWith(u8, out, "{\"ok\":false") } },
+                    .{ .name = "preview", .value = .{ .text = if (out.len > 4000) out[0..4000] else out } },
+                });
+            }
         }
         return results;
     }
@@ -3918,6 +3994,8 @@ test "wasmBytes reads each wasm path from disk only once (cached slice)" {
     agent.ctx = &ctx;
     agent.arena = arena_state.allocator();
     agent.wasm_cache = .empty;
+    agent.events = null;
+    agent.last_recorded_prompt = "";
     defer agent.deinit();
 
     var tool: registry.Tool = undefined;
@@ -3960,6 +4038,8 @@ test "wasmBytes drops a module whose file changed mid-session instead of serving
     agent.ctx = &ctx;
     agent.arena = arena_state.allocator();
     agent.wasm_cache = .empty;
+    agent.events = null;
+    agent.last_recorded_prompt = "";
     defer agent.deinit();
 
     var tool: registry.Tool = undefined;
@@ -4014,6 +4094,8 @@ test "moduleFor recompiles a compiled module whose wasm file changed mid-run" {
     agent.cfg = &cfg;
     agent.modules = .empty;
     agent.wasm_cache = .empty;
+    agent.events = null;
+    agent.last_recorded_prompt = "";
     // Sandbox extras that `sandboxFor` copies in; none are exercised by a
     // load, but they must be null so no garbage is dereferenced.
     agent.subagent_runner = null;
@@ -4023,6 +4105,8 @@ test "moduleFor recompiles a compiled module whose wasm file changed mid-run" {
     agent.current_task = "";
     agent.current_run_id = "";
     agent.session_id = "";
+    agent.events = null;
+    agent.last_recorded_prompt = "";
     agent.subprocs = null;
     agent.preset = null;
     agent.plan_mode = false;

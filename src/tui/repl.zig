@@ -2927,7 +2927,7 @@ const Model = struct {
             if (maybe_line) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch {};
         } else |_| {}
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
-        session_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
+        session_mod.saveSession(self.io, self.gpa, self.arena, "state/sessions", .{
             .id = sid,
             .title = self.session_title,
             .messages = self.messages.items,
@@ -4087,7 +4087,7 @@ const Model = struct {
             break :blk self.arena.dupe(u8, session_mod.titleFromTask(&title_buf, session_mod.titleSource(transcript.items, ""))) catch "";
         };
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, 1_000_000_000));
-        session_mod.saveSession(self.io, self.gpa, self.arena, std.Io.Dir.cwd(), .{
+        session_mod.saveSession(self.io, self.gpa, self.arena, "state/sessions", .{
             .id = id,
             .title = title,
             .messages = transcript.items,
@@ -8194,7 +8194,7 @@ test "resolveMascot takes speed from the flag, the config, then 5" {
 /// Returns null when there are none, so a first `--continue` starts a fresh
 /// session rather than failing at someone who has not made one yet.
 fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
-    return session_mod.latestSessionId(io, arena, std.Io.Dir.cwd());
+    return session_mod.latestSessionId(io, arena, "state/sessions");
 }
 
 /// A fresh conversation's id, minted the first time it is saved. The
@@ -8407,7 +8407,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     const now_s: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
     var session_id: ?[]const u8 = opts.session;
     if (session_id == null and opts.continue_last) {
-        session_id = session_mod.latestSessionId(io, arena, std.Io.Dir.cwd());
+        session_id = session_mod.latestSessionId(io, arena, "state/sessions");
     }
     // The id becomes a path fragment under state/sessions/, so the shared
     // session-store validator rejects it before it could walk out of the store.
@@ -8422,7 +8422,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     var loaded_messages: []const types.Message = &.{};
     var loaded_system_prompt: ?[]const u8 = null;
     if (session_id) |sid| {
-        const maybe_s: ?session_mod.Session = session_mod.loadSession(io, gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
+        const maybe_s: ?session_mod.Session = session_mod.loadSession(io, gpa, arena, "state/sessions", sid) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
         };

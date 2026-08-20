@@ -260,3 +260,80 @@ test "meta round-trips the session record" {
     try std.testing.expectEqualStrings("hello", store.getMeta("title").?);
     try std.testing.expect(store.getMeta("absent") == null);
 }
+
+/// A fail-open recorder the agent loop holds for the duration of a run.
+/// Events land in the per-session database `<session_id>.events.db` under
+/// the session store directory; any error (disk full, unreadable dir) is
+/// logged at debug and dropped — recording must never fail a run.
+///
+/// The database is opened lazily on the first record and closed by the
+/// caller (Agent.deinit), so a session that never records anything touches
+/// no files.
+pub const Recorder = struct {
+    io: std.Io,
+    arena: std.mem.Allocator,
+    gpa: std.mem.Allocator,
+    session_id: []const u8,
+    store: ?Store = null,
+    opened: bool = false,
+
+    pub fn init(io: std.Io, arena: std.mem.Allocator, gpa: std.mem.Allocator, session_id: []const u8) Recorder {
+        return .{ .io = io, .arena = arena, .gpa = gpa, .session_id = session_id };
+    }
+
+    pub fn close(self: *Recorder) void {
+        if (self.store) |*s| s.close();
+        self.store = null;
+        self.opened = false;
+    }
+
+    fn openIfNeeded(self: *Recorder) void {
+        if (self.opened) return;
+        self.opened = true;
+        // state/sessions/<id>.events.db, sentinel-terminated for sqlite.
+        const rel = std.fmt.allocPrint(self.arena, "state/sessions/{s}{s}", .{ self.session_id, db_suffix }) catch return;
+        const path = self.arena.dupeZ(u8, rel) catch return;
+        std.Io.Dir.cwd().createDirPath(self.io, "state/sessions") catch {};
+        self.store = Store.open(self.arena, path) catch return;
+    }
+
+    /// Records one event. Fail-open: nothing here may propagate.
+    pub fn record(self: *Recorder, kind: []const u8, payload: []const u8) void {
+        if (self.session_id.len == 0) return;
+        self.openIfNeeded();
+        const s = &(self.store orelse return);
+        const ts_ms: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, std.time.ns_per_ms));
+        _ = s.append(ts_ms, kind, payload) catch return;
+    }
+
+    /// Builds a payload object from fields and records it.
+    pub fn recordObject(self: *Recorder, kind: []const u8, fields: []const Field) void {
+        const arena = self.arena;
+        var w: std.Io.Writer.Allocating = .init(self.gpa);
+        defer w.deinit();
+        var j = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+        j.beginObject() catch return;
+        for (fields) |f| {
+            j.objectField(f.name) catch return;
+            switch (f.value) {
+                .text => |t| j.write(t) catch return,
+                .int => |n| j.write(n) catch return,
+                .bool_ => |b| j.write(b) catch return,
+            }
+        }
+        j.endObject() catch return;
+        const owned = arena.dupe(u8, w.written()) catch return;
+        self.record(kind, owned);
+    }
+
+    pub const Field = struct {
+        name: []const u8,
+        value: Value,
+    };
+
+    pub const Value = union(enum) {
+        text: []const u8,
+        int: i64,
+        bool_: bool,
+    };
+};

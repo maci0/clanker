@@ -3555,7 +3555,7 @@ fn reportUnfinishedRun(
 /// when there are none, so a first `clanker -c "..."` starts a session rather
 /// than failing at someone who has not made one yet.
 fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
-    return session.latestSessionId(io, arena, std.Io.Dir.cwd());
+    return session.latestSessionId(io, arena, "state/sessions");
 }
 
 /// `--provider`/`--model` resolution, shared with the REPL: the logic (and
@@ -4187,7 +4187,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         dap.dropLive(a.session_id);
     }
     if (opts_session) |sid| {
-        const maybe_s = session.loadSession(io, init.gpa, arena, std.Io.Dir.cwd(), sid) catch |err| switch (err) {
+        const maybe_s = session.loadSession(io, init.gpa, arena, "state/sessions", sid) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
         };
@@ -4374,7 +4374,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         if (!cfg.modules.sessions) return;
         session.compactMessages(&messages, session.max_session_tokens);
-        try session.saveSession(io, init.gpa, arena, std.Io.Dir.cwd(), .{
+        try session.saveSession(io, init.gpa, arena, "state/sessions", .{
             .id = sid,
             .title = title,
             .workspace = prev_workspace,
@@ -5044,7 +5044,7 @@ fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
     if (q.len < session_search_min_len) {
         usageExitFor(io, "session", "session search needs at least {d} characters: clanker session search \"<query>\"", .{session_search_min_len});
     }
-    const hits = session.searchSessions(io, arena, std.Io.Dir.cwd(), q, session_search_limit) catch {
+    const hits = session.searchSessions(io, arena, "state/sessions", q, session_search_limit) catch {
         return error.ToolFailed;
     };
     if (hits.len == 0) {
@@ -10283,7 +10283,7 @@ fn handleSessionSearch(io: std.Io, arena: std.mem.Allocator, target: []const u8,
         return;
     }
 
-    const hits = session.searchSessions(io, arena, std.Io.Dir.cwd(), q, session_search_limit + 1) catch {
+    const hits = session.searchSessions(io, arena, "state/sessions", q, session_search_limit + 1) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read the sessions\"}");
         return;
     };
@@ -10355,7 +10355,7 @@ fn compactSession(
     id: []const u8,
     threshold: usize,
 ) !usize {
-    var s = try session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id);
+    var s = try session.loadSession(io, gpa, arena, "state/sessions", id);
     const target = threshold / 2;
     var first: usize = 0;
     // Never touch the last two messages: that is the most recent exchange.
@@ -10366,7 +10366,7 @@ fn compactSession(
     if (first > 0) {
         s.messages = s.messages[first..];
         s.updated = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-        try session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), s);
+        try session.saveSession(io, gpa, arena, "state/sessions", s);
     }
     return transcriptBytes(s.messages);
 }
@@ -12112,7 +12112,7 @@ fn handleSessions(
                     respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                     return;
                 }
-                const new_id = session.branchSession(io, gpa, arena, std.Io.Dir.cwd(), src_id, branch.turn) catch |err| switch (err) {
+                const new_id = session.branchSession(io, gpa, arena, "state/sessions", src_id, branch.turn) catch |err| switch (err) {
                     error.TurnOutOfRange => {
                         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"turn out of range\"}");
                         return;
@@ -12137,7 +12137,7 @@ fn handleSessions(
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad session id\"}");
                 return;
             }
-            const new_id = session.forkSession(io, gpa, arena, std.Io.Dir.cwd(), src_id) catch {
+            const new_id = session.forkSession(io, gpa, arena, "state/sessions", src_id) catch {
                 respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
                 return;
             };
@@ -12178,7 +12178,7 @@ fn handleSessions(
             return;
         }
         if (std.mem.eql(u8, method, "DELETE")) {
-            session.deleteSession(io, arena, std.Io.Dir.cwd(), id) catch {
+            session.deleteSession(io, arena, "state/sessions", id) catch {
                 respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
                 return;
             };
@@ -12189,7 +12189,7 @@ fn handleSessions(
         if (std.mem.eql(u8, method, "POST")) {
             const req = jsonBody(SessionPatchBody, arena, body, stream) orelse return;
             if (req.archived) |arch| {
-                session.setArchived(io, gpa, arena, std.Io.Dir.cwd(), id, arch) catch {
+                session.setArchived(io, gpa, arena, "state/sessions", id, arch) catch {
                     respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
                     return;
                 };
@@ -12205,7 +12205,7 @@ fn handleSessions(
                     respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"workspace must be 0-64 characters and contain no separators\"}");
                     return;
                 }
-                session.setWorkspace(io, gpa, arena, std.Io.Dir.cwd(), id, ws) catch {
+                session.setWorkspace(io, gpa, arena, "state/sessions", id, ws) catch {
                     respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
                     return;
                 };
@@ -12218,14 +12218,14 @@ fn handleSessions(
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing title, workspace, or archived\"}");
                 return;
             };
-            session.renameSession(io, gpa, arena, std.Io.Dir.cwd(), id, title) catch {
+            session.renameSession(io, gpa, arena, "state/sessions", id, title) catch {
                 respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
                 return;
             };
             respond(stream, 200, "OK", "{\"ok\":true}");
             return;
         }
-        const s = session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), id) catch {
+        const s = session.loadSession(io, gpa, arena, "state/sessions", id) catch {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such session\"}");
             return;
         };
@@ -12247,7 +12247,7 @@ fn handleSessions(
         if (import_req.import_chat orelse false) {
             const msgs = import_req.messages orelse &[_]session.StoredMessage{};
             const title = import_req.title orelse "imported chat";
-            const new_id = session.importChat(io, gpa, arena, std.Io.Dir.cwd(), title, msgs) catch {
+            const new_id = session.importChat(io, gpa, arena, "state/sessions", title, msgs) catch {
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"import failed: need at least one user/assistant message with content\"}");
                 return;
             };
@@ -13041,14 +13041,15 @@ test "forkSession mints an id that still passes validSessionId" {
 
     const arena = env.arena();
 
-    try session.saveSession(io, std.testing.allocator, arena, env.tmp.dir, .{
+    const sdir = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}", .{&env.tmp.sub_path});
+    try session.saveSession(io, std.testing.allocator, arena, sdir, .{
         .id = "sess-1",
         .title = "t",
         .messages = &.{.{ .role = .user, .content = "hi" }},
         .created = 1,
         .updated = 2,
     });
-    const forked = try session.forkSession(io, std.testing.allocator, arena, env.tmp.dir, "sess-1");
+    const forked = try session.forkSession(io, std.testing.allocator, arena, sdir, "sess-1");
     // The fork id is returned to the client and must itself stay addressable
     // through the id-validated session endpoints.
     try std.testing.expect(session.validSessionId(forked));
@@ -13314,14 +13315,14 @@ fn handleWorkspaces(
                     return;
                 },
             };
-            if (session.listSessions(io, arena, std.Io.Dir.cwd())) |list| {
+            if (session.listSessions(io, arena, "state/sessions")) |list| {
                 for (list) |m| {
                     if (std.mem.eql(u8, m.workspace, id)) {
                         // The workspace is gone either way, but a session whose
                         // stored record still names it carries a dangling id
                         // that every later read answers with "workspace not
                         // found"; say which session lost its pointer.
-                        session.setWorkspace(io, gpa, arena, std.Io.Dir.cwd(), m.id, "") catch |err| {
+                        session.setWorkspace(io, gpa, arena, "state/sessions", m.id, "") catch |err| {
                             log.log(.warn, "workspace '{s}' removed but session '{s}' still records it (unlink failed: {s})", .{ id, m.id, @errorName(err) });
                         };
                     }
@@ -13404,7 +13405,7 @@ fn handleWorkspaces(
     }
 
     const registered = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch &.{};
-    const sessions = session.listSessions(io, arena, std.Io.Dir.cwd()) catch &.{};
+    const sessions = session.listSessions(io, arena, "state/sessions") catch &.{};
     const cwd_abs = workspace_mod.cwdPath(io, arena);
     const cwd_name = workspace_mod.basenameOf(cwd_abs);
 
@@ -15039,7 +15040,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     var run_cfg = cfg.*;
     var run_workspace: []const u8 = req.workspace;
     if (run_workspace.len == 0 and cfg.modules.sessions and req.session.len > 0) {
-        if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
+        if (session.loadSession(io, gpa, arena, "state/sessions", req.session)) |s| {
             run_workspace = s.workspace;
         } else |_| {}
     }
@@ -15264,7 +15265,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         ensure_dir.ensureDir(std.Io.Dir.cwd(), io, "state/sessions") catch |err|
             log.log(.warn, "run: mkdir 'state/sessions' failed: {s}", .{@errorName(err)});
         session_lock = file_lock.acquire(io, std.Io.Dir.cwd(), "state/sessions", req.session, gpa);
-        if (session.loadSession(io, gpa, arena, std.Io.Dir.cwd(), req.session)) |s| {
+        if (session.loadSession(io, gpa, arena, "state/sessions", req.session)) |s| {
             created = s.created;
             prev_title = s.title;
             session_workspace = s.workspace;
@@ -15421,7 +15422,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             var title_buf: [session.title_max]u8 = undefined;
             const title = session.nextTitle(&title_buf, prev_title, session.titleSource(messages.items, if (req.task.len > 0) req.task else final_task));
             const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-            session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
+            session.saveSession(io, gpa, arena, "state/sessions", .{
                 .id = req.session,
                 .title = title,
                 .workspace = session_workspace,
@@ -15503,7 +15504,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         var title_buf: [session.title_max]u8 = undefined;
         const title = session.nextTitle(&title_buf, prev_title, session.titleSource(messages.items, if (req.task.len > 0) req.task else task_text));
         const updated: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
-        session.saveSession(io, gpa, arena, std.Io.Dir.cwd(), .{
+        session.saveSession(io, gpa, arena, "state/sessions", .{
             .id = req.session,
             .title = title,
             .workspace = session_workspace,
