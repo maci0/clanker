@@ -3200,7 +3200,10 @@ fn fsGrepFile(
         const end = std.mem.findScalarPos(u8, data, start, '\n') orelse data.len;
         const line = data[start..end];
         if (std.mem.find(u8, line, pattern) != null) {
-            const display = if (line.len > fs_grep_max_line) line[0..fs_grep_max_line] else line;
+            // Cut on a codepoint boundary: a raw byte cut lands mid-UTF-8 and
+            // the hit text is JSON-encoded below, so a split sequence would
+            // make the whole ck_fs_grep result unparseable to the guest.
+            const display = utf8.cap(line, fs_grep_max_line);
             s.beginObject() catch return error.OutOfMemory;
             s.objectField("file") catch return error.OutOfMemory;
             s.write(rel_path) catch return error.OutOfMemory;
