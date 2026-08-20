@@ -980,7 +980,7 @@ form[hidden] { display: none; }
   padding: 0.05rem 0.45rem; border-radius: var(--radius-pill); cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  color: var(--accent-text); vertical-align: baseline; line-height: 1.4;
+  color: var(--accent-text); vertical-align: middle; line-height: 1;
 }
 .citation-chip:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border-color: var(--accent); }
 .citation-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -2561,7 +2561,7 @@ h2#session-title {
 .board-col[data-collapsed="true"] { flex: 0 0 40px; min-width: 40px; max-width: 40px; cursor: pointer; opacity: 0.8; }
 .board-col[data-collapsed="true"]:hover { opacity: 1; }
 .board-col[data-collapsed="true"] .board-cards, .board-col[data-collapsed="true"] .board-quick-add, .board-col[data-collapsed="true"] .board-empty-slot { display: none; }
-.board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 0.06em; white-space: nowrap; }
+.board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 0.04em; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .board-col[data-collapsed="true"] .board-col-actions { display: none; }
 .board-col[data-collapsed="true"] .board-col-head { padding: 0.65rem var(--space-2); justify-content: center; }
 .board-col[data-drop="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); box-shadow: inset 0 0 0 2px var(--accent); }
@@ -2767,7 +2767,7 @@ h2#session-title {
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent), var(--lift-low); }
 .card[aria-current="true"] .card-title { color: var(--accent-text); }
-.card[data-dragging="true"] { opacity: 0.35; transform: scale(0.97); box-shadow: none; }
+.card[data-dragging="true"] { opacity: 0.85; transform: scale(0.97) rotate(1deg); box-shadow: var(--lift-high); }
 /* Card quick-edit pencil — appears on hover */
 .card-quick-edit-btn {
   position: absolute; top: 4px; right: 4px; z-index: 3;
