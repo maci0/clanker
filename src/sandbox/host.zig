@@ -22,6 +22,7 @@ const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
+const secret_dotenv = @import("../util/secret_dotenv.zig");
 const glob = @import("../util/glob.zig");
 const fs_skip = @import("../util/fs_skip.zig");
 const token_stats = @import("../stats/tokens.zig");
@@ -5723,14 +5724,11 @@ fn rootIsProcessCwd(root_dir: []const u8) bool {
 
 /// True when `sub_path` names a dotenv file (or a path under one). Those
 /// files hold the API keys env_allow exists to keep out of guest memory.
+/// The rule itself is shared with the HTTP file browser:
+/// `util/secret_dotenv.zig` owns which names count, here we only apply it to
+/// every component of the sub_path.
 fn isSecretDotenv(sub_path: []const u8) bool {
-    if (std.mem.eql(u8, sub_path, ".env") or std.mem.eql(u8, sub_path, ".envrc")) return true;
-    if (std.mem.startsWith(u8, sub_path, ".env.") or std.mem.startsWith(u8, sub_path, ".env/") or
-        std.mem.startsWith(u8, sub_path, ".envrc/"))
-        return true;
-    if (std.mem.endsWith(u8, sub_path, "/.env") or std.mem.endsWith(u8, sub_path, "/.envrc")) return true;
-    if (std.mem.find(u8, sub_path, "/.env.") != null or std.mem.find(u8, sub_path, "/.env/") != null) return true;
-    return false;
+    return secret_dotenv.isSecretDotenvPath(sub_path);
 }
 
 /// Whether any `fs_prefixes` entry authorizes `sub_path` relative to one root.
