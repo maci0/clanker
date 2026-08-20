@@ -378,6 +378,10 @@ rlm = true
 multimodal = true
 chatrooms = true
 token_stats = true
+# Per-session append-only event store (SQLite): system prompts, tool
+# calls/results, reasoning, subagent launches and context injections as an
+# INSERT-only event stream per session, replicable to mesh peers.
+session_events = true
 
 [chatrooms]
 on = true

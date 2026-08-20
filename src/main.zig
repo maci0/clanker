@@ -190,6 +190,7 @@ comptime {
     _ = @import("tui/clipboard.zig");
     _ = @import("tui/repl.zig");
     _ = @import("tui/slash_plugins.zig");
+    _ = @import("agent/session_events.zig");
     _ = @import("serve/proxy.zig");
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");

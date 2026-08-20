@@ -146,6 +146,19 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(exe);
+    // Vendored SQLite (session event store). Host-only: WASM guests never
+    // link it; the store lives behind the harness like every native surface.
+    exe.root_module.addCSourceFile(.{
+        .file = b.path("vendor/sqlite/sqlite3.c"),
+        .flags = &.{
+            "-DSQLITE_ENABLE_FTS5",
+            "-DSQLITE_OMIT_LOAD_EXTENSION",
+            "-DSQLITE_DQS=0",
+            "-DSQLITE_OMIT_DEPRECATED",
+            "-DSQLITE_DEFAULT_MEMSTATUS=0",
+        },
+    });
+    exe.root_module.addIncludePath(b.path("vendor/sqlite"));
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -217,6 +230,19 @@ pub fn build(b: *std.Build) void {
     // running binary has no use for the file's text, and embedding it in the
     // exe to serve one test would ship it to every user.
     test_mod.addAnonymousImport("config_toml", .{ .root_source_file = b.path("config.toml") });
+
+    // The session event store's host tests need SQLite in the test binary too.
+    test_mod.addCSourceFile(.{
+        .file = b.path("vendor/sqlite/sqlite3.c"),
+        .flags = &.{
+            "-DSQLITE_ENABLE_FTS5",
+            "-DSQLITE_OMIT_LOAD_EXTENSION",
+            "-DSQLITE_DQS=0",
+            "-DSQLITE_OMIT_DEPRECATED",
+            "-DSQLITE_DEFAULT_MEMSTATUS=0",
+        },
+    });
+    test_mod.addIncludePath(b.path("vendor/sqlite"));
 
     const exe_tests = b.addTest(.{ .root_module = test_mod, .use_llvm = true, .filters = test_filters });
     const run_tests = b.addRunArtifact(exe_tests);

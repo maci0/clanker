@@ -904,6 +904,10 @@ pub const Modules = struct {
     /// state/token_stats.jsonl and aggregated per provider/model
     /// (model_stats tool, `clanker stats`, GET /api/stats).
     token_stats: bool = true,
+    /// Per-session append-only event store (SQLite): system prompts, tool
+    /// calls/results, reasoning, subagent launches and context injections as
+    /// an INSERT-only event stream per session, replicable to mesh peers.
+    session_events: bool = true,
     /// TCP peer mesh (PRD 0011). Off by default: serve binds a socket.
     mesh: bool = false,
 };
@@ -932,6 +936,10 @@ pub const ModulesFields = struct {
     multimodal: bool = false,
     chatrooms: bool = false,
     token_stats: bool = false,
+    /// Per-session append-only event store (SQLite): system prompts, tool
+    /// calls/results, reasoning, subagent launches and context injections as
+    /// an INSERT-only event stream per session, replicable to mesh peers.
+    session_events: bool = false,
     mesh: bool = false,
 };
 
@@ -2950,12 +2958,14 @@ pub const Config = struct {
             .{ .key = "multimodal", .ptr = &m.multimodal, .present = &mf.multimodal },
             .{ .key = "chatrooms", .ptr = &m.chatrooms, .present = &mf.chatrooms },
             .{ .key = "token_stats", .ptr = &m.token_stats, .present = &mf.token_stats },
+            .{ .key = "session_events", .ptr = &m.session_events, .present = &mf.session_events },
             .{ .key = "mesh", .ptr = &m.mesh, .present = &mf.mesh },
         };
         warnUnknownKeys(obj, &.{
             "mcp",       "mcp_client", "acp",             "peers",        "a2a",       "webui",       "graphs",
             "sessions",  "goal",       "goal_auto_steer", "token_budget", "streaming", "dotenv",      "hot_reload",
-            "autolearn", "subagents",  "rlm",             "multimodal",   "chatrooms", "token_stats", "mesh",
+            "autolearn", "subagents",  "rlm",             "multimodal",   "chatrooms", "token_stats", "session_events",
+            "mesh",
         }, "modules");
         for (fields) |f| {
             if (obj.get(f.key)) |val| {
