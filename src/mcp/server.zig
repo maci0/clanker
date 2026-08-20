@@ -377,6 +377,98 @@ test "fuzz: a JSON-RPC line from stdin never crashes the parse/dispatch path" {
     try std.testing.fuzz({}, Ctx.one, .{});
 }
 
+test "extractToolCall parses name and arguments and refuses an overflowing buffer" {
+    // The fuzz test above proves no stdin line crashes extractToolCall, but
+    // not that a valid call yields the right name/arguments or that an
+    // oversized one is refused rather than silently truncated. Pin the
+    // documented contract: defaults for absent fields, compact re-serialized
+    // arguments, and too_large discarding the partial JSON prefix.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const parse = struct {
+        fn go(alloc: std.mem.Allocator, raw: []const u8) std.json.Value {
+            return std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{}) catch @panic("test payload");
+        }
+    }.go;
+
+    var buf: [64]u8 = undefined;
+
+    // No params at all: defaults, no error.
+    const none = extractToolCall(null, &buf);
+    try std.testing.expectEqualStrings("", none.name);
+    try std.testing.expectEqualStrings("{}", none.arg_text);
+    try std.testing.expect(!none.too_large);
+
+    // params that is not an object is ignored, not an error.
+    const arr = extractToolCall(parse(arena, "[1,2]"), &buf);
+    try std.testing.expectEqualStrings("", arr.name);
+    try std.testing.expectEqualStrings("{}", arr.arg_text);
+
+    // Missing name and non-string name both read as empty.
+    const no_name = extractToolCall(parse(arena, "{\"arguments\":{\"a\":1}}"), &buf);
+    try std.testing.expectEqualStrings("", no_name.name);
+    try std.testing.expectEqualStrings("{\"a\":1}", no_name.arg_text);
+    const num_name = extractToolCall(parse(arena, "{\"name\":7,\"arguments\":{\"a\":1}}"), &buf);
+    try std.testing.expectEqualStrings("", num_name.name);
+
+    // No arguments: the tool sees an empty object, not an error.
+    const no_args = extractToolCall(parse(arena, "{\"name\":\"read_file\"}"), &buf);
+    try std.testing.expectEqualStrings("read_file", no_args.name);
+    try std.testing.expectEqualStrings("{}", no_args.arg_text);
+
+    // A normal call round-trips its arguments as compact JSON.
+    const ok = extractToolCall(parse(arena, "{\"name\":\"read_file\",\"arguments\":{\"path\":\"./x\",\"n\":3}}"), &buf);
+    try std.testing.expectEqualStrings("read_file", ok.name);
+    try std.testing.expectEqualStrings("{\"path\":\"./x\",\"n\":3}", ok.arg_text);
+    try std.testing.expect(!ok.too_large);
+
+    // An arguments value that overflows arg_buf is refused wholesale: the
+    // truncated JSON prefix is discarded and the tool sees "{}", because a
+    // partial object would look like a valid but wrong call.
+    const big = try std.fmt.allocPrint(arena, "{{\"name\":\"x\",\"arguments\":{{\"blob\":\"{s}\"}}}}", .{"y" ** 200});
+    var tiny: [16]u8 = undefined;
+    const overflow = extractToolCall(parse(arena, big), &tiny);
+    try std.testing.expectEqualStrings("x", overflow.name);
+    try std.testing.expectEqualStrings("{}", overflow.arg_text);
+    try std.testing.expect(overflow.too_large);
+
+    // An exact fit is not an overflow.
+    var fit: [7]u8 = undefined;
+    const exact = extractToolCall(parse(arena, "{\"name\":\"x\",\"arguments\":{\"a\":1}}"), &fit);
+    try std.testing.expectEqualStrings("{\"a\":1}", exact.arg_text);
+    try std.testing.expect(!exact.too_large);
+}
+
+test "respondText emits the MCP content payload without nesting a second result" {
+    // Regression: respondText used to emit {"result":{"result":{...}}} by
+    // writing its own "result" object, which MCP clients cannot parse. The
+    // caller owns the result object; respondText writes only the payload
+    // fields, and isError rides alongside content.
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+
+    try s.beginObject();
+    try s.objectField("result");
+    try s.beginObject();
+    try respondText(&s, "hello", false);
+    try s.endObject();
+    try s.endObject();
+    try std.testing.expectEqualStrings("{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}", buf[0..w.end]);
+
+    w = .fixed(&buf);
+    s = json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("result");
+    try s.beginObject();
+    try respondText(&s, "boom", true);
+    try s.endObject();
+    try s.endObject();
+    try std.testing.expectEqualStrings("{\"result\":{\"isError\":true,\"content\":[{\"type\":\"text\",\"text\":\"boom\"}]}}", buf[0..w.end]);
+}
+
 test "hasValidJsonRpc accepts only the JSON-RPC 2.0 version" {
     try std.testing.expect(hasValidJsonRpc("2.0"));
     try std.testing.expect(!hasValidJsonRpc(null));
