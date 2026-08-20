@@ -649,6 +649,9 @@ function cardNode(c) {
   b.draggable = true;
   b.setAttribute("data-card", c.id);
   if (c.id === openCardId) b.setAttribute("aria-current", "true");
+  // The card opens the card-detail dialog; say so and mirror its state.
+  b.setAttribute("aria-haspopup", "dialog");
+  b.setAttribute("aria-expanded", c.id === openCardId ? "true" : "false");
 
   // Trello cover strip — priority or label-color tint at top edge; also cover_color
   var labels = c.labels || [];
@@ -878,14 +881,27 @@ function cardNode(c) {
     av.className = "card-member";
     av.textContent = (c.assignee.trim().substring(0, 2) || "?").toUpperCase();
     av.title = c.assignee + " — click to reassign";
-    av.addEventListener("click", function(e){
-      e.stopPropagation();
+    // A span with a click is invisible to a keyboard; the reassign popup
+    // must be openable without a pointer, so this is an actual button.
+    av.setAttribute("role", "button");
+    av.tabIndex = 0;
+    av.setAttribute("aria-label", "Reassign " + c.assignee);
+    function openMemberPopup() {
       var existing = document.querySelector(".member-picker-popup");
       if (existing) existing.remove();
       var popup = memberPicker(c, false);
       dismissOnOutside(popup);
       av.style.position = "relative";
       av.appendChild(popup);
+    }
+    av.addEventListener("click", function(e){
+      e.stopPropagation();
+      openMemberPopup();
+    });
+    av.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      openMemberPopup();
     });
     membersWrap.appendChild(av);
     bottom.appendChild(membersWrap);
@@ -1123,7 +1139,11 @@ function showCardDetail(id) {
   inListName.className = "card-in-list-name";
   inListName.textContent = colTitle;
   inListEl.appendChild(inListName);
-  inListName.addEventListener("click", function() {
+  // A <strong> with a click is unreachable by keyboard; the column picker
+  // opens as a button.
+  inListName.setAttribute("role", "button");
+  inListName.tabIndex = 0;
+  function openColMoveMenu() {
     // Open column picker
     var existing = headerTextWrap.querySelector(".col-move-menu");
     if (existing) { existing.remove(); return; }
@@ -1143,6 +1163,12 @@ function showCardDetail(id) {
     dismissOnOutside(menu);
     inListEl.style.position = "relative";
     inListEl.appendChild(menu);
+  }
+  inListName.addEventListener("click", function() { openColMoveMenu(); });
+  inListName.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    openColMoveMenu();
   });
   headerTextWrap.appendChild(inListEl);
   header.appendChild(headerIcon);
@@ -1262,6 +1288,9 @@ function showCardDetail(id) {
   var fields = detailSection(mainCol, "Description");
   var descDisplay = document.createElement("div");
   descDisplay.className = "card-desc-display";
+  // Click-to-edit is pointer-only; the same edit must open from the keyboard.
+  descDisplay.setAttribute("role", "button");
+  descDisplay.tabIndex = 0;
   if (c.body && c.body.trim()) {
     descDisplay.textContent = c.body;
   } else {
@@ -1286,11 +1315,17 @@ function showCardDetail(id) {
   descCancel.textContent = "Cancel";
   descActions.appendChild(descSave);
   descActions.appendChild(descCancel);
-  descDisplay.addEventListener("click", function() {
+  function openDescEdit() {
     descDisplay.hidden = true;
     bodyIn.style.display = "block";
     descActions.classList.add("is-open");
     bodyIn.focus();
+  }
+  descDisplay.addEventListener("click", openDescEdit);
+  descDisplay.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    openDescEdit();
   });
   descCancel.addEventListener("click", function() {
     bodyIn.value = c.body || "";

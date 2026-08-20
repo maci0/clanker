@@ -153,6 +153,9 @@ export function paragraphInto(parent, lines) {
 export function tableRow(tr, cells, cellTag) {
   cells.forEach(function (c) {
     var cell = document.createElement(cellTag);
+    // Header cells name the column below them; scope keeps that association
+    // explicit for assistive tech (WCAG 1.3.1).
+    if (cellTag === "th") cell.scope = "col";
     inlineInto(cell, c.trim());
     tr.appendChild(cell);
   });
