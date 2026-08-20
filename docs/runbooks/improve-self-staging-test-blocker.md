@@ -39,3 +39,25 @@
 ## Escalate or follow up
 
 - If a *new* `state/...` sub_path is introduced into a test that hits the disk via the sandbox, the staging worktree will fail again for the same reason. Prefer tmp-dir-relative or non-shared paths in tests.
+
+## This batch: the CSI-stripping idea kept failing (imp-17872430.., imp-17872452..)
+
+- The loop stopped after iterations 2 and 3 because the plan kept re-proposing
+  "Strip CSI escape sequences (ESC [ params final) as a unit in
+  sanitize.zig instead of leaking parameter bytes as visible text" and every
+  patch failed the staged tests (`tui.sanitize`, `tui.syntax`).
+- A `sanitize.zig`-only patch cannot fix the *syntax* path: `std.zig.Tokenizer`
+  splits a lone ESC byte from the `[2J` that follows into separate tokens, so
+  per-token `sanitizeAlloc` leaves `[2J` visible no matter what the sanitizer
+  does. The fix needed line-level stripping in `syntax.zig` (`renderAlloc` and
+  `spansVaxis` sanitize the whole line before `highlightLine`) plus CSI handling
+  in `cardPreview`, all matching the core `writeSanitized`/`sanitizeAlloc`.
+  Landed manually as "consume CSI sequences whole".
+- Lesson: when a recurring improve idea's staged tests keep failing on the same
+  TUI test, check whether the fix is applied at a boundary where the escape
+  bytes are already split (tokenizer, per-byte streaming). If so, the change
+  must land at the whole-line / whole-input boundary, not only in the
+  per-token sanitizer. Also note `spansVaxis`'s `gpa` is arena-backed: calling
+  `gpa.free` on the sanitized line there trips the test's allocator, so the
+  arena owns it (matching the function's doc contract).
+

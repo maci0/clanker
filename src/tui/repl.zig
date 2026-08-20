@@ -8292,9 +8292,9 @@ test "a completed answer is control-stripped before it becomes transcript" {
     var lines: std.ArrayList(Line) = .empty;
     appendAnswerLines(arena, &lines, "here is \x1b[31mred\x1b[0m and \xc2\x9bcsi");
     try std.testing.expectEqual(@as(usize, 1), lines.items.len);
-    // The turn arrow is prepended; the escapes are gone, their payload text
-    // stays (dropping bytes, not whole sequences, is sanitize.zig's contract).
-    try std.testing.expectEqualStrings("\xe2\x80\xba here is [31mred[0m and csi", lines.items[0].text);
+    // The turn arrow is prepended; the CSI sequences are consumed whole and
+    // the C1 CSI (0xC2 0x9B) drops, so no escape bytes reach the terminal.
+    try std.testing.expectEqualStrings("\xe2\x80\xba here is red and csi", lines.items[0].text);
     for (lines.items) |l| {
         try std.testing.expect(std.mem.findScalar(u8, l.text, 0x1B) == null);
     }
