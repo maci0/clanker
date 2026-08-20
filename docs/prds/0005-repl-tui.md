@@ -88,13 +88,16 @@ markdown streamer, one theme mapping, one width table, not two.
 **Control stripping (CWE-150).** Everything rendered here is text clanker
 didn't generate itself — LLM output, tool results, clipboard contents. Every
 such path goes through `sanitize.zig` (`clean`, a wrapper over
-`sanitizeAlloc`), which drops C0 controls except `\n`/`\t`, DEL, and the
-UTF-8-encoded C1 range `U+0080..U+009F`, so a raw ESC — or a `\xc2\x9b` that
-a C1-decoding terminal reads as CSI — can't inject an escape sequence. The
-common case (no control bytes) is alloc-free: it scans first and only copies
-if it finds something to drop. On an allocation failure the text is dropped,
-never passed through: rendering unsanitized bytes is the one outcome the
-wrapper exists to prevent, so it is not an acceptable fallback for it.
+`sanitizeAlloc`), which drops C0 controls except `\n`/`\t`, DEL, the
+UTF-8-encoded C1 range `U+0080..U+009F`, and consumes whole OSC (`ESC ] …`
+BEL/ST-terminated) and CSI (`ESC [ params final`) sequences — so neither a
+raw ESC, a `\xc2\x9b` a C1-decoding terminal reads as CSI, nor the parameter
+bytes of a stripped sequence (`[31m` after the ESC) can inject or leak into
+the terminal. The common case (no control bytes) is alloc-free: it scans
+first and only copies if it finds something to drop. On an allocation
+failure the text is dropped, never passed through: rendering unsanitized
+bytes is the one outcome the wrapper exists to prevent, so it is not an
+acceptable fallback for it.
 
 The seam matters more than the predicate. Stripping used to happen at each
 call site, which meant it could be — and was — missed at several: `onToken`

@@ -40,6 +40,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   task prose. Both now log the byte count beside the error, as `ck_chat`
   already did.
 
+- The TUI no longer leaks CSI escape-sequence parameter bytes as visible
+  text. `sanitize.zig` (`writeSanitized`, `sanitizeAlloc`) and the
+  transcript's `cardPreview` consumed OSC sequences whole but stripped only
+  the ESC byte of a CSI sequence (`ESC [ params final`), so `\x1b[31mred`
+  rendered as `[31mred`. Both now consume CSI whole, and `syntax.zig`
+  strips the whole line before tokenizing (the Zig tokenizer splits a lone
+  ESC from the `[2J` that follows, which would otherwise still leak the
+  parameters). This is the improvement the improve-self loop tried five
+  times to land and failed because each patch only touched `sanitize.zig`.
+
 ### Added
 
 - **Sessions moved to SQLite**: one database per conversation

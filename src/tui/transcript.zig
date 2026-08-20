@@ -121,8 +121,37 @@ pub const MdStream = struct {
             }
 
             // Untrusted control bytes never reach the terminal, in or out of
-            // a fence. A lone 0xC2 at the chunk boundary is held back like a
-            // split marker: the next chunk decides if it completes a C1.
+            // a fence. A control sequence (OSC ESC ] or CSI ESC [) is consumed
+            // whole so its payload does not leak as visible text; a lone ESC is
+            // a C0 control and drops. A sequence truncated at the end of this
+            // chunk window is dropped too — it is escape machinery, not text.
+            if (c == 0x1B) {
+                if (i + 1 < total) {
+                    const nxt = self.at(chunk, i + 1);
+                    if (nxt == 0x5D or nxt == 0x5B) {
+                        var j = i + 2;
+                        while (j < total) {
+                            const b = self.at(chunk, j);
+                            if (nxt == 0x5D and (b == 0x07 or (b == 0x1B and j + 1 < total and self.at(chunk, j + 1) == 0x5C))) {
+                                j += if (b == 0x07) 1 else 2;
+                                break;
+                            }
+                            if (nxt == 0x5B) {
+                                if (b >= 0x40 and b <= 0x7E) { // final byte
+                                    j += 1;
+                                    break;
+                                }
+                                if (b < 0x20 or b > 0x3F) break; // not a CSI byte
+                            }
+                            j += 1;
+                        }
+                        i = j;
+                        continue;
+                    }
+                }
+                i += 1; // lone ESC
+                continue;
+            }
             if (strippedControl(c)) {
                 i += 1;
                 continue;
@@ -369,6 +398,12 @@ pub fn cardPreview(gpa: std.mem.Allocator, bytes: []const u8) ![]u8 {
             i = k;
             continue;
         }
+        // CSI sequences are consumed whole too, matching writeSanitized:
+        // stripping only the ESC byte would leak the parameter bytes.
+        if (c == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5B) {
+            i = sanitize.csiEnd(bytes, i);
+            continue;
+        }
         if (strippedControl(c)) {
             i += 1;
             continue;
@@ -564,10 +599,11 @@ test "MdStream under the mono theme emits no ANSI codes at all" {
 
 test "MdStream strips C0 controls and DEL from prose, keeping newline and tab" {
     const allocator = std.testing.allocator;
-    // The ESC is dropped; the "[31m" behind it survives as inert text.
+    // ESC [ 3 1 m is a CSI sequence and is consumed whole; the lone BEL,
+    // NUL and DEL drop.
     const out = try mdStreamRender(allocator, &.{"a\x1b[31mb\x07c\x00d\x7fe\tf\ng"});
     defer allocator.free(out);
-    try std.testing.expectEqualStrings("a[31mb" ++ "c" ++ "d" ++ "e\tf\ng", out);
+    try std.testing.expectEqualStrings("abcde\tf\ng", out);
 }
 
 test "MdStream strips controls inside a fence too" {
@@ -579,11 +615,10 @@ test "MdStream strips controls inside a fence too" {
     md.flush(&w.writer);
     const out = try allocator.dupe(u8, w.written());
     defer allocator.free(out);
-    // The number may be syntax-coloured, but the stripped ESC leaves the
-    // printable pieces of its escape sequence intact.
-    try std.testing.expect(std.mem.find(u8, out, "x[") != null);
-    try std.testing.expect(std.mem.find(u8, out, "Jy") != null);
-    try std.testing.expect(std.mem.find(u8, out, "\x1b[2J") == null);
+    // The CSI sequence ESC [ 2 J is consumed whole even inside a fence, so
+    // its parameter bytes never become visible text.
+    try std.testing.expect(std.mem.find(u8, out, "xy") != null);
+    try std.testing.expect(std.mem.find(u8, out, "[2J") == null);
 }
 
 test "MdStream strips C1 controls but keeps multi-byte codepoints intact" {
@@ -613,11 +648,11 @@ test "MdStream strips a control held back behind an unresolved marker" {
 
 test "cardPreview flattens newline and tab, strips controls, keeps short input" {
     const gpa = std.testing.allocator;
-    // The ESC and DEL drop; the "[31m" behind the ESC stays as inert text,
-    // same contract as writeSanitized.
+    // The newline/tab flatten, and the CSI sequence ESC [ 3 1 m is consumed
+    // whole so its parameter bytes don't leak as "[31m"; DEL drops.
     const out = try cardPreview(gpa, "a\nb\tc\x1b[31md\x7f");
     defer gpa.free(out);
-    try std.testing.expectEqualStrings("a b c[31md", out);
+    try std.testing.expectEqualStrings("a b cd", out);
 }
 
 test "cardPreview caps at the preview cap and marks the cut" {
@@ -679,6 +714,13 @@ test "toolCardArgs skips empty and no-argument bodies" {
 test "cardPreview strips OSC sequences whole" {
     const gpa = std.testing.allocator;
     const out = try cardPreview(gpa, "a\x1b]38;5;9\x07b");
+    defer gpa.free(out);
+    try std.testing.expectEqualStrings("ab", out);
+}
+
+test "cardPreview strips CSI sequences whole" {
+    const gpa = std.testing.allocator;
+    const out = try cardPreview(gpa, "a\x1b[2Jb");
     defer gpa.free(out);
     try std.testing.expectEqualStrings("ab", out);
 }
