@@ -214,8 +214,10 @@ pub const Agent = struct {
     peer_names: []const []const u8 = &.{},
     /// Loaded tool modules, keyed by tool name (wasm modules are stateful in
     /// zwasm for AssemblyScript guests, cache and reuse instead of
-    /// re-instantiating per call).
-    modules: std.StringArrayHashMapUnmanaged(*runtime.ToolModule) = .empty,
+    /// re-instantiating per call), each stamped with the wasm file it was
+    /// compiled from so a rebuild on disk recompiles instead of serving the
+    /// first build this run saw.
+    modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .empty,
     /// Loaded tool wasm bytes, keyed by the tool's wasm path (gpa-owned):
     /// read from disk once per distinct (path, size, mtime) — a module
     /// rebuilt under a long-running process (a `zig build tools` in another
@@ -618,7 +620,7 @@ pub const Agent = struct {
         defer {
             var it = self.modules.iterator();
             while (it.next()) |kv| {
-                kv.value_ptr.*.deinit();
+                kv.value_ptr.*.mod.deinit();
             }
             self.modules.clearRetainingCapacity();
             // wasm_cache is gpa-owned and survives across turns (freed once
@@ -2217,21 +2219,9 @@ pub const Agent = struct {
         // `self.modules`; repeated invocations skip recompilation (the modules
         // are deinitialized by the run() defer like any other cached module).
         const cache_key = try std.fmt.allocPrint(self.arena, "transform:{s}", .{tool.name});
-        const mod = if (self.modules.get(cache_key)) |m|
-            m
-        else blk: {
-            const wasm_bytes = self.wasmBytes(tool) catch |err| {
-                log.log(.error_, "transform '{s}': cannot load {s}: {s}", .{ tool.name, tool.wasm, @errorName(err) });
-                return err;
-            };
-            const sbp = try self.sandboxPtrFor(tool);
-            const m = try runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes);
-            self.modules.put(self.arena, cache_key, m) catch {
-                m.deinit();
-                return error.OutOfMemory;
-            };
-            break :blk m;
-        };
+        // moduleFor logs the specific load failure; returning the error lets
+        // runChain note it and pass the payload through unchanged.
+        const mod = self.moduleFor(cache_key, tool) catch |err| return err;
 
         const out = try mod.executeTool(input);
         defer self.ctx.gpa.free(out);
@@ -2251,6 +2241,13 @@ pub const Agent = struct {
     /// One cached wasm file: the bytes and the fingerprint they were read
     /// under, so a rebuild on disk is detected on the next call.
     const WasmEntry = struct { stamp: u64, bytes: []const u8 };
+
+    /// One cached compiled module: the module and the fingerprint of the wasm
+    /// file it was compiled from. A changed stamp means a rebuild landed on
+    /// disk since the module was compiled, so `moduleFor` drops it and
+    /// recompiles instead of executing stale tool code for the rest of the
+    /// run.
+    const ModuleEntry = struct { stamp: u64, mod: *runtime.ToolModule };
 
     /// Returns the wasm bytes for `tool`, reading the file from disk only on
     /// the first call for a given (path, size, mtime); the bytes are
@@ -2308,6 +2305,51 @@ pub const Agent = struct {
         return h.final();
     }
 
+    /// The compiled module for `tool` under `cache_key` (the tool name, or a
+    /// "transform:"-prefixed key), compiled on first use and recompiled when
+    /// the wasm file's stamp changed since it was cached. Without the stamp
+    /// half, `self.modules` served the first build it compiled for the whole
+    /// run: `wasmBytes` re-stamps on every call and picked up a `zig build
+    /// tools` from another terminal, but the module layer shadowed it (a hit
+    /// here never consulted the bytes), so the agent kept executing old tool
+    /// code while every stateless caller (`runtime.cachedWasm`) served the
+    /// new build -- two layers disagreeing about which build of a tool is
+    /// current inside one process.
+    ///
+    /// The old module is freed only after the new one compiled successfully,
+    /// so a failed recompile leaves the previous entry in place (retried on
+    /// the next call) rather than a dangling pointer. Every caller is the
+    /// main thread and parallel workers load their own modules from the wasm
+    /// bytes, so freeing a superseded module cannot race an in-flight use.
+    fn moduleFor(self: *Agent, cache_key: []const u8, tool: *const registry.Tool) !*runtime.ToolModule {
+        const stamp = Agent.wasmStamp(self.ctx.io, tool.wasm) catch 0;
+        if (self.modules.getPtr(cache_key)) |e| {
+            if (e.stamp == stamp) return e.mod;
+        }
+        const wasm_bytes = self.wasmBytes(tool) catch |err| {
+            log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tool.name, tool.wasm, @errorName(err) });
+            return err;
+        };
+        const sbp = self.sandboxPtrFor(tool) catch |err| {
+            log.log(.error_, "tool '{s}': sandbox setup failed: {s}", .{ tool.name, @errorName(err) });
+            return err;
+        };
+        const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
+            log.log(.error_, "tool '{s}': sandbox load failed: {s}", .{ tool.name, @errorName(err) });
+            return err;
+        };
+        errdefer m.deinit();
+        const gop = self.modules.getOrPut(self.arena, cache_key) catch return error.OutOfMemory;
+        if (!gop.found_existing) {
+            gop.key_ptr.* = cache_key;
+            gop.value_ptr.* = .{ .stamp = stamp, .mod = m };
+            return m;
+        }
+        if (gop.value_ptr.mod != m) gop.value_ptr.mod.deinit();
+        gop.value_ptr.* = .{ .stamp = stamp, .mod = m };
+        return m;
+    }
+
     /// Pre-loads the wasm bytes of every tool in `calls` and compiles every
     /// transform module registered for them (before and after phases) into
     /// `self.modules` under its "transform:<name>" key. Runs on the main
@@ -2353,19 +2395,17 @@ pub const Agent = struct {
     /// the way runTransform lazily recompiles on a cache miss and runChain
     /// skips a transform that fails to load.
     fn precompileModule(self: *Agent, cache_key: []const u8, tool: *const registry.Tool) void {
-        const wasm_bytes = self.wasmBytes(tool) catch |err| {
+        // Warm the wasm-byte cache either way: the bytes are what a parallel
+        // worker loads a fresh module from. moduleFor then compiles when the
+        // entry is missing or stale (contains() used to return true for a
+        // stale build, so the fresh bytes just read were never compiled and
+        // the old module ran for the rest of the run).
+        _ = self.wasmBytes(tool) catch |err| {
             log.log(.warn, "cannot pre-load {s} ({s}): {s}", .{ tool.name, tool.wasm, @errorName(err) });
             return;
         };
-        if (self.modules.contains(cache_key)) return;
-        const sbp = self.sandboxPtrFor(tool) catch return;
-        const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
+        _ = self.moduleFor(cache_key, tool) catch |err| {
             log.log(.warn, "pre-compile of {s} failed: {s}", .{ tool.name, @errorName(err) });
-            return;
-        };
-        self.modules.put(self.arena, cache_key, m) catch |err| {
-            m.deinit();
-            log.log(.warn, "cache insert of {s} failed: {s}", .{ tool.name, @errorName(err) });
         };
     }
 
@@ -2664,10 +2704,29 @@ pub const Agent = struct {
     /// not re-read the wasm from disk and recompile it every turn. The module
     /// is freed with the rest of the cache when `run()` returns.
     fn cachedInternalModule(self: *Agent, tool_name: []const u8) !*runtime.ToolModule {
-        if (self.modules.get(tool_name)) |m| return m;
+        if (self.modules.getPtr(tool_name)) |e| {
+            // Reuse only while the wasm it was compiled from is still
+            // current; a rebuild on disk must recompile, not keep running
+            // old code for the rest of the run.
+            if (self.reg.get(tool_name)) |tool| {
+                const stamp = Agent.wasmStamp(self.ctx.io, tool.wasm) catch 0;
+                if (e.stamp == stamp) return e.mod;
+            } else {
+                return e.mod;
+            }
+        }
+        const tool = self.reg.get(tool_name) orelse return error.UnknownTool;
+        const stamp = Agent.wasmStamp(self.ctx.io, tool.wasm) catch 0;
         const m = try runtime.loadNamedTool(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, self.reg, tool_name, null);
         errdefer m.deinit();
-        self.modules.put(self.arena, tool_name, m) catch return error.OutOfMemory;
+        const gop = self.modules.getOrPut(self.arena, tool_name) catch return error.OutOfMemory;
+        if (!gop.found_existing) {
+            gop.key_ptr.* = tool_name;
+            gop.value_ptr.* = .{ .stamp = stamp, .mod = m };
+            return m;
+        }
+        if (gop.value_ptr.mod != m) gop.value_ptr.mod.deinit();
+        gop.value_ptr.* = .{ .stamp = stamp, .mod = m };
         return m;
     }
 
@@ -2804,26 +2863,15 @@ pub const Agent = struct {
         log.log(.debug, "running tool '{s}' in sandbox args_bytes={d}", .{ tc.name, tc.arguments.len });
         const t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
 
-        const mod = if (self.modules.get(tc.name)) |m|
-            m
-        else blk: {
-            const wasm_bytes = self.wasmBytes(tool) catch |err| {
-                log.log(.error_, "tool '{s}': cannot load {s}: {s} (run `zig build tools`)", .{ tc.name, tool.wasm, @errorName(err) });
+        // moduleFor logs the specific failure (wasm missing, sandbox setup,
+        // sandbox load); the tool answer carries the actionable guidance.
+        const mod = self.moduleFor(tc.name, tool) catch |err| switch (err) {
+            error.FileNotFound => {
                 return toolErrorJson(self.arena, "tool wasm missing: {s} ({s}). Run `zig build tools`.", .{ tc.name, @errorName(err) });
-            };
-            const sbp = self.sandboxPtrFor(tool) catch |err| {
-                log.log(.error_, "tool '{s}': sandbox setup failed: {s}", .{ tc.name, @errorName(err) });
-                return toolErrorJson(self.arena, "tool sandbox failed: {s} ({s})", .{ tc.name, @errorName(err) });
-            };
-            const m = runtime.ToolModule.load(self.ctx.gpa, self.ctx.io, sbp, wasm_bytes) catch |err| {
-                log.log(.error_, "tool '{s}': sandbox load failed: {s}", .{ tc.name, @errorName(err) });
+            },
+            else => {
                 return toolErrorJson(self.arena, "tool load failed: {s} ({s})", .{ tc.name, @errorName(err) });
-            };
-            self.modules.put(self.arena, tc.name, m) catch {
-                m.deinit();
-                return error.OutOfMemory;
-            };
-            break :blk m;
+            },
         };
 
         // Run before-transforms on the arguments (input rewriting / validation).
@@ -3928,6 +3976,83 @@ test "wasmBytes drops a module whose file changed mid-session instead of serving
     // A third read is served from the cache again: one slice, no re-read.
     const third = try agent.wasmBytes(&tool);
     try std.testing.expect(second.ptr == third.ptr);
+}
+
+test "moduleFor recompiles a compiled module whose wasm file changed mid-run" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Two genuinely different modules, so the size half of the stamp differs
+    // even on a filesystem with coarse mtime resolution. chat.wasm exists
+    // only once `zig build tools` has run in this checkout.
+    const tiny = try std.Io.Dir.cwd().readFileAlloc(io, "tests/fixtures/tiny.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(tiny);
+    const other = std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    defer std.testing.allocator.free(other);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/module_for_swap.wasm", .{tmp.sub_path});
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = tiny });
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var cfg = config.Config{};
+
+    var ctx: client.Ctx = .{ .io = io, .gpa = std.testing.allocator, .environ_map = &env, .cfg = &cfg };
+    var agent: Agent = undefined;
+    agent.ctx = &ctx;
+    agent.arena = arena;
+    agent.cfg = &cfg;
+    agent.modules = .empty;
+    agent.wasm_cache = .empty;
+    // Sandbox extras that `sandboxFor` copies in; none are exercised by a
+    // load, but they must be null so no garbage is dereferenced.
+    agent.subagent_runner = null;
+    agent.private_todos = null;
+    agent.ask_fn = null;
+    agent.parent_ask = null;
+    agent.current_task = "";
+    agent.current_run_id = "";
+    agent.session_id = "";
+    agent.subprocs = null;
+    agent.preset = null;
+    agent.plan_mode = false;
+    defer {
+        // The map's own entries are arena-owned (getOrPut(self.arena, ...)),
+        // freed with the arena; only the modules and wasm_cache contents are
+        // gpa-owned.
+        var it = agent.modules.iterator();
+        while (it.next()) |kv| kv.value_ptr.*.mod.deinit();
+        agent.deinit(); // frees wasm_cache
+    }
+
+    var tool: registry.Tool = .{
+        .name = "t",
+        .description = "",
+        .wasm = path,
+        .input_schema = .null,
+    };
+
+    const first = try agent.moduleFor("t", &tool);
+    try std.testing.expectEqual(first, try agent.moduleFor("t", &tool));
+
+    // The rebuild a long-running run never sees coming: the file on disk is
+    // replaced mid-run. The compiled module must be dropped and recompiled,
+    // not served until the run ends (wasmBytes refreshes on the same stamp,
+    // so serving the old module would leave the two layers disagreeing).
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = other });
+    const rebuilt = try agent.moduleFor("t", &tool);
+    try std.testing.expect(rebuilt != first);
+    try std.testing.expectEqual(rebuilt, try agent.moduleFor("t", &tool));
 }
 
 test "the parallel-tool stack reservation stays above the observed crash floor" {
