@@ -714,10 +714,12 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
 .rail-tab[aria-selected="true"] .tab-count,
 .pf-v6-c-nav__link.rail-tab.pf-m-current .tab-count { color: var(--accent-text); }
 .view[hidden] { display: none; }
-/* Author `display` on `.pf-v6-c-form` beats the UA [hidden] rule, so a
-   compatibility form that is only `hidden` still paints. Same override as
-   .chip[hidden] / .overlay[hidden]. */
+/* Any flex/grid element with [hidden] would otherwise still paint: the
+   author display beats the UA [hidden] rule. Patch individually would
+   whack-a-mole; catch all. Must sit after component display rules.
+   Keep the explicit form[hidden] selector the test looks for too. */
 form[hidden] { display: none; }
+[hidden] { display: none !important; }
 .view:focus { outline: none; }
 .view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* The first section inside a view has nothing above it to be separated from. */
@@ -2193,6 +2195,11 @@ mark {
 .board-empty {
   max-width: var(--measure); margin: var(--space-5) 0; padding: var(--space-4) 0;
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); text-align: left; color: var(--fg-muted);
+}
+/* Filter miss (board-filter-empty) reads as "no match" not "no data" — keep
+   the same left alignment so it doesn't float like the kanban placeholder. */
+#board-filter-empty {
+  margin: var(--space-4) 0; text-align: left; align-items: flex-start;
 }
 .board-empty[hidden] { display: none; }
 .board-empty strong {
