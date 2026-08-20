@@ -130,7 +130,18 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
         errdefer alloc.free(owned_cwd);
         try conn.sessions.put(alloc, owned, owned_cwd);
     }
-    try conn.prompt_busy.put(alloc, owned, false);
+    // The busy row is the second half of minting a session: a session that is
+    // in `sessions` but has no busy flag reads back as "unknown sessionId"
+    // (getPtr misses), and its key would otherwise leak. Roll the map back so
+    // an OOM here leaves no half-minted session behind. The map holds the
+    // exact slices `owned`/`owned_cwd`, so removing the row and freeing them
+    // is all the rollback needs.
+    conn.prompt_busy.put(alloc, owned, false) catch |err| {
+        _ = conn.sessions.orderedRemove(owned);
+        alloc.free(owned);
+        alloc.free(owned_cwd);
+        return err;
+    };
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
     var s = json.Stringify{ .writer = &out.writer, .options = .{} };
