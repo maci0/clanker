@@ -233,7 +233,7 @@ fn load() !Loaded {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return result;
     const parsed = std.json.parseFromSliceLeaky([]Entry, lib.alloc, trimmed, .{ .ignore_unknown_fields = true }) catch
-        return result;
+        return error.CorruptScheduleFile;
     try result.entries.appendSlice(lib.alloc, parsed);
     return result;
 }
