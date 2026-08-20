@@ -425,7 +425,7 @@
 .slack-room-icon { width: 16px; text-align: center; flex-shrink: 0; font-size: var(--step-0); }
 
 .slack-room-name {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .slack-room-badge {
@@ -544,7 +544,7 @@
 .slack-search-bar input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .slack-search-results {
-  width: 100%; max-height: 200px; overflow-y: auto;
+  width: 100%; max-height: min(30vh, 200px); overflow-y: auto;
   margin-top: var(--space-1); font-size: var(--step-0);
 }
 
@@ -573,8 +573,8 @@
 }
 
 .slack-pins-panel {
-  border-bottom: 1px solid var(--rule); padding: 0.5rem 1rem;
-  max-height: 240px; overflow-y: auto; background: var(--bg);
+  border-bottom: 1px solid var(--rule); padding: var(--space-2) 1rem;
+  max-height: min(30vh, 240px); overflow-y: auto; background: var(--bg);
 }
 
 .slack-pins-head {
