@@ -22,6 +22,7 @@ pub const TaskError = error{
 /// path-safe and short.
 pub fn validId(id: []const u8) bool {
     if (id.len == 0 or id.len > 64) return false;
+    if (id[0] == '-') return false;
     for (id) |c| {
         if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
     }
@@ -78,6 +79,7 @@ test "validId matches the session-id alphabet" {
     try std.testing.expect(!validId("sch/1"));
     try std.testing.expect(!validId("sch 1"));
     try std.testing.expect(!validId("x" ** 65));
+    try std.testing.expect(!validId("-foo"));
 }
 
 test "nextRun omits disabled, junk, and never-firing specs" {
