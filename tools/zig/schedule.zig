@@ -139,16 +139,17 @@ fn doRemove(req: std.json.Value, out: *lib.Out) !void {
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
-        var found = false;
+        var removed_entry: ?Entry = null;
         var i: usize = 0;
         while (i < loaded.entries.items.len) {
             if (std.mem.eql(u8, loaded.entries.items[i].id, id)) {
+                removed_entry = loaded.entries.items[i];
                 _ = loaded.entries.orderedRemove(i);
-                found = true;
+                break;
             } else i += 1;
         }
-        if (!found) return lib.fail(out, "no such entry");
-        if (try store(loaded)) return out.writeAll("{\"ok\":true}");
+        const entry_val = removed_entry orelse return lib.fail(out, "no such entry");
+        if (try store(loaded)) return writeOne(out, entry_val);
     }
     return lib.fail(out, "schedule file kept changing underneath; try again");
 }
