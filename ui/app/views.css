@@ -285,6 +285,9 @@
 .json-node > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .json-children { margin-left: 1.1rem; border-left: 1px dashed var(--rule); padding-left: var(--space-3); }
+@media (max-width: 40rem) {
+  .json-children { margin-left: var(--space-3); padding-left: var(--space-2); border-left-style: solid; }
+}
 
 .json-empty { color: var(--fg-muted); }
 
@@ -495,7 +498,12 @@
   font-size: var(--step-0); color: var(--fg-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border-left: 1px solid var(--rule); padding-left: 0.5rem; margin-left: var(--space-1);
-  cursor: pointer;
+  cursor: pointer; min-width: 0;
+}
+@media (max-width: 48rem) {
+  .slack-channel-topic {
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
 }
 
 .slack-channel-topic:hover { color: var(--fg); text-decoration: underline dotted; }
@@ -742,7 +750,7 @@
   .slack-sidebar-toggle { display: inline-flex; }
   .slack-sidebar-scrim {
     display: block; position: absolute; inset: 0; z-index: 25;
-    background: color-mix(in srgb, var(--fg) 28%, transparent);
+    background: var(--scrim);
   }
   .slack-sidebar.is-collapsed + .slack-sidebar-scrim { display: none; }
   .slack-channel-header { padding: var(--space-2) 0.75rem; }
@@ -762,10 +770,8 @@
   display: flex; flex-direction: column; gap: 0.5rem;
 }
 
-.chat-log:empty::before {
-  content: "Loading messages…"; color: var(--fg-muted);
-  font-family: var(--sans); font-size: var(--step-0);
-}
+/* Loading/empty text is rendered by JS (.run-empty / .chat-empty) — the
+   pseudo here used to double it when a DOM empty node was also present. */
 
 /* Slack-style "New messages" divider */
 .chat-unread-divider {
@@ -802,7 +808,7 @@
 @media (hover: none) {
   .chat-msg:not(.chat-msg-deleted) .chat-actions {
     display: flex; position: static; top: auto; right: auto;
-    margin-top: 0.35rem; flex-wrap: wrap; box-shadow: none;
+    margin-top: var(--space-2); flex-wrap: wrap; box-shadow: none;
   }
 }
 
@@ -909,8 +915,8 @@
 
 .chat-composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; align-items: stretch; }
 
-.chat-composer input {
-  flex: 1; min-width: 12rem; min-height: 40px; padding: 0.45rem 0.75rem;
+.chat-composer input[type="text"] {
+  flex: 1; min-width: 0; min-height: 40px; padding: 0.45rem 0.75rem;
   font-family: var(--sans); font-size: var(--step-0);
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius-pill);
@@ -1091,7 +1097,7 @@
 .prompt-body {
   margin: var(--space-3) 0 0; padding: 0;
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-  white-space: pre-wrap; word-break: break-word;
+  white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 9rem; overflow: auto;
 }
 
@@ -1262,7 +1268,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .fleet-roster-head {
   font-family: var(--mono); font-size: var(--step--1); font-weight: 700;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-muted);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
   margin: 0 0 var(--space-2);
 }
 
