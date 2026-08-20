@@ -94,3 +94,24 @@ now wins the race.
 
 - Root-cause sibling: [`2026-08-17-agent-llm-call-has-no-deadline.md`](2026-08-17-agent-llm-call-has-no-deadline.md)
 - Code: `src/improve/engine.zig` (`askModel`, `plan`), `src/llm/client.zig` (`chatWithDeadline`, `underDeadline`), `src/config.zig` (`agent.request_timeout_ms`)
+## Follow-up 2026-08-20: empty-content recurrence, budget-aware handling
+
+A later batch (`improve clanker tools`, request_id `improve`) again logged
+`proposal rejected: UnexpectedEndOfInput` and `model returned no proposal
+content` across both iterations, all attempts failed. This time the deadline
+worked (no 900s hang) — the failure was the *content*: `deepseek-v4-flash`
+(reasoning, `reasoning_effort=low`, `max_tokens=8192`) kept returning either a
+truncated JSON object (`UnexpectedEndOfInput` from `parseProposal`) or empty
+`content` with the reasoning not containing a `lastProposalJson`-extractable
+answer. On a reasoning model `reasoning_content` is output, so a large-context
+improve turn spends the grant before the answer and the provider answers 200
+with empty content / `finish_reason: length`.
+
+Fix (this change): the improve engine now distinguishes the failure cause. In
+the empty-content path it logs `finish_reason`, reasoning length, and raw
+length, and when `finish_reason == "length"` it sends budget-aware feedback
+("keep reasoning short, put the complete JSON in the content field") instead of
+the generic "output the JSON in the content field" that a budget-starved
+reasoning model cannot satisfy. The `parseProposal` failure path does the same
+for a truncated object instead of the JSON-escaping lecture. The plan phase
+logs the same completion shape. Verified with `zig build` / `zig fmt --check`.

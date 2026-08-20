@@ -668,11 +668,29 @@ pub const Engine = struct {
             }
         }
         if (json_text.len == 0) {
-            log.log(.error_, "model returned no proposal content", .{});
+            // Distinguish the two ways content can come back empty so a retry
+            // targets the cause rather than the symptom, and a report can tell
+            // a dead provider from a budget-starved reasoning model. A model
+            // that spends its whole output grant on reasoning_content answers
+            // 200 with empty content and finish_reason "length" -- no amount
+            // of "put the JSON in content" fixes that.
+            const budget_cut = std.mem.eql(u8, resp.finish_reason orelse "", "length");
+            const reasoning_len = if (resp.reasoning) |rc| rc.len else 0;
+            log.log(.error_, "model returned no proposal content (finish_reason={s}, reasoning={d} chars, raw={d} bytes)", .{
+                resp.finish_reason orelse "none",
+                reasoning_len,
+                if (resp.raw) |raw| raw.len else 0,
+            });
             // Log the length only, not the content: the raw model response can
             // contain user PII echoed back from the conversation context.
             if (resp.raw) |raw| log.log(.debug, "raw response length: {d} chars", .{raw.len});
-            self.feedback = "Your previous response had an empty content field. Output the JSON object in the content field.";
+            // A reasoning model that hit its output ceiling spent the budget
+            // before the answer; the recovery is to leave room for it, not to
+            // restate the same formatting demand.
+            self.feedback = if (budget_cut)
+                "Your previous response was cut off by the output limit before the JSON answer (chain-of-thought likely ate the budget). Keep your reasoning short and put the complete JSON object in the content field."
+            else
+                "Your previous response had an empty content field. Output the JSON object in the content field.";
             const empty_id = self.newId() catch null;
             if (empty_id) |owned_id| {
                 defer self.ctx.gpa.free(owned_id);
@@ -800,6 +818,13 @@ pub const Engine = struct {
                     "This is how your last answer started:\n{s}\n...and ended:\n{s}",
                 .{ @errorName(err), head, tail },
             );
+            // A truncated response (finish_reason "length") is not an
+            // escaping bug: the model hit its output ceiling mid-object. The
+            // JSON lecture just above would only send it back to the same
+            // wall; say what actually happened and ask for the answer to fit.
+            if (std.mem.eql(u8, resp.finish_reason orelse "", "length")) {
+                self.feedback = try std.fmt.allocPrint(self.arena, "Your previous response was cut off by the output limit before the JSON object was complete ({s}). Keep your reasoning short and emit ONLY the complete JSON object described above.", .{@errorName(err)});
+            }
             if (err == error.NoChanges) return .no_change;
             // Same class of bug the path-rejection arm above used to have:
             // without a history row the next iteration has no memory of this
@@ -1361,9 +1386,15 @@ pub const Engine = struct {
         }
         const ideas = (plan_mod.parsePlan(self.arena, json_text, 6, opts.max_request_files) catch null) orelse {
             log.log(.warn, "plan: response was not a usable idea list", .{});
-            // Byte count only: the plan body is a model response and must not
-            // reach the log in full.
-            log.log(.debug, "plan: unusable response was {d} bytes", .{json_text.len});
+            // Log the length only, not the body: the plan is a model
+            // response and must not reach the log in full. Include the
+            // completion shape so a reasoning model that spent its
+            // budget on chain-of-thought is identifiable here too.
+            log.log(.debug, "plan: unusable response was {d} bytes (finish_reason={s}, reasoning={d} chars)", .{
+                json_text.len,
+                resp.finish_reason orelse "none",
+                if (resp.reasoning) |rc| rc.len else 0,
+            });
             return &.{};
         };
         log.log(.info, "plan: {d} candidate idea(s)", .{ideas.len});

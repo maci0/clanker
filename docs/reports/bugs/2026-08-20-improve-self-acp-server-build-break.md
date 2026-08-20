@@ -4,11 +4,11 @@
 
 - **What failed:** Two improve-self commits broke `zig build`: d8cbf2da/cb2c95e0 ("Hoist stdout File handle...") deleted the `stdout_file`/`out_buf` declarations in `serve()` without re-adding them, and ce3af5c1/faa57166 ("Store the validated cwd...") changed the `sessions` map value type to `[]const u8` while leaving `handleSessionNew` calling `sessions.put(alloc, owned, {})` with a `void` value. Restored the declarations and made the map store an owned copy of cwd. Verified build/test/tools/fmt green.
 - **Impact:** To be confirmed.
-- **Resolution:** Resolved on 2026-08-20. Restored the ACP serve loop declarations and stored an owned copy of cwd in session state; zig build/test/tools/fmt all pass.
+- **Resolution:** Reopened on 2026-08-20. Reopened: the operator's parallel fix merge (7e218e41) reintroduced the duplicates (sessions member, deinit loop, owned_cwd, stdout_file/out_buf), breaking zig build again.
 
 ## Status
 
-Resolved on 2026-08-20. Restored the ACP serve loop declarations and stored an owned copy of cwd in session state; zig build/test/tools/fmt all pass.
+Reopened on 2026-08-20. Reopened: the operator's parallel fix merge (7e218e41) reintroduced the duplicates (sessions member, deinit loop, owned_cwd, stdout_file/out_buf), breaking zig build again.
 
 ## Symptom and impact
 
@@ -68,3 +68,27 @@ Two improve-self commits, each duplicated across the history:
 ## References
 
 - Investigation: none yet
+## Reopened 2026-08-20: the parallel-fix merge reintroduced the break
+
+The checkout's own `main` had already been reconciled to the owner's `b8e192c9`
+fix, but a later commit `7e218e41` ("Fix ACP stdio server compile errors",
+author `ywy50`) was a bad merge of the parallel fixes: it *added* the duplicate
+lines back instead of removing them. `git show 7e218e41` is net-additive —
+duplicate `const owned_cwd`, a second `errdefer` + second `sessions.put`, and a
+second in-loop `stdout_file`/`out_buf` declaration. The duplicate `sessions`
+struct member and duplicated `deinit` free loop were also present at `HEAD`,
+leaving `zig build` broken on `main` again.
+
+Root cause of "the staging gate did not reject it": this break did not come
+from an improve-self staged patch at all — it was a human/operator parallel
+merge committed straight to `main` (`7e218e41`), which is outside the improve
+loop's staging gate. The improve loop cannot protect `main` from a direct
+commit that does not compile; only a `clanker gate` on `main` catches it.
+
+## Resolution (reopened)
+
+Working tree fix verified and committed: remove the duplicate `sessions`
+member, the duplicated `deinit` loop, the duplicate `owned_cwd` declaration and
+errdefer/put, and declare `stdout_file`/`out_buf` once before the `serve` loop
+(the correct hoist). `zig build`, `zig build tools`, `zig build test`, and
+`zig fmt --check` all pass (`clanker gate`).

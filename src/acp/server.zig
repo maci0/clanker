@@ -28,15 +28,10 @@ pub const Connection = struct {
     initialized: bool = false,
     session_counter: u32 = 0,
     sessions: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
-    sessions: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
     prompt_busy: std.StringArrayHashMapUnmanaged(bool) = .empty,
 
     pub fn deinit(self: *Connection, gpa: std.mem.Allocator) void {
         var it = self.sessions.iterator();
-        while (it.next()) |kv| {
-            gpa.free(kv.key_ptr.*);
-            gpa.free(kv.value_ptr.*);
-        }
         while (it.next()) |kv| {
             gpa.free(kv.key_ptr.*);
             gpa.free(kv.value_ptr.*);
@@ -127,14 +122,11 @@ fn handleSessionNew(conn: *Connection, alloc: std.mem.Allocator, arena: std.mem.
     const sid = try std.fmt.allocPrint(arena, "acp-{d}", .{conn.session_counter});
     const owned = try alloc.dupe(u8, sid);
     const owned_cwd = try alloc.dupe(u8, cwd);
-    const owned_cwd = try alloc.dupe(u8, cwd);
     {
         // If the first put fails, the key and value are still ours to free;
         // once in the map the map owns both, so the errdefers must not
         // outlive the put.
         errdefer alloc.free(owned);
-        errdefer alloc.free(owned_cwd);
-        try conn.sessions.put(alloc, owned, owned_cwd);
         errdefer alloc.free(owned_cwd);
         try conn.sessions.put(alloc, owned, owned_cwd);
     }
@@ -331,8 +323,6 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator) !void {
         const response = try conn.handleLine(gpa, line);
         defer gpa.free(response);
         if (response.len == 0) continue;
-        var stdout_file = std.Io.File.stdout();
-        var out_buf: [64 * 1024]u8 = undefined;
         var writer = stdout_file.writerStreaming(io, &out_buf);
         try writer.interface.writeAll(response);
         try writer.interface.writeByte('\n');

@@ -80,7 +80,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [improve-self left src/acp/server.zig non-compiling across two commits](bugs/2026-08-20-improve-self-acp-server-build-break.md) — Resolved
+- [improve-self left src/acp/server.zig non-compiling across two commits](bugs/2026-08-20-improve-self-acp-server-build-break.md) — Reopened
 
 - [schedule list rendered rows after the first as garbage from a freed buffer](bugs/2026-08-19-schedule-list-second-row-garbled.md) — Resolved
 
