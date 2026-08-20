@@ -1579,7 +1579,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .compare-prompt { font-weight: 600; margin: var(--space-3) 0 0.2rem; }
 
-.compare-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--space-3, 12px); align-items: start; }
+.compare-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-3, 12px); align-items: start; }
 
 .compare-answer { display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; }
 
