@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [janitor reports removing orphaned staging dirs but large ones survive](bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md) — Open
+
 - [lsp capability eval fails on large files, blocking every improve-self promotion](bugs/2026-08-20-lsp-eval-blocks-improve-self.md) — Resolved
 
 - [improve-self left src/acp/server.zig non-compiling across two commits](bugs/2026-08-20-improve-self-acp-server-build-break.md) — Resolved
