@@ -1133,6 +1133,23 @@ test "sessions and graph report empty when the state dir does not exist" {
         try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
         try std.testing.expect(std.mem.find(u8, out, c.want) != null);
     }
+
+    // The session_search capability eval asserts this exact search shape
+    // (ok:true plus a hits array) and the parallel worker builds its sandbox
+    // through host.sandboxFor, so the session grant must come from the tool
+    // descriptor — a worker that hand-rolls its Sandbox literal and drops the
+    // `session` field (the regression that failed the eval for a whole improve
+    // loop) makes this return the 187-byte denied error instead of ok:true.
+    // On an empty host store the search is ok:true with an empty hits array.
+    const swasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/sessions.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(swasm);
+    const smod = try ToolModule.load(std.testing.allocator, io, &sb, swasm);
+    defer smod.deinit();
+    const sout = try smod.executeTool("{\"q\":\"the\"}");
+    defer std.testing.allocator.free(sout);
+    try std.testing.expect(std.mem.find(u8, sout, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, sout, "\"hits\"") != null);
+    try std.testing.expect(std.mem.find(u8, sout, "\"ok\":false") == null);
 }
 
 test "roadmap wasm tool lists planned items from the real bullet format" {

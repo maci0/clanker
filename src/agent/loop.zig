@@ -3676,50 +3676,20 @@ const ToolWorker = struct {
         var arena_state = std.heap.ArenaAllocator.init(self.ctx.gpa);
         defer arena_state.deinit();
 
-        var sb = host.Sandbox{
-            .gpa = self.ctx.gpa,
-            .io = io,
-            .root_dir = self.cfg.agent.sandbox_root,
-            .shared_root = self.cfg.agent.shared_root,
-            .extra_roots = self.cfg.agent.sandbox_roots,
-            // Same omission class as exec_allow/env_allow below: without this
-            // the parallel path refused symlinked granted paths (state/,
-            // .local) that the sequential path allowed under ADR 0017's flag.
-            .follow_symlinks = self.cfg.agent.sandbox_follow_symlinks,
-            .network_allow = self.tool.network_allow,
-            .fs_prefixes = self.tool.fs_prefixes,
-            // The named host channels (ck_harness_config, ck_std_api,
-            // ck_model_stats, ck_chat, ...) gate on tool_self_name, and
-            // host.sandboxFor sets it from the descriptor. The worker builds
-            // its own Sandbox literal, and omitting it left every agent-run
-            // tool with an empty name, so peers/std_api/status were denied
-            // their own channels in capability evals and the improve loop.
-            .tool_self_name = self.tool.name,
-            // Copied like every other policy field. Omitting them here did not
-            // make a worker safer, it made it wrong: a tool ran with no
-            // commands and no environment on the parallel path and the same
-            // tool ran with its descriptor's on the sequential one, so
-            // repo_search was refused ripgrep for as long as it ran in
-            // parallel with anything.
-            .exec_allow = self.tool.exec_allow,
-            .git_remote_ops = self.cfg.agent.git_remote_ops,
-            .exec_pattern_allow = self.cfg.agent.exec_pattern_allow,
-            .env_allow = self.tool.env_allow,
-            .environ_map = self.ctx.environ_map,
-            .seed = self.cfg.agent.seed,
-            .subagent_runner = self.subagent_runner,
-            .cfg = self.cfg,
-            .state_dir = self.cfg.agent.state_dir,
-            // An exec-capable tool sees the harness's exec policy in its own
-            // `config`, the same injection host.sandboxFor applies on the
-            // sequential path. Without it the git/gh guests read an empty
-            // config on the parallel path and reported "no exec_pattern_allow
-            // patterns are configured" even though the config had them, the
-            // two execution paths disagreed about the same tool's settings.
-            .config_json = try host.toolConfigFor(arena_state.allocator(), self.tool, self.cfg),
-            .fuel = self.tool.fuel,
-            .tool_policy = self.tool_policy,
-        };
+        // The worker is the parallel fast-path for the same tool the sequential
+        // path runs, so it must not assemble its own Sandbox policy:
+        // host.sandboxFor is documented as "the single place a tool's sandbox
+        // policy is assembled", and a hand-rolled literal here drifts as fields
+        // are added to Sandbox. It has already silently dropped tool_self_name,
+        // exec_allow/env_allow, follow_symlinks and — after the ck_session
+        // seam — `session`, each disabling the capability that depended on it
+        // on the parallel path only (session_search failed its capability eval
+        // for an entire improve loop over the missing `session`). Delegate, then
+        // add the agent-only extras sandboxFor does not set.
+        var sb = try host.sandboxFor(self.ctx.gpa, io, arena_state.allocator(), self.ctx.environ_map, self.cfg, self.tool, self.ctx);
+        sb.subagent_runner = self.subagent_runner;
+        sb.tool_policy = self.tool_policy;
+        sb.state_dir = self.cfg.agent.state_dir;
 
         log.log(.debug, "running tool '{s}' in sandbox args_bytes={d}", .{ self.tool.name, self.arguments.len });
         const t0 = std.Io.Timestamp.now(io, .awake);

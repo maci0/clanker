@@ -54,3 +54,11 @@ The `std_api` eval additionally failed even after the name was granted because `
 
 - Investigation: none yet
 - Related: reports on improve-self staging (2026-08-14 improve-staging-*) and build failures (2026-04-15 improve-self-gate-build).
+## Follow-up (2026-08-21)
+
+The same drift class recurred: the worker's hand-rolled Sandbox literal omitted
+`session` after the `ck_session` seam, denying `session_search` on the parallel
+path and stalling another improve-self batch. Rather than add the one missing
+field again, the worker now builds its sandbox through `host.sandboxFor` (the
+documented single source of truth), removing the class. See
+`2026-08-21-worker-sandbox-missing-session-grant.md`.
