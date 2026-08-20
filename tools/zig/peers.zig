@@ -129,17 +129,57 @@ fn phonebook(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer) !void
             try s.objectField("status");
             try s.write("down");
             try s.objectField("error");
-            try s.write(switch (err) {
-                error.SandboxDenied => "refused by sandbox policy",
-                error.NetworkError => "request did not complete",
-                else => "peer did not respond",
-            });
+            // A legible reason per failure shape, so an operator can tell a
+            // switched-off LAN peer from a mistyped config URL. The render
+            // half (src/peers/phonebook.zig) prints this field in the status
+            // column, so this is what both the CLI and the web UI show.
+            try s.write(downReason(p.url, err));
         }
         try s.endObject();
     }
     try s.endArray();
     try s.endObject();
     try out.writeAll(buf[0..w.end]);
+}
+
+/// One operator-legible reason per failure shape. The host ABI folds every
+/// fetch failure into a single network code, so the URL itself is checked
+/// here and the network failure is named for what it can still be.
+fn downReason(config_url: []const u8, err: anyerror) []const u8 {
+    if (invalidUrl(config_url)) |why| return why;
+    return switch (err) {
+        error.SandboxDenied => "refused by sandbox policy: the peer host is not in this tool's network allowlist",
+        error.NetworkError => "unreachable: connection refused, timed out, or DNS failed",
+        error.NoAccess => "no access to the peer host",
+        error.TooLarge => "peer answered but the response was too large to return",
+        error.InvalidArg => "malformed peer url",
+        else => "peer did not respond",
+    };
+}
+
+/// Returns a reason when `raw` cannot be a usable peer base URL, or null when
+/// it can. Checked guest-side so a config typo is named as such instead of
+/// surfacing as whatever error the host's URL parser happens to return.
+fn invalidUrl(raw: []const u8) ?[]const u8 {
+    const url = std.mem.trim(u8, raw, " \t\r\n");
+    if (url.len == 0) return "peer url is empty in config";
+    const scheme_len: usize = if (std.mem.startsWith(u8, url, "http://"))
+        "http://".len
+    else if (std.mem.startsWith(u8, url, "https://"))
+        "https://".len
+    else
+        return "malformed peer url: must start with http:// or https://";
+    const rest = url[scheme_len..];
+    var host_len = rest.len;
+    for (rest, 0..) |c, i| {
+        if (c <= 0x20 or c == 0x7f) return "malformed peer url: contains whitespace or control characters";
+        if (c == '/' or c == ':' or c == '?') {
+            host_len = i;
+            break;
+        }
+    }
+    if (host_len == 0) return "malformed peer url: no host after the scheme";
+    return null;
 }
 
 fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Request) !void {
