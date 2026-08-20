@@ -72,6 +72,20 @@ pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
     return spec.nextAfter(now, tz_offset_minutes);
 }
 
+/// Distinct failure modes for cron validation at add/update time so an
+/// operator gets an actionable diagnostic rather than a conflated message.
+pub const CronValidationError = error{
+    ParseFailed,
+    NeverFires,
+};
+
+pub fn validateCron(cron_text: []const u8, now: i64, tz_offset_minutes: i32) CronValidationError!void {
+    if (cron_text.len > max_cron_spec_bytes) return CronValidationError.ParseFailed;
+    if (!validTzOffset(tz_offset_minutes)) return CronValidationError.ParseFailed;
+    const spec = cron.parse(cron_text) catch return CronValidationError.ParseFailed;
+    _ = spec.nextAfter(now, tz_offset_minutes) orelse return CronValidationError.NeverFires;
+}
+
 test "validId matches the session-id alphabet" {
     try std.testing.expect(validId("sch-1"));
     try std.testing.expect(validId("nightly"));
@@ -116,6 +130,14 @@ test "ids are sequential and never reuse a removed one" {
     try std.testing.expectEqualStrings("sch-3", try nextId(arena, &gap));
     const named = [_][]const u8{"nightly"};
     try std.testing.expectEqualStrings("sch-1", try nextId(arena, &named));
+}
+
+test "validateCron distinguishes parse failure from impossible dates" {
+    const now = cron.epochFromCivil(2026, 8, 13, 12, 0, 0);
+    _ = try validateCron("* * * * *", now, 0);
+    try std.testing.expectError(CronValidationError.ParseFailed, validateCron("not a spec", now, 0));
+    try std.testing.expectError(CronValidationError.NeverFires, validateCron("0 0 30 2 *", now, 0));
+    try std.testing.expectError(CronValidationError.ParseFailed, validateCron("", now, 0));
 }
 
 test "firstFire refuses a spec that never comes around" {

@@ -113,8 +113,10 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
     if (!logic.validTzOffset(tz))
         return lib.fail(out, "tz_offset_minutes out of range (-1440..+1440)");
     const now: i64 = @trunc(lib.nowSeconds());
-    if (logic.firstFire(cron_text, now, tz) == null)
-        return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
+    logic.validateCron(cron_text, now, tz) catch |err| return lib.fail(out, switch (err) {
+        error.ParseFailed => "cron spec is not a valid five-field expression",
+        error.NeverFires => "cron spec parses but never comes around (e.g. an impossible date)",
+    });
 
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
@@ -207,8 +209,10 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
         if (has_cron) {
             const effective_tz: i32 = if (has_tz) new_tz else e.tz_offset_minutes;
             const now: i64 = @trunc(lib.nowSeconds());
-            if (logic.firstFire(cron_text, now, effective_tz) == null)
-                return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
+            logic.validateCron(cron_text, now, effective_tz) catch |err| return lib.fail(out, switch (err) {
+                error.ParseFailed => "cron spec is not a valid five-field expression",
+                error.NeverFires => "cron spec parses but never comes around (e.g. an impossible date)",
+            });
         }
         if (has_cron) e.cron = cron_text;
         if (has_task) e.task = task_val;
