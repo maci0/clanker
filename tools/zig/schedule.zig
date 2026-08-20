@@ -99,6 +99,8 @@ fn doSetEnabled(req: std.json.Value, out: *lib.Out) !void {
 
 fn doAdd(req: std.json.Value, out: *lib.Out) !void {
     const cron_text = lib.optStr(req, "cron") orelse return lib.fail(out, "add needs a cron spec");
+    if (cron_text.len == 0)
+        return lib.fail(out, "cron must be non-empty");
     const task_raw = lib.optStr(req, "task") orelse return lib.fail(out, "add needs a task");
     const task = logic.validateTask(task_raw) catch |err| return lib.fail(out, switch (err) {
         error.TaskEmpty => "the task is empty",
@@ -185,6 +187,8 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
     var cron_text: []const u8 = "";
     if (has_cron) {
         cron_text = lib.optStr(req, "cron") orelse return lib.fail(out, "cron must be a string");
+        if (cron_text.len == 0)
+            return lib.fail(out, "cron must be non-empty");
     }
 
     var task_val: []const u8 = "";
