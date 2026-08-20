@@ -169,41 +169,56 @@ fn recordRunTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.
         return;
     };
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+    const line = encodeRunEventLine(&out, ts, e) catch |err| {
+        // Same reason as encodeEventLine's handler: a bare `catch return` per
+        // step dropped the record silently, so a lost run event was
+        // indistinguishable from a run that never happened.
+        log.log(.warn, "autolearn: encode failed: {s}", .{@errorName(err)});
+        return;
+    };
+    appendLine(base, io, gpa, arena, line);
+}
+
+/// Encodes one run record into `out` and returns the written slice: the run
+/// sibling of [[encodeEventLine]], whose `![]const u8` return keeps every
+/// encode step propagating to the single logged handler in `recordRunTo`
+/// instead of the chain of bare `catch return`s it replaces. Callers must
+/// not hold the slice past `out`'s deinit.
+fn encodeRunEventLine(out: *std.Io.Writer.Allocating, ts: i64, e: RunEvent) ![]const u8 {
     // Names are capped UTF-8-safe so malformed configuration cannot overflow
     // into a dropped event. User task text is deliberately not collected:
     // operational usage analytics need counts and tool names, not prompts.
     const provider_capped = utf8.cap(e.provider, cap_name_bytes);
     const model_capped = utf8.cap(e.model, cap_name_bytes);
-
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
     var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-    s.beginObject() catch return;
-    s.objectField("ts") catch return;
-    s.print("{d}", .{ts}) catch return;
-    s.objectField("type") catch return;
-    s.write("run") catch return;
-    s.objectField("provider") catch return;
-    s.write(provider_capped) catch return;
-    s.objectField("model") catch return;
-    s.write(model_capped) catch return;
-    s.objectField("prompt_tokens") catch return;
-    s.print("{d}", .{e.prompt_tokens}) catch return;
-    s.objectField("completion_tokens") catch return;
-    s.print("{d}", .{e.completion_tokens}) catch return;
-    s.objectField("cache_hit") catch return;
-    s.print("{d}", .{e.cache_hit}) catch return;
-    s.objectField("cache_miss") catch return;
-    s.print("{d}", .{e.cache_miss}) catch return;
-    s.objectField("duration_ms") catch return;
-    s.print("{d}", .{e.duration_ms}) catch return;
-    s.objectField("tools") catch return;
-    s.beginArray() catch return;
-    for (e.tools) |t| s.write(utf8.cap(t, cap_name_bytes)) catch return;
-    s.endArray() catch return;
-    s.endObject() catch return;
-
-    appendLine(base, io, gpa, arena, out.written());
+    try s.beginObject();
+    try s.objectField("ts");
+    try s.print("{d}", .{ts});
+    try s.objectField("type");
+    try s.write("run");
+    try s.objectField("provider");
+    try s.write(provider_capped);
+    try s.objectField("model");
+    try s.write(model_capped);
+    try s.objectField("prompt_tokens");
+    try s.print("{d}", .{e.prompt_tokens});
+    try s.objectField("completion_tokens");
+    try s.print("{d}", .{e.completion_tokens});
+    try s.objectField("cache_hit");
+    try s.print("{d}", .{e.cache_hit});
+    try s.objectField("cache_miss");
+    try s.print("{d}", .{e.cache_miss});
+    try s.objectField("duration_ms");
+    try s.print("{d}", .{e.duration_ms});
+    try s.objectField("tools");
+    try s.beginArray();
+    for (e.tools) |t| try s.write(utf8.cap(t, cap_name_bytes));
+    try s.endArray();
+    try s.endObject();
+    return out.written();
 }
 
 // Aggregating state/autolearn.jsonl into roadmap items and upserting
