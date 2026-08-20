@@ -87,7 +87,17 @@ hole (`src/peers/session_sync.zig`).
 
 ## Open questions / future work
 
-- Automatic fan-out on append and serve-start backfill (the ADR names this).
-- Cross-session FTS index when the linear scan is measured slow.
-- Replicating the transcript projection, if a peer should resume a session
-  rather than only audit its events.
+All four items named here have shipped (see the committed code and the
+ROADMAP entry):
+
+- Automatic fan-out on append and serve-start backfill —
+  `session_sync.pushTail` runs after every session save (REPL persist,
+  `cmdRun` save, serve save sites), gated on `modules.session_events`;
+  `session_sync.backfill` runs at serve start and per gap (409) resend.
+- Cross-session FTS index — `session_fts.zig`: one global FTS5 trigram
+  index over message content, maintained on `saveSession`, read through
+  `searchSessions` candidates with a linear-scan fallback when the index
+  is missing or corrupt.
+- Replicating the transcript projection — `session_sync.pullTranscript`
+  fetches a peer's session meta + messages after event sync so a replica
+  can resume the conversation, not only audit its events.

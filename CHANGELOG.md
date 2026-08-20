@@ -53,6 +53,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   dense per-stream seq cursors: appends accepted at cursor+1, duplicates
   dropped, gaps reported for backfill ([ADR 0033](docs/adrs/0033-sessions-are-per-session-sqlite-databases-with-an-append.md),
   [PRD 0044](docs/prds/0044-per-session-sqlite-store-with-an-append-only-event-stream.md)).
+  **The four open items shipped** (2026-08-20): automatic fan-out
+  (`session_sync.pushTail` runs after every session save), serve-start
+  backfill (`session_sync.backfill` at serve start, gap resend on 409), a
+  cross-session FTS5 trigram index (`session_fts.zig`, maintained on save,
+  linear-scan fallback), and replica transcript projection
+  (`session_sync.pullTranscript`, so a peer resumes a session rather than
+  only auditing its events).
 
 - Sessions record the **system prompt snapshot** the model was running
   against (`system_prompt` on the stored session, saved from the agent's
