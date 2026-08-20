@@ -13684,7 +13684,7 @@ fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest:
             var it = std.mem.splitScalar(u8, cols_param, ',');
             while (it.next()) |cid| {
                 const t2 = std.mem.trim(u8, cid, " \t");
-                if (t2.len > 0) s.write(t2) catch {};
+                if (t2.len > 0) s.write(t2) catch return null;
             }
             s.endArray() catch return null;
         }
@@ -14739,10 +14739,17 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             }
         }
         if (kb_buf.items.len > knowledge_prefix_len) {
-            kb_buf.appendSlice(arena, "\n</retrieved_knowledge>\n\n<operator_task>\n") catch {};
-            kb_buf.appendSlice(arena, task_text) catch {};
-            kb_buf.appendSlice(arena, "\n</operator_task>") catch {};
-            final_task = kb_buf.items;
+            // The closing fence is adopted only when every part of the tail
+            // landed: a half-written boundary would leak retrieved (untrusted)
+            // text out of its fence into the operator-task region, so an OOM
+            // here keeps the unframed task instead of a truncated prompt.
+            const framed = blk: {
+                kb_buf.appendSlice(arena, "\n</retrieved_knowledge>\n\n<operator_task>\n") catch break :blk false;
+                kb_buf.appendSlice(arena, task_text) catch break :blk false;
+                kb_buf.appendSlice(arena, "\n</operator_task>") catch break :blk false;
+                break :blk true;
+            };
+            if (framed) final_task = kb_buf.items;
         }
         if (do_memory_inject and req.knowledge.len > 0) {
             var mem_buf: std.ArrayList(u8) = .empty;
@@ -14760,15 +14767,21 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 } else |_| {}
             }
             if (mem_buf.items.len > 0) {
+                // Same rule as the knowledge fence: adopt the combined prompt
+                // only when every part landed, so retrieved (untrusted) hits
+                // can never be sent with their closing fence missing.
                 var combined: std.ArrayList(u8) = .empty;
-                combined.appendSlice(
-                    arena,
-                    "<retrieved_memory_hits>\n" ++ retrieval_untrusted_preamble,
-                ) catch {};
-                combined.appendSlice(arena, mem_buf.items) catch {};
-                combined.appendSlice(arena, "\n</retrieved_memory_hits>\n\n") catch {};
-                combined.appendSlice(arena, final_task) catch {};
-                final_task = combined.items;
+                const framed = blk: {
+                    combined.appendSlice(
+                        arena,
+                        "<retrieved_memory_hits>\n" ++ retrieval_untrusted_preamble,
+                    ) catch break :blk false;
+                    combined.appendSlice(arena, mem_buf.items) catch break :blk false;
+                    combined.appendSlice(arena, "\n</retrieved_memory_hits>\n\n") catch break :blk false;
+                    combined.appendSlice(arena, final_task) catch break :blk false;
+                    break :blk true;
+                };
+                if (framed) final_task = combined.items;
             }
         }
     }
