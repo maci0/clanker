@@ -107,9 +107,11 @@ pairing), `docs/` (numbering, stale cross-references), and the repository root
       an untracked one on disk is a finding only if it should be ignored and
       is not.
 - [ ] Tools whose three parts do not line up: a `tools/manifests/*.tool.json`
-      with no matching `tools/zig/*.zig` source (and not deliberately parked in
-      `examples/manifests/`), or a `tools/zig/*.zig` with no descriptor, or a
-      descriptor pointing at a `wasm` path the build does not produce.
+      with no matching source — `tools/zig/*.zig` *or* AssemblyScript
+      `tools/ts/*.ts` — (and not deliberately parked in
+      `examples/manifests/`), or a `tools/zig/*.zig`/`tools/ts/*.ts` with no
+      descriptor, or a descriptor pointing at a `wasm` path the build does
+      not produce.
 - [ ] A tracked file that matches a `.gitignore` intent (generated, local, or
       runtime state) and should never have been committed.
 - [ ] Duplicated logic that structure caused: the same helper hand-copied into
@@ -143,9 +145,9 @@ ls src/*.zig
 # A module's import reach: zero hits (outside itself) means orphaned
 rg -n "@import\(\"(\.\./)*<name>\.zig\"\)" src
 
-# Tools whose parts don't pair up
+# Tools whose parts don't pair up (sources may be Zig or AssemblyScript)
 comm -3 <(ls tools/manifests/*.tool.json | xargs -n1 basename | sed 's/\.tool\.json$//' | sort) \
-        <(ls tools/zig/*.zig | xargs -n1 basename | sed 's/\.zig$//' | sort)
+        <(ls tools/zig/*.zig tools/ts/*.ts | xargs -n1 basename | sed 's/\.\(zig\|ts\)$//' | sort)
 
 # Files with tests that main.zig's registry may not import
 rg -l "^test \"" src | sort > /tmp/have_tests

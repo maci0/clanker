@@ -94,8 +94,8 @@ src/agent/*          agent loop, system prompt assembly, session store,
                       execution graphs, sub-agents, autolearn
 src/toolhost/*          tool registry (registry.zig); WASM build pipeline
                       (builder.zig, protected)
-src/tui/*            REPL terminal UI: raw-mode/size (term.zig), multiline
-                      input, approval prompts, status bar, theming, transcript
+src/tui/*            libvaxis REPL (repl.zig), transcript (MdStream), theme,
+                     mascot, turn stats
 src/mcp/*            Model Context Protocol server (stdio JSON-RPC)
 src/peers/*          peer chatrooms (notify/phonebook and patch application
                       moved to the sandboxed `peers`/`patch_apply` WASM tools)
@@ -154,7 +154,7 @@ House table (AGENTS.md + observed style, normative):
 | Variables / fields / params | `snake_case` | `tool_call_id`, `max_iterations`, `run_stdout_color` |
 | Types | `PascalCase` | `Agent`, `MdStream`, `RunStats`, `ToolCall`, `ProviderKind` |
 | Files | `snake_case.zig` | `system_prompt.zig`, `status.zig` |
-| Constants | `snake_case` module `const` | `max_session_chars`, `parallel_tool_stack_bytes` |
+| Constants | `snake_case` module `const` | `max_session_tokens`, `parallel_tool_stack_bytes` |
 | WASM tool / descriptor names | Match the `.tool.json` `name` field exactly | `"webui"`, `"repo_search"`, `"status"` |
 
 Extra rules:
@@ -166,7 +166,7 @@ Extra rules:
       `interactive`, since it gates one specific thing: color on stdout).
       Confusing names are defects.
 - [ ] No magic numbers: token/byte caps, buffer sizes, and iteration limits
-      are named module `const` (`max_session_chars`, `max_per_turn_tokens`),
+      are named module `const` (`max_session_tokens`, `parallel_tool_stack_bytes`),
       not inline literals.
 - [ ] No hungarian prefixes, no `p`/`p_` for pointers, no `m_` for members.
 - [ ] Acronyms read as words where std does (`Io`, `Http`, `Json`) except
@@ -233,10 +233,12 @@ rather than re-litigating the 0.16 facts here.
   `[*:0]const u8` argv for `std.os.linux.execve`): justified, each cast has
   an obvious sizes-match reason (C string / argv shape), but confirm new
   `@ptrCast` sites keep that same "obviously safe" bar.
-- `@intFromFloat` in `src/config.zig` (`jsonInt`) and `src/agent/loop.zig`
-  (formatting a float tool-arg as an int string): these are exactly the
-  deprecated-but-present case `zig-0.16-changelog-review.md` hunts for; do
-  not re-litigate here, just cite it and move on.
+- `@intFromFloat`: the `src/config.zig` (`jsonInt`) and `src/agent/loop.zig`
+  (float tool-arg formatting) call sites have migrated to `@trunc`/`@floor`;
+  the only remaining hits are comment text in `src/sandbox/host.zig`'s
+  gate-denial fixture. Any *new* call site is exactly the deprecated-but-
+  present case `zig-0.16-changelog-review.md` hunts for; do not re-litigate
+  here, just cite it and move on.
 
 **Negative guidance:**
 

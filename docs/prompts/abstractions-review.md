@@ -168,7 +168,7 @@ places -> one function with a name that states the policy.
 
 ```text
 // Good: named policy
-fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) void
+fn compactMessages(messages: *std.ArrayList(types.Message), max_tokens: usize) void
 
 // Bad: copy-paste "drop oldest non-system message while over budget" in three call sites
 ```
@@ -194,8 +194,8 @@ fn compactMessages(messages: *std.ArrayList(types.Message), max_chars: usize) vo
 
 Pull pure logic (the markdown-to-ANSI state machine, message compaction) into
 a small, tested unit: `MdStream` (`src/tui/transcript.zig`) and
-`compactMessages` (`src/cli.zig`, tested at the bottom of the file) are the
-shape to match. Keep I/O and process orchestration outside the tested core.
+`compactMessages` (`src/agent/session.zig`, tested at the bottom of the file)
+are the shape to match. Keep I/O and process orchestration outside the tested core.
 
 ### E. Stdlib-shaped extension
 
@@ -471,7 +471,7 @@ Why: illegal "some counters updated, others not" state becomes hard to reach.
 | Compile errors > runtime crashes | Types/enums over stringly APIs where cheap |
 | Incremental improvements | Extract on third site; finish a migration fully rather than keeping both paths (the resolved `format.zig`-vs-`MdStream` case above) |
 | Avoid local maximums | Do not keep a raw syscall because a wrapper is "done" |
-| Reduce what one must remember | Caps and policies in one place (`max_session_chars`, `max_per_turn_tokens`) |
+| Reduce what one must remember | Caps and policies in one place (`max_session_tokens`, `parallel_tool_stack_bytes`) |
 | Memory is a resource | No alloc-hiding helpers on the streaming/loop path |
 | Serve the users | Abstractions serve a working, answerable agent, not architecture cosplay |
 

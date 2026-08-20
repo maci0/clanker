@@ -83,7 +83,7 @@ Use these as a severity tie-break when two fixes both "work." Official spirit
 | Compile errors better than runtime crashes | Exhaustive enum switches (`ProviderKind`, `Level`); typed config over stringly options where cheap |
 | Incremental improvements | Small PRs; fix idiom drift in files you touch instead of big-bang rewrites |
 | Avoid local maximums | Do not micro-opt with raw syscalls if it blocks a cleaner `std.Io` path |
-| Reduce the amount one must remember | Named caps (`max_session_tokens`, `max_per_turn_tokens`); no magic numbers |
+| Reduce the amount one must remember | Named caps (`max_session_tokens`, `parallel_tool_stack_bytes`); no magic numbers |
 | Focus on code rather than style | Fix real footguns first; bikeshed last |
 | Resource alloc may fail; dealloc must succeed | `try` alloc at init; `defer`/`errdefer`; never leak a WASM module or an arena on an error path |
 | Memory is a resource | No unbounded per-token/per-iteration heap growth; arenas scoped to a run, not the process |
@@ -126,7 +126,7 @@ Reference naming (from AGENTS.md and observed house style):
 | Variables / fields / params | `snake_case` | `tool_call_id`, `run_stdout_color`, `max_iterations` |
 | Types | `PascalCase` | `Agent`, `MdStream`, `RunStats`, `ToolCall` |
 | Files | `snake_case.zig` | `status.zig`, `system_prompt.zig` |
-| Module constants | `snake_case` | `max_session_chars`, `parallel_tool_stack_bytes` |
+| Module constants | `snake_case` | `max_session_tokens`, `parallel_tool_stack_bytes` |
 | WASM tool descriptor strings | Match the `.tool.json` `name` field exactly | `"webui"`, `"repo_search"` |
 
 ---
@@ -221,7 +221,7 @@ or once per agent-loop iteration, not just once per CLI invocation. Includes:
 | Unbounded `ArrayList.append` per token with no cap | Hidden realloc, unbounded growth for a runaway stream |
 | Spawning a `std.Thread` per token or per loop iteration | Thread-spawn cost dwarfs the work; already scoped to per-tool-batch in `executeCalls`, keep it there |
 
-**Already-correct shape to match (`MdStream.feed`, `src/cli.zig`):** it
+**Already-correct shape to match (`MdStream.feed`, `src/tui/transcript.zig`):** it
 writes directly into the caller's `*std.Io.Writer` per byte/marker, holds at
 most 2 bytes of lookahead state in a fixed `[2]u8` field, and never
 allocates per delta. Any new per-token transform should look like this, not
@@ -296,7 +296,7 @@ or error, never `catch unreachable`.
 | `@memcpy` / `@memset` | Manual byte loops for bulk copy |
 | `@min` / `@max` | Branchy min/max |
 | `@intCast` with a prior bounds check | Blind cast of a model/tool-controlled length |
-| Named `const` for sizes/caps | Magic numbers inline (`max_session_chars`, `parallel_tool_stack_bytes` are the pattern to match) |
+| Named `const` for sizes/caps | Magic numbers inline (`max_session_tokens`, `parallel_tool_stack_bytes` are the pattern to match) |
 | `[]const u8` for borrowed strings | Owning copies without need |
 
 ### 7. Zig 0.16 stdlib abstractions (not OS-specific layers)
@@ -401,7 +401,8 @@ Review any change that runs per streamed delta or per agent-loop iteration:
 ### 11. Tests
 
 - Unit tests at the **bottom** of the owning file (existing precedent:
-  `compactMessages`, `MdStream` tests in `src/cli.zig`)
+  `compactMessages` tests in `src/agent/session.zig`, `MdStream` tests in
+  `src/tui/transcript.zig`)
 - New parsers/streaming state machines get at least one test that would fail
   if a marker-split-across-chunks case regressed (see the `MdStream` split
   test for the shape to match)
@@ -476,7 +477,7 @@ Prefer **ast-grep** for structural patterns (e.g. all `catch {}` blocks, all
 ### Streaming-safe state machine (good)
 
 ```zig
-// MdStream (src/cli.zig): fixed [2]u8 lookahead, writes straight to the
+// MdStream (src/tui/transcript.zig): fixed [2]u8 lookahead, writes straight to the
 // caller's writer, never allocates per delta.
 fn feed(self: *MdStream, w: *std.Io.Writer, chunk: []const u8) void { ... }
 ```
@@ -541,7 +542,7 @@ _ = a.run(messages, task, &err_detail) catch {}; // swallowed, caller thinks it 
 - `catch {}` without an intentional-drop comment
 - Global mutable allocator
 - `Thread.spawn` per token or per loop iteration instead of per bounded batch
-- Magic numbers on streaming/loop paths (name them, matching `max_session_chars` style)
+- Magic numbers on streaming/loop paths (name them, matching `max_session_tokens` style)
 - Narrating comments; missing rationale on non-obvious residual `std.posix` sites
 - Ignoring edge cases (empty, max, malformed) because the happy path works
 
