@@ -27,6 +27,10 @@ pub const Goal = struct {
     /// tasks name the `instance.id`s that may see them and never reach the
     /// project's `#general` fold.
     tasks: []const GoalTask = &.{},
+    /// Seconds since the Unix epoch — the unit `goal_update` writes and the
+    /// one every other state store uses. The goal `id` is the nanosecond clock
+    /// (opaque, unique per add); the timestamps are seconds. Mixing the two
+    /// writers' units made `updated` sort below `created` in the web UI.
     created: i64 = 0,
     updated: i64 = 0,
 };
@@ -40,6 +44,7 @@ pub const GoalTask = struct {
     /// Empty = public (every project member). Non-empty = private to exactly
     /// the named instance ids.
     visible_to: []const []const u8 = &.{},
+    /// Seconds since the Unix epoch, same unit as `Goal.created`/`updated`.
     created: i64 = 0,
     updated: i64 = 0,
 };

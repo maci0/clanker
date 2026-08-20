@@ -81,10 +81,11 @@ function uuid4(): string {
 
 /// ULID: 48-bit millisecond timestamp + 80 bits of randomness, both
 /// Crockford base32, lexically sortable by creation time. `now()` is
-/// seconds (the harness's ck_now contract), so it is widened to
-/// milliseconds — coarser than a true millisecond clock, but still
-/// monotonic-enough ordering within the same tool call for what an id
-/// generator needs.
+/// seconds (see lib.ts), so it is widened to milliseconds — coarser than a
+/// true millisecond clock, but still monotonic-enough ordering within the
+/// same tool call for what an id generator needs. (It used to be multiplied
+/// from raw nanoseconds, overflowing the 48-bit field and destroying the
+/// sort order; the host's ck_now is nanoseconds, `now()` divides.)
 function ulid(): string {
   const ms: u64 = now() * 1000;
   let t = "";

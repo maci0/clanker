@@ -70,8 +70,12 @@ export function logInfo(msg: string): void { log(1, msg); }
 export function logWarn(msg: string): void { log(2, msg); }
 export function logError(msg: string): void { log(3, msg); }
 
-/// Seconds since epoch (matches ck_now's contract; see lib.zig's own).
-export function now(): u64 { return ck_now(); }
+/// Seconds since the Unix epoch. `ck_now` itself is nanoseconds (see
+/// src/sandbox/host.zig ckNow and tools/zig/lib.zig nowSeconds, which divides
+/// by 1e9 the same way); this is the division so callers never see the raw
+/// unit. Do not multiply by 1000 expecting milliseconds of an epoch that was
+/// already seconds — that is how id_gen's ULID timestamp overflowed.
+export function now(): u64 { return ck_now() / 1000000000; }
 
 /// One host-sourced random u64 per call (not a seeded PRNG stream): fine for
 /// building an id, not for anything needing many draws from one seed.

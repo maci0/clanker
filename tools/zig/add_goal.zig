@@ -22,8 +22,6 @@ const std = @import("std");
 const lib = @import("lib.zig");
 const store = @import("goal_store.zig");
 
-extern fn ck_now() u64;
-
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
@@ -58,7 +56,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         break :blk @as(u32, @trunc(n));
     } else null;
 
-    const now = ck_now();
+    // The id is the nanosecond clock, unique per add; the stored timestamps
+    // are seconds since the Unix epoch, the unit every other store uses and
+    // the unit goal_update writes. Mixing the two is what made a goal's
+    // `updated` (seconds) sort below its `created` (nanoseconds) and read as
+    // the oldest goal in the web UI (state/goals.json carried both next to
+    // each other for weeks).
+    const now_ns: u64 = lib.nowNanos();
+    const now_s: i64 = @intCast(@divTrunc(now_ns, std.time.ns_per_s));
 
     var attempt: u32 = 0;
     while (attempt < 3) : (attempt += 1) {
@@ -86,7 +91,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
 
         const goal = store.Goal{
-            .id = try std.fmt.allocPrint(lib.alloc, "{d}", .{now}),
+            .id = try std.fmt.allocPrint(lib.alloc, "{d}", .{now_ns}),
             .objective = objective,
             .completion_criterion = completion,
             .proof = proof,
@@ -96,8 +101,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .worktree = if (worktree.len > 0) worktree else null,
             .workspace = workspace,
             .status = "active",
-            .created = @intCast(now),
-            .updated = @intCast(now),
+            .created = now_s,
+            .updated = now_s,
         };
 
         var goal_buf: std.ArrayList(u8) = .empty;
