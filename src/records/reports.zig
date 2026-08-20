@@ -100,7 +100,7 @@ fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     });
 
     const result = try common.callTool(arena, "reports", tool, input);
-    try common.out(io, try renderSearch(arena, query, kind, common.arrayField(result, "reports"), common.arrayField(result, "runbooks")));
+    try common.out(io, try renderSearch(arena, query, kind, try common.sortedMatches(arena, common.arrayField(result, "reports")), try common.sortedMatches(arena, common.arrayField(result, "runbooks"))));
 }
 
 fn open(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
