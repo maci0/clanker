@@ -726,7 +726,7 @@ form[hidden] { display: none; }
 .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 
 /* ---- transcript: a running list of turns, chat-style ---- */
-.transcript { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-3); padding-bottom: var(--space-3); }
+.transcript { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); padding-bottom: var(--space-3); }
 .transcript:empty { display: none; }
 /* A turn is a job on the panel's record: seamed off from the one above,
    its number stamped in the margin, a blue strip lit while it runs.
