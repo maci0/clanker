@@ -7,6 +7,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker improve-self` no longer dies with `ProposalRequestFailed` when the
+  primary provider goes down or goes quiet: its proposal and plan LLM calls
+  now route through the same `chatWithFallbackChain` the agent loop uses, so a
+  down primary falls back to a configured `agent.fallback_providers` provider
+  instead of aborting the whole improve run after the deadline. The
+  caller-thread `chatWithDeadline` ceiling (`agent.request_timeout_ms`) is
+  preserved, so a provider that accepts and goes silent still aborts rather
+  than hanging
+  ([bug](docs/reports/bugs/2026-08-18-improve-engine-llm-calls-have-no-deadline.md)).
+
 - The `UnknownProvider` hint no longer claims the name is missing from
   `config.toml`: providers merge from `config.toml` + `config.local.toml`,
   so a provider defined only locally made the old wording a false lead —
