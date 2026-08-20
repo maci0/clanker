@@ -177,8 +177,8 @@ fn frame(alloc: std.mem.Allocator, body: *std.ArrayList(u8), payload: []const u8
 /// way an editor and every other tool here report positions).
 fn collectLocations(alloc: std.mem.Allocator, stdout: []const u8, out: *std.ArrayList([]const u8)) !void {
     var rest = stdout;
-    while (std.mem.find(u8, rest, "\"uri\":\"file://")) |at| {
-        rest = rest[at + "\"uri\":\"file://".len ..];
+    while (std.mem.find(u8, rest, "\"file://")) |at| {
+        rest = rest[at + "\"file://".len ..];
         const uri_end = std.mem.findScalar(u8, rest, '"') orelse break;
         const path = rest[0..uri_end];
 
