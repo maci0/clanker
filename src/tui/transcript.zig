@@ -354,21 +354,6 @@ pub fn cardPreview(gpa: std.mem.Allocator, bytes: []const u8) ![]u8 {
             i += 1;
             continue;
         }
-        // OSC sequences are consumed whole, matching writeSanitized and
-        // sanitizeAlloc: stripping only the ESC byte leaves the payload visible.
-        if (c == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5D) {
-            var k = i + 2;
-            while (k < bytes.len) {
-                if (bytes[k] == 0x07) break;
-                if (bytes[k] == 0x1B and k + 1 < bytes.len and bytes[k + 1] == 0x5C) {
-                    k += 2;
-                    break;
-                }
-                k += 1;
-            }
-            i = k;
-            continue;
-        }
         if (strippedControl(c)) {
             i += 1;
             continue;
@@ -674,18 +659,4 @@ test "toolCardArgs skips empty and no-argument bodies" {
     const gpa = std.testing.allocator;
     try std.testing.expect((try toolCardArgs(gpa, "")) == null);
     try std.testing.expect((try toolCardArgs(gpa, "{}")) == null);
-}
-
-test "cardPreview strips OSC sequences whole" {
-    const gpa = std.testing.allocator;
-    const out = try cardPreview(gpa, "a\x1b]38;5;9\x07b");
-    defer gpa.free(out);
-    try std.testing.expectEqualStrings("ab", out);
-}
-
-test "cardPreview strips OSC sequences (ST-terminated)" {
-    const gpa = std.testing.allocator;
-    const out = try cardPreview(gpa, "a\x1b]0;1\x1b\\b");
-    defer gpa.free(out);
-    try std.testing.expectEqualStrings("ab", out);
 }

@@ -79,7 +79,6 @@ const zero_width_ranges = [_][2]u21{
     .{ 0x20D0, 0x20FF }, // Combining Diacritical Marks for Symbols
     .{ 0xFE00, 0xFE0F }, // variation selectors
     .{ 0xFE20, 0xFE2F }, // Combining Half Marks
-    .{ 0xFEFF, 0xFEFF }, // BOM / zero-width no-break space
 };
 
 fn inRanges(cp: u21, ranges: []const [2]u21) bool {
@@ -158,10 +157,6 @@ test "hangul syllables are width 2" {
 
 test "combining marks are width 0" {
     try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x0301)); // combining acute accent
-}
-
-test "BOM (U+FEFF) is zero-width" {
-    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0xFEFF));
 }
 
 test "control chars are width 0" {
