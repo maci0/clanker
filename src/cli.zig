@@ -12145,13 +12145,45 @@ const file_preview_cap = 1 << 20;
 /// growing with whatever the directory happens to hold.
 const dir_listing_cap: usize = 2000;
 
+/// True when a path component names a dotenv file. Mirrors the sandbox's
+/// `isSecretDotenv` (sandbox/host.zig): `.env` and its variants hold the
+/// provider API keys `env_allow` exists to keep out of guest memory, so the
+/// same files must not cross the HTTP file-browser surface either — a listing
+/// or preview would otherwise hand every configured key to whoever can reach
+/// the port (a LAN client when `--host 0.0.0.0`, or any local process).
+fn isSecretDotenvName(name: []const u8) bool {
+    if (std.mem.eql(u8, name, ".env") or std.mem.eql(u8, name, ".envrc")) return true;
+    if (std.mem.startsWith(u8, name, ".env.") or std.mem.startsWith(u8, name, ".envrc/")) return true;
+    return false;
+}
+
+test "isSecretDotenvName refuses every dotenv spelling the sandbox refuses" {
+    // The exact names and the prefix variants safeJoin's isSecretDotenv
+    // blocks for guests must be blocked here too, or the file browser serves
+    // what the sandbox withholds.
+    try std.testing.expect(isSecretDotenvName(".env"));
+    try std.testing.expect(isSecretDotenvName(".envrc"));
+    try std.testing.expect(isSecretDotenvName(".env.local"));
+    try std.testing.expect(isSecretDotenvName(".env.production"));
+    // Ordinary dotfiles and real files stay servable. `.envrc.local` stays
+    // servable too: the sandbox's isSecretDotenv refuses only `.env.`-prefixed
+    // names, and parity with it is the point of this rule.
+    try std.testing.expect(!isSecretDotenvName(".gitignore"));
+    try std.testing.expect(!isSecretDotenvName(".envrc.example"));
+    try std.testing.expect(!isSecretDotenvName(".envrc.local"));
+    try std.testing.expect(!isSecretDotenvName("src/main.zig"));
+    try std.testing.expect(!isSecretDotenvName("README.md"));
+}
+
 /// `GET /api/files?path=<rel>`, list one directory inside the current
 /// workspace, or, when `path` names a file rather than a directory, that
 /// file's content (capped at `file_preview_cap`, refused as binary rather
 /// than sent if a NUL byte turns up in what was read). The workspace is the
 /// process working directory, which is all the server is allowed to see; a
 /// requested path is resolved component-wise and any attempt to escape above
-/// it (`..`) is clamped to the workspace root. A missing directory is 404.
+/// it (`..`) is clamped to the workspace root. Dotenv files (`.env` and
+/// variants) are refused outright, the same rule the sandbox applies to its
+/// guests. A missing directory is 404.
 fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
@@ -12193,6 +12225,10 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
         if (std.mem.eql(u8, c, "..")) {
             if (comps.items.len > 0) _ = comps.pop();
             continue;
+        }
+        if (isSecretDotenvName(c)) {
+            respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"secret file not served\"}");
+            return;
         }
         comps.append(arena, arena.dupe(u8, c) catch c) catch return;
     }
@@ -12253,6 +12289,9 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     var truncated_listing = false;
     var dit = dir.iterate();
     while (dit.next(io) catch null) |entry| {
+        // Dotenv files never appear in the listing: they are the one file
+        // class the browser must not offer, same rule as the path check above.
+        if (isSecretDotenvName(entry.name)) continue;
         // One stat and one arena copy per entry, so an unbounded directory is
         // an unbounded response: `.zig-cache/o` and `node_modules` are both
         // reachable from the workspace root and both hold thousands of names.
