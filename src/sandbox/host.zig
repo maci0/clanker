@@ -1559,7 +1559,9 @@ pub fn ckEnv(caller: *zwasm.Caller, name_ptr: u32, name_len: u32) u32 {
 }
 
 /// Variables any tool may read: where it is running, and how to format output.
-/// Everything else has to be named by the tool's manifest.
+/// Empty `env_allow` means exactly this list; a manifest that names variables
+/// replaces it, so the named set is the complete readable set and never these
+/// defaults plus the names. Everything else has to be named by the manifest.
 const env_default_allow = [_][]const u8{ "PWD", "HOME", "PATH", "LANG", "LC_ALL", "TERM", "TZ", "USER" };
 
 /// The process environment holds this project's API keys, loaded from .env at
