@@ -1835,7 +1835,7 @@ function showCardDetail(id) {
     track.appendChild(fill2);
     var pctLabel = document.createElement("span");
     pctLabel.className = "card-progress"; pctLabel.textContent = dN + "/" + tN + " · " + pct2 + "%";
-    pctLabel.style.marginLeft = "0.5rem";
+    pctLabel.style.marginLeft = "var(--space-3)";
     var progRow = document.createElement("div");
     progRow.className = "detail-row";
     progRow.style.alignItems = "center";
@@ -2280,7 +2280,7 @@ export function bindBoard(deps) {
         var actTd=document.createElement("td");
         var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); }); actTd.appendChild(openBtn);
         if(c.assignee!==((document.getElementById("instance-chip")||{}).textContent||"").trim()){
-          var claimBtn=document.createElement("button"); claimBtn.type="button"; claimBtn.className="secondary"; claimBtn.textContent="Claim"; claimBtn.style.marginLeft="0.4rem"; claimBtn.addEventListener("click", function(){ postBoard({op:"update", id:c.id, assignee: ((document.getElementById("instance-chip")||{}).textContent||"").trim()}, "Claimed."); }); actTd.appendChild(claimBtn);
+          var claimBtn=document.createElement("button"); claimBtn.type="button"; claimBtn.className="secondary"; claimBtn.textContent="Claim"; claimBtn.style.marginLeft="var(--space-2)"; claimBtn.addEventListener("click", function(){ postBoard({op:"update", id:c.id, assignee: ((document.getElementById("instance-chip")||{}).textContent||"").trim()}, "Claimed."); }); actTd.appendChild(claimBtn);
         }
         tr.appendChild(actTd);
         tbody.appendChild(tr);

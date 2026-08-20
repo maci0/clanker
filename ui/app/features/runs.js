@@ -456,7 +456,7 @@ function drawRun(g) {
 
   var head = document.createElement("div");
   head.className = "run-head";
-  head.style.display = "flex"; head.style.flexWrap = "wrap"; head.style.gap = "0.4rem"; head.style.alignItems = "center";
+  head.style.display = "flex"; head.style.flexWrap = "wrap"; head.style.gap = "var(--space-2)"; head.style.alignItems = "center";
   var headId = document.createElement("span"); headId.textContent = g.run_id; headId.style.fontWeight = "600"; head.appendChild(headId);
   if (g.provider) { var hp = document.createElement("span"); hp.className = "tool-tag"; hp.textContent = g.provider; head.appendChild(hp); }
   var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
@@ -555,7 +555,7 @@ function drawRun(g) {
 
   var graphSearch = document.createElement("div");
   graphSearch.className = "run-graph-search";
-  graphSearch.style.display = "flex"; graphSearch.style.gap = "0.5rem"; graphSearch.style.marginBottom = "0.5rem"; graphSearch.style.flexWrap = "wrap"; graphSearch.style.alignItems = "center";
+  graphSearch.style.display = "flex"; graphSearch.style.gap = "var(--space-3)"; graphSearch.style.marginBottom = "var(--space-2)"; graphSearch.style.flexWrap = "wrap"; graphSearch.style.alignItems = "center";
   var graphSearchInput = document.createElement("input");
   graphSearchInput.type = "search"; graphSearchInput.placeholder = "Filter nodes (e.g. read_file, grep)…  —  / to focus";
   graphSearchInput.setAttribute("aria-label", "Filter graph nodes — press / to focus, n/N to step matches, F failed, j/k iterations, arrows walk nodes");
@@ -576,7 +576,7 @@ function drawRun(g) {
   var _kindFilter = (function(){ try{ return localStorage.getItem("clanker.graphKind") || ""; }catch(_){ return ""; } })();
   var _initSearch = (function(){ try{ return localStorage.getItem("clanker.graphSearch") || ""; }catch(_){ return ""; } })();
   var graphKindBar = document.createElement("div");
-  graphKindBar.className = "run-kind-filter"; graphKindBar.style.display = "flex"; graphKindBar.style.gap = "0.35rem"; graphKindBar.style.flexWrap = "wrap"; graphKindBar.style.marginBottom = "0.5rem";
+  graphKindBar.className = "run-kind-filter"; graphKindBar.style.display = "flex"; graphKindBar.style.gap = "var(--space-1)"; graphKindBar.style.flexWrap = "wrap"; graphKindBar.style.marginBottom = "var(--space-2)";
   graphKindBar.setAttribute("role", "group"); graphKindBar.setAttribute("aria-label", "Filter by node kind");
   [{k:"",label:"All"},{k:"llm",label:"LLM"},{k:"tool",label:"Tools"},{k:"final",label:"Answer"},{k:"failed",label:"Failed"}].forEach(function(opt){
     var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = opt.label; upgradePfButton(b);
@@ -594,7 +594,7 @@ function drawRun(g) {
   el.runGraph.appendChild(graphKindBar);
   // Codex-style breadcrumb: iteration / step chips + keyboard tour
   var crumb = document.createElement("div");
-  crumb.className = "run-crumbs"; crumb.style.display = "flex"; crumb.style.gap = "0.35rem"; crumb.style.flexWrap = "wrap"; crumb.style.marginBottom = "0.5rem";
+  crumb.className = "run-crumbs"; crumb.style.display = "flex"; crumb.style.gap = "var(--space-1)"; crumb.style.flexWrap = "wrap"; crumb.style.marginBottom = "var(--space-2)";
   crumb.setAttribute("role", "navigation"); crumb.setAttribute("aria-label", "Iterations");
   built.stages.forEach(function(st, idx){
     var chip = document.createElement("button");
@@ -618,7 +618,7 @@ function drawRun(g) {
     var maxIter = Math.max.apply(null, built.stages.map(function(s){ return s.iteration; }));
     var minIter = Math.min.apply(null, built.stages.map(function(s){ return s.iteration; }));
     var scrubWrap = document.createElement("div");
-    scrubWrap.style.display = "flex"; scrubWrap.style.alignItems = "center"; scrubWrap.style.gap = "0.5rem"; scrubWrap.style.marginBottom = "0.5rem";
+    scrubWrap.style.display = "flex"; scrubWrap.style.alignItems = "center"; scrubWrap.style.gap = "var(--space-3)"; scrubWrap.style.marginBottom = "var(--space-2)";
     var scrubLabel = document.createElement("span"); scrubLabel.className = "meta"; scrubLabel.textContent = "Scrub:"; scrubWrap.appendChild(scrubLabel);
     var scrub = document.createElement("input"); scrub.type = "range"; scrub.min = String(minIter); scrub.max = String(maxIter); scrub.value = String(maxIter); scrub.step = "1";
     scrub.setAttribute("aria-label", "Scrub iterations"); scrub.style.flex = "1";
@@ -663,7 +663,7 @@ function drawRun(g) {
     }, { passive: false });
   })();
   var zoomWrap = document.createElement("div");
-  zoomWrap.style.display = "flex"; zoomWrap.style.gap = "0.4rem"; zoomWrap.style.marginTop = "0.4rem";
+  zoomWrap.style.display = "flex"; zoomWrap.style.gap = "var(--space-2)"; zoomWrap.style.marginTop = "var(--space-2)";
   var zoomInBtn = document.createElement("button"); zoomInBtn.type = "button"; zoomInBtn.className = "secondary"; zoomInBtn.textContent = "+ Zoom"; upgradePfButton(zoomInBtn);
   var zoomOutBtn = document.createElement("button"); zoomOutBtn.type = "button"; zoomOutBtn.className = "secondary"; zoomOutBtn.textContent = "− Zoom"; upgradePfButton(zoomOutBtn);
   var zoomResetBtn = document.createElement("button"); zoomResetBtn.type = "button"; zoomResetBtn.className = "secondary"; zoomResetBtn.textContent = "Reset"; upgradePfButton(zoomResetBtn);
@@ -1100,7 +1100,7 @@ function showNodeDetail(kind, node) {
   // itself, so nothing about the flat-text case depends on the tag.
   // Clickable trace refs inside the detail (file:line, run ids) jump to source / graph
   var traceBar = document.createElement("div");
-  traceBar.style.display = "flex"; traceBar.style.gap = "0.4rem"; traceBar.style.flexWrap = "wrap"; traceBar.style.marginBottom = "0.5rem";
+  traceBar.style.display = "flex"; traceBar.style.gap = "var(--space-2)"; traceBar.style.flexWrap = "wrap"; traceBar.style.marginBottom = "var(--space-2)";
   var rawOut = node.output || "";
   var traceRe = /(?:^|\s)([a-zA-Z0-9_\-\.\/]+\.(?:zig|ts|js|py|rs|go|md):\d+(?::\d+)?)/g;
   var m, seen = {}, cnt = 0;
@@ -1219,7 +1219,7 @@ function showNodeDetail(kind, node) {
       tree.className = "json-tree";
       tree.appendChild(buildJsonTree(parsed, null, 0));
       var treeBar = document.createElement("div");
-      treeBar.style.display = "flex"; treeBar.style.gap = "0.4rem"; treeBar.style.marginBottom = "0.4rem";
+      treeBar.style.display = "flex"; treeBar.style.gap = "var(--space-2)"; treeBar.style.marginBottom = "var(--space-2)";
       var expandAll = document.createElement("button"); expandAll.type="button"; expandAll.className="secondary"; expandAll.textContent="Expand all"; upgradePfButton(expandAll);
       expandAll.addEventListener("click", function(){ tree.querySelectorAll("details").forEach(function(d){ d.open=true; }); });
       var collapseAll = document.createElement("button"); collapseAll.type="button"; collapseAll.className="secondary"; collapseAll.textContent="Collapse all"; upgradePfButton(collapseAll);

@@ -1811,7 +1811,7 @@ function renderStats(turn, stats, task) {
   var actions = document.createElement("span");
   actions.className = "turn-foot-actions";
   actions.style.display = "inline-flex";
-  actions.style.gap = "0.4rem";
+  actions.style.gap = "var(--space-2)";
   actions.style.flexWrap = "wrap";
   var copyBtn = document.createElement("button");
   copyBtn.type = "button";
@@ -3127,7 +3127,7 @@ function buildChatMessage(m) {
       linkCard.textContent = trimmed;
       // keep original text too for copy, but add card beneath
       var unfurl = document.createElement("div");
-      unfurl.style.marginTop = "0.3rem";
+      unfurl.style.marginTop = "var(--space-2)";
       unfurl.appendChild(linkCard);
       wrap._unfurl = unfurl;
     }
@@ -4971,7 +4971,7 @@ wireRefresh(el.logsRefresh, loadLogList);
         var a=document.createElement("a"); a.href="#"; a.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+((r.duration_ms||0)+"ms");
         a.addEventListener("click", function(e){ e.preventDefault(); if(typeof openRun==="function") openRun(r.run_id); });
         li.appendChild(a);
-        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="0.5rem";
+        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="var(--space-3)";
         rev.addEventListener("click", function(){
           uiConfirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.", { danger: true, confirmLabel: "Revert" }).then(function (yes) {
             if(!yes) return;
