@@ -67,6 +67,7 @@ pub fn nextId(arena: std.mem.Allocator, ids: []const []const u8) ![]const u8 {
 /// time rather than sitting in the list looking scheduled.
 pub fn firstFire(cron_text: []const u8, now: i64, tz_offset_minutes: i32) ?i64 {
     if (cron_text.len > max_cron_spec_bytes) return null;
+    if (!validTzOffset(tz_offset_minutes)) return null;
     const spec = cron.parse(cron_text) catch return null;
     return spec.nextAfter(now, tz_offset_minutes);
 }
