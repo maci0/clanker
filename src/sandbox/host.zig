@@ -987,7 +987,7 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 
     if (std.mem.eql(u8, op, "search")) {
         const q = json_util.strFieldOrNull(req.object, "q") orelse return Err.invalid;
-        const hits = session_mod.searchSessions(h.sandbox.io, arena, sessions_dir, q, 50) catch return Err.invalid;
+        const hits = session_mod.searchSessions(h.sandbox.io, h.sandbox.gpa, arena, sessions_dir, q, 50) catch return Err.invalid;
         w.beginObject() catch return Err.invalid;
         w.objectField("ok") catch return Err.invalid;
         w.write(true) catch return Err.invalid;

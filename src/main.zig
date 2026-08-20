@@ -192,6 +192,7 @@ comptime {
     _ = @import("tui/repl.zig");
     _ = @import("tui/slash_plugins.zig");
     _ = @import("agent/session_events.zig");
+    _ = @import("agent/session_fts.zig");
     _ = @import("serve/proxy.zig");
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");

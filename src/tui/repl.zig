@@ -73,6 +73,7 @@ const mascot = @import("mascot.zig");
 const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");
 const slash_plugins = @import("slash_plugins.zig");
+const session_sync = @import("../peers/session_sync.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
@@ -2937,6 +2938,8 @@ const Model = struct {
         }) catch |err| {
             log.log(.error_, "session '{s}' save failed: {s}", .{ sid, @errorName(err) });
         };
+        // Fan the session's new events out to mesh peers (best-effort).
+        if (self.cfg.modules.session_events) session_sync.pushTail(self.io, self.gpa, self.arena, &self.cfg, sid);
     }
 
     fn submit(self: *Model, ctx: *vxfw.EventContext) !void {
