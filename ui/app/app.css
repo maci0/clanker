@@ -1212,7 +1212,7 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
   outline-offset: -2px;
 }
 ::placeholder { color: var(--fg-muted); opacity: 1; }
-.composer textarea::placeholder { font-size: var(--step-0); }
+.composer textarea::placeholder { font-size: var(--step-0); opacity: 0.85; }
 .toolbar {
   display: flex; flex-wrap: wrap; justify-content: space-between;
   align-items: center; gap: var(--space-2) var(--space-3); margin-top: var(--space-2);
