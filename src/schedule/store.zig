@@ -183,7 +183,7 @@ fn writeEntries(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, entries:
     var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .whitespace = .indent_2, .emit_null_optional_fields = false } };
     try s.write(entries);
     try enc.writer.writeByte('\n');
-    try atomic_write.writeFile(io, base, store_path, enc.written());
+    try atomic_write.writeFilePerms(io, base, store_path, enc.written(), atomic_write.private_file);
 }
 
 /// The next free `sch-N`. Sequential rather than a timestamp because these ids
@@ -268,7 +268,10 @@ pub fn appendRecord(io: std.Io, gpa: std.mem.Allocator, base: std.Io.Dir, rec: R
         std.mem.copyForwards(u8, out.items[0 .. out.items.len - drop], out.items[drop..]);
         out.shrinkRetainingCapacity(out.items.len - drop);
     }
-    atomic_write.writeFile(io, base, ledger_path, out.items) catch |err| {
+    // Owner-only like the store itself: ledger records carry the scheduled
+    // task text, so a world-readable ledger is the same exposure as a
+    // world-readable store.
+    atomic_write.writeFilePerms(io, base, ledger_path, out.items, atomic_write.private_file) catch |err| {
         log.log(.warn, "schedule: could not append to {s}: {s}", .{ ledger_path, @errorName(err) });
     };
 }
@@ -354,6 +357,30 @@ test "entries round-trip through the store, keeping absent overrides absent" {
     try testing.expectEqualStrings("deepseek", back[1].provider.?);
     try testing.expectEqual(@as(i32, 120), back[1].tz_offset_minutes);
     try testing.expectEqual(false, back[1].enabled);
+}
+
+test "the schedule store and its ledger are owner-only (0600)" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    {
+        var s = try open(io, testing.allocator, arena, tmp.dir);
+        defer s.close();
+        try s.entries.append(arena, .{ .id = "sch-1", .cron = "* * * * *", .task = "say hi", .created = 100 });
+        try s.save();
+    }
+    const st_store = try tmp.dir.statFile(io, store_path, .{});
+    try testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st_store.permissions)) & 0o777);
+
+    appendRecord(io, testing.allocator, tmp.dir, .{ .ts = 100, .id = "sch-1", .cron = "* * * * *", .task = "say hi", .trigger = "due", .ok = true });
+    const st_ledger = try tmp.dir.statFile(io, ledger_path, .{});
+    try testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st_ledger.permissions)) & 0o777);
 }
 
 test "a corrupt store refuses the command instead of reading as empty" {

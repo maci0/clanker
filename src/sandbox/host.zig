@@ -3294,7 +3294,10 @@ fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u
         if (slash > 0) std.Io.Dir.cwd().createDirPath(h.sandbox.io, full_dst[0..slash]) catch {};
     }
 
-    std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full_dst, .data = data }) catch |err| switch (err) {
+    // Destination mode follows ck_fs_write: private under state/, where a
+    // guest copy of a session/spill/note would otherwise recreate the
+    // world-readable exposure the 0600 store mode removes.
+    std.Io.Dir.cwd().writeFile(h.sandbox.io, .{ .sub_path = full_dst, .data = data, .flags = .{ .permissions = stateWritePermissions(h.sandbox.state_dir, dst_sub) } }) catch |err| switch (err) {
         error.NoSpaceLeft, error.DiskQuota => return Err.too_large,
         else => return Err.invalid,
     };

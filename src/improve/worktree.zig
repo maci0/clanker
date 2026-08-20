@@ -20,6 +20,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const atomic_write = @import("../util/atomic_write.zig");
 /// For `shared_prefixes`: the list of untracked, checkout-wide paths is one
 /// list, shared with the sandbox that routes them, so the links here and the
 /// routing there cannot drift into disagreeing about what is shared.
@@ -858,7 +859,10 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
         defer gpa.free(data);
         const dst = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
         defer gpa.free(dst);
-        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data }) catch |err|
+        // Owner-only: the copied files are the user's own shared memory
+        // (learnings, autolearn events, token stats, reasoning traces), and a
+        // default-mode copy would land world-readable inside the worktree.
+        std.Io.Dir.cwd().writeFile(io, .{ .sub_path = dst, .data = data, .flags = .{ .permissions = atomic_write.private_file } }) catch |err|
             log.log(.warn, "improve-self: could not copy {s} into the worktree: {s}", .{ name, @errorName(err) });
     }
 }

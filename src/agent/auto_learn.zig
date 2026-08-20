@@ -112,7 +112,12 @@ fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
         };
     } else |_| {}
 
-    const file = base.createFile(io, event_path, .{ .truncate = false }) catch |err| {
+    // Owner-only like every other store under state/: tool labels and error
+    // detail are operational data about the user's work, and with the default
+    // creation mode the file landed 0644 on first write, world-readable for
+    // any other local user on a shared machine (the same exposure the privacy
+    // pass removed from sessions, chatrooms, and token stats).
+    const file = base.createFile(io, event_path, .{ .truncate = false, .permissions = atomic_write.private_file }) catch |err| {
         log.log(.warn, "autolearn: failed to open {s}: {s}", .{ event_path, @errorName(err) });
         return;
     };
@@ -150,7 +155,7 @@ fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.
         try out.appendSlice(gpa, ln);
         try out.append(gpa, '\n');
     }
-    try atomic_write.writeFile(io, base, event_path, out.items);
+    try atomic_write.writeFilePerms(io, base, event_path, out.items, atomic_write.private_file);
 }
 
 /// Records a completed run (from agent stats + used tool names).
@@ -232,6 +237,34 @@ test "recordTo appends without re-reading the existing log" {
         try std.testing.expect(parsed.object.get("tool") != null);
     }
     try std.testing.expectEqual(@as(usize, 2), lines);
+}
+
+test "the autolearn log is owner-only on creation and survives a trim" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    // Fresh create (no file yet) must not land world-readable: the log holds
+    // tool labels and error detail from the user's own runs.
+    recordTo(env.tmp.dir, io, std.testing.allocator, arena, "tool_call", "read_file", "");
+    var st = try env.tmp.dir.statFile(io, event_path, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+
+    // The trim path rewrites the whole file through a temp + rename; the
+    // private mode must be re-applied on that rewrite, not just creation.
+    try env.tmp.dir.createDirPath(io, "state");
+    var contents: std.ArrayList(u8) = .empty;
+    defer contents.deinit(std.testing.allocator);
+    var i: usize = 0;
+    while (i < keep_lines + 10) : (i += 1) {
+        const line = try std.fmt.allocPrint(arena, "{{\"ts\":{d}}}\n", .{i});
+        try contents.appendSlice(std.testing.allocator, line);
+    }
+    try env.tmp.dir.writeFile(io, .{ .sub_path = event_path, .data = contents.items });
+    try trimLog(env.tmp.dir, io, std.testing.allocator, std.testing.allocator);
+    st = try env.tmp.dir.statFile(io, event_path, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
 }
 
 test "trimLog keeps only the newest keep_lines lines" {
