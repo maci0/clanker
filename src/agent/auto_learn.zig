@@ -66,19 +66,34 @@ fn recordTo(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem
 
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-    s.beginObject() catch return;
-    s.objectField("ts") catch return;
-    s.print("{d}", .{ts}) catch return;
-    s.objectField("type") catch return;
-    s.write(type_) catch return;
-    s.objectField("tool") catch return;
-    s.write(tool_capped) catch return;
-    s.objectField("detail") catch return;
-    s.write(detail_capped) catch return;
-    s.endObject() catch return;
+    const line = encodeEventLine(&out, ts, type_, tool_capped, detail_capped) catch |err| {
+        // A mid-encode failure used to be seven bare `catch return`s that
+        // dropped the record with no line saying so, unlike the token and
+        // reasoning logs, which warn on the same failure. A lost autolearn
+        // event is not user data, but a silent one is indistinguishable from
+        // an event that never happened, so this says when it could not write.
+        log.log(.warn, "autolearn: encode failed: {s}", .{@errorName(err)});
+        return;
+    };
+    appendLine(base, io, gpa, arena, line);
+}
 
-    appendLine(base, io, gpa, arena, out.written());
+/// Encodes one event record into `out` and returns the written slice. A
+/// `![]const u8` return keeps every encode step propagating to the single
+/// logged handler above; callers must not hold the slice past `out`'s deinit.
+fn encodeEventLine(out: *std.Io.Writer.Allocating, ts: i64, type_: []const u8, tool: []const u8, detail: []const u8) ![]const u8 {
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("ts");
+    try s.print("{d}", .{ts});
+    try s.objectField("type");
+    try s.write(type_);
+    try s.objectField("tool");
+    try s.write(tool);
+    try s.objectField("detail");
+    try s.write(detail);
+    try s.endObject();
+    return out.written();
 }
 
 /// Appends one line via a locked seek-to-end write: O(1) in the log size,

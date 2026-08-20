@@ -2491,11 +2491,16 @@ fn collectZigFiles(io: std.Io, arena: std.mem.Allocator) ![][]const u8 {
 }
 
 fn walkZig(io: std.Io, arena: std.mem.Allocator, list: *std.ArrayList([]const u8), dir_path: []const u8) !void {
-    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return;
+    // A walk error is propagated, never a silent truncation of the file list:
+    // the fmt/lint/provider-kind gates run on exactly what this collects, and
+    // an unreadable subdirectory or a failed iteration would otherwise make
+    // `clanker gate` report green on partial coverage. Skipping dot-dirs and
+    // vendored trees below is the only intentional exclusion.
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true });
     defer dir.close(io);
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
-        const sub = std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_path, entry.name }) catch continue;
+    while (try it.next(io)) |entry| {
+        const sub = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_path, entry.name });
         switch (entry.kind) {
             .directory => {
                 // Only this project's own sources are gated. Dot-directories
