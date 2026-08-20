@@ -106,6 +106,24 @@ pub fn usageError(comptime fmt: []const u8, args: anytype) void {
     diag.errorLine(fmt, args);
 }
 
+/// A store's `search <query>` argument. Missing is the usage mistake every
+/// store already refused; empty or whitespace-only is refused here because a
+/// blank grep pattern matches every line of every record, and that result
+/// buries whatever the reader was looking for under the whole store. The
+/// query is returned untrimmed: leading whitespace can be part of what is
+/// being searched for, and only "nothing but whitespace" is refused.
+pub fn requireQuery(store: []const u8, query: ?[]const u8) Error![]const u8 {
+    const q = query orelse {
+        usageError("{s} search needs a query: clanker {s} search \"<text>\"", .{ store, store });
+        return Error.MissingArg;
+    };
+    if (std.mem.trim(u8, q, " \t\r\n").len == 0) {
+        usageError("{s} search needs a non-empty query: an empty one matches every line of every record", .{store});
+        return Error.MissingArg;
+    }
+    return q;
+}
+
 /// The accepted subcommands of one record store, spelled once.
 ///
 /// Each store used to carry the list three times — the dispatch chain, the
@@ -138,6 +156,14 @@ fn englishList(comptime items: []const []const u8) []const u8 {
         }
         return prose;
     }
+}
+
+test "requireQuery refuses missing, empty and whitespace-only queries" {
+    try testing.expectError(Error.MissingArg, requireQuery("adr", null));
+    try testing.expectError(Error.MissingArg, requireQuery("adr", ""));
+    try testing.expectError(Error.MissingArg, requireQuery("adr", "  \t \r\n "));
+    // A real query passes through unchanged, interior whitespace included.
+    try testing.expectEqualStrings("provider vtable", try requireQuery("adr", "provider vtable"));
 }
 
 test "englishList reads as prose for one, two and many" {

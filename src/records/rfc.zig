@@ -79,10 +79,7 @@ fn list(arena: std.mem.Allocator, tool: Tool) ![]const u8 {
 }
 
 fn search(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    const query = opts.arg1 orelse {
-        common.usageError("rfc search needs a query: clanker rfc search \"http client\"", .{});
-        return Error.MissingArg;
-    };
+    const query = try common.requireQuery("rfc", opts.arg1);
 
     const input = try common.request(arena, &.{
         .{ .name = "action", .value = .{ .text = "search" } },

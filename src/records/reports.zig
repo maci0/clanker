@@ -83,10 +83,7 @@ fn searchKindAllowed(kind: []const u8) bool {
 }
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const query = opts.arg1 orelse {
-        common.usageError("reports search needs a query: clanker reports search \"worktree symlink\"", .{});
-        return Error.MissingArg;
-    };
+    const query = try common.requireQuery("reports", opts.arg1);
     const kind = opts.kind orelse "all";
     if (!searchKindAllowed(kind)) {
         common.usageError("reports search --kind must be all, report or runbook, not '{s}'", .{kind});
