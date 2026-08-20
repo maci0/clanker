@@ -286,7 +286,6 @@ pub fn startExec(
         return error.InvalidArg;
     };
 
-    gpa_ref = gpa;
     const id_owned = gpa.dupe(u8, kind) catch {
         child.kill(io);
         reg.forget(sid, kind);
@@ -323,6 +322,11 @@ pub fn startExec(
     {
         mu.lock();
         defer mu.unlock();
+        // The allocator behind `finishSub`'s copies: every writer sets it
+        // under `mu` (`registerSub` does the same below), because background
+        // subagent threads read it under `mu` in `finishSub`. A store outside
+        // the lock was a plain data race with that locked read.
+        gpa_ref = gpa;
         reapDone(ExecJob, &execs, gpa);
         execs.append(gpa, job) catch {
             // Residual posix: signal delivery has no std.Io equivalent.
