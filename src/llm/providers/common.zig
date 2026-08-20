@@ -241,7 +241,10 @@ pub fn parseGoogleErrorMessage(arena: std.mem.Allocator, body: []const u8) ?[]co
             return std.fmt.allocPrint(arena, "{s}: {s}", .{ f.status, f.message }) catch f.message;
         }
     }
-    return null;
+    // Last resort: surface a capped slice of the raw body so the operator
+    // sees something actionable rather than a bare HTTP status with no detail.
+    const cap = if (trimmed.len > 512) trimmed[0..512] else trimmed;
+    return std.mem.trim(u8, cap, " \t\r\n");
 }
 
 test "parseGoogleErrorMessage reads the object and array envelopes" {
