@@ -317,6 +317,28 @@ test("every theme declares all three elevation rungs", () => {
   }
 });
 
+// Violet is the axis that kept its name while losing its meaning. app.css
+// re-points --violet at --accent twice (the day root and the night block):
+// goals and jumps are operator action, and "a cabinet whose whole argument is
+// that one blue means one thing cannot carry two blues". Eight of the ten
+// themes shipped the palette's own pink/magenta as violet anyway -- frappe's
+// #f4b8e4 beside its #ca9ee6 accent, tokyonight's #bb9af7 beside #9d7cd8 --
+// so a goal chip and a button were two different colours on one screen.
+// Pinned exactly like the chat hues: the theme rides the token, it does not
+// fork it.
+test("violet is the interactive accent in every theme", () => {
+  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  assert.match(
+    appCss,
+    /\n\s*--violet\s*:\s*var\(--accent\)\s*;/,
+    "app.css must re-point --violet at --accent (goals are operator action)",
+  );
+  for (const [file, tokens] of themeTokens()) {
+    assert.equal(tokens["--violet"], "var(--accent)", `themes/${file} --violet must ride --accent`);
+    assert.equal(tokens["--violet-text"], "var(--accent-text)", `themes/${file} --violet-text must ride --accent-text`);
+  }
+});
+
 // The icon grid is the sixth axis, and typed pictographs are how it drifts.
 // ICON_PATHS exists because a star glyph and a multiplication sign could not
 // share a stroke; its header says so. The music dock still typed its whole
