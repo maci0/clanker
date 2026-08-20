@@ -6,9 +6,11 @@ a change that cannot pass them does not land.
 
 ## Getting started
 
-Follow the quick start in [README.md](README.md): `zig build`, `zig build
-tools`, `zig build test`, `clanker init`, `clanker gate`, and enable the
-repository hooks with:
+Follow the quick start in [README.md](README.md): `zig build`, `scripts/apply-patches.sh`
+(re-applies `patches/*.patch` to the fetched dependencies — the SIGWINCH patch
+is load-bearing for the pty e2e journeys), `zig build`, `zig build tools`,
+`zig build test`, `clanker init`, `clanker gate`, and enable the repository
+hooks with:
 
 ```sh
 git config core.hooksPath .githooks
@@ -26,6 +28,10 @@ test suites (pinned in `.nvmrc`).
   nothing passes with 0 tests; the JS suites still run.
 - One JS suite: `node --test ui/app/core/scroll.test.mjs` (or whichever
   `.test.mjs` you changed).
+- The e2e journeys (`zig build e2e`) spawn the real `clanker repl` on a pty,
+  so they need the dependency patches applied: run `scripts/apply-patches.sh`
+  once after the first `zig build` (idempotent; `scripts/verify.sh` does it
+  for you).
 - Before pushing: `scripts/verify.sh` — mirrors everything CI's verify job
   runs (shellcheck, Python syntax check, SBOM generation, AssemblyScript
   rebuild-and-diff, `clanker gate`, e2e), so a red CI run is not the first

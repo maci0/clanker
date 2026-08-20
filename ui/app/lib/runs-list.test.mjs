@@ -13,8 +13,18 @@ const runsView = readFileSync(join(here, "..", "features", "runs.js"), "utf8");
 const markup = readFileSync(join(here, "..", "index.html"), "utf8");
 const guest = readFileSync(join(here, "..", "..", "webui.zig"), "utf8");
 
-// 2026-08-17T06:42:57Z, the newest run in the store when the list was built.
+// 2026-08-16T22:42:57Z, the newest run in the store when the list was built.
 const NOW = 1786920177000;
+
+// Local-calendar yesterday at midnight: the day-bucket boundaries under test
+// are local midnights, so a fixed "30h before NOW" instant lands on either
+// side of yesterday depending on the machine's timezone (CI pins TZ=UTC).
+// Yesterday 00:00 local is on yesterday's calendar day and ≥24h before NOW in
+// every timezone, which is exactly the "yesterday" contract both labels use.
+const yesterdayMidnight = new Date(NOW);
+yesterdayMidnight.setDate(yesterdayMidnight.getDate() - 1);
+yesterdayMidnight.setHours(0, 0, 0, 0);
+const YESTERDAY = yesterdayMidnight.getTime();
 
 test("a run id carries the only timestamp a listing has", function () {
   // `/api/runs` sends run_id, task, provider, duration_ms, nodes and token
@@ -38,7 +48,7 @@ test("fmtWhen says how long ago, then falls back to a date", function () {
   assert.equal(fmtWhen(NOW - 5 * 1000, NOW), "just now");
   assert.equal(fmtWhen(NOW - 12 * 60 * 1000, NOW), "12m ago");
   assert.equal(fmtWhen(NOW - 3 * 3600 * 1000, NOW), "3h ago");
-  assert.equal(fmtWhen(NOW - 30 * 3600 * 1000, NOW), "yesterday");
+  assert.equal(fmtWhen(YESTERDAY, NOW), "yesterday");
   assert.match(fmtWhen(NOW - 6 * 86400 * 1000, NOW), /^[A-Z][a-z]{2} \d{1,2}$/);
   // An id with no timestamp gets no invented one.
   assert.equal(fmtWhen(0, NOW), "");
@@ -46,7 +56,7 @@ test("fmtWhen says how long ago, then falls back to a date", function () {
 
 test("dayBucket names today and yesterday before it names a date", function () {
   assert.equal(dayBucket(NOW - 60 * 1000, NOW), "Today");
-  assert.equal(dayBucket(NOW - 30 * 3600 * 1000, NOW), "Yesterday");
+  assert.equal(dayBucket(YESTERDAY, NOW), "Yesterday");
   assert.match(dayBucket(NOW - 9 * 86400 * 1000, NOW), /\d/);
   assert.equal(dayBucket(0, NOW), "Undated");
 });
@@ -99,11 +109,20 @@ test("the filter matches the same things the dropdown matched", function () {
 });
 
 test("grouping puts each row under the day it ran", function () {
+  // dayBucket's boundaries are local-calendar midnights, so a fixed "8h
+  // before NOW" run would land on either side of midnight depending on the
+  // machine's timezone (CI pins TZ=UTC, where the old constant fell on the
+  // same day; a UTC+8 machine saw it as Yesterday). Derive the Yesterday run
+  // from the local calendar instead: a millisecond before today's local
+  // midnight is the previous day in every timezone.
+  const localMidnight = new Date(NOW);
+  localMidnight.setHours(0, 0, 0, 0);
+  const justBeforeMidnight = localMidnight.getTime() - 1;
   const groups = groupRunsByDay(
     runRows(
       [
         { run_id: "run-1786920177" },
-        { run_id: "run-1786891336" },
+        { run_id: "run-" + Math.floor(justBeforeMidnight / 1000) },
         { run_id: "run-1786561572" },
       ],
       { now: NOW },

@@ -1,9 +1,13 @@
 # Local dependency patches
 
-Patches applied by hand to packages under `zig-pkg/` (which is gitignored and
+Patches applied to packages under `zig-pkg/` (which is gitignored and
 hash-pinned in `build.zig.zon`). A fresh checkout fetches the pristine
 upstream tarball, so **none of these are active on a fresh clone or in CI**
-until re-applied or upstreamed. Each entry says what breaks without it.
+until re-applied or upstreamed. `scripts/apply-patches.sh` is that
+re-application: run it after the first `zig build` (and after any later
+`zig build` that re-fetched pristine trees) — it is idempotent and skips
+what is already applied; `scripts/verify.sh` runs it before the e2e step.
+Each entry says what breaks without it.
 
 **The `.patch` file in this directory is the canonical record of each
 change.** It must always apply with `patch -p1` to the pristine upstream
@@ -41,8 +45,11 @@ Nothing in clanker breaks without the patch. `mascot.zig` gates every SIXEL
 path behind `sixel_supported`, which is `@hasField(vaxis.Vaxis.Capabilities,
 "sixel_graphics")`, so an unpatched dependency compiles the path out and the
 mascot falls back to cells exactly as it did before. That is what makes a
-patch (rather than a pinned fork) safe here: a fresh clone and CI build and
-pass their tests, they just have one fewer renderer.
+patch (rather than a pinned fork) safe here: a fresh clone builds and passes
+`zig build test` and `clanker gate` with one fewer renderer. The e2e pty
+journeys (`zig build e2e`) are the exception: their shared harness answers
+the sixel geometry query that the patched query phase sends, so they fail on
+an unpatched dependency until `scripts/apply-patches.sh` has run.
 
 What the patch contains:
 
@@ -180,3 +187,9 @@ patch exist so the fix survives a `zig-pkg` wipe until then. Related tracked
 change that *is* in the repo: `build.zig` passes `target`/`optimize` through
 to the zwasm dependency, so release builds stop compiling the interpreter at
 zwasm's Debug default.
+
+**The pin has since moved to zwasm 2.5.0, which keeps the same unguarded
+`dbg.print("mem.cksum", ...)` call sites (verified in
+`src/wasi/jit_dispatch.zig`), so this patch no longer applies as written.**
+Re-derive it against 2.5.0 before applying; `scripts/apply-patches.sh`
+skips it for that reason.

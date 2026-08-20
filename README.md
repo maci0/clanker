@@ -60,12 +60,22 @@ state, run the complete gate, and enable the repository hooks:
 
 ```sh
 zig build
+scripts/apply-patches.sh   # re-apply patches/*.patch to the fetched dependencies
+zig build                  # rebuild against the patched dependencies
 zig build tools
 zig build test
 ./zig-out/bin/clanker init
 ./zig-out/bin/clanker gate
 git config core.hooksPath .githooks
 ```
+
+`patches/*.patch` are local fixes to pinned upstream dependencies (see
+[patches/README.md](patches/README.md)); the first `zig build` fetches the
+pristine upstream trees, and `scripts/apply-patches.sh` re-applies the
+patches to them (idempotent, skips what is already applied). The SIGWINCH
+patch is load-bearing: without it, resizing the terminal in `clanker repl`
+aborts the process, and the e2e pty journeys fail. Run it again whenever a
+fresh dependency fetch replaced the trees.
 
 `zig build test` is the full suite (Zig + JS) and takes minutes, so the edit
 loop has a single-test path: `zig build test -Dtest-filter="<substring>"`

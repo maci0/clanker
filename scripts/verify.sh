@@ -55,6 +55,9 @@ step "zig build + clanker gate (CI: Run deterministic gate)"
 zig build || status=1
 ./zig-out/bin/clanker gate || status=1
 
+step "dependency patches (patches/*.patch)"
+./scripts/apply-patches.sh || status=1
+
 step "end-to-end tests (CI: Run end-to-end tests)"
 zig build e2e || status=1
 
