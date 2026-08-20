@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve-self left src/acp/server.zig non-compiling across two commits](bugs/2026-08-20-improve-self-acp-server-build-break.md) — Resolved
+
 - [schedule list rendered rows after the first as garbage from a freed buffer](bugs/2026-08-19-schedule-list-second-row-garbled.md) — Resolved
 
 - [A throwing plugin mount broke the tab switch instead of showing a tab error](bugs/2026-08-19-webui-plugin-mount-throw-breaks-tab-switch.md) — Resolved
