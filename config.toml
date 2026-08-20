@@ -485,6 +485,12 @@ pattern = "rate limit"
 inject = "The provider is applying rate limits. Reduce request frequency or wait before retrying; if another model is available, switch to it."
 max_fires = 2
 
+[[ttsr.rules]]
+name = "connection-refused"
+pattern = "*refused*"
+inject = "The provider endpoint refused the connection. Verify the base_url in config.toml for this provider, confirm the api_key_env variable is set and non-empty, check that the host/port are reachable (e.g. curl -sI), and try a configured fallback provider if available."
+max_fires = 2
+
 # Persistent eval kernels: a long-lived subprocess an eval can talk to instead
 # of paying process startup per case. Off by default and worth leaving off
 # unless you need it -- a kernel is unsandboxed, with the host's own ambient
