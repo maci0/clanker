@@ -4,14 +4,27 @@
   "wasm": "zig-out/tools/session_export.wasm",
   "input_schema": {
     "type": "object",
-    "required": ["id"],
+    "required": [
+      "id"
+    ],
     "properties": {
-      "id": { "type": "string" },
-      "return_html": { "type": "boolean" },
-      "forget": { "type": "boolean", "description": "Host-internal: delete this session's export instead of writing one, called when its transcript is deleted" }
+      "id": {
+        "type": "string"
+      },
+      "return_html": {
+        "type": "boolean"
+      },
+      "forget": {
+        "type": "boolean",
+        "description": "Host-internal: delete this session's export instead of writing one, called when its transcript is deleted"
+      }
     }
   },
-  "fs_prefixes": ["state/sessions/", "state/exports/"],
+  "fs_prefixes": [
+    "state/sessions/",
+    "state/exports/"
+  ],
   "internal": true,
-  "category": "harness"
+  "category": "harness",
+  "session": true
 }

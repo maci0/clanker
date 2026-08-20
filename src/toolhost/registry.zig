@@ -60,6 +60,9 @@ pub const Tool = struct {
     /// May call the model through `ck_llm`. Costs tokens, so it is opt-in per
     /// descriptor and forces the tool onto the sequential execution path.
     llm: bool = false,
+    /// May read the session store through `ck_session` (list/get/search).
+    /// Opt-in per descriptor: the session transcript is private to its owner.
+    session: bool = false,
     /// May emit onto the serve live bus through `ck_publish`. The import
     /// existing is not a grant. Forces the sequential path: the bus is
     /// host-shared state, same reason `sequential` exists for the chat log.
@@ -774,6 +777,12 @@ pub const Registry = struct {
         if (obj.get("llm")) |lv| {
             switch (lv) {
                 .bool => |b| t.llm = b,
+                else => {},
+            }
+        }
+        if (obj.get("session")) |sv| {
+            switch (sv) {
+                .bool => |b| t.session = b,
                 else => {},
             }
         }

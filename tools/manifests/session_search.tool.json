@@ -6,11 +6,19 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "q": { "type": "string", "description": "case-insensitive substring, min 3 characters" }
+      "q": {
+        "type": "string",
+        "description": "case-insensitive substring, min 3 characters"
+      }
     },
-    "required": ["q"]
+    "required": [
+      "q"
+    ]
   },
-  "fs_prefixes": ["state/sessions/"],
+  "fs_prefixes": [
+    "state/sessions/"
+  ],
   "confirm": false,
-  "category": "harness"
+  "category": "harness",
+  "session": true
 }

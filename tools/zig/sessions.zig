@@ -1,14 +1,37 @@
-//! sessions: list saved conversations (state/sessions/*.json).
-//! Input:  {} | {"format":"json"}
+//! sessions: list saved conversations through the host session store
+//! (ck_session, SQLite). Input: {} | {"format":"json"} | {"q":"..."}
 //! Output: {"ok": true, "text": "<id>  <title>  <age>  per line, newest last>"}
-//!         {"ok": true, "sessions": [{id,title,created,updated,workspace,archived,messages,bytes}]}
-//!
-//! `GET /api/sessions` relays `format=json`. Mutations (fork/branch/rename/
-//! delete) stay native: they write the session store.
+//!         {"ok": true, "sessions": [...]} (format=json)
+//!         {"ok": true, "query": ..., "hits": [...]} (search)
 
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("sessions_logic.zig");
+
+const Listing = struct {
+    id: []const u8 = "",
+    title: []const u8 = "",
+    created: i64 = 0,
+    updated: i64 = 0,
+    workspace: []const u8 = "",
+    archived: bool = false,
+    messages: usize = 0,
+    bytes: usize = 0,
+};
+
+const ListResponse = struct { sessions: []const Listing = &.{} };
+
+const SearchHit = struct {
+    id: []const u8 = "",
+    title: []const u8 = "",
+    updated: i64 = 0,
+    snippet: []const u8 = "",
+    more: usize = 0,
+};
+
+const SearchResponse = struct { ok: bool = true, query: []const u8 = "", hits: []const SearchHit = &.{} };
+
+const GetResponse = struct { ok: bool = true, id: []const u8 = "" };
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -16,12 +39,6 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
-    // A blank query is no query. `clanker sessions` reaches this tool through
-    // the CLI's generic passthrough, which always sends {"args":"<argv tail>"}
-    // — empty for a bare `clanker sessions`. Treating that empty string as a
-    // search made the plain listing exit 1 with "query must be at least 3
-    // characters". The length guard still applies to a query the caller
-    // actually typed.
     const q = blk: {
         const raw_q = lib.optStr(req, "q") orelse lib.optStr(req, "args") orelse break :blk null;
         const trimmed = std.mem.trim(u8, raw_q, " \t\r\n");
@@ -33,42 +50,26 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     const as_json = if (lib.optStr(req, "format")) |fmt| std.mem.eql(u8, fmt, "json") else false;
 
-    // state/ is gitignored and every directory under it is created lazily on
-    // first write, so a checkout that has never saved a session has no
-    // state/sessions at all. That is zero sessions, not a failure — fall
-    // through to the empty-list message below.
-    const raw: []const u8 = lib.fsList("state/sessions") catch |err| switch (err) {
-        error.NotFound => "[]",
-        else => return lib.failErr(out, err, "listing state/sessions"),
+    const raw: []const u8 = lib.sessionCall("{\"op\":\"list\"}") catch |err| switch (err) {
+        error.NoAccess => "{\"sessions\":[]}",
+        else => return lib.failErr(out, err, "listing sessions"),
     };
-    const names = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{});
+    const parsed = std.json.parseFromSliceLeaky(ListResponse, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch
+        return lib.fail(out, "host listing unreadable");
 
     var metas: std.ArrayList(logic.Listing) = .empty;
     defer metas.deinit(lib.alloc);
-    if (names == .array) {
-        for (names.array.items) |item| {
-            if (item != .string) continue;
-            const fname = item.string;
-            if (!std.mem.endsWith(u8, fname, ".json")) continue;
-            const path = try std.fmt.allocPrint(lib.alloc, "state/sessions/{s}", .{fname});
-            defer lib.alloc.free(path);
-            // Title/updated/counters sit in front of the transcript. A full
-            // ck_fs_read of every file both costs up to 1 MiB apiece (the
-            // host cap, max_fs_bytes) and burns the 1 MiB host arena, so
-            // later sessions vanished from the list.
-            const content = lib.fsReadRange(path, 0, 4096) catch continue;
-            const row = logic.listingFromPrefix(lib.alloc, content) orelse continue;
-            try metas.append(lib.alloc, .{
-                .id = try lib.alloc.dupe(u8, row.id),
-                .title = try lib.alloc.dupe(u8, row.title),
-                .created = row.created,
-                .updated = row.updated,
-                .workspace = try lib.alloc.dupe(u8, row.workspace),
-                .archived = row.archived,
-                .messages = row.messages,
-                .bytes = row.bytes,
-            });
-        }
+    for (parsed.sessions) |row| {
+        try metas.append(lib.alloc, .{
+            .id = try lib.alloc.dupe(u8, row.id),
+            .title = try lib.alloc.dupe(u8, row.title),
+            .created = row.created,
+            .updated = row.updated,
+            .workspace = try lib.alloc.dupe(u8, row.workspace),
+            .archived = row.archived,
+            .messages = row.messages,
+            .bytes = row.bytes,
+        });
     }
 
     if (as_json) {
@@ -90,18 +91,39 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 }
 
 fn searchSessions(out: *lib.Out, query: []const u8) !void {
-    // Always a structured {"ok":true,"query":...,"hits":[...]} so callers can
-    // machine-consume the result. An empty store (state/sessions/ missing or
-    // no match) is a valid empty hit list, not a failure.
-    const raw = lib.fsGrep("state/sessions", query) catch |err| switch (err) {
-        error.NotFound => null,
+    var wb: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer wb.deinit();
+    var sj = std.json.Stringify{ .writer = &wb.writer, .options = .{} };
+    try sj.beginObject();
+    try sj.objectField("op");
+    try sj.write("search");
+    try sj.objectField("q");
+    try sj.write(query);
+    try sj.endObject();
+    const raw = lib.sessionCall(wb.written()) catch |err| switch (err) {
+        error.NoAccess => null,
         else => return lib.failErr(out, err, "searching sessions"),
     };
-    var w = lib.writer(out);
-    try w.writeAll("{\"ok\":true,\"query\":");
-    try std.json.Stringify.value(query, .{}, &w);
-    try w.writeAll(",\"hits\":");
-    try w.writeAll(raw orelse "[]");
-    try w.writeAll("}");
-    lib.commit(out, &w);
+    const parsed = std.json.parseFromSliceLeaky(SearchResponse, lib.alloc, raw orelse "{\"hits\":[]}", .{ .ignore_unknown_fields = true }) catch
+        return lib.fail(out, "host search unreadable");
+    var w2 = lib.writer(out);
+    try w2.writeAll("{\"ok\":true,\"query\":");
+    try std.json.Stringify.value(query, .{}, &w2);
+    try w2.writeAll(",\"hits\":[");
+    for (parsed.hits, 0..) |hit, i| {
+        if (i > 0) try w2.writeAll(",");
+        try w2.writeAll("{\"id\":");
+        try std.json.Stringify.value(hit.id, .{}, &w2);
+        try w2.writeAll(",\"title\":");
+        try std.json.Stringify.value(hit.title, .{}, &w2);
+        try w2.writeAll(",\"updated\":");
+        try std.json.Stringify.value(hit.updated, .{}, &w2);
+        try w2.writeAll(",\"snippet\":");
+        try std.json.Stringify.value(hit.snippet, .{}, &w2);
+        try w2.writeAll(",\"more\":");
+        try std.json.Stringify.value(hit.more, .{}, &w2);
+        try w2.writeAll("}");
+    }
+    try w2.writeAll("]}");
+    lib.commit(out, &w2);
 }

@@ -56,8 +56,17 @@ fn toolMain(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "expected a session id");
     if (!validId(req.id)) return lib.fail(out, "invalid session id");
     if (req.forget) return forget(out, req.id);
-    const source = try std.fmt.allocPrint(lib.alloc, "state/sessions/{s}.json", .{req.id});
-    const raw = lib.fsRead(source) catch |err| return lib.failErr(out, err, "reading session");
+    // The session store is host-side SQLite; read it through ck_session.
+    var wb: std.Io.Writer.Allocating = .init(lib.alloc);
+    defer wb.deinit();
+    var sj = std.json.Stringify{ .writer = &wb.writer, .options = .{} };
+    try sj.beginObject();
+    try sj.objectField("op");
+    try sj.write("get");
+    try sj.objectField("id");
+    try sj.write(req.id);
+    try sj.endObject();
+    const raw = lib.sessionCall(wb.written()) catch |err| return lib.failErr(out, err, "reading session");
     const value = std.json.parseFromSliceLeaky(Session, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch |err|
         return lib.failErr(out, err, "parsing session");
     const html = render(lib.alloc, value) catch |err| return lib.failErr(out, err, "rendering session");

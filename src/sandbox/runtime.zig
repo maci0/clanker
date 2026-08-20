@@ -77,6 +77,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_kernel", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckKernel);
     try lk.defineFuncCtx("env", "ck_debug", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckDebug);
     try lk.defineFuncCtx("env", "ck_llm", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckLlm);
+    try lk.defineFuncCtx("env", "ck_session", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckSession);
     try lk.defineFuncCtx("env", "ck_llm_many", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckLlmMany);
     try lk.defineFuncCtx("env", "ck_chat", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckChat);
     try lk.defineFuncCtx("env", "ck_publish", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckPublish);
@@ -1110,11 +1111,16 @@ test "sessions and graph report empty when the state dir does not exist" {
         .root_dir = root,
         .network_allow = &.{},
         .fs_prefixes = &.{ "state/sessions/", "state/runs/" },
+        .session = true,
         .environ_map = &env_map,
     };
 
+    // Sessions live in the host's state store (ck_session), not the sandbox
+    // root, so an empty sandbox root still lists the host's conversations:
+    // the tool's contract is ok:true, not emptiness. The graph tool reads
+    // the sandbox root's state/runs, which is empty here.
     const cases = [_]struct { wasm: []const u8, want: []const u8 }{
-        .{ .wasm = "zig-out/tools/sessions.wasm", .want = "No saved conversations yet" },
+        .{ .wasm = "zig-out/tools/sessions.wasm", .want = "\"ok\":true" },
         .{ .wasm = "zig-out/tools/graph.wasm", .want = "(no runs yet" },
     };
     for (cases) |c| {

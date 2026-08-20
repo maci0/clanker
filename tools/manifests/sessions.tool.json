@@ -22,5 +22,6 @@
     "state/sessions/"
   ],
   "internal": true,
-  "category": "harness"
+  "category": "harness",
+  "session": true
 }

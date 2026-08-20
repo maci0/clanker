@@ -34,6 +34,7 @@ extern fn ck_docker(req_ptr: u32, req_len: u32) u32;
 extern fn ck_kernel(req_ptr: u32, req_len: u32) u32;
 extern fn ck_debug(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm(prompt_ptr: u32, prompt_len: u32) u32;
+extern fn ck_session(req_ptr: u32, req_len: u32) u32;
 extern fn ck_llm_many(req_ptr: u32, req_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
 extern fn ck_publish(ptr: u32, len: u32) u32;
@@ -462,6 +463,13 @@ fn hostResult(rc: u32) HostError![]const u8 {
         4 => error.NetworkError,
         else => error.InvalidArg,
     };
+}
+
+/// Reads the session store through ck_session (list/get/search). Gate:
+/// the tool descriptor must set `session: true`.
+pub fn sessionCall(input: []const u8) HostError![]const u8 {
+    const m = sliceToMem(input);
+    return hostResult(ck_session(m.ptr, m.len));
 }
 
 pub fn httpGet(url: []const u8) HostError![]const u8 {

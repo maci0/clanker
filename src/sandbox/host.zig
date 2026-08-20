@@ -14,6 +14,7 @@ const json_util = @import("../util/json.zig");
 const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
+const session_mod = @import("../agent/session.zig");
 const config_mod = @import("../config.zig");
 const registry = @import("../toolhost/registry.zig");
 const chatrooms_mod = @import("../peers/chatrooms.zig");
@@ -292,6 +293,9 @@ pub const Sandbox = struct {
     /// this runs sequentially: one provider call per tool call, never from the
     /// parallel worker pool.
     llm: ?LlmAccess = null,
+    /// Whether the tool descriptor set session: true (the only gate on
+    /// ck_session list/get/search of the session store).
+    session: bool = false,
     /// The tool descriptor's `config` object, serialized. Returned verbatim by
     /// `ck_config` so a plugin can read its own settings.
     config_json: []const u8 = "{}",
@@ -412,6 +416,7 @@ pub fn sandboxFor(
         .follow_symlinks = cfg.agent.sandbox_follow_symlinks,
         .network_allow = net,
         .llm = llm_access,
+        .session = tool.session,
         .exec_allow = tool.exec_allow,
         .git_remote_ops = cfg.agent.git_remote_ops,
         .exec_pattern_allow = cfg.agent.exec_pattern_allow,
@@ -846,6 +851,170 @@ fn emptyCompletionCause(content: []const u8, finish_reason: ?[]const u8, reasoni
     if (reasoning) |r| if (r.len > 0)
         return "the model spent the whole max_tokens grant on reasoning; raise the tool descriptor's config.max_tokens";
     return "the completion was cut off at the max_tokens grant before any content";
+}
+
+/// ck_session(request) -> JSON. The only way a sandboxed guest reaches the
+/// session store (which is SQLite, host-side). Gate: the tool descriptor must
+/// set `session: true`. Requests:
+///   {"op":"list"}                       -> {"sessions":[{id,title,created,updated,workspace,archived,messages,bytes}]}
+///   {"op":"get","id":"<sid>"}         -> the full session (meta + messages)
+///   {"op":"search","q":"<query>"}     -> {"ok":true,"query":...,"hits":[...]}
+pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const raw = sliceOf(bytes, ptr, len) orelse return Err.invalid;
+    if (!h.sandbox.session) {
+        log.log(.warn, "[session] denied: tool descriptor does not set \"session\": true", .{});
+        return Err.denied;
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const req = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return Err.invalid;
+    if (req != .object) return Err.invalid;
+    const op = json_util.strFieldOrNull(req.object, "op") orelse return Err.invalid;
+
+    const sessions_dir = "state/sessions";
+    var out_w: std.Io.Writer.Allocating = .init(h.sandbox.gpa);
+    defer out_w.deinit();
+    var w = std.json.Stringify{ .writer = &out_w.writer, .options = .{ .emit_null_optional_fields = false } };
+
+    if (std.mem.eql(u8, op, "list")) {
+        const metas = session_mod.listSessions(h.sandbox.io, arena, sessions_dir) catch return Err.invalid;
+        w.beginObject() catch return Err.invalid;
+        w.objectField("sessions") catch return Err.invalid;
+        w.beginArray() catch return Err.invalid;
+        for (metas) |m| {
+            w.beginObject() catch return Err.invalid;
+            w.objectField("id") catch return Err.invalid;
+            w.write(m.id) catch return Err.invalid;
+            w.objectField("title") catch return Err.invalid;
+            w.write(m.title) catch return Err.invalid;
+            w.objectField("created") catch return Err.invalid;
+            w.write(m.created) catch return Err.invalid;
+            w.objectField("updated") catch return Err.invalid;
+            w.write(m.updated) catch return Err.invalid;
+            w.objectField("workspace") catch return Err.invalid;
+            w.write(m.workspace) catch return Err.invalid;
+            w.objectField("archived") catch return Err.invalid;
+            w.write(m.archived) catch return Err.invalid;
+            w.objectField("messages") catch return Err.invalid;
+            w.write(m.messages) catch return Err.invalid;
+            w.objectField("bytes") catch return Err.invalid;
+            w.write(m.bytes) catch return Err.invalid;
+            w.endObject() catch return Err.invalid;
+        }
+        w.endArray() catch return Err.invalid;
+        w.endObject() catch return Err.invalid;
+        return h.writeResult(bytes, out_w.written());
+    }
+
+    if (std.mem.eql(u8, op, "get")) {
+        const id = json_util.strFieldOrNull(req.object, "id") orelse return Err.invalid;
+        if (!session_mod.validSessionId(id)) return Err.invalid;
+        const s = session_mod.loadSession(h.sandbox.io, h.sandbox.gpa, arena, sessions_dir, id) catch return Err.invalid;
+        w.beginObject() catch return Err.invalid;
+        w.objectField("id") catch return Err.invalid;
+        w.write(s.id) catch return Err.invalid;
+        w.objectField("title") catch return Err.invalid;
+        w.write(s.title) catch return Err.invalid;
+        w.objectField("created") catch return Err.invalid;
+        w.write(s.created) catch return Err.invalid;
+        w.objectField("updated") catch return Err.invalid;
+        w.write(s.updated) catch return Err.invalid;
+        w.objectField("workspace") catch return Err.invalid;
+        w.write(s.workspace) catch return Err.invalid;
+        w.objectField("archived") catch return Err.invalid;
+        w.write(s.archived) catch return Err.invalid;
+        if (s.system_prompt) |sp| {
+            w.objectField("system_prompt") catch return Err.invalid;
+            w.write(sp) catch return Err.invalid;
+        }
+        w.objectField("messages") catch return Err.invalid;
+        w.beginArray() catch return Err.invalid;
+        for (s.messages) |m| {
+            w.beginObject() catch return Err.invalid;
+            w.objectField("role") catch return Err.invalid;
+            w.write(m.role.asStr()) catch return Err.invalid;
+            if (m.content) |c| {
+                w.objectField("content") catch return Err.invalid;
+                w.write(c) catch return Err.invalid;
+            }
+            if (m.images) |imgs| {
+                if (imgs.len > 0) {
+                    w.objectField("images") catch return Err.invalid;
+                    w.beginArray() catch return Err.invalid;
+                    for (imgs) |img| {
+                        w.beginObject() catch return Err.invalid;
+                        w.objectField("mime") catch return Err.invalid;
+                        w.write(img.mime) catch return Err.invalid;
+                        w.objectField("b64") catch return Err.invalid;
+                        w.write(img.b64) catch return Err.invalid;
+                        w.endObject() catch return Err.invalid;
+                    }
+                    w.endArray() catch return Err.invalid;
+                }
+            }
+            if (m.tool_calls) |calls| {
+                if (calls.len > 0) {
+                    w.objectField("tool_calls") catch return Err.invalid;
+                    w.beginArray() catch return Err.invalid;
+                    for (calls) |tc| {
+                        w.beginObject() catch return Err.invalid;
+                        w.objectField("id") catch return Err.invalid;
+                        w.write(tc.id) catch return Err.invalid;
+                        w.objectField("name") catch return Err.invalid;
+                        w.write(tc.name) catch return Err.invalid;
+                        w.objectField("arguments") catch return Err.invalid;
+                        w.write(tc.arguments) catch return Err.invalid;
+                        w.endObject() catch return Err.invalid;
+                    }
+                    w.endArray() catch return Err.invalid;
+                }
+            }
+            if (m.tool_call_id) |tid| {
+                w.objectField("tool_call_id") catch return Err.invalid;
+                w.write(tid) catch return Err.invalid;
+            }
+            w.endObject() catch return Err.invalid;
+        }
+        w.endArray() catch return Err.invalid;
+        w.endObject() catch return Err.invalid;
+        return h.writeResult(bytes, out_w.written());
+    }
+
+    if (std.mem.eql(u8, op, "search")) {
+        const q = json_util.strFieldOrNull(req.object, "q") orelse return Err.invalid;
+        const hits = session_mod.searchSessions(h.sandbox.io, arena, sessions_dir, q, 50) catch return Err.invalid;
+        w.beginObject() catch return Err.invalid;
+        w.objectField("ok") catch return Err.invalid;
+        w.write(true) catch return Err.invalid;
+        w.objectField("query") catch return Err.invalid;
+        w.write(q) catch return Err.invalid;
+        w.objectField("hits") catch return Err.invalid;
+        w.beginArray() catch return Err.invalid;
+        for (hits) |hit| {
+            w.beginObject() catch return Err.invalid;
+            w.objectField("id") catch return Err.invalid;
+            w.write(hit.id) catch return Err.invalid;
+            w.objectField("title") catch return Err.invalid;
+            w.write(hit.title) catch return Err.invalid;
+            w.objectField("updated") catch return Err.invalid;
+            w.write(hit.updated) catch return Err.invalid;
+            w.objectField("snippet") catch return Err.invalid;
+            w.write(hit.snippet) catch return Err.invalid;
+            w.objectField("more") catch return Err.invalid;
+            w.write(hit.more) catch return Err.invalid;
+            w.endObject() catch return Err.invalid;
+        }
+        w.endArray() catch return Err.invalid;
+        w.endObject() catch return Err.invalid;
+        return h.writeResult(bytes, out_w.written());
+    }
+
+    return Err.invalid;
 }
 
 /// ck_llm(request) -> completion text in the host arena. The request is either
@@ -4569,6 +4738,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     linker.defineFuncCtx("env", "ck_docker", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDocker) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_kernel", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckKernel) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_debug", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckDebug) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_session", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckSession) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlm) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_llm_many", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckLlmMany) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;
