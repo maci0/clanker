@@ -516,7 +516,7 @@ one off removes its tools, endpoints, and prompt surface: `mcp`, `mcp_client`,
 `peers`,
 `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`,
 `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`,
-`rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`.
+`rlm`, `multimodal`, `chatrooms`, `token_stats`, `session_events`, `acp`, `mesh`.
 `mesh` is the TCP cluster (`clanker mesh`, `/api/mesh/*`); it is not the
 HTTP `[[peers]]` list. Off until you turn it on and restart serve.
 

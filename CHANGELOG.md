@@ -33,6 +33,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- **Sessions moved to SQLite**: one database per conversation
+  (`state/sessions/<id>.db`) holds the session record, the transcript and an
+  **append-only event stream** (system prompt, task, assistant replies, tool
+  calls/results, LLM calls, reasoning, compaction), INSERT-only by trigger.
+  The JSON transcript format is gone. Sandboxed tools read sessions through a
+  new host channel (`ck_session`, `session: true` descriptor key); the
+  sessions/search/export tools keep their interfaces. Mesh peers replicate a
+  session's event stream over HTTP (`GET|POST /api/sessions/<id>/events`) with
+  dense per-stream seq cursors: appends accepted at cursor+1, duplicates
+  dropped, gaps reported for backfill ([ADR 0033](docs/adrs/0033-sessions-are-per-session-sqlite-databases-with-an-append.md),
+  [PRD 0044](docs/prds/0044-per-session-sqlite-store-with-an-append-only-event-stream.md)).
+
 - Sessions record the **system prompt snapshot** the model was running
   against (`system_prompt` on the stored session, saved from the agent's
   built prompt on every save path: REPL, `run --session`, serve). Session
