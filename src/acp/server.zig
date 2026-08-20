@@ -314,6 +314,9 @@ pub fn serve(io: std.Io, gpa: std.mem.Allocator) !void {
         const raw = reader.interface.takeDelimiter('\n') catch |err| switch (err) {
             error.StreamTooLong => {
                 reader.interface.toss(reader.interface.buffered().len);
+                var w = stdout_file.writerStreaming(io, &out_buf);
+                try w.interface.writeAll("{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32700,\"message\":\"line exceeds maximum length\"}}\n");
+                try w.interface.flush();
                 continue;
             },
             error.ReadFailed => return err,
