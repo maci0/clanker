@@ -2719,7 +2719,7 @@ h2#session-title {
   background: var(--surface-2); color: var(--fg);
 }
 .card-detail-move-opt.is-current { background: var(--accent); color: var(--on-accent); }
-.card-detail-save-row { margin-top: var(--space-3); display: flex; gap: 8px; flex-wrap: wrap; }
+.card-detail-save-row { margin-top: var(--space-3); display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .card-activity-empty { font-style: italic; color: var(--fg-muted); padding: 0.5rem 0; }
 .card-comment-row { display: flex; gap: var(--space-2); align-items: center; margin-top: 0.5rem; }
 .card-comment-avatar { flex: none; background: var(--accent); color: var(--on-accent); }
