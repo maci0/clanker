@@ -1,0 +1,17 @@
+# Line-ending policy for a repo edited on Linux and macOS (the two claimed
+# CI platforms) and checked out by contributors on any OS.
+#
+# * text=auto  normalizes CRLF to LF in the repository while keeping native
+#              line endings on checkout; combined with eol=lf below, the
+#              shell scripts and the extensionless pre-commit hook always
+#              stay LF, because a CRLF `#!/bin/sh` shebang is an immediate
+#              `bad interpreter` failure.
+# *.wasm binary keeps the committed AssemblyScript guests byte-identical to
+#              a rebuild: a newline-normalization pass would silently corrupt
+#              the artifacts tools/ts/verify.sh diffs against.
+* text=auto
+
+*.sh text eol=lf
+.githooks/pre-commit text eol=lf
+
+*.wasm binary

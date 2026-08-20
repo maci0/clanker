@@ -22,7 +22,9 @@ step() { printf '\n== %s ==\n' "$*"; }
 
 step "shellcheck (CI: Check shell scripts)"
 if command -v shellcheck >/dev/null 2>&1; then
-    git ls-files -z '*.sh' '.githooks/pre-commit' | xargs -0 -r shellcheck || status=1
+    if [ -n "$(git ls-files -z '*.sh' '.githooks/pre-commit' | tr -d '\0')" ]; then
+        git ls-files -z '*.sh' '.githooks/pre-commit' | xargs -0 shellcheck || status=1
+    fi
 else
     echo "shellcheck not installed; skipping (CI will run it)"
 fi
@@ -44,7 +46,9 @@ fi
 
 step "Python syntax check (CI: Compile-check Python scripts)"
 if command -v python3 >/dev/null 2>&1; then
-    git ls-files -z '*.py' | xargs -0 -r python3 -c 'import ast,pathlib,sys; [ast.parse(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]' || status=1
+    if [ -n "$(git ls-files -z '*.py' | tr -d '\0')" ]; then
+        git ls-files -z '*.py' | xargs -0 python3 -c 'import ast,pathlib,sys; [ast.parse(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]' || status=1
+    fi
 fi
 
 step "zig build + clanker gate (CI: Run deterministic gate)"

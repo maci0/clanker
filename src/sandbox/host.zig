@@ -4051,9 +4051,19 @@ fn uvVerbAllowed(argv: []const []const u8) bool {
 
 /// Host roots a sandboxed argv must never name. `/foo/` as an rg regex is not
 /// one of these; `/etc/passwd` and `/home/me/.env` are.
+///
+/// The list spans both supported host families: the Linux roots first (also
+/// the paths the original author's machine exercised), then the roots macOS
+/// does not share — `/Users` (home), `/Volumes` (mount points), `/System`,
+/// `/Library`, `/Applications`, and `/private`, where macOS actually keeps
+/// the `/etc`, `/var` and `/tmp` that Linux spells at the top level. A
+/// guest is denied host-absolute argv on every platform: its world is
+/// relative to `sandbox_root`, so naming `/home/...` or `/Users/...` is the
+/// same escape attempt in either place.
 const host_abs_roots = [_][]const u8{
-    "/etc", "/home", "/usr", "/var", "/tmp",  "/root", "/opt",
-    "/dev", "/proc", "/sys", "/run", "/boot",
+    "/etc",    "/home",    "/usr",          "/var",     "/tmp",  "/root",  "/opt",
+    "/dev",    "/proc",    "/sys",          "/run",     "/boot", "/Users", "/Volumes",
+    "/System", "/Library", "/Applications", "/private",
 };
 
 fn startsWithHostRoot(path: []const u8) bool {
@@ -6217,6 +6227,11 @@ test "execDenial: the argv-level gate ckExec and the REPL escape share" {
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", "/home/me", "status" }).? == .host_path);
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "--git-dir=/etc/foo", "status" }).? == .host_path);
     try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "src/../.env" }).? == .host_path);
+    // The macOS home and mount roots are denied the same way the Linux ones
+    // are, so the argv gate does not silently weaken on a mac checkout.
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "/Users/me/secret" }).? == .host_path);
+    try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "-C", "/Volumes/data/clanker", "status" }).? == .host_path);
+    try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "/private/tmp/out" }).? == .host_path);
     // An rg regex that merely starts with '/' is not a host root, and `..`
     // in a pattern (not the last/path argument) is ordinary regex syntax.
     try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "/foo/", "src" }) == null);
