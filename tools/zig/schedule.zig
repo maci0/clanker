@@ -185,9 +185,6 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
     var cron_text: []const u8 = "";
     if (has_cron) {
         cron_text = lib.optStr(req, "cron") orelse return lib.fail(out, "cron must be a string");
-        const now: i64 = @trunc(lib.nowSeconds());
-        if (logic.firstFire(cron_text, now, new_tz) == null)
-            return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
     }
 
     var task_val: []const u8 = "";
@@ -203,6 +200,12 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         const e = find(&loaded, id) orelse return lib.fail(out, "no such entry");
+        if (has_cron) {
+            const effective_tz: i32 = if (has_tz) new_tz else e.tz_offset_minutes;
+            const now: i64 = @trunc(lib.nowSeconds());
+            if (logic.firstFire(cron_text, now, effective_tz) == null)
+                return lib.fail(out, "cron spec parses but never comes around, or is not a usable five-field spec");
+        }
         if (has_cron) e.cron = cron_text;
         if (has_task) e.task = task_val;
         if (has_provider) e.provider = lib.optStr(req, "provider");
