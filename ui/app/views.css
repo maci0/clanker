@@ -1242,11 +1242,6 @@ button.tool-name:hover { color: var(--accent-text); }
 
 
 /* ---- goals: what the agent is steering toward ---- */
-@media (max-width: 40rem) {
-.slack-room-item {
-    min-height: 44px;
-  }
-}
 @media (forced-colors: active) {
 .run-edges path { stroke: CanvasText; }
 }
