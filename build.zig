@@ -366,6 +366,13 @@ pub fn build(b: *std.Build) void {
     const fmt_step = b.step("fmt", "Format-check all Zig source");
     fmt_step.dependOn(&fmt_cmd.step);
 
+    // `zig build fmt-fix`: auto-format the checkout (the mutating sibling of
+    // the check above). Runs zig fmt without --check, rewriting any file that
+    // deviates from canonical formatting.
+    const fmt_fix_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
+    const fmt_fix_step = b.step("fmt-fix", "Auto-format all Zig source");
+    fmt_fix_step.dependOn(&fmt_fix_cmd.step);
+
     // ------------------------------------------------------- wasm tool builds
     // `zig build tools` compiles every guest tool under tools/zig/ (lib.zig
     // and the host-tested helpers listed above are skipped) into a
