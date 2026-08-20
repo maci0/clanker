@@ -450,7 +450,7 @@
 .slack-presence-dot.is-away { background: transparent; border-color: var(--warn); }
 
 .slack-room-item-name {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--step-0);
 }
 
