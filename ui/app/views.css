@@ -549,7 +549,7 @@
 }
 
 .slack-search-result {
-  display: block; width: 100%; text-align: left; padding: 0.35rem 0.5rem;
+  display: block; width: 100%; text-align: left; padding: var(--space-2) var(--space-3);
   border: none; border-bottom: 1px solid var(--rule); background: none;
   color: var(--fg); cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
