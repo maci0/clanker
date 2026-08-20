@@ -875,7 +875,15 @@ fn execResult(rc: u32) ExecError![]const u8 {
 /// stderr} JSON. For processes you talk to rather than just launch — an LSP
 /// server reads framed requests and answers on stdout.
 pub fn execStdin(cmd: []const u8, args: []const []const u8, input: []const u8) ExecError![]const u8 {
-    const wbuf = std.heap.wasm_allocator.alloc(u8, 256 * 1024) catch return error.OutOfMemory;
+    // stdin is JSON-escaped into this buffer, so it must be sized for the
+    // escaped length, not the raw bytes. A fixed 256 KiB cap made the lsp
+    // tool answer "zls did not answer" on any source file whose escaped
+    // session exceeded it: src/agent/loop.zig is 248 KiB and its didOpen
+    // session escaped past 256 KiB before zls was ever spawned. Source text
+    // escapes at most ~2x (quotes, backslashes, newlines, tabs); the +4096
+    // covers cmd/args and the JSON framing.
+    const wcap = input.len * 2 + 4096;
+    const wbuf = std.heap.wasm_allocator.alloc(u8, wcap) catch return error.OutOfMemory;
     defer std.heap.wasm_allocator.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
     var s = std.json.Stringify{ .writer = &w, .options = .{ .emit_null_optional_fields = false } };
