@@ -499,3 +499,102 @@ test "segments split sentences but not dots inside paths" {
     try std.testing.expectEqual(@as(usize, 2), clauses.len);
     try std.testing.expectEqualStrings("without breaking the API", clauses[1]);
 }
+
+test "fuzz: any intent assembles a draft whose fields are honest and distinct" {
+    // `assemble` is the heuristic parser for user goal intents, so its
+    // contract must hold for any bytes at all. The assertions encode the
+    // documented invariants: a field either holds extracted intent text or the
+    // default (never the raw blob), the assumptions/unresolved lists name
+    // exactly the defaulted fields, and no field duplicates the text another
+    // field already holds. The one corner that breaks the plain iff — an
+    // intent that quotes a default string verbatim, letting extraction return
+    // bytes identical to the default — is detected and its assertions skipped.
+    const Ctx = struct {
+        fn containsName(list: []const []const u8, name: []const u8) bool {
+            for (list) |n| if (std.mem.eql(u8, n, name)) return true;
+            return false;
+        }
+
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            var buf: [2048]u8 = undefined;
+            const len = smith.slice(&buf);
+            const intent = buf[0..len];
+            const intent_trim = std.mem.trim(u8, intent, " \t\r\n");
+
+            var answers: [field_count]?[]const u8 = .{null} ** field_count;
+            const d = assemble(arena, intent, &answers);
+            const vals = [_][]const u8{ d.objective, d.completion_criterion, d.proof, d.boundaries, d.stop_rule };
+
+            // Assumptions and unresolved are two copies of one list, and the
+            // names it holds are distinct (each field is listed at most once).
+            try std.testing.expectEqual(d.assumptions.len, d.unresolved.len);
+            for (d.assumptions, d.unresolved) |a, u| try std.testing.expectEqualStrings(a, u);
+            for (d.assumptions, 0..) |a, i| {
+                for (d.assumptions[i + 1 ..]) |b| try std.testing.expect(!std.mem.eql(u8, a, b));
+            }
+
+            var quotes_default = false;
+            for (fields, vals) |f, v| {
+                const name = fieldName(f);
+                const def = defaultFor(f);
+                try std.testing.expect(v.len > 0);
+                if (std.mem.indexOf(u8, intent_trim, def) != null) quotes_default = true;
+
+                if (std.mem.indexOf(u8, intent_trim, def) == null) {
+                    // Intent never quotes the default: defaulted ⟺ listed, and
+                    // extracted never equals the default.
+                    try std.testing.expectEqual(std.mem.eql(u8, v, def), containsName(d.assumptions, name));
+                    try std.testing.expectEqual(std.mem.eql(u8, v, def), containsName(d.unresolved, name));
+                } else if (!std.mem.eql(u8, v, def)) {
+                    // Extraction may have returned bytes identical to the
+                    // default; only the direction that holds unconditionally.
+                    try std.testing.expect(!containsName(d.assumptions, name));
+                    try std.testing.expect(!containsName(d.unresolved, name));
+                }
+                if (!std.mem.eql(u8, v, def)) {
+                    // Extracted text is never the raw intent, and it is never
+                    // the text of a field already filled.
+                    try std.testing.expect(!std.mem.eql(u8, v, intent_trim));
+                }
+            }
+
+            // When the intent quotes none of the five defaults, every value is
+            // distinct: extraction refuses candidates identical to an earlier
+            // value, the defaults themselves are distinct, and no extracted
+            // value can collide with a default.
+            if (!quotes_default) {
+                for (vals, 0..) |v, i| for (vals[i + 1 ..]) |w| {
+                    try std.testing.expect(!std.mem.eql(u8, v, w));
+                };
+            }
+
+            // Segments are non-empty, in-order slices of the intent: each one
+            // appears in it, and together they never exceed its length.
+            const segs = try segments(arena, intent);
+            var seg_total: usize = 0;
+            for (segs) |seg| {
+                try std.testing.expect(seg.len > 0);
+                try std.testing.expect(std.mem.indexOf(u8, intent, seg) != null);
+                seg_total += seg.len;
+            }
+            try std.testing.expect(seg_total <= intent.len);
+
+            // The interview asks only questions the intent left open.
+            const qs = chooseQuestions(arena, intent, 3);
+            try std.testing.expect(qs.len <= 3);
+            for (qs) |q| try std.testing.expect(!intentAnswers(q.field, intent));
+
+            // The rendered markdown carries every field and its value.
+            const md = try renderMarkdown(arena, &d);
+            for (fields, vals) |f, v| {
+                try std.testing.expect(std.mem.find(u8, md, fieldName(f)) != null);
+                try std.testing.expect(std.mem.find(u8, md, v) != null);
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}

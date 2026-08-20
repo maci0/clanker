@@ -90,3 +90,27 @@ test "stripXmlTags decodes entities" {
     defer std.testing.allocator.free(text);
     try std.testing.expectEqualStrings("a & b <c> 'd\n", text);
 }
+
+test "fuzz: no transcript bytes crash the stripper or amplify the text" {
+    // Timedtext captions arrive off the network, so any byte sequence must
+    // strip without crashing or hanging. Two invariants the fuzzer must keep:
+    // stripping never *grows* the text (tags are dropped whole, a `</p>` line
+    // break consumes four bytes to add one, and every entity decodes to fewer
+    // bytes than it occupies), and valid UTF-8 stays valid UTF-8 — the entity
+    // decoder is the only byte producer, and a swallowed utf8Encode failure
+    // would surface here as a garbled transcript.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const xml = buf[0..len];
+            const text = stripXmlTags(std.testing.allocator, xml) catch return;
+            defer std.testing.allocator.free(text);
+            try std.testing.expect(text.len <= xml.len);
+            if (std.unicode.utf8ValidateSlice(xml)) {
+                try std.testing.expect(std.unicode.utf8ValidateSlice(text));
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{});
+}
