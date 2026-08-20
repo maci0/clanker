@@ -12,19 +12,6 @@ Resolved on 2026-08-20. Gaps fixed and verified (zig build + test green): system
 
 ## Trigger and scope
 
-## Evidence
-
-## Hypotheses and tests
-
-## Finding
-
-## Resolution or handoff
-
-## References
-
-- Related bug: none yet
-## Trigger and scope
-
 The operator asked whether clanker follows the same philosophy as DeepSeek Harness
 (DSH): *everything is a plugin* (models, tools, skills, sessions, sandboxes, storage,
 loops, scheduling, and the UI are swappable/recomposable capabilities), *every run is
