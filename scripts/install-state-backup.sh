@@ -7,7 +7,25 @@ user_bin="${HOME:?}/.local/bin"
 
 mkdir -p "$user_bin"
 ln -sfn "$script_dir/backup-state.sh" "$user_bin/clanker-state-backup"
-systemctl --user link "$script_dir/systemd/clanker-state-backup.service"
-systemctl --user link "$script_dir/systemd/clanker-state-backup.timer"
+
+# `systemctl link` fails with "File exists" when the unit is already linked,
+# so a plain second run of this script exits 1 instead of converging. Link
+# only when the unit is missing from the user unit dir or points at a
+# different checkout, and replace a stale link (the checkout moved) first.
+user_units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+mkdir -p "$user_units"
+link_unit() {
+    local unit="$1"
+    local target
+    target=$(readlink -f -- "$script_dir/systemd/$unit")
+    local link_path="$user_units/$unit"
+    if [ "$(readlink -- "$link_path" 2>/dev/null || true)" = "$target" ]; then
+        return 0
+    fi
+    rm -f -- "$link_path"
+    systemctl --user link "$script_dir/systemd/$unit"
+}
+link_unit clanker-state-backup.service
+link_unit clanker-state-backup.timer
 systemctl --user daemon-reload
 systemctl --user enable --now clanker-state-backup.timer
