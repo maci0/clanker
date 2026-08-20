@@ -19,7 +19,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var want_all = false;
     if (parsed == .object) {
         if (parsed.object.get("list")) |l| {
-            if (l == .string and std.mem.eql(u8, l.string, "all")) want_all = true;
+            if (l == .string and std.mem.eql(u8, l.string, "planned")) {
+                want_all = false;
+            } else if (l == .string and std.mem.eql(u8, l.string, "all")) {
+                want_all = true;
+            } else {
+                return lib.fail(out, "list must be \"planned\" or \"all\"");
+            }
         }
     }
     const md = lib.fsRead("docs/ROADMAP.md") catch return lib.fail(out, "ROADMAP.md unreadable");

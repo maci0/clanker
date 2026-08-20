@@ -21,6 +21,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .string => |s| s,
         else => "staged",
     };
+    if (!std.mem.eql(u8, scope, "staged") and !std.mem.eql(u8, scope, "all"))
+        return lib.fail(out, "scope must be \"staged\" or \"all\"");
     const max_commits: usize = switch (obj.get("max_commits") orelse std.json.Value{ .integer = 10 }) {
         .integer => |n| if (n < 1) 1 else @as(usize, @intCast(n)),
         else => 10,
