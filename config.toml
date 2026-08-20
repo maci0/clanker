@@ -255,6 +255,9 @@ repl_exec_allow = []
 
 # The rest of [agent], commented out at its built-in default. Uncommenting a
 # line pins it: the default stops applying, including a later change to it.
+# The two uncommented lines below (confirm_writes, fallback_providers) are
+# active pins on purpose, not defaults restated: their built-in defaults are
+# "never" and an empty chain respectively, and these override both.
 #
 # Conversation budgeting. compact_threshold_bytes above is the byte-based
 # trigger; these are the token-based ceilings.

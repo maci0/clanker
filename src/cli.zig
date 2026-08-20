@@ -3967,6 +3967,16 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     var provider_val = try resolveProvider(&cfg, opts);
     const provider = &provider_val;
 
+    // A primary provider that cannot serve at all -- the env var its
+    // api_key_env names is unset, or its base_url is missing -- would
+    // otherwise only surface as a MissingApiKey error on the first model
+    // call, after the sandbox and session are already built. Same offline
+    // gate the /model picker applies; the fallback chain still gets its
+    // turn, so this is a warning, not a refusal.
+    if (providers.unconfiguredReason(arena, init.environ_map, provider)) |why| {
+        log.log(.warn, "run: provider '{s}' is not usable ({s}); the first model call will fail unless a fallback serves it", .{ provider.name, why });
+    }
+
     // `--worktree`: give the run its own worktree and branch, then chdir into
     // it for the rest of the run.
     //

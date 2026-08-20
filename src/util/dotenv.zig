@@ -20,7 +20,18 @@ pub fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process
             return;
         }
     else
-        base.readFileAlloc(io, ".env", gpa, .limited(1 << 16)) catch return;
+        base.readFileAlloc(io, ".env", gpa, .limited(1 << 16)) catch |err| switch (err) {
+            // A checkout with no .env is the normal state for a machine that
+            // sets real environment variables; stay silent there. Anything
+            // else -- permission denied, a file over the 64 KiB cap -- would
+            // otherwise load no keys at all and surface as a baffling
+            // "X_API_KEY not set" on the first provider call, so name it now.
+            error.FileNotFound => return,
+            else => {
+                log.log(.warn, "cannot read .env: {s} (real environment variables still apply)", .{@errorName(err)});
+                return;
+            },
+        };
     defer gpa.free(data);
 
     var loaded: usize = 0;
