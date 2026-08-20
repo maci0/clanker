@@ -33,6 +33,7 @@ pub fn validId(id: []const u8) bool {
 /// never will: disabled, an unparseable spec, or a spec with no future match.
 pub fn nextRun(enabled: bool, cron_text: []const u8, last_run: i64, created: i64, tz_offset_minutes: i32) ?i64 {
     if (!enabled) return null;
+    if (!validTzOffset(tz_offset_minutes)) return null;
     const spec = cron.parse(cron_text) catch return null;
     const from = if (last_run > 0) last_run else created;
     return spec.nextAfter(from, tz_offset_minutes);
@@ -86,6 +87,9 @@ test "nextRun omits disabled, junk, and never-firing specs" {
     const created = cron.epochFromCivil(2026, 8, 13, 12, 0, 0);
     try std.testing.expectEqual(@as(?i64, created + 60), nextRun(true, "* * * * *", 0, created, 0));
     try std.testing.expectEqual(@as(?i64, null), nextRun(false, "* * * * *", 0, created, 0));
+    // An out-of-range tz offset yields null rather than a nonsensical fire time.
+    try std.testing.expectEqual(@as(?i64, null), nextRun(true, "* * * * *", 0, created, 9999));
+    try std.testing.expectEqual(@as(?i64, null), nextRun(true, "* * * * *", 0, created, -9999));
     try std.testing.expectEqual(@as(?i64, null), nextRun(true, "not a cron spec", 0, created, 0));
     try std.testing.expectEqual(@as(?i64, null), nextRun(true, "0 0 30 2 *", 0, created, 0));
     // last_run, not created, is the origin once the entry has fired.
