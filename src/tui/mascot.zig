@@ -240,7 +240,7 @@ const sixel_supported = @hasField(vaxis.Vaxis.Capabilities, "sixel_graphics");
 /// The mascot state still advances at its normal rate; only what reaches the
 /// terminal is thinned, by showing the newest eligible frame and dropping the
 /// ones in between. Typing and model streaming outrank the robot.
-pub const sixel_min_interval_ms: i64 = 100;
+pub const sixel_interval_ms_min: i64 = 100;
 
 /// Milliseconds on a monotonic clock, for the presentation rate.
 ///
@@ -542,7 +542,7 @@ pub const State = struct {
     }
 
     /// The frame to present as a sixel now, holding the presentation rate to
-    /// `sixel_min_interval_ms`.
+    /// `sixel_interval_ms_min`.
     ///
     /// Returning the *previously* presented frame is what makes this a dropped
     /// frame rather than a queued one: the mascot's own state has already moved
@@ -550,7 +550,7 @@ pub const State = struct {
     /// has got to, not the backlog it skipped.
     pub fn presentSixel(self: *State, now_ms: i64) struct { frame: u8, flip: Flip } {
         const want = self.flip();
-        const due = now_ms -| self.sixel_ms >= sixel_min_interval_ms;
+        const due = now_ms -| self.sixel_ms >= sixel_interval_ms_min;
         // The first presentation is always due: `sixel_ms` starts at zero and
         // a mascot that waited for a tick boundary would flash in late.
         if (due or self.sixel_ms == 0) {
