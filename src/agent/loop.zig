@@ -3676,50 +3676,7 @@ const ToolWorker = struct {
         var arena_state = std.heap.ArenaAllocator.init(self.ctx.gpa);
         defer arena_state.deinit();
 
-        var sb = host.Sandbox{
-            .gpa = self.ctx.gpa,
-            .io = io,
-            .root_dir = self.cfg.agent.sandbox_root,
-            .shared_root = self.cfg.agent.shared_root,
-            .extra_roots = self.cfg.agent.sandbox_roots,
-            // Same omission class as exec_allow/env_allow below: without this
-            // the parallel path refused symlinked granted paths (state/,
-            // .local) that the sequential path allowed under ADR 0017's flag.
-            .follow_symlinks = self.cfg.agent.sandbox_follow_symlinks,
-            .network_allow = self.tool.network_allow,
-            .fs_prefixes = self.tool.fs_prefixes,
-            // The named host channels (ck_harness_config, ck_std_api,
-            // ck_model_stats, ck_chat, ...) gate on tool_self_name, and
-            // host.sandboxFor sets it from the descriptor. The worker builds
-            // its own Sandbox literal, and omitting it left every agent-run
-            // tool with an empty name, so peers/std_api/status were denied
-            // their own channels in capability evals and the improve loop.
-            .tool_self_name = self.tool.name,
-            // Copied like every other policy field. Omitting them here did not
-            // make a worker safer, it made it wrong: a tool ran with no
-            // commands and no environment on the parallel path and the same
-            // tool ran with its descriptor's on the sequential one, so
-            // repo_search was refused ripgrep for as long as it ran in
-            // parallel with anything.
-            .exec_allow = self.tool.exec_allow,
-            .git_remote_ops = self.cfg.agent.git_remote_ops,
-            .exec_pattern_allow = self.cfg.agent.exec_pattern_allow,
-            .env_allow = self.tool.env_allow,
-            .environ_map = self.ctx.environ_map,
-            .seed = self.cfg.agent.seed,
-            .subagent_runner = self.subagent_runner,
-            .cfg = self.cfg,
-            .state_dir = self.cfg.agent.state_dir,
-            // An exec-capable tool sees the harness's exec policy in its own
-            // `config`, the same injection host.sandboxFor applies on the
-            // sequential path. Without it the git/gh guests read an empty
-            // config on the parallel path and reported "no exec_pattern_allow
-            // patterns are configured" even though the config had them, the
-            // two execution paths disagreed about the same tool's settings.
-            .config_json = try host.toolConfigFor(arena_state.allocator(), self.tool, self.cfg),
-            .fuel = self.tool.fuel,
-            .tool_policy = self.tool_policy,
-        };
+        var sb = try self.sandboxFor(arena_state.allocator(), io);
 
         log.log(.debug, "running tool '{s}' in sandbox args_bytes={d}", .{ self.tool.name, self.arguments.len });
         const t0 = std.Io.Timestamp.now(io, .awake);
@@ -3736,6 +3693,25 @@ const ToolWorker = struct {
         // the two obvious ones missed the one that actually runs.
         tool_out.warnIfMalformed(self.ctx.gpa, self.tool.name, out);
         self.out = out;
+    }
+
+    /// Builds the worker's sandbox by delegating the whole descriptor policy
+    /// to `host.sandboxFor`, the documented single source of truth, then adds
+    /// the agent-level extras sandboxFor does not know about. A hand-rolled
+    /// Sandbox literal here drifted four times — `exec_allow`/`env_allow`,
+    /// `tool_self_name`, and `session` — each time silently denying a
+    /// parallel-run tool a capability (or silently relaxing a restriction) the
+    /// sequential path granted, the last one failing the `session_search`
+    /// capability eval in improve-self. This worker never runs an
+    /// llm/sequential/live_publish tool (the dispatch skips those), so the llm
+    /// access sandboxFor builds for such tools is never exercised here and
+    /// llm_ctx stays the caller's.
+    fn sandboxFor(self: *const ToolWorker, arena: std.mem.Allocator, io: std.Io) !host.Sandbox {
+        var sb = try host.sandboxFor(self.ctx.gpa, io, arena, self.ctx.environ_map, self.cfg, self.tool, self.ctx);
+        sb.subagent_runner = self.subagent_runner;
+        sb.state_dir = self.cfg.agent.state_dir;
+        sb.tool_policy = self.tool_policy;
+        return sb;
     }
 };
 
@@ -4175,6 +4151,55 @@ test "the parallel-tool stack reservation stays above the observed crash floor" 
     const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, W.run, .{&w});
     thread.join();
     try std.testing.expectEqual(@as(i32, 42), w.sum orelse return error.WorkerDidNotRun);
+}
+
+test "worker sandbox delegates the descriptor's session grant through host.sandboxFor" {
+    // Regression: ToolWorker hand-rolled its own Sandbox literal and omitted
+    // `session`, so a session:true tool running on the parallel path had
+    // ck_session denied and the session_search capability eval scored 0.00,
+    // rejecting every improve-self staged tree (d8008075 and the exec_allow /
+    // env_allow fixes were the same class of drift). The worker must route
+    // through host.sandboxFor, the single source of truth, and only add the
+    // agent-level extras sandboxFor does not know about.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var cfg = config.Config{};
+    cfg.agent.state_dir = "state";
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env, .cfg = &cfg };
+
+    var tool = registry.Tool{
+        .name = "session_tool",
+        .description = "",
+        .wasm = "t.wasm",
+        .input_schema = .null,
+        .session = true,
+    };
+    var worker = ToolWorker{
+        .ctx = &ctx,
+        .cfg = &cfg,
+        .tool = &tool,
+        .arguments = "",
+        .wasm_bytes = "",
+    };
+
+    const sb = try worker.sandboxFor(arena, io);
+    try std.testing.expect(sb.session);
+    // The named channels and the state dir survive the delegation too.
+    try std.testing.expectEqualStrings(tool.name, sb.tool_self_name);
+    try std.testing.expectEqualStrings(cfg.agent.state_dir, sb.state_dir);
+
+    // A tool that did not declare the grant stays closed on the worker too.
+    tool.session = false;
+    const sb2 = try worker.sandboxFor(arena, io);
+    try std.testing.expect(!sb2.session);
 }
 
 test "maybeCompactMessages drops the middle, keeps the system prompt and the recent tail" {

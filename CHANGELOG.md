@@ -13,6 +13,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   it sent the vertex HTTP 400 re-evaluation to the wrong file. The hint
   now names the merged config.
 
+- The parallel tool worker builds its sandbox through `host.sandboxFor`
+  instead of a hand-rolled `Sandbox` literal, which had drifted to omit the
+  descriptor's `session` grant. Session tools (`sessions`, `session_search`,
+  `session_export`) running in parallel were denied `ck_session`, so the
+  `session_search` capability eval failed and improve-self rejected every
+  staged tree. Delegating to the single source of truth also restored
+  `network_from_config` and the research `web.allow` hosts on the parallel
+  path.
+
 - `DELETE /api/sessions/<id>` now deletes the conversation's spills and its
   exported transcript, not only `state/sessions/<id>.json`.
 
