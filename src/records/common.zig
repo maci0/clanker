@@ -157,7 +157,18 @@ test "englishList reads as prose for one, two and many" {
 /// An answer that is not readable JSON is the opposite case, a broken build
 /// rather than a bad argument, and stays a log record.
 pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: []const u8) !std.json.Value {
-    const raw = try tool.call(tool.ctx, input);
+    // The call itself failing -- a WASM trap, a sandbox failure, a missing
+    // tool -- is a broken build rather than a bad argument, so it gets the
+    // same log record as the unreadable-answer cases below instead of
+    // surfacing as an opaque error with no hint of which store was asked.
+    // OutOfMemory is never a tool failure and keeps propagating.
+    const raw = tool.call(tool.ctx, input) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            log.log(.error_, "{s}: the tool call failed: {s}", .{ store, @errorName(err) });
+            return Error.ToolFailed;
+        },
+    };
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
         log.log(.error_, "{s}: the tool answered something that is not JSON", .{store});
         return Error.ToolFailed;
@@ -584,6 +595,20 @@ test "callTool fails the call for a refusal and for an unreadable answer" {
     try testing.expectError(
         Error.ToolFailed,
         callTool(arena_state.allocator(), "adr", .{ .ctx = &refused, .call = Canned.call }, "{}"),
+    );
+
+    // A tool call that errors outright (a trap, a sandbox failure) fails
+    // the command as ToolFailed with a log record naming the store, rather
+    // than propagating an opaque error.
+    const Trapped = struct {
+        fn call(_: *anyopaque, _: []const u8) anyerror![]const u8 {
+            return error.TrapUnreachable;
+        }
+    };
+    var trap_ctx: u8 = 0;
+    try testing.expectError(
+        Error.ToolFailed,
+        callTool(arena_state.allocator(), "adr", .{ .ctx = &trap_ctx, .call = Trapped.call }, "{}"),
     );
 
     var fine: Canned = .{ .answer = "{\"ok\":true,\"next_number\":7}" };
