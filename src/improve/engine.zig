@@ -34,6 +34,7 @@ const redact = @import("../util/redact.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const disk_cap = @import("../util/disk_cap.zig");
 const worktree_mod = @import("worktree.zig");
+const agent_loop = @import("../agent/loop.zig");
 const test_env = @import("../util/test_env.zig");
 
 pub const Options = struct {
@@ -645,11 +646,17 @@ pub const Engine = struct {
             .{ .role = .user, .content = user_prompt },
         };
         var err_detail: ?[]const u8 = null;
-        const resp = client.chatWithDeadline(self.ctx, self.arena, .{
+        // Route through the same fallback provider chain the agent loop uses:
+        // a silent or down primary (the deadline fires, `chatWithDeadline`
+        // returns Timeout) then falls back to a configured healthy provider
+        // instead of aborting the whole improve-self run with
+        // ProposalRequestFailed. `self.provider` is repointed by the chain, so
+        // a later iteration and the plan phase keep using whoever served.
+        const resp = agent_loop.chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = &messages,
             .max_tokens = opts.response_tokens,
-        }, &err_detail, self.cfg.agent.request_timeout_ms) catch |err| {
+        }, &err_detail, null, null) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.ProposalRequestFailed;
@@ -1365,13 +1372,13 @@ pub const Engine = struct {
         };
 
         var err_detail: ?[]const u8 = null;
-        const resp = client.chatWithDeadline(self.ctx, self.arena, .{
+        const resp = agent_loop.chatWithFallbackChain(self.ctx, self.arena, self.cfg, &self.provider, .{
             .provider = self.provider,
             .messages = &messages,
             // An idea list is a few hundred tokens; the full patch budget
             // only invites the model to write the patches here too.
             .max_tokens = @min(opts.response_tokens, 4096),
-        }, &err_detail, self.cfg.agent.request_timeout_ms) catch |err| {
+        }, &err_detail, null, null) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.warn, "plan request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
             return error.PlanRequestFailed;
