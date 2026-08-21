@@ -80,6 +80,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [ToolWorker parallel sandbox drops session:true, failing the session_search capability eval and stopping improve-self](bugs/2026-08-21-improve-self-worker-sandbox-drops-session.md) — Open
 - [janitor reports removing orphaned staging dirs but large ones survive](bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md) — Open
 
 - [lsp capability eval fails on large files, blocking every improve-self promotion](bugs/2026-08-20-lsp-eval-blocks-improve-self.md) — Resolved

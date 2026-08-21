@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Parallel-path tool execution no longer drops a tool's `session: true`
+  descriptor grant. `ToolWorker` builds its own sandbox policy literal, and
+  omitting `session` left session-capable tools (`session_search`, `sessions`)
+  on the struct's default `session: false` on the worker pool, so every
+  `ck_session` call was denied there. That made the `session_search`
+  capability eval score 0.00 and fail every staged improve-self tree, stopping
+  the batch after iterations 1 and 2 with `[session] denied: tool descriptor
+  does not set "session": true`.
+
 - The `UnknownProvider` hint no longer claims the name is missing from
   `config.toml`: providers merge from `config.toml` + `config.local.toml`,
   so a provider defined only locally made the old wording a false lead —

@@ -3705,6 +3705,13 @@ const ToolWorker = struct {
             .git_remote_ops = self.cfg.agent.git_remote_ops,
             .exec_pattern_allow = self.cfg.agent.exec_pattern_allow,
             .env_allow = self.tool.env_allow,
+            // Same omission class as tool_self_name/exec_allow above: the
+            // worker builds its own Sandbox literal, and without this a
+            // session-capable tool (session_search, sessions) ran with the
+            // struct's default `session: false` on the parallel path, so
+            // ck_session was denied and the session_search capability eval
+            // scored 0.00, failing every staged improve-self tree.
+            .session = self.tool.session,
             .environ_map = self.ctx.environ_map,
             .seed = self.cfg.agent.seed,
             .subagent_runner = self.subagent_runner,
