@@ -201,3 +201,17 @@ test "sanitizeAlloc strips OSC sequences" {
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("ab", result);
 }
+
+test "writeSanitized consumes an unterminated OSC sequence whole" {
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    writeSanitized(&w, "pre\x1b]38;2;255;0;0");
+    try std.testing.expectEqualStrings("pre", buf[0..w.end]);
+}
+
+test "sanitizeAlloc consumes an unterminated OSC sequence whole" {
+    const dirty = "pre\x1b]38;2;255;0;0";
+    const result = try sanitizeAlloc(std.testing.allocator, dirty);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("pre", result);
+}

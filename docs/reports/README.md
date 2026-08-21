@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [REPL slash commands typed mid-run are steered, not run](bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md) — Open
+
 - [Post-launch DAP ops block unbounded on a silent adapter](bugs/2026-08-22-dap-post-launch-ops-block-unbounded.md) — Resolved
 
 - [Steer framing sentence is persisted as the user's own words](bugs/2026-08-22-steer-framing-persisted-in-transcript.md) — Open
