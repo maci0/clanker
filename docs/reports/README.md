@@ -80,6 +80,14 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [loadSessions folds every failure into an empty conversation list](bugs/2026-08-22-webui-loadsessions-swallows-failure.md) — Open
+
+- [webui model and effort choices are stored browser-global, not per chat](bugs/2026-08-22-webui-model-effort-storage-is-global.md) — Open
+
+- [webui handles llm_start stream events the server never emits](bugs/2026-08-22-webui-llm-start-event-never-emitted.md) — Open
+
+- [node --test on ui/app fails in directory mode while every file passes](bugs/2026-08-22-node-test-dir-mode-fails-on-ui-app.md) — Open
+
 - [REPL slash commands typed mid-run are steered, not run](bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md) — Open
 
 - [Post-launch DAP ops block unbounded on a silent adapter](bugs/2026-08-22-dap-post-launch-ops-block-unbounded.md) — Resolved
