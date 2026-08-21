@@ -44,6 +44,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Post-launch debug ops (`continue`, `stackTrace`, `variables`, ...) no
+  longer block a run forever when the adapter goes silent: every request
+  runs under the new `debug.request_timeout_ms` (default 15000 ms, `0`
+  disables), with the same kill-and-reap expiry as the launch bound.
+  `disconnect`/`terminate` treat the timeout as success with a note —
+  teardown wanted the adapter gone and the expiry killed it.
+
 - `debug.launch_timeout_ms` actually bounds a debug launch. The whole
   launch handshake (initialize + launch/attach) runs under the configured
   cap; a silent or wedged adapter is terminated (SIGTERM, then SIGKILL

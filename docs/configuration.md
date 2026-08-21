@@ -506,7 +506,8 @@ unsandboxed subprocess (ADR 0010 / 0011 carve-out). Do not flip
 |---|---|---|
 | `enabled` | `false` | Start adapters. Off = the tool returns a disabled error. |
 | `disconnect_timeout_ms` | 3000 | How long to wait after `disconnect`/`terminate` before SIGTERM. |
-| `launch_timeout_ms` | 15000 | How long to wait for the adapter's `initialized` event. |
+| `launch_timeout_ms` | 15000 | Wall cap on the whole launch handshake (initialize + launch/attach). A silent adapter is killed and reaped at the deadline. `0` disables the bound. |
+| `request_timeout_ms` | 15000 | Wall cap on every post-launch request (`continue`, `stackTrace`, `variables`, ...). Same kill-and-reap on expiry. `0` disables the bound. |
 | `adapters.<name>.command` | (unset) | argv to spawn. v1 requires an explicit `adapter` on `launch`. |
 
 ## `[modules]`

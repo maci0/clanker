@@ -602,6 +602,9 @@ pub const Debug = struct {
     enabled: bool = false,
     disconnect_timeout_ms: u32 = 3000,
     launch_timeout_ms: u32 = 15_000,
+    /// Wall cap on every post-launch DAP request (continue, stackTrace,
+    /// variables, ...). 0 disables the bound.
+    request_timeout_ms: u32 = 15_000,
     adapters: []const DebugAdapter = &.{},
 };
 
@@ -2707,11 +2710,12 @@ pub const Config = struct {
         };
         var d = Debug{};
         warnUnknownKeys(obj, &.{
-            "enabled", "disconnect_timeout_ms", "launch_timeout_ms", "adapters",
+            "enabled", "disconnect_timeout_ms", "launch_timeout_ms", "request_timeout_ms", "adapters",
         }, "debug");
         if (obj.get("enabled")) |e| d.enabled = try jsonBool(e, "enabled");
         if (obj.get("disconnect_timeout_ms")) |n| d.disconnect_timeout_ms = try jsonUnsigned(u32, n, "debug.disconnect_timeout_ms");
         if (obj.get("launch_timeout_ms")) |n| d.launch_timeout_ms = try jsonUnsigned(u32, n, "debug.launch_timeout_ms");
+        if (obj.get("request_timeout_ms")) |n| d.request_timeout_ms = try jsonUnsigned(u32, n, "debug.request_timeout_ms");
         if (obj.get("adapters")) |av| {
             const aobj = switch (av) {
                 .object => |o| o,
