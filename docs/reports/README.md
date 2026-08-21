@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [REPL log sink frees the logger's stack buffer on the first [ERROR] record](bugs/2026-08-22-repl-log-sink-frees-the-loggers-stack-buffer.md) — Resolved
+
 - [debug.launch_timeout_ms is stored but never bounds a launch](bugs/2026-08-21-dap-launch-timeout-never-bounds-launch.md) — Resolved
 
 - [SQLITE_TRANSIENT translate-c cast breaks the build on aarch64-macos](bugs/2026-08-21-sqlite-transient-fnptr-cast-breaks-macos-build.md) — Resolved
