@@ -96,8 +96,10 @@ Cons: not mid-turn, and concurrent sessions have a runbook for a reason.
 
 ## Next steps / action items
 
-- [ ] ADR: REPL inject is the steer queue, not a second channel
-- [ ] PRD: /steer phase 1; Ctrl-S later if it does not fight XOFF
+- [x] ADR: REPL inject is the steer queue, not a second channel — ADR 0047
+- [x] PRD: /steer phase 1; Ctrl-S later if it does not fight XOFF — PRD 0058
+      (shipped as the composer-as-steer-box, not a /steer command; see the
+      PRD's Status for the drift)
 
 ## Recommendation
 

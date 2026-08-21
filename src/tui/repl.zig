@@ -207,6 +207,9 @@ var bridge_tool_lines: std.ArrayList([]const u8) = .empty;
 /// run thread (the same seam POST /api/steer uses for the web). Filled by the
 /// render thread's composer-as-steer-box; freed by tuiSteerPoll as it drains.
 var bridge_steer: std.ArrayListUnmanaged([]u8) = .empty;
+/// Same ceiling steerEnqueue enforces per run on POST /api/steer, so the
+/// composer cannot grow an unbounded backlog the run may never get to.
+const steer_message_cap = 16;
 /// `.error_` log records emitted while the alt screen is up (the LLM
 /// client's "request to 'x' failed" lines, sandbox refusals) previously
 /// wrote straight to stderr and painted over the frame the draw loop had
@@ -2556,6 +2559,7 @@ const Model = struct {
     /// draw-local buffer because vaxis cells borrow the slices written into
     /// them until the frame is flushed, which is after `draw` has returned.
     phase_buf: [80]u8 = undefined,
+    steer_buf: [48]u8 = undefined,
     meter_buf: [64]u8 = undefined,
     cost_buf: [32]u8 = undefined,
     tok_buf: [32]u8 = undefined,
@@ -3072,6 +3076,14 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "notice: no run to steer; the turn already ended", .dim = true }) catch {};
             return;
         }
+        // Same ceiling POST /api/steer enforces per run server-side. The
+        // refusal repeats the text: the composer was already reset, so this
+        // line is the only place the message survives to be re-sent from.
+        if (bridge_steer.items.len >= steer_message_cap) {
+            const refusal = std.fmt.allocPrint(self.arena, "error: steer queue is full ({d} pending); not queued: {s}", .{ bridge_steer.items.len, task }) catch "error: steer queue is full";
+            self.lines.append(self.arena, .{ .text = refusal, .dim = true }) catch {};
+            return;
+        }
         // Same framing POST /api/steer applies server-side, so the model reads
         // a TUI steer as the same mid-run course correction it reads a web one.
         const framed = std.fmt.allocPrint(bridge_gpa, "[The user interjected while this run was in progress; take the message into account and adjust course.]\n\n{s}", .{task}) catch {
@@ -3083,10 +3095,14 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
-        const echo = std.fmt.allocPrint(bridge_gpa, "notice: steering queued: {s}", .{task}) catch "notice: steering queued";
-        bridge_tool_lines.append(bridge_gpa, echo) catch {
-            if (echo.ptr != "notice: steering queued".ptr) bridge_gpa.free(echo);
-        };
+        // Echoed straight into the transcript: the old echo went through
+        // bridge_tool_lines, which finishTurn drains only after the run
+        // returns, so the typed text vanished until the turn ended with no
+        // sign it was queued at all. self.lines is safe here — this thread
+        // holds bridge_mutex, the same lock the draw loop and finishTurn
+        // take around self.lines.
+        const echo = std.fmt.allocPrint(self.arena, "steering queued ({d} pending): {s}", .{ bridge_steer.items.len, task }) catch "steering queued";
+        self.lines.append(self.arena, .{ .text = echo, .dim = true }) catch {};
         ctx.redraw = true;
     }
 
@@ -5563,6 +5579,7 @@ const Model = struct {
         // append cannot reallocate the backing storage mid-iteration.
         drainLogLines(self);
         const streaming = bridge_streaming;
+        const steer_pending = bridge_steer.items.len;
         const stream_snapshot = ctx.arena.dupe(u8, bridge_stream_buf.items) catch "";
         var tool_snap: [64]u8 = undefined;
         const tool_snap_len = bridge_active_tool_len;
@@ -5722,6 +5739,13 @@ const Model = struct {
             writeRowAt(surface, 0, &scol, phase, if (streaming) accent_style else prompt_style);
             _ = writeStatusPairIfFits(surface, &scol, dot, dim, "clanker", brand_style);
             _ = writeStatusPairIfFits(surface, &scol, dot, dim, model, accent_style);
+        }
+        // Steering messages waiting for the next model step. Each one echoed
+        // a transcript line as it was typed; this count is the only live
+        // signal that decrements as the run drains the queue.
+        if (streaming and steer_pending > 0) {
+            const steer_text = std.fmt.bufPrint(&self.steer_buf, "{d} steer queued", .{steer_pending}) catch "";
+            if (steer_text.len > 0) _ = writeStatusPairIfFits(surface, &scol, dot, dim, steer_text, accent_style);
         }
         if (scroll_hint.len > 0 and statusTextFits(max.width, scol, scroll_hint))
             writeRowAt(surface, 0, &scol, scroll_hint, dim);

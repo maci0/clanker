@@ -44,6 +44,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A steering message typed into the REPL composer mid-run is now visible
+  the moment it is queued: the transcript echoes
+  `steering queued (N pending): <text>` immediately, and the status line
+  shows `N steer queued` while any are waiting, counting down as the run
+  drains them. Previously the echo went through a buffer only flushed
+  after the turn ended, so the typed text vanished with no feedback until
+  then. The queue also gains the server's 16-message ceiling; a steer over
+  the cap is refused with a line that repeats the message text.
+
 - A `POST /api/run` carrying a `temperature` or `top_p` override no longer
   corrupts the serve-lifetime provider config. The handler's provider struct
   copy still shared the models map's entries with the config, so one
