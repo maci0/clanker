@@ -1736,6 +1736,56 @@ test "janitor wasm tool scans and removes only shaped staging directories" {
     _ = try tmp.dir.statFile(io, "state/staging/keep-me/data", .{});
 }
 
+test "janitor prune removes a staging tree larger than one ck_fs_list page" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // 60 files serialize to ~600 bytes of listing JSON, several times the
+    // 256-byte page below, so one ck_fs_list call cannot name them all.
+    // Before fsDeleteTree re-listed until empty (fs_delete_tree_max_passes),
+    // this tree survived its own deletion and janitor still reported the
+    // bytes as reclaimed (docs/reports/bugs/
+    // 2026-08-20-janitor-truncated-list-leaves-staging-behind.md).
+    try tmp.dir.createDirPath(io, "state/staging/imp-123");
+    var i: usize = 0;
+    while (i < 60) : (i += 1) {
+        var name_buf: [64]u8 = undefined;
+        const sub = try std.fmt.bufPrint(&name_buf, "state/staging/imp-123/file-{d:0>2}", .{i});
+        try tmp.dir.writeFile(io, .{ .sub_path = sub, .data = "x" });
+    }
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "state/staging", "state/runs", "state/logs" },
+        .environ_map = &env_map,
+        .max_fs_bytes = 256,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/janitor.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const pruned = try mod.executeTool("{\"op\":\"prune\",\"state_dir\":\"state\"}");
+    defer std.testing.allocator.free(pruned);
+    try std.testing.expect(std.mem.find(u8, pruned, "\"ok\":true") != null);
+    // The whole tree must actually be gone, and janitor must have credited
+    // it as removed rather than counting a survivor as failed.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/staging/imp-123", .{}));
+    try std.testing.expect(std.mem.find(u8, pruned, "could not be removed") == null);
+}
+
 test "recent_commits wasm tool summarizes git history in one call (ck_exec)" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
