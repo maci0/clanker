@@ -253,6 +253,9 @@ fn load() !Loaded {
         else => return err,
     };
     result.seen_hash = try lib.hash(raw);
+    // A truncated or hand-emptied state file must recover as an empty list,
+    // not brick every alarm operation with a JSON parse error.
+    if (std.mem.trim(u8, raw, " \t\r\n").len == 0) return result;
     const parsed = try std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true });
     for (parsed) |a| try result.alarms.append(lib.alloc, a);
     return result;
