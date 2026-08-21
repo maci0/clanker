@@ -70,6 +70,8 @@ hole (`src/peers/session_sync.zig`).
 | Condition | Behaviour |
 |---|---|
 | Session DB missing on load | `error.FileNotFound`; resume treats it as absent |
+| Meta edit (archive/rename/workspace) on an unknown id | `error.FileNotFound`; the HTTP routes answer 404 and no database is minted |
+| Session deleted | `<id>.db` unlinked and its `session_fts` rows removed; run graphs stay |
 | Events UPDATE/DELETE attempted | Trigger aborts (`StepFailed`) |
 | Append arrives ahead of the cursor | 409 `gap:true` (caller backfills) |
 | Append at/below the cursor | Dropped silently, cursor unchanged |
