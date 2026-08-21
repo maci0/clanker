@@ -44,6 +44,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A `POST /api/run` carrying a `temperature` or `top_p` override no longer
+  corrupts the serve-lifetime provider config. The handler's provider struct
+  copy still shared the models map's entries with the config, so one
+  override wrote through as the model's new default for every later run —
+  and a map growth left the config pointing into the request's arena, after
+  which every run naming a model of that provider got 400 `no such model
+  for that provider` and the next `GET /api/providers` crashed the server.
+  The override is now cloned request-local.
+
+- The web UI chat now names who answered each turn: the turn footer shows
+  the provider and model from the run's `done` event (plus the pinned
+  reasoning effort when one was set). Before, nothing in the chat reflected
+  a mid-conversation model or effort switch, so a switch that applied
+  correctly still looked like it had been ignored.
+
 - The REPL no longer dies with `panic: Invalid free` on the first `[ERROR]`
   log record of a session (a failed provider request, a sandbox refusal).
   The transcript log sink stored `sanitizeAlloc`'s no-copy alias of the

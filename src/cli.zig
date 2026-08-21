@@ -15016,6 +15016,48 @@ fn containsAnyCaseInsensitive(haystack: []const u8, needles: []const []const u8)
     return false;
 }
 
+/// Applies a per-run temperature/top_p override to `provider`, which is a
+/// struct copy of a config-owned provider. The copy still shares the models
+/// map's entries array with the config, so a direct `put` writes the override
+/// through into the serve-lifetime config — every later run inherits it — and
+/// a `put` that grows or re-indexes the map leaves the config pointing into
+/// this request's arena, which dies with the request (observed as "no such
+/// model" 400s for every model of the provider, then a segfault in
+/// /api/providers). Cloning the map first keeps the override request-local;
+/// on OOM the override is dropped rather than ever touching the shared map.
+fn applySamplingOverride(arena: std.mem.Allocator, provider: *config.Provider, temperature: ?f64, top_p: ?f64) void {
+    if (temperature == null and top_p == null) return;
+    var m = provider.activeModel();
+    if (temperature) |t| m.temperature = std.math.clamp(t, 0.0, 2.0);
+    if (top_p) |t| m.top_p = std.math.clamp(t, 0.0, 1.0);
+    var cloned = provider.models.clone(arena) catch return;
+    cloned.put(arena, provider.default_model, m) catch return;
+    provider.models = cloned;
+}
+
+test "per-run sampling override stays request-local" {
+    var cfg_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer cfg_arena.deinit();
+    const cfg_alloc = cfg_arena.allocator();
+    var prov = try config.Provider.single(cfg_alloc, "mock", "http://x.test", .openai_compat, "m1", .{});
+    try prov.models.put(cfg_alloc, "m2", .{});
+
+    var req_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var copy = prov;
+    applySamplingOverride(req_arena.allocator(), &copy, 1.5, null);
+    // The run itself sees the override…
+    try std.testing.expectEqual(@as(?f64, 1.5), copy.activeModel().temperature);
+    // …but the config-owned provider must not: a write-through here becomes
+    // the default for every later run on this server.
+    try std.testing.expectEqual(@as(?f64, null), prov.models.get("m1").?.temperature);
+
+    // And once the request arena dies, the config's map must still resolve
+    // every model — the corrupted variant dangled into freed memory.
+    req_arena.deinit();
+    try std.testing.expect(prov.models.get("m1") != null);
+    try std.testing.expect(prov.models.get("m2") != null);
+}
+
 /// Runs one agent task synchronously and returns the final answer as JSON:
 /// {"ok":true,"content":"..."} or {"ok":false,"error":"..."}.
 fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, stream: std.Io.net.Stream, body: []const u8) void {
@@ -15332,12 +15374,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             log.log(.info, "run: {s} cannot take the image; falling back to provider '{s}'", .{ used_fallback.?, provider.name });
         }
     }
-    if (req.temperature != null or req.top_p != null) {
-        var m = provider_copy.activeModel();
-        if (req.temperature) |t| m.temperature = std.math.clamp(t, 0.0, 2.0);
-        if (req.top_p) |t| m.top_p = std.math.clamp(t, 0.0, 1.0);
-        provider_copy.models.put(arena, provider_copy.default_model, m) catch {};
-    }
+    applySamplingOverride(arena, &provider_copy, req.temperature, req.top_p);
 
     var run_dir = std.Io.Dir.cwd();
     var run_dir_open = false;
@@ -15631,8 +15668,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // trailing Connection: close ends the client-side stream.
         // `served_by` is whoever actually answered (the fallback chain
         // repoints the agent's provider), which can differ from the request.
+        // `model` is the active model of whoever answered, so a mid-chat
+        // model switch is visible on the turn it applied to — without it the
+        // chat shows nothing that confirms the switch took effect.
         writeStreamEvent(stream.socket.handle, "done", .{
             .served_by = a.provider.name,
+            .model = a.provider.activeModelName(),
+            .reasoning_effort = if (run_cfg.agent.reasoning_effort) |re| @tagName(re) else "",
             .prompt_tokens = a.stats.total_prompt_tokens,
             .completion_tokens = a.stats.total_completion_tokens,
             .cost = a.stats.cost,
