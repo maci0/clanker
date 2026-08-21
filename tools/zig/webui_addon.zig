@@ -179,6 +179,8 @@ fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
     if (logic.cssRejected(css)) |why| return lib.fail(out, why);
     const overwrite = lib.optBool(obj, "overwrite", false);
     const enable = lib.optBool(obj, "enable", true);
+    const eager = lib.optBool(obj, "eager", false);
+    const is_module = lib.optBool(obj, "module", false);
 
     const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
     const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/plugin.json", .{dir});
@@ -192,7 +194,7 @@ fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
         return lib.failErr(out, err, "creating the addon directory");
     };
 
-    const manifest = try writeManifestJson(name, title, description, group);
+    const manifest = try writeManifestJson(name, title, description, group, eager, is_module);
     lib.fsWrite(manifest_path, manifest) catch |err| return lib.failErr(out, err, "writing plugin.json");
     const js_path = try std.fmt.allocPrint(lib.alloc, "{s}/app.js", .{dir});
     lib.fsWrite(js_path, js) catch |err| return lib.failErr(out, err, "writing app.js");
@@ -289,7 +291,7 @@ fn writeOk(out: *lib.Out, name: []const u8, enabled: bool) !void {
     lib.commit(out, &w);
 }
 
-fn writeManifestJson(name: []const u8, title: []const u8, description: []const u8, group: []const u8) ![]const u8 {
+fn writeManifestJson(name: []const u8, title: []const u8, description: []const u8, group: []const u8, eager: bool, is_module: bool) ![]const u8 {
     var buf: std.Io.Writer.Allocating = .init(lib.alloc);
     var s = std.json.Stringify{ .writer = &buf.writer, .options = .{ .whitespace = .indent_2 } };
     try s.beginObject();
@@ -301,6 +303,14 @@ fn writeManifestJson(name: []const u8, title: []const u8, description: []const u
     try s.write(description);
     try s.objectField("group");
     try s.write(group);
+    if (eager) {
+        try s.objectField("eager");
+        try s.write(true);
+    }
+    if (is_module) {
+        try s.objectField("module");
+        try s.write(true);
+    }
     try s.endObject();
     try buf.writer.writeByte('\n');
     return buf.written();
