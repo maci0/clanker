@@ -276,6 +276,10 @@ fn actionToggle(obj: std.json.Value, out: *lib.Out, on: bool) !void {
     if (!logic.validName(name)) return lib.fail(out, "bad addon name");
     const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}/plugin.json", .{ plugins_dir, name });
     if (lib.fsStat(manifest_path)) |_| {} else |_| return lib.fail(out, "no such addon");
+    if (on) {
+        const js_path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}/app.js", .{ plugins_dir, name });
+        if (lib.fsStat(js_path)) |_| {} else |_| return lib.fail(out, "no app.js in this addon; create it before enabling");
+    }
     setEnabled(name, on) catch |err| return lib.failErr(out, err, "updating plugin state");
     return writeOk(out, name, on);
 }
