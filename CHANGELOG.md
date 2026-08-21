@@ -44,6 +44,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The chat composer's steer row now keeps a visible ledger of every
+  steering message sent for the running turn (sending / queued / applied /
+  failed per entry), so a second message no longer looks like it replaced
+  the first — the server always queued them all (FIFO, 16 per run); the
+  client just kept no record. The `[ steering applied ]` transcript line
+  now echoes which message landed, messages still queued when the run ends
+  are called out as never applied, a reloaded transcript renders a steered
+  message as `[ steered mid-run: … ]` inside the turn it steered instead
+  of impersonating a typed user turn (and no longer marks the real
+  question unanswered), Ctrl+Enter can no longer double-send the same
+  text, and the steer box gets the same 8000-character cap the goals
+  view already had.
+
 - `debug.launch_timeout_ms` actually bounds a debug launch. The whole
   launch handshake (initialize + launch/attach) runs under the configured
   cap; a silent or wedged adapter is terminated (SIGTERM, then SIGKILL

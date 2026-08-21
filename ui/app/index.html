@@ -352,9 +352,13 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="meta run-metrics" id="run-metrics" hidden></p>
       <div class="chat-steer" id="steer-row" hidden>
         <label for="steer-input">Steer this turn</label>
-        <textarea id="steer-input" rows="2" wrap="soft" placeholder="Change course while the run is in flight (optional)…" autocomplete="off"></textarea>
+        <textarea id="steer-input" rows="2" wrap="soft" maxlength="8000" placeholder="Change course while the run is in flight (optional)…" autocomplete="off"></textarea>
         <button type="button" class="secondary" id="steer-btn">Steer</button>
         <span class="meta" id="steer-hint"></span>
+        <!-- Ledger of this turn's steering messages: sending / queued /
+             applied / failed per entry, so a second send is visibly a
+             second entry instead of silently replacing the first. -->
+        <ul class="steer-sent" id="steer-sent" aria-live="polite" hidden></ul>
       </div>
       <noscript><p class="meta">Running a task needs JavaScript. Without it, use <code>clanker run "&lt;task&gt;"</code> from the shell.</p></noscript>
     </form>

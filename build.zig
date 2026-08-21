@@ -349,6 +349,11 @@ pub fn build(b: *std.Build) void {
     const skills_js_test = b.addSystemCommand(&.{ "node", "--test" });
     skills_js_test.addFileArg(b.path("ui/app/core/skills.test.mjs"));
     test_step.dependOn(&skills_js_test.step);
+    // The chat composer's steering ledger: what was sent mid-run, in what
+    // order, and what the run never consumed.
+    const steer_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    steer_js_test.addFileArg(b.path("ui/app/core/steer.test.mjs"));
+    test_step.dependOn(&steer_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under
