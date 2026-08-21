@@ -53,6 +53,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   then. The queue also gains the server's 16-message ceiling; a steer over
   the cap is refused with a line that repeats the message text.
 
+- A `POST /api/run` carrying a `temperature` or `top_p` override no longer
+  corrupts the serve-lifetime provider config. The handler's provider struct
+  copy still shared the models map's entries with the config, so one
+  override wrote through as the model's new default for every later run —
+  and a map growth left the config pointing into the request's arena, after
+  which every run naming a model of that provider got 400 `no such model
+  for that provider` and the next `GET /api/providers` crashed the server.
+  The override is now cloned request-local.
+
+- The web UI chat now names who answered each turn: the turn footer shows
+  the provider and model from the run's `done` event (plus the pinned
+  reasoning effort when one was set). Before, nothing in the chat reflected
+  a mid-conversation model or effort switch, so a switch that applied
+  correctly still looked like it had been ignored.
+
+- Post-launch debug ops (`continue`, `stackTrace`, `variables`, ...) no
+  longer block a run forever when the adapter goes silent: every request
+  runs under the new `debug.request_timeout_ms` (default 15000 ms, `0`
+  disables), with the same kill-and-reap expiry as the launch bound.
+  `disconnect`/`terminate` treat the timeout as success with a note —
+  teardown wanted the adapter gone and the expiry killed it.
+
 - The chat composer's steer row now keeps a visible ledger of every
   steering message sent for the running turn (sending / queued / applied /
   failed per entry), so a second message no longer looks like it replaced

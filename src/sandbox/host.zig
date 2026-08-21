@@ -1996,6 +1996,7 @@ pub fn ckDebug(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .enabled = true,
         .adapters = cfg.debug.adapters,
         .launch_timeout_ms = cfg.debug.launch_timeout_ms,
+        .request_timeout_ms = cfg.debug.request_timeout_ms,
         .disconnect_timeout_ms = cfg.debug.disconnect_timeout_ms,
     }, json_input) catch |err| {
         const msg = switch (err) {
@@ -2004,6 +2005,7 @@ pub fn ckDebug(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             error.UnknownAdapter => "unknown adapter; check debug.adapters",
             error.AdapterNotFound => "adapter binary not found on PATH",
             error.LaunchTimeout => "launch timed out (debug.launch_timeout_ms); adapter terminated",
+            error.RequestTimeout => "request timed out (debug.request_timeout_ms); adapter terminated",
             else => @errorName(err),
         };
         return h.writeResult(bytes, dap.errorJson(arena, msg));

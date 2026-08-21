@@ -1328,7 +1328,7 @@ function syncAdvancedSummary() {
   var effort = (el.paramEffort && el.paramEffort.value) || "";
   summary.textContent = effort ? "Advanced: effort " + effort : "Advanced";
   summary.title = effort
-    ? "Reasoning effort pinned to " + effort + " for this chat. Click to change."
+    ? "Reasoning effort " + effort + ", sent with each new message. A message already running keeps the effort it started with. Click to change."
     : "Fallback provider, sampling and reasoning-effort overrides";
   if (effort) params.setAttribute("data-active", "true");
   else params.removeAttribute("data-active");
@@ -1343,7 +1343,7 @@ function updateComposerModeHint() {
   if (el.researchMode && el.researchMode.checked) parts.push("Research mode · web search preferred");
   if (el.unlimitedIterations && el.unlimitedIterations.checked) parts.push("Long run · 1000-step budget");
   if (el.worktreeMode && el.worktreeMode.checked) parts.push("Isolated worktree · shared checkout untouched");
-  if (el.paramEffort && el.paramEffort.value) parts.push("Effort " + el.paramEffort.value + " · pinned for this chat");
+  if (el.paramEffort && el.paramEffort.value) parts.push("Effort " + el.paramEffort.value + " · sent with each message");
   if (attachImages.length) {
     parts.push(attachImages.length + (attachImages.length === 1 ? " image attached" : " images attached"));
   }
@@ -1839,6 +1839,13 @@ function renderStats(turn, stats, task) {
   held.appendChild(document.createTextNode(failed ? "did not hold" : "held"));
   turn.foot.appendChild(held);
   var parts = [];
+  /* Name who answered this turn. A mid-chat model or effort switch is
+     otherwise invisible: the run applies it, but nothing on the turn says
+     so, and the switch looks like it never happened. */
+  if (stats.served_by) {
+    parts.push(stats.served_by + (stats.model ? " " + stats.model : ""));
+  }
+  if (stats.reasoning_effort) parts.push("effort " + stats.reasoning_effort);
   if (typeof stats.prompt_tokens === "number" && typeof stats.completion_tokens === "number") {
     parts.push(fmtInt(stats.prompt_tokens) + " prompt + " + fmtInt(stats.completion_tokens) + " completion");
   }
