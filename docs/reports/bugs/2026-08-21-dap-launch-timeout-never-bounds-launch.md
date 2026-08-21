@@ -28,7 +28,7 @@ New test 'silent adapter: launch is bounded by launch_timeout_ms and reaped' (sr
 
 ## Follow-up
 
-waitResponse/waitEvent on the post-launch ops (continue, stackTrace, ...) still block unbounded on a silent adapter; only the launch handshake is covered by this knob.
+The post-launch ops were fixed separately: [Post-launch DAP ops block unbounded on a silent adapter](2026-08-22-dap-post-launch-ops-block-unbounded.md), bounded by the new debug.request_timeout_ms.
 
 ## References
 

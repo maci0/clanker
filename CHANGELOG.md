@@ -44,6 +44,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Post-launch debug ops (`continue`, `stackTrace`, `variables`, ...) no
+  longer block a run forever when the adapter goes silent: every request
+  runs under the new `debug.request_timeout_ms` (default 15000 ms, `0`
+  disables), with the same kill-and-reap expiry as the launch bound.
+  `disconnect`/`terminate` treat the timeout as success with a note —
+  teardown wanted the adapter gone and the expiry killed it.
+
 - The chat composer's steer row now keeps a visible ledger of every
   steering message sent for the running turn (sending / queued / applied /
   failed per entry), so a second message no longer looks like it replaced
