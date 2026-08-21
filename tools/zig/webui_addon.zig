@@ -219,6 +219,7 @@ fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
     const file = lib.optStr(obj, "file") orelse return lib.fail(out, "put needs file (app.js, app.css, or plugin.json)");
     if (!logic.validFile(file)) return lib.fail(out, "file must be app.js, app.css, or plugin.json");
     const content = lib.optStr(obj, "content") orelse return lib.fail(out, "put needs content");
+    if (content.len == 0) return lib.fail(out, std.fmt.allocPrint(lib.alloc, "{s} must not be empty", .{file}) catch "content must not be empty");
     if (content.len > 1024 * 1024) return lib.fail(out, "content exceeds the 1 MiB limit for a single put call");
     if (std.mem.eql(u8, file, "app.js")) {
         if (logic.jsRejected(content)) |why| return lib.fail(out, why);
