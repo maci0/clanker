@@ -384,6 +384,28 @@ pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefi
     const branch = try std.fmt.allocPrint(gpa, "{s}{s}", .{ branch_prefix, id });
     errdefer gpa.free(branch);
 
+    // The ref the worktree is cut from. An improve-self run must be cut from
+    // the latest code, not the possibly-stale local branch tip: a local `main`
+    // that has not yet merged origin's fixes would make the loop stage and
+    // gate its proposals against pre-fix code even after a fix landed
+    // remotely, so every capability eval fails for a reason already fixed on
+    // the remote (the 2026-08-21 batch kept failing session_search because
+    // its worktree was cut from a local main that predated PR #291). Prefer
+    // `origin/<base_branch>` when that ref exists; fall back to the local
+    // branch when there is no remote tracking ref or the run is a plain agent
+    // run (.run), which is cut from the checkout's own working state.
+    var origin_ref: ?[]u8 = null;
+    defer if (origin_ref) |r| gpa.free(r);
+    const base_ref: []const u8 = if (sharing == .improve) blk: {
+        const r = try std.fmt.allocPrint(gpa, "origin/{s}", .{base_branch});
+        if (refExists(gpa, io, r)) {
+            origin_ref = r;
+            break :blk r;
+        }
+        gpa.free(r);
+        break :blk base_branch;
+    } else base_branch;
+
     // Deliberately outside state/: a worktree under state/ would contain its
     // own state directory inside the runtime state tree. Keeping worktrees in
     // a dedicated ignored directory also lets linkSharedState expose only the
@@ -403,7 +425,7 @@ pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefi
 
     std.Io.Dir.cwd().createDirPath(io, ".clanker-worktrees") catch {};
 
-    const argv = [_][]const u8{ "git", "worktree", "add", "-b", branch, path, base_branch };
+    const argv = [_][]const u8{ "git", "worktree", "add", "-b", branch, path, base_ref };
     const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return error.WorktreeCreateFailed;
     defer gpa.free(res.stdout);
     defer gpa.free(res.stderr);
@@ -633,6 +655,39 @@ test "mergeBack's resync reaches the invoking checkout only when it is clean" {
     const kept = try tmp.dir.readFileAlloc(io, "code.txt", gpa, .limited(1 << 10));
     defer gpa.free(kept);
     try std.testing.expectEqualStrings("operator work\n", kept);
+}
+
+test "refExists tells a present ref from a missing one" {
+    // Regression for the stale worktree-base fix: `createOn` now cuts an
+    // improve-self worktree from `origin/<base>` when that ref exists, so a
+    // local `main` that has not yet merged a fix landed on origin no longer
+    // makes the loop stage and gate proposals against pre-fix code. The
+    // decision hinges on `refExists`, so it must answer a present ref true and
+    // a missing one false, without erroring on an empty or unborn repo.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(io, &root_buf)];
+
+    try gitOk(gpa, io, root, &.{ "init", "-q", "-b", "main" });
+    try gitOk(gpa, io, root, &.{ "config", "user.email", "t@example.invalid" });
+    try gitOk(gpa, io, root, &.{ "config", "user.name", "test" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "code.txt", .data = "before\n" });
+    try gitOk(gpa, io, root, &.{ "add", "code.txt" });
+    try gitOk(gpa, io, root, &.{ "commit", "-qm", "seed" });
+
+    // A branch named `origin/main` stands in for the fetched remote tracking
+    // ref (creating a true `refs/remotes/origin/main` needs a remote config
+    // that `git update-ref` does not require).
+    try gitOk(gpa, io, root, &.{ "branch", "origin/main" });
+
+    try std.testing.expect(refExists(gpa, io, "origin/main"));
+    try std.testing.expect(refExists(gpa, io, "main"));
+    try std.testing.expect(!refExists(gpa, io, "origin/nope"));
+    try std.testing.expect(!refExists(gpa, io, "nope"));
 }
 
 /// Runs one git command in `repo` and fails the test unless it exits 0.
@@ -891,6 +946,20 @@ fn currentBranch(gpa: std.mem.Allocator, io: std.Io) ![]u8 {
 
 fn revParse(gpa: std.mem.Allocator, io: std.Io, refname: []const u8) ![]u8 {
     return run1(gpa, io, &.{ "git", "rev-parse", refname });
+}
+
+/// Whether `refname` resolves (e.g. `origin/main` exists as a fetched remote
+/// tracking ref). Used by `createOn` to cut an improve-self worktree from the
+/// latest remote code instead of a possibly-stale local branch tip.
+fn refExists(gpa: std.mem.Allocator, io: std.Io, refname: []const u8) bool {
+    const argv = [_][]const u8{ "git", "rev-parse", "--verify", "--quiet", refname };
+    const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return false;
+    defer gpa.free(res.stdout);
+    defer gpa.free(res.stderr);
+    return switch (res.term) {
+        .exited => |c| c == 0,
+        else => false,
+    };
 }
 
 fn mergeBaseOf(gpa: std.mem.Allocator, io: std.Io, a: []const u8, b: []const u8) ![]u8 {

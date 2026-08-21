@@ -52,6 +52,40 @@ This was the fourth field the hand-rolled worker literal drifted on — `exec_al
 - The new unit test passes as part of `zig build test`.
 - The session_search capability eval is the integration gate for this path and now has a working mechanism underneath it; run `clanker eval session_search --tasks` with a configured provider to confirm end-to-end.
 
+## Follow-up (2026-08-21): the same symptom recurred on a *newer* batch, from a stale worktree base
+
+A later improve-self batch (eval runs `run-1787282522`, `run-1787283196`,
+`run-1787284292`) failed with the identical `session_search: 0.00 FAIL` /
+`[session] denied: tool descriptor does not set "session": true` symptom even
+though the worker-sandbox fix above was already merged to origin/main (PR
+#291, b7b4b77a, merged 1787241888). The fix was on origin; the batch still
+ran the buggy code.
+
+Root cause: the improve loop cut its worktree from the **local** `main` ref
+via `Worktree.createOn` (`git worktree add -b <branch> <path> <base_branch>`,
+where `base_branch = currentBranch()`). At the time that batch's worktree
+(`.clanker-worktrees/1787281039786392993-main`) was created, local `main`
+still pointed at `154f1575` (committed 1787237597) — *before* the fix — even
+though origin/main had advanced. The loop staged and gated every proposal
+against pre-fix code, so the capability eval kept failing no matter how the
+proposal changed.
+
+Fix (this report): `createOn` now cuts an improve-self worktree from the
+fetched remote tip `origin/<base_branch>` when that ref exists, falling back
+to the local branch only when there is no remote tracking ref. Plain agent
+runs (`.run`) are unchanged: they isolate the checkout's own working state,
+so they still cut from the local branch. `base_branch` (the local name) is
+unchanged for merge-back targeting, and `created_from` records the actual cut
+point, so merge semantics are unaffected.
+
+The remaining error lines in that batch — `plan: response was not a usable
+idea list` and the `staging build failed: src/agent/ttsr.zig:93:10 error:
+expected statement, found ';'` — were not code defects: the plan line is a
+model-output quality flake (documented below), and the ttsr.zig staging
+failure came from the loop's own broken intermediate proposal
+(imp-1787284534818753126), not from committed code (committed ttsr.zig:93 is
+a clean `var arena_state = ...` inside a `test` block).
+
 ## Follow-up
 
 The two other error lines in the failing batch — `plan: response was not a usable idea list` and `model returned no proposal content (finish_reason=stop, reasoning=0 chars)` — were model-output quality issues on a batch whose gate was already failing for an opaque reason; they are not code defects and are expected to resolve once the capability gate passes.
