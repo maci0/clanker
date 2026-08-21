@@ -5537,7 +5537,7 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
     if (std.mem.eql(u8, sub, "new")) {
         const name = opts.plugin_target orelse
             usageExitFor(io, "plugins", "plugins new needs a tool name: clanker plugins new word_count", .{});
-        return pluginsNew(init, config.firstToolsDir(cfg.agent.tools_dir), name);
+        return pluginsNew(init, cfg.agent.tools_dir, name);
     }
     usageExitFor(io, "plugins", "unknown plugins subcommand '{s}' (list, on, off, validate, new)", .{sub});
 }
@@ -6181,18 +6181,36 @@ fn withCrossChecks(
 
 /// Scaffold a manifest and a guest source file that build and validate as
 /// they stand. Refuses to overwrite either: a scaffolder that clobbers is a
-/// scaffolder nobody runs twice.
-fn pluginsNew(init: std.process.Init, tools_dir: []const u8, name: []const u8) !void {
+/// scaffolder nobody runs twice. Also refuses a name that already identifies
+/// a registered tool anywhere on the configured `tools_dir` list, not just a
+/// colliding file in the destination directory: with more than one directory
+/// configured (PRD 0022), the freshly scaffolded manifest would silently
+/// override — or be overridden by — the existing tool at load time.
+fn pluginsNew(init: std.process.Init, tools_dirs: []const []const u8, name: []const u8) !void {
     const io = init.io;
     const arena = init.arena.allocator();
 
-    const trimmed_dir = std.mem.trimEnd(u8, tools_dir, "/");
+    const trimmed_dir = std.mem.trimEnd(u8, config.firstToolsDir(tools_dirs), "/");
     const in_tree = std.mem.eql(u8, trimmed_dir, "tools/manifests");
     const portable = !in_tree;
 
     const manifest_text = manifest_mod.scaffoldManifest(arena, name, portable) catch
         usageExitFor(io, "plugins", "'{s}' is not a usable tool name (lowercase letters, digits and underscores)", .{name});
     const guest_text = try manifest_mod.scaffoldGuest(arena, name);
+
+    // The registry sees every configured tools_dir; the file checks below see
+    // only the destination. Consult it first so an id loaded from another
+    // directory is refused before write, as the manifest-SDK contract states.
+    // A registry that will not load must not block scaffolding (that is
+    // `plugins validate`'s job), so this check fails open with a warning.
+    if (registry.Registry.load(io, arena, std.Io.Dir.cwd(), tools_dirs)) |reg| {
+        if (reg.tools.get(name) != null) {
+            const dirs = config.toolsDirDisplay(arena, tools_dirs) catch "(configured tools_dir list)";
+            usageExitFor(io, "plugins", "'{s}' already identifies a registered tool (loaded from {s}); pick another name", .{ name, dirs });
+        }
+    } else |err| {
+        log.log(.warn, "plugins new: cannot load the tool registry to check '{s}' for collisions: {s}", .{ name, @errorName(err) });
+    }
 
     const manifest_path = try std.fmt.allocPrint(arena, "{s}/{s}.tool.json", .{ trimmed_dir, name });
     const guest_path = if (in_tree)

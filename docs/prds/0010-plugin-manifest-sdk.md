@@ -199,13 +199,16 @@ existing docs:
   Docs and `registry.zig` were corrected in Bugs fixed above; the surviving
   code comment now states the empty-allows-nothing contract too, closing the
   last copy of the drift.
-- **`plugins new` refuses colliding files, not colliding registered tool ids.**
-  Failure modes below state the contract: a name that already identifies a
-  registered tool is refused before write. Today `pluginsNew` only
-  `statFile`s the destination manifest/guest paths (`src/cli.zig`), so an id
-  loaded from another directory (especially once PRD 0022 lands) can still be
-  scaffolded. Fix belongs in `pluginsNew`: consult the registry (or scan
-  configured `tools_dir`s) before writing.
+- **(Fixed) `plugins new` used to refuse colliding files, not colliding
+  registered tool ids.** Failure modes below state the contract: a name that
+  already identifies a registered tool is refused before write. `pluginsNew`
+  only `statFile`d the destination manifest/guest paths (`src/cli.zig`), so an
+  id loaded from another directory (especially once PRD 0022 lands) could
+  still be scaffolded. It now loads the registry over every configured
+  `tools_dir` first and refuses a name `reg.tools` already knows, naming the
+  directories it checked; a registry that will not load logs a warning and
+  falls back to the file checks, so scaffolding never depends on validate-time
+  cleanliness.
 
 ## Failure modes
 
