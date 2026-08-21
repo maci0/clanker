@@ -84,7 +84,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [Worker parallel sandbox omitted the session grant, denying session tools and failing the session_search capability eval in improve-self](bugs/2026-08-20-worker-sandbox-omits-session-denies-session-tools.md) — Resolved
 
-- [janitor reports removing orphaned staging dirs but large ones survive](bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md) — Open
+- [janitor reports removing orphaned staging dirs but large ones survive](bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md) — Resolved
 
 - [lsp capability eval fails on large files, blocking every improve-self promotion](bugs/2026-08-20-lsp-eval-blocks-improve-self.md) — Resolved
 
