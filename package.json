@@ -1,0 +1,17 @@
+{
+  "name": "clanker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "clanker — self-improving AI agent harness",
+  "type": "module",
+  "scripts": {
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "oxlint": "1.79.0"
+  }
+}

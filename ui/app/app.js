@@ -4889,13 +4889,13 @@ el.runCopy.addEventListener("click", function () {
         // Accept {messages:[{role,content}]} or {conversations:[...]} or bare array
         var msgs = null; var title = "";
         if (Array.isArray(parsed)) msgs = parsed;
+        else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
-        else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         if (!msgs || !msgs.length){ uiToast("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
         // Normalize to StoredMessage shape the server expects
         var norm = msgs.map(function(m){
-          var role = (m.role==="assistant"||m.role==="assistant") ? "assistant" : (m.role==="user"?"user":String(m.role||"user"));
+          var role = (m.role==="assistant" || m.role==="system") ? m.role : (m.role==="user"?"user":String(m.role||"user"));
           var content = m.content!=null ? String(m.content) : (m.text!=null?String(m.text):"");
           if (role!=="user" && role!=="assistant") role="user";
           return { role: role, content: content };

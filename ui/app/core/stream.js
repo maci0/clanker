@@ -12,7 +12,7 @@ export function makeLineSplitter(onLine) {
       // and the raw {"type":"done"} JSON lands in the answer while the
       // turn's stats never render. JSON escapes control characters, so a
       // literal \x01 only ever appears as this marker.
-      buffer = buffer.replace(/([^\n])\u0001/g, "$1\n\u0001");
+      buffer = buffer.replace(/([^\n])\u0001/g, "$1\n\u0001"); // eslint-disable-line no-control-regex -- \u0001 is the /api/run stream marker
       var lines = buffer.split("\n");
       buffer = lines.pop();
       for (var i = 0; i < lines.length; i++) onLine(lines[i], true);
