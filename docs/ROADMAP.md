@@ -65,6 +65,41 @@
 
 ## Planned
 
+- **jcode feature audit (2026-08-21)** — inventory and decisions:
+  [docs/research/jcode-features.md](research/jcode-features.md),
+  [docs/digests/jcode.md](digests/jcode.md). **Implement-now (phase 1
+  shipped with this change):** provider `extra_body` ([PRD 0045](prds/0045-provider-extra-body.md),
+  [ADR 0034](adrs/0034-openai-compat-extra-body-is-a-provider-json-object-merged.md)),
+  Anthropic cache-cold warning ([PRD 0046](prds/0046-anthropic-cache-cold-warning.md),
+  [ADR 0035](adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md)),
+  grep outline on `repo_search` hits ([PRD 0047](prds/0047-structure-aware-grep-outline.md),
+  [ADR 0036](adrs/0036-repo-search-attaches-enclosing-symbols-to-grep-hits.md)).
+  **Later phases, not this round:** every-turn memory inject
+  ([PRD 0048](prds/0048-passive-memory-inject-on-every-turn.md)), file-touch
+  notify ([PRD 0049](prds/0049-file-touch-notify-for-live-sessions.md)),
+  foreign session import ([PRD 0050](prds/0050-foreign-session-import.md)),
+  first-class browser tool ([PRD 0051](prds/0051-first-class-browser-catalog-tool.md)).
+  Rejected: RAM/TTFF race, mermaid-rs, handterm, iOS, telemetry, self-dev
+  exec, Unix-socket daemon (ADR 0008), local ONNX embedder (PRD 0007).
+
+- **Kimi Code CLI feature audit (2026-08-21)** — inventory and decisions:
+  [docs/research/kimi-code-features.md](research/kimi-code-features.md),
+  [docs/digests/kimi-code.md](digests/kimi-code.md). **Implement-now (phase 1
+  shipped with this change):** `@path` mentions ([PRD 0052](prds/0052-composer-path-mention-expander.md),
+  [ADR 0041](adrs/0041-composer-path-mentions-expand-through-a-host-tested-helper.md)),
+  `/compact [hint]` ([PRD 0054](prds/0054-operator-compact-with-optional-hint.md),
+  [ADR 0043](adrs/0043-operator-compact-is-the-existing-summarizer-plus-an.md)),
+  markdown session export ([PRD 0055](prds/0055-markdown-session-export.md),
+  [ADR 0044](adrs/0044-markdown-session-export-is-a-second-renderer-in-the.md)).
+  **Later phases, not this round:** session permission modes
+  ([PRD 0053](prds/0053-session-permission-modes-on-confirm-writes.md)),
+  goal queue ([PRD 0056](prds/0056-goal-queue-started-only-on-complete.md)),
+  nested explore/plan/coder ([PRD 0057](prds/0057-nested-explore-plan-coder-presets.md)),
+  REPL steer inject ([PRD 0058](prds/0058-repl-mid-stream-inject-via-steer.md)).
+  Rejected: plugin marketplace (ADR 0007), Computer Use, Datasource,
+  WebSocket (PRD 0006), millisecond-startup race.
+
+
 - **SIXEL mascot rendering** — **shipped 2026-08-17** (code-complete): Kitty → SIXEL → cells with capability discovery, bounded 10fps, transparent-palette preservation, and fallback; upstream libvaxis change lives on `sixel-graphics` branch via [patches/vaxis-sixel-graphics.patch](../patches/vaxis-sixel-graphics.patch) (pin moves on merge). Manual terminal matrix across SIXEL/Kitty/no-image/multiplexer paths is external QA and does not block gates. ([PRD 0036](prds/0036-sixel-mascot-rendering.md) → [ADR 0013](adrs/0013-sixel-precedes-unicode-mascot-fallback.md))
 - **vaxis REPL: close the gap left by the deleted REPL** — full audit of `src/tui/repl.zig` against both the implementation it replaced and the other interactive surfaces (`clanker run`, the web UI) it now sits beside. `/model`, `/help`, the flag wiring, session persistence, and (2026-08-12) manual scrollback, the slash-command registry, and left-bar tool-call cards (all landed — see above and below) close seven items that used to be on this list; everything below is still open, roughly most-surprising first:
   - **No Tab-complete or fuzzy command palette.** (2026-08-13: both shipped, and this item is closed. Tab-complete is `completeSlashCommand` in `src/tui/repl.zig`, prefix completion over `command_registry` that edits the TextField in place rather than opening a modal. The fuzzy palette is Ctrl-P, a modal over the whole registry that matches mid-word and on the description, alongside Ctrl-R for transcript search.)

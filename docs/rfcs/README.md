@@ -93,6 +93,20 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0035 — How the REPL injects mid-stream like web steer](0035-repl-inject.md) — Decided
+- [RFC 0034 — How nested runs pick explore/plan/coder profiles](0034-nested-profiles.md) — Decided
+- [RFC 0033 — How a goal queue sits beside the one active goal](0033-goal-queue.md) — Decided
+- [RFC 0032 — How session export grows a markdown form](0032-session-export-md.md) — Decided
+- [RFC 0031 — How operator-triggered compact takes a hint](0031-compact-hint.md) — Decided
+- [RFC 0030 — How session permission modes sit on confirm_writes](0030-permission-modes.md) — Decided
+- [RFC 0029 — How composer @file mentions inject path contents](0029-file-mentions.md) — Decided
+- [RFC 0028 — Whether clanker ships a first-class browser catalog tool](0028-first-class-browser.md) — Decided
+- [RFC 0027 — Whether clanker imports foreign harness session transcripts](0027-foreign-session-resume.md) — Decided
+- [RFC 0026 — How live sessions are notified when a file they read is edited](0026-file-shift-notify.md) — Decided
+- [RFC 0025 — Whether every agent turn injects memory hits without a tool call](0025-passive-memory-inject.md) — Decided
+- [RFC 0024 — Whether repo_search attaches enclosing symbols to grep hits](0024-agent-grep-outline.md) — Decided
+- [RFC 0023 — How clanker warns that Anthropic prompt cache has gone cold](0023-cache-cold.md) — Decided
+- [RFC 0022 — How openai-compat extra_body is merged into chat requests](0022-extra-body.md) — Decided
 - [RFC 0021 — How improve-self promotions reach origin and the invoking checkout](0021-improve-promotion-landing-lifecycle.md) — Discussion
 - [RFC 0020 — How clanker drives an external coding agent (Claude Code, Codex, Grok)](0020-how-clanker-drives-claude-code-as-a-backend-agent.md) — Decided
 - [RFC 0019 — Shared state store for worktree-isolated runs and mesh peers](0019-shared-state-store.md) — Discussion
