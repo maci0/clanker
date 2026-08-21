@@ -36,6 +36,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- DAP `disconnect` honors `debug.disconnect_timeout_ms`: the adapter gets
+  that window to exit on its own after the disconnect response before the
+  registry SIGTERMs it. It used to be killed immediately, making the
+  config knob a no-op (PRD 0017 known issue).
+
 - `clanker improve-self` no longer dies with `ProposalRequestFailed` when the
   primary provider goes down or goes quiet: its proposal and plan LLM calls
   now route through the same `chatWithFallbackChain` the agent loop uses, so a
