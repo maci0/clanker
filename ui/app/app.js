@@ -1811,7 +1811,7 @@ function renderStats(turn, stats, task) {
   var actions = document.createElement("span");
   actions.className = "turn-foot-actions";
   actions.style.display = "inline-flex";
-  actions.style.gap = "0.4rem";
+  actions.style.gap = "var(--space-2)";
   actions.style.flexWrap = "wrap";
   var copyBtn = document.createElement("button");
   copyBtn.type = "button";
@@ -3127,7 +3127,7 @@ function buildChatMessage(m) {
       linkCard.textContent = trimmed;
       // keep original text too for copy, but add card beneath
       var unfurl = document.createElement("div");
-      unfurl.style.marginTop = "0.3rem";
+      unfurl.style.marginTop = "var(--space-2)";
       unfurl.appendChild(linkCard);
       wrap._unfurl = unfurl;
     }
@@ -4889,13 +4889,13 @@ el.runCopy.addEventListener("click", function () {
         // Accept {messages:[{role,content}]} or {conversations:[...]} or bare array
         var msgs = null; var title = "";
         if (Array.isArray(parsed)) msgs = parsed;
+        else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
-        else if (parsed && parsed.id && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         if (!msgs || !msgs.length){ uiToast("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
         // Normalize to StoredMessage shape the server expects
         var norm = msgs.map(function(m){
-          var role = (m.role==="assistant"||m.role==="assistant") ? "assistant" : (m.role==="user"?"user":String(m.role||"user"));
+          var role = (m.role==="assistant" || m.role==="system") ? m.role : (m.role==="user"?"user":String(m.role||"user"));
           var content = m.content!=null ? String(m.content) : (m.text!=null?String(m.text):"");
           if (role!=="user" && role!=="assistant") role="user";
           return { role: role, content: content };
@@ -4971,7 +4971,7 @@ wireRefresh(el.logsRefresh, loadLogList);
         var a=document.createElement("a"); a.href="#"; a.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+((r.duration_ms||0)+"ms");
         a.addEventListener("click", function(e){ e.preventDefault(); if(typeof openRun==="function") openRun(r.run_id); });
         li.appendChild(a);
-        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="0.5rem";
+        var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="var(--space-3)";
         rev.addEventListener("click", function(){
           uiConfirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.", { danger: true, confirmLabel: "Revert" }).then(function (yes) {
             if(!yes) return;

@@ -412,7 +412,7 @@ body {
 }
 @media (max-width: 40rem) {
   #app-masthead.pf-v6-c-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
-  #app-masthead .pf-v6-c-masthead__content { gap: 0.35rem 0.45rem; flex-wrap: nowrap; }
+  #app-masthead .pf-v6-c-masthead__content { gap: var(--space-1) var(--space-2); flex-wrap: nowrap; }
   /* Phone chrome is Menu, model, Jump, theme. Lamps and help live in
      System / the palette so they cannot wrap and clip here. */
   #instance-chip, #peers-chip, #session-chip, #help-open { display: none; }
@@ -594,7 +594,7 @@ main.pf-v6-c-page__main {
    Everything used to be stacked in one column, so reaching Tools meant
    scrolling past the whole transcript, the run graph and every room. */
 .rail-nav,
-.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: visible; }
+.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: clip; }
 .pf-v6-c-nav.rail-nav .pf-v6-c-nav__list { list-style: none; margin: 0; padding: 0; }
 .pf-v6-c-nav.rail-nav .pf-v6-c-nav__item { margin: 0; }
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the
@@ -714,17 +714,19 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
 .rail-tab[aria-selected="true"] .tab-count,
 .pf-v6-c-nav__link.rail-tab.pf-m-current .tab-count { color: var(--accent-text); }
 .view[hidden] { display: none; }
-/* Author `display` on `.pf-v6-c-form` beats the UA [hidden] rule, so a
-   compatibility form that is only `hidden` still paints. Same override as
-   .chip[hidden] / .overlay[hidden]. */
+/* Any flex/grid element with [hidden] would otherwise still paint: the
+   author display beats the UA [hidden] rule. Patch individually would
+   whack-a-mole; catch all. Must sit after component display rules.
+   Keep the explicit form[hidden] selector the test looks for too. */
 form[hidden] { display: none; }
+[hidden] { display: none !important; }
 .view:focus { outline: none; }
 .view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* The first section inside a view has nothing above it to be separated from. */
 .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 
 /* ---- transcript: a running list of turns, chat-style ---- */
-.transcript { display: flex; flex-direction: column; gap: var(--space-5); margin-top: var(--space-3); padding-bottom: var(--space-3); }
+.transcript { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); padding-bottom: var(--space-3); }
 .transcript:empty { display: none; }
 /* A turn is a job on the panel's record: seamed off from the one above,
    its number stamped in the margin, a blue strip lit while it runs.
@@ -793,7 +795,7 @@ form[hidden] { display: none; }
 .turn-you.md .md-h { margin: 0.4em 0 0.25em; font-size: 1em; }
 .turn-you.md ul, .turn-you.md ol { margin: 0.3em 0; }
 .turn-you.md .code-block { margin: 0.4em 0; }
-.turn-author { color: var(--fg); font-weight: 700; letter-spacing: -0.015em; }
+.turn-author { color: var(--fg); font-weight: 700; letter-spacing: -0.01em; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
 .turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
@@ -853,7 +855,7 @@ form[hidden] { display: none; }
   margin: var(--space-1) 0 var(--space-1) 1.1rem; padding: 0.3rem 0.5rem;
   font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
   background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius-lg);
-  white-space: pre-wrap; word-break: break-word; max-width: 60ch;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-width: 60ch;
 }
 .event-tool .dur { color: var(--fg-muted); }
 .spin {
@@ -980,7 +982,7 @@ form[hidden] { display: none; }
   padding: 0.05rem 0.45rem; border-radius: var(--radius-pill); cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  color: var(--accent-text); vertical-align: baseline; line-height: 1.4;
+  color: var(--accent-text); vertical-align: middle; line-height: 1;
 }
 .citation-chip:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface)); border-color: var(--accent); }
 .citation-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1056,7 +1058,7 @@ form[hidden] { display: none; }
 .md-preview { border-top: 1px solid var(--rule); }
 .md-preview iframe {
   display: block; width: 100%; height: 360px; border: 0;
-  background: #fff;
+  background: var(--surface);
 }
 
 /* ---- fenced code blocks inside a finished answer ----
@@ -1210,7 +1212,7 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
   outline-offset: -2px;
 }
 ::placeholder { color: var(--fg-muted); opacity: 1; }
-.composer textarea::placeholder { font-size: var(--step-0); }
+.composer textarea::placeholder { font-size: var(--step-0); opacity: 0.85; }
 .toolbar {
   display: flex; flex-wrap: wrap; justify-content: space-between;
   align-items: center; gap: var(--space-2) var(--space-3); margin-top: var(--space-2);
@@ -1222,9 +1224,9 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
    labeled pill so the control still names the action while a turn runs. */
 .composer .toolbar #cancel {
   display: inline-flex; align-items: center; justify-content: center;
-  gap: 0.35rem; min-height: 36px; padding-inline: 1rem; border-radius: var(--radius-pill);
+  gap: var(--space-1); min-height: 36px; padding-inline: 1rem; border-radius: var(--radius-pill);
 }
-.composer .toolbar #submit { display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem; }
+.composer .toolbar #submit { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
 .composer .toolbar #submit svg,
 .composer .toolbar #cancel svg { display: block; }
 /* The author display above beats the UA [hidden] rule (same trap as
@@ -1551,7 +1553,7 @@ h2 {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
-}.run-row:last-child { border-bottom: 0; }.run-row:hover { background: var(--accent-dim); }.run-row.is-selected { background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }.run-row.is-nested { padding-left: calc(var(--space-3) + 1rem); }.run-row-top { display: flex; align-items: baseline; gap: var(--space-3); }.run-row-task {
+}.run-row:last-child { border-bottom: 0; }.run-row:hover { background: var(--accent-dim); }.run-row.is-selected { background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }.run-row.is-nested { padding-left: calc(var(--space-3) + 1rem); }.run-row-top { display: flex; align-items: center; gap: var(--space-3); }.run-row-task {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }.run-row-when { flex: 0 0 auto; font-size: var(--step-0); color: var(--fg-muted); }.run-row-meta {
@@ -1824,9 +1826,9 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
   flex: none; min-width: 4.5rem; color: var(--fg-muted);
   text-transform: uppercase; letter-spacing: 0.1em; font-size: var(--step-0);
 }
-.palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .palette-hint { margin: var(--space-3) 0 0; color: var(--fg-muted); font-size: var(--step-0); }
-.shortcuts { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; margin: 0; font-size: var(--step-0); }
+.shortcuts { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-3); margin: 0; font-size: var(--step-0); }
 .shortcuts dt { font-family: var(--sans); font-weight: 600; color: var(--fg); white-space: nowrap; }
 .shortcuts dd { margin: 0; color: var(--fg-muted); }
 
@@ -2193,6 +2195,11 @@ mark {
 .board-empty {
   max-width: var(--measure); margin: var(--space-5) 0; padding: var(--space-4) 0;
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); text-align: left; color: var(--fg-muted);
+}
+/* Filter miss (board-filter-empty) reads as "no match" not "no data" — keep
+   the same left alignment so it doesn't float like the kanban placeholder. */
+#board-filter-empty {
+  margin: var(--space-4) 0; text-align: left; align-items: flex-start;
 }
 .board-empty[hidden] { display: none; }
 .board-empty strong {
@@ -2561,7 +2568,7 @@ h2#session-title {
 .board-col[data-collapsed="true"] { flex: 0 0 40px; min-width: 40px; max-width: 40px; cursor: pointer; opacity: 0.8; }
 .board-col[data-collapsed="true"]:hover { opacity: 1; }
 .board-col[data-collapsed="true"] .board-cards, .board-col[data-collapsed="true"] .board-quick-add, .board-col[data-collapsed="true"] .board-empty-slot { display: none; }
-.board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 0.06em; white-space: nowrap; }
+.board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 0.04em; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .board-col[data-collapsed="true"] .board-col-actions { display: none; }
 .board-col[data-collapsed="true"] .board-col-head { padding: 0.65rem var(--space-2); justify-content: center; }
 .board-col[data-drop="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); box-shadow: inset 0 0 0 2px var(--accent); }
@@ -2684,7 +2691,7 @@ h2#session-title {
 .card-desc-display {
   min-height: 40px; padding: 0.5rem var(--space-3); border-radius: var(--radius-lg);
   cursor: pointer; line-height: 1.5; font-size: var(--step-0);
-  white-space: pre-wrap; word-break: break-word;
+  white-space: pre-wrap; overflow-wrap: anywhere;
 }
 .card-desc-display.is-empty {
   background: var(--surface-2); color: var(--fg-muted); font-style: italic;
@@ -2712,7 +2719,7 @@ h2#session-title {
   background: var(--surface-2); color: var(--fg);
 }
 .card-detail-move-opt.is-current { background: var(--accent); color: var(--on-accent); }
-.card-detail-save-row { margin-top: var(--space-3); display: flex; gap: 8px; flex-wrap: wrap; }
+.card-detail-save-row { margin-top: var(--space-3); display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .card-activity-empty { font-style: italic; color: var(--fg-muted); padding: 0.5rem 0; }
 .card-comment-row { display: flex; gap: var(--space-2); align-items: center; margin-top: 0.5rem; }
 .card-comment-avatar { flex: none; background: var(--accent); color: var(--on-accent); }
@@ -2722,7 +2729,7 @@ h2#session-title {
 .board-wip-banner { font-size: var(--step--1); font-weight: 600; color: var(--warn-text); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid var(--warn); border-radius: var(--radius); padding: var(--space-1) 0.5rem; margin: 0.3rem 0.5rem; text-align: center; }
 .board-cards {
   list-style: none; margin: 0; padding: var(--space-1) var(--space-2) var(--space-2);
-  display: flex; flex-direction: column; gap: 0.5rem;
+  display: flex; flex-direction: column; gap: var(--space-2);
   overflow-y: auto; min-height: 2rem; flex: 1;
   scroll-behavior: smooth;
   scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 15%, transparent) transparent;
@@ -2767,7 +2774,7 @@ h2#session-title {
 .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .card[aria-current="true"] { box-shadow: inset 3px 0 0 var(--accent), var(--lift-low); }
 .card[aria-current="true"] .card-title { color: var(--accent-text); }
-.card[data-dragging="true"] { opacity: 0.35; transform: scale(0.97); box-shadow: none; }
+.card[data-dragging="true"] { opacity: 0.85; transform: scale(0.97) rotate(1deg); box-shadow: var(--lift-high); }
 /* Card quick-edit pencil — appears on hover */
 .card-quick-edit-btn {
   position: absolute; top: 4px; right: 4px; z-index: 3;
@@ -2967,7 +2974,7 @@ h2#session-title {
   padding: 0.3rem 0.7rem; font-size: var(--step--1); cursor: pointer; font-weight: 500;
   transition: background 120ms ease;
 }
-.card-detail-cover-btn:hover { background: color-mix(in srgb, #000 12%, var(--scrim)); }
+.card-detail-cover-btn:hover { background: color-mix(in srgb, var(--fg) 12%, var(--scrim)); }
 .card-detail-header {
   display: flex; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) var(--space-4) 0;
   position: sticky; top: 0; background: var(--surface); z-index: 2;
@@ -3133,7 +3140,8 @@ h2#session-title {
 .checklist-add button { flex: none; }
 .checklist-add[hidden] { display: none; }
 .checklist-tree { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
-.checklist-item { min-width: 18rem; }
+.checklist-item { min-width: 0; }
+@media (min-width: 40.01rem) { .checklist-item { min-width: 18rem; } }
 .checklist-children { margin-left: var(--space-4); padding-left: var(--space-3); border-left: 1px solid var(--rule); }
 .checklist-deps { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0 0 var(--space-2) 2rem; }
 .checklist-deps .card-flag { display: inline-flex; align-items: center; gap: var(--space-1); }
@@ -3283,7 +3291,7 @@ h2#session-title {
   .card:hover { transform: none; box-shadow: var(--lift); }
   .card[data-dragging="true"] { transform: none; }
 }
-@media (max-width: 900px) {
+@media (max-width: 56.25rem) {
   #view-fleet .runs { margin-top: var(--space-4); }
   .fleet-card { flex-direction: column; align-items: flex-start; }
   .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }

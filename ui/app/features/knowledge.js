@@ -180,7 +180,7 @@ function openCollection(id, docId){
     showSyncRow(id);
     var head=document.createElement("div"); head.className="run-detail-head";
     var t=document.createElement("span"); t.className="run-detail-title"; t.textContent=data.title||id; head.appendChild(t);
-    var share=document.createElement("button"); share.type="button"; share.className="secondary"; share.textContent="Copy link"; share.style.marginLeft="0.5rem";
+    var share=document.createElement("button"); share.type="button"; share.className="secondary"; share.textContent="Copy link"; share.style.marginLeft="var(--space-3)";
     share.addEventListener("click", function(){
       var url = window.location.origin + window.location.pathname + "#knowledge/" + encodeURIComponent(id);
       if (!navigator.clipboard || !window.isSecureContext) { uiPrompt("Share link", url); return; }
@@ -212,7 +212,7 @@ function openCollection(id, docId){
       }
       detail.appendChild(row);
     });
-    var addForm=document.createElement("form"); addForm.className="goal-form"; addForm.style.marginTop="1rem";
+    var addForm=document.createElement("form"); addForm.className="goal-form"; addForm.style.marginTop="var(--space-4)";
     var nId="knowledge-new-doc-name";
     var nLabel=document.createElement("label"); nLabel.setAttribute("for", nId); nLabel.textContent="New document name"; addForm.appendChild(nLabel);
     var nInput=document.createElement("input"); nInput.type="text"; nInput.id=nId; nInput.placeholder="e.g. notes.md"; nInput.maxLength=200; nInput.required=true; addForm.appendChild(nInput);

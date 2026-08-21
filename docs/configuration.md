@@ -78,6 +78,7 @@ unconfigured one.
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
+| `extra_body` | object | JSON object merged last into `openai_compat` and `azure_openai` chat bodies so non-standard fields (for example NVIDIA NIM `chat_template_kwargs`) can be sent. Same-name keys overwrite generated fields. Refused at load if it is not an object. Ignored by Anthropic/Vertex/Gemini codecs. |
 | `rpm` | int | Self-imposed requests per minute for every model on this provider. Omit or `0` = no cap. A model's own `rpm` is a separate cap on that name, not an override. |
 | `tool_schema` | string | Wire shape for tool calls: `openai` (default) or `none` (endpoint with no tool support). A model entry can override. |
 | `thinking_schema` | string | How the reasoning knob is encoded on the wire: `reasoning_effort` (default, the flat OpenAI field), `reasoning` (OpenRouter-style `{"reasoning":{"effort":...}}`), `thinking` (GLM/Zhipu `{"thinking":{"type":"enabled"}}`), or `none` (omit every reasoning field for endpoints that 400 on unknown keys). A model entry can override. |

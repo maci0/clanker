@@ -540,12 +540,17 @@ const sanitizeAlloc = sanitize.sanitizeAlloc;
 pub fn spansVaxis(state: *State, style: *const Style, gpa: std.mem.Allocator, line: []const u8, out: *std.ArrayList(vaxis.Segment)) !void {
     var toks: std.ArrayList(Token) = .empty;
     defer toks.deinit(gpa);
-    try highlightLine(state, gpa, line, &toks);
+    // Same whole-line strip as renderAlloc: the Zig tokenizer splits a lone
+    // ESC from the following "[2J", so per-token sanitize would leak CSI.
+    // `clean` is arena-owned (gpa's contract in this function is a caller
+    // arena whose lifetime covers the segments), so it is not freed here.
+    const clean = try sanitizeAlloc(gpa, line);
+    try highlightLine(state, gpa, clean, &toks);
     out.clearRetainingCapacity();
     for (toks.items) |tok| {
-        const clean = try sanitizeAlloc(gpa, tok.text);
-        if (clean.len == 0) continue;
-        try out.append(gpa, .{ .text = clean, .style = style.vaxisFor(tok.kind) });
+        const tok_clean = try sanitizeAlloc(gpa, tok.text);
+        if (tok_clean.len == 0) continue;
+        try out.append(gpa, .{ .text = tok_clean, .style = style.vaxisFor(tok.kind) });
     }
 }
 
@@ -563,8 +568,14 @@ fn renderAlloc(allocator: std.mem.Allocator, fence_lang: []const u8, code: []con
         if (line.len == 0 and it.peek() == null) break; // trailing newline
         if (!first) w.writer.writeAll("\n") catch {};
         first = false;
-        try highlightLine(&state, allocator, line, &toks);
+        // Strip escape sequences from the whole line before the tokenizer
+        // sees it: std.zig.Tokenizer splits a lone ESC byte from the "[2J"
+        // that follows, so per-token stripping would leak the CSI parameters
+        // as visible text (CWE-150).
+        const clean = try sanitizeAlloc(allocator, line);
+        try highlightLine(&state, allocator, clean, &toks);
         emit(&w.writer, style, toks.items);
+        if (clean.ptr != line.ptr) allocator.free(clean);
     }
     return allocator.dupe(u8, w.written());
 }
@@ -648,7 +659,9 @@ test "control bytes are stripped from highlighted code" {
     const style = Style.fromTheme(&theme_mod.Theme.default);
     const out = try renderAlloc(allocator, "zig", "const \x1b[2Jx = 1;\x07", &style);
     defer allocator.free(out);
-    try std.testing.expect(std.mem.find(u8, out, "[2Jx") != null);
+    // The CSI sequence ESC [ 2 J is consumed whole, not leaked as "[2J".
+    try std.testing.expect(std.mem.find(u8, out, "x") != null);
+    try std.testing.expect(std.mem.find(u8, out, "[2J") == null);
     // No raw ESC other than the SGR sequences the highlighter itself wrote.
     var i: usize = 0;
     while (i < out.len) : (i += 1) {

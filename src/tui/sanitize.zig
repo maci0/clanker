@@ -39,6 +39,12 @@ pub fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
             }
             i = j;
             start = i;
+        } else if (bytes[i] == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5B) {
+            // CSI sequence: ESC [ params final; consume it whole so the
+            // parameter bytes don't leak as visible "[31m" text.
+            if (i > start) w.writeAll(bytes[start..i]) catch {};
+            i = csiEnd(bytes, i);
+            start = i;
         } else if (isControl(bytes[i])) {
             if (i > start) w.writeAll(bytes[start..i]) catch {};
             i += 1;
@@ -61,7 +67,7 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
     var i: usize = 0;
     while (i < bytes.len) : (i += 1) {
         if (isControl(bytes[i]) or
-            (bytes[i] == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5D) or
+            (bytes[i] == 0x1B and i + 1 < bytes.len and (bytes[i + 1] == 0x5D or bytes[i + 1] == 0x5B)) or
             (bytes[i] == 0xC2 and i + 1 < bytes.len and bytes[i + 1] >= 0x80 and bytes[i + 1] <= 0x9F))
         {
             var out: std.ArrayList(u8) = .empty;
@@ -80,6 +86,8 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
                         k += 1;
                     }
                     j = k;
+                } else if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5B) {
+                    j = csiEnd(bytes, j);
                 } else if (isControl(bytes[j])) {
                     j += 1;
                 } else if (bytes[j] == 0xC2 and j + 1 < bytes.len and bytes[j + 1] >= 0x80 and bytes[j + 1] <= 0x9F) {
@@ -95,6 +103,27 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
     return bytes;
 }
 
+/// End (exclusive) of the CSI sequence starting at `bytes[i]`, which must be
+/// ESC '[' (0x1B 0x5B). Per ECMA-48 a CSI sequence is the introducer, then
+/// parameter bytes (0x30-0x3F) and intermediate bytes (0x20-0x2F), terminated
+/// by a final byte in 0x40-0x7E. A sequence with no final byte before end of
+/// input — or before a byte in none of those classes — is consumed through
+/// that point: what is left is escape machinery or malformed input, not text
+/// worth showing.
+pub fn csiEnd(bytes: []const u8, i: usize) usize {
+    var j = i + 2;
+    while (j < bytes.len) {
+        const c = bytes[j];
+        if (c >= 0x40 and c <= 0x7E) return j + 1; // final byte
+        if (c >= 0x20 and c <= 0x3F) { // parameter or intermediate
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    return j;
+}
+
 // ------------------------------------------------------------------- tests --
 
 test "isControl flags C0 and DEL, keeps newline and tab" {
@@ -106,11 +135,11 @@ test "isControl flags C0 and DEL, keeps newline and tab" {
     try std.testing.expect(!isControl('A'));
 }
 
-test "writeSanitized strips ESC and C1 but keeps text and multi-byte codepoints" {
+test "writeSanitized strips ESC, CSI and C1 but keeps text and multi-byte codepoints" {
     var buf: [256]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    writeSanitized(&w, "hello\x1b[31mworld");
-    try std.testing.expectEqualStrings("hello[31mworld", buf[0..w.end]);
+    writeSanitized(&w, "hello\x1b[31mworld"); // CSI sequence consumed whole
+    try std.testing.expectEqualStrings("helloworld", buf[0..w.end]);
 
     w = .fixed(&buf);
     writeSanitized(&w, "\xc2\x85safe"); // C1 NEL stripped
@@ -121,6 +150,17 @@ test "writeSanitized strips ESC and C1 but keeps text and multi-byte codepoints"
     try std.testing.expectEqualStrings("\xe2\x82\xac", buf[0..w.end]);
 }
 
+test "writeSanitized strips CSI sequences whole, not just the ESC byte" {
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    writeSanitized(&w, "a\x1b[31;1mb\x1b[?25l");
+    try std.testing.expectEqualStrings("ab", buf[0..w.end]);
+    // A sequence truncated at end of input (no final byte) is consumed too.
+    w = .fixed(&buf);
+    writeSanitized(&w, "x\x1b[31m");
+    try std.testing.expectEqualStrings("x", buf[0..w.end]);
+}
+
 test "sanitizeAlloc returns input unchanged when clean" {
     const clean = "hello world\n";
     const result = try sanitizeAlloc(std.testing.allocator, clean);
@@ -129,6 +169,13 @@ test "sanitizeAlloc returns input unchanged when clean" {
 
 test "sanitizeAlloc strips controls and allocates a copy" {
     const dirty = "a\x1bb\xc2\x85c";
+    const result = try sanitizeAlloc(std.testing.allocator, dirty);
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqualStrings("abc", result);
+}
+
+test "sanitizeAlloc strips CSI sequences whole" {
+    const dirty = "a\x1b[2Jb\xc2\x85c";
     const result = try sanitizeAlloc(std.testing.allocator, dirty);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("abc", result);

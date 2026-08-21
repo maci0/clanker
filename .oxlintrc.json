@@ -1,0 +1,67 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  // Anti-slop: syntactic shortcuts that read as AI-generated filler and
+  // survive `tsc`/`zig build` unnoticed. All warnings — visible locally
+  // and fail-able with `npx oxlint --deny-warnings` when you want a gate.
+  "rules": {
+    "no-console": "warn",
+    "no-empty-function": "warn",
+    // Loose equality is the classic LLM drift (`== null` vs `=== null`);
+    // tools/ts AssemblyScript targets intentionally use `==` against
+    // JKind discriminants so the override turns this off there.
+    "eqeqeq": "warn",
+    "no-duplicate-imports": "warn",
+    "no-useless-escape": "warn",
+    "typescript/no-explicit-any": "warn",
+    "typescript/no-non-null-assertion": "warn",
+    "typescript/no-non-null-asserted-optional-chain": "warn",
+    "typescript/no-empty-object-type": "warn",
+    // Existing debt (199 hits) would make `npx oxlint` always exit 1.
+    // Keep it as signal (warn) for now; promote back to error once debt
+    // is paid — see the snapshot below.
+    "no-unused-vars": ["warn", { "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }],
+    "no-unused-expressions": "warn",
+    "no-useless-empty-export": "warn"
+  },
+  "env": {
+    "builtin": true,
+    "browser": true,
+    "node": true
+  },
+  "ignorePatterns": [
+    "node_modules/**",
+    "tools/ts/node_modules/**",
+    "tools/ts/dist/**",
+    "zig-out/**",
+    "zig-cache/**",
+    "zig-pkg/**",
+    "ui/vendor/**",
+    "vendor/**",
+    "state/**",
+    ".clanker-worktrees/**",
+    ".zig-cache/**",
+    // AssemblyScript decorators (`@external`) not yet supported by oxlint's parser.
+    "tools/ts/calc_ts.ts",
+    "tools/ts/lib.ts"
+  ],
+  "overrides": [
+    {
+      "files": ["tools/ts/**/*.ts"],
+      "rules": {
+        "eqeqeq": "off",
+        "no-console": "off"
+      }
+    },
+    {
+      "files": ["**/*.test.{js,mjs,ts}", "**/*.spec.{js,mjs,ts}", "tests/**/*", "ui/app/**/*.test.mjs", "ui/**/*.test.mjs", "tools/**/*.test.*"],
+      "rules": {
+        "no-console": "off",
+        "no-empty-function": "off"
+      }
+    }
+  ]
+}

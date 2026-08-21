@@ -16,6 +16,7 @@ const config = @import("../config.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const token_stats = @import("../stats/tokens.zig");
+const cache_cold = @import("cache_cold.zig");
 const rate_limit = @import("rate_limit.zig");
 const build_options = @import("build_options");
 
@@ -306,6 +307,7 @@ pub fn chat(
     defer if (ctx.abort) |a| a.disarm(ctx.io);
 
     noteRequest();
+    warnIfCacheCold(ctx, provider);
     var attempt: u32 = 0;
     var outcome: FetchOutcome = undefined;
     while (true) {
@@ -733,6 +735,18 @@ pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
     return cost;
 }
 
+fn warnIfCacheCold(ctx: *Ctx, provider: *const config.Provider) void {
+    const now_ms: u64 = @intCast(@divTrunc(std.Io.Timestamp.now(ctx.io, .real).nanoseconds, std.time.ns_per_ms));
+    const model = provider.activeModelName();
+    const last = cache_cold.lastOk(provider.name, model);
+    if (cache_cold.shouldWarn(last, now_ms, cache_cold.default_ttl_ms)) {
+        const idle_s = (now_ms - last) / 1000;
+        log.log(.warn, "prompt cache likely cold for '{s}'/{s} ({d}s idle, ttl {d}s)", .{
+            provider.name, model, idle_s, cache_cold.default_ttl_ms / 1000,
+        });
+    }
+}
+
 /// Records one completion in the global token-usage log (best-effort). The
 /// caller supplies `duration_ms`; 0 means "unknown" (chat() times the whole
 /// call via `llm_t0` where the retry loop hides the true duration).
@@ -742,6 +756,24 @@ fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Prov
     // operator to how long the provider is taking. Same reason it sits before
     // the empty-usage return -- a call that reported no tokens still took time.
     noteLatency(duration_ms);
+    // Cache-cold is the same class of signal: a last-ok stamp and unexpected
+    // miss must land even when modules.token_stats is off or usage is empty
+    // of prompt/completion counts (ADR 0035). afterUsage no-ops when the
+    // provider reported no cache accounting.
+    if (usage) |u| {
+        const now_ms: u64 = @intCast(@divTrunc(std.Io.Timestamp.now(ctx.io, .real).nanoseconds, std.time.ns_per_ms));
+        if (cache_cold.afterUsage(
+            provider.name,
+            provider.activeModelName(),
+            u.prompt_cache_hit_tokens,
+            u.prompt_cache_miss_tokens,
+            now_ms,
+        )) {
+            log.log(.warn, "unexpected prompt-cache miss for '{s}'/{s}", .{
+                provider.name, provider.activeModelName(),
+            });
+        }
+    }
     const cfg = ctx.cfg orelse return;
     if (!cfg.modules.token_stats) return;
     const u = usage orelse return;
@@ -1081,6 +1113,7 @@ pub fn chatStream(
     defer if (ctx.abort) |a| a.disarm(ctx.io);
 
     noteRequest();
+    warnIfCacheCold(ctx, provider);
 
     var headers = baseHeaders();
     var extra: providers.ExtraHeaders = undefined;

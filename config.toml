@@ -34,6 +34,11 @@ default_provider = "moonshotai"
 # # 0 = no ceiling.
 # check_timeout_seconds = 3
 #
+# # JSON object merged last into openai_compat / azure chat bodies so
+# # non-standard fields (NVIDIA NIM chat_template_kwargs) can be sent.
+# # Same-name keys overwrite generated fields. Omit or leave empty for none.
+# extra_body = { chat_template_kwargs = { thinking = true } }
+#
 # # Self-imposed requests per minute for every model on this provider.
 # # A model's own rpm is a separate cap, not an override of this one.
 # rpm = 40

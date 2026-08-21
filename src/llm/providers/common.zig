@@ -110,6 +110,39 @@ pub fn joinBaseAndPath(gpa: std.mem.Allocator, provider: *const config.Provider,
     return std.fmt.allocPrint(gpa, "{s}{s}", .{ base, norm_path orelse path });
 }
 
+/// Overlay `extra_json` (a JSON object) onto `body` (a JSON object), extra
+/// keys last. Empty extra is a no-op copy. Invalid extra is fail-open: the
+/// original body is returned so a bad hatch cannot 400 the model. Config load
+/// already refused a non-object extra_body (ADR 0034).
+pub fn mergeExtraBody(gpa: std.mem.Allocator, body: []const u8, extra_json: []const u8) error{OutOfMemory}![]u8 {
+    if (extra_json.len == 0) return gpa.dupe(u8, body);
+    const extra_parsed = std.json.parseFromSlice(std.json.Value, gpa, extra_json, .{}) catch return gpa.dupe(u8, body);
+    defer extra_parsed.deinit();
+    if (extra_parsed.value != .object) return gpa.dupe(u8, body);
+
+    const body_parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return gpa.dupe(u8, body);
+    defer body_parsed.deinit();
+    if (body_parsed.value != .object) return gpa.dupe(u8, body);
+
+    var w: std.Io.Writer.Allocating = .init(gpa);
+    errdefer w.deinit();
+    var s = json.Stringify{ .writer = &w.writer, .options = .{} };
+    s.beginObject() catch return gpa.dupe(u8, body);
+    var bit = body_parsed.value.object.iterator();
+    while (bit.next()) |kv| {
+        if (extra_parsed.value.object.get(kv.key_ptr.*)) |_| continue;
+        s.objectField(kv.key_ptr.*) catch return gpa.dupe(u8, body);
+        s.write(kv.value_ptr.*) catch return gpa.dupe(u8, body);
+    }
+    var eit = extra_parsed.value.object.iterator();
+    while (eit.next()) |kv| {
+        s.objectField(kv.key_ptr.*) catch return gpa.dupe(u8, body);
+        s.write(kv.value_ptr.*) catch return gpa.dupe(u8, body);
+    }
+    s.endObject() catch return gpa.dupe(u8, body);
+    return w.toOwnedSlice();
+}
+
 /// The SSE sentinel that ends an OpenAI-style stream. Anthropic never sends
 /// it, but a proxy in front of one might, so both codecs honour it.
 pub fn isDoneSentinel(payload: []const u8) bool {
@@ -130,6 +163,30 @@ pub fn bearerAuthHeaders(
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "mergeExtraBody overlays keys last and leaves an empty extra unchanged" {
+    const gpa = std.testing.allocator;
+    const body = "{\"model\":\"m\",\"max_tokens\":16}";
+    const copied = try mergeExtraBody(gpa, body, "");
+    defer gpa.free(copied);
+    try std.testing.expectEqualStrings(body, copied);
+
+    const merged = try mergeExtraBody(gpa, body, "{\"chat_template_kwargs\":{\"thinking\":true},\"max_tokens\":32}");
+    defer gpa.free(merged);
+    try std.testing.expect(std.mem.find(u8, merged, "\"chat_template_kwargs\"") != null);
+    try std.testing.expect(std.mem.find(u8, merged, "\"thinking\":true") != null);
+    try std.testing.expect(std.mem.find(u8, merged, "\"max_tokens\":32") != null);
+    try std.testing.expect(std.mem.find(u8, merged, "\"max_tokens\":16") == null);
+    try std.testing.expect(std.mem.find(u8, merged, "\"model\":\"m\"") != null);
+}
+
+test "mergeExtraBody fail-opens on a non-object extra" {
+    const gpa = std.testing.allocator;
+    const body = "{\"model\":\"m\"}";
+    const copied = try mergeExtraBody(gpa, body, "[1]");
+    defer gpa.free(copied);
+    try std.testing.expectEqualStrings(body, copied);
+}
 
 test "a path override replaces the kind default and is slash-normalized" {
     const gpa = std.testing.allocator;

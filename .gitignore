@@ -5,7 +5,8 @@
 zig-out/
 zig-pkg/
 
-# AssemblyScript toolchain and its build output (tools/ts/dist/ IS committed)
+# JS toolchain (root oxlint + per-tool toolchains)
+node_modules/
 tools/ts/node_modules/
 tools/ts/build/
 

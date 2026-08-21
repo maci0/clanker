@@ -115,3 +115,54 @@ the generic "output the JSON in the content field" that a budget-starved
 reasoning model cannot satisfy. The `parseProposal` failure path does the same
 for a truncated object instead of the JSON-escaping lecture. The plan phase
 logs the same completion shape. Verified with `zig build` / `zig fmt --check`.
+## Follow-up 2026-08-20: fallback wiring completes the fix
+
+The deadline fix above was necessary but not sufficient: when the primary is
+*down* (not merely silent), the run now fails fast with `ProposalRequestFailed`
+instead of hanging — but it still fails. This is exactly the reported batch
+(`request_id=improve`):
+
+```
+provider 'ollama' did not answer within 900000ms; abandoning the request
+request to 'ollama' failed: HttpConnectionClosing (attempt 1/3)
+proposal request failed: Timeout (couldn't reach 'ollama' (HttpConnectionClosing))
+error: ProposalRequestFailed
+```
+
+`chatWithDeadline` aborted the wedged call at the 900s ceiling and returned
+`error.Timeout`, which the existing `catch` logged and turned into
+`error.ProposalRequestFailed` — a clean failure, but the improve-self run still
+exited 1 even though `agent.fallback_providers` listed healthy providers.
+
+Fix (this change): the improve engine's proposal and plan LLM calls now route
+through the same `chatWithFallbackChain` the agent loop uses
+(`src/agent/loop.zig`), instead of calling `client.chatWithDeadline` directly.
+`chatWithFallbackChain` with `on_delta == null` still uses the caller-thread
+`client.chatWithDeadline(..., cfg.agent.request_timeout_ms)` path, so the
+whole-call deadline, the retry-before-timeout behaviour, and the thread-local
+log context the original resolution chose `chatWithDeadline` for are all
+preserved. On a deadline lapse or transport failure it walks
+`agent.fallback_providers` (skipping unknown/unconfigured names, the same
+offline gate as the agent loop) and repoints `self.provider` to whoever served,
+so a later iteration and the plan phase keep using the healthy fallback. Only
+when the whole chain is exhausted does it surface `ProposalRequestFailed`.
+
+Verified: new e2e `tests/e2e/improve_fallback_test.zig` drives a real
+`improve-self --dry-run --iters 1` with a never-listening primary
+(`127.0.0.1:9`, the same discard port the mesh fixtures use) and a scripted mock
+fallback; it asserts the run exits 0 and the mock received ≥1 request, proving
+the improve engine routed its LLM call through the fallback rather than dying.
+`zig build`, `zig build tools`, `zig build test`, `zig build e2e`, `zig fmt
+--check` all pass.
+
+Two other lines in the reported batch are not defects and need no fix:
+
+- `plan: response was not a usable idea list` is the plan phase's soft-failure
+  path: a malformed idea list is logged at warn and the engine falls back to a
+  single-shot proposal. With the fallback wiring, a plan response that fails
+  because the primary is down now also recovers via the fallback chain.
+- `proposal rejected: 'evals/bugreport.task.json' already exists and may only
+  be added to, not rewritten` is the append-only guard on `evals/*.task.json`
+  (ADR: evals are append-only) working as intended — the improve loop proposed
+  overwriting a tracked eval task and the engine correctly refused. That file
+  is a real tracked eval task and must not be deleted or rewritten.

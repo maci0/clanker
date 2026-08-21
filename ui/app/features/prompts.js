@@ -122,7 +122,7 @@ function renderPrompts(prompts){
     card.appendChild(body);
     var meta=document.createElement("div"); meta.className="meta";
     meta.textContent=p.id+(p.updated?" · "+new Date(p.updated*1000).toLocaleString():"");
-    meta.style.marginTop="0.35rem"; card.appendChild(meta);
+    meta.style.marginTop="var(--space-2)"; card.appendChild(meta);
     listEl.appendChild(card);
   });
   applyPromptFilter();

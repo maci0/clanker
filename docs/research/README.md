@@ -176,6 +176,8 @@ Two checks, because both have caught real errors in finished notes:
 ## Inventory
 
 <!-- inventory:research:start -->
+- [Kimi Code CLI feature inventory for clanker](kimi-code-features.md) — Current
+- [jcode feature inventory for clanker](jcode-features.md) — Current
 - [Stage-1 spike — replicating one owner stream between two instances](t-stage1-stream-replication-spike.md) — Draft
 - [Decentralized state store for isolated worktrees and mesh peers](decentralized-state-store.md) — Current
 - [Free LLM endpoints for testing](free-llm-endpoints.md) — Current

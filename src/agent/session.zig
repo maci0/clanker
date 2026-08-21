@@ -8,6 +8,7 @@
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const sqlite = @import("../util/sqlite.zig");
+const session_fts = @import("session_fts.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
 
@@ -153,7 +154,6 @@ fn encodeToolCalls(arena: std.mem.Allocator, calls: ?[]const types.ToolCall) ![]
 /// the transcript replaced (the messages table is the mutable projection),
 /// in one transaction. The events table is never touched here.
 pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, session: Session) !void {
-    _ = gpa;
     if (!validSessionId(session.id)) return error.InvalidSessionId;
     std.Io.Dir.cwd().createDirPath(io, sessions_dir) catch {};
 
@@ -187,6 +187,9 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         _ = try ins.step();
     }
     try tx.commit();
+    // Cross-session full-text index (fail-open: a missing index only costs
+    // the next search its speedup).
+    session_fts.replaceSession(io, gpa, arena, session.id, session.messages);
 }
 
 pub const StoredToolCall = struct {
@@ -757,6 +760,7 @@ pub fn snippetAround(arena: std.mem.Allocator, text: []const u8, at: usize, matc
 /// search, matching how the listing treats a corrupt session.
 pub fn searchSessions(
     io: std.Io,
+    gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
     sessions_dir: []const u8,
     query: []const u8,
@@ -764,8 +768,26 @@ pub fn searchSessions(
 ) ![]SearchHit {
     var out: std.ArrayList(SearchHit) = .empty;
     const metas = try listSessions(io, arena, sessions_dir);
+    // Fast path: the FTS index names candidate sessions (substring
+    // semantics via the trigram tokenizer); each candidate is then scanned
+    // exactly for the turn/role/snippet the caller expects. No index ->
+    // full linear scan.
+    const fts_ids = session_fts.candidates(io, gpa, arena, query);
     for (metas) |meta| {
         if (out.items.len >= max_hits) break;
+        // Indexed: only candidate sessions are scanned. No index: every
+        // session is scanned (the title is never a pre-filter, a query may
+        // match only inside messages).
+        if (fts_ids) |ids| {
+            var in_index = false;
+            for (ids) |cid| {
+                if (std.mem.eql(u8, cid, meta.id)) {
+                    in_index = true;
+                    break;
+                }
+            }
+            if (!in_index) continue;
+        }
         var conn = openDb(arena, sessions_dir, meta.id) catch continue;
         defer conn.close();
         var stmt = conn.prepare("SELECT role, content FROM messages ORDER BY seq;") catch continue;
@@ -1058,7 +1080,7 @@ test "a fork copies the conversation; search finds text in the transcript" {
     try std.testing.expect(std.mem.startsWith(u8, f.title, "fork of"));
     try std.testing.expectEqual(@as(usize, 2), f.messages.len);
 
-    const hits = try searchSessions(io, arena, dir, "hi there", 10);
+    const hits = try searchSessions(io, std.testing.allocator, arena, dir, "hi there", 10);
     try std.testing.expectEqual(@as(usize, 2), hits.len);
     try std.testing.expect(std.mem.find(u8, hits[0].snippet, "hi there") != null);
 }

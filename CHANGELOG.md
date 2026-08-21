@@ -5,13 +5,61 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- Composer `@rel/path` mentions expand into fenced file bytes on REPL
+  submit (dotenv, `..`, and absolute paths are refused; files over 32 KiB
+  truncate). Markdown `clanker session export` when the destination ends
+  in `.md`. `/compact [hint]` schedules a history compact on the next
+  turn and can tell the summarizer what to keep.
+
+- `providers.<name>.extra_body`: a JSON object merged last into
+  `openai_compat` and `azure_openai` chat bodies so gateways that need
+  non-standard fields (NVIDIA NIM `chat_template_kwargs`) can enable
+  thinking. Refused at config load if it is not an object. Same-name keys
+  overwrite generated fields.
+
+- Prompt-cache idle warning: after a cache-accounted completion, a pause
+  longer than five minutes on *that* provider/model logs that Anthropic's
+  prompt cache is likely cold before the next send, and an unexpected
+  miss (warm expected, `cache_hit` 0) is logged after. The stamp is
+  independent of `modules.token_stats`.
+
+- `repo_search` rg, ast-grep, and host-fallback (`ck_fs_grep` when rg is
+  missing) hits include `symbol` / `symbol_kind` / `symbol_line` for the
+  enclosing declaration (Zig first, with a `def`/`function`/`class`
+  fallback) so the model can see file shape without a follow-up read.
+
+- `clanker rfc create` now passes a fourth positional as the research
+  note path, so `create` can link `docs/research/` the way the `rfc` tool
+  already did.
+
 ### Fixed
+
+- `clanker improve-self` no longer dies with `ProposalRequestFailed` when the
+  primary provider goes down or goes quiet: its proposal and plan LLM calls
+  now route through the same `chatWithFallbackChain` the agent loop uses, so a
+  down primary falls back to a configured `agent.fallback_providers` provider
+  instead of aborting the whole improve run after the deadline. The
+  caller-thread `chatWithDeadline` ceiling (`agent.request_timeout_ms`) is
+  preserved, so a provider that accepts and goes silent still aborts rather
+  than hanging
+  ([bug](docs/reports/bugs/2026-08-18-improve-engine-llm-calls-have-no-deadline.md)).
 
 - The `UnknownProvider` hint no longer claims the name is missing from
   `config.toml`: providers merge from `config.toml` + `config.local.toml`,
   so a provider defined only locally made the old wording a false lead —
   it sent the vertex HTTP 400 re-evaluation to the wrong file. The hint
   now names the merged config.
+
+- The parallel tool worker builds its sandbox through `host.sandboxFor`
+  instead of a hand-rolled `Sandbox` literal, which had drifted to omit the
+  descriptor's `session` grant. Session tools (`sessions`, `session_search`,
+  `session_export`) running in parallel were denied `ck_session`, so the
+  `session_search` capability eval failed and improve-self rejected every
+  staged tree. Delegating to the single source of truth also restored
+  `network_from_config` and the research `web.allow` hosts on the parallel
+  path.
 
 - `DELETE /api/sessions/<id>` now deletes the conversation's spills and its
   exported transcript, not only `state/sessions/<id>.json`.
@@ -31,6 +79,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   task prose. Both now log the byte count beside the error, as `ck_chat`
   already did.
 
+- The TUI no longer leaks CSI escape-sequence parameter bytes as visible
+  text. `sanitize.zig` (`writeSanitized`, `sanitizeAlloc`) and the
+  transcript's `cardPreview` consumed OSC sequences whole but stripped only
+  the ESC byte of a CSI sequence (`ESC [ params final`), so `\x1b[31mred`
+  rendered as `[31mred`. Both now consume CSI whole, and `syntax.zig`
+  strips the whole line before tokenizing (the Zig tokenizer splits a lone
+  ESC from the `[2J` that follows, which would otherwise still leak the
+  parameters). This is the improvement the improve-self loop tried five
+  times to land and failed because each patch only touched `sanitize.zig`.
+
 ### Added
 
 - **Sessions moved to SQLite**: one database per conversation
@@ -44,6 +102,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   dense per-stream seq cursors: appends accepted at cursor+1, duplicates
   dropped, gaps reported for backfill ([ADR 0033](docs/adrs/0033-sessions-are-per-session-sqlite-databases-with-an-append.md),
   [PRD 0044](docs/prds/0044-per-session-sqlite-store-with-an-append-only-event-stream.md)).
+  **The four open items shipped** (2026-08-20): automatic fan-out
+  (`session_sync.pushTail` runs after every session save), serve-start
+  backfill (`session_sync.backfill` at serve start, gap resend on 409), a
+  cross-session FTS5 trigram index (`session_fts.zig`, maintained on save,
+  linear-scan fallback), and replica transcript projection
+  (`session_sync.pullTranscript`, so a peer resumes a session rather than
+  only auditing its events).
 
 - Sessions record the **system prompt snapshot** the model was running
   against (`system_prompt` on the stored session, saved from the agent's

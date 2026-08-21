@@ -88,7 +88,7 @@
 
 
 /* ---- run canvas: llm -> tool(s) -> llm -> ... -> final, drawn as nodes and edges ---- */
-.run-canvas { position: relative; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); max-height: min(60vh, 520px); }
+.run-canvas { position: relative; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); max-height: min(55vh, 520px); padding-bottom: 92px; }
 
 .run-crumbs { scrollbar-width: thin; }
 
@@ -234,7 +234,7 @@
 
 .diff-line[data-kind="hunk"] { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--accent-text); font-weight: 600; }
 
-.diff-gutter { flex: none; width: 2.2rem; text-align: right; padding-right: 0.5rem; color: var(--fg-muted); user-select: none; }
+.diff-gutter { flex: none; min-width: 2.8rem; width: auto; text-align: right; padding-right: var(--space-2); color: var(--fg-muted); user-select: none; }
 
 .diff-sign { flex: none; width: 1rem; text-align: center; user-select: none; }
 
@@ -285,6 +285,9 @@
 .json-node > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .json-children { margin-left: 1.1rem; border-left: 1px dashed var(--rule); padding-left: var(--space-3); }
+@media (max-width: 40rem) {
+  .json-children { margin-left: var(--space-3); padding-left: var(--space-2); border-left-style: solid; }
+}
 
 .json-empty { color: var(--fg-muted); }
 
@@ -366,7 +369,7 @@
   display: flex; align-items: center; gap: var(--space-1);
   padding: var(--space-1) 0.75rem; font-size: var(--step-0); font-weight: 600;
   color: var(--fg-muted); cursor: pointer; user-select: none;
-  text-transform: uppercase; letter-spacing: 0.03em;
+  text-transform: uppercase; letter-spacing: 0.06em;
   /* A real button now, so it needs the button reset a row of slack-room-item
      buttons already has: full width, no UA border/background, text left. */
   width: 100%; text-align: left; border: 0; background: none;
@@ -422,7 +425,7 @@
 .slack-room-icon { width: 16px; text-align: center; flex-shrink: 0; font-size: var(--step-0); }
 
 .slack-room-name {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .slack-room-badge {
@@ -430,7 +433,7 @@
   font-size: var(--step--2); font-weight: 700; min-width: 18px;
   height: 18px; border-radius: var(--radius-pill);
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 0 5px; flex-shrink: 0;
+  padding: 0 var(--space-1); flex-shrink: 0;
 }
 
 .slack-room-item.is-active .slack-room-badge {
@@ -447,7 +450,7 @@
 .slack-presence-dot.is-away { background: transparent; border-color: var(--warn); }
 
 .slack-room-item-name {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--step-0);
 }
 
@@ -457,7 +460,7 @@
   background: var(--danger); color: var(--on-danger);
   font-size: var(--step--2); font-weight: 700; min-width: 18px; height: 18px;
   border-radius: var(--radius-pill); display: inline-flex; align-items: center;
-  justify-content: center; padding: 0 5px; flex-shrink: 0;
+  justify-content: center; padding: 0 var(--space-1); flex-shrink: 0;
 }
 
 .slack-room-item.is-active .slack-room-item-count {
@@ -495,7 +498,12 @@
   font-size: var(--step-0); color: var(--fg-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   border-left: 1px solid var(--rule); padding-left: 0.5rem; margin-left: var(--space-1);
-  cursor: pointer;
+  cursor: pointer; min-width: 0;
+}
+@media (max-width: 48rem) {
+  .slack-channel-topic {
+    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
 }
 
 .slack-channel-topic:hover { color: var(--fg); text-decoration: underline dotted; }
@@ -536,12 +544,12 @@
 .slack-search-bar input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .slack-search-results {
-  width: 100%; max-height: 200px; overflow-y: auto;
+  width: 100%; max-height: min(30vh, 200px); overflow-y: auto;
   margin-top: var(--space-1); font-size: var(--step-0);
 }
 
 .slack-search-result {
-  display: block; width: 100%; text-align: left; padding: 0.35rem 0.5rem;
+  display: block; width: 100%; text-align: left; padding: var(--space-2) var(--space-3);
   border: none; border-bottom: 1px solid var(--rule); background: none;
   color: var(--fg); cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -565,8 +573,8 @@
 }
 
 .slack-pins-panel {
-  border-bottom: 1px solid var(--rule); padding: 0.5rem 1rem;
-  max-height: 240px; overflow-y: auto; background: var(--bg);
+  border-bottom: 1px solid var(--rule); padding: var(--space-2) 1rem;
+  max-height: min(30vh, 240px); overflow-y: auto; background: var(--bg);
 }
 
 .slack-pins-head {
@@ -597,7 +605,7 @@
 }
 
 .slack-composer-row {
-  display: flex; align-items: center; gap: 0.5rem;
+  display: flex; align-items: center; gap: var(--space-2);
 }
 
 .slack-composer-row input[type="text"] {
@@ -683,7 +691,7 @@
 
 /* ── Typing indicator ── */
 .slack-typing-indicator {
-  padding: 0.15rem 1rem; font-size: var(--step--1); color: var(--fg-muted);
+  padding: var(--space-1) 1rem; font-size: var(--step--1); color: var(--fg-muted);
   min-height: 1.25rem; flex-shrink: 0;
 }
 
@@ -742,7 +750,7 @@
   .slack-sidebar-toggle { display: inline-flex; }
   .slack-sidebar-scrim {
     display: block; position: absolute; inset: 0; z-index: 25;
-    background: color-mix(in srgb, var(--fg) 28%, transparent);
+    background: var(--scrim);
   }
   .slack-sidebar.is-collapsed + .slack-sidebar-scrim { display: none; }
   .slack-channel-header { padding: var(--space-2) 0.75rem; }
@@ -762,10 +770,8 @@
   display: flex; flex-direction: column; gap: 0.5rem;
 }
 
-.chat-log:empty::before {
-  content: "Loading messages…"; color: var(--fg-muted);
-  font-family: var(--sans); font-size: var(--step-0);
-}
+/* Loading/empty text is rendered by JS (.run-empty / .chat-empty) — the
+   pseudo here used to double it when a DOM empty node was also present. */
 
 /* Slack-style "New messages" divider */
 .chat-unread-divider {
@@ -785,24 +791,24 @@
   white-space: nowrap;
 }
 
-.chat-msg { position: relative; font-family: var(--sans); font-size: var(--step-0); line-height: 1.5; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 0.15rem; align-items: stretch; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; }
+.chat-msg { position: relative; font-family: var(--sans); font-size: var(--step-0); line-height: 1.5; overflow-wrap: anywhere; display: flex; flex-direction: column; gap: 0.15rem; align-items: stretch; padding: 0.35rem 0.5rem; border-radius: var(--radius); border-left: 2px solid transparent; box-sizing: border-box; }
 
 .chat-msg[data-grouped="true"] { padding-top: 0.2rem; padding-bottom: 0.2rem; }
 
 .chat-msg[data-grouped="true"] .chat-meta { display: none; }
 
-.chat-gutter-time { font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: center; }
+.chat-gutter-time { font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: flex-end; }
 
 .chat-msg:hover .chat-gutter-time, .chat-msg:focus-within .chat-gutter-time { opacity: 1; }
 
-.chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem var(--space-1); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--lift-low); }
+.chat-actions { position: absolute; top: -10px; right: 0.6rem; display: none; align-items: center; gap: 0.2rem; padding: 0.15rem var(--space-1); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--lift-low); z-index: 1; }
 
 .chat-msg:hover .chat-actions, .chat-msg:focus-within .chat-actions { display: flex; }
 
 @media (hover: none) {
   .chat-msg:not(.chat-msg-deleted) .chat-actions {
     display: flex; position: static; top: auto; right: auto;
-    margin-top: 0.35rem; flex-wrap: wrap; box-shadow: none;
+    margin-top: var(--space-2); flex-wrap: wrap; box-shadow: none;
   }
 }
 
@@ -909,8 +915,8 @@
 
 .chat-composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; align-items: stretch; }
 
-.chat-composer input {
-  flex: 1; min-width: 12rem; min-height: 40px; padding: 0.45rem 0.75rem;
+.chat-composer input[type="text"] {
+  flex: 1; min-width: 0; min-height: 40px; padding: 0.45rem 0.75rem;
   font-family: var(--sans); font-size: var(--step-0);
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius-pill);
@@ -1001,7 +1007,7 @@
 }
 
 .models-edit-form label {
-  display: flex; flex-direction: column; gap: 0.2rem;
+  display: flex; flex-direction: column; gap: var(--space-1);
   font-size: var(--step--1); color: var(--fg-muted);
 }
 
@@ -1091,7 +1097,7 @@
 .prompt-body {
   margin: var(--space-3) 0 0; padding: 0;
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-  white-space: pre-wrap; word-break: break-word;
+  white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 9rem; overflow: auto;
 }
 
@@ -1210,7 +1216,7 @@ button.tool-name:hover { color: var(--accent-text); }
   display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; padding-top: 0.35rem;
 }
 
-.tool-field { display: flex; flex-direction: column; gap: 0.2rem; }
+.tool-field { display: flex; flex-direction: column; gap: var(--space-1); }
 
 .tool-field label {
   margin: 0; font-size: var(--step-0); letter-spacing: 0.1em;
@@ -1236,11 +1242,6 @@ button.tool-name:hover { color: var(--accent-text); }
 
 
 /* ---- goals: what the agent is steering toward ---- */
-@media (max-width: 40rem) {
-.slack-room-item {
-    min-height: 44px;
-  }
-}
 @media (forced-colors: active) {
 .run-edges path { stroke: CanvasText; }
 }
@@ -1262,7 +1263,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .fleet-roster-head {
   font-family: var(--mono); font-size: var(--step--1); font-weight: 700;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-muted);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
   margin: 0 0 var(--space-2);
 }
 
@@ -1479,7 +1480,7 @@ button.tool-name:hover { color: var(--accent-text); }
   .mesh-node--working .mesh-node-halo { animation: none; opacity: 0.35; }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 45rem) {
   .mesh-map, .mesh-map svg { min-height: 16rem; height: 16rem; }
 }
 
@@ -1536,9 +1537,9 @@ button.tool-name:hover { color: var(--accent-text); }
 
 @keyframes arena-lamp-pulse { 50% { opacity: 0.35; } }
 
-.arena-combatants { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 6px 0; }
+.arena-combatants { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: var(--space-2) 0; }
 
-.arena-combatant { display: flex; align-items: center; gap: 8px; font-size: var(--step-0); }
+.arena-combatant { display: flex; align-items: center; gap: var(--space-2); font-size: var(--step-0); }
 
 .arena-combatant[data-out="true"] { opacity: 0.55; }
 
@@ -1578,7 +1579,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .compare-prompt { font-weight: 600; margin: var(--space-3) 0 0.2rem; }
 
-.compare-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: var(--space-3, 12px); align-items: start; }
+.compare-answers { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-3, 12px); align-items: start; }
 
 .compare-answer { display: flex; flex-direction: column; gap: 6px; background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); padding: 10px 12px; }
 

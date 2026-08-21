@@ -30,6 +30,7 @@ pub const Options = struct {
     /// `create`: the slug. `update`: the new text. `recommend`: the
     /// confidence. `status`: the note.
     arg3: ?[]const u8 = null,
+    /// `create`: the research note path (`docs/research/<name>.md`).
     /// `recommend`: the rationale.
     arg4: ?[]const u8 = null,
 };
@@ -117,6 +118,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         .{ .name = "title", .value = .{ .text = title } },
         .{ .name = "overview", .value = .{ .text = overview } },
         .{ .name = "slug", .value = common.Field.optional(opts.arg3) },
+        .{ .name = "research", .value = common.Field.optional(opts.arg4) },
     });
 
     const result = try common.callTool(arena, "rfc", tool, input);
@@ -366,6 +368,31 @@ test "renderSearch with no hits points at create rather than reporting an error"
     const text = try renderSearch(arena, "quantum", &.{}, &.{});
     try testing.expect(std.mem.find(u8, text, "no RFC or ADR mentions") != null);
     try testing.expect(std.mem.find(u8, text, "clanker rfc create") != null);
+}
+
+test "create passes a research path to the tool when arg4 is set" {
+    const Ctx = struct {
+        captured: []const u8 = "",
+        fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.captured = input;
+            return "{\"ok\":true,\"path\":\"docs/rfcs/0022-x.md\",\"indexed\":true}";
+        }
+    };
+    var ctx = Ctx{};
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const tool = Tool{ .ctx = &ctx, .call = Ctx.call };
+    const text = try create(arena, .{
+        .arg1 = "HTTP client",
+        .arg2 = "The proxy needs one",
+        .arg3 = "http-client",
+        .arg4 = "docs/research/jcode-features.md",
+    }, tool);
+    try testing.expect(std.mem.find(u8, text, "docs/rfcs/0022-x.md") != null);
+    try testing.expect(std.mem.find(u8, ctx.captured, "\"research\":\"docs/research/jcode-features.md\"") != null);
+    try testing.expect(std.mem.find(u8, ctx.captured, "\"slug\":\"http-client\"") != null);
 }
 
 test "renderChecklist prints the question to ask under each requirement" {

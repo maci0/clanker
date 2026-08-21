@@ -258,7 +258,10 @@ test "clanker run --worktree: goal and session state stay in the checkout" {
     const goals = try tmp.dir.readFileAlloc(io, "state/goals.json", gpa, .limited(1 << 20));
     defer gpa.free(goals);
     try std.testing.expect(std.mem.find(u8, goals, "exercise shared worktree state") != null);
-    const session = try tmp.dir.readFileAlloc(io, "state/sessions/worktree-state.json", gpa, .limited(1 << 20));
+    // Sessions are SQLite files (`db_suffix = ".db"`, ADR 0033): the store
+    // migrated away from JSON. Read the .db and look for the task text, which
+    // SQLite stores as a contiguous string in the messages table.
+    const session = try tmp.dir.readFileAlloc(io, "state/sessions/worktree-state.db", gpa, .limited(1 << 20));
     defer gpa.free(session);
     try std.testing.expect(std.mem.find(u8, session, "persist a goal") != null);
 }

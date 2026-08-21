@@ -191,7 +191,7 @@ test("spacing that lands on a rung of the scale is written as the token", () => 
       for (const part of m[2].split(/[\s(,]+/)) {
         const token = SPACE_STEPS[part];
         // A negative offset has no token; it is a nudge off the rhythm.
-        if (!token || /-$/.test(m[2].slice(0, m[2].indexOf(part)))) continue;
+        if (!token || m[2].slice(0, m[2].indexOf(part)).endsWith("-")) continue;
         strays.push(`${name}:${css.slice(0, m.index).split("\n").length}  ${part} is var(${token})`);
       }
     }

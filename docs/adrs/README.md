@@ -81,6 +81,21 @@ its current text.
 ## Inventory
 
 <!-- inventory:adr:start -->
+- [ADR 0047 — REPL mid-stream inject is the existing steer queue](0047-repl-mid-stream-inject-is-the-existing-steer-queue.md) — Accepted
+- [ADR 0046 — Nested explore/plan/coder types are shipped presets named by subagent_type](0046-nested-explore-plan-coder-types-are-shipped-presets-named.md) — Accepted
+- [ADR 0045 — A goal queue starts the next objective only when the current goal completes](0045-a-goal-queue-starts-the-next-objective-only-when-the.md) — Accepted
+- [ADR 0044 — Markdown session export is a second renderer in the session_export guest](0044-markdown-session-export-is-a-second-renderer-in-the.md) — Accepted
+- [ADR 0043 — Operator /compact is the existing summarizer plus an optional hint](0043-operator-compact-is-the-existing-summarizer-plus-an.md) — Accepted
+- [ADR 0042 — Session permission modes sit on confirm_writes; the sandbox always-denied tier never lifts](0042-session-permission-modes-sit-on-confirm-writes-the-sandbox.md) — Accepted
+- [ADR 0041 — Composer @path mentions expand through a host-tested helper into the saved user message](0041-composer-path-mentions-expand-through-a-host-tested-helper.md) — Accepted
+- [ADR 0040 — Browser is a first-class catalog tool; phase 1 is status and setup](0040-browser-is-a-first-class-catalog-tool-phase-1-is-status.md) — Accepted
+- [ADR 0039 — Foreign transcripts import as new clanker sessions, Claude Code JSONL first](0039-foreign-transcripts-import-as-new-clanker-sessions-claude.md) — Accepted
+- [ADR 0038 — Live sessions get advisory file-touch notify from a host read-set](0038-live-sessions-get-advisory-file-touch-notify-from-a-host.md) — Accepted
+- [ADR 0037 — Every Agent.run turn injects memory hits through the existing guest](0037-every-agent-run-turn-injects-memory-hits-through-the.md) — Accepted
+- [ADR 0036 — repo_search attaches enclosing symbols to grep hits](0036-repo-search-attaches-enclosing-symbols-to-grep-hits.md) — Accepted
+- [ADR 0035 — Anthropic cache-cold is a timestamp compare at request time](0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md) — Accepted
+- [ADR 0034 — openai_compat extra_body is a provider JSON object merged last](0034-openai-compat-extra-body-is-a-provider-json-object-merged.md) — Accepted
+- [ADR 0033 — Sessions are per-session SQLite databases with an append-only event stream; mesh peers replicate streams at cursor+1](0033-sessions-are-per-session-sqlite-databases-with-an-append.md) — Accepted
 - [ADR 0032 — External coding agents are driven by an ACP client first, with headless spawn as fallback](0032-external-coding-agents-are-driven-by-an-acp-client-first.md) — Accepted
 - [ADR 0031 — Compare-and-swap locks live in state/locks, keyed by a hash of the target path](0031-compare-and-swap-locks-live-in-state-locks-keyed-by-a-hash.md) — Accepted
 - [ADR 0030 — Agent presets are preset.toml multi-root with registry filter](0030-agent-presets-are-preset-toml-multi-root-with-registry.md) — Accepted

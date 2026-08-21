@@ -266,7 +266,70 @@ pub fn render(gpa: std.mem.Allocator, s: Session) ![]u8 {
 /// given. Beside the other exportable artifacts under `state/`, not in the
 /// session store: a rewritten export must never be mistaken for the session.
 pub fn defaultPath(gpa: std.mem.Allocator, id: []const u8) ![]u8 {
-    return std.fmt.allocPrint(gpa, "state/exports/{s}.html", .{id});
+    return defaultPathExt(gpa, id, "html");
+}
+
+pub fn defaultPathExt(gpa: std.mem.Allocator, id: []const u8, ext: []const u8) ![]u8 {
+    return std.fmt.allocPrint(gpa, "state/exports/{s}.{s}", .{ id, ext });
+}
+
+fn breakFences(w: *std.Io.Writer, text: []const u8) !void {
+    var i: usize = 0;
+    while (i < text.len) {
+        if (std.mem.startsWith(u8, text[i..], "```")) {
+            try w.writeAll("``\\`");
+            i += 3;
+            continue;
+        }
+        try w.writeByte(text[i]);
+        i += 1;
+    }
+}
+
+/// Readable markdown twin of `render`. Untrusted bodies stay inside fences
+/// with inner fence markers broken so they cannot close the block.
+pub fn renderMarkdown(gpa: std.mem.Allocator, s: Session) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    const w = &out.writer;
+    try w.writeAll("# ");
+    try w.writeAll(if (s.title.len > 0) s.title else s.id);
+    try w.writeAll("\n\nSession: ");
+    try w.writeAll(s.id);
+    try w.print("\nMessages: {d}\n\n", .{s.messages.len});
+    if (s.system_prompt) |sp| {
+        if (sp.len > 0) {
+            try w.writeAll("## System prompt\n\n```\n");
+            try breakFences(w, sp);
+            try w.writeAll("\n```\n\n");
+        }
+    }
+    if (s.messages.len == 0) {
+        try w.writeAll("_This conversation has no messages._\n");
+        return out.toOwnedSlice();
+    }
+    for (s.messages) |m| {
+        try w.writeAll("## ");
+        try w.writeAll(roleLabel(m.role));
+        try w.writeAll("\n\n");
+        const content = m.content orelse "";
+        if (content.len > 0) {
+            try w.writeAll("```\n");
+            try breakFences(w, content);
+            try w.writeAll("\n```\n\n");
+        }
+        if (m.tool_calls) |calls| {
+            for (calls) |tc| {
+                try w.writeAll("### ");
+                try w.writeAll(tc.name);
+                try w.writeAll("\n\n```\n");
+                try breakFences(w, tc.arguments);
+                try w.writeAll("\n```\n\n");
+            }
+        }
+    }
+    try w.writeAll("_Exported by clanker as markdown. Bodies are literal, not rendered HTML._\n");
+    return out.toOwnedSlice();
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +428,26 @@ test "render escapes a hostile transcript instead of emitting it as markup" {
     try std.testing.expect(std.mem.find(u8, html, "exec&lt;img src=x onerror=alert(1)&gt;") != null);
     // The code fence survives as literal text, backticks and all.
     try std.testing.expect(std.mem.find(u8, html, "```html") != null);
+}
+
+test "renderMarkdown keeps hostile text literal and breaks inner fences" {
+    const gpa = std.testing.allocator;
+    const messages = [_]Message{
+        .{ .role = .user, .content = "<script>alert(1)</script>" },
+        .{ .role = .assistant, .content = "```\nbreakout\n```" },
+    };
+    const md = try renderMarkdown(gpa, .{
+        .id = "sess-md",
+        .title = "md title",
+        .messages = &messages,
+        .created = 1_700_000_000,
+        .updated = 1_700_000_060,
+    });
+    defer gpa.free(md);
+    try std.testing.expect(std.mem.find(u8, md, "# md title") != null);
+    try std.testing.expect(std.mem.find(u8, md, "<script>alert(1)</script>") != null);
+    try std.testing.expect(std.mem.find(u8, md, "``\\`") != null);
+    try std.testing.expect(std.mem.find(u8, md, "\n```\nbreakout\n```") == null);
 }
 
 test "render produces a self-contained document with no external references" {

@@ -114,6 +114,7 @@ comptime {
     _ = @import("llm/providers/gemini.zig");
     _ = @import("llm/auth.zig");
     _ = @import("llm/client.zig");
+    _ = @import("llm/cache_cold.zig");
     _ = @import("sandbox/protocol.zig");
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");
@@ -161,6 +162,7 @@ comptime {
     _ = @import("util/fs_skip.zig");
     _ = @import("util/glob.zig");
     _ = @import("util/utf8.zig");
+    _ = @import("util/http_client.zig");
     _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("improve/proposal.zig");
@@ -192,6 +194,7 @@ comptime {
     _ = @import("tui/repl.zig");
     _ = @import("tui/slash_plugins.zig");
     _ = @import("agent/session_events.zig");
+    _ = @import("agent/session_fts.zig");
     _ = @import("serve/proxy.zig");
     _ = @import("serve/proxy_transcode.zig");
     _ = @import("cli.zig");

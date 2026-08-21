@@ -46,6 +46,8 @@ const types = @import("../llm/types.zig");
 const providers = @import("../llm/registry.zig");
 const registry = @import("../toolhost/registry.zig");
 const session_mod = @import("../agent/session.zig");
+const mention_expand = @import("mention_expand");
+const secret_dotenv = @import("../util/secret_dotenv.zig");
 const subprocess = @import("../agent/subprocess.zig");
 const dap = @import("../debug/dap.zig");
 const goal_prompt = @import("../agent/goal_prompt.zig");
@@ -73,6 +75,7 @@ const mascot = @import("mascot.zig");
 const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");
 const slash_plugins = @import("slash_plugins.zig");
+const session_sync = @import("../peers/session_sync.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.
@@ -585,6 +588,10 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.ask_fn = &tuiAsk;
     if (self.cfg.agent.confirm_writes == .always) a.confirm_fn = &tuiConfirm;
     a.plan_mode = self.plan_mode;
+    a.compact_hint = self.compact_hint;
+    a.force_compact = self.force_compact;
+    self.compact_hint = "";
+    self.force_compact = false;
     if (self.preset_name) |pn| {
         var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch null;
         if (dir) |*d| {
@@ -1240,6 +1247,8 @@ const CommandAction = union(enum) {
     rfc,
     /// Queue an image path for the next task submit (`/attach <path>`).
     attach,
+    /// Force compact on the next turn, with an optional preserve-hint.
+    compact,
     /// List TUI slash-command plugins, or enable/disable one in
     /// state/tui_plugins.json (PRD 0012). A plugin is off until enabled.
     tui_plugins,
@@ -1295,6 +1304,7 @@ const command_registry = [_]CommandSpec{
     .{ .name = "/research", .takes_args = true, .arg_hint = "<sub> [args]", .help = "research notes, same store as clanker research: list, search, open, plan, sweep, create, append, update, status", .action = .research },
     .{ .name = "/rfc", .takes_args = true, .arg_hint = "<sub> [args]", .help = "open decisions, same store as clanker rfc: list, search, open, checklist, create, append, update, recommend, status", .action = .rfc },
     .{ .name = "/attach", .takes_args = true, .arg_hint = "<path>", .help = "queue an image for the next task submit", .action = .attach },
+    .{ .name = "/compact", .takes_args = true, .arg_hint = "[hint]", .help = "compact history on the next turn; optional hint tells the summarizer what to keep", .action = .compact },
     .{ .name = "/quit", .aliases = &.{ "/exit", "/q", "exit", "quit" }, .help = "leave the REPL", .action = .quit },
     .{ .name = "/tui-plugins", .takes_args = true, .arg_hint = "[on|off <name>]", .help = "list TUI slash-command plugins, or enable/disable one (PRD 0012)", .action = .tui_plugins },
 };
@@ -2557,6 +2567,9 @@ const Model = struct {
     /// sliced into `Agent.pending_images` by `submitTask`. Mirrors the web
     /// composer's `attachments` (PRD 0041).
     pending_attach_paths: std.ArrayList([]const u8) = .empty,
+    /// /compact [hint]: applied to the next Agent.run then cleared.
+    compact_hint: []const u8 = "",
+    force_compact: bool = false,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op, there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -2937,6 +2950,8 @@ const Model = struct {
         }) catch |err| {
             log.log(.error_, "session '{s}' save failed: {s}", .{ sid, @errorName(err) });
         };
+        // Fan the session's new events out to mesh peers (best-effort).
+        if (self.cfg.modules.session_events) session_sync.pushTail(self.io, self.gpa, self.arena, &self.cfg, sid);
     }
 
     fn submit(self: *Model, ctx: *vxfw.EventContext) !void {
@@ -3199,6 +3214,20 @@ const Model = struct {
                 // Bare `/effort` or an unrecognised spelling opens the picker
                 // seeded with the spelling, so `high` is one Enter away.
                 try self.openEffortPicker(ctx, arg);
+            },
+            .compact => {
+                if (bridge_streaming) {
+                    self.lines.append(self.arena, .{ .text = "compact: wait until the turn is idle", .dim = true }) catch {};
+                    return;
+                }
+                const hint = std.mem.trim(u8, pc.args, " \t");
+                self.compact_hint = if (hint.len > 0) (self.arena.dupe(u8, hint) catch hint) else "";
+                self.force_compact = true;
+                const msg = if (self.compact_hint.len > 0)
+                    std.fmt.allocPrint(self.arena, "notice: next turn will compact, preserving: {s}", .{self.compact_hint}) catch "notice: next turn will compact"
+                else
+                    "notice: next turn will compact history";
+                self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
             },
             .attach => {
                 const path = std.mem.trim(u8, pc.args, " \t");
@@ -3985,7 +4014,23 @@ const Model = struct {
         // once the worker is joined.
         self.summary_before = stats_mod.summaryState(self.messages.items);
 
-        const owned_task = try self.arena.dupe(u8, task);
+        const owned_task = blk: {
+            const copied = try self.arena.dupe(u8, task);
+            const Ctx = struct {
+                io: std.Io,
+                arena: std.mem.Allocator,
+                pub fn refuse(_: @This(), path: []const u8) bool {
+                    if (path.len == 0) return true;
+                    if (path[0] == '/') return true;
+                    if (std.mem.find(u8, path, "..") != null) return true;
+                    return secret_dotenv.isSecretDotenvPath(path);
+                }
+                pub fn readFile(c: @This(), path: []const u8) ?[]const u8 {
+                    return std.Io.Dir.cwd().readFileAlloc(c.io, path, c.arena, .limited(mention_expand.per_file_cap + 1)) catch null;
+                }
+            };
+            break :blk mention_expand.expandAlloc(self.arena, copied, Ctx{ .io = self.io, .arena = self.arena }) catch copied;
+        };
         // Drain pending image attachments for this run; submit clears them so
         // a later turn never re-sends an old attachment. Mirrors the web path
         // where the composer clears after submit.
@@ -8292,9 +8337,9 @@ test "a completed answer is control-stripped before it becomes transcript" {
     var lines: std.ArrayList(Line) = .empty;
     appendAnswerLines(arena, &lines, "here is \x1b[31mred\x1b[0m and \xc2\x9bcsi");
     try std.testing.expectEqual(@as(usize, 1), lines.items.len);
-    // The turn arrow is prepended; the escapes are gone, their payload text
-    // stays (dropping bytes, not whole sequences, is sanitize.zig's contract).
-    try std.testing.expectEqualStrings("\xe2\x80\xba here is [31mred[0m and csi", lines.items[0].text);
+    // The turn arrow is prepended; the CSI sequences are consumed whole and
+    // the C1 CSI (0xC2 0x9B) drops, so no escape bytes reach the terminal.
+    try std.testing.expectEqualStrings("\xe2\x80\xba here is red and csi", lines.items[0].text);
     for (lines.items) |l| {
         try std.testing.expect(std.mem.findScalar(u8, l.text, 0x1B) == null);
     }

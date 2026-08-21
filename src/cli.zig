@@ -79,8 +79,8 @@ const schedule_runner = @import("schedule/runner.zig");
 const jobs = @import("sandbox/jobs.zig");
 const schedule_store = @import("schedule/store.zig");
 const cli_plugins = @import("cli_plugins.zig");
-const session_sync = @import("peers/session_sync.zig");
 const session_events = @import("agent/session_events.zig");
+const session_sync = @import("peers/session_sync.zig");
 
 // Web UI vendor assets: served as plain static files (not routed through the
 // WASM "webui" tool, its shared output buffer, lib.zig's out_cap, is 64 KiB,
@@ -4385,6 +4385,8 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
             .updated = updated,
             .system_prompt = a.system_prompt_text,
         });
+        // Fan the session's new events out to mesh peers (best-effort).
+        if (cfg.modules.session_events) session_sync.pushTail(io, init.gpa, arena, &cfg, sid);
     }
 }
 
@@ -5012,9 +5014,14 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
         log.log(.error_, "not a session id: '{s}'", .{id});
         return error.InvalidSessionId;
     }
-    const input = try std.fmt.allocPrint(arena, "{{\"id\":{f},\"return_html\":{s}}}", .{
+    const export_fmt: []const u8 = if (opts.session_out) |p|
+        if (std.mem.endsWith(u8, p, ".md")) "md" else "html"
+    else
+        "html";
+    const input = try std.fmt.allocPrint(arena, "{{\"id\":{f},\"return_html\":{s},\"format\":{f}}}", .{
         std.json.fmt(id, .{}),
         if (opts.session_out != null) "true" else "false",
+        std.json.fmt(export_fmt, .{}),
     });
     const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "session_export", input);
     const ExportResult = struct { ok: bool = false, path: []const u8 = "", messages: usize = 0, bytes: usize = 0, html: ?[]const u8 = null, @"error": ?[]const u8 = null };
@@ -5046,7 +5053,7 @@ fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
     if (q.len < session_search_min_len) {
         usageExitFor(io, "session", "session search needs at least {d} characters: clanker session search \"<query>\"", .{session_search_min_len});
     }
-    const hits = session.searchSessions(io, arena, "state/sessions", q, session_search_limit) catch {
+    const hits = session.searchSessions(io, init.gpa, arena, "state/sessions", q, session_search_limit) catch {
         return error.ToolFailed;
     };
     if (hits.len == 0) {
@@ -7175,6 +7182,9 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         std.fmt.bufPrint(&hostbuf, "{s}:{d}", .{ listen.host, port }) catch "host:port";
 
     log.log(.info, "serve listening on {s}", .{disp});
+    // Backfill replica session event streams from their owners on start
+    // (best-effort; an unreachable owner leaves its tail for the next start).
+    if (cfg.modules.session_events) session_sync.backfill(io, gpa, arena, &cfg);
     const dedicated = listen.proxy_enabled and listen.proxy_port != listen.port;
     if (listen.proxy_enabled and !isLoopbackHost(listen.host) and cfg.serve.proxy_token_env == null) {
         log.log(.warn, "serve proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{listen.host});
@@ -10269,7 +10279,7 @@ const session_search_limit = 50;
 /// Case-insensitive substring, not the fuzzy match the rail filter uses on
 /// titles: fuzzy over whole transcripts hits almost every conversation, so it
 /// would answer every query with the whole archive.
-fn handleSessionSearch(io: std.Io, arena: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+fn handleSessionSearch(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
     const raw_q = queryParam(arena, target, "q") orelse "";
     const q = std.mem.trim(u8, raw_q, " \t\r\n");
     if (q.len < session_search_min_len) {
@@ -10285,7 +10295,7 @@ fn handleSessionSearch(io: std.Io, arena: std.mem.Allocator, target: []const u8,
         return;
     }
 
-    const hits = session.searchSessions(io, arena, "state/sessions", q, session_search_limit + 1) catch {
+    const hits = session.searchSessions(io, gpa, arena, "state/sessions", q, session_search_limit + 1) catch {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read the sessions\"}");
         return;
     };
@@ -12198,7 +12208,7 @@ fn handleSessions(
     // `GET /api/sessions/search?q=` — full-text over saved conversations.
     // Answered before the id branch below, because "search" is not an id.
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, rest, "/search")) {
-        handleSessionSearch(io, arena, target, stream);
+        handleSessionSearch(io, gpa, arena, target, stream);
         return;
     }
 
@@ -15560,6 +15570,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .updated = updated,
                 .system_prompt = a.system_prompt_text,
             }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
+            if (cfg.modules.session_events) session_sync.pushTail(io, gpa, arena, cfg, req.session);
         }
         const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
         // When the fallback chain replaced the requested provider mid-run,
@@ -15642,6 +15653,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             .updated = updated,
             .system_prompt = a.system_prompt_text,
         }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
+        if (cfg.modules.session_events) session_sync.pushTail(io, gpa, arena, cfg, req.session);
     }
 
     var rbuf: [1 << 20]u8 = undefined;

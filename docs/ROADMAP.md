@@ -65,6 +65,41 @@
 
 ## Planned
 
+- **jcode feature audit (2026-08-21)** — inventory and decisions:
+  [docs/research/jcode-features.md](research/jcode-features.md),
+  [docs/digests/jcode.md](digests/jcode.md). **Implement-now (phase 1
+  shipped with this change):** provider `extra_body` ([PRD 0045](prds/0045-provider-extra-body.md),
+  [ADR 0034](adrs/0034-openai-compat-extra-body-is-a-provider-json-object-merged.md)),
+  Anthropic cache-cold warning ([PRD 0046](prds/0046-anthropic-cache-cold-warning.md),
+  [ADR 0035](adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md)),
+  grep outline on `repo_search` hits ([PRD 0047](prds/0047-structure-aware-grep-outline.md),
+  [ADR 0036](adrs/0036-repo-search-attaches-enclosing-symbols-to-grep-hits.md)).
+  **Later phases, not this round:** every-turn memory inject
+  ([PRD 0048](prds/0048-passive-memory-inject-on-every-turn.md)), file-touch
+  notify ([PRD 0049](prds/0049-file-touch-notify-for-live-sessions.md)),
+  foreign session import ([PRD 0050](prds/0050-foreign-session-import.md)),
+  first-class browser tool ([PRD 0051](prds/0051-first-class-browser-catalog-tool.md)).
+  Rejected: RAM/TTFF race, mermaid-rs, handterm, iOS, telemetry, self-dev
+  exec, Unix-socket daemon (ADR 0008), local ONNX embedder (PRD 0007).
+
+- **Kimi Code CLI feature audit (2026-08-21)** — inventory and decisions:
+  [docs/research/kimi-code-features.md](research/kimi-code-features.md),
+  [docs/digests/kimi-code.md](digests/kimi-code.md). **Implement-now (phase 1
+  shipped with this change):** `@path` mentions ([PRD 0052](prds/0052-composer-path-mention-expander.md),
+  [ADR 0041](adrs/0041-composer-path-mentions-expand-through-a-host-tested-helper.md)),
+  `/compact [hint]` ([PRD 0054](prds/0054-operator-compact-with-optional-hint.md),
+  [ADR 0043](adrs/0043-operator-compact-is-the-existing-summarizer-plus-an.md)),
+  markdown session export ([PRD 0055](prds/0055-markdown-session-export.md),
+  [ADR 0044](adrs/0044-markdown-session-export-is-a-second-renderer-in-the.md)).
+  **Later phases, not this round:** session permission modes
+  ([PRD 0053](prds/0053-session-permission-modes-on-confirm-writes.md)),
+  goal queue ([PRD 0056](prds/0056-goal-queue-started-only-on-complete.md)),
+  nested explore/plan/coder ([PRD 0057](prds/0057-nested-explore-plan-coder-presets.md)),
+  REPL steer inject ([PRD 0058](prds/0058-repl-mid-stream-inject-via-steer.md)).
+  Rejected: plugin marketplace (ADR 0007), Computer Use, Datasource,
+  WebSocket (PRD 0006), millisecond-startup race.
+
+
 - **SIXEL mascot rendering** — **shipped 2026-08-17** (code-complete): Kitty → SIXEL → cells with capability discovery, bounded 10fps, transparent-palette preservation, and fallback; upstream libvaxis change lives on `sixel-graphics` branch via [patches/vaxis-sixel-graphics.patch](../patches/vaxis-sixel-graphics.patch) (pin moves on merge). Manual terminal matrix across SIXEL/Kitty/no-image/multiplexer paths is external QA and does not block gates. ([PRD 0036](prds/0036-sixel-mascot-rendering.md) → [ADR 0013](adrs/0013-sixel-precedes-unicode-mascot-fallback.md))
 - **vaxis REPL: close the gap left by the deleted REPL** — full audit of `src/tui/repl.zig` against both the implementation it replaced and the other interactive surfaces (`clanker run`, the web UI) it now sits beside. `/model`, `/help`, the flag wiring, session persistence, and (2026-08-12) manual scrollback, the slash-command registry, and left-bar tool-call cards (all landed — see above and below) close seven items that used to be on this list; everything below is still open, roughly most-surprising first:
   - **No Tab-complete or fuzzy command palette.** (2026-08-13: both shipped, and this item is closed. Tab-complete is `completeSlashCommand` in `src/tui/repl.zig`, prefix completion over `command_registry` that edits the TextField in place rather than opening a modal. The fuzzy palette is Ctrl-P, a modal over the whole registry that matches mid-word and on the description, alongside Ctrl-R for transcript search.)
@@ -98,7 +133,7 @@
   - **Not adopting, and why:** Odysseus's 2FA/multi-user auth doesn't apply to `clanker serve`'s *default* trust model — it binds `127.0.0.1` unless `[serve].host`, `CLANKER_HOST` or `--host` says otherwise (config < env < flag), and `unexpectedHost` in `src/cli.zig` refuses any `Host`/`:authority` that is not an IP literal at this port, `localhost`, or a name passed to `--serve-as`. So out of the box there is no network-facing surface to authenticate against. That is a default, not a guarantee: `serve --host 0.0.0.0` is unauthenticated too, and anyone who can reach the port gets full agent and tool access, so the access control there is a firewall or a trusted network, not clanker. Real multi-user exposure would need auth first, and remains a non-goal until it becomes an explicit one. Pi's own docs note it has *no* built-in permission system and runs with the user's full process permissions — the opposite direction from clanker's `ck_*`/descriptor sandbox, so this is a validation of the existing design, not a gap to close.
 - **Feature audit vs. Feynman (2026-08-13)** — compared clanker against [companion-inc/feynman](https://github.com/companion-inc/feynman), Companion's open-source terminal research agent (TypeScript, built on Pi's agent runtime: the same Pi audited on 2026-08-12, so the harness layer is already covered; what is new here is the skill layer on top). Most of feynman's surface is domain research machinery out of scope for a coding/ops harness — PaperRank, alphaXiv paper Q&A, the bio-database tools (OpenAlex, PubMed, ChEMBL, UniProt, ...), literature reviews, replication planning — not adopting any of it. Four ideas are worth adapting:
   - **`/watch` — baseline plus scheduled follow-up.** Feynman's watch skill runs a baseline survey into `outputs/`, then registers recurring follow-up checks *if* a scheduler is reachable, and explicitly reports the capability as unavailable when it is not, rather than pretending monitoring exists. Clanker has the scheduler (`clanker schedule`) but an agent cannot reach it: the schedule entry under Done already names the missing WASM tool over `state/schedule.json` as its one open item. Watch is the feature that makes that tool worth building — a skill that runs the baseline (research_mode), saves it, and adds its own follow-up entry. Adopt in that order: schedule WASM tool first, watch skill second.
-  - **Cross-session search.** Feynman's session-search skill: sessions are JSONL under `~/.feynman/sessions/`, `/search <query>` opens an interactive picker whose hits can be resumed, and the documented fallback is plain grep over the directory. Clanker's Ctrl-R still searches the current transcript only. Shipped: `session.searchSessions` + `GET /api/sessions/search?q=` (min 3 chars, cap 50), `clanker session search` (`src/cli.zig:cmdSessionSearch`), and the model-facing guest `session_search` (`tools/zig/sessions.zig` / `evals/session_search.task.json`). Still open: REPL resume-from-hit (interactive picker over the search hits). No SQLite index until the linear scan is measured slow.
+  - **Cross-session search.** Feynman's session-search skill: sessions are JSONL under `~/.feynman/sessions/`, `/search <query>` opens an interactive picker whose hits can be resumed, and the documented fallback is plain grep over the directory. Clanker's Ctrl-R still searches the current transcript only. Shipped: `session.searchSessions` + `GET /api/sessions/search?q=` (min 3 chars, cap 50), `clanker session search` (`src/cli.zig:cmdSessionSearch`), and the model-facing guest `session_search` (`tools/zig/sessions.zig` / `evals/session_search.task.json`). **The SQLite index shipped** (2026-08-20): one global FTS5 trigram index (`src/agent/session_fts.zig`, `state/session_fts.db`) over message content, maintained on every session save and read through `searchSessions` candidates with a linear-scan fallback when the index is missing or corrupt — measured ~45x faster on the 150-session corpus (6.4s cold / 0.14s warm linear vs ~0.14s cold indexed). Still open: REPL resume-from-hit (interactive picker over the search hits).
   - **Verifier pass with a provenance sidecar.** Feynman's outputs are source-grounded (claims carry direct URLs), deepresearch writes a `.provenance.md` sidecar beside the brief, and a dedicated Verifier agent checks citations and prunes dead links. Clanker's research_mode injects a search/fetch directive but nothing ever checks the citations in the answer. Adaptable as an opt-in post-run verify step: a subagent that fetches each cited URL via the existing `fetch_web` and flags dead or unsupporting ones. No new machinery — subagent + fetch_web compose it.
   - **Named agent role presets.** Feynman bundles four roles (Researcher, Reviewer, Writer, Verifier) as plain markdown prompts in `prompts/`, referenced by name from skills. Clanker's `subagent` tool takes only a free-text task; every skill that wants a reviewer-shaped subagent re-describes one. Cheap adoption: role prompt files under `docs/prompts/` that skills and the subagent tool reference by name.
   - **Not adopting, and why:** skills-only installers into other harnesses (feynman can install just its skills into Claude/Codex/OpenCode trees; clanker's skills name clanker's own tool vocabulary, so exporting them exports calls nothing else can make); the standalone bundle with pinned Node.js and SHA-256 release verification (clanker is one static Zig binary — no runtime to pin); local-model `/v1` endpoints (already have, multi-provider client); feynman's own autoresearch skill (same hypothesis→measure→retain shape as clanker's shipped generic loop; the only takeable detail is its narrative `autoresearch.md` sidecar beside the structured ledger, noted here, not planned); `/jobs` visibility (mostly covered by `clanker schedule list|log` + `clanker graph`; a unified "what is running or scheduled" view can wait until something is actually confusing).

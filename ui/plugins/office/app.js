@@ -965,7 +965,7 @@ clanker.registerView({
       if (o._grid) return o._grid;
       var L = o.layout;
       var g = [];
-      for (var y = 0; y < L.h; y++) g.push(new Array(L.w).fill(false));
+      for (var y = 0; y < L.h; y++) g.push(Array.from({ length: L.w }, function () { return false; }));
       function block(x, yy) { if (yy >= 0 && yy < L.h && x >= 0 && x < L.w) g[yy][x] = true; }
       for (var x0 = 0; x0 < L.w; x0++) { block(x0, 0); block(x0, L.h - 1); }
       for (var y0 = 0; y0 < L.h; y0++) { block(0, y0); block(L.w - 1, y0); }
