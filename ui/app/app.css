@@ -575,6 +575,7 @@ main.pf-v6-c-page__main {
 .run-shape > summary::-webkit-details-marker { display: none; }
 .run-shape[open] > summary,
 .run-shape[data-active="true"] > summary { color: var(--fg); border-color: var(--accent); }
+#params[data-active="true"] > summary { color: var(--fg); }
 .run-shape-body {
   position: absolute; bottom: calc(100% + 0.35rem); left: 0; z-index: 4;
   display: flex; flex-wrap: wrap; gap: var(--space-2);

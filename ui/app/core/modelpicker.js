@@ -408,6 +408,8 @@ export function runOptions() {
   if (!isNaN(t)) out.temperature = t;
   var tp = parseFloat(_el.paramTopP.value);
   if (!isNaN(tp)) out.top_p = tp;
+  var re = (_el.paramEffort && _el.paramEffort.value) || "";
+  if (re) out.reasoning_effort = re;
   return out;
 }
 
@@ -453,6 +455,18 @@ export function bindModelPicker(ctx) {
   if (_el.fallbackProvider) {
     _el.fallbackProvider.addEventListener("change", function () {
       try { window.localStorage.setItem("clanker.fallback", _el.fallbackProvider.value); } catch (e) {}
+    });
+  }
+
+  if (_el.paramEffort) {
+    try {
+      var savedEffort = window.localStorage.getItem("clanker.effort") || "";
+      if (savedEffort && _el.paramEffort.querySelector('option[value="' + savedEffort + '"]')) {
+        _el.paramEffort.value = savedEffort;
+      }
+    } catch (e) {}
+    _el.paramEffort.addEventListener("change", function () {
+      try { window.localStorage.setItem("clanker.effort", _el.paramEffort.value); } catch (e) {}
     });
   }
 }

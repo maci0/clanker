@@ -191,6 +191,7 @@ var el = {
   modelSelect: document.getElementById("model-select"),
   paramTemp: document.getElementById("param-temp"),
   paramTopP: document.getElementById("param-topp"),
+  paramEffort: document.getElementById("param-effort"),
   fallbackProvider: document.getElementById("fallback-provider"),
   enterSends: document.getElementById("enter-sends"),
   planMode: document.getElementById("plan-mode"),
@@ -1301,6 +1302,23 @@ function syncRunShape() {
   }
   if (bits.length) shape.setAttribute("data-active", "true");
   else shape.removeAttribute("data-active");
+  syncAdvancedSummary();
+}
+
+/* A pinned reasoning effort must stay visible when the Advanced fold is
+   closed, same rule as the Run shape toggles. */
+function syncAdvancedSummary() {
+  var params = document.getElementById("params");
+  if (!params) return;
+  var summary = params.querySelector("summary");
+  if (!summary) return;
+  var effort = (el.paramEffort && el.paramEffort.value) || "";
+  summary.textContent = effort ? "Advanced: effort " + effort : "Advanced";
+  summary.title = effort
+    ? "Reasoning effort pinned to " + effort + " for this chat. Click to change."
+    : "Fallback provider, sampling and reasoning-effort overrides";
+  if (effort) params.setAttribute("data-active", "true");
+  else params.removeAttribute("data-active");
 }
 
 /** Idle composer hint for plan/research toggles (matches TUI status bar labels). */
@@ -1312,6 +1330,7 @@ function updateComposerModeHint() {
   if (el.researchMode && el.researchMode.checked) parts.push("Research mode · web search preferred");
   if (el.unlimitedIterations && el.unlimitedIterations.checked) parts.push("Long run · 1000-step budget");
   if (el.worktreeMode && el.worktreeMode.checked) parts.push("Isolated worktree · shared checkout untouched");
+  if (el.paramEffort && el.paramEffort.value) parts.push("Effort " + el.paramEffort.value + " · pinned for this chat");
   if (attachImages.length) {
     parts.push(attachImages.length + (attachImages.length === 1 ? " image attached" : " images attached"));
   }
@@ -2040,6 +2059,7 @@ if (el.planMode) el.planMode.addEventListener("change", updateComposerModeHint);
 if (el.researchMode) el.researchMode.addEventListener("change", updateComposerModeHint);
 if (el.unlimitedIterations) el.unlimitedIterations.addEventListener("change", updateComposerModeHint);
 if (el.worktreeMode) el.worktreeMode.addEventListener("change", updateComposerModeHint);
+if (el.paramEffort) el.paramEffort.addEventListener("change", updateComposerModeHint);
 // A tab closed or reloaded mid-sentence has no other chance to write.
 window.addEventListener("beforeunload", flushDraft);
 
@@ -2435,6 +2455,7 @@ el.form.addEventListener("submit", function (e) {
       fallback_provider: opts.fallbackProvider || "",
       temperature: typeof opts.temperature === "number" ? opts.temperature : null,
       top_p: typeof opts.top_p === "number" ? opts.top_p : null,
+      reasoning_effort: opts.reasoning_effort || "",
       plan: isPlan,
       research: isResearch,
       max_iterations: noLimit ? 1000 : null,

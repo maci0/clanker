@@ -7,6 +7,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The web UI composer's Advanced fold gains a per-chat reasoning-effort
+  select (`none`/`low`/`medium`/`high`/`max`, default leaves the
+  classifier, per-model setting and sampling profile in charge). It rides
+  `POST /api/run` as `reasoning_effort` — the request-shaped
+  `--reasoning-effort` / TUI `/effort` pin — persists in the browser, and
+  a pinned value stays visible on the fold's summary while it is closed.
+  An unknown value is refused with a 400.
+
 - Composer `@rel/path` mentions expand into fenced file bytes on REPL
   submit (dotenv, `..`, and absolute paths are refused; files over 32 KiB
   truncate). Markdown `clanker session export` when the destination ends

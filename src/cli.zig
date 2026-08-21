@@ -8961,6 +8961,11 @@ const RunRequestBody = struct {
     fallback_provider: []const u8 = "",
     temperature: ?f64 = null,
     top_p: ?f64 = null,
+    /// Optional per-run reasoning-effort pin (none|low|medium|high|max), the
+    /// request-shaped equivalent of `--reasoning-effort` and the TUI /effort
+    /// picker. Empty means "leave the classifier, per-model config and
+    /// sampling profile in charge".
+    reasoning_effort: []const u8 = "",
     /// Plan mode (webui-plan 2.2): the run researches and proposes but the
     /// harness refuses write-capable tools, so nothing changes until the
     /// user applies the plan as a follow-up run.
@@ -15217,6 +15222,19 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     }
     run_cfg.agent.workspace_id = run_workspace;
+    // Per-run reasoning-effort pin: lands on the same `agent.reasoning_effort`
+    // the CLI flag and the TUI /effort picker set, so the agent loop honors it
+    // on every turn of this run ahead of the auto-thinking classifier, the
+    // per-model setting and the sampling profile. An unknown value is refused
+    // like an unknown model rather than silently ignored — running at the
+    // wrong effort quietly is worse than a 400. Checked before the worktree
+    // is created so a refusal leaves nothing behind.
+    if (req.reasoning_effort.len > 0) {
+        run_cfg.agent.reasoning_effort = config.ReasoningEffort.fromStr(req.reasoning_effort) orelse {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"no such reasoning effort (use none, low, medium, high or max)\"}");
+            return;
+        };
+    }
     const ws_root = workspaceSandboxPath(io, arena, run_workspace);
     var wt: ?worktree_mod.Worktree = null;
     defer if (wt) |*w| w.deinit(gpa);
@@ -17382,6 +17400,14 @@ test "the run request body carries optional images, and the cap counts decoded b
     try std.testing.expectEqualStrings("", bare.goal);
     const with_goal = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"\",\"goal\":\"g1\"}", .{ .ignore_unknown_fields = true });
     try std.testing.expectEqualStrings("g1", with_goal.goal);
+
+    // Reasoning effort is optional, empty by default, and validated with the
+    // same table as --reasoning-effort so the two surfaces cannot drift.
+    try std.testing.expectEqualStrings("", bare.reasoning_effort);
+    const with_effort = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"reasoning_effort\":\"high\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("high", with_effort.reasoning_effort);
+    try std.testing.expectEqual(config.ReasoningEffort.high, config.ReasoningEffort.fromStr(with_effort.reasoning_effort).?);
+    try std.testing.expectEqual(@as(?config.ReasoningEffort, null), config.ReasoningEffort.fromStr("turbo"));
 }
 
 test "a model that declares its capabilities without image_in is refused image attachments" {
