@@ -307,7 +307,15 @@ pub fn parseGoogleErrorMessage(arena: std.mem.Allocator, body: []const u8) ?[]co
     }
     // Last resort: surface a capped slice of the raw body so the operator
     // sees something actionable rather than a bare HTTP status with no detail.
-    const cap = if (trimmed.len > 512) trimmed[0..512] else trimmed;
+    var end = trimmed.len;
+    if (end > 512) {
+        end = 512;
+        // Keep the surfaced detail valid UTF-8: drop a partial codepoint at the
+        // cap (trailing continuation bytes, plus the orphaned leading byte).
+        while (end > 0 and (trimmed[end - 1] & 0xC0) == 0x80) end -= 1;
+        if (end > 0 and (trimmed[end - 1] & 0xC0) == 0xC0) end -= 1;
+    }
+    const cap = trimmed[0..end];
     const detail = std.mem.trim(u8, cap, " \t\r\n");
     if (trimmed.len <= 512) return detail;
     return std.fmt.allocPrint(arena, "{s} [truncated]", .{detail}) catch detail;
