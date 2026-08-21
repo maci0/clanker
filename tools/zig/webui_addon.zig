@@ -176,6 +176,7 @@ fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
     const group = lib.optStr(obj, "group") orelse "Watch";
     if (!logic.validGroup(group)) return lib.fail(out, "group must be Work, Watch, or Set up");
     const js = lib.optStr(obj, "js") orelse return lib.fail(out, "create needs js (the app.js source)");
+    if (js.len == 0) return lib.fail(out, "app.js must be non-empty");
     if (js.len > 1024 * 1024) return lib.fail(out, "js exceeds the 1 MiB limit for a single create call");
     if (logic.jsRejected(js)) |why| return lib.fail(out, why);
     const css = lib.optStr(obj, "css") orelse "";
