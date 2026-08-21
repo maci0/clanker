@@ -114,6 +114,7 @@ comptime {
     _ = @import("llm/providers/gemini.zig");
     _ = @import("llm/auth.zig");
     _ = @import("llm/client.zig");
+    _ = @import("llm/cache_cold.zig");
     _ = @import("sandbox/protocol.zig");
     _ = @import("sandbox/host.zig");
     _ = @import("sandbox/runtime.zig");

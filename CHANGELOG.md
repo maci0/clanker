@@ -5,6 +5,35 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- Composer `@rel/path` mentions expand into fenced file bytes on REPL
+  submit (dotenv, `..`, and absolute paths are refused; files over 32 KiB
+  truncate). Markdown `clanker session export` when the destination ends
+  in `.md`. `/compact [hint]` schedules a history compact on the next
+  turn and can tell the summarizer what to keep.
+
+- `providers.<name>.extra_body`: a JSON object merged last into
+  `openai_compat` and `azure_openai` chat bodies so gateways that need
+  non-standard fields (NVIDIA NIM `chat_template_kwargs`) can enable
+  thinking. Refused at config load if it is not an object. Same-name keys
+  overwrite generated fields.
+
+- Prompt-cache idle warning: after a cache-accounted completion, a pause
+  longer than five minutes on *that* provider/model logs that Anthropic's
+  prompt cache is likely cold before the next send, and an unexpected
+  miss (warm expected, `cache_hit` 0) is logged after. The stamp is
+  independent of `modules.token_stats`.
+
+- `repo_search` rg, ast-grep, and host-fallback (`ck_fs_grep` when rg is
+  missing) hits include `symbol` / `symbol_kind` / `symbol_line` for the
+  enclosing declaration (Zig first, with a `def`/`function`/`class`
+  fallback) so the model can see file shape without a follow-up read.
+
+- `clanker rfc create` now passes a fourth positional as the research
+  note path, so `create` can link `docs/research/` the way the `rfc` tool
+  already did.
+
 ### Fixed
 
 - `clanker improve-self` no longer dies with `ProposalRequestFailed` when the

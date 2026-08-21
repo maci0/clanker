@@ -169,7 +169,11 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
     }
     try s.endObject();
 
-    return try b.finish();
+    const raw = try b.finish();
+    if (params.provider.extra_body.len == 0) return raw;
+    const merged = try common.mergeExtraBody(gpa, raw, params.provider.extra_body);
+    gpa.free(raw);
+    return merged;
 }
 
 // --------------------------------------------------------------- response --
@@ -373,6 +377,20 @@ fn parseStreamEvent(chunk_arena: std.mem.Allocator, payload: []const u8) api.Str
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "openai request body merges extra_body last" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    var p = try config.Provider.single(arena, "nim", "https://nim.test/v1", .openai_compat, "m", .{ .max_tokens = 64 });
+    p.extra_body = "{\"chat_template_kwargs\":{\"thinking\":true}}";
+    const body = try buildRequest(arena, .{ .provider = &p, .messages = &messages });
+    defer arena.free(body);
+    try std.testing.expect(std.mem.find(u8, body, "\"chat_template_kwargs\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"thinking\":true") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"model\"") != null);
+}
 
 test "openai request body golden" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

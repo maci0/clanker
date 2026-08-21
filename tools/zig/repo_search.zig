@@ -5,6 +5,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const utf8 = @import("utf8");
+const grep_outline = @import("grep_outline.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -66,6 +67,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (err == error.NotFound and std.mem.eql(u8, engine, "rg")) {
             const native = lib.fsGrep(path, query) catch
                 return lib.failErr(out, err, "running the search");
+            const parsed_native = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, native, .{}) catch
+                return lib.fail(out, "could not read the search result");
             var w = out.writer();
             var s2 = std.json.Stringify{ .writer = &w, .options = .{} };
             try s2.beginObject();
@@ -76,9 +79,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s2.objectField("note");
             try s2.write("rg is not installed; this is the host's own literal search, which takes no regular expressions or flags");
             try s2.objectField("matches");
-            const parsed_native = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, native, .{}) catch
-                return lib.fail(out, "could not read the search result");
-            try s2.write(parsed_native);
+            try grep_outline.writeNativeMatches(&s2, parsed_native, struct {
+                pub fn readFile(p: []const u8) ?[]const u8 {
+                    return lib.fsRead(p) catch null;
+                }
+            });
             try s2.endObject();
             out.len = w.end;
             return;
@@ -210,6 +215,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.write(line_num);
             try s.objectField("text");
             try s.write(display);
+            const ag_line_n = std.fmt.parseInt(u32, line_num, 10) catch 0;
+            try writeOutline(&s, file_path, ag_line_n);
             try s.endObject();
             match_count += 1;
         }
@@ -313,6 +320,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.print("{d}", .{line_number});
             try s.objectField("text");
             try s.write(display);
+            const rg_line_n: u32 = if (line_number > 0) std.math.cast(u32, line_number) orelse 0 else 0;
+            try writeOutline(&s, file_path, rg_line_n);
             try s.endObject();
             match_count += 1;
         }
@@ -346,4 +355,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     try out.writeAll(result);
+}
+
+fn writeOutline(s: anytype, file_path: []const u8, line_number: u32) !void {
+    if (file_path.len == 0 or line_number == 0) return;
+    const src = lib.fsRead(file_path) catch return;
+    try grep_outline.writeSymbolFields(s, src, line_number);
 }

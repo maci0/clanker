@@ -5014,9 +5014,14 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
         log.log(.error_, "not a session id: '{s}'", .{id});
         return error.InvalidSessionId;
     }
-    const input = try std.fmt.allocPrint(arena, "{{\"id\":{f},\"return_html\":{s}}}", .{
+    const export_fmt: []const u8 = if (opts.session_out) |p|
+        if (std.mem.endsWith(u8, p, ".md")) "md" else "html"
+    else
+        "html";
+    const input = try std.fmt.allocPrint(arena, "{{\"id\":{f},\"return_html\":{s},\"format\":{f}}}", .{
         std.json.fmt(id, .{}),
         if (opts.session_out != null) "true" else "false",
+        std.json.fmt(export_fmt, .{}),
     });
     const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "session_export", input);
     const ExportResult = struct { ok: bool = false, path: []const u8 = "", messages: usize = 0, bytes: usize = 0, html: ?[]const u8 = null, @"error": ?[]const u8 = null };

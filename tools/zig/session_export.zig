@@ -21,7 +21,12 @@ const validId = logic.validId;
 const render = logic.render;
 const defaultPath = logic.defaultPath;
 
-const Request = struct { id: []const u8, return_html: bool = false, forget: bool = false };
+const Request = struct {
+    id: []const u8,
+    return_html: bool = false,
+    forget: bool = false,
+    format: []const u8 = "html",
+};
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, toolMain);
@@ -37,6 +42,11 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn forget(out: *lib.Out, id: []const u8) !void {
     const path = try defaultPath(lib.alloc, id);
     lib.fsDelete(path) catch |err| switch (err) {
+        error.NotFound => {},
+        else => return lib.failErr(out, err, "deleting export"),
+    };
+    const md_path = try logic.defaultPathExt(lib.alloc, id, "md");
+    lib.fsDelete(md_path) catch |err| switch (err) {
         error.NotFound => {},
         else => return lib.failErr(out, err, "deleting export"),
     };
@@ -69,9 +79,19 @@ fn toolMain(input: []const u8, out: *lib.Out) !void {
     const raw = lib.sessionCall(wb.written()) catch |err| return lib.failErr(out, err, "reading session");
     const value = std.json.parseFromSliceLeaky(Session, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch |err|
         return lib.failErr(out, err, "parsing session");
-    const html = render(lib.alloc, value) catch |err| return lib.failErr(out, err, "rendering session");
-    const path = try defaultPath(lib.alloc, req.id);
-    if (!req.return_html) lib.fsWrite(path, html) catch |err| return lib.failErr(out, err, "writing export");
+    const is_md = std.mem.eql(u8, req.format, "md") or std.mem.eql(u8, req.format, "markdown");
+    if (!is_md and !std.mem.eql(u8, req.format, "html") and req.format.len != 0) {
+        return lib.fail(out, "format must be html or md");
+    }
+    const body = if (is_md)
+        logic.renderMarkdown(lib.alloc, value) catch |err| return lib.failErr(out, err, "rendering session")
+    else
+        render(lib.alloc, value) catch |err| return lib.failErr(out, err, "rendering session");
+    const path = if (is_md)
+        try logic.defaultPathExt(lib.alloc, req.id, "md")
+    else
+        try defaultPath(lib.alloc, req.id);
+    if (!req.return_html) lib.fsWrite(path, body) catch |err| return lib.failErr(out, err, "writing export");
 
     var writer = lib.writer(out);
     var json = lib.json(&writer);
@@ -83,10 +103,12 @@ fn toolMain(input: []const u8, out: *lib.Out) !void {
     try json.objectField("messages");
     try json.print("{d}", .{value.messages.len});
     try json.objectField("bytes");
-    try json.print("{d}", .{html.len});
+    try json.print("{d}", .{body.len});
+    try json.objectField("format");
+    try json.write(if (is_md) "md" else "html");
     if (req.return_html) {
         try json.objectField("html");
-        try json.write(html);
+        try json.write(body);
     }
     try json.endObject();
     lib.commit(out, &writer);

@@ -35,6 +35,7 @@ const ttsr = @import("ttsr.zig");
 const sampling = @import("../llm/sampling_profiles.zig");
 const session = @import("session.zig");
 const preset_mod = @import("../preset/preset.zig");
+const compact_hint = @import("compact_hint");
 
 /// How many iterations before the budget runs out the wrap-up warning is
 /// injected. Skipped entirely on budgets small enough that the warning
@@ -277,6 +278,11 @@ pub const Agent = struct {
     /// task message. run() consumes them once and clears the slot, so a
     /// later turn never re-sends an old attachment.
     pending_images: ?[]types.ImagePart = null,
+    /// Operator /compact hint, consumed by the next summarizer prompt.
+    compact_hint: []const u8 = "",
+    /// When true, the next maybeCompactMessages run treats the threshold as
+    /// zero so an idle /compact can force a summary even under the budget.
+    force_compact: bool = false,
     /// A decision the user already made outside a tool call (picking a
     /// numbered option the previous answer offered), recorded at the start of
     /// the run it caused so the graph shows why this turn happened.
@@ -1504,6 +1510,10 @@ pub const Agent = struct {
         // Threshold floors: compaction must never race the per-turn cap,
         // which would otherwise terminate the run before compaction runs.
         threshold = @max(threshold, self.cfg.agent.max_tokens_per_turn);
+        if (self.force_compact) {
+            self.force_compact = false;
+            threshold = 0;
+        }
         // ... nor be set below what compaction can actually deliver. The system
         // prompt and the kept tail survive every compaction, so a threshold
         // under their combined size asks for the impossible and is answered
@@ -1861,13 +1871,8 @@ pub const Agent = struct {
         }
         if (buf.items.len == 0) return error.EmptyMessages;
 
-        const prompt = try std.fmt.allocPrint(
-            self.arena,
-            "Summarize the following conversation excerpt in 3-5 concise bullet points. " ++
-                "Focus on: decisions made, facts established, tool results, and any pending tasks. " ++
-                "Be specific: include names, numbers, and key values. Do NOT add commentary.\n\n{s}",
-            .{buf.items},
-        );
+        const prompt = try compact_hint.formatPrompt(self.arena, buf.items, self.compact_hint);
+        self.compact_hint = "";
 
         const sum_messages = [_]types.Message{.{ .role = .user, .content = prompt }};
         var err_detail: ?[]const u8 = null;

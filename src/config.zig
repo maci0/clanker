@@ -258,6 +258,10 @@ pub const Provider = struct {
     /// seconds, and a single number cannot be short for both.
     check_timeout_seconds: ?u32 = null,
 
+    /// JSON object merged last into openai_compat / azure chat bodies
+    /// (ADR 0034). Empty means none. Stored as canonical JSON text.
+    extra_body: []const u8 = "",
+
     /// Name of the active model (sent as the API `model` field).
     /// Builds a provider with one model. JSON loading normalizes into exactly
     /// this shape, so programmatic callers (tests, ad-hoc providers) do not
@@ -1571,7 +1575,7 @@ pub const Config = struct {
             };
             var it = pobj.iterator();
             while (it.next()) |kv| {
-                const p = try parseProvider(kv.key_ptr.*, kv.value_ptr.*);
+                const p = try parseProvider(arena, kv.key_ptr.*, kv.value_ptr.*);
                 try cfg.providers.put(arena, kv.key_ptr.*, p);
             }
         }
@@ -1623,7 +1627,7 @@ pub const Config = struct {
         return cfg;
     }
 
-    fn parseProvider(name: []const u8, v: json.Value) !Provider {
+    fn parseProvider(arena: std.mem.Allocator, name: []const u8, v: json.Value) !Provider {
         const prior_scope = diagnostic_scope;
         diagnostic_scope = "providers";
         defer diagnostic_scope = prior_scope;
@@ -1651,6 +1655,7 @@ pub const Config = struct {
             "thinking_schema",
             "reasoning_format",
             "check_timeout_seconds",
+            "extra_body",
             // Legacy names: flagged with a dedicated error below, not a warning.
             "model",
             "models",
@@ -1741,6 +1746,9 @@ pub const Config = struct {
             // 0 = no ceiling. A negative used to @intCast into a 4G hang.
             p.check_timeout_seconds = try jsonUnsigned(u32, k, "check_timeout_seconds");
         }
+        if (obj.get("extra_body")) |eb| {
+            p.extra_body = try parseExtraBody(arena, name, eb);
+        }
 
         // Some kinds address the model by project/location in the URL
         // (Vertex). Missing those only surfaces as error.VertexProjectMissing
@@ -1760,6 +1768,60 @@ pub const Config = struct {
         // validateProviderModels below): at this point `p.models` is always
         // empty.
         return p;
+    }
+
+    fn writeJsonValueRaw(s: *std.json.Stringify, v: json.Value) std.Io.Writer.Error!void {
+        switch (v) {
+            .null => try s.write(null),
+            .bool => |b| try s.write(b),
+            .integer => |n| try s.write(n),
+            .float => |n| try s.write(n),
+            .number_string => |t| try s.write(t),
+            .string => |t| try s.write(t),
+            .array => |arr| {
+                try s.beginArray();
+                for (arr.items) |item| try writeJsonValueRaw(s, item);
+                try s.endArray();
+            },
+            .object => |map| {
+                try s.beginObject();
+                var it = map.iterator();
+                while (it.next()) |kv| {
+                    try s.objectField(kv.key_ptr.*);
+                    try writeJsonValueRaw(s, kv.value_ptr.*);
+                }
+                try s.endObject();
+            },
+        }
+    }
+
+    fn parseExtraBody(arena: std.mem.Allocator, name: []const u8, eb: json.Value) ![]const u8 {
+        switch (eb) {
+            .object => {
+                var w: std.Io.Writer.Allocating = .init(arena);
+                var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
+                writeJsonValueRaw(&s, eb) catch {
+                    log.log(.error_, "provider '{s}': extra_body could not be serialized", .{name});
+                    return error.ExtraBodyNotObject;
+                };
+                return w.toOwnedSlice();
+            },
+            .string => |str| {
+                const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, str, .{}) catch {
+                    log.log(.error_, "provider '{s}': extra_body string is not JSON", .{name});
+                    return error.ExtraBodyNotObject;
+                };
+                if (parsed != .object) {
+                    log.log(.error_, "provider '{s}': extra_body must be a JSON object", .{name});
+                    return error.ExtraBodyNotObject;
+                }
+                return str;
+            },
+            else => {
+                log.log(.error_, "provider '{s}': extra_body must be a JSON object", .{name});
+                return error.ExtraBodyNotObject;
+            },
+        }
     }
 
     /// Reads the top-level "models" table (keyed `"<provider>/<model>"`, each
@@ -5316,6 +5378,20 @@ test "agent.tool_catalog and hot_tools load from config" {
     const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     try std.testing.expectEqual(false, cfg.agent.tool_catalog);
     try std.testing.expectEqual(@as(u32, 3), cfg.agent.hot_tools);
+}
+
+test "extra_body object loads and a non-object is refused" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const ok = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","extra_body":"{\"chat_template_kwargs\":{\"thinking\":true}}"}},"models":{"p/m":{"provider":"p"}}}
+    , .{});
+    const cfg = try Config.parseConfig(arena, ok);
+    const p = cfg.providers.get("p") orelse return error.MissingProvider;
+    try std.testing.expect(std.mem.find(u8, p.extra_body, "chat_template_kwargs") != null);
+    try std.testing.expect(std.mem.find(u8, p.extra_body, "thinking") != null);
 }
 
 test "an unknown key in a known section does not fail the load" {
