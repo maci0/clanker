@@ -1542,6 +1542,30 @@ sticky:
   reports the override as saved (`"9"`), `config_types` still says `number`,
   and neither `shape` nor `ghost` declares a type.
 
+## Steering messages are a visible ledger, not one overwritten hint line (2026-08-22)
+
+Sending a second steering message mid-run looked like it deleted the first:
+`sendSteerChat` discarded the text after POSTing `/api/steer` and each send
+overwrote the single `#steer-hint` line, so N sends were indistinguishable
+from one. The server was never the problem — it queues them all (FIFO, 16
+per run, drained oldest-first between iterations).
+
+- `ui/app/core/steer.js` (new, pure, node-tested in `steer.test.mjs`): a
+  ledger of `{text, state}` entries — sending / queued / applied / failed —
+  with oldest-first apply to mirror the server drain, and the framing-
+  sentence detector for persisted transcripts.
+- The steer row renders the ledger as a list (`#steer-sent`, `aria-live`);
+  failed entries carry the server's reason (429 queue-full, 404 no run).
+- `[ steering applied ]` stream lines now echo the message that landed;
+  entries still pending when the run ends produce `[ steering never
+  applied; the run ended first: … ]` — the server frees those silently.
+- `renderSessionHistory` shows a persisted steer as `[ steered mid-run: … ]`
+  inside the turn it steered, instead of a fake user turn that also marked
+  the real question unanswered.
+- Ctrl+Enter no longer bypasses the send guard (the input clears before the
+  POST, so a repeat press hits the blank check); `maxlength="8000"` matches
+  the goals view and the server's 8 KiB cap.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
