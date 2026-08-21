@@ -1984,9 +1984,9 @@ pub fn ckDebug(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 
     const sess = dap.liveSession(h.sandbox.gpa, h.sandbox.io, reg, sid) catch
         return h.writeResult(bytes, dap.errorJson(arena, "debug session unavailable"));
-    sess.launch_timeout_ms = cfg.debug.launch_timeout_ms;
-    sess.disconnect_timeout_ms = cfg.debug.disconnect_timeout_ms;
 
+    // handle() copies the timeout knobs from HandleOpts onto the session;
+    // writing them here too made the opts fields look dead.
     const out = dap.handle(sess, .{
         .io = h.sandbox.io,
         .gpa = h.sandbox.gpa,
@@ -2003,6 +2003,7 @@ pub fn ckDebug(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             error.MissingAdapter => "launch requires adapter matching debug.adapters",
             error.UnknownAdapter => "unknown adapter; check debug.adapters",
             error.AdapterNotFound => "adapter binary not found on PATH",
+            error.LaunchTimeout => "launch timed out (debug.launch_timeout_ms); adapter terminated",
             else => @errorName(err),
         };
         return h.writeResult(bytes, dap.errorJson(arena, msg));

@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **What failed:** Config parses the knob and host.zig copies it onto the DAP Session, but launch() waits on a fixed spin count over readFrame and nothing reads Session.launch_timeout_ms, so a silent adapter blocks past any configured cap. Found while fixing the sibling disconnect_timeout_ms dead knob (PR 305).
-- **Impact:** To be confirmed.
-- **Resolution:** Open on 2026-08-21. confirmed against main 5a4767f8: no reader of Session.launch_timeout_ms exists; not fixed yet
+- **Impact:** A guest debug launch against a silent or wedged adapter never returned, wedging the calling run; the configured cap was a no-op.
+- **Resolution:** Resolved on 2026-08-21. launchBounded bounds the launch handshake with debug.launch_timeout_ms via io.concurrent + Event.waitTimeout; silent adapter is SIGTERM/SIGKILLed and reaped; pinned by a silent-adapter test
 
 ## Status
 
-Open on 2026-08-21. confirmed against main 5a4767f8: no reader of Session.launch_timeout_ms exists; not fixed yet
+Resolved on 2026-08-21. launchBounded bounds the launch handshake with debug.launch_timeout_ms via io.concurrent + Event.waitTimeout; silent adapter is SIGTERM/SIGKILLed and reaped; pinned by a silent-adapter test
 
 ## Symptom and impact
 
@@ -16,11 +16,19 @@ Open on 2026-08-21. confirmed against main 5a4767f8: no reader of Session.launch
 
 ## Root cause
 
+The spin counts in launch()/waitResponse() bound the number of frames read, not time: a silent adapter leaves the caller blocked inside one readStreaming on the stdout pipe, which never returns. A fully silent adapter blocks in initialize() before launch()'s loop even runs, so a per-loop deadline would not have covered the launch op either.
+
 ## Resolution
+
+launchBounded (src/debug/dap.zig) runs the whole launch handshake (initialize + launch/attach) on an io.concurrent worker and bounds it with Event.waitTimeout at debug.launch_timeout_ms, the same pattern as subprocess.waitChildWithin. On expiry the adapter is SIGTERMed (its exit closing the pipe is what unblocks the worker's read), escalated to SIGKILL after a 2s grace, then awaited and reaped; the guest gets error.LaunchTimeout, mapped to 'launch timed out (debug.launch_timeout_ms); adapter terminated' in ckDebug. launch_timeout_ms = 0 disables the bound. The dead HandleOpts copies are wired instead of deleted: handle() is now the one writer of both Session timeout fields, and host.zig's direct session writes are gone, so tests can inject timeouts through opts.
 
 ## Verification
 
+New test 'silent adapter: launch is bounded by launch_timeout_ms and reaped' (src/debug/dap.zig): a python adapter that reads requests but never answers, launch_timeout_ms=300, asserts error.LaunchTimeout and that the registry row is gone. Full suite green: 333/333 steps, 1815/1826 passed (11 expected worktree skips).
+
 ## Follow-up
+
+waitResponse/waitEvent on the post-launch ops (continue, stackTrace, ...) still block unbounded on a silent adapter; only the launch handshake is covered by this knob.
 
 ## References
 
