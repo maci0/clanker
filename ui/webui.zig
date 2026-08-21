@@ -40,6 +40,7 @@ const chat = @embedFile("app/core/chat.js");
 const labels = @embedFile("app/core/labels.js");
 const goals = @embedFile("app/core/goals.js");
 const stream = @embedFile("app/core/stream.js");
+const steer = @embedFile("app/core/steer.js");
 const theme = @embedFile("app/core/theme.js");
 const slash = @embedFile("app/core/slash.js");
 const overlay = @embedFile("app/core/overlay.js");
@@ -88,8 +89,8 @@ comptime {
     // branches this entire comptime evaluation may spend, not a per-call
     // budget, so sizing it off one asset runs out once the assets together
     // exceed it — which is what adding a view used to do to the build.
-    const assets = [_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
-    const names = [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
+    const assets = [_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, steer, theme, slash, overlay, search, composer, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
+    const names = [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/steer.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
     var total: usize = 0;
     for (assets) |a| total += a.len;
     @setEvalBranchQuota(4 * total);
@@ -123,6 +124,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/core/labels.js")) return .{ .body = labels, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/goals.js")) return .{ .body = goals, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/stream.js")) return .{ .body = stream, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/steer.js")) return .{ .body = steer, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/theme.js")) return .{ .body = theme, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/slash.js")) return .{ .body = slash, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/overlay.js")) return .{ .body = overlay, .content_type = "text/javascript; charset=utf-8" };

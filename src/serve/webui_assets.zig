@@ -38,6 +38,7 @@ pub const Kind = enum {
     labels,
     goals,
     stream,
+    steer,
     theme,
     slash,
     overlay,
@@ -83,6 +84,7 @@ pub fn kindFor(target: []const u8) Kind {
     if (std.mem.endsWith(u8, target, "labels.js")) return .labels;
     if (std.mem.endsWith(u8, target, "goals.js")) return .goals;
     if (std.mem.endsWith(u8, target, "stream.js")) return .stream;
+    if (std.mem.endsWith(u8, target, "steer.js")) return .steer;
     if (std.mem.endsWith(u8, target, "theme.js")) return .theme;
     if (std.mem.endsWith(u8, target, "core/slash.js")) return .slash;
     if (std.mem.endsWith(u8, target, "overlay.js")) return .overlay;
@@ -149,6 +151,7 @@ pub const asset_paths = [_][]const u8{
     "/webui/core/search.js",
     "/webui/core/status.js",
     "/webui/core/stream.js",
+    "/webui/core/steer.js",
     "/webui/core/theme.js",
     "/webui/core/slash.js",
     "/webui/core/tools.js",

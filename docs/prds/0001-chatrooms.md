@@ -120,10 +120,14 @@ a restart is needed.
 
 ## Known issues
 
-- **History page size differs by surface** (tool: 20, CLI/HTTP: 50). The
-  dead `chatrooms.zig` `history_limit` constant this used to also disagree
-  with has been removed. Document why the tool path is deliberately
-  smaller (e.g. token budget for agent context), or unify the two.
+- **(Fixed) History page size differs by surface — deliberately, now
+  documented and named.** The agent-facing page stays 20
+  (`chat_history_page_size`, src/sandbox/host.zig) to protect the model's
+  context budget; the operator surfaces (CLI `clanker chat history`, HTTP
+  `GET /api/chat/messages`) page 50 via one shared constant,
+  `chatrooms.history_page_size`, instead of two magic literals in
+  src/cli.zig. Each constant's doc comment names the other, so the split
+  reads as a decision rather than drift.
 - **(Fixed) `rooms` and `todo_*` used to fall through to a generic
   `InvalidArg` message, and a sandbox-disabled chat tool surfaced a bare
   `SandboxDenied`.** The chat guest (tools/zig/chat.zig) now names each

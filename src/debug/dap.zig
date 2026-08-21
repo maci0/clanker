@@ -92,6 +92,7 @@ pub const Session = struct {
     adapter_name: []const u8 = "",
     buf: std.ArrayList(u8) = .empty,
     launch_timeout_ms: u32 = 15_000,
+    request_timeout_ms: u32 = 15_000,
     disconnect_timeout_ms: u32 = 3_000,
 
     pub fn deinit(self: *Session) void {
@@ -341,6 +342,7 @@ pub const HandleOpts = struct {
     enabled: bool,
     adapters: []const config_mod.DebugAdapter,
     launch_timeout_ms: u32 = 15_000,
+    request_timeout_ms: u32 = 15_000,
     disconnect_timeout_ms: u32 = 3_000,
     /// Test hook: when set, launch uses this argv instead of config.
     override_argv: ?[]const []const u8 = null,
@@ -349,6 +351,11 @@ pub const HandleOpts = struct {
 
 pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
     if (!opts.enabled) return error.DebugDisabled;
+    // HandleOpts is the one writer of the session's timeout knobs, so a test
+    // can inject them and a live session picks up a config change per call.
+    sess.launch_timeout_ms = opts.launch_timeout_ms;
+    sess.request_timeout_ms = opts.request_timeout_ms;
+    sess.disconnect_timeout_ms = opts.disconnect_timeout_ms;
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, opts.arena, input, .{});
     const obj = switch (parsed) {
         .object => |o| o,
@@ -369,7 +376,6 @@ pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
         };
         try sess.spawnAdapter(argv, opts.override_cwd);
         sess.adapter_name = adapter;
-        _ = try sess.initialize(opts.arena);
         var args: std.Io.Writer.Allocating = .init(opts.arena);
         var s = std.json.Stringify{ .writer = &args.writer };
         try s.beginObject();
@@ -384,10 +390,7 @@ pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
             try s.write(a);
         }
         try s.endObject();
-        const body = if (std.mem.eql(u8, op, "attach"))
-            try sess.attach(opts.arena, args.written())
-        else
-            try sess.launch(opts.arena, args.written());
+        const body = try runBounded(sess, opts, sess.launch_timeout_ms, .{ .launch = .{ .is_attach = std.mem.eql(u8, op, "attach"), .args_json = args.written() } });
         return wrap(opts.arena, sess, body);
     }
 
@@ -412,30 +415,30 @@ pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
             .string => |s| s,
             else => null,
         };
-        const body = try sess.setBreakpoints(opts.arena, source, lines.items, cond, hit);
+        const body = try runBounded(sess, opts, sess.request_timeout_ms, .{ .set_breakpoints = .{ .source = source, .lines = lines.items, .condition = cond, .hit_condition = hit } });
         return wrap(opts.arena, sess, body);
     }
 
-    if (std.mem.eql(u8, op, "continue")) return wrap(opts.arena, sess, try sess.simple(opts.arena, "continue", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "step_in")) return wrap(opts.arena, sess, try sess.simple(opts.arena, "stepIn", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "step_out")) return wrap(opts.arena, sess, try sess.simple(opts.arena, "stepOut", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "next")) return wrap(opts.arena, sess, try sess.simple(opts.arena, "next", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "pause")) return wrap(opts.arena, sess, try sess.simple(opts.arena, "pause", "{\"threadId\":1}"));
+    if (std.mem.eql(u8, op, "continue")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "continue", "{\"threadId\":1}"));
+    if (std.mem.eql(u8, op, "step_in")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "stepIn", "{\"threadId\":1}"));
+    if (std.mem.eql(u8, op, "step_out")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "stepOut", "{\"threadId\":1}"));
+    if (std.mem.eql(u8, op, "next")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "next", "{\"threadId\":1}"));
+    if (std.mem.eql(u8, op, "pause")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "pause", "{\"threadId\":1}"));
     if (std.mem.eql(u8, op, "stack_trace")) {
-        const body = try sess.simple(opts.arena, "stackTrace", "{\"threadId\":1}");
+        const body = try boundedSimple(sess, opts, "stackTrace", "{\"threadId\":1}");
         return flattenStack(opts.arena, sess, body);
     }
     if (std.mem.eql(u8, op, "scopes")) {
         const frame_id = jsonInt(obj, "frame_id") orelse 0;
         var args_buf: [64]u8 = undefined;
         const args = std.fmt.bufPrint(&args_buf, "{{\"frameId\":{d}}}", .{frame_id}) catch "{\"frameId\":0}";
-        return wrap(opts.arena, sess, try sess.simple(opts.arena, "scopes", args));
+        return wrap(opts.arena, sess, try boundedSimple(sess, opts, "scopes", args));
     }
     if (std.mem.eql(u8, op, "variables")) {
         const ref = jsonInt(obj, "variables_reference") orelse 0;
         var args_buf: [80]u8 = undefined;
         const args = std.fmt.bufPrint(&args_buf, "{{\"variablesReference\":{d}}}", .{ref}) catch "{\"variablesReference\":0}";
-        return flattenVars(opts.arena, sess, try sess.simple(opts.arena, "variables", args));
+        return flattenVars(opts.arena, sess, try boundedSimple(sess, opts, "variables", args));
     }
     if (std.mem.eql(u8, op, "evaluate")) {
         const expr = switch (obj.get("expression") orelse return error.MissingExpression) {
@@ -453,19 +456,150 @@ pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
         try s.objectField("context");
         try s.write("repl");
         try s.endObject();
-        return flattenEval(opts.arena, sess, try sess.simple(opts.arena, "evaluate", args.written()));
+        return flattenEval(opts.arena, sess, try boundedSimple(sess, opts, "evaluate", args.written()));
     }
     if (std.mem.eql(u8, op, "disconnect")) {
-        const out = try wrap(opts.arena, sess, try sess.disconnect(opts.arena));
+        const out = try wrap(opts.arena, sess, try boundedTeardown(sess, opts, .disconnect));
         dropLive(opts.session_id);
         return out;
     }
     if (std.mem.eql(u8, op, "terminate")) {
-        const out = try wrap(opts.arena, sess, try sess.terminate(opts.arena));
+        const out = try wrap(opts.arena, sess, try boundedTeardown(sess, opts, .terminate));
         dropLive(opts.session_id);
         return out;
     }
     return error.UnknownOp;
+}
+
+fn boundedSimple(sess: *Session, opts: HandleOpts, command: []const u8, args_json: []const u8) ![]const u8 {
+    return runBounded(sess, opts, sess.request_timeout_ms, .{ .simple = .{ .command = command, .args_json = args_json } });
+}
+
+/// Teardown wants the adapter gone either way: when the op times out, the
+/// expiry path has already killed and reaped it, which is that outcome, so
+/// the caller gets a success with a note rather than an error.
+fn boundedTeardown(sess: *Session, opts: HandleOpts, spec: OpSpec) ![]const u8 {
+    return runBounded(sess, opts, sess.request_timeout_ms, spec) catch |err| switch (err) {
+        error.RequestTimeout => "{\"ok\":true,\"note\":\"adapter unresponsive; killed\"}",
+        else => err,
+    };
+}
+
+/// One DAP operation as data, so `runBounded` can execute any of them on a
+/// watchdogged worker. `launch` covers the whole handshake (initialize, then
+/// launch/attach); the rest map 1:1 onto the Session methods.
+const OpSpec = union(enum) {
+    launch: struct { is_attach: bool, args_json: []const u8 },
+    simple: struct { command: []const u8, args_json: []const u8 },
+    set_breakpoints: struct { source: []const u8, lines: []const i64, condition: ?[]const u8, hit_condition: ?[]const u8 },
+    disconnect,
+    terminate,
+};
+
+/// The operation on the caller's thread, unbounded. The worker body of
+/// `runBounded`, and the fallback when no bound is configured or no
+/// concurrency is available.
+fn opInline(sess: *Session, arena: std.mem.Allocator, spec: OpSpec) ![]const u8 {
+    return switch (spec) {
+        .launch => |l| blk: {
+            _ = try sess.initialize(arena);
+            break :blk if (l.is_attach)
+                sess.attach(arena, l.args_json)
+            else
+                sess.launch(arena, l.args_json);
+        },
+        .simple => |c| sess.simple(arena, c.command, c.args_json),
+        .set_breakpoints => |b| sess.setBreakpoints(arena, b.source, b.lines, b.condition, b.hit_condition),
+        .disconnect => sess.disconnect(arena),
+        .terminate => sess.terminate(arena),
+    };
+}
+
+const OpOutcome = struct {
+    body: ?[]const u8 = null,
+    err: ?anyerror = null,
+};
+
+fn opWorker(sess: *Session, arena: std.mem.Allocator, spec: OpSpec, out: *OpOutcome, done: *std.Io.Event) void {
+    defer done.set(sess.io);
+    out.body = opInline(sess, arena, spec) catch |err| {
+        out.err = err;
+        return;
+    };
+}
+
+/// Bounds one DAP operation: `debug.launch_timeout_ms` for the launch
+/// handshake, `debug.request_timeout_ms` for everything after it. The spin
+/// counts in the wait loops cannot do it: a silent adapter leaves the worker
+/// *blocked* inside one `readStreaming` on the stdout pipe, which is not a
+/// cancelable syscall — the adapter's exit closing the pipe is what unblocks
+/// it (same ordering as `subprocess.waitChildWithin`). So on expiry the
+/// adapter is SIGTERMed first, escalating to SIGKILL when the worker is
+/// still blocked after a short grace, and only then awaited and reaped.
+fn runBounded(sess: *Session, opts: HandleOpts, timeout_ms: u32, spec: OpSpec) ![]const u8 {
+    if (timeout_ms == 0) return opInline(sess, opts.arena, spec);
+    var outcome: OpOutcome = .{};
+    var done: std.Io.Event = .unset;
+    var fut = opts.io.concurrent(opWorker, .{ sess, opts.arena, spec, &outcome, &done }) catch {
+        // No spare unit of concurrency for the watchdog; run unbounded
+        // rather than refuse an operation that would likely have succeeded.
+        return opInline(sess, opts.arena, spec);
+    };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(opts.io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    });
+    var expired = false;
+    while (!done.isSet()) {
+        done.waitTimeout(opts.io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too; the deadline decides.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(opts.io).raw.nanoseconds > 0) continue;
+                expired = true;
+                break;
+            },
+            error.Canceled => {
+                expired = true;
+                break;
+            },
+        };
+    }
+    if (expired) {
+        if (sess.reg.get(sess.session_id, sess.kind)) |pid| {
+            std.posix.kill(pid, std.posix.SIG.TERM) catch {};
+        }
+        const grace: std.Io.Clock.Timestamp = .fromNow(opts.io, .{
+            .clock = .awake,
+            .raw = .{ .nanoseconds = @as(i96, 2_000) * std.time.ns_per_ms },
+        });
+        while (!done.isSet()) {
+            done.waitTimeout(opts.io, .{ .deadline = grace }) catch |err| switch (err) {
+                error.Timeout => {
+                    if (done.isSet()) break;
+                    if (grace.durationFromNow(opts.io).raw.nanoseconds > 0) continue;
+                    // Still blocked: the adapter ignored SIGTERM, so it still
+                    // holds the pipe open. SIGKILL closes it unconditionally.
+                    if (sess.reg.get(sess.session_id, sess.kind)) |pid| {
+                        std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+                    }
+                    break;
+                },
+                error.Canceled => break,
+            };
+        }
+        fut.await(opts.io);
+        // Reap and drop the row so the guest sees a clean timeout, not a
+        // half-dead session a later op trips over.
+        sess.reg.terminate(sess.session_id, sess.kind);
+        return switch (spec) {
+            .launch => error.LaunchTimeout,
+            else => error.RequestTimeout,
+        };
+    }
+    fut.await(opts.io);
+    if (outcome.err) |err| return err;
+    return outcome.body orelse "{\"ok\":true}";
 }
 
 fn jsonInt(obj: std.json.ObjectMap, key: []const u8) ?i64 {
@@ -903,6 +1037,128 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
     const disc = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
     try std.testing.expect(std.mem.find(u8, disc, "\"ok\":true") != null);
     try std.testing.expect(reg.get("dbg-1", "dap") == null);
+}
+
+test "silent adapter: launch is bounded by launch_timeout_ms and reaped" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Reads requests but never answers one: without the bound, launch blocks
+    // forever inside readStreaming on the stdout pipe.
+    tmp.dir.writeFile(io, .{ .sub_path = "silent_dap.py", .data = "import sys\nwhile sys.stdin.buffer.read(4096):\n    pass\n" }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var sess = Session{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .reg = &reg,
+        .session_id = "dbg-silent",
+    };
+    defer sess.deinit();
+
+    const argv = [_][]const u8{ "python3", "silent_dap.py" };
+    const got = handle(&sess, .{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena_state.allocator(),
+        .reg = &reg,
+        .session_id = "dbg-silent",
+        .enabled = true,
+        .adapters = &.{},
+        .launch_timeout_ms = 300,
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    }, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./myapp\"}");
+    if (got) |_| return error.TestExpectedEqual else |err| switch (err) {
+        error.LaunchTimeout => {},
+        error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    }
+    // The expired launch reaped the adapter and dropped the registry row.
+    try std.testing.expect(reg.get("dbg-silent", "dap") == null);
+}
+
+test "mute-after-launch adapter: post-launch ops are bounded by request_timeout_ms" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Answers initialize and launch, then keeps reading but never answers
+    // again: without the bound, `continue` blocks forever in readStreaming.
+    const mute_src =
+        \\import json, sys
+        \\def rf():
+        \\    h = {}
+        \\    while True:
+        \\        line = sys.stdin.buffer.readline()
+        \\        if not line: return None
+        \\        if line in (b"\r\n", b"\n"): break
+        \\        if b":" in line:
+        \\            k, v = line.decode().split(":", 1); h[k.strip().lower()] = v.strip()
+        \\    return json.loads(sys.stdin.buffer.read(int(h.get("content-length", "0"))).decode())
+        \\def send(o):
+        \\    raw = json.dumps(o).encode()
+        \\    sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw); sys.stdout.buffer.flush()
+        \\seq = 1
+        \\while True:
+        \\    r = rf()
+        \\    if r is None: break
+        \\    c = r.get("command"); rid = r.get("seq", 0); seq += 1
+        \\    if c == "initialize":
+        \\        send({"seq": seq, "type": "response", "request_seq": rid, "command": c, "success": True, "body": {}})
+        \\    elif c == "launch":
+        \\        send({"seq": seq, "type": "event", "event": "initialized", "body": {}}); seq += 1
+        \\        send({"seq": seq, "type": "response", "request_seq": rid, "command": c, "success": True, "body": {}})
+    ;
+    tmp.dir.writeFile(io, .{ .sub_path = "mute_dap.py", .data = mute_src }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var sess = Session{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .reg = &reg,
+        .session_id = "dbg-mute",
+    };
+    defer sess.deinit();
+
+    const argv = [_][]const u8{ "python3", "mute_dap.py" };
+    const opts = HandleOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena_state.allocator(),
+        .reg = &reg,
+        .session_id = "dbg-mute",
+        .enabled = true,
+        .adapters = &.{},
+        .request_timeout_ms = 300,
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    };
+
+    const launched = handle(&sess, opts, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./myapp\"}") catch |err| switch (err) {
+        error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    try std.testing.expect(std.mem.find(u8, launched, "\"ok\":true") != null);
+
+    const got = handle(&sess, opts, "{\"op\":\"continue\"}");
+    if (got) |_| return error.TestExpectedEqual else |err| switch (err) {
+        error.RequestTimeout => {},
+        else => return err,
+    }
+    // The expired request reaped the adapter and dropped the registry row.
+    try std.testing.expect(reg.get("dbg-mute", "dap") == null);
 }
 
 test "seq numbers increase across requests" {

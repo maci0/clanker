@@ -332,14 +332,6 @@ fn writeManifestJson(name: []const u8, title: []const u8, description: []const u
         try s.objectField("module");
         try s.write(true);
     }
-    if (eager) {
-        try s.objectField("eager");
-        try s.write(true);
-    }
-    if (is_module) {
-        try s.objectField("module");
-        try s.write(true);
-    }
     try s.endObject();
     try buf.writer.writeByte('\n');
     return buf.written();

@@ -59,6 +59,33 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   a mid-conversation model or effort switch, so a switch that applied
   correctly still looked like it had been ignored.
 
+- Post-launch debug ops (`continue`, `stackTrace`, `variables`, ...) no
+  longer block a run forever when the adapter goes silent: every request
+  runs under the new `debug.request_timeout_ms` (default 15000 ms, `0`
+  disables), with the same kill-and-reap expiry as the launch bound.
+  `disconnect`/`terminate` treat the timeout as success with a note —
+  teardown wanted the adapter gone and the expiry killed it.
+
+- The chat composer's steer row now keeps a visible ledger of every
+  steering message sent for the running turn (sending / queued / applied /
+  failed per entry), so a second message no longer looks like it replaced
+  the first — the server always queued them all (FIFO, 16 per run); the
+  client just kept no record. The `[ steering applied ]` transcript line
+  now echoes which message landed, messages still queued when the run ends
+  are called out as never applied, a reloaded transcript renders a steered
+  message as `[ steered mid-run: … ]` inside the turn it steered instead
+  of impersonating a typed user turn (and no longer marks the real
+  question unanswered), Ctrl+Enter can no longer double-send the same
+  text, and the steer box gets the same 8000-character cap the goals
+  view already had.
+
+- `debug.launch_timeout_ms` actually bounds a debug launch. The whole
+  launch handshake (initialize + launch/attach) runs under the configured
+  cap; a silent or wedged adapter is terminated (SIGTERM, then SIGKILL
+  after a short grace), reaped, and the tool returns a timeout error
+  instead of blocking the run forever. `launch_timeout_ms = 0` disables
+  the bound (PRD 0017 known issue).
+
 - The REPL no longer dies with `panic: Invalid free` on the first `[ERROR]`
   log record of a session (a failed provider request, a sandbox refusal).
   The transcript log sink stored `sanitizeAlloc`'s no-copy alias of the

@@ -7,6 +7,7 @@ import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, pumpInto, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
+import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steerFramedText, renderSteerList } from "./core/steer.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
@@ -59,6 +60,7 @@ var el = {
   steerInput: document.getElementById("steer-input"),
   steerBtn: document.getElementById("steer-btn"),
   steerHint: document.getElementById("steer-hint"),
+  steerSent: document.getElementById("steer-sent"),
   refresh: document.getElementById("refresh"),
   hint: document.getElementById("hint"),
   transcript: document.getElementById("transcript"),
@@ -892,7 +894,16 @@ function renderSessionHistory(messages) {
       try {
         while (idx < messages.length && performance.now() < until) {
           var m = messages[idx];
-          if (m.role === "user") {
+          // A steering message is persisted as a user turn carrying the
+          // server's framing sentence. Rendered as a plain user message it
+          // closed the real question as unanswered and impersonated the
+          // user with text they never typed — show it as the mid-run
+          // interjection it was, inside the turn it steered.
+          var steeredText = m.role === "user" && pendingTurn ? steerFramedText(m.content) : null;
+          if (steeredText != null) {
+            if (span) span.to = idx;
+            appendText(pendingTurn, "\n[ steered mid-run: " + steeredText + " ]\n", true);
+          } else if (m.role === "user") {
             // A question with no reply before the next one: close it off
             // rather than letting the next answer attach to the wrong one.
             if (pendingTurn) markTurnUnanswered(pendingTurn);
@@ -1272,6 +1283,8 @@ function syncControls() {
   if (!busy) {
     el.steerInput.value = "";
     el.steerHint.textContent = "";
+    el.steerSent.textContent = "";
+    el.steerSent.hidden = true;
     updateComposerModeHint();
   }
   // The send circle yields its spot to the stop circle while a turn runs
@@ -1360,31 +1373,39 @@ function stopElapsed() {
    view uses, keyed by the run's session id instead of a goal id). While a
    turn runs, a dedicated input appears beside the locked composer; sending
    queues a course correction the agent loop drains between iterations. */
+var steerLedger = makeSteerLedger();
+function paintSteerList() {
+  renderSteerList(steerLedger, el.steerSent, document);
+  el.steerSent.hidden = steerLedger.entries.length === 0;
+}
 function sendSteerChat() {
   var msg = (el.steerInput.value || "").trim();
   if (!msg) { el.steerHint.textContent = "Type a message to steer the running turn."; return; }
-  el.steerHint.textContent = "sending…";
-  el.steerBtn.disabled = true;
+  // Cleared before the POST, so a repeated Ctrl+Enter cannot send the same
+  // text twice — the second press hits the blank guard above. The message
+  // itself is not lost: the ledger entry below carries it from here on.
+  el.steerInput.value = "";
+  el.steerHint.textContent = "";
+  var entry = steerAdd(steerLedger, msg);
+  paintSteerList();
   fetch("/api/steer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session: sessionId, message: msg })
   }).then(function (resp) {
     if (resp.ok) {
-      el.steerInput.value = "";
-      el.steerHint.textContent = "steering message sent — it lands on the next model step.";
+      // The stream's "applied" event can beat this 200 — don't demote.
+      if (entry.state === "sending") steerMark(entry, "queued");
     } else {
       return resp.json().then(function (j) {
-        el.steerHint.textContent = "steer failed: " + (j.error || ("HTTP " + resp.status));
+        steerMark(entry, "failed", j.error || ("HTTP " + resp.status));
       }).catch(function () {
-        el.steerHint.textContent = "steer failed: HTTP " + resp.status;
+        steerMark(entry, "failed", "HTTP " + resp.status);
       });
     }
   }).catch(function (err) {
-    el.steerHint.textContent = "steer failed: " + (err && err.message ? err.message : "network error");
-  }).finally(function () {
-    el.steerBtn.disabled = false;
-  });
+    steerMark(entry, "failed", err && err.message ? err.message : "network error");
+  }).finally(paintSteerList);
 }
 el.steerBtn.addEventListener("click", sendSteerChat);
 el.steerInput.addEventListener("keydown", function (e) {
@@ -2399,7 +2420,18 @@ el.form.addEventListener("submit", function (e) {
       // A status event is a run lifecycle note (contacting the provider, a
       // steering message being applied) rather than answer text: show it as a
       // bracketed log line, the same way the goals view renders it.
-      else if (evt.type === "status") { appendText(turn, "\n[ " + evt.message + " ]\n", true); }
+      else if (evt.type === "status") {
+        // The applied event names no message; the queue drains oldest-first,
+        // so the ledger's oldest pending entry is the one that just landed —
+        // echo its text so two applied steers are distinguishable.
+        if (evt.message === "steering message applied") {
+          var appliedSteer = steerApplyOldest(steerLedger);
+          paintSteerList();
+          appendText(turn, "\n[ steering applied" + (appliedSteer ? ": " + steerPreview(appliedSteer.text) : "") + " ]\n", true);
+        } else {
+          appendText(turn, "\n[ " + evt.message + " ]\n", true);
+        }
+      }
       else if (evt.type === "ask") { addAskEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "confirm") { addConfirmEvent(turn, evt); setTurnPhase(turn, "ask"); }
       else if (evt.type === "error") { appendText(turn, "\n[" + evt.message + errorRecoveryHint(evt.message) + "]\n", true); setTurnPhase(turn, ""); pushLiveNode("tool", evt.message, "error", 0); }
@@ -2540,6 +2572,15 @@ el.form.addEventListener("submit", function (e) {
     stopElapsed();
     paintRunMetrics();
     controller = null;
+    // The server frees still-queued steering messages silently when the run
+    // ends; this ledger is the only record left, so say what was dropped
+    // before the steer row (and the list in it) is hidden.
+    var droppedSteers = steerUnapplied(steerLedger);
+    for (var dsi = 0; dsi < droppedSteers.length; dsi++) {
+      appendText(turn, "\n[ steering never applied; the run ended first: " + steerPreview(droppedSteers[dsi].text) + " ]\n", true);
+    }
+    steerClear(steerLedger);
+    paintSteerList();
     // Stop is about to be hidden; take focus back to the composer rather
     // than letting it drop to <body>.
     var focusWasOnStop = document.activeElement === el.cancel;
