@@ -342,9 +342,15 @@ fn logSinkWrite(ctx: *const anyopaque, line: []const u8) void {
     // string, an exec refusal) is untrusted, so control-strip like every
     // other tool-sourced transcript line (CWE-150).
     const safe = clean(bridge_gpa, body) orelse return;
+    // `line` is log.log's stack buffer, dead once this returns, and
+    // sanitizeAlloc hands that same slice back when nothing needed stripping
+    // (every ordinary record). The list owns bridge_gpa memory — drainLogLines
+    // frees each entry — so the no-copy case is copied here; storing the
+    // alias freed a stack address on the next frame ("Invalid free").
+    const owned = if (safe.ptr == body.ptr) (bridge_gpa.dupe(u8, safe) catch return) else safe;
     _ = std.c.pthread_mutex_lock(&bridge_log_mutex);
     defer _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
-    bridge_log_lines.append(bridge_gpa, safe) catch bridge_gpa.free(safe);
+    bridge_log_lines.append(bridge_gpa, owned) catch bridge_gpa.free(owned);
 }
 
 /// Moves buffered log records into the transcript as dim lines. Caller
@@ -362,6 +368,35 @@ fn drainLogLines(self: *Model) void {
         if (copy.ptr != l.ptr) bridge_gpa.free(l);
     }
     bridge_log_lines.clearRetainingCapacity();
+}
+
+test "logSinkWrite owns every record it buffers, including one sanitizeAlloc hands back unchanged" {
+    // log.log formats the record into a stack buffer and the sink's slice
+    // dies with that frame. sanitizeAlloc returns its input untouched when
+    // nothing needs stripping (every ordinary record), so the sink has to
+    // copy that case too: drainLogLines frees each entry with bridge_gpa,
+    // and freeing log.log's stack through it was the "Invalid free" panic
+    // that ended a REPL on the first [ERROR] record.
+    const saved_gpa = bridge_gpa;
+    bridge_gpa = std.testing.allocator;
+    defer bridge_gpa = saved_gpa;
+    const record = "[ERROR] ts_ms=1 request to 'llamacpp' failed\n";
+    var buf: [record.len]u8 = undefined;
+    @memcpy(&buf, record);
+    logSinkWrite(@ptrCast(&buf), &buf);
+    _ = std.c.pthread_mutex_lock(&bridge_log_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
+    try std.testing.expectEqual(@as(usize, 1), bridge_log_lines.items.len);
+    const stored = bridge_log_lines.items[0];
+    const aliases_stack = @intFromPtr(stored.ptr) >= @intFromPtr(&buf) and @intFromPtr(stored.ptr) < @intFromPtr(&buf) + buf.len;
+    // Cleanup mirrors drainLogLines; the alias guard only keeps a failing
+    // run from turning the assertion below into an allocator panic.
+    defer {
+        if (!aliases_stack) bridge_gpa.free(stored);
+        bridge_log_lines.clearAndFree(bridge_gpa);
+    }
+    try std.testing.expectEqualStrings(record[0 .. record.len - 1], stored);
+    try std.testing.expect(!aliases_stack);
 }
 
 /// Agent.steer_fn for the REPL: pops the next steering message the user typed

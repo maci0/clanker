@@ -44,6 +44,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The REPL no longer dies with `panic: Invalid free` on the first `[ERROR]`
+  log record of a session (a failed provider request, a sandbox refusal).
+  The transcript log sink stored `sanitizeAlloc`'s no-copy alias of the
+  logger's stack buffer and the draw loop then freed that stack address;
+  the sink now owns a copy of every record it buffers.
+
 - Chat tools answer a denial and a bad argument with actionable text:
   `rooms` and `todo_*` name their fields (the todo messages point at the
   run's private list and at `kanban_*` for shared work), chatrooms-off
