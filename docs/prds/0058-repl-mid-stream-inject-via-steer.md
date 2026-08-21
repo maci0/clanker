@@ -2,94 +2,100 @@
 
 ## Status
 
-Draft — opened 2026-08-21. Name the source files that are the single source of truth, and the surfaces that expose it.
+Shipped (differently than drafted) — updated 2026-08-22, opened 2026-08-21.
 
-Shipped / In progress / Draft. Name the source files that are the single
-source of truth, and the surface(s) that expose it (tools, HTTP, CLI, web
-UI). If a claim below is known to be stale or contradicted by the code,
-say so here up front rather than burying it in Design — a reader who only
-reads Status should not walk away misinformed.
+Source of truth: `src/tui/repl.zig` (`steerWhileRunning`, `tuiSteerPoll`,
+`bridge_steer`, `steer_message_cap`) and the drain seam in
+`src/agent/loop.zig` (`steer_fn`, polled between iterations). Surfaces: the
+REPL composer while a turn runs; the web equivalent is `POST /api/steer`
+(PRD 0006 8.6).
+
+What shipped is not the drafted `/steer` command or Ctrl-S binding: while a
+turn runs the composer itself is the steer box — plain Enter queues the
+typed line as a mid-run course correction onto the same `Agent.steer_fn`
+seam the web uses. There is no `/steer` command and no Ctrl-S binding in
+the tree.
 
 ## Problem
 
-Web can POST /api/steer. The vaxis REPL cannot inject into a running turn.
-
-What breaks or is impossible without this, stated from the situation that
-forced the decision, not from the solution. Include real constraints
-(no server to mediate, must ride an existing transport, sandbox must be
-able to enforce it) that shaped the design, not just the desired outcome.
+Web can POST /api/steer. The vaxis REPL could not inject into a running
+turn: typing mid-run was a no-op, so the only course correction was to
+kill the turn or switch to the web UI.
 
 ## Goals
 
-1. /steer queues onto Agent.steer_fn.  2. Ctrl-S does the same if it does not fight XOFF.  3. Idle is a hint not a send.  4. Same queue as web.  5. Tests the queue, not a second channel.
-
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
+1. Mid-run composer input queues onto `Agent.steer_fn` — the same queue
+   the web uses, not a second channel.
+2. Queued steers are visible: an immediate transcript echo per message and
+   a live queue count while any are waiting.
+3. The queue is bounded the same way the server's is.
+4. Tests exercise the queue, not a parallel implementation.
 
 ## Non-goals
 
-What this deliberately does not do, and why leaving it out is a feature
-(not just unstarted work). This is what stops the next reader from
-"fixing" a deliberate omission.
+- Abort-and-resubmit (drops in-flight tool work; RFC 0035 Option B, rejected).
+- A second steer channel or protocol.
+- A Ctrl-S binding — it can collide with XOFF under software flow control;
+  revisit only with evidence terminals handle it (ADR 0047 caveat).
 
 ## Design
 
-**Queue.** /steer and Ctrl-S push onto Agent.steer_fn, the same poll web POST /api/steer uses. Idle /steer is a hint, not a send. /steer is the reliable spelling; Ctrl-S is skipped if it is XOFF.
+**Queue.** `steerWhileRunning` (render thread) frames the composer text
+with the same interjection sentence `POST /api/steer` applies server-side
+and appends it to `bridge_steer` under `bridge_mutex`; `tuiSteerPoll` (run
+thread) drains it oldest-first as the run's `Agent.steer_fn` between agent
+iterations. The queue is cleared at turn start and teardown, so a stale
+steer never leaks into the next turn.
 
-**Dependencies.** Hard: ADR 0047, PRD 0006 8.6, src/tui/repl.zig tuiSteerPoll.
+**Visibility (2026-08-22).** Each queued steer echoes
+`steering queued (N pending): <text>` straight into the transcript from
+`steerWhileRunning` — not via `bridge_tool_lines`, which is only drained
+after the run returns and made the typed text vanish until the turn ended.
+While `bridge_steer` is non-empty during a run, the status line shows
+`N steer queued`, decrementing as the run drains the queue.
 
-**Implementation.**
-1. later: /steer command. Files: src/tui/repl.zig.
-2. later: Ctrl-S if terminals allow. Files: src/tui/repl.zig.
-
-## Non-goals
-Abort-and-resubmit. A second steer channel.
+**Bound.** `steer_message_cap = 16`, the same ceiling `steerEnqueue`
+enforces per run server-side. A steer over the cap is refused with a
+transcript line that repeats the message (the composer was already reset,
+so that line is where the text survives).
 
 ## Failure modes
+
 | Condition | Behaviour |
 |---|---|
-| /steer while idle | notice, no send |
-| Ctrl-S is XOFF | /steer still works |
+| Enter while idle | submits a task, as always; steering needs a running turn |
+| Enter in the race window after the turn ended | `notice: no run to steer; the turn already ended` |
+| Queue at 16 | refusal line repeating the message; nothing queued |
+| Slash command typed mid-run | swallowed into the steer queue as literal text — see Known issues |
+| Run ends with steers still queued | queue is cleared at next turn start; the count disappears |
 
 ## Acceptance criteria
-1. [ ] /steer uses steer_fn (Goal 1, Goal 4)
-2. [ ] idle is a hint (Goal 3)
 
-## Open questions / future work
-Ctrl-S vs XOFF is phase 2.
+1. [x] Mid-run composer input reaches `Agent.steer_fn`'s queue (Goal 1).
+2. [x] A queued steer is visible before the turn ends: transcript echo +
+       status-line count (Goal 2).
+3. [x] The TUI queue refuses message 17, like the server (Goal 3).
+4. [ ] A test drives `steerWhileRunning`/`tuiSteerPoll` end to end (Goal 4)
+       — the drain seam is covered server-side in `src/cli.zig` steer
+       registry tests, but the TUI queue itself has no direct test; the
+       shared blank-line rule is pinned by `isBlankSubmission` only.
 
 ## Known issues
 
-Only needed when verification against code turned up real drift between
-what was designed/promised (in this doc, in a manifest, in a code comment)
-and what the code actually does. Omit this section entirely for a PRD with
-no known drift — an empty "Known issues: none" is noise. Each entry: what
-was promised, what actually happens, and where the fix belongs (file, not
-just "somewhere").
-
-## Failure modes
-
-A table: condition -> behaviour. Every "what happens when X goes wrong"
-answer a caller would otherwise have to read the source to find out. Mark
-a row as a known bug (cross-reference Known issues) rather than describing
-buggy behavior as if it were the design.
-
-## Acceptance criteria
-
-Checkboxes, each traceable to a Goal. Use `[ ]` honestly for anything not
-currently true — an unchecked box that names the gap is more useful than a
-checked box that's aspirational. Re-verify this section, not just Design,
-whenever the code changes underneath a shipped PRD.
+- Slash commands typed while a turn runs are not parsed: `submit` branches
+  to `steerWhileRunning` before `parseCommand`, so `/help` or `/compact`
+  mid-run is sent to the model as literal steering text. If mid-run
+  commands should work, the parse has to happen before the steer branch in
+  `src/tui/repl.zig` `submit`. Filed as
+  `docs/reports/bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md`.
+- The framing sentence is persisted verbatim as the user's message in the
+  saved session (shared with the web path); see
+  `docs/reports/bugs/2026-08-22-steer-framing-persisted-in-transcript.md`.
 
 ## Open questions / future work
 
-Real unresolved decisions, each phrased so a reader unfamiliar with the
-history can tell what's actually being asked and why it's still open
-(what would resolving it cost or break?). Distinguish a genuine open
-design question from a plain bug that just hasn't been fixed yet — a bug
-belongs in Known issues, not here, even if fixing it is future work.
-
-Do not park build blockers here. If implementation cannot start until a
-choice is made, make the choice in Design (and say why), then leave only
-follow-on / optional refinements in this section.
+- Ctrl-S as a kimi-style alias stays out until the XOFF question is
+  settled (ADR 0047).
+- Whether an explicit `/steer` spelling is still worth adding now that the
+  composer steers implicitly — it would also reopen mid-run slash parsing
+  (see Known issues).
