@@ -57,6 +57,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   text, and the steer box gets the same 8000-character cap the goals
   view already had.
 
+- `debug.launch_timeout_ms` actually bounds a debug launch. The whole
+  launch handshake (initialize + launch/attach) runs under the configured
+  cap; a silent or wedged adapter is terminated (SIGTERM, then SIGKILL
+  after a short grace), reaped, and the tool returns a timeout error
+  instead of blocking the run forever. `launch_timeout_ms = 0` disables
+  the bound (PRD 0017 known issue).
+
 - The REPL no longer dies with `panic: Invalid free` on the first `[ERROR]`
   log record of a session (a failed provider request, a sandbox refusal).
   The transcript log sink stored `sanitizeAlloc`'s no-copy alias of the

@@ -84,6 +84,12 @@ pub const max_emoji_len = 64;
 const last_text_preview_bytes = 120;
 /// Newest messages injected into the agent inbox per run.
 pub const inbox_limit = 5;
+/// Operator-surface history page: CLI `clanker chat history` and HTTP
+/// `GET /api/chat/messages`. Deliberately larger than the agent-facing
+/// page — `chat_history_page_size` (20) in src/sandbox/host.zig protects
+/// the model's context budget, while an operator scrolling a room reads
+/// full text and can take more per request (PRD 0001).
+pub const history_page_size = 50;
 /// One line's JSON envelope beyond the text: room, from, id, ts, thread,
 /// reactions, and framing. Text is capped at `max_text_len` and the JSON
 /// escaping can double it, so a worst-case line is `max_text_len * 2` plus
