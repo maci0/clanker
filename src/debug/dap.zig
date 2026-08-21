@@ -317,7 +317,9 @@ pub const Session = struct {
         if (self.reg.get(self.session_id, self.kind) == null) return "{\"ok\":true}";
         const id = self.sendRequest(arena, "disconnect", "{\"terminateDebuggee\":true}") catch 0;
         if (id != 0) _ = self.waitResponse(arena, id) catch {};
-        self.reg.terminate(self.session_id, self.kind);
+        // The adapter was just told to shut down; give it
+        // disconnect_timeout_ms to exit on its own before the SIGTERM.
+        _ = self.reg.terminateWithin(self.session_id, self.kind, self.disconnect_timeout_ms);
         return "{\"ok\":true}";
     }
 

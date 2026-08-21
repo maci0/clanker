@@ -216,6 +216,37 @@ pub const Registry = struct {
         }
     }
 
+    /// Waits up to `timeout_ms` for one process to exit on its own before
+    /// terminating it. DAP's `disconnect` uses this: the adapter was just
+    /// asked to shut down (`terminateDebuggee`), so give it the configured
+    /// window to exit cleanly instead of SIGTERMing it the moment it
+    /// answers (PRD 0017, `debug.disconnect_timeout_ms`). The process is
+    /// reaped and the row dropped either way. Missing keys are a no-op.
+    /// Returns true when the process exited within the window.
+    pub fn terminateWithin(self: *Registry, session_id: []const u8, kind: []const u8, timeout_ms: u32) bool {
+        self.mutex.lockUncancelable(self.io);
+        var taken: ?Handle = null;
+        for (self.items.items, 0..) |h, i| {
+            if (std.mem.eql(u8, h.session_id, session_id) and std.mem.eql(u8, h.kind, kind)) {
+                taken = self.items.orderedRemove(i);
+                break;
+            }
+        }
+        self.mutex.unlock(self.io);
+        var h = taken orelse return true;
+        defer self.destroyHandle(&h);
+        if (h.child) |*c| {
+            const exited = waitChildWithin(self.io, c, h.pid, timeout_ms);
+            // No-op when the wait above already reaped it; SIGTERM + reap
+            // when the window lapsed or the wait was interrupted.
+            c.kill(self.io);
+            return exited;
+        }
+        // Residual posix: signal delivery has no std.Io equivalent.
+        std.posix.kill(h.pid, std.posix.SIG.TERM) catch {};
+        return false;
+    }
+
     /// SIGTERM every process for this session. Missing pids are ignored.
     pub fn terminateSession(self: *Registry, session_id: []const u8) void {
         self.mutex.lockUncancelable(self.io);
@@ -295,6 +326,50 @@ pub const Registry = struct {
         self.destroyHandle(&h);
     }
 };
+
+fn childWaitWorker(io: std.Io, child: *std.process.Child, done: *std.Io.Event) void {
+    defer done.set(io);
+    _ = child.wait(io) catch {};
+}
+
+/// Blocks until `child` exits or `timeout_ms` lapses, whichever is first.
+/// On expiry the child is SIGTERMed *before* the worker is cancelled — a
+/// blocked waitpid is not a cancelable syscall, so the signal is what makes
+/// the worker's wait return and the cancel complete instead of wedging
+/// (same ordering as `pingWithTimeout` in cli.zig).
+fn waitChildWithin(io: std.Io, child: *std.process.Child, pid: std.posix.pid_t, timeout_ms: u32) bool {
+    if (timeout_ms == 0) return false;
+    var done: std.Io.Event = .unset;
+    var fut = io.concurrent(childWaitWorker, .{ io, child, &done }) catch {
+        // No spare unit of concurrency for the wait; skip the grace window
+        // rather than block without a ceiling on a child that never exits.
+        return false;
+    };
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too; the deadline decides.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                std.posix.kill(pid, std.posix.SIG.TERM) catch {};
+                fut.cancel(io);
+                return false;
+            },
+            // The caller itself was canceled: terminate hard and unwind.
+            error.Canceled => {
+                std.posix.kill(pid, std.posix.SIG.TERM) catch {};
+                fut.cancel(io);
+                return false;
+            },
+        };
+    }
+    fut.await(io);
+    return true;
+}
 
 var process_mu: SpinMutex = .{};
 var process_reg: ?Registry = null;
@@ -429,6 +504,52 @@ test "adopt a live process, write/read a line, SIGTERM on session end" {
     try std.testing.expectEqual(@as(usize, 0), reg.count());
     // A second terminate is a no-op, not a crash on a stale pid.
     reg.terminateSession("live-1");
+}
+
+test "terminateWithin reports a child that exits inside the window" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+
+    const child = std.process.spawn(io, .{
+        .argv = &.{ "python3", "-c", "raise SystemExit(0)" },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    _ = try reg.adopt("grace-1", "dap", child);
+    try std.testing.expect(reg.terminateWithin("grace-1", "dap", 10_000));
+    try std.testing.expect(reg.get("grace-1", "dap") == null);
+    try std.testing.expectEqual(@as(usize, 0), reg.count());
+    // Missing keys are a no-op that reports "nothing left running".
+    try std.testing.expect(reg.terminateWithin("grace-1", "dap", 10_000));
+}
+
+test "terminateWithin SIGTERMs a child that outlives the window" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+
+    const child = std.process.spawn(io, .{
+        .argv = &.{ "python3", "-c", "import time; time.sleep(600)" },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    }) catch |err| switch (err) {
+        error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    _ = try reg.adopt("grace-2", "dap", child);
+    try std.testing.expect(!reg.terminateWithin("grace-2", "dap", 50));
+    try std.testing.expect(reg.get("grace-2", "dap") == null);
+    try std.testing.expectEqual(@as(usize, 0), reg.count());
 }
 
 test "register refuses an empty kind" {
