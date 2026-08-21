@@ -18,8 +18,10 @@ line as an agent chat message, see Design), WASM tool `autoresearch`
 The old `src/research/engine.zig` placeholder was deleted: the
 autoresearch loop never imported it.
 
-`--budget` is accepted and logged as an advisory pacing hint only in v1;
-the harness owns its own timeout. See Design and Known issues.
+`--budget` is enforced as a per-experiment wall clock since commit
+8e3bdcfa (2026-08-19): `runHarness` passes it to `std.process.run` as a
+deadline, and a lapsed budget kills the harness and reports `timed_out`.
+See Design and Known issues.
 
 ## Problem
 
@@ -56,11 +58,12 @@ just GPU kernels.
 **Harness contract.** Any shell command must (a) exit 0, (b) emit the
 metric as `<pattern><number>` in stdout/stderr, or as `metric.json`
 `{"<name>": <number>}` (checked first), both implemented in
-`harness.zig`'s `extractMetric`. `--budget` is **advisory only in v1**:
-stored on `Options` and passed through to `Loop.run`, surfaced in the CLI
-`--dry-run` log but not written into the run's `config.json`, and not used
-as a wall-clock kill. The harness owns its own timeout; do not claim a
-subprocess cutoff until `runHarness` enforces one.
+`harness.zig`'s `extractMetric`. `--budget` is **enforced since 8e3bdcfa**:
+stored on `Options` as `budget_seconds`, converted by `budgetMs` and passed
+to `runHarness`, which hands `std.process.run` a deadline covering the whole
+run. A harness past its budget is killed and reaped, and the ledger entry
+records `timed_out` rather than a plain failure — "the experiment ran
+away" is a different diagnosis from "it failed".
 
 **CLI flags** (`clanker autoresearch`, mirrored by REPL `/autoresearch` help):
 
@@ -71,7 +74,7 @@ subprocess cutoff until `runHarness` enforces one.
 | `--metric <name>` | Metric key | `score` |
 | `--direction min|max` | Whether lower or higher is better | `min` |
 | `--pattern <sub>` | Substring before the number to extract | empty (first float) |
-| `--budget <sec>` | Logged advisory pacing hint only; not a kill switch | `300` |
+| `--budget <sec>` | Per-experiment wall clock; a harness past it is killed and reported `timed_out` | `300` |
 | `--iters <n>` | Max experiments | `3` |
 | `--dry-run` | Validate/log options; no LLM, no harness | off |
 | `--provider` / `--model` | Provider/model for proposals | config default |
@@ -100,10 +103,15 @@ surface.
 
 ## Known issues
 
-- `--budget` is advisory only (see Design). `runHarness` still calls
-  `std.process.run` with no timeout, so a hung harness runs until it exits.
-  Not a kill switch until code enforces one; CLI `--help` detail that still
-  reads like "wall seconds" should stay aligned with advisory semantics.
+- **(Fixed) `--budget` used to be advisory only.** Commit 8e3bdcfa
+  (2026-08-19, "autoresearch: enforce budget_seconds as a real harness
+  timeout") made it a real per-experiment wall clock: `runHarness` passes a
+  deadline to `std.process.run`, a hung harness is killed and reaped at the
+  deadline, and the result reports `timed_out`. Pinned by the test
+  "runHarness kills a harness that outlives its budget"
+  (src/autoresearch/harness.zig). The CLI `--help` "per-experiment wall
+  seconds" wording is accurate again. This entry stayed open two days after
+  the fix landed; re-verified against main 006b9f43 on 2026-08-22.
 
 ## Failure modes
 
@@ -117,7 +125,7 @@ surface.
 | `patch_apply` WASM tool fails | Iteration warning-logged, treated as no improvement |
 | Harness exits non-zero | `ok=false` in the ledger entry, not an improvement |
 | Harness produces no parseable metric | `metric=null` in the ledger entry, `isBetter` treats it as not an improvement |
-| Harness runs long past `--budget` | Not cut off: budget is advisory; harness runs until it exits on its own (see Known issues) |
+| Harness runs long past `--budget` | Killed at the deadline and reaped; ledger entry records `timed_out` (test: "runHarness kills a harness that outlives its budget") |
 | `ledger.jsonl` already over 10 MiB | `appendEntry` returns `error.StreamTooLong`, existing file left untouched (test-covered) |
 
 ## Acceptance criteria
@@ -129,10 +137,10 @@ surface.
 - [x] Append-only ledger (`ledger.jsonl`), including the oversized-file edge case
 - [x] WASM tool `autoresearch` lists runs and tails a ledger, reachable from any agent conversation
 - [x] Skill (`skills/autoresearch.md`) + REPL `/autoresearch` + eval coverage (`evals/autoresearch_*.task.json`)
-- [x] Goal 1 (loop pacing): `--budget` is accepted and passed through as an advisory pacing hint only, never a kill switch (CLI `--help` still says "wall seconds" — see Known issues)
+- [x] Goal 1 (loop pacing): `--budget` is accepted and passed through; advisory-only in v1, enforced as a real wall-clock kill since 8e3bdcfa (see Known issues)
 - [x] Goals 1–4 build and format clean: `zig build` / `zig build tools` / `zig fmt --check` green
 
 ## Open questions / future work
 
-- v1 decision: `--budget` stays logged advisory; the harness owns its own
-  timeout. A real subprocess kill remains future work if operators need it.
+- v1 decision was advisory-only; superseded by 8e3bdcfa, which shipped the
+  real subprocess kill (see Known issues).
