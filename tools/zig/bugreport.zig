@@ -269,6 +269,13 @@ fn inferDiagnosis(texts: []const ?[]const u8) ?[]const u8 {
         .{ .kw = "auth", .label = "authentication" },
         .{ .kw = "permission denied", .label = "authorization" },
         .{ .kw = "injection", .label = "input validation" },
+        .{ .kw = "error: expected", .label = "Zig compile error" },
+        .{ .kw = "no member named", .label = "Zig compile error" },
+        .{ .kw = "out of bounds", .label = "bounds / stack exhaustion" },
+        .{ .kw = "stack overflow", .label = "bounds / stack exhaustion" },
+        .{ .kw = "denied", .label = "sandbox / guest denial" },
+        .{ .kw = "sandbox", .label = "sandbox / guest denial" },
+        .{ .kw = "wasm", .label = "sandbox / guest denial" },
     };
     for (texts) |t| {
         if (t) |text| {
