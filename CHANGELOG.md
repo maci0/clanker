@@ -44,6 +44,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI chat's Archive, Delete and Rename buttons work again and say
+  what they did. Their feedback went only to a visually hidden live region,
+  so every outcome — including the silent refusal when the conversation was
+  missing from the picker's stale list — looked like the button doing
+  nothing; outcomes now also toast. The handlers refresh the conversation
+  list and retry once before refusing, and the list itself refreshes after
+  every run outcome instead of only fully finished ones, so a stopped or
+  half-streamed first turn no longer strands the page with dead session
+  actions.
+
+- Archiving or renaming a conversation that was never saved answers 404
+  again. The SQLite session-store port opened metadata edits with
+  `SQLITE_OPEN_CREATE`, so an unknown id "succeeded", changed nothing
+  visible, and left a junk titleless `<id>.db` behind that the listing then
+  filtered out.
+
+- Deleting a conversation now also removes its rows from the cross-session
+  search index (`state/session_fts.db`). Before, the full text of a deleted
+  transcript stayed findable there indefinitely.
+
 - A `POST /api/run` carrying a `temperature` or `top_p` override no longer
   corrupts the serve-lifetime provider config. The handler's provider struct
   copy still shared the models map's entries with the config, so one

@@ -62,6 +62,19 @@ pub fn replaceSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocat
     }
 }
 
+/// Removes a deleted session's rows from the index: without this, the full
+/// text of a conversation the operator deleted stays findable in
+/// `state/session_fts.db` forever. Fail-open like the writer — a missing
+/// index means there is nothing to forget.
+pub fn removeSession(arena: std.mem.Allocator, session_id: []const u8) void {
+    var conn = open(arena) catch return;
+    defer conn.close();
+    var del = conn.prepare("DELETE FROM session_fts WHERE session_id = ?1;") catch return;
+    defer del.finalize();
+    del.bindText(1, session_id) catch return;
+    _ = del.step() catch return;
+}
+
 /// Session ids whose content matches `query` (3+ chars, substring semantics
 /// via the trigram tokenizer). Returns null when the index is unavailable,
 /// signalling the caller to fall back to the linear scan.
@@ -124,4 +137,27 @@ test "fts candidates find substring matches across sessions" {
     // A mid-word substring still matches via the trigram tokenizer.
     const mid = candidates(io, std.testing.allocator, arena, "needle") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), mid.len);
+}
+
+test "removeSession forgets a session's text; other sessions keep theirs" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const saved_index_path = index_path;
+    index_path = try testIndexPath(arena, &env);
+    defer index_path = saved_index_path; // restore before env.deinit frees the path
+
+    const gone = [_]types.Message{.{ .role = .user, .content = "the doomedword lives here" }};
+    replaceSession(io, std.testing.allocator, arena, "sess-gone", &gone);
+    const kept = [_]types.Message{.{ .role = .user, .content = "the survivorword lives here" }};
+    replaceSession(io, std.testing.allocator, arena, "sess-kept", &kept);
+
+    removeSession(arena, "sess-gone");
+
+    const hits = candidates(io, std.testing.allocator, arena, "doomedword") orelse return error.FtsUnavailable;
+    try std.testing.expectEqual(@as(usize, 0), hits.len);
+    const still = candidates(io, std.testing.allocator, arena, "survivorword") orelse return error.FtsUnavailable;
+    try std.testing.expectEqual(@as(usize, 1), still.len);
+    try std.testing.expectEqualStrings("sess-kept", still[0]);
 }
