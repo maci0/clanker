@@ -142,6 +142,10 @@ fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
     try s.beginArray();
     for (state.enabled) |e| try s.write(e);
     try s.endArray();
+    try s.objectField("disabled");
+    try s.beginArray();
+    for (state.disabled) |d| try s.write(d);
+    try s.endArray();
     try s.endObject();
     lib.commit(out, &w);
 }
