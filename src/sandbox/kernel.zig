@@ -10,6 +10,7 @@
 const std = @import("std");
 const subprocess = @import("../agent/subprocess.zig");
 const utf8 = @import("../util/utf8.zig");
+const log = @import("../util/log.zig");
 
 pub const supervisor_src =
     \\import ast, io, json, os, subprocess, sys, time, traceback
@@ -347,8 +348,79 @@ pub fn errorJson(arena: std.mem.Allocator, msg: []const u8) []const u8 {
         "{\"ok\":false,\"error\":\"kernel failed\"}";
 }
 
+/// Session-end removal of kernel working directories under
+/// `<state_dir>/kernels/` (PRD 0016). The ending session's directory goes
+/// immediately: `Registry.terminateSession` has already SIGTERMed and
+/// synchronously reaped that session's processes (`Child.kill` blocks), so
+/// no in-flight read of ours can still hold a file in it. Sibling session
+/// directories are what crashed runs leave behind and nothing else ever
+/// cleans (ADR 0008: nothing fires on its own) — one is removed only when
+/// its session holds no live process in `live` and its mtime is older than
+/// `cleanup_delay_ms`, the same write-clears-its-own-garbage shape as the
+/// `ck_fs_write_if` lock sweep. Two runs sharing one session id are outside
+/// this guard (the registry is per-process; see the concurrent-sessions
+/// runbook): the first to end removes the shared directory.
+pub fn cleanupSessionDirs(
+    io: std.Io,
+    base: std.Io.Dir,
+    state_dir: []const u8,
+    session_id: []const u8,
+    cleanup_delay_ms: u32,
+    live: ?*subprocess.Registry,
+) void {
+    var path_buf: [512]u8 = undefined;
+    const kernels_rel = std.fmt.bufPrint(&path_buf, "{s}/kernels", .{state_dir}) catch return;
+    var kdir = base.openDir(io, kernels_rel, .{ .iterate = true }) catch return;
+    defer kdir.close(io);
+    kdir.deleteTree(io, session_id) catch {};
+    const now_ms = log.unixMilliseconds();
+    var it = kdir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .directory) continue;
+        if (live) |reg| {
+            if (reg.sessionLive(entry.name)) continue;
+        }
+        const st = kdir.statFile(io, entry.name, .{}) catch continue;
+        const age_ms = now_ms - @divTrunc(st.mtime.nanoseconds, std.time.ns_per_ms);
+        if (age_ms < cleanup_delay_ms) continue;
+        kdir.deleteTree(io, entry.name) catch {};
+    }
+}
+
 fn testIo() std.Io.Threaded {
     return std.Io.Threaded.init(std.testing.allocator, .{});
+}
+
+test "cleanupSessionDirs removes the ending session and aged orphans, keeps live ones" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "state/kernels/s-end/python");
+    try tmp.dir.createDirPath(io, "state/kernels/s-orphan/python");
+    try tmp.dir.createDirPath(io, "state/kernels/s-live/python");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/kernels/s-end/python/x.txt", .data = "x" });
+
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    try reg.register("s-live", "python", 1);
+
+    // delay 0: the ending session goes, and so does the aged orphan; the
+    // session with a live registered process survives.
+    cleanupSessionDirs(io, tmp.dir, "state", "s-end", 0, &reg);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/kernels/s-end", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/kernels/s-orphan", .{}));
+    _ = try tmp.dir.statFile(io, "state/kernels/s-live", .{});
+
+    // A fresh orphan inside the delay window is kept for inspection.
+    try tmp.dir.createDirPath(io, "state/kernels/s-fresh/python");
+    cleanupSessionDirs(io, tmp.dir, "state", "s-end", 3_600_000, &reg);
+    _ = try tmp.dir.statFile(io, "state/kernels/s-fresh", .{});
+
+    // A missing kernels tree is a no-op, not an error.
+    cleanupSessionDirs(io, tmp.dir, "nowhere", "s-end", 0, null);
 }
 
 test "encodeRequest / parseResponse are inverses for a cell" {

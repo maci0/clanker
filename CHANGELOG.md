@@ -36,6 +36,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Session end deletes `state/kernels/<session-id>/` once the session's
+  processes are reaped, and sweeps orphan kernel directories older than
+  `kernel.cleanup_delay_ms` whose session has no live process. Directories
+  used to pile up forever; the knob was parsed and never read (PRD 0016
+  known issue).
+
 - DAP `disconnect` honors `debug.disconnect_timeout_ms`: the adapter gets
   that window to exit on its own after the disconnect response before the
   registry SIGTERMs it. It used to be killed immediately, making the
