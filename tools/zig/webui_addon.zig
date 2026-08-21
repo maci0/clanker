@@ -183,6 +183,7 @@ fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
     const enable = lib.optBool(obj, "enable", true);
     const eager = lib.optBool(obj, "eager", false);
     const is_module = lib.optBool(obj, "module", false);
+    if (eager and is_module) return lib.fail(out, "eager and module are mutually exclusive: an addon cannot both run at page load and be a non-view module");
 
     const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
     const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/plugin.json", .{dir});
@@ -227,6 +228,7 @@ fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
         if (m.title.len == 0 or m.title.len > logic.max_title_len) return lib.fail(out, "title must be 1-64 characters");
         if (m.description.len > logic.max_desc_len) return lib.fail(out, "description is too long");
         if (!logic.validGroup(m.group)) return lib.fail(out, "group must be Work, Watch, or Set up");
+        if (m.eager and m.module) return lib.fail(out, "plugin.json: eager and module are mutually exclusive; an addon cannot both run at page load and be a non-view module");
     }
     const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
     if (lib.fsStat(dir)) |_| {} else |_| return lib.fail(out, "no such addon (create it first)");
