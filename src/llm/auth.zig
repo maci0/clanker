@@ -138,6 +138,13 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
         });
         return error.MissingApiKey;
     }
+    if (raw) |k| if (k.len == 0) {
+        log.log(.error_, "credential for provider '{s}' is empty: set a non-empty value in {s}", .{
+            provider.name,
+            provider.api_key_env orelse "the configured env var",
+        });
+        return error.MissingApiKey;
+    };
     if (raw) |k| return .{
         .value = k,
         .bearer = try std.fmt.allocPrint(env.gpa, "Bearer {s}", .{k}),
@@ -253,4 +260,17 @@ test "quota_project is a Spec field, not a kind switch" {
     const without = try resolve(env, .{}, &p);
     defer without.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("", without.quota_project);
+}
+
+test "an empty-string credential is rejected with a diagnostic, not sent as a bare bearer" {
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("EMPTY_KEY", "");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const env = Env{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map };
+
+    var p = config.Provider{ .name = "remote", .base_url = "https://x", .default_model = "m" };
+    p.api_key_env = "EMPTY_KEY";
+    try std.testing.expectError(error.MissingApiKey, resolve(env, .{}, &p));
 }
