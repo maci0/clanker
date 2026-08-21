@@ -237,6 +237,10 @@ fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
     }
     const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
     if (lib.fsStat(dir)) |_| {} else |_| return lib.fail(out, "no such addon (create it first)");
+    if (!std.mem.eql(u8, file, "plugin.json")) {
+        const manifest_check = try std.fmt.allocPrint(lib.alloc, "{s}/plugin.json", .{dir});
+        if (lib.fsStat(manifest_check)) |_| {} else |_| return lib.fail(out, "no plugin.json in this addon; create it before putting files");
+    }
     const path = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, file });
     lib.fsWrite(path, content) catch |err| return lib.failErr(out, err, "writing the file");
     const st = loadState();
