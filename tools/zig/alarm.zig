@@ -256,7 +256,8 @@ fn load() !Loaded {
     // A truncated or hand-emptied state file must recover as an empty list,
     // not brick every alarm operation with a JSON parse error.
     if (std.mem.trim(u8, raw, " \t\r\n").len == 0) return result;
-    const parsed = try std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true });
+    const parsed = std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch
+        return error.CorruptAlarmFile;
     for (parsed) |a| try result.alarms.append(lib.alloc, a);
     return result;
 }
