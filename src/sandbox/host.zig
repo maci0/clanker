@@ -2262,9 +2262,10 @@ fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []c
 }
 
 /// The agent-facing history response is deliberately small to protect its
-/// context budget. Read one extra record internally so callers that must fold
-/// a complete log can tell whether another page exists without guessing from
-/// a full final page.
+/// context budget; the operator surfaces (CLI/HTTP) page larger on purpose,
+/// see `chatrooms.history_page_size` (PRD 0001). Read one extra record
+/// internally so callers that must fold a complete log can tell whether
+/// another page exists without guessing from a full final page.
 const chat_history_page_size = 20;
 /// Per-message text in the history JSON: enough to read, short enough that
 /// a page of messages cannot blow the guest arena.
