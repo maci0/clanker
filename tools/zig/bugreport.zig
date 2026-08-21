@@ -42,6 +42,22 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         const desc = description orelse "";
         if (desc.len > 0) component = inferComponent(desc);
     }
+    if (component == null) {
+        const repro_cmd = lib.optStr(parsed, "repro") orelse "";
+        if (repro_cmd.len > 0) component = inferComponent(repro_cmd);
+    }
+    if (component == null) {
+        const steps_txt = steps orelse "";
+        if (steps_txt.len > 0) component = inferComponent(steps_txt);
+    }
+    if (component == null) {
+        const env_txt = environment orelse "";
+        if (env_txt.len > 0) component = inferComponent(env_txt);
+    }
+    if (component == null) {
+        const impact_txt = impact orelse "";
+        if (impact_txt.len > 0) component = inferComponent(impact_txt);
+    }
     const room = lib.optStr(parsed, "room");
     if (room) |r| {
         if (r.len == 0) return lib.fail(out, "room must be non-empty and match [a-zA-Z0-9_-]+");
