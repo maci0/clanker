@@ -81,8 +81,10 @@ pub fn unconfiguredReason(
     if (p.base_url.len > 0 and !std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
         return std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url}) catch "base_url has no scheme";
     if (p.api_key_env) |env_name| {
-        if (environ_map.get(env_name) == null)
-            return std.fmt.allocPrint(arena, "{s} not set", .{env_name}) catch "api key env not set";
+        if (environ_map.get(env_name)) |val| {
+            if (val.len == 0)
+                return std.fmt.allocPrint(arena, "{s} is set but empty", .{env_name}) catch "api key env is empty";
+        } else return std.fmt.allocPrint(arena, "{s} not set", .{env_name}) catch "api key env not set";
     }
     return null;
 }
