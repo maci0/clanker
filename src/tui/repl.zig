@@ -50,6 +50,7 @@ const mention_expand = @import("mention_expand");
 const secret_dotenv = @import("../util/secret_dotenv.zig");
 const subprocess = @import("../agent/subprocess.zig");
 const dap = @import("../debug/dap.zig");
+const kernel_mod = @import("../sandbox/kernel.zig");
 const goal_prompt = @import("../agent/goal_prompt.zig");
 const goal_loop = @import("../agent/goal_loop.zig");
 const research_cmd = @import("../records/research.zig");
@@ -8669,6 +8670,16 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         const sid = model.session_id orelse "default";
         subprocess.endSession(sid);
         dap.dropLive(sid);
+        // endSession reaped this session's processes synchronously, so its
+        // kernel working directories can go now (PRD 0016).
+        if (model.cfg.kernel.enabled) kernel_mod.cleanupSessionDirs(
+            io,
+            std.Io.Dir.cwd(),
+            model.cfg.agent.state_dir,
+            sid,
+            model.cfg.kernel.cleanup_delay_ms,
+            subprocess.existingRegistry(),
+        );
     }
     // Worker is joined (either was idle or we joined above), safe to free.
     {

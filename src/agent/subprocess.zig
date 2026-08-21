@@ -262,6 +262,18 @@ pub const Registry = struct {
         }
     }
 
+    /// True when any process is registered for this session. Session-end
+    /// sweeps ask this before treating a sibling `state/kernels/` directory
+    /// as an orphan.
+    pub fn sessionLive(self: *Registry, session_id: []const u8) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (self.items.items) |h| {
+            if (std.mem.eql(u8, h.session_id, session_id)) return true;
+        }
+        return false;
+    }
+
     pub fn count(self: *Registry) usize {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -381,6 +393,16 @@ pub fn processRegistry(gpa: std.mem.Allocator, io: std.Io) !*Registry {
     defer process_mu.unlock();
     if (process_reg == null) process_reg = Registry.init(gpa, io);
     return &process_reg.?;
+}
+
+/// The process-global registry if one was ever created; never allocates.
+/// Ordinary runs that made no privileged kernel/DAP call get null, and a
+/// session-end sweep skips its liveness check with nothing to be alive.
+pub fn existingRegistry() ?*Registry {
+    process_mu.lock();
+    defer process_mu.unlock();
+    if (process_reg) |*reg| return reg;
+    return null;
 }
 
 /// Ends a session only when a privileged kernel or DAP call actually created

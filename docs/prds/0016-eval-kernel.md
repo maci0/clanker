@@ -165,8 +165,13 @@ or not `undefined` (JS). Output is capped at `kernel.max_output_bytes` (default
 shared `SessionSubprocessRegistry` (a `std.StringHashMap` keyed by
 `<session-id>/<kind>`) mapping to OS process handles. On session end (detected
 by the session cleanup path in `src/agent/loop.zig`), all processes for that
-session are sent SIGTERM and their directories are scheduled for deletion after
-`kernel.cleanup_delay_ms` (default 5000, to allow in-flight reads). PRD 0017
+session are sent SIGTERM and synchronously reaped, then the session's
+`state/kernels/<session-id>/` directory is removed (no reader of ours can
+still be in flight once the reap returns). Orphan directories that a crashed
+run left behind are swept opportunistically by the same cleanup once older
+than `kernel.cleanup_delay_ms` (default 5000) and only while no process is
+registered for their session (`cleanupSessionDirs`, src/sandbox/kernel.zig).
+PRD 0017
 (DAP) hard-depends on this registry; design and land it once here, then have DAP
 register adapters under the same lifecycle.
 
@@ -214,8 +219,12 @@ the feature default-on without quotas is not.
   Design still wants `state/kernels/<session>/python/venv/`.
 - **`%%bash` / `!cmd` run inside the supervisor (`bash -c`), not `ck_exec`.**
   The exec_allow table is not applied.
-- **Session end SIGTERMs processes but does not delete `state/kernels/`
-  after `cleanup_delay_ms`.** Directories stay for inspection.
+- **(Fixed) Session end used to SIGTERM processes but never delete
+  `state/kernels/`.** `cleanupSessionDirs` (src/sandbox/kernel.zig) now
+  removes the ending session's directory once its processes are reaped, and
+  sweeps orphan directories older than `cleanup_delay_ms` whose session has
+  no live process. Runs from both session-end paths (cli run, REPL) when
+  `kernel.enabled` is on.
 - **WASI one-shot (`python_wasi.zig`) is unused by the persist path.**
   Persist is a host `python3` supervisor so `__main__` can live across cells.
   ADR 0010 (revised) disagrees: it frames `runPythonCell`
@@ -263,9 +272,10 @@ the feature default-on without quotas is not.
 - [ ] `%%bash` runs via `ck_exec`; the exec policy (exec_allow) is enforced.
 - [x] Cell execution exceeding `timeout_ms` kills the kernel and returns a
       timeout error; the next call starts a fresh kernel.
-- [ ] Session cleanup removes `state/kernels/<session-id>/` within
+- [x] Session cleanup removes `state/kernels/<session-id>/` within
       `kernel.cleanup_delay_ms` and SIGTERMs registered subprocesses via the
-      shared registry. SIGTERM is shipped; delayed directory delete is not.
+      shared registry. The delete lands immediately after the synchronous
+      reap; `cleanup_delay_ms` ages out orphan directories from crashed runs.
 - [x] Session subprocess registry is usable by PRD 0017 without a second
       lifecycle implementation.
 - [x] Quota requirement is documented as a blocker for default-on, not for

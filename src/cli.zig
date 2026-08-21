@@ -32,6 +32,7 @@ const goal_prompt = @import("agent/goal_prompt.zig");
 const goal_loop = @import("agent/goal_loop.zig");
 const runtime = @import("sandbox/runtime.zig");
 const host = @import("sandbox/host.zig");
+const kernel_mod = @import("sandbox/kernel.zig");
 const raw_http = @import("util/raw_http.zig");
 const toml_edit = @import("util/toml_edit.zig");
 const json_util = @import("util/json.zig");
@@ -4187,6 +4188,16 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     defer {
         subprocess.endSession(a.session_id);
         dap.dropLive(a.session_id);
+        // endSession reaped this session's processes synchronously, so its
+        // kernel working directories can go now (PRD 0016).
+        if (cfg.kernel.enabled) kernel_mod.cleanupSessionDirs(
+            io,
+            std.Io.Dir.cwd(),
+            cfg.agent.state_dir,
+            a.session_id,
+            cfg.kernel.cleanup_delay_ms,
+            subprocess.existingRegistry(),
+        );
     }
     if (opts_session) |sid| {
         const maybe_s = session.loadSession(io, init.gpa, arena, "state/sessions", sid) catch |err| switch (err) {
