@@ -133,6 +133,8 @@ fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
         try s.write(a.eager);
         try s.objectField("module");
         try s.write(a.module);
+        try s.objectField("path");
+        try s.write(try std.fmt.allocPrint(lib.alloc, "ui/plugins/{s}/", .{a.name}));
         try s.endObject();
     }
     try s.endArray();
