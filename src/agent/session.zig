@@ -799,6 +799,7 @@ pub fn searchSessions(
         var best_content: []const u8 = "";
         var best_at: usize = 0;
         var best_len: usize = 0;
+        var best_turn: usize = 0;
         while (true) {
             if ((stmt.step() catch null) != .row) break;
             const content = stmt.columnText(1) orelse continue;
@@ -814,7 +815,7 @@ pub fn searchSessions(
                     best_len = query.len;
                     best_content = arena.dupe(u8, content) catch content;
                     role = arena.dupe(u8, stmt.columnText(0) orelse "") catch "";
-                    turn = turn;
+                    best_turn = turn;
                 }
             }
             turn += 1;
@@ -825,7 +826,7 @@ pub fn searchSessions(
             .title = meta.title,
             .updated = meta.updated,
             .archived = meta.archived,
-            .turn = turn,
+            .turn = best_turn,
             .role = role,
             .snippet = snippetAround(arena, best_content, best_at, best_len),
             .more = more - 1,
@@ -1083,6 +1084,10 @@ test "a fork copies the conversation; search finds text in the transcript" {
     const hits = try searchSessions(io, std.testing.allocator, arena, dir, "hi there", 10);
     try std.testing.expectEqual(@as(usize, 2), hits.len);
     try std.testing.expect(std.mem.find(u8, hits[0].snippet, "hi there") != null);
+    // The hit's turn indexes the message that matched ("hi there" is the
+    // assistant message at index 1), not the total message count the old
+    // `turn = turn` self-assignment left behind.
+    try std.testing.expectEqual(@as(usize, 1), hits[0].turn);
 }
 
 test "setArchived, setWorkspace and renameSession update the record" {
