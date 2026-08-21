@@ -399,6 +399,15 @@ pub fn build(b: *std.Build) void {
     const fmt_fix_step = b.step("fmt-fix", "Auto-format all Zig source");
     fmt_fix_step.dependOn(&fmt_fix_cmd.step);
 
+    // `zig build quick-check`: format-check + compile in parallel — the
+    // fastest possible signal that a proposed patch is syntactically valid and
+    // builds. The improve loop uses this before committing to full test-suite
+    // compilation, so a syntax error costs seconds rather than minutes per
+    // wasted iteration.
+    const quick_check_step = b.step("quick-check", "Fast fmt+compile check (no tests)");
+    quick_check_step.dependOn(&fmt_cmd.step);
+    quick_check_step.dependOn(b.getInstallStep());
+
     // ------------------------------------------------------- wasm tool builds
     // `zig build tools` compiles every guest tool under tools/zig/ (lib.zig
     // and the host-tested helpers listed above are skipped) into a
