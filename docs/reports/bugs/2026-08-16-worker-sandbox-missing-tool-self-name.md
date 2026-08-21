@@ -50,6 +50,15 @@ The `std_api` eval additionally failed even after the name was granted because `
 
 - The `[WARN] improve plan: response was not a usable idea list` line is a separate, non-fatal symptom (loose plan parsing already landed in f1c0ab53). Not part of this defect.
 
+## Follow-up (2026-08-21)
+
+The same drift class recurred: the worker's hand-rolled Sandbox literal omitted
+`session` after the `ck_session` seam, denying `session_search` on the parallel
+path and stalling another improve-self batch. Rather than add the one missing
+field again, the worker now builds its sandbox through `host.sandboxFor` (the
+documented single source of truth), removing the class. See
+`2026-08-21-worker-sandbox-missing-session-grant.md`.
+
 ## References
 
 - Investigation: none yet
