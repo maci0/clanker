@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [SQLITE_TRANSIENT translate-c cast breaks the build on aarch64-macos](bugs/2026-08-21-sqlite-transient-fnptr-cast-breaks-macos-build.md) — Resolved
+
 - [Worker parallel sandbox omitted the session grant, denying session tools and failing the session_search capability eval in improve-self](bugs/2026-08-20-worker-sandbox-omits-session-denies-session-tools.md) — Resolved
 
 - [janitor reports removing orphaned staging dirs but large ones survive](bugs/2026-08-20-janitor-truncated-list-leaves-staging-behind.md) — Open

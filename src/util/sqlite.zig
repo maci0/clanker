@@ -98,6 +98,21 @@ pub const Connection = struct {
     }
 };
 
+/// `c.SQLITE_TRANSIENT` is `(sqlite3_destructor_type)-1`, and translate-c
+/// materializes that cast as a comptime `@ptrFromInt` of all-ones, which zig
+/// rejects on targets whose function pointers carry an alignment requirement
+/// (aarch64-macos: "pointer type ... requires aligned address"). Redeclare
+/// `sqlite3_bind_text` with the destructor parameter as the pointer-sized
+/// integer it is at the ABI, so the sentinel never has to exist as a zig
+/// function pointer at all.
+const sqlite3_bind_text_raw = @extern(
+    *const fn (?*c.sqlite3_stmt, c_int, [*c]const u8, c_int, usize) callconv(.c) c_int,
+    .{ .name = "sqlite3_bind_text" },
+);
+
+/// SQLITE_TRANSIENT: sqlite copies the buffer before the bind returns.
+const sqlite_transient: usize = std.math.maxInt(usize);
+
 pub const Statement = struct {
     stmt: ?*c.sqlite3_stmt = null,
 
@@ -110,7 +125,7 @@ pub const Statement = struct {
 
     pub fn bindText(self: *Statement, index: c_int, value: []const u8) Error!void {
         const s = self.stmt orelse return Error.NotOpen;
-        const rc = c.sqlite3_bind_text(s, index, value.ptr, @intCast(value.len), c.SQLITE_TRANSIENT);
+        const rc = sqlite3_bind_text_raw(s, index, value.ptr, @intCast(value.len), sqlite_transient);
         if (rc != c.SQLITE_OK) return Error.BindFailed;
     }
 
