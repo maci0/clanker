@@ -12,14 +12,15 @@
 //!   chat_history:   {"room":"dev","after":0}
 //!   chat_rooms:     {}
 //!   chat_subscribe: {"room":"dev","on":true}
-//!   todo_add:       {"room":"dev","title":"ship it"}
-//!   todo_claim:     {"room":"dev","todo":"<id>"}
-//!   todo_close:     {"room":"dev","todo":"<id>"}
-//!   todo_list:      {"room":"dev"}
+//!   todo_add:       {"title":"ship it"}
+//!   todo_claim:     {"todo":"<id>"}
+//!   todo_close:     {"todo":"<id>"}
+//!   todo_list:      {}
 //!
-//! The todo_* ops may omit "room": inside a sub-agent run that targets the
-//! run's private in-memory list instead of a shared room list (the host
-//! routes on the missing field; see src/agent/private_todos.zig).
+//! The todo_* ops target the run's private in-memory list (the host routes
+//! on the absent "room" field; see src/agent/private_todos.zig). A todo op
+//! that does name a room is refused by the host with a pointer at the board:
+//! room todo lists are kanban cards now (src/sandbox/host.zig, ckChat).
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -91,8 +92,27 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 lib.fail(out, "chat topic needs \"room\" (and \"topic\" to set)")
             else if (std.mem.eql(u8, op, "pin"))
                 lib.fail(out, "chat pin needs \"room\" (and \"msg_id\" to pin/unpin)")
+            else if (std.mem.eql(u8, op, "rooms"))
+                lib.fail(out, "chat rooms takes no arguments; the host rejected the fields it was given")
+            else if (std.mem.eql(u8, op, "todo_add"))
+                lib.fail(out, "todo_add needs \"title\" and writes the run's private list; a shared list is a board card (kanban_add)")
+            else if (std.mem.eql(u8, op, "todo_claim"))
+                lib.fail(out, "todo_claim needs \"todo\" (an id from todo_list) on the run's private list; shared claims are board cards (kanban_claim)")
+            else if (std.mem.eql(u8, op, "todo_close"))
+                lib.fail(out, "todo_close needs \"todo\" (an id from todo_list) on the run's private list; shared cards close on the board (kanban_move)")
+            else if (std.mem.eql(u8, op, "todo_list"))
+                lib.fail(out, "todo_list reads the run's private list and needs no fields; the shared board is kanban_list")
             else
                 lib.fail(out, "the chat host rejected the arguments for this operation"),
+            // Mirror the board's split between the two denials (they need
+            // different fixes): chatrooms switched off is a config the
+            // operator can flip; a tool denied chat access is a code/version
+            // mismatch that no config change repairs.
+            error.SandboxDenied => if (std.mem.startsWith(u8, op, "todo_"))
+                lib.fail(out, "this todo names a \"room\", which makes it a chatroom list, and chatrooms are disabled: set modules.chatrooms = true (and chatrooms.on = true) in config.toml or config.local.toml and restart clanker, or omit \"room\" to use the run's private list")
+            else
+                lib.fail(out, "chatrooms are disabled: set modules.chatrooms = true (and chatrooms.on = true) in config.toml or config.local.toml, then restart clanker"),
+            error.NoAccess => lib.fail(out, "this tool is denied chat access (not the chatrooms module); that is a tool-permission / clanker-version mismatch, rebuild clanker and restart it"),
             else => lib.failErr(out, err, "running the chat operation"),
         };
     };

@@ -124,13 +124,15 @@ a restart is needed.
   dead `chatrooms.zig` `history_limit` constant this used to also disagree
   with has been removed. Document why the tool path is deliberately
   smaller (e.g. token budget for agent context), or unify the two.
-- **`rooms` and `todo_*` fall through to a generic `InvalidArg` message**
-  while `send`/`history`/`subscribe`/`react`/`edit`/`delete`/`topic`/`pin`
-  get field-naming errors; and a
-  sandbox-disabled chat tool surfaces a bare `SandboxDenied` instead of the
-  board's friendlier, actionable chatrooms-disabled message (which names the
-  config keys to enable and the restart needed).
-  Inconsistent, not incorrect — low priority.
+- **(Fixed) `rooms` and `todo_*` used to fall through to a generic
+  `InvalidArg` message, and a sandbox-disabled chat tool surfaced a bare
+  `SandboxDenied`.** The chat guest (tools/zig/chat.zig) now names each
+  op's fields — the `todo_*` messages point at the run's private list and
+  at `kanban_*` for shared work, matching the host's board-cards routing —
+  and mirrors the board's split between the two denials: chatrooms
+  switched off names `modules.chatrooms` / `chatrooms.on` and the restart;
+  a chat-access denial names the rebuild. Pinned by two sandbox.runtime
+  tests.
 
 ## Failure modes
 

@@ -761,6 +761,107 @@ test "chat wasm tool routes roomless todo ops to the private list" {
     try std.testing.expect(std.mem.find(u8, out, "host wiring error") != null);
 }
 
+test "chat wasm tool names the config keys when chatrooms are disabled" {
+    // PRD 0001 known issue: a sandbox-disabled chat tool used to surface a
+    // bare SandboxDenied while the board named the keys to flip. Pin the
+    // chat guest's actionable message for both denial shapes.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var cfg = config_mod.Config{};
+    cfg.modules.chatrooms = false;
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .config_json = "{\"op\":\"send\"}",
+        .tool_self_name = "chat_send",
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const out = try mod.executeTool("{\"room\":\"dev\",\"text\":\"hi\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out, "modules.chatrooms") != null);
+
+    // A room-scoped todo against disabled chatrooms points at the private
+    // list as the fix, not only at the config keys.
+    var todo_sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .config_json = "{\"op\":\"todo_add\"}",
+        .tool_self_name = "todo_add",
+    };
+    const todo_mod = try ToolModule.load(std.testing.allocator, io, &todo_sb, wasm);
+    defer todo_mod.deinit();
+    const todo_out = try todo_mod.executeTool("{\"room\":\"dev\",\"title\":\"x\"}");
+    defer std.testing.allocator.free(todo_out);
+    try std.testing.expect(std.mem.find(u8, todo_out, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, todo_out, "modules.chatrooms") != null);
+    try std.testing.expect(std.mem.find(u8, todo_out, "private list") != null);
+}
+
+test "chat wasm tool names the missing field for a rejected todo op" {
+    // PRD 0001 known issue: rooms and todo_* used to fall through to the
+    // generic "host rejected the arguments" line while every chat_* op got
+    // a field-naming error.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/chat.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .state_dir = "",
+        .state_base_dir = tmp.dir,
+        .config_json = "{\"op\":\"todo_add\"}",
+        .tool_self_name = "todo_add",
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    // Arguments the host cannot parse are the surviving InvalidArg path for
+    // todo ops (a roomed todo gets the host's board-cards reply instead);
+    // the guest must name the op's fields, not the generic rejected line.
+    const out = try mod.executeTool("{\"oops\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out, "todo_add needs \\\"title\\\"") != null);
+}
+
 test "todo_* through the real wasm tool moves List.rev and yields the browser's payload" {
     // The other half of the checklist-in-the-browser path (webui PRD 0006
     // phase 3.3): the agent loop decides whether to push a `todos` event by

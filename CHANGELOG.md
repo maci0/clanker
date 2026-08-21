@@ -36,6 +36,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Chat tools answer a denial and a bad argument with actionable text:
+  `rooms` and `todo_*` name their fields (the todo messages point at the
+  run's private list and at `kanban_*` for shared work), chatrooms-off
+  names `modules.chatrooms` / `chatrooms.on` and the restart the way the
+  board already did, and a chat-access denial names the rebuild instead
+  of a bare `SandboxDenied` (PRD 0001 known issue).
+
 - Session end deletes `state/kernels/<session-id>/` once the session's
   processes are reaped, and sweeps orphan kernel directories older than
   `kernel.cleanup_delay_ms` whose session has no live process. Directories
