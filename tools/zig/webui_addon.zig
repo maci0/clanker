@@ -354,7 +354,7 @@ fn warnBadState(what: []const u8, err: anyerror) void {
     var buf: [192]u8 = undefined;
     const msg = std.fmt.bufPrint(
         &buf,
-        "{s} {s} ({s}); treating it as an empty enabled-list until the next toggle rewrites it",
+        "{s} {s} ({s}); treating both enabled and disabled lists as empty (all addons off) until the next toggle rewrites it",
         .{ state_path, what, @errorName(err) },
     ) catch state_path;
     lib.log(2, msg);
