@@ -224,3 +224,12 @@ relocating the picker fields must not reach into it.
   user-tunable too.
 - **Revisit the concrete numbers** as vendors change documented guidance.
   The mechanism is stable; the row values are not sacred.
+### Post-ship note (2026-08-21): per-run reasoning-effort override surface
+
+The per-run override tier gained a `reasoning_effort` field on
+`POST /api/run` (the webui composer's Advanced fold sends it; it is the
+request-shaped `--reasoning-effort` / TUI `/effort` pin). It lands on
+`agent.reasoning_effort` for that run only, which rides
+`ChatParams.reasoning_effort` — the same top-of-precedence params tier this
+PRD names — so 'per-run override still wins' now covers effort as well as
+temperature/top_p, and the profile table stays the last `orelse`.

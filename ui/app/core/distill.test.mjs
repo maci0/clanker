@@ -35,6 +35,21 @@ test("run-shape disclosure holds the four mode toggles", function () {
   assert.match(shape, /id="worktree-mode"/);
 });
 
+test("the Advanced fold holds a per-chat reasoning-effort pin", function () {
+  const params = html.slice(html.indexOf('id="params"'), html.indexOf('id="run-shape"'));
+  assert.match(params, /id="param-effort"/);
+  for (const v of ["none", "low", "medium", "high", "max"]) {
+    assert.match(params, new RegExp('<option value="' + v + '"'));
+  }
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  assert.match(app, /reasoning_effort: opts\.reasoning_effort \|\| ""/);
+  // A pinned effort must stay visible while the fold is closed.
+  assert.match(app, /function syncAdvancedSummary\(\)/);
+  const picker = readFileSync(join(here, "modelpicker.js"), "utf8");
+  assert.match(picker, /out\.reasoning_effort = re/);
+  assert.match(picker, /clanker\.effort/);
+});
+
 test("submit is a labeled Run control", function () {
   assert.match(html, /id="submit"[^>]*>Run</);
 });
