@@ -561,8 +561,26 @@ fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
     const loop_ctx: *TuiGoalLoopContext = @ptrCast(@alignCast(context));
     const self = loop_ctx.model;
     const started = std.Io.Timestamp.now(self.io, .awake);
-    const resp = loop_ctx.agent.run(&self.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
-    const answer = resp.message.content orelse "";
+    const answer = if (try acp_driver.runIfBackend(.{
+        .io = self.io,
+        .gpa = self.gpa,
+        .arena = self.arena,
+        .name = .grok,
+        .prompt = task,
+        .timeout_ms = self.cfg.agent.backend_timeout_ms,
+        .acp_argv = self.cfg.agent.backend_acp_argv,
+        .cfg = &self.cfg,
+        .environ_map = self.ctx.environ_map,
+        .reg = &self.reg,
+        .session_id = self.session_id orelse "backend",
+    }, self.cfg.agent.backend)) |got| blk: {
+        var backend_result = got;
+        defer backend_result.graph.deinit(self.gpa);
+        break :blk backend_result.answer;
+    } else blk: {
+        const resp = loop_ctx.agent.run(&self.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
+        break :blk resp.message.content orelse "";
+    };
     // Goal-loop turns build their own agent; capture its prompt so the save
     // after the loop records what the evaluator's target actually saw.
     self.session_system_prompt = loop_ctx.agent.system_prompt_text;

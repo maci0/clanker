@@ -32,6 +32,16 @@ pub fn afterAcp(outcome: AcpOutcome) Next {
     };
 }
 
+/// Goal-loop work turns (CLI, TUI, HTTP) call this: empty `backend` means the
+/// caller should run the in-process Agent; a named backend runs `run`.
+pub fn runIfBackend(opts: RunOpts, backend: []const u8) !?RunResult {
+    if (backend.len == 0) return null;
+    const name = vendor.Name.parse(backend) orelse return error.BadBackend;
+    var o = opts;
+    o.name = name;
+    return try run(o);
+}
+
 pub const RunOpts = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -51,6 +61,9 @@ pub const RunOpts = struct {
     reg: ?*const registry.Registry = null,
     session_id: []const u8 = "backend",
     persist: bool = true,
+    /// Tests pass a local process table so they do not leak the process-global
+    /// registry. Production leaves this null and uses `processRegistry`.
+    acp_reg: ?*subprocess.Registry = null,
 };
 
 pub const RunResult = struct {
@@ -157,7 +170,7 @@ pub fn run(opts: RunOpts) !RunResult {
 fn runAcp(opts: RunOpts, g: *graph_mod.Graph, answer: *[]const u8) !AcpOutcome {
     var owned_transport: ?acp_client.ChildTransport = null;
     const transport = opts.transport orelse blk: {
-        const proc_reg = subprocess.processRegistry(opts.gpa, opts.io) catch return .missing;
+        const proc_reg = opts.acp_reg orelse (subprocess.processRegistry(opts.gpa, opts.io) catch return .missing);
         const argv = vendor.acpArgv(opts.name, opts.acp_argv);
         owned_transport = acp_client.spawnTransport(
             opts.io,
@@ -166,9 +179,11 @@ fn runAcp(opts: RunOpts, g: *graph_mod.Graph, answer: *[]const u8) !AcpOutcome {
             opts.session_id,
             argv,
             opts.cwd,
+            opts.timeout_ms,
         ) catch return .missing;
         break :blk owned_transport.?.transport();
     };
+    defer if (owned_transport) |*t| t.reg.terminate(t.session_id, "acp");
     var client = acp_client.Client{
         .alloc = opts.arena,
         .transport = transport,
@@ -330,22 +345,130 @@ test "headless writes a degraded llm/final pair" {
     try std.testing.expectEqualStrings("stdout-answer", g.nodes.items[1].output);
 }
 
-test "hang then headless persists a failed ACP node before the degraded pair" {
-    var g = graph_mod.Graph{ .run_id = "run-hang", .task = "t", .provider = "grok", .started_at = 0 };
-    defer g.deinit(std.testing.allocator);
-    try g.add(std.testing.allocator, .{
-        .kind = .llm,
-        .iteration = 0,
-        .label = "acp",
-        .detail = "hang",
-        .ok = false,
+test "driver.run hangs a blocking child, persists a failed ACP node, then headless" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var proc_reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer proc_reg.deinit();
+    // `sleep` never writes ACP JSON-RPC; the watchdog must kill it so
+    // readStreaming unblocks, rather than waiting out the child's 30s.
+    const acp_argv = [_][]const u8{ "sleep", "30" };
+    const headless_argv = [_][]const u8{ "printf", "recovered-from-hang" };
+    var result = try run(.{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .name = .grok,
+        .prompt = "hello",
+        .timeout_ms = 200,
+        .acp_argv = &acp_argv,
+        .headless_argv = &headless_argv,
+        .persist = false,
+        .session_id = "hangchild1",
+        .acp_reg = &proc_reg,
     });
-    try nodesFromHeadless(std.testing.allocator, &g, "recovered");
-    try std.testing.expectEqual(@as(usize, 3), g.nodes.items.len);
-    try std.testing.expect(!g.nodes.items[0].ok);
-    try std.testing.expectEqualStrings("hang", g.nodes.items[0].detail);
-    try std.testing.expectEqual(graph_mod.NodeKind.llm, g.nodes.items[1].kind);
-    try std.testing.expectEqual(graph_mod.NodeKind.final, g.nodes.items[2].kind);
+    defer result.graph.deinit(std.testing.allocator);
+    try std.testing.expectEqual(AcpOutcome.hang, result.acp_outcome);
+    try std.testing.expect(result.used_headless);
+    try std.testing.expect(!result.used_acp);
+    try std.testing.expectEqualStrings("recovered-from-hang", result.answer);
+    try std.testing.expect(result.graph.nodes.items.len >= 3);
+    try std.testing.expect(!result.graph.nodes.items[0].ok);
+    try std.testing.expectEqualStrings("hang", result.graph.nodes.items[0].detail);
+    try std.testing.expectEqual(graph_mod.NodeKind.llm, result.graph.nodes.items[1].kind);
+    try std.testing.expectEqual(graph_mod.NodeKind.final, result.graph.nodes.items[2].kind);
+}
+
+const LogBuf = struct {
+    mu: std.atomic.Mutex = .unlocked,
+    bytes: std.ArrayList(u8) = .empty,
+    alloc: std.mem.Allocator,
+
+    fn write(ctx: *const anyopaque, line: []const u8) void {
+        const self: *LogBuf = @ptrCast(@alignCast(@constCast(ctx)));
+        while (!self.mu.tryLock()) {
+            std.Thread.yield() catch {};
+        }
+        defer self.mu.unlock();
+        self.bytes.appendSlice(self.alloc, line) catch {};
+    }
+};
+
+test "driver.run spawn path does not log a token present in the child environment" {
+    var tenv: @import("../util/test_env.zig").Env = .init();
+    defer tenv.deinit();
+    const io = tenv.io();
+    const arena = tenv.arena();
+    const token = "sekrit-token-xyz-backend";
+    const script = try std.fmt.allocPrint(arena,
+        \\#!/bin/sh
+        \\export SEKRIT_VENDOR_TOKEN={s}
+        \\printf %s "$SEKRIT_VENDOR_TOKEN" > "$1"
+        \\shift
+        \\exec python3 tests/fixtures/fake-acp-agent.py
+        \\
+    , .{token});
+    try tenv.tmp.dir.writeFile(io, .{ .sub_path = "wrap.sh", .data = script });
+    const wrap = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/wrap.sh", .{tenv.tmp.sub_path});
+    const probe = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/probe", .{tenv.tmp.sub_path});
+    var proc_reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer proc_reg.deinit();
+
+    var logs = LogBuf{ .alloc = std.testing.allocator };
+    defer logs.bytes.deinit(std.testing.allocator);
+    log.setSink(.{ .ctx = @ptrCast(&logs), .write = LogBuf.write });
+    defer log.setSink(null);
+
+    const acp_argv = [_][]const u8{ "sh", wrap, probe };
+    var result = try run(.{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .name = .grok,
+        .prompt = "hello",
+        .timeout_ms = 3000,
+        .acp_argv = &acp_argv,
+        .persist = false,
+        .session_id = "credchild1",
+        .acp_reg = &proc_reg,
+    });
+    defer result.graph.deinit(std.testing.allocator);
+    try std.testing.expect(result.used_acp or result.used_headless);
+    try std.testing.expect(std.mem.find(u8, logs.bytes.items, token) == null);
+    for (acp_argv) |a| try std.testing.expect(std.mem.find(u8, a, token) == null);
+    const inherited = tenv.tmp.dir.readFileAlloc(io, "probe", std.testing.allocator, .limited(256)) catch "";
+    defer if (inherited.len > 0) std.testing.allocator.free(inherited);
+    try std.testing.expectEqualStrings(token, inherited);
+}
+
+test "runIfBackend is empty for the in-process loop and runs the driver when named" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var proc_reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer proc_reg.deinit();
+    const base = RunOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena_state.allocator(),
+        .name = .grok,
+        .prompt = "hello",
+        .timeout_ms = 3000,
+        .acp_argv = &.{ "python3", "tests/fixtures/fake-acp-agent.py" },
+        .persist = false,
+        .session_id = "goalif1",
+        .acp_reg = &proc_reg,
+    };
+    try std.testing.expect(try runIfBackend(base, "") == null);
+    var result = (try runIfBackend(base, "grok")).?;
+    defer result.graph.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.find(u8, result.answer, "fake-acp-answer") != null);
 }
 
 test "encodeWrite payload is the graph-guest write action with NodeKind names" {

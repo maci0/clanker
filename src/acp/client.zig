@@ -318,6 +318,7 @@ pub fn spawnTransport(
     session_id: []const u8,
     argv: []const []const u8,
     cwd: []const u8,
+    timeout_ms: u64,
 ) !ChildTransport {
     _ = vendor;
     if (argv.len == 0) return error.MissingCommand;
@@ -341,6 +342,7 @@ pub fn spawnTransport(
         .gpa = gpa,
         .reg = reg,
         .session_id = session_id,
+        .timeout_ms = timeout_ms,
     };
 }
 
@@ -349,6 +351,7 @@ pub const ChildTransport = struct {
     gpa: std.mem.Allocator,
     reg: *subprocess.Registry,
     session_id: []const u8,
+    timeout_ms: u64 = 120_000,
 
     pub fn transport(self: *ChildTransport) Transport {
         return .{
@@ -368,9 +371,44 @@ pub const ChildTransport = struct {
         try self.reg.writeStdin(self.session_id, "acp", buf.items);
     }
 
+    /// Blocks on the child's stdout, but a watchdog SIGTERMs the child when
+    /// `timeout_ms` elapses so a silent vendor cannot pin the run forever.
+    /// Killing the child closes the pipe and unblocks `readStreaming`.
     fn readLine(ptr: *anyopaque, alloc: std.mem.Allocator) anyerror![]u8 {
         const self: *ChildTransport = @ptrCast(@alignCast(ptr));
-        return self.reg.readStdoutLine(alloc, self.session_id, "acp");
+        if (self.timeout_ms == 0) {
+            return self.reg.readStdoutLine(alloc, self.session_id, "acp");
+        }
+        var stop = std.atomic.Value(bool).init(false);
+        var hung = std.atomic.Value(bool).init(false);
+        const Watch = struct {
+            transport: *ChildTransport,
+            stop: *std.atomic.Value(bool),
+            hung: *std.atomic.Value(bool),
+            ms: u64,
+            fn run(w: *@This()) void {
+                const deadline = nowMs() + @as(i64, @intCast(w.ms));
+                while (nowMs() < deadline) {
+                    if (w.stop.load(.acquire)) return;
+                    pauseNs(5 * std.time.ns_per_ms);
+                }
+                if (w.stop.load(.acquire)) return;
+                w.hung.store(true, .release);
+                w.transport.reg.terminate(w.transport.session_id, "acp");
+            }
+        };
+        var watch = Watch{ .transport = self, .stop = &stop, .hung = &hung, .ms = self.timeout_ms };
+        const thread = try std.Thread.spawn(.{}, Watch.run, .{&watch});
+        defer {
+            stop.store(true, .release);
+            thread.join();
+        }
+        const line = self.reg.readStdoutLine(alloc, self.session_id, "acp") catch |err| {
+            if (hung.load(.acquire)) return Error.Hang;
+            return err;
+        };
+        if (hung.load(.acquire)) return Error.Hang;
+        return line;
     }
 
     fn cancel(ptr: *anyopaque) void {
@@ -681,14 +719,4 @@ test "ACP client refuses fs/* from the agent" {
         if (std.mem.find(u8, line, "capability not supported") != null) saw_error = true;
     }
     try std.testing.expect(saw_error);
-}
-
-test "spawn argv logging never includes a credential" {
-    const argv = [_][]const u8{ "grok", "agent", "stdio" };
-    const token = "sekrit-token-xyz";
-    var buf: [256]u8 = undefined;
-    const line = try std.fmt.bufPrint(&buf, "acp-client: spawning {s} ({d} arg(s)); credentials stay in the child", .{ argv[0], argv.len });
-    try std.testing.expect(std.mem.find(u8, line, token) == null);
-    try std.testing.expect(std.mem.find(u8, line, "grok") != null);
-    for (argv) |a| try std.testing.expect(std.mem.find(u8, a, token) == null);
 }

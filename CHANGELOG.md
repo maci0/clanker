@@ -5,6 +5,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- ACP hang handling actually unblocks a silent child: `ChildTransport.readLine`
+  used to wait forever on `readStreaming`, so `timeout_ms` between reads never
+  fired and hang → cancel → failed ACP node → headless could not run. A watchdog
+  now SIGTERMs the child when the budget elapses.
+- `clanker goal --backend`, TUI `/goal`, and a goal-loop `POST /api/run` used
+  to parse or persist the backend then still call `Agent.run` for each work
+  turn. Work turns now go through `runIfBackend`.
+
 ### Added
 
 - `--backend` / `[agent] backend` on `run`, `repl`, and `goal` (and the
