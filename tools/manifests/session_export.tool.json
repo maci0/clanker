@@ -14,6 +14,11 @@
       "return_html": {
         "type": "boolean"
       },
+      "format": {
+        "type": "string",
+        "enum": ["html", "md"],
+        "description": "Render as a self-contained HTML page (default) or as Markdown. Chooses the file extension of state/exports/<id>.<ext> too."
+      },
       "forget": {
         "type": "boolean",
         "description": "Host-internal: delete this session's export instead of writing one, called when its transcript is deleted"
