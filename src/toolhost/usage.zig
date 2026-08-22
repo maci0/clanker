@@ -26,10 +26,10 @@ pub const Entry = struct {
 pub const Usage = struct {
     /// Name to call count. Order is insertion order, which is meaningless;
     /// `top` sorts.
-    counts: std.StringArrayHashMapUnmanaged(u64) = .empty,
+    counts: std.array_hash_map.String(u64) = .empty,
     /// Increments made by this process since load. Save merges these into the
     /// latest on-disk snapshot while holding the cross-process state lock.
-    deltas: std.StringArrayHashMapUnmanaged(u64) = .empty,
+    deltas: std.array_hash_map.String(u64) = .empty,
     /// Set when a count changed since the last save, so a run that called no
     /// tools does not rewrite the file.
     dirty: bool = false,

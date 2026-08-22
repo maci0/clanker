@@ -181,7 +181,7 @@ pub const plugin_config_state_path = "state/plugin_config.json";
 const max_catalog_line_bytes: usize = 160;
 
 pub const Registry = struct {
-    tools: std.StringArrayHashMapUnmanaged(Tool) = .empty,
+    tools: std.array_hash_map.String(Tool) = .empty,
 
     pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, tools_dirs: []const []const u8) !Registry {
         var reg = Registry{};
@@ -550,7 +550,7 @@ pub const Registry = struct {
     /// whether to ask for its schema. This is what the system prompt carries
     /// instead of every schema, which for this repo is the difference between
     /// roughly 6,600 tokens and roughly 1,000 in every single request.
-    pub fn catalogText(self: *const Registry, arena: std.mem.Allocator, revealed: *const std.StringArrayHashMapUnmanaged(void)) ![]const u8 {
+    pub fn catalogText(self: *const Registry, arena: std.mem.Allocator, revealed: *const std.array_hash_map.String(void)) ![]const u8 {
         var out: std.Io.Writer.Allocating = .init(arena);
         // Not "names": Registry.names is a method on this same type, and a
         // local of that name shadows it and does not compile.
@@ -622,7 +622,7 @@ pub const Registry = struct {
         self: *const Registry,
         arena: std.mem.Allocator,
         core: []const []const u8,
-        revealed: *const std.StringArrayHashMapUnmanaged(void),
+        revealed: *const std.array_hash_map.String(void),
     ) ![]types.ToolDef {
         var out: std.ArrayList(types.ToolDef) = .empty;
         try out.append(arena, try loadToolDef(arena));
@@ -1589,7 +1589,7 @@ test "tool defs are sorted by name so prompts are stable across load order" {
     try std.testing.expectEqualStrings("zeta", defs[2].name);
 
     const core = [_][]const u8{ "zeta", "alpha", "mid" };
-    var revealed: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var revealed: std.array_hash_map.String(void) = .empty;
     const lazy = try reg.lazyToolDefs(arena, &core, &revealed);
     try std.testing.expectEqual(@as(usize, 4), lazy.len);
     try std.testing.expectEqualStrings("load_tools", lazy[0].name);

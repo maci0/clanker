@@ -356,7 +356,7 @@ fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []c
     defer scratch_state.deinit();
     const scratch = scratch_state.allocator();
 
-    var by_key: std.StringArrayHashMapUnmanaged(Stat) = .empty;
+    var by_key: std.array_hash_map.String(Stat) = .empty;
     var lines = std.mem.splitScalar(u8, raw, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;

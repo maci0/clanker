@@ -330,7 +330,7 @@ pub fn listRooms(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_d
     var scratch_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer scratch_state.deinit();
     const scratch = scratch_state.allocator();
-    var by_room: std.StringArrayHashMapUnmanaged(RoomInfo) = .empty;
+    var by_room: std.array_hash_map.String(RoomInfo) = .empty;
     var lines = std.mem.splitScalar(u8, raw, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;

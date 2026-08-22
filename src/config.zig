@@ -243,7 +243,7 @@ pub const Provider = struct {
     service_account_file: []const u8 = "",
     /// Per-model settings keyed by model name. When non-empty, `default_model`
     /// selects the active model; the legacy flat fields below are ignored.
-    models: std.StringArrayHashMapUnmanaged(Model) = .empty,
+    models: std.array_hash_map.String(Model) = .empty,
     /// Default model name within `models` (or the legacy `model` name).
     default_model: []const u8 = "",
 
@@ -1091,8 +1091,8 @@ pub const Config = struct {
     agent_fields: AgentFields = .{},
     improve_present: bool = false,
     default_provider: []const u8 = "deepseek",
-    providers: std.StringArrayHashMapUnmanaged(Provider) = .empty,
-    mcp_servers: std.StringArrayHashMapUnmanaged(McpServer) = .empty,
+    providers: std.array_hash_map.String(Provider) = .empty,
+    mcp_servers: std.array_hash_map.String(McpServer) = .empty,
     agent: Agent = .{},
     improve: Improve = .{},
     peers: []const Peer = &.{},
@@ -1224,7 +1224,7 @@ pub const Config = struct {
                 try s.endArray();
             },
             .@"struct" => |st| {
-                // `std.StringArrayHashMapUnmanaged` is the shape `providers`,
+                // `std.array_hash_map.String` is the shape `providers`,
                 // `mcp_servers` and `models` take; it is a JSON object keyed
                 // by its own keys, not a struct of internal buffers.
                 if (@hasDecl(T, "getEntry") and @hasField(T, "entries")) {

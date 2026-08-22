@@ -320,7 +320,7 @@ pub fn toolDescriptorGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, t
     };
     defer scope.close(io);
 
-    var names: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var names: std.array_hash_map.String(void) = .empty;
     var problems: std.ArrayList([]const u8) = .empty;
     defer problems.deinit(gpa);
 

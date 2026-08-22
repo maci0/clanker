@@ -104,7 +104,7 @@ const Sent = struct {
 /// harmless but folding a cost twice would not.
 fn history(alloc: std.mem.Allocator, room: []const u8) ![]cards.Message {
     var all: std.ArrayList(cards.Message) = .empty;
-    var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var seen: std.array_hash_map.String(void) = .empty;
     var after: i64 = 0;
 
     var pages_read: usize = 0;

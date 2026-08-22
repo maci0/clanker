@@ -230,7 +230,7 @@ pub const Agent = struct {
     /// available until the run ends: a tool wanted once is usually wanted
     /// again, and re-sending the catalog line is cheaper than a second
     /// round-trip to load it.
-    revealed: std.StringArrayHashMapUnmanaged(void) = .empty,
+    revealed: std.array_hash_map.String(void) = .empty,
     /// False when every schema is sent every time (config.agent.tool_catalog).
     catalog_mode: bool = false,
     /// Set from outside the run (the REPL's SIGINT handler) to ask this run to
@@ -252,7 +252,7 @@ pub const Agent = struct {
     /// re-instantiating per call), each stamped with the wasm file it was
     /// compiled from so a rebuild on disk recompiles instead of serving the
     /// first build this run saw.
-    modules: std.StringArrayHashMapUnmanaged(ModuleEntry) = .empty,
+    modules: std.array_hash_map.String(ModuleEntry) = .empty,
     /// Loaded tool wasm bytes, keyed by the tool's wasm path (gpa-owned):
     /// read from disk once per distinct (path, size, mtime) — a module
     /// rebuilt under a long-running process (a `zig build tools` in another
@@ -260,7 +260,7 @@ pub const Agent = struct {
     /// execution, worker spawn, and transform invocation so repeated calls
     /// skip the filesystem read.  Allocated on gpa (not the per-run arena)
     /// so the cache survives across turns in a multi-turn session.
-    wasm_cache: std.StringArrayHashMapUnmanaged(WasmEntry) = .empty,
+    wasm_cache: std.array_hash_map.String(WasmEntry) = .empty,
     /// Cumulative token usage across all LLM calls in this agent run.
     stats: RunStats = .{},
     /// Compaction progress for the run in flight, reset by `run()` alongside
@@ -434,7 +434,7 @@ pub const Agent = struct {
         for (cfg.peers) |p| peer_names.append(arena, p.name) catch {};
 
         var usage = tool_usage.Usage.load(ctx.io, arena, std.Io.Dir.cwd());
-        var revealed: std.StringArrayHashMapUnmanaged(void) = .empty;
+        var revealed: std.array_hash_map.String(void) = .empty;
         var defs = tool_defs;
         var catalog: []const u8 = "";
         if (cfg.agent.tool_catalog) {
@@ -1797,7 +1797,7 @@ pub const Agent = struct {
         const content_preview_chars = 200;
         const tool_result_preview_chars = 150;
         const args_preview_chars = 120;
-        var tool_calls_seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+        var tool_calls_seen: std.array_hash_map.String(void) = .empty;
         defer tool_calls_seen.deinit(self.ctx.gpa);
 
         for (msgs) |m| {
@@ -3066,11 +3066,11 @@ pub const Agent = struct {
         // spawns: every tool's wasm bytes and every registered transform
         // module land in wasm_cache / the "transform:<name>" module cache
         // here, so worker threads only ever *read* those maps and never
-        // insert into the shared StringArrayHashMapUnmanaged concurrently.
+        // insert into the shared array_hash_map.String concurrently.
         self.warmToolCaches(calls);
 
         // ---- parallel pass: one worker per distinct tool name ----
-        var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+        var seen: std.array_hash_map.String(void) = .empty;
         defer seen.deinit(self.ctx.gpa);
         var handles: std.ArrayList(WorkerHandle) = .empty;
         defer {

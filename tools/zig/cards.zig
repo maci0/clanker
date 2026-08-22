@@ -357,7 +357,7 @@ const State = struct {
 /// the result is independent of message order. Arena-owned, oldest-created
 /// first.
 pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
-    var by_id: std.StringArrayHashMapUnmanaged(State) = .empty;
+    var by_id: std.array_hash_map.String(State) = .empty;
 
     for (msgs) |m| {
         const act = parseAction(arena, m.text) orelse continue;

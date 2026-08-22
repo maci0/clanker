@@ -567,6 +567,7 @@ fn runBounded(sess: *Session, opts: HandleOpts, timeout_ms: u32, spec: OpSpec) !
     }
     if (expired) {
         if (sess.reg.get(sess.session_id, sess.kind)) |pid| {
+            // Residual posix: signal delivery has no std.Io equivalent.
             std.posix.kill(pid, std.posix.SIG.TERM) catch {};
         }
         const grace: std.Io.Clock.Timestamp = .fromNow(opts.io, .{

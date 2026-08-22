@@ -13,7 +13,7 @@ const log = @import("../util/log.zig");
 pub const window_ns: i64 = 60 * std.time.ns_per_s;
 
 var mutex: std.Io.Mutex = .init;
-var buckets: std.StringArrayHashMapUnmanaged(std.ArrayList(i64)) = .empty;
+var buckets: std.array_hash_map.String(std.ArrayList(i64)) = .empty;
 
 /// How long to sleep before the next send is allowed. `0` means go now.
 /// `stamps` is oldest-first and may still contain entries older than the

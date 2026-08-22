@@ -27,8 +27,8 @@ const Request = struct {
 pub const Connection = struct {
     initialized: bool = false,
     session_counter: u32 = 0,
-    sessions: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
-    prompt_busy: std.StringArrayHashMapUnmanaged(bool) = .empty,
+    sessions: std.array_hash_map.String([]const u8) = .empty,
+    prompt_busy: std.array_hash_map.String(bool) = .empty,
 
     pub fn deinit(self: *Connection, gpa: std.mem.Allocator) void {
         var it = self.sessions.iterator();

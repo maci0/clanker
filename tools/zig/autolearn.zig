@@ -76,13 +76,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     const data: ?[]const u8 = if (req.reset and !synthesizing) null else prior;
 
-    var unknown: std.StringArrayHashMapUnmanaged(Count) = .empty;
-    var errors: std.StringArrayHashMapUnmanaged(Count) = .empty;
-    var tool_uses: std.StringArrayHashMapUnmanaged(u64) = .empty;
+    var unknown: std.array_hash_map.String(Count) = .empty;
+    var errors: std.array_hash_map.String(Count) = .empty;
+    var tool_uses: std.array_hash_map.String(u64) = .empty;
     var run_count: u64 = 0;
     var cache_hit: u64 = 0;
     var cache_miss: u64 = 0;
-    var model_uses: std.StringArrayHashMapUnmanaged(u64) = .empty;
+    var model_uses: std.array_hash_map.String(u64) = .empty;
     var repeat_guard: u64 = 0;
 
     // 0 disables the window (a host without a clock keeps full history).
