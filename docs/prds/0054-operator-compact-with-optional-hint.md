@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-08-21. Name the source files that are the single source of truth, and the surfaces that expose it.
+In progress — TUI half shipped 2026-08-21 (/compact + compact_hint through tools/zig/compact_hint.zig into the summarizer prompt); web UI Compact hint field open. Source of truth: src/tui/repl.zig, src/agent/loop.zig, tools/zig/compact_hint.zig. Decision: [ADR 0043](../adrs/0043-operator-compact-is-the-existing-summarizer-plus-an.md). RFC: [0031](../rfcs/0031-compact-hint.md).
 
 Shipped / In progress / Draft. Name the source files that are the single
 source of truth, and the surface(s) that expose it (tools, HTTP, CLI, web

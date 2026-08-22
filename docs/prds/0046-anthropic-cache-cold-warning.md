@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Implement-now: phase 1. Decision: [ADR 0035](../adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md). RFC: [0023](../rfcs/0023-cache-cold.md). Source of truth once shipped: src/llm/cache_cold.zig plus stamp in src/llm/client.zig.
+In progress — phase 1 shipped 2026-08-21; phases 2 (turn_stats segment) and 3 (per-provider ttl_ms config) open. Decision: [ADR 0035](../adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md). RFC: [0023](../rfcs/0023-cache-cold.md). Source of truth: src/llm/cache_cold.zig plus stamp in src/llm/client.zig.
 
 ## Problem
 

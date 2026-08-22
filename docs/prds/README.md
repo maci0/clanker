@@ -102,17 +102,17 @@ and Implementation lists checkable file-level phases.
 | [0042](0042-config-profiles-profile-and-dump-config-file-overlay.md) | Config profiles: --profile and --dump-config (file overlay) | Shipped | `profiles/<name>.toml` overlay + merged dump |
 | [0043](0043-external-coding-agent-driver-acp-client-headless-fallback.md) | External coding-agent driver (ACP client, headless fallback) | In progress | Goals 1–5 shipped; Goal 6 image ContentBlocks for grok/claude/codex not forwarded yet |
 | [0044](0044-per-session-sqlite-store-with-an-append-only-event-stream.md) | Per-session SQLite store with an append-only event stream and mesh replication | Shipped |  |
-| [0045](0045-provider-extra-body.md) | Provider extra_body | Draft |  |
-| [0046](0046-anthropic-cache-cold-warning.md) | Anthropic cache-cold warning | Draft |  |
-| [0047](0047-structure-aware-grep-outline.md) | Structure-aware grep outline | Draft |  |
+| [0045](0045-provider-extra-body.md) | Provider extra_body | In progress | phase 1 shipped; env overlay + per-model extra_body open |
+| [0046](0046-anthropic-cache-cold-warning.md) | Anthropic cache-cold warning | In progress | phase 1 shipped; turn_stats segment + per-provider ttl open |
+| [0047](0047-structure-aware-grep-outline.md) | Structure-aware grep outline | In progress | rg/ast-grep/host-fallback outline shipped; seen-set truncation open |
 | [0048](0048-passive-memory-inject-on-every-turn.md) | Passive memory inject on every turn | Draft |  |
 | [0049](0049-file-touch-notify-for-live-sessions.md) | File-touch notify for live sessions | Draft |  |
 | [0050](0050-foreign-session-import.md) | Foreign session import | Draft |  |
 | [0051](0051-first-class-browser-catalog-tool.md) | First-class browser catalog tool | Draft |  |
-| [0052](0052-composer-path-mention-expander.md) | Composer @path mention expander | Draft |  |
+| [0052](0052-composer-path-mention-expander.md) | Composer @path mention expander | In progress | REPL expansion shipped; web composer + @ picker open |
 | [0053](0053-session-permission-modes-on-confirm-writes.md) | Session permission modes on confirm_writes | Draft |  |
-| [0054](0054-operator-compact-with-optional-hint.md) | Operator /compact with optional hint | Draft |  |
-| [0055](0055-markdown-session-export.md) | Markdown session export | Draft |  |
+| [0054](0054-operator-compact-with-optional-hint.md) | Operator /compact with optional hint | In progress | TUI /compact hint shipped; web UI hint field open |
+| [0055](0055-markdown-session-export.md) | Markdown session export | In progress | format=md + CLI .md inference shipped; TUI /export-md open |
 | [0056](0056-goal-queue-started-only-on-complete.md) | Goal queue started only on complete | Draft |  |
 | [0057](0057-nested-explore-plan-coder-presets.md) | Nested explore/plan/coder presets | Draft |  |
 | [0058](0058-repl-mid-stream-inject-via-steer.md) | REPL mid-stream inject via steer | Draft |  |

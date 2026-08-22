@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Implement-now: phase 1. Decision: [ADR 0034](../adrs/0034-openai-compat-extra-body-is-a-provider-json-object-merged.md). RFC: [0022](../rfcs/0022-extra-body.md). Source of truth once shipped: `src/config.zig` Provider.extra_body + parseProvider, `src/llm/providers/common.zig` mergeExtraBody, openai/azure buildRequest.
+In progress — phase 1 shipped 2026-08-21; phases 2 (env overlay) and 3 (per-model extra_body) open. Decision: [ADR 0034](../adrs/0034-openai-compat-extra-body-is-a-provider-json-object-merged.md). RFC: [0022](../rfcs/0022-extra-body.md). Source of truth: `src/config.zig` Provider.extra_body + parseExtraBody, `src/llm/providers/common.zig` mergeExtraBody, openai/azure buildRequest.
 
 ## Problem
 

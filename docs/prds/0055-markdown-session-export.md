@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-08-21. Name the source files that are the single source of truth, and the surfaces that expose it.
+In progress — phase 1 shipped 2026-08-21 (renderMarkdown + format switch in the session_export guest, CLI infers md from a .md destination); TUI /export-md is phase 2 and open. Source of truth: tools/zig/session_export_logic.zig, tools/zig/session_export.zig, src/cli.zig. Decision: [ADR 0044](../adrs/0044-markdown-session-export-is-a-second-renderer-in-the.md). RFC: [0032](../rfcs/0032-session-export-md.md).
 
 Shipped / In progress / Draft. Name the source files that are the single
 source of truth, and the surface(s) that expose it (tools, HTTP, CLI, web

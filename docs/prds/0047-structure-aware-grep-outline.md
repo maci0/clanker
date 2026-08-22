@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft. Implement-now: phase 1. Decision: [ADR 0036](../adrs/0036-repo-search-attaches-enclosing-symbols-to-grep-hits.md). RFC: [0024](../rfcs/0024-agent-grep-outline.md). Source of truth once shipped: tools/zig/grep_outline.zig and tools/zig/repo_search.zig.
+In progress — phases 1 and 2 shipped 2026-08-21 (rg, ast-grep, and host-fallback hits all attach outline); phase 3 (seen-set truncation) open. Decision: [ADR 0036](../adrs/0036-repo-search-attaches-enclosing-symbols-to-grep-hits.md). RFC: [0024](../rfcs/0024-agent-grep-outline.md). Source of truth: tools/zig/grep_outline.zig and tools/zig/repo_search.zig.
 
 ## Problem
 

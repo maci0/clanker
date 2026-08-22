@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-08-21. Name the source files that are the single source of truth, and the surfaces that expose it.
+In progress — REPL half shipped 2026-08-21 (helper + submit expansion); web composer and @ completion picker open. Source of truth: tools/zig/mention_expand.zig (expandAlloc) + src/tui/repl.zig. Decision: [ADR 0041](../adrs/0041-composer-path-mentions-expand-through-a-host-tested-helper.md). RFC: [0029](../rfcs/0029-file-mentions.md).
 
 Shipped / In progress / Draft. Name the source files that are the single
 source of truth, and the surface(s) that expose it (tools, HTTP, CLI, web
