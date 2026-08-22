@@ -44,6 +44,7 @@ pub const Kind = enum {
     overlay,
     search,
     composer,
+    chatprefs,
     ai_disclosure,
     scroll,
     run_metrics,
@@ -90,6 +91,7 @@ pub fn kindFor(target: []const u8) Kind {
     if (std.mem.endsWith(u8, target, "overlay.js")) return .overlay;
     if (std.mem.endsWith(u8, target, "search.js")) return .search;
     if (std.mem.endsWith(u8, target, "composer.js")) return .composer;
+    if (std.mem.endsWith(u8, target, "chatprefs.js")) return .chatprefs;
     if (std.mem.endsWith(u8, target, "ai-disclosure.js")) return .ai_disclosure;
     if (std.mem.endsWith(u8, target, "scroll.js")) return .scroll;
     if (std.mem.endsWith(u8, target, "run-metrics.js")) return .run_metrics;
@@ -136,6 +138,7 @@ pub const asset_paths = [_][]const u8{
     "/webui/core/attachments.js",
     "/webui/core/ai-disclosure.js",
     "/webui/core/chat.js",
+    "/webui/core/chatprefs.js",
     "/webui/core/composer.js",
     "/webui/core/dialog.js",
     "/webui/core/goals.js",
