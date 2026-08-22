@@ -99,33 +99,32 @@ the one most often missed.
 ### `clanker rfc`
 
 `list`, `search`, `open`, `checklist`, `create`, `append`, `update`,
-`recommend`, `status`, `rename`. An RFC needs at least two candidates, the status quo,
-one out-of-the-box option, and a recommendation whose confidence is a number
-from 0 to 10. `search` covers the RFCs and the ADRs together on purpose.
-`checklist` answers a bare request with the whole recipe — what to pin down,
-what to put to the operator with `ask_user`, that a research note's claims stay
-unverified until reopened at the source it cites, the shape the option set has
-to take, and the closing `recommend` — so start there rather than inventing a
-scope.
+`recommend`, `status`, `rename`. An RFC needs at least two candidates, the
+status quo, one out-of-the-box option, and a recommendation whose confidence is
+a number from 0 to 10. `search` covers the RFCs and the ADRs together on
+purpose. `checklist` answers a bare request with the whole recipe — what to pin
+down, what to put to the operator with `ask_user`, that a research note's
+claims stay unverified until reopened at the source it cites, the shape the
+option set has to take, and the closing `recommend` — so start there rather
+than inventing a scope.
 
 ### `clanker adr`
 
 `list`, `search`, `open`, `create`, `append`, `update`, `status`, `rename`. The
-decision
-once it is made. The title is the **choice**, not the question. `create`
-requires the consequences, and `status ... superseded` requires a note naming
-what replaced it: a reversal links forward instead of editing the history out,
-because that history is the only account of why the original constraint looked
-binding. `search` spans the ADRs, RFCs and PRDs and reports each separately —
-which store a hit lands in is the answer. Passing the RFC a decision came from
-links it and quotes its recommendation under the Decision.
+decision once it is made. The title is the **choice**, not the question.
+`create` requires the consequences, and `status ... superseded` requires a note
+naming what replaced it: a reversal links forward instead of editing the
+history out, because that history is the only account of why the original
+constraint looked binding. `search` spans the ADRs, RFCs and PRDs and reports
+each separately — which store a hit lands in is the answer. Passing the RFC a
+decision came from links it and quotes its recommendation under the Decision.
 
 ### `clanker prd`
 
 `list`, `search`, `open`, `checklist`, `create`, `append`, `update`, `status`,
-`rename`. What a feature is meant to be — never a decision (that is an ADR) and never the
-shipped narrative (that is the ROADMAP). `list` groups by status with the
-unfinished work first. `checklist` is the Draft bar: dependencies named,
+`rename`. What a feature is meant to be — never a decision (that is an ADR) and
+never the shipped narrative (that is the ROADMAP). `list` groups by status with
+the unfinished work first. `checklist` is the Draft bar: dependencies named,
 blocking questions settled in Design rather than parked under Open questions,
 implementation phases that name files. `status ... shipped` requires a note
 naming the source files that are now the source of truth. Goals and acceptance
