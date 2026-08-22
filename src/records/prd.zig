@@ -320,49 +320,16 @@ pub fn renderChecklist(arena: std.mem.Allocator, requirements: []const std.json.
         // These are whole sentences from the tool, long enough that a raw
         // print wraps them mid-thought at the terminal's own margin. Breaking
         // them here puts the break between words instead.
-        if (why.len > 0) try wrapInto(&w.writer, why, "      ", help_columns);
+        if (why.len > 0) try common.wrapInto(&w.writer, why, "      ", common.help_columns);
         if (ask.len > 0) {
             // The "ask:" label wraps with the question rather than sitting on
             // a line of its own.
             const labelled = try std.fmt.allocPrint(arena, "ask: {s}", .{ask});
-            try wrapInto(&w.writer, labelled, "      ", help_columns);
+            try common.wrapInto(&w.writer, labelled, "      ", common.help_columns);
         }
         try w.writer.writeByte('\n');
     }
     return w.written();
-}
-
-/// The column the CLI's own help is held to, so this output sits in the same
-/// terminal without a different margin.
-const help_columns: usize = 80;
-
-/// Writes `text` at `indent`, breaking between words so no line exceeds
-/// `columns`. A word longer than the column is emitted whole and overruns: a
-/// path or identifier split across two lines is no longer copy-pasteable,
-/// which is worse than the overrun.
-fn wrapInto(w: *std.Io.Writer, text: []const u8, indent: []const u8, columns: usize) !void {
-    const room = columns -| indent.len;
-    var line_len: usize = 0;
-    var it = std.mem.tokenizeAny(u8, text, " \t\n");
-    while (it.next()) |word| {
-        if (line_len == 0) {
-            try w.writeAll(indent);
-            try w.writeAll(word);
-            line_len = word.len;
-            continue;
-        }
-        if (line_len + 1 + word.len > room) {
-            try w.writeByte('\n');
-            try w.writeAll(indent);
-            try w.writeAll(word);
-            line_len = word.len;
-            continue;
-        }
-        try w.writeByte(' ');
-        try w.writeAll(word);
-        line_len += 1 + word.len;
-    }
-    if (line_len > 0) try w.writeByte('\n');
 }
 
 // -------------------------------------------------------------------- tests --
@@ -485,25 +452,6 @@ test "renderChecklist keeps every line inside the terminal column" {
     try testing.expect(std.mem.find(u8, text, "untested") != null);
     try testing.expect(std.mem.find(u8, text, "one at a time?") != null);
     try testing.expect(std.mem.find(u8, text, "ask:") != null);
-}
-
-test "wrapInto breaks between words and never mid-word" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var w: std.Io.Writer.Allocating = .init(arena);
-    defer w.deinit();
-    try wrapInto(&w.writer, "aaa bbb ccc ddd", "..", 9);
-    // Two columns of indent, then at most 7 more.
-    try testing.expectEqualStrings("..aaa bbb\n..ccc ddd\n", w.written());
-
-    var long: std.Io.Writer.Allocating = .init(arena);
-    defer long.deinit();
-    // A single word wider than the column is emitted whole rather than cut:
-    // a broken path or identifier is worse than one long line.
-    try wrapInto(&long.writer, "supercalifragilistic x", "", 5);
-    try testing.expectEqualStrings("supercalifragilistic\nx\n", long.written());
 }
 
 test "renderChecklist prints the question to ask under each requirement" {

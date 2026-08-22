@@ -997,11 +997,13 @@ clanker rfc open docs/rfcs/0001-workspace-room-board-hierarchy.md
 
 `search` covers the RFCs and the ADRs together on purpose: a matching [ADR](adrs/) means the decision is already made, which is the one answer that should stop an RFC from being written at all. `list` prints each RFC's status read from the document itself rather than from the index, and the next free number, so the number to claim is never counted by hand.
 
-When a request is too vague to draft from, ask before inventing a scope:
+Hand a bare request to `checklist` before inventing a scope:
 
 ```bash
 clanker rfc checklist "state store"
 ```
+
+It answers with the whole recipe: the seven things an RFC cannot be written without and the question to put to the operator with `ask_user` for each, then, under `NEXT`, where the evidence comes from, that a claim taken from a `docs/research/` note stays unverified until the source that note cites for it is reopened (re-reading the note verifies nothing), the shape the option set has to take, and the closing `recommend` with its confidence. The CLI used to print the questions and drop that guidance; the `rfc` tool always returned it.
 
 Write them:
 
@@ -1012,6 +1014,14 @@ clanker rfc recommend docs/rfcs/0022-http-client-for-the-proxy.md "Adopt option 
 clanker rfc status docs/rfcs/0022-http-client-for-the-proxy.md decided "Chose option B; see the ADR"
 clanker rfc rename docs/rfcs/0022-http-client-for-the-proxy.md proxy-http-client
 ```
+
+Seed a new RFC from an existing research note by passing its path as `create`'s fourth argument:
+
+```bash
+clanker rfc create "State store" "Peers disagree about state" state-store docs/research/decentralized-state-store.md
+```
+
+That links the note from References and lifts its option headings in as stubs marked unverified — claims to re-check against the sources the note cites, never content to keep.
 
 `create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2. `rename <path> <new-slug>` moves a record to a new slug and rewrites its inventory link in the same call, and it keeps the **number**: these records are cited by number in prose across the tree, where a scan of filenames cannot follow, so the slug is a name and the number is identity. Pass the new name without a number; a slug carrying a different number is refused by name rather than silently ignored. The unnumbered `research` store has the same action with no such rule.
 

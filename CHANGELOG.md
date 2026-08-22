@@ -358,6 +358,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `## Status` section, stays deliberately first-line-only: there the prose
   underneath explains what the state means and must survive.
 
+- `clanker rfc checklist` prints the `rfc` tool's own next steps, which the
+  CLI renderer dropped: the questions came out and none of the guidance that
+  turns the answers into an RFC. That guidance now also states what the
+  option set has to contain (two real candidates, the status quo among them,
+  one out-of-the-box possibility), that the record closes with a `recommend`
+  carrying a confidence from 0 to 10, and that a claim taken from a
+  `docs/research/` note is unverified until its own cited source is reopened.
+  Long sentences wrap between words instead of at the terminal margin, sharing
+  one wrap helper with `clanker prd checklist`. Two `rfc` fixes ride along:
+  `create`'s seeded "Seeded from" link was written as `research/x.md`, which
+  resolves to `docs/rfcs/research/x.md` and is dead, and `clanker rfc --help`
+  never named the fourth `create` positional that takes the research note.
+
 ### Added
 
 - **Sessions moved to SQLite**: one database per conversation

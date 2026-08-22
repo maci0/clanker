@@ -105,7 +105,12 @@ fn checklist(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     });
 
     const result = try common.callTool(arena, "rfc", tool, input);
-    return renderChecklist(arena, json_util.strFieldOrEmpty(result.object, "topic"), common.arrayField(result, "requirements"));
+    return renderChecklist(
+        arena,
+        json_util.strFieldOrEmpty(result.object, "topic"),
+        common.arrayField(result, "requirements"),
+        common.arrayField(result, "next"),
+    );
 }
 
 // ------------------------------------------------------------------ writing --
@@ -266,8 +271,18 @@ pub fn renderSearch(
 }
 
 /// The checklist is a list of questions to put to a person, so each one is
-/// printed as the question, with what it pins down under it.
-pub fn renderChecklist(arena: std.mem.Allocator, topic: []const u8, requirements: []const std.json.Value) ![]const u8 {
+/// printed as the question, with what it pins down under it. `next` is the
+/// tool's own instruction for turning the answers into an RFC — where to get
+/// the evidence, what the option set has to contain, and that the record ends
+/// in a recommendation carrying a confidence. It used to be dropped here, so
+/// `clanker rfc checklist` and the TUI's `/rfc checklist` returned the
+/// questions and none of the guidance the `rfc` tool answers an agent with.
+pub fn renderChecklist(
+    arena: std.mem.Allocator,
+    topic: []const u8,
+    requirements: []const std.json.Value,
+    next: []const std.json.Value,
+) ![]const u8 {
     var w: std.Io.Writer.Allocating = .init(arena);
     errdefer w.deinit();
 
@@ -288,9 +303,25 @@ pub fn renderChecklist(arena: std.mem.Allocator, topic: []const u8, requirements
         const why = json_util.strFieldOrEmpty(r.object, "why");
         const ask = json_util.strFieldOrEmpty(r.object, "ask");
         try w.writer.print("  {s}\n", .{needs});
-        if (why.len > 0) try w.writer.print("      {s}\n", .{why});
-        if (ask.len > 0) try w.writer.print("      ask: {s}\n", .{ask});
+        // Whole sentences from the tool: wrapped between words here rather
+        // than at the terminal's own margin, which breaks them mid-thought.
+        if (why.len > 0) try common.wrapInto(&w.writer, why, "      ", common.help_columns);
+        if (ask.len > 0) {
+            // The "ask:" label wraps with the question instead of sitting on
+            // a line of its own.
+            const labelled = try std.fmt.allocPrint(arena, "ask: {s}", .{ask});
+            try common.wrapInto(&w.writer, labelled, "      ", common.help_columns);
+        }
         try w.writer.writeByte('\n');
+    }
+
+    if (next.len > 0) {
+        try w.writer.writeAll("NEXT\n\n");
+        for (next) |step| {
+            if (step != .string) continue;
+            try common.wrapInto(&w.writer, step.string, "  ", common.help_columns);
+            try w.writer.writeByte('\n');
+        }
     }
     return w.written();
 }
@@ -404,7 +435,7 @@ test "renderChecklist prints the question to ask under each requirement" {
     const reqs = try parseValue(arena,
         \\[{"needs":"the decision as a question","why":"an RFC without one drifts","ask":"What exactly is being decided?"}]
     );
-    const text = try renderChecklist(arena, "http client", reqs.array.items);
+    const text = try renderChecklist(arena, "http client", reqs.array.items, &.{});
     try testing.expect(std.mem.find(u8, text, "http client") != null);
     try testing.expect(std.mem.find(u8, text, "the decision as a question") != null);
     try testing.expect(std.mem.find(u8, text, "ask: What exactly is being decided?") != null);
@@ -423,4 +454,39 @@ fn rename(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
         opts.arg2,
         tool,
     );
+}
+
+test "renderChecklist prints the tool's next steps under their own heading" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const reqs = try parseValue(arena,
+        \\[{"needs":"the status quo","why":"doing nothing is an option","ask":"What happens today?"}]
+    );
+    const next = try parseValue(arena,
+        \\["Put what the request does not answer to the operator with ask_user.","Then create it with a title and an overview."]
+    );
+    const text = try renderChecklist(arena, "http client", reqs.array.items, next.array.items);
+    try testing.expect(std.mem.find(u8, text, "NEXT") != null);
+    try testing.expect(std.mem.find(u8, text, "ask_user") != null);
+    try testing.expect(std.mem.find(u8, text, "with a title and an overview") != null);
+}
+
+test "checklist renders the guidance the tool returned beside the requirements" {
+    const Ctx = struct {
+        fn call(_: *anyopaque, _: []const u8) anyerror![]const u8 {
+            return
+            \\{"ok":true,"topic":"state store","requirements":[{"needs":"the status quo","why":"w","ask":"a"}],
+            \\ "next":["An RFC needs at least two real candidates, the status quo among them, and one out-of-the-box possibility."]}
+            ;
+        }
+    };
+    var ctx: u8 = 0;
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const text = try run(arena, .{ .sub = "checklist", .arg1 = "state store" }, Tool{ .ctx = &ctx, .call = Ctx.call });
+    try testing.expect(std.mem.find(u8, text, "the status quo") != null);
+    try testing.expect(std.mem.find(u8, text, "out-of-the-box") != null);
 }

@@ -102,8 +102,11 @@ the one most often missed.
 `recommend`, `status`, `rename`. An RFC needs at least two candidates, the status quo,
 one out-of-the-box option, and a recommendation whose confidence is a number
 from 0 to 10. `search` covers the RFCs and the ADRs together on purpose.
-`checklist` is what to pin down when a request is too vague to draft from —
-use it with `ask_user` rather than inventing a scope.
+`checklist` answers a bare request with the whole recipe — what to pin down,
+what to put to the operator with `ask_user`, that a research note's claims stay
+unverified until reopened at the source it cites, the shape the option set has
+to take, and the closing `recommend` — so start there rather than inventing a
+scope.
 
 ### `clanker adr`
 
