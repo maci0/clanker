@@ -2,9 +2,9 @@
 
 ## TL;DR
 
-- **Use when:** Link config.local.toml and .env from the main checkout into a worktree made with git worktree add before running any verb that calls a model; clanker doctor confirms the default provider is the one you configured.
-- **Recover by:** Determine the current verified procedure.
-- **Verify with:** The linked report's verification steps.
+- **Use when:** a clanker verb run inside a worktree you made with `git worktree add` names a provider you never configured (`no credential for provider 'moonshotai'`), `clanker commit` falls back to `chore: update working tree`, or every guest-backed verb fails with `ToolWasmMissing`.
+- **Recover by:** symlinking `config.local.toml` and `.env` from the main checkout into the worktree and running `zig build tools` there.
+- **Verify with:** `clanker doctor` in the worktree reporting the main checkout's `default_provider` with its key set.
 
 ## Scope and preconditions
 
