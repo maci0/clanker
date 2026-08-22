@@ -354,6 +354,11 @@ pub fn build(b: *std.Build) void {
     const steer_js_test = b.addSystemCommand(&.{ "node", "--test" });
     steer_js_test.addFileArg(b.path("ui/app/core/steer.test.mjs"));
     test_step.dependOn(&steer_js_test.step);
+    // Which model and reasoning effort a conversation runs on: the per-chat
+    // pin, its bound, and the browser default it falls back to.
+    const chatprefs_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    chatprefs_js_test.addFileArg(b.path("ui/app/core/chatprefs.test.mjs"));
+    test_step.dependOn(&chatprefs_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under

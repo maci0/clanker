@@ -2146,7 +2146,7 @@ const specs = [_]Spec{
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, compare-and-swap lock files under state/locks/ that\nnothing has re-acquired in 12 hours, spilled tool results older than 12 hours,\nand the worktrees of goals that have been archived or abandoned whose branch\nis already merged. Sessions, goals, learnings and chat history are never\ntouched, and neither is a worktree whose branch still holds commits the base\ndoes not.\n\nAn aged lock file is not a stuck lock. ck_fs_write_if locks with flock, which\nthe kernel releases when the holding descriptor closes -- a crash included --\nso a lock is never stale. The 12 hours is a retention window for the file,\nwhich is named for a hash of its target: a target that recurs keeps the same\nlock fresh, and only one that will never be written again ages out." },
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
-    .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\nsandbox-abi, tools-ts-toolchain and the release contract\n(CHANGELOG/RELEASES.md) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
+    .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\njs-suite-coverage, sandbox-abi, tools-ts-toolchain and the release contract\n(CHANGELOG/RELEASES.md) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
     .{ .command = .config, .usage = "config [get <key>|set <key> <value>]", .blurb = "read or pin one key of the merged config", .group = .maintain, .detail = "Reads and writes through the same `config` tool the agent uses. Every\nCLI flag with a persistent twin in config (say --reasoning-effort and\n[agent] reasoning_effort) can be pinned here instead of hand-editing\nconfig.local.toml.\n\n  (no subcommand)      dump config.toml + config.local.toml raw, local last\n  get <key>            print one dotted key of the merged config\n  set <key> <value>    pin the key in config.local.toml -- never config.toml\n\nset refuses a key the loader does not know (a typo'd TOML key would be\nsilently ignored; this is the checked path), refuses a value that does not\nparse as the key's merged type, and refuses the table sections (providers,\nmodels, mcp_servers), whose quoted-key disk shape a line edit does not\nspeak: edit config.local.toml by hand there. The write replaces one line\nand leaves the rest of the file byte-identical, comments included. A\nchange applies from the next command, not to processes already running.\n\nEXAMPLES\n  clanker config get agent.reasoning_effort\n  clanker config set agent.reasoning_effort high\n  clanker config set default_provider deepseek\n  clanker config set tui.mascot_size mini" },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model, .seed }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model\n--seed <n>          pin the tool-RNG seed (agent.seed) so the evals draw the\n                    identical ck_random stream and a failure can be re-run\n                    byte-identically" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
@@ -2479,9 +2479,9 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
 }
 
 /// Runs all deterministic gates (build, test, tools, fmt, lint,
-/// provider-kind, test-root-coverage, sandbox-abi, tools-ts-toolchain,
-/// release-contract) against the current checkout. Throws error.GateFailed on the first
-/// failure.
+/// provider-kind, test-root-coverage, js-suite-coverage, sandbox-abi,
+/// tools-ts-toolchain, release-contract) against the current checkout.
+/// Throws error.GateFailed on the first failure.
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
@@ -2511,6 +2511,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     var test_root = try gate_checks.testRootCoverageGate(gpa, io, std.Io.Dir.cwd(), files);
     defer test_root.deinit(gpa);
     try reportGate(io, "test-root-coverage", test_root);
+
+    var js_suites = try gate_checks.jsSuiteCoverageGate(gpa, io, std.Io.Dir.cwd());
+    defer js_suites.deinit(gpa);
+    try reportGate(io, "js-suite-coverage", js_suites);
 
     var sandbox_abi = try gate_checks.sandboxAbiGate(gpa, io, std.Io.Dir.cwd());
     defer sandbox_abi.deinit(gpa);
@@ -9416,27 +9420,61 @@ fn appendRunningGoals(w: *std.Io.Writer) void {
 
 const SteerEnqueue = enum { ok, no_run, full, out_of_memory };
 
-/// Queues a steering message for the in-flight run keyed by `goal_id` and/or
-/// `session_id` (the caller passes whichever the client named). The copy is
-/// made with `gpa` (the serve allocator, the same one runRelease and steerPoll
-/// free with). Returns no_run when nothing currently works that key.
-fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, session_id: []const u8, message: []const u8) SteerEnqueue {
+/// What one POST /api/steer did: the outcome, plus how many in-flight runs
+/// the message actually landed on. `delivered` exists because a key can
+/// address more than one run (two connection threads working the same goal),
+/// and a bare `{"ok":true}` left the sender to assume it was exactly one.
+const SteerOutcome = struct { status: SteerEnqueue, delivered: usize = 0 };
+
+/// Does a slot keyed `slot_goal`/`slot_session` answer to the keys a steer
+/// body named? Every key the caller named must match, and a key the slot
+/// does not carry matches nothing: `{"goal":g,"session":s}` addresses the one
+/// run holding both, so a pair whose halves name different runs addresses
+/// neither. A body naming one key matches on that key alone, which is what
+/// both web UI senders do today (goals send `goal`, chat sends `session`).
+/// Naming nothing addresses nothing — an empty body must never broadcast.
+fn steerKeysMatch(slot_goal: []const u8, slot_session: []const u8, want_goal: []const u8, want_session: []const u8) bool {
+    if (want_goal.len == 0 and want_session.len == 0) return false;
+    if (want_goal.len != 0 and !std.mem.eql(u8, slot_goal, want_goal)) return false;
+    if (want_session.len != 0 and !std.mem.eql(u8, slot_session, want_session)) return false;
+    return true;
+}
+
+/// Queues a steering message for *every* in-flight run the caller's keys
+/// address (see steerKeysMatch), not the first one found: a goal id two
+/// connection threads registered under names both of them, and stopping at
+/// the first left the other silently unsteerable. The copy is made with
+/// `gpa` (the serve allocator, the same one runRelease and steerPoll free
+/// with), one per receiving slot. Returns no_run when the keys address
+/// nothing, and full/out_of_memory only when no addressed run took it.
+fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, session_id: []const u8, message: []const u8) SteerOutcome {
     _ = std.c.pthread_mutex_lock(&steer_mutex);
     defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
+    var delivered: usize = 0;
+    var addressed = false;
+    var out_of_memory = false;
     for (&steer_slots) |*slot| {
         if (!slot.occupied()) continue;
-        const goal_hit = goal_id.len != 0 and slot.goal_len != 0 and std.mem.eql(u8, slot.goalId(), goal_id);
-        const session_hit = session_id.len != 0 and slot.session_len != 0 and std.mem.eql(u8, slot.sessionId(), session_id);
-        if (!goal_hit and !session_hit) continue;
-        if (slot.queue.items.len >= steer_message_cap) return .full;
-        const copy = gpa.dupe(u8, message) catch return .out_of_memory;
+        if (!steerKeysMatch(slot.goalId(), slot.sessionId(), goal_id, session_id)) continue;
+        addressed = true;
+        if (slot.queue.items.len >= steer_message_cap) continue;
+        const copy = gpa.dupe(u8, message) catch {
+            out_of_memory = true;
+            continue;
+        };
         slot.queue.append(gpa, copy) catch {
             gpa.free(copy);
-            return .out_of_memory;
+            out_of_memory = true;
+            continue;
         };
-        return .ok;
+        delivered += 1;
     }
-    return .no_run;
+    // One run taking it is a success even if a second was full: the message
+    // is in flight, and `delivered` is what says how widely.
+    if (delivered != 0) return .{ .status = .ok, .delivered = delivered };
+    if (out_of_memory) return .{ .status = .out_of_memory };
+    if (addressed) return .{ .status = .full };
+    return .{ .status = .no_run };
 }
 
 /// Agent.steer_fn for streaming web runs: pops the next queued message for
@@ -9491,8 +9529,13 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    switch (steerEnqueue(gpa, req.goal, req.session, framed)) {
-        .ok => respond(stream, 200, "OK", "{\"ok\":true}"),
+    const outcome = steerEnqueue(gpa, req.goal, req.session, framed);
+    switch (outcome.status) {
+        .ok => {
+            var ok_buf: [48]u8 = undefined;
+            const ok_body = std.fmt.bufPrint(&ok_buf, "{{\"ok\":true,\"delivered\":{d}}}", .{outcome.delivered}) catch "{\"ok\":true}";
+            respond(stream, 200, "OK", ok_body);
+        },
         .no_run => respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no run is currently working that goal or session\"}"),
         .full => respond(stream, 429, "Too Many Requests", "{\"ok\":false,\"error\":\"too many queued messages for this run; wait for it to catch up\"}"),
         .out_of_memory => respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}"),
@@ -9736,9 +9779,9 @@ test "steer registry: register by goal or session, steer, poll, release" {
     try std.testing.expect(runRegister("g-123", "sess-1"));
     defer runRelease();
 
-    try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "", "hi"));
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "", "go left"));
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "sess-1", "then right"));
+    try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "", "hi").status);
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "", "go left").status);
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "sess-1", "then right").status);
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -9760,7 +9803,7 @@ test "steer registry: a session-only (chat) run steers by session" {
     // A chat run has a session but no goal; it must still register and steer.
     try std.testing.expect(runRegister("", "chat-sess"));
     defer runRelease();
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "chat-sess", "adjust"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "chat-sess", "adjust").status);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -9787,11 +9830,80 @@ test "steer registry: a resumed goal run has no session and still shows as runni
     appendRunningGoals(&w);
     try std.testing.expectEqualStrings("[{\"id\":\"g-resumed\",\"session\":\"\"}]", buf[0..w.end]);
     // And it is steerable by that goal id, which is the other half of the slot.
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-resumed", "", "stop after this turn"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-resumed", "", "stop after this turn").status);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const got = steerPoll(arena_state.allocator()) orelse return error.TestExpectedSteer;
     try std.testing.expectEqualStrings("stop after this turn", got);
+}
+
+test "steer registry: a message reaches every run working the named key" {
+    serve_gpa = std.testing.allocator;
+    defer serve_gpa = null;
+    // Two runs are working the same goal from different sessions — the shape
+    // the board produces when a goal is resumed while a client still streams
+    // it. Steering the goal must reach both, not whichever slot is scanned
+    // first, or one of the two runs is silently unsteerable.
+    try std.testing.expect(runRegister("g-dup", "sess-a"));
+    const slot_a = current_steer_slot orelse return error.TestExpectedSlot;
+    // runRegister keys the slot off this thread's threadlocal; clearing it
+    // lets the second registration claim a slot of its own, standing in for
+    // the second connection thread.
+    current_steer_slot = null;
+    try std.testing.expect(runRegister("g-dup", "sess-b"));
+    const slot_b = current_steer_slot orelse return error.TestExpectedSlot;
+    defer {
+        current_steer_slot = slot_a;
+        runRelease();
+    }
+    defer {
+        current_steer_slot = slot_b;
+        runRelease();
+    }
+
+    const both = steerEnqueue(std.testing.allocator, "g-dup", "", "both of you stop");
+    try std.testing.expectEqual(SteerEnqueue.ok, both.status);
+    try std.testing.expectEqual(@as(usize, 2), both.delivered);
+
+    // Naming both keys addresses the one run carrying both: an AND, so the
+    // second run's queue does not grow.
+    const one = steerEnqueue(std.testing.allocator, "g-dup", "sess-b", "b only");
+    try std.testing.expectEqual(SteerEnqueue.ok, one.status);
+    try std.testing.expectEqual(@as(usize, 1), one.delivered);
+
+    // And a pair whose halves name different runs addresses neither, rather
+    // than landing on whichever half happens to match.
+    const mismatched = steerEnqueue(std.testing.allocator, "g-dup", "sess-nobody", "nowhere");
+    try std.testing.expectEqual(SteerEnqueue.no_run, mismatched.status);
+    try std.testing.expectEqual(@as(usize, 0), mismatched.delivered);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    current_steer_slot = slot_a;
+    try std.testing.expectEqualStrings("both of you stop", steerPoll(arena) orelse return error.TestExpectedSteer);
+    try std.testing.expect(steerPoll(arena) == null);
+    current_steer_slot = slot_b;
+    try std.testing.expectEqualStrings("both of you stop", steerPoll(arena) orelse return error.TestExpectedSteer);
+    try std.testing.expectEqualStrings("b only", steerPoll(arena) orelse return error.TestExpectedSteer);
+}
+
+test "steer key match: every key the caller named must match" {
+    // Nothing named addresses nothing: an empty body must not broadcast.
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "", ""));
+    // One key named matches on that key alone, either side.
+    try std.testing.expect(steerKeysMatch("g-1", "s-1", "g-1", ""));
+    try std.testing.expect(steerKeysMatch("g-1", "s-1", "", "s-1"));
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "g-2", ""));
+    // Both named is an AND, so a half-right pair matches nothing.
+    try std.testing.expect(steerKeysMatch("g-1", "s-1", "g-1", "s-1"));
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "g-1", "s-2"));
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "g-2", "s-1"));
+    // A key the slot does not carry cannot be matched: a goal-only run
+    // (no session) is not addressable by session, and vice versa.
+    try std.testing.expect(!steerKeysMatch("g-1", "", "", "s-1"));
+    try std.testing.expect(!steerKeysMatch("g-1", "", "g-1", "s-1"));
+    try std.testing.expect(!steerKeysMatch("", "s-1", "g-1", ""));
 }
 
 /// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent

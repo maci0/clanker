@@ -52,7 +52,18 @@ gh pr create --base main --head fix/<topic> --title "..." --body "..."
 gh pr merge <n> --merge
 ```
 
-Then remove the worktree and branches:
+`gh pr merge` is deliberately given no `--delete-branch` here. That flag makes
+`gh` check the branch out locally to clean it up, which fails with `fatal:
+'main' is already used by worktree at …` on any checkout following the
+worktree rule — and it fails *after* the merge has already landed on the
+remote, so the error reads as a failed merge and is not one. Confirm the state
+before reacting to it:
+
+```bash
+gh pr view <n> --json state,mergedAt,mergeCommit
+```
+
+Then remove the worktree and branches by hand:
 
 ```bash
 git worktree remove .local/worktrees/<topic>

@@ -81,7 +81,9 @@ fresh dependency fetch replaced the trees.
 loop has a single-test path: `zig build test -Dtest-filter="<substring>"`
 compiles the Zig binary with only the matching tests registered (a filter
 that matches nothing passes with 0 tests; the JS suites still run). For a
-JS-only loop, run one suite directly, e.g. `node --test ui/app/core/scroll.test.mjs`.
+JS-only loop, run one suite directly, e.g. `node --test ui/app/core/scroll.test.mjs`,
+or sweep them all with `node --test 'ui/**/*.test.mjs'` (quoted — node expands
+the pattern; a directory positional is resolved as a module and fails).
 
 `clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
 but CI also runs shellcheck, a Python syntax check, the SBOM generation, and
