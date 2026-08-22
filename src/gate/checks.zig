@@ -1421,6 +1421,131 @@ test "testRootCoverageGate names a module whose tests would never run" {
     try std.testing.expect(std.mem.find(u8, result.detail, "gate/checks.zig") != null);
 }
 
+// ------------------------------------------------- js-suite coverage gate --
+
+/// True when `build.zig` hands `rel` to a build step. Every node suite is
+/// registered as an `addFileArg(b.path("<rel>"))` on a `node --test` system
+/// command, so the quoted path is the registration, and the quotes are part
+/// of the needle: `ui/app/core/scroll.test.mjs` cannot be satisfied by
+/// `ui/app/core/scroll.test.mjs.bak`.
+fn buildRegistersJsSuite(build_src: []const u8, rel: []const u8) bool {
+    var buf: [512]u8 = undefined;
+    const needle = std.fmt.bufPrint(&buf, "b.path(\"{s}\")", .{rel}) catch return true;
+    return std.mem.find(u8, build_src, needle) != null;
+}
+
+/// `zig build test` drives the web UI's node suites by name: one
+/// `addSystemCommand(&.{ "node", "--test" })` per `.test.mjs`, listed by hand
+/// in `build.zig`. A new suite nobody adds a line for is never run, and the
+/// suite output cannot show it — the file is simply not in the list, so the
+/// run is green on the tests it does not have. The obvious alternative,
+/// pointing node at the directory, is not available: `node --test ui/app/`
+/// resolves the positional as a *module* path and dies with
+/// `MODULE_NOT_FOUND` on the directory itself (verified on node v24.18.1,
+/// docs/reports/bugs/2026-08-22-node-test-dir-mode-fails-on-ui-app.md). The
+/// hand-written list is therefore the mechanism, and this gate is what keeps
+/// it complete.
+pub fn jsSuiteCoverageGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    const build_src = dir.readFileAlloc(io, "build.zig", gpa, .limited(4 << 20)) catch {
+        return .{ .ok = false, .label = "js-suite-coverage", .detail = "build.zig could not be read" };
+    };
+    defer gpa.free(build_src);
+    return scanUnrunJsSuites(gpa, io, dir, build_src);
+}
+
+/// The gate's body with the build file's text passed in, so a test can pin
+/// the failing verdict against a `build.zig` that registers nothing.
+fn scanUnrunJsSuites(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, build_src: []const u8) !GateResult {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var suites: std.ArrayList([]const u8) = .empty;
+    collectJsSuites(io, arena, &suites, dir, "ui") catch |err| switch (err) {
+        error.FileNotFound => return .{ .ok = true, .label = "js-suite-coverage", .detail = "no ui/ dir (ok on a minimal checkout)" },
+        // A walk error is a failure, never a silent truncation: this gate's
+        // whole claim is that it saw every suite on disk.
+        else => return .{ .ok = false, .label = "js-suite-coverage", .detail = "ui/ could not be walked" },
+    };
+
+    var misses: usize = 0;
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+    for (suites.items) |rel| {
+        if (buildRegistersJsSuite(build_src, rel)) continue;
+        misses += 1;
+        miss_w.print("{s}; ", .{rel}) catch {};
+    }
+    if (misses == 0) return .{ .ok = true, .label = "js-suite-coverage" };
+    // miss_buf is this frame's stack. Same aliasing convention as lintGate
+    // and testRootCoverageGate: detail and stderr share one owned copy, freed
+    // exactly once by deinit.
+    const owned = try std.fmt.allocPrint(
+        gpa,
+        "these node suites are never run by `zig build test`; register each in build.zig as an addSystemCommand(&.{{ \"node\", \"--test\" }}) with addFileArg(b.path(\"...\")): {s}",
+        .{miss_w.buffered()},
+    );
+    return .{ .ok = false, .label = "js-suite-coverage", .detail = owned, .stderr = owned };
+}
+
+/// Collects every `*.test.mjs` under `dir_path`, recursively, as paths
+/// relative to `dir`.
+fn collectJsSuites(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    list: *std.ArrayList([]const u8),
+    dir: std.Io.Dir,
+    dir_path: []const u8,
+) !void {
+    const scope = try dir.openDir(io, dir_path, .{ .iterate = true });
+    defer scope.close(io);
+    var it = scope.iterate();
+    while (try it.next(io)) |entry| {
+        // Dot-directories and node_modules are not ours to run; ui/vendor is
+        // vendored upstream JS kept as close to upstream as possible.
+        if (entry.name.len > 0 and entry.name[0] == '.') continue;
+        if (std.mem.eql(u8, entry.name, "node_modules")) continue;
+        if (std.mem.eql(u8, entry.name, "vendor")) continue;
+        const sub = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_path, entry.name });
+        switch (entry.kind) {
+            .directory => try collectJsSuites(io, arena, list, dir, sub),
+            .file => if (std.mem.endsWith(u8, entry.name, ".test.mjs")) try list.append(arena, sub),
+            else => {},
+        }
+    }
+}
+
+test "buildRegistersJsSuite matches the whole quoted path" {
+    const src = "    scroll_js_test.addFileArg(b.path(\"ui/app/core/scroll.test.mjs\"));\n";
+    try std.testing.expect(buildRegistersJsSuite(src, "ui/app/core/scroll.test.mjs"));
+    try std.testing.expect(!buildRegistersJsSuite(src, "ui/app/core/scroll.test.mjs.bak"));
+    try std.testing.expect(!buildRegistersJsSuite(src, "ui/app/core/theme.test.mjs"));
+    try std.testing.expect(!buildRegistersJsSuite(src, "core/scroll.test.mjs"));
+}
+
+test "jsSuiteCoverageGate passes on the live checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var result = try jsSuiteCoverageGate(gpa, io, std.Io.Dir.cwd());
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}
+
+test "scanUnrunJsSuites names a suite zig build test would never run" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    // A build file that registers nothing: every suite on disk is then
+    // exactly the never-run case the gate exists to catch.
+    var result = try scanUnrunJsSuites(gpa, io, std.Io.Dir.cwd(), "pub fn build(b: *std.Build) void {}\n");
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, ".test.mjs") != null);
+}
+
 /// Every capability a sandboxed WASM guest can reach is a `pub fn ck…` in
 /// `src/sandbox/host.zig` that `src/sandbox/runtime.zig` hands to the zwasm
 /// linker. A host function nobody registers is not a capability waiting to be

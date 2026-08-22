@@ -381,6 +381,12 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   runs test blocks only in the root file, so a module missing from that list
   compiles and its tests never run; `zig build test` stays green either way,
   which is why this is a gate and not a convention.
+- `js-suite-coverage`: every `ui/**/*.test.mjs` on disk is registered in
+  `build.zig` as a `node --test` step. The web UI suites are named one by
+  one there, because node has no working directory mode — `node --test
+  ui/app/` resolves the positional as a module path and fails on the
+  directory itself — so an unregistered suite is simply never run and the
+  green suite output cannot show it.
 - `sandbox-abi`: every `pub fn ck…` in `src/sandbox/host.zig` is registered
   with the zwasm linker in `src/sandbox/runtime.zig`. An unregistered one is
   not a capability waiting to be granted, it is unreachable: no guest can
@@ -562,7 +568,7 @@ Tools are discovered by the registry (`src/toolhost/registry.zig`) from the conf
 | `zig build tools` | Compile `tools/zig/*.zig` to `zig-out/tools/*.wasm` |
 | `zig build proxy` | Build `clanker-proxy`, the standalone compatibility proxy (not in the default install) |
 | `zig build test` | Run the unit and integration tests |
-| `zig build test -Dtest-filter="<name>"` | Run only the Zig unit tests whose name contains the substring (compile-time filter; a filter matching nothing passes with 0 tests, and the JS suites still run). A JS-only loop runs one suite directly: `node --test ui/app/core/scroll.test.mjs` |
+| `zig build test -Dtest-filter="<name>"` | Run only the Zig unit tests whose name contains the substring (compile-time filter; a filter matching nothing passes with 0 tests, and the JS suites still run). A JS-only loop runs one suite directly: `node --test ui/app/core/scroll.test.mjs`, or every suite at once: `node --test 'ui/**/*.test.mjs'` |
 | `zig fmt --check src/ tools/zig/` | Verify formatting |
 | `clanker gate` | Run all of the above the way the self-improvement gate does |
 | `scripts/verify.sh` | Mirror the full CI verify job locally: shellcheck, `tools/ts` audit + rebuild-and-diff, SBOM generation, Python syntax check, then `zig build` + `clanker gate` + `zig build e2e`. The checks CI runs that `clanker gate` does not (shellcheck, Python, SBOM) live only in `.github/workflows/ci.yml` otherwise |

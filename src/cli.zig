@@ -2146,7 +2146,7 @@ const specs = [_]Spec{
     .{ .command = .prune, .usage = "janitor [--yes]", .blurb = "sweep up what old runs left behind", .group = .maintain, .flags = &.{.yes}, .detail = "Also reachable as `clanker prune`.\n\nReports by default and deletes nothing. --yes removes: staging copies left by\nimprove runs that were killed, run graphs beyond the newest 200, improve logs\nbeyond the newest 20, compare-and-swap lock files under state/locks/ that\nnothing has re-acquired in 12 hours, spilled tool results older than 12 hours,\nand the worktrees of goals that have been archived or abandoned whose branch\nis already merged. Sessions, goals, learnings and chat history are never\ntouched, and neither is a worktree whose branch still holds commits the base\ndoes not.\n\nAn aged lock file is not a stuck lock. ck_fs_write_if locks with flock, which\nthe kernel releases when the holding descriptor closes -- a crash included --\nso a lock is never stale. The 12 hours is a retention window for the file,\nwhich is named for a hash of its target: a target that recurs keeps the same\nlock fresh, and only one that will never be written again ages out." },
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
-    .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\nsandbox-abi, tools-ts-toolchain and the release contract\n(CHANGELOG/RELEASES.md) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
+    .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\njs-suite-coverage, sandbox-abi, tools-ts-toolchain and the release contract\n(CHANGELOG/RELEASES.md) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
     .{ .command = .config, .usage = "config [get <key>|set <key> <value>]", .blurb = "read or pin one key of the merged config", .group = .maintain, .detail = "Reads and writes through the same `config` tool the agent uses. Every\nCLI flag with a persistent twin in config (say --reasoning-effort and\n[agent] reasoning_effort) can be pinned here instead of hand-editing\nconfig.local.toml.\n\n  (no subcommand)      dump config.toml + config.local.toml raw, local last\n  get <key>            print one dotted key of the merged config\n  set <key> <value>    pin the key in config.local.toml -- never config.toml\n\nset refuses a key the loader does not know (a typo'd TOML key would be\nsilently ignored; this is the checked path), refuses a value that does not\nparse as the key's merged type, and refuses the table sections (providers,\nmodels, mcp_servers), whose quoted-key disk shape a line edit does not\nspeak: edit config.local.toml by hand there. The write replaces one line\nand leaves the rest of the file byte-identical, comments included. A\nchange applies from the next command, not to processes already running.\n\nEXAMPLES\n  clanker config get agent.reasoning_effort\n  clanker config set agent.reasoning_effort high\n  clanker config set default_provider deepseek\n  clanker config set tui.mascot_size mini" },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model, .seed }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model\n--seed <n>          pin the tool-RNG seed (agent.seed) so the evals draw the\n                    identical ck_random stream and a failure can be re-run\n                    byte-identically" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
@@ -2479,9 +2479,9 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
 }
 
 /// Runs all deterministic gates (build, test, tools, fmt, lint,
-/// provider-kind, test-root-coverage, sandbox-abi, tools-ts-toolchain,
-/// release-contract) against the current checkout. Throws error.GateFailed on the first
-/// failure.
+/// provider-kind, test-root-coverage, js-suite-coverage, sandbox-abi,
+/// tools-ts-toolchain, release-contract) against the current checkout.
+/// Throws error.GateFailed on the first failure.
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
     defer build.deinit(gpa);
@@ -2511,6 +2511,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     var test_root = try gate_checks.testRootCoverageGate(gpa, io, std.Io.Dir.cwd(), files);
     defer test_root.deinit(gpa);
     try reportGate(io, "test-root-coverage", test_root);
+
+    var js_suites = try gate_checks.jsSuiteCoverageGate(gpa, io, std.Io.Dir.cwd());
+    defer js_suites.deinit(gpa);
+    try reportGate(io, "js-suite-coverage", js_suites);
 
     var sandbox_abi = try gate_checks.sandboxAbiGate(gpa, io, std.Io.Dir.cwd());
     defer sandbox_abi.deinit(gpa);

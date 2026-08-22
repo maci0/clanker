@@ -1821,6 +1821,77 @@ test "isBlankSubmission refuses empty and whitespace-only lines" {
     try std.testing.expect(!isBlankSubmission("  !  "));
 }
 
+/// What the composer holds while a turn streams. `submit` hands every
+/// mid-run line to `steerWhileRunning`, which used to queue it as steering
+/// text no matter what it was: a slash command typed against a running turn
+/// (`/help`, `/compact`, `/quit`) reached the model framed as a course
+/// correction and the user got no command, and a `!cmd` escape reached the
+/// LLM, which `parseShellEscape`'s contract says it never may. The line is
+/// classified ahead of the queue instead, with the same parsers the idle
+/// path dispatches on, so a spelling means the same thing in both states.
+const MidRunInput = union(enum) {
+    /// Plain text: queue it as a steering message.
+    steer,
+    /// A registry command that may run while the turn streams
+    /// (`runsWhileStreaming`).
+    command: ParsedCommand,
+    /// A registry command that needs the idle prompt: reported, never
+    /// queued, never run.
+    deferred: ParsedCommand,
+    /// Looks like a /command but matches nothing: the idle path's
+    /// unknown-command diagnostic, never queued.
+    unknown_command,
+    /// A `!cmd` shell escape: refused until the turn is idle, never queued.
+    shell_escape,
+};
+
+fn classifyMidRunInput(task: []const u8) MidRunInput {
+    if (parseShellEscape(task) != null) return .shell_escape;
+    if (parseCommand(task)) |pc| {
+        return if (runsWhileStreaming(pc.spec.action)) .{ .command = pc } else .{ .deferred = pc };
+    }
+    if (looksLikeSlashCommand(task)) return .unknown_command;
+    return .steer;
+}
+
+/// The commands `steerWhileRunning` executes while a turn streams. The arm
+/// runs on the UI thread under `bridge_mutex` beside a live worker, so an
+/// action qualifies only if it touches nothing the run thread owns and
+/// never starts a task: `/quit` sets `ctx.quit` and the exit path stops and
+/// joins the worker; `/help` appends to the transcript under the lock. A
+/// picker, a tool call, or a task-submitting command waits for the idle
+/// prompt (the `.deferred` notice) rather than racing the worker on
+/// `self.reg`, `self.provider`, or `submitTask`.
+fn runsWhileStreaming(action: CommandAction) bool {
+    return switch (action) {
+        .quit, .help => true,
+        else => false,
+    };
+}
+
+test "classifyMidRunInput keeps commands and shell escapes out of the steer queue" {
+    try std.testing.expect(classifyMidRunInput("please also update the docs") == .steer);
+    try std.testing.expect(classifyMidRunInput("what does /help list?") == .steer);
+
+    const help = classifyMidRunInput("/help");
+    try std.testing.expect(help == .command);
+    try std.testing.expect(help.command.spec.action == .help);
+    const quit = classifyMidRunInput("exit");
+    try std.testing.expect(quit == .command);
+    try std.testing.expect(quit.command.spec.action == .quit);
+
+    const model = classifyMidRunInput("/model kimi");
+    try std.testing.expect(model == .deferred);
+    try std.testing.expectEqualStrings("/model", model.deferred.spec.name);
+    try std.testing.expectEqualStrings("kimi", model.deferred.args);
+    try std.testing.expect(classifyMidRunInput("/compact keep the file list") == .deferred);
+    try std.testing.expect(classifyMidRunInput("/goal fix the failing eval") == .deferred);
+    try std.testing.expect(classifyMidRunInput("/sessions") == .deferred);
+
+    try std.testing.expect(classifyMidRunInput("/hlep") == .unknown_command);
+    try std.testing.expect(classifyMidRunInput("!ls") == .shell_escape);
+}
+
 test "parseModeToggle accepts on/off and rejects unknown tokens" {
     try std.testing.expectEqual(@as(?bool, true), parseModeToggle("on"));
     try std.testing.expectEqual(@as(?bool, false), parseModeToggle("off"));
@@ -3011,7 +3082,10 @@ const Model = struct {
         // the typed line is queued as a mid-run course correction instead of
         // being dropped (the old no-op). A second turn can never start
         // anyway, one turn at a time, so this is the only useful thing to
-        // type into it.
+        // type into it. A slash command or `!` escape is still a command
+        // there: `steerWhileRunning` classifies the line before queuing it
+        // (`classifyMidRunInput`), or `/help` would reach the model as a
+        // course correction.
         if (already_streaming) {
             self.steerWhileRunning(ctx);
             return;
@@ -3075,6 +3149,44 @@ const Model = struct {
         if (!bridge_streaming) {
             self.lines.append(self.arena, .{ .text = "notice: no run to steer; the turn already ended", .dim = true }) catch {};
             return;
+        }
+        // A command is a command in both states. Classified before the
+        // queue so `/help` runs, `/model` is told to wait, and neither is
+        // read by the model as a course correction (see `MidRunInput`).
+        // The refusals repeat the line for the same reason the queue-full
+        // one does: the composer is already reset.
+        switch (classifyMidRunInput(task)) {
+            .steer => {},
+            .command => |pc| {
+                // Under bridge_mutex: `.help` appends to self.lines, which
+                // finishTurn and the draw loop touch under this same lock.
+                // Neither allowed arm takes the lock itself (it is not
+                // reentrant); `runsWhileStreaming` is where that is pinned.
+                self.runCommand(ctx, pc, task) catch |err| {
+                    const msg = std.fmt.allocPrint(self.arena, "error: {s}: {s}", .{ pc.spec.name, @errorName(err) }) catch "error: command failed";
+                    self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
+                };
+                ctx.redraw = true;
+                return;
+            },
+            .deferred => |pc| {
+                const msg = std.fmt.allocPrint(self.arena, "notice: {s} is a command, not steering; it runs once the turn is idle (Ctrl+C stops the turn); not queued: {s}", .{ pc.spec.name, task }) catch "notice: command refused while a turn runs; not queued";
+                self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
+                ctx.redraw = true;
+                return;
+            },
+            .unknown_command => {
+                const text = unknownSlashCommandText(self.arena, task) catch "error: unknown command; try `/help`";
+                self.lines.append(self.arena, .{ .text = text, .dim = true }) catch {};
+                ctx.redraw = true;
+                return;
+            },
+            .shell_escape => {
+                const msg = std.fmt.allocPrint(self.arena, "notice: `!` shell escapes run once the turn is idle (Ctrl+C stops the turn); not queued: {s}", .{task}) catch "notice: shell escape refused while a turn runs; not queued";
+                self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
+                ctx.redraw = true;
+                return;
+            },
         }
         // Same ceiling POST /api/steer enforces per run server-side. The
         // refusal repeats the text: the composer was already reset, so this
