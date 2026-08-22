@@ -173,6 +173,24 @@ test "operator journey: typing a / prefix previews matching commands with their 
     try pty_mod.setWinsize(pty.master, rows, 160);
     try std.testing.expect(try pumpUntilShown(io, pty.master, &seen, gpa, "search saved conversations", 250));
 
+    // A row wider than the terminal is clipped with an ellipsis at the last
+    // whole word, not stopped dead mid-word: /model's help no longer fits a
+    // 60-column terminal, so the tail after the cut must not appear and the
+    // mark must.
+    seen.clearRetainingCapacity();
+    pty_mod.writeAll(pty.master, "\x15/model");
+    rows += 1;
+    try pty_mod.setWinsize(pty.master, rows, 60);
+    try std.testing.expect(try pumpUntilShown(io, pty.master, &seen, gpa, "/model [query]", 250));
+    {
+        const plain = try plainText(gpa, seen.items);
+        defer gpa.free(plain);
+        const plain_ns = try despace(gpa, plain);
+        defer gpa.free(plain_ns);
+        try std.testing.expect(std.mem.find(u8, plain_ns, "Esc cancels") == null);
+        try std.testing.expect(std.mem.find(u8, plain_ns, "\xe2\x80\xa6") != null);
+    }
+
     try std.testing.expect(pty_mod.reapIfDead(pid) == null);
     std.debug.print("pass: operator journey: typing a / prefix previews matching commands with their help\n", .{});
 }

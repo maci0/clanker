@@ -38,11 +38,20 @@ pub fn open(arena: std.mem.Allocator) !sqlite.Connection {
 
 /// Replaces a session's index rows: remove the old, insert one row per
 /// message that has content. Fail-open: a missing index only costs speed.
+///
+/// The whole swap is one transaction. Without it every insert autocommits,
+/// and in SQLite's default rollback-journal mode each autocommit is its own
+/// journal write and fsync cycle: a long transcript's rebuild cost one commit
+/// per message on every `saveSession` (every turn). The wrap also makes the
+/// swap atomic, so a crash mid-rebuild cannot leave the session half-deleted
+/// in the index.
 pub fn replaceSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, session_id: []const u8, messages: []const types.Message) void {
     _ = io;
     _ = gpa;
     var conn = open(arena) catch return;
     defer conn.close();
+    var tx = sqlite.Transaction.begin(&conn) catch return;
+    defer tx.rollback();
     {
         var del = conn.prepare("DELETE FROM session_fts WHERE session_id = ?1;") catch return;
         defer del.finalize();
@@ -60,6 +69,7 @@ pub fn replaceSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocat
         ins.bindText(3, content) catch continue;
         _ = ins.step() catch continue;
     }
+    tx.commit() catch return;
 }
 
 /// Removes a deleted session's rows from the index: without this, the full
@@ -137,6 +147,27 @@ test "fts candidates find substring matches across sessions" {
     // A mid-word substring still matches via the trigram tokenizer.
     const mid = candidates(io, std.testing.allocator, arena, "needle") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), mid.len);
+}
+
+test "replaceSession drops a session's previous text" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const saved_index_path = index_path;
+    index_path = try testIndexPath(arena, &env);
+    defer index_path = saved_index_path; // restore before env.deinit frees the path
+
+    const first = [_]types.Message{.{ .role = .user, .content = "the staleword lives here" }};
+    replaceSession(io, std.testing.allocator, arena, "sess-r", &first);
+    const second = [_]types.Message{.{ .role = .user, .content = "the freshword lives here" }};
+    replaceSession(io, std.testing.allocator, arena, "sess-r", &second);
+
+    const gone = candidates(io, std.testing.allocator, arena, "staleword") orelse return error.FtsUnavailable;
+    try std.testing.expectEqual(@as(usize, 0), gone.len);
+    const hits = candidates(io, std.testing.allocator, arena, "freshword") orelse return error.FtsUnavailable;
+    try std.testing.expectEqual(@as(usize, 1), hits.len);
+    try std.testing.expectEqualStrings("sess-r", hits[0]);
 }
 
 test "removeSession forgets a session's text; other sessions keep theirs" {

@@ -5888,8 +5888,19 @@ const Model = struct {
                     if (c.spec == spec) break c;
                 } else continue;
                 const split = cand.label.len - spec.help.len;
-                writeRowAt(surface, row_y, &col, cand.label[0..split], if (preview_specs.len == 1) accent_style else .{});
-                writeRowAt(surface, row_y, &col, cand.label[split..], dim);
+                // A row wider than the surface used to stop dead at the edge,
+                // cut mid-word and unmarked ("Enter picks,"). Fit it instead
+                // and mark the cut with an ellipsis after the last whole word.
+                const avail = surface.size.width -| col;
+                if (fittedEllipsis(cand.label, avail)) |fitted| {
+                    const fitted_split = @min(split, fitted.len);
+                    if (fitted_split > 0) writeRowAt(surface, row_y, &col, fitted[0..fitted_split], if (preview_specs.len == 1) accent_style else .{});
+                    if (fitted.len > fitted_split) writeRowAt(surface, row_y, &col, fitted[fitted_split..], dim);
+                    writeRowAt(surface, row_y, &col, "\xe2\x80\xa6", dim);
+                } else {
+                    writeRowAt(surface, row_y, &col, cand.label[0..split], if (preview_specs.len == 1) accent_style else .{});
+                    writeRowAt(surface, row_y, &col, cand.label[split..], dim);
+                }
             }
         }
 
@@ -7666,6 +7677,30 @@ test "a row of CJK occupies the columns lineRows reserved for it" {
     // wrap point is the same one the renderer will use.
     try std.testing.expectEqual(@as(usize, 1), lineRows(line, 20));
     try std.testing.expectEqual(@as(usize, 2), lineRows(line, 10));
+}
+
+/// The prefix of `text` to draw when it does not fit `max_cols`: clipped to
+/// `max_cols - 1` so the caller can append the ellipsis inside the same
+/// budget, with trailing padding spaces trimmed so the mark hugs the last
+/// whole word instead of floating after the name column. Null when the text
+/// already fits and no ellipsis should be drawn.
+fn fittedEllipsis(text: []const u8, max_cols: usize) ?[]const u8 {
+    if (width_mod.displayWidth(text) <= max_cols) return null;
+    return std.mem.trimEnd(u8, width_mod.truncateToWidth(text, max_cols -| 1), " ");
+}
+
+test "fittedEllipsis keeps fitting rows whole and marks cut rows" {
+    const fits = fittedEllipsis("/goal <completion condition>  short help", 200);
+    try std.testing.expect(fits == null);
+
+    const label = "/model [query]                              switch provider/model";
+    // Budget leaves one column for the caller's ellipsis.
+    const fitted = fittedEllipsis(label, 40).?;
+    try std.testing.expect(width_mod.displayWidth(fitted) <= 39);
+    try std.testing.expect(std.mem.startsWith(u8, label, fitted));
+    // The cut never lands mid-word: padding between name and help is
+    // trimmed away, so the ellipsis hugs real text on either side.
+    try std.testing.expect(!std.mem.endsWith(u8, fitted, " "));
 }
 
 fn writeRowAt(surface: vxfw.Surface, row: u16, col: *u16, text: []const u8, style: vaxis.Style) void {
