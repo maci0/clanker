@@ -161,6 +161,39 @@ pub const Decision = struct {
 /// identifies the run through a threadlocal rather than a context argument.
 pub const SteerFn = *const fn (arena: std.mem.Allocator) ?[]const u8;
 
+/// How a mid-run interjection is introduced to the model: as a course
+/// correction on the task in flight, not as a fresh task replacing it.
+///
+/// One copy, applied in one place. It used to be pasted onto the message by
+/// each sender (POST /api/steer in cli.zig, the REPL composer in
+/// tui/repl.zig), which meant the harness's own sentence was saved to the
+/// session as the opening line of a `role=user` message — every transcript
+/// reader, the web UI included, then showed it as something the user typed
+/// ([[docs/reports/bugs/2026-08-22-steer-framing-persisted-in-transcript.md]]).
+/// Senders now queue the user's words alone and this is applied to the
+/// request copy.
+pub const steer_frame_sentence = "[The user interjected while this run was in progress; take the message into account and adjust course.]";
+
+/// Applies [[steer_frame_sentence]] to every `steered` message of a request
+/// copy, in place. The copy is the arena-owned dupe `requestMessages` makes,
+/// so the stored messages keep the user's own words.
+///
+/// Deliberately not a `.system` message before the user's: on Anthropic and
+/// Gemini a mid-conversation system message is hoisted into the top-level
+/// system field (`anthropic.zig` collects `system_parts`), which would
+/// detach the framing from the interjection it frames.
+///
+/// A message whose content is already framed is left alone, so this is safe
+/// to apply to a transcript written before the flag existed.
+fn applySteerFraming(arena: std.mem.Allocator, messages: []types.Message) !void {
+    for (messages) |*m| {
+        if (!m.steered) continue;
+        const text = m.content orelse continue;
+        if (std.mem.startsWith(u8, text, steer_frame_sentence)) continue;
+        m.content = try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ steer_frame_sentence, text });
+    }
+}
+
 /// Cumulative token usage across all LLM calls in a single agent run.
 pub const RunStats = struct {
     total_prompt_tokens: u64 = 0,
@@ -335,6 +368,14 @@ pub const Agent = struct {
     /// an actual change (`List.rev`), so a run that never touches todo_* never
     /// pays for it.
     on_todos: ?*const fn ([]const u8) void = null,
+    /// Fired at the top of each iteration, just before that iteration's
+    /// request goes out, with the provider name, the model that is about to
+    /// serve it, and the zero-based iteration number. Lets a live viewer draw
+    /// the LLM step of a turn while it runs; the `done` trailer only says who
+    /// answered last. Fired on the run thread, like `on_tool_call`, so a
+    /// callback reading threadlocal stream state (`run_stream_socket`) sees
+    /// this run's.
+    on_llm_start: ?*const fn ([]const u8, []const u8, u32) void = null,
     /// Fired after each LLM usage fold so a live viewer can tick tokens
     /// without waiting for the run's final `done` trailer.
     on_usage: ?*const fn (RunStats) void = null,
@@ -837,7 +878,10 @@ pub const Agent = struct {
             if (self.steer_fn) |steer| {
                 while (steer(self.arena)) |text| {
                     log.log(.info, "steering message joined the run at iteration {d} ({d} bytes)", .{ iteration + 1, text.len });
-                    try messages.append(self.arena, .{ .role = .user, .content = text });
+                    // Stored as the user's own words; `steered` is what makes
+                    // the request copy carry [[steer_frame_sentence]] on this
+                    // turn and on every later one.
+                    try messages.append(self.arena, .{ .role = .user, .content = text, .steered = true });
                     try g.add(self.ctx.gpa, .{
                         .kind = .decision,
                         .iteration = iteration,
@@ -883,6 +927,7 @@ pub const Agent = struct {
 
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const effort = self.classifyEffort(messages.items);
+            if (self.on_llm_start) |cb| cb(self.provider.name, self.provider.activeModelName(), iteration);
             const request_messages = try self.requestMessages(messages.items);
             var ttsr_hit: ?*ttsr.Rule = null;
             const resp = if (self.on_token) |cb| blk: {
@@ -1606,6 +1651,9 @@ pub const Agent = struct {
 
     fn requestMessages(self: *Agent, messages: []const types.Message) ![]types.Message {
         const copy = try self.arena.dupe(types.Message, messages);
+        // Request-only, like the pruning below: what the model reads carries
+        // the interjection framing, what the session stores does not.
+        try applySteerFraming(self.arena, copy);
         const reclaimed = try prune.pruneToolResults(copy, self.arena, self.cfg.agent.tool_result_prune_bytes, self.cfg.agent.tool_result_prune_head_bytes, self.cfg.agent.tool_result_prune_tail_bytes);
         if (reclaimed > 0) {
             const spilled = self.persistSpills(copy, messages) catch 0;
@@ -4900,4 +4948,40 @@ test "tool metrics count invocations and error JSON" {
     const snap = snapshotToolMetrics();
     try std.testing.expect(snap.requests_total >= start_req + 2);
     try std.testing.expect(snap.errors_total >= start_err + 1);
+}
+
+test "steer framing is applied to the request copy, never to the stored message" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var stored = [_]types.Message{
+        .{ .role = .user, .content = "write the report" },
+        .{ .role = .assistant, .content = "on it" },
+        .{ .role = .user, .content = "cite the source", .steered = true },
+    };
+    const copy = try arena.dupe(types.Message, &stored);
+    try applySteerFraming(arena, copy);
+    // The request copy carries the framing the model needs...
+    try std.testing.expect(std.mem.startsWith(u8, copy[2].content.?, steer_frame_sentence));
+    try std.testing.expect(std.mem.endsWith(u8, copy[2].content.?, "cite the source"));
+    // ...and the messages the session saves stay the user's own words.
+    try std.testing.expectEqualStrings("cite the source", stored[2].content.?);
+    // A typed turn is untouched in both copies.
+    try std.testing.expectEqualStrings("write the report", copy[0].content.?);
+}
+
+test "steer framing is byte-identical across a save/load round trip" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // What the run sent, and what a later turn re-sends after the session was
+    // reloaded, have to be the same bytes: a rewritten prefix busts the
+    // provider's prompt cache for everything after it.
+    const in_run = [_]types.Message{.{ .role = .user, .content = "cite the source", .steered = true }};
+    const first = try arena.dupe(types.Message, &in_run);
+    try applySteerFraming(arena, first);
+    const reloaded = [_]types.Message{.{ .role = .user, .content = "cite the source", .steered = true }};
+    const second = try arena.dupe(types.Message, &reloaded);
+    try applySteerFraming(arena, second);
+    try std.testing.expectEqualStrings(first[0].content.?, second[0].content.?);
 }

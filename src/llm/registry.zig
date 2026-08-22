@@ -81,8 +81,10 @@ pub fn unconfiguredReason(
     if (p.base_url.len > 0 and !std.mem.startsWith(u8, p.base_url, "http://") and !std.mem.startsWith(u8, p.base_url, "https://"))
         return std.fmt.allocPrint(arena, "base_url '{s}' has no http:// or https:// scheme", .{p.base_url}) catch "base_url has no scheme";
     if (p.api_key_env) |env_name| {
-        if (environ_map.get(env_name) == null)
-            return std.fmt.allocPrint(arena, "{s} not set", .{env_name}) catch "api key env not set";
+        if (environ_map.get(env_name)) |val| {
+            if (val.len == 0)
+                return std.fmt.allocPrint(arena, "{s} is set but empty", .{env_name}) catch "api key env is empty";
+        } else return std.fmt.allocPrint(arena, "{s} not set", .{env_name}) catch "api key env not set";
     }
     return null;
 }
@@ -146,12 +148,24 @@ pub fn loopbackEndpoint(base_url: []const u8) ?LoopbackEndpoint {
 /// never to hide what it cannot judge.
 pub fn loopbackAlive(io: std.Io, port: u16) bool {
     const addr = std.Io.net.IpAddress.parseIp4("127.0.0.1", port) catch return true;
-    var stream = addr.connect(io, .{ .mode = .stream }) catch |err| switch (err) {
-        error.ConnectionRefused => return false,
-        else => return true,
-    };
-    stream.close(io);
-    return true;
+    // Retry once on refusal: a local server restarting after a crash (the
+    // common transient failure for ollama/vllm) answers within a second or
+    // two, and a single-shot probe would mark it dead for the whole check.
+    var attempt: u8 = 0;
+    while (attempt < 2) {
+        attempt += 1;
+        var stream = addr.connect(io, .{ .mode = .stream }) catch |err| switch (err) {
+            error.ConnectionRefused => {
+                if (attempt >= 2) return false;
+                _ = std.Io.sleep(io, .{ .nanoseconds = 500_000_000 }, .awake) catch {};
+                continue;
+            },
+            else => return true,
+        };
+        stream.close(io);
+        return true;
+    }
+    return false;
 }
 
 // ------------------------------------------------------------------- tests --

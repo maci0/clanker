@@ -111,6 +111,12 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
     else
         null;
     const strategy = selectStrategy(spec, provider, raw);
+    // An explicit `auth = "api_key"` / `"oauth_static"` names a credential the
+    // user must supply; with none present it is a misconfiguration that must
+    // fail loudly rather than ride out as an unauthenticated request. The
+    // default strategy (also api_key) does not count: keyless local endpoints
+    // legitimately resolve to no credential.
+    const explicit_needs_secret = if (provider.auth) |a| a == .api_key or a == .oauth_static else false;
 
     if (strategy == .oauth_refresh and raw == null) {
         const mint = spec.mint orelse {
@@ -131,13 +137,20 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
         };
     }
 
-    if (raw == null and (provider.api_key_env != null or spec.required)) {
+    if (raw == null and (provider.api_key_env != null or spec.required or explicit_needs_secret)) {
         log.log(.error_, "no credential for provider '{s}': set {s}, service_account_file, or gcloud ADC", .{
             provider.name,
             provider.api_key_env orelse "an API key env var",
         });
         return error.MissingApiKey;
     }
+    if (raw) |k| if (k.len == 0) {
+        log.log(.error_, "credential for provider '{s}' is empty: set a non-empty value in {s}", .{
+            provider.name,
+            provider.api_key_env orelse "the configured env var",
+        });
+        return error.MissingApiKey;
+    };
     if (raw) |k| return .{
         .value = k,
         .bearer = try std.fmt.allocPrint(env.gpa, "Bearer {s}", .{k}),
@@ -253,4 +266,33 @@ test "quota_project is a Spec field, not a kind switch" {
     const without = try resolve(env, .{}, &p);
     defer without.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("", without.quota_project);
+}
+
+test "an empty-string credential is rejected with a diagnostic, not sent as a bare bearer" {
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("EMPTY_KEY", "");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const env = Env{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map };
+
+    var p = config.Provider{ .name = "remote", .base_url = "https://x", .default_model = "m" };
+    p.api_key_env = "EMPTY_KEY";
+    try std.testing.expectError(error.MissingApiKey, resolve(env, .{}, &p));
+}
+
+test "an explicit credential strategy with no credential fails loudly" {
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const env = Env{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map };
+
+    var p = config.Provider{ .name = "x", .base_url = "https://x", .default_model = "m" };
+    p.auth = .api_key;
+    try std.testing.expectError(error.MissingApiKey, resolve(env, .{}, &p));
+
+    var q = config.Provider{ .name = "y", .base_url = "https://y", .default_model = "m" };
+    q.auth = .oauth_static;
+    try std.testing.expectError(error.MissingApiKey, resolve(env, .{}, &q));
 }

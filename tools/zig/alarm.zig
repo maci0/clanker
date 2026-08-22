@@ -188,7 +188,7 @@ fn doDone(obj: std.json.ObjectMap, out: *lib.Out) !void {
                     // value must not overflow the guest's arithmetic and trap
                     // it. A wrap used to be able to put the next fire in the
                     // past, making the alarm permanently due.
-                    const step: i64 = @max(60, @min(a.every, std.math.maxInt(i64) / 60) * 60);
+                    const step: i64 = @max(60, @max(1, @min(a.every, std.math.maxInt(i64) / 60)) * 60);
                     const behind: i64 = if (a.ts >= now) 0 else if (now >= 0 and a.ts < now - std.math.maxInt(i64)) std.math.maxInt(i64) else now - a.ts;
                     const slots = @divTrunc(behind, step) +| 1;
                     const advance = slots *| step;
@@ -253,7 +253,11 @@ fn load() !Loaded {
         else => return err,
     };
     result.seen_hash = try lib.hash(raw);
-    const parsed = try std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true });
+    // A truncated or hand-emptied state file must recover as an empty list,
+    // not brick every alarm operation with a JSON parse error.
+    if (std.mem.trim(u8, raw, " \t\r\n").len == 0) return result;
+    const parsed = std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch
+        return error.CorruptAlarmFile;
     for (parsed) |a| try result.alarms.append(lib.alloc, a);
     return result;
 }

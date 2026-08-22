@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The streaming `POST /api/run` response emits an `llm_start` control
+  frame at the top of each agent iteration, carrying `served_by`, `model`
+  and the zero-based `iteration`. The web UI's live run graph has always
+  had a handler for that event and no server path emitted one, so
+  iterations were drawn without the model that served them. `served_by`
+  is who the turn started on; the `done` trailer stays the record of who
+  finished it, since the fallback chain can repoint the provider
+  mid-turn.
+
 - `clanker gate` runs a `js-suite-coverage` gate: every `ui/**/*.test.mjs`
   on disk is registered in `build.zig` as a `node --test` step. The web UI
   suites are named there one by one — node has no working directory mode
@@ -79,6 +88,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   separately as a switched-off module, with no retry, because retrying it
   answers the same thing forever. `readJson` carries the HTTP status onto
   the error it throws, which is what tells those two apart.
+
+- A mid-run steering message is no longer saved as the user having typed
+  the harness's framing sentence. `POST /api/steer` and the REPL composer
+  each prefixed the message with "[The user interjected while this run was
+  in progress...]" and the run stored that text verbatim as a `role=user`
+  message, so every transcript reader — the web UI, exports, search — read
+  the harness's words as the user's. Senders now queue the user's words
+  alone; the agent loop applies the framing to the *request* copy only, and
+  the saved message carries a `steered` marker instead (persisted in the
+  session store, emitted by `GET /api/sessions/<id>`, rendered by the web
+  UI as the interjection it was). The bytes the model receives are
+  unchanged, on the steering turn and on every later one. Transcripts saved
+  before this change still render correctly: the web UI falls back to
+  detecting the framing sentence in the text.
 
 - The web UI composer's model and reasoning-effort choices are pinned per
   conversation instead of per browser. Both were single `localStorage` keys,

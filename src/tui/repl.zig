@@ -3196,14 +3196,16 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = refusal, .dim = true }) catch {};
             return;
         }
-        // Same framing POST /api/steer applies server-side, so the model reads
-        // a TUI steer as the same mid-run course correction it reads a web one.
-        const framed = std.fmt.allocPrint(bridge_gpa, "[The user interjected while this run was in progress; take the message into account and adjust course.]\n\n{s}", .{task}) catch {
+        // The user's words alone, exactly as POST /api/steer queues them: the
+        // agent loop frames the request copy (applySteerFraming), so a TUI
+        // steer reads to the model as the same mid-run course correction a web
+        // one does without the framing reaching the saved transcript.
+        const queued = bridge_gpa.dupe(u8, task) catch {
             self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
-        bridge_steer.append(bridge_gpa, framed) catch {
-            bridge_gpa.free(framed);
+        bridge_steer.append(bridge_gpa, queued) catch {
+            bridge_gpa.free(queued);
             self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
