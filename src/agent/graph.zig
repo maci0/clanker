@@ -155,6 +155,78 @@ pub const Graph = struct {
     }
 };
 
+/// JSON payload the graph guest's `write` action accepts. Both the in-process
+/// loop and the coding-agent driver persist through this shape so autolearn
+/// sees one schema.
+pub fn encodeWrite(alloc: std.mem.Allocator, g: *const Graph) ![]u8 {
+    var enc: std.Io.Writer.Allocating = .init(alloc);
+    errdefer enc.deinit();
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{} };
+    try s.beginObject();
+    try s.objectField("write");
+    try s.beginObject();
+    try s.objectField("run_id");
+    try s.write(g.run_id);
+    try s.objectField("parent_run_id");
+    try s.write(g.parent_run_id);
+    try s.objectField("task");
+    try s.write(g.task);
+    try s.objectField("provider");
+    try s.write(g.provider);
+    try s.objectField("started_at");
+    try s.print("{d}", .{g.started_at});
+    try s.objectField("duration_ms");
+    try s.print("{d}", .{g.duration_ms});
+    try s.objectField("total_prompt_tokens");
+    try s.print("{d}", .{g.totalPromptTokens()});
+    try s.objectField("total_completion_tokens");
+    try s.print("{d}", .{g.totalCompletionTokens()});
+    try s.objectField("nodes");
+    try s.beginArray();
+    for (g.nodes.items) |n| {
+        try s.beginObject();
+        try s.objectField("kind");
+        try s.write(switch (n.kind) {
+            .llm => "llm",
+            .tool => "tool",
+            .final => "final",
+            .decision => "decision",
+            .check => "check",
+        });
+        try s.objectField("iteration");
+        try s.print("{d}", .{n.iteration});
+        try s.objectField("label");
+        try s.write(n.label);
+        try s.objectField("detail");
+        try s.write(n.detail);
+        try s.objectField("prompt_tokens");
+        try s.print("{d}", .{n.prompt_tokens});
+        try s.objectField("completion_tokens");
+        try s.print("{d}", .{n.completion_tokens});
+        try s.objectField("result_bytes");
+        try s.print("{d}", .{n.result_bytes});
+        try s.objectField("duration_ms");
+        try s.print("{d}", .{n.duration_ms});
+        try s.objectField("ok");
+        try s.write(n.ok);
+        try s.objectField("output");
+        try s.write(n.output);
+        if (n.arguments.len > 0) {
+            try s.objectField("arguments");
+            try s.write(n.arguments);
+        }
+        try s.objectField("repeats");
+        try s.print("{d}", .{n.repeats});
+        try s.objectField("loop_to");
+        try s.print("{d}", .{n.loop_to});
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    try s.endObject();
+    return enc.toOwnedSlice();
+}
+
 test "truncatedPreview caps output at output_preview_cap bytes" {
     const short = "hello";
     try std.testing.expectEqualStrings(short, truncatedPreview(short));

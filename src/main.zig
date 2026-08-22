@@ -176,6 +176,10 @@ comptime {
     _ = @import("gate/checks.zig");
     _ = @import("mcp/server.zig");
     _ = @import("acp/server.zig");
+    _ = @import("acp/vendor.zig");
+    _ = @import("acp/client.zig");
+    _ = @import("acp/fallback_spawn.zig");
+    _ = @import("acp/driver.zig");
     _ = @import("llm/gcp_jwt.zig");
     _ = @import("llm/vertex_token.zig");
     _ = @import("peers/chatrooms.zig");
@@ -295,6 +299,7 @@ pub fn main(init: std.process.Init) !void {
             error.BadSeed => cli.printUsageError(init.io, "--seed wants a non-negative integer, got '{s}'", .{shown}),
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{shown}),
             error.BadReasoningEffort => cli.printUsageError(init.io, "--reasoning-effort wants none, low, medium, high, or max, got '{s}'", .{shown}),
+            error.BadBackend => cli.printUsageError(init.io, "--backend wants grok, claude, or codex, got '{s}'", .{shown}),
             error.BadBudget => cli.printUsageError(init.io, "--budget wants a non-negative integer, got '{s}'", .{shown}),
             error.BadRounds => cli.printUsageError(init.io, "--rounds wants a non-negative integer, got '{s}'", .{shown}),
             error.BadPort => cli.printUsageError(init.io, "--webui-port wants a 16-bit port number, got '{s}'", .{shown}),

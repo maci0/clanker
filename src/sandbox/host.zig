@@ -6474,6 +6474,11 @@ test "ck_job start gate: execDenial alone passes an unlisted command, so the all
     try std.testing.expect(execDenial(&sb, "git", &.{ "/usr/bin/git", "status" }) == null);
     try std.testing.expect(execAllowed(sb.exec_allow, "rg"));
     try std.testing.expect(execDenial(&sb, "rg", &.{ "/usr/bin/rg", "needle", "src" }) == null);
+
+    // Coding-agent CLIs stay off ck_exec: the driver is native harness spawn.
+    try std.testing.expect(!execAllowed(sb.exec_allow, "claude"));
+    try std.testing.expect(!execAllowed(sb.exec_allow, "codex"));
+    try std.testing.expect(!execAllowed(sb.exec_allow, "grok"));
 }
 
 test "execUnderPolicyInput carries stdin and enforces one wall-clock deadline" {

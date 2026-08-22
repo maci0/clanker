@@ -2607,6 +2607,7 @@ el.form.addEventListener("submit", function (e) {
       images: pendingImages.map(function (i) { return { mime: i.mime, b64: i.b64 }; }),
       provider: opts.provider || "",
       model: opts.model || "",
+      backend: opts.backend || "",
       fallback_provider: opts.fallbackProvider || "",
       temperature: typeof opts.temperature === "number" ? opts.temperature : null,
       top_p: typeof opts.top_p === "number" ? opts.top_p : null,

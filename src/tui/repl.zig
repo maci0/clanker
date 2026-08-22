@@ -44,6 +44,8 @@ const config = @import("../config.zig");
 const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const providers = @import("../llm/registry.zig");
+const acp_vendor = @import("../acp/vendor.zig");
+const acp_driver = @import("../acp/driver.zig");
 const registry = @import("../toolhost/registry.zig");
 const session_mod = @import("../agent/session.zig");
 const mention_expand = @import("mention_expand");
@@ -678,6 +680,32 @@ fn runThreadMain(args: RunThreadArgs) void {
     // Wall time spans the whole turn, tool rounds included, because that is
     // the wait the person at the keyboard actually sat through.
     const started = std.Io.Timestamp.now(self.io, .awake);
+    if (self.cfg.agent.backend.len > 0) {
+        const name = acp_vendor.Name.parse(self.cfg.agent.backend) orelse {
+            self.finishTurn("error: unknown backend; use grok, claude, or codex", null);
+            return;
+        };
+        var result = acp_driver.run(.{
+            .io = self.io,
+            .gpa = self.gpa,
+            .arena = self.arena,
+            .name = name,
+            .prompt = args.task,
+            .timeout_ms = self.cfg.agent.backend_timeout_ms,
+            .acp_argv = self.cfg.agent.backend_acp_argv,
+            .cfg = &self.cfg,
+            .environ_map = self.ctx.environ_map,
+            .reg = &self.reg,
+            .session_id = self.session_id orelse "backend",
+        }) catch |err| {
+            const text = std.fmt.allocPrint(self.arena, "error: backend {s}", .{@errorName(err)}) catch "error: backend";
+            self.finishTurn(text, null);
+            return;
+        };
+        defer result.graph.deinit(self.gpa);
+        self.finishTurn(result.answer, self.turnStats(&a, started, messages.items));
+        return;
+    }
     const resp = a.run(messages, args.task, &err_detail) catch |err| {
         const hint = errorRecoveryHint(err, err_detail);
         // `err_detail` is the provider's own error string, echoed verbatim
@@ -925,6 +953,10 @@ const ModelCandidate = struct {
     cost_in: ?f64,
     cost_out: ?f64,
     category: []const u8,
+    /// Non-empty for a local coding-agent backend row (PATH / configured
+    /// command). Empty for an API-key provider/model.
+    backend: []const u8 = "",
+    group: []const u8 = "",
 };
 
 /// Flattens every configured provider's models into one list, in config
@@ -936,6 +968,31 @@ const ModelCandidate = struct {
 /// call on this machine.
 fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, io: ?std.Io) ![]const ModelCandidate {
     var out: std.ArrayList(ModelCandidate) = .empty;
+    const path_env = environ_map.get("PATH") orelse "";
+    const configured0: []const u8 = if (cfg.agent.backend_acp_argv.len > 0) cfg.agent.backend_acp_argv[0] else "";
+    if (io) |probe_io| {
+        for (std.enums.values(acp_vendor.Name)) |name| {
+            const argv0 = if (cfg.agent.backend.len > 0 and std.mem.eql(u8, cfg.agent.backend, name.cliName()) and configured0.len > 0)
+                configured0
+            else
+                "";
+            if (acp_vendor.installed(probe_io, name, path_env, argv0)) {
+                const label = try std.fmt.allocPrint(arena, "{s}  local coding-agent backend", .{name.cliName()});
+                try out.append(arena, .{
+                    .provider = "Local coding-agent backend",
+                    .model = name.cliName(),
+                    .display = name.cliName(),
+                    .label = label,
+                    .context_window = 0,
+                    .cost_in = null,
+                    .cost_out = null,
+                    .category = "",
+                    .backend = name.cliName(),
+                    .group = "Local coding-agent backend",
+                });
+            }
+        }
+    }
     var pit = cfg.providers.iterator();
     while (pit.next()) |pentry| {
         // The combined gate: the credential check plus, when io is present, a
@@ -1044,6 +1101,32 @@ test "buildModelCandidates flattens providers in config order, one entry per mod
     try std.testing.expectEqualStrings("deepseek", cands[1].provider);
     try std.testing.expectEqualStrings("deepseek-chat", cands[1].display); // no display set: falls back to the model id
     try std.testing.expectEqual(@as(?f64, null), cands[1].cost_in);
+}
+
+test "buildModelCandidates lists installed coding-agent backends in their own group" {
+    var tenv: @import("../util/test_env.zig").Env = .init();
+    defer tenv.deinit();
+    const io = tenv.io();
+    const arena = tenv.arena();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const file = try tenv.tmp.dir.createFile(io, "grok", .{});
+    file.close(io);
+    const dir_path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tenv.tmp.sub_path});
+    defer std.testing.allocator.free(dir_path);
+    try env.put("PATH", dir_path);
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "deepseek", try config.Provider.single(arena, "deepseek", "https://api.deepseek.com", .openai_compat, "deepseek-chat", .{
+        .context_window = 65536,
+    }));
+    const cands = try buildModelCandidates(arena, &cfg, &env, io);
+    try std.testing.expect(cands.len >= 2);
+    try std.testing.expectEqualStrings("grok", cands[0].backend);
+    try std.testing.expectEqualStrings("Local coding-agent backend", cands[0].group);
+    try std.testing.expect(std.mem.find(u8, cands[0].label, "local coding-agent backend") != null);
+    try std.testing.expectEqualStrings("deepseek", cands[cands.len - 1].provider);
+    try std.testing.expectEqualStrings("", cands[cands.len - 1].backend);
 }
 
 test "buildModelCandidates excludes providers with no usable credentials" {
@@ -4608,6 +4691,15 @@ const Model = struct {
     /// conversation (`self.messages`) is untouched, so the switch lands
     /// mid-session exactly like `--model` does at startup, just later.
     fn applyModelSelection(self: *Model, cand: ModelCandidate) void {
+        if (cand.backend.len > 0) {
+            self.cfg.agent.backend = cand.backend;
+            self.lines.append(self.arena, .{
+                .text = std.fmt.allocPrint(self.arena, "notice: backend switched to {s} (local coding-agent CLI)", .{cand.backend}) catch "notice: backend switched",
+                .dim = true,
+            }) catch {};
+            return;
+        }
+        self.cfg.agent.backend = "";
         if (self.cfg.provider(cand.provider)) |p| {
             var np = p.*;
             np.default_model = cand.model;
@@ -8187,6 +8279,8 @@ pub const ReplOptions = struct {
     /// applied to `agent.reasoning_effort` after config load. Null means the
     /// config decides.
     reasoning_effort: ?config.ReasoningEffort = null,
+    /// `--backend`: drive a local coding-agent CLI for this session.
+    backend: ?[]const u8 = null,
     session: ?[]const u8 = null,
     continue_last: bool = false,
     /// `--mascot[=<mode>]`, unparsed. Null means the flag was absent, which is
@@ -8576,6 +8670,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     // `--reasoning-effort` is the config key for one session; the agent loop
     // reads only cfg, so apply it before anything captures the config.
     if (opts.reasoning_effort) |re| cfg.agent.reasoning_effort = re;
+    if (opts.backend) |b| cfg.agent.backend = b;
     // A REPL owns the terminal and has one live conversation, so it is safe
     // to move this standalone process into its worktree before anything else
     // opens a cwd-relative file. (The concurrent Web UI cannot do that and

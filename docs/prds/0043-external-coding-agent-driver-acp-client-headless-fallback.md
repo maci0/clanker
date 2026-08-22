@@ -2,9 +2,9 @@
 
 ## Status
 
-Draft — opened 2026-08-18. Implements the decision recorded in [ADR 0032 — External coding agents are driven by an ACP client first, with headless spawn as fallback](../adrs/0032-external-coding-agents-are-driven-by-an-acp-client-first.md).
+Shipped — 2026-08-22. src/acp/{client,fallback_spawn,driver,vendor}.zig; --backend in src/cli.zig and [agent] backend in src/config.zig; pickers in ui/app/core/modelpicker.js and src/tui/repl.zig.
 
-No part of this driver exists yet — no source file names it. Everything below is the intended shape, not a description of shipped code.
+Shipped. Source of truth: src/acp/client.zig, src/acp/fallback_spawn.zig, src/acp/driver.zig, src/acp/vendor.zig, plus --backend / [agent] backend in src/cli.zig and src/config.zig.
 
 ## Problem
 
@@ -78,13 +78,13 @@ Unset keeps today's in-process LLM loop. List a backend when that vendor CLI is 
 
 ## Acceptance criteria
 
-- [ ] A native ACP client (src/acp/client.zig) starts a vendor ACP agent over stdio and completes initialize/authenticate/session/new/session/prompt, receiving session/update. (Goal 1)
-- [ ] The client implements session/request_permission. (Goal 1)
-- [ ] Headless fallback spawns claude -p / codex exec / grok -p when a vendor has no ACP, or when ACP breaks after a vendor update. (Goal 2)
-- [ ] No vendor credential is seen, stored, or logged by clanker on either path. (Goal 3)
-- [ ] Each driven session writes a run-graph node and autolearn can read it. (Goal 4)
-- [ ] Spawn is harness-native, not ck_job and not ck_exec's allowlist. (Goal 5)
-- [ ] The web UI model picker (and TUI /model) lists installed coding-agent backends in their own group, headed as a local CLI backend rather than an API-key provider; choosing one is what POST /api/run and run/repl/goal send as the backend. (Operator surface)
+- [x] A native ACP client (src/acp/client.zig) starts a vendor ACP agent over stdio and completes initialize/authenticate/session/new/session/prompt, receiving session/update. (Goal 1)
+- [x] The client implements session/request_permission. (Goal 1)
+- [x] Headless fallback spawns claude -p / codex exec / grok -p when a vendor has no ACP, or when ACP breaks after a vendor update. (Goal 2)
+- [x] No vendor credential is seen, stored, or logged by clanker on either path. (Goal 3)
+- [x] Each driven session writes a run-graph node and autolearn can read it. (Goal 4)
+- [x] Spawn is harness-native, not ck_job and not ck_exec's allowlist. (Goal 5)
+- [x] The web UI model picker (and TUI /model) lists installed coding-agent backends in their own group, headed as a local CLI backend rather than an API-key provider; choosing one is what POST /api/run and run/repl/goal send as the backend. (Operator surface)
 
 ## Open questions / future work
 

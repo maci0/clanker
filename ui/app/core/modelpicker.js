@@ -33,6 +33,62 @@ var _open = false;
 export function getProviderCache() { return _providerCache; }
 export function getModelIndex() { return _modelIndex; }
 
+/// Flat picker rows from a GET /api/providers payload. Coding-agent backends
+/// come first under "Local coding-agent backend"; API-key models follow,
+/// grouped by provider name. Used by loadProviders and by node tests.
+export function pickerIndexFromPayload(d, fmtInt) {
+  var index = [];
+  var fmt = fmtInt || function (n) { return String(n); };
+  (d.backends || []).forEach(function (b) {
+    index.push({
+      value: "backend:" + b.name,
+      provider: b.group || "Local coding-agent backend",
+      model: b.name,
+      label: b.name,
+      meta: "local CLI",
+      backend: b.name,
+    });
+  });
+  callableProviders(d.providers).forEach(function (prov) {
+    var models = (prov.models || []).slice();
+    models.forEach(function (m) {
+      var meta = [];
+      if (m.category) meta.push(m.category);
+      if (m.context_window) meta.push(fmt(m.context_window) + " ctx");
+      if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
+        meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
+                   " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
+      }
+      index.push({
+        value: prov.name + " " + m.name,
+        provider: prov.name,
+        model: m.name,
+        label: m.display || m.name,
+        meta: meta.join("  ·  "),
+      });
+    });
+  });
+  return index;
+}
+
+export function runOptionsFromValue(raw) {
+  var out = {};
+  raw = (raw || "").trim();
+  if (raw.indexOf("backend:") === 0) {
+    out.backend = raw.slice("backend:".length);
+    return out;
+  }
+  var sp = raw.indexOf(" ");
+  if (sp !== -1) {
+    out.provider = raw.slice(0, sp);
+    out.model = raw.slice(sp + 1).trim();
+    if (!out.model) delete out.model;
+  } else if (raw) {
+    out.provider = raw;
+  }
+  return out;
+}
+
 /* The two browser-global keys are the default a *new* conversation starts
    from; a conversation that has been pinned reads its own value instead. Both
    are written on a change: the pin so this chat keeps it, the default so the
@@ -393,6 +449,16 @@ export function loadProviders() {
       // a now-uncallable pair finds no option below and the configured
       // default stays selected instead.
       var callable = callableProviders(d.providers);
+      _modelIndex = pickerIndexFromPayload(d, _fmtInt);
+      _modelIndex.forEach(function (row) {
+        if (row.backend) {
+          var opt = document.createElement("option");
+          opt.value = row.value;
+          opt.textContent = row.label + (row.meta ? "  ·  " + row.meta : "");
+          _el.modelSelect.appendChild(opt);
+          return;
+        }
+      });
       callable.forEach(function (prov) {
         var group = document.createElement("optgroup");
         group.label = prov.name;
@@ -417,7 +483,6 @@ export function loadProviders() {
           opt.textContent = label + (meta.length ? "  ·  " + meta.join("  ·  ") : "");
           if (prov.name === d.default && m.name === prov.default_model) opt.selected = true;
           group.appendChild(opt);
-          _modelIndex.push({ value: value, provider: prov.name, model: m.name, label: label, meta: meta.join("  ·  ") });
         });
         _el.modelSelect.appendChild(group);
       });
@@ -456,16 +521,7 @@ export function loadProviders() {
 }
 
 export function runOptions() {
-  var out = {};
-  var raw = (_el.modelSelect.value || "").trim();
-  var sp = raw.indexOf(" ");
-  if (sp !== -1) {
-    out.provider = raw.slice(0, sp);
-    out.model = raw.slice(sp + 1).trim();
-    if (!out.model) delete out.model;
-  } else if (raw) {
-    out.provider = raw;
-  }
+  var out = runOptionsFromValue((_el.modelSelect.value || "").trim());
   out.fallbackProvider = fallbackProviderValue();
   var t = parseFloat(_el.paramTemp.value);
   if (!isNaN(t)) out.temperature = t;

@@ -313,6 +313,13 @@ confirm_writes = "browser"
 fallback_providers = ["deepseek", "openai"]
 # fallback_provider = "deepseek"
 #
+# Drive a local coding-agent CLI instead of the in-process LLM loop.
+# grok | claude | codex. Empty keeps today's in-process loop.
+# --backend on run/repl/goal and POST /api/run set it for one invocation.
+# backend = ""
+# backend_acp_argv = []          # optional full ACP spawn argv; empty = vendor default
+# backend_timeout_ms = 120000    # ACP hang → cancel, failed node, then headless
+#
 # Per-turn classifier that picks a reasoning_effort. Off until a calibration
 # eval justifies it. Empty model = cheapest configured provider by input cost.
 # auto_thinking = false
