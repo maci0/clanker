@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { serialize } from "../lib/dom-stub.mjs";
 import {
   makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied,
-  steerClear, steerPreview, steerStateLabel, steerFramedText,
+  steerClear, steerPreview, steerStateLabel, steerFramedText, steeredText,
   steer_frame_sentence, steer_preview_max, renderSteerList,
 } from "./steer.js";
 
@@ -79,6 +79,17 @@ test("framed transcript messages are detected and stripped; plain ones are not",
   assert.equal(steerFramedText(framed), "please stop and summarize");
   assert.equal(steerFramedText("please stop and summarize"), null);
   assert.equal(steerFramedText(""), null);
+});
+
+test("a steered turn is read from the flag, and from the framing on old transcripts", function () {
+  // What the server stores now: the user's own words plus the marker.
+  assert.equal(steeredText({ role: "user", content: "cite the source", steered: true }), "cite the source");
+  // What transcripts written before the marker hold.
+  const framed = steer_frame_sentence + "\n\ncite the source";
+  assert.equal(steeredText({ role: "user", content: framed }), "cite the source");
+  // A typed turn is neither.
+  assert.equal(steeredText({ role: "user", content: "cite the source" }), null);
+  assert.equal(steeredText(null), null);
 });
 
 test("renderSteerList rebuilds one li per entry with its state", function () {

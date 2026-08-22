@@ -9539,13 +9539,13 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"message is too long (8 KB cap)\"}");
         return;
     }
-    // Framed so the model reads it as a mid-run course correction from the
-    // user, not as a fresh task replacing the one it is working.
-    const framed = std.fmt.allocPrint(arena, "[The user interjected while this run was in progress; take the message into account and adjust course.]\n\n{s}", .{msg}) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-        return;
-    };
-    const outcome = steerEnqueue(gpa, req.goal, req.session, framed);
+    // The user's own words are what is queued, and what the session stores.
+    // The framing that makes the model read this as a mid-run course
+    // correction is applied to the request copy by the agent loop
+    // (`agent/loop.zig` applySteerFraming): framing it here saved the
+    // harness's sentence as the opening line of a `role=user` message, so
+    // every transcript reader showed it as something the user typed.
+    const outcome = steerEnqueue(gpa, req.goal, req.session, msg);
     switch (outcome.status) {
         .ok => {
             var ok_buf: [48]u8 = undefined;
@@ -13384,6 +13384,13 @@ fn sessionJSON(arena: std.mem.Allocator, s_in: session.Session) ![]const u8 {
         try s.write(if (m.role == .user) "user" else "assistant");
         try s.objectField("content");
         try s.write(m.content.?);
+        // Only when set: a transcript reader renders a steered turn as an
+        // interjection rather than as a typed turn, and it must not have to
+        // sniff the harness's framing sentence out of the text to know.
+        if (m.steered) {
+            try s.objectField("steered");
+            try s.write(true);
+        }
         try s.endObject();
     }
     try s.endArray();

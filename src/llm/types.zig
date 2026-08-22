@@ -42,6 +42,17 @@ pub const Message = struct {
     tool_calls: ?[]const ToolCall = null,
     /// Present on tool messages; links to the tool_call_id of a call.
     tool_call_id: ?[]const u8 = null,
+    /// This user message was interjected mid-run (POST /api/steer, or the
+    /// REPL composer during a turn), not typed as a turn of its own.
+    /// `content` is the user's own words; the harness's framing sentence is
+    /// applied to the *request* copy by
+    /// [[agent/loop.zig:applySteerFraming]] and never stored, so a
+    /// transcript reader is not shown the harness speaking as the user.
+    /// The flag persists with the message (session store, transcript JSON)
+    /// because the framing has to be re-applied identically on every later
+    /// turn: a prefix that changes between requests busts the provider's
+    /// prompt cache for everything after it.
+    steered: bool = false,
 };
 
 pub const ToolDef = struct {

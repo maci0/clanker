@@ -94,7 +94,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [Post-launch DAP ops block unbounded on a silent adapter](bugs/2026-08-22-dap-post-launch-ops-block-unbounded.md) — Resolved
 
-- [Steer framing sentence is persisted as the user's own words](bugs/2026-08-22-steer-framing-persisted-in-transcript.md) — Open
+- [Steer framing sentence is persisted as the user's own words](bugs/2026-08-22-steer-framing-persisted-in-transcript.md) — Resolved
 
 - [Non-streaming runs never register a steer slot](bugs/2026-08-22-nonstreaming-runs-unsteerable.md) — Open
 
