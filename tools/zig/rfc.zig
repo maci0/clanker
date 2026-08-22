@@ -146,7 +146,10 @@ fn checklist(obj: std.json.Value, out: *lib.Out) !void {
     try s.beginArray();
     try s.write("Answer each requirement from the request itself where you can; put the rest to the operator with ask_user rather than assuming.");
     try s.write("A technical choice needs evidence first: research sweep, then web_fetch on what looks promising. A direction question needs alternative perspectives and the strongest case against your own recommendation instead.");
+    try s.write("A claim carried over from a docs/research/ note is unverified until you open the source that note cites for it — the URL, the repository, the file — with web_fetch, gh_read or read_file. The note is an earlier pass's summary, so re-reading it verifies nothing; a claim whose source you cannot open goes in marked unverified.");
+    try s.write("The option set is the record: at least two real candidates, the status quo among them because doing nothing is always available, and one out-of-the-box possibility that is not a variation of the others.");
     try s.write("Then {\"action\":\"create\"} with a title and an overview; pass research when a note exists.");
+    try s.write("Close it with {\"action\":\"recommend\"} carrying a confidence from 0 to 10 and what would move it. Four or below says the evidence is not there yet, which is an answer; a recommendation with no number is an opinion.");
     try s.endArray();
     try s.endObject();
     lib.commit(out, &w);
@@ -311,7 +314,11 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
 
 fn renderSeededOptions(w: *std.Io.Writer, options: []const []const u8, research_path: []const u8) !void {
     try w.print(
-        "\nSeeded from [{s}]({s}). Every line below is a claim carried over unverified:\nopen the source it cites (not the research note) before keeping it, then rewrite\nit in this RFC's terms or delete it.\n",
+        // The `../` is what makes the link resolve from docs/rfcs/. Without it the
+        // href read `research/x.md`, which points at docs/rfcs/research/x.md and
+        // is a dead link; the References line below formats its own `../` and so
+        // never carried the bug.
+        "\nSeeded from [{s}](../{s}). Every line below is a claim carried over unverified:\nopen the source it cites (not the research note) before keeping it, then rewrite\nit in this RFC's terms or delete it.\n",
         .{ research_path, relativeToRfcs(research_path) },
     );
     for (options) |option| {
@@ -343,8 +350,9 @@ fn renderSeededOptions(w: *std.Io.Writer, options: []const []const u8, research_
     );
 }
 
+/// The link is written into `docs/rfcs/<number>-<slug>.md` and has to resolve
+/// from there, so the `docs/` prefix comes off and the caller prefixes `../`.
 fn relativeToRfcs(path: []const u8) []const u8 {
-    // docs/research/x.md → ../research/x.md, so the link works from docs/rfcs/.
     if (std.mem.startsWith(u8, path, "docs/")) return path["docs/".len..];
     return path;
 }

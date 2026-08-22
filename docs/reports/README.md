@@ -88,6 +88,8 @@ Project agents receive this workflow through the harness prompt and
 
 - [clanker commit --all silently omits every new file](bugs/2026-08-22-commit-all-omits-new-files.md) — Open
 
+- [rfc create writes a seeded research link that does not resolve](bugs/2026-08-22-rfc-seeded-research-link-misses-the-parent-directory.md) — Resolved
+
 - [improve-self exhausts all attempts when the model answers only in reasoning](bugs/2026-08-22-improve-self-reasoning-only-empty-content.md) — Resolved
 - [A hand-made git worktree loses config.local.toml and .env, so clanker verbs fall back to the committed default provider](bugs/2026-08-22-hand-made-worktree-falls-back-to-committed-provider.md) — Resolved
 
