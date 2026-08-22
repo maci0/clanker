@@ -7,7 +7,7 @@ import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, pumpInto, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
-import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steerFramedText, renderSteerList } from "./core/steer.js";
+import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steeredText as steeredMessageText, renderSteerList } from "./core/steer.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
@@ -21,9 +21,10 @@ import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, rende
 import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/logs.js";
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
-import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
+import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, applyChatPrefs as mpApplyChatPrefs, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
 import { goalStatusLabel } from "./core/goals.js";
 import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
+import { loadPrefs as cpLoad, savePrefs as cpSave, prefsFor as cpFor, setPref as cpSet, dropPref as cpDrop, copyPref as cpCopy } from "./core/chatprefs.js";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
 /* The deferred stylesheets (PatternFly, views.css) are armed by
@@ -298,6 +299,56 @@ function dropDraft(id) {
   compSaveDrafts(drafts);
 }
 
+/* ---------- per-conversation model and reasoning effort ----------
+
+   Same idea as the drafts above, for the composer's two run selects: the
+   model and the reasoning effort a conversation runs on belong to it, not to
+   the browser. `core/chatprefs.js` owns the store's shape and bounds; the
+   hooks below are all the model picker is given, so it never has to know
+   which conversation is open. */
+var chatPrefs = cpLoad();
+
+function chatPrefsGet() {
+  return cpFor(chatPrefs, sessionId);
+}
+
+function chatPrefsSet(patch) {
+  cpSet(chatPrefs, sessionId, patch);
+  cpSave(chatPrefs);
+}
+
+function chatPrefsDrop(id) {
+  cpDrop(chatPrefs, id || sessionId);
+  cpSave(chatPrefs);
+}
+
+/* A fork, a branch or an import continues under a new id; the copy keeps
+   running on what it was forked from. */
+function chatPrefsCarry(fromId, toId) {
+  cpCopy(chatPrefs, fromId, toId);
+  cpSave(chatPrefs);
+}
+
+/* The selects, the Advanced fold summary and the idle hint all describe the
+   conversation's current pin, so they move together. Deliberately not a
+   dispatched `change` event: that would re-write the browser default, which
+   is the cross-chat leak this store exists to close. */
+function applyChatPrefs() {
+  mpApplyChatPrefs();
+  updateComposerModeHint();
+}
+
+/* A conversation that never had a select touched is pinned by its first turn,
+   to whatever it is about to run on. Without this, a chat with history would
+   still follow a model chosen later in another tab. */
+function chatPrefsPinFirstTurn() {
+  if (chatPrefsGet()) return;
+  chatPrefsSet({
+    model: (el.modelSelect && el.modelSelect.value) || "",
+    effort: (el.paramEffort && el.paramEffort.value) || ""
+  });
+}
+
 /* Only ever fills an empty composer. Restoring over text the reader is in the
    middle of writing would be the same loss this exists to prevent, in the
    other direction. */
@@ -365,6 +416,9 @@ el.newChat.addEventListener("click", function () {
   sessionId = newSessionId();
   el.task.value = "";
   rememberSession(sessionId);
+  // The selects are shared DOM: a new chat starts on the browser default, not
+  // on whatever the conversation just left was pinned to.
+  applyChatPrefs();
   el.transcript.textContent = "";
   // createTurn hides the empty state and nothing ever put it back, so after
   // one run plus New chat the area became the ambiguity the empty state was
@@ -929,12 +983,13 @@ function renderSessionHistory(messages) {
       try {
         while (idx < messages.length && performance.now() < until) {
           var m = messages[idx];
-          // A steering message is persisted as a user turn carrying the
-          // server's framing sentence. Rendered as a plain user message it
-          // closed the real question as unanswered and impersonated the
-          // user with text they never typed — show it as the mid-run
-          // interjection it was, inside the turn it steered.
-          var steeredText = m.role === "user" && pendingTurn ? steerFramedText(m.content) : null;
+          // A steering message is persisted as a user turn the server marks
+          // `steered` (older transcripts carry the framing sentence in the
+          // text instead). Rendered as a plain user message it closed the
+          // real question as unanswered and impersonated the user with text
+          // they never typed — show it as the mid-run interjection it was,
+          // inside the turn it steered.
+          var steeredText = m.role === "user" && pendingTurn ? steeredMessageText(m) : null;
           if (steeredText != null) {
             if (span) span.to = idx;
             appendText(pendingTurn, "\n[ steered mid-run: " + steeredText + " ]\n", true);
@@ -1057,6 +1112,8 @@ function switchSession(id, jump) {
   resetSessionMetrics();
   el.task.value = "";
   rememberSession(sessionId);
+  // Puts this conversation's own model and effort back on the selects.
+  applyChatPrefs();
   var opened = currentSessionMeta();
   if (opened && (opened.workspace || "") !== currentWorkspace) {
     setCurrentWorkspace(opened.workspace || "", { silent: true });
@@ -1257,6 +1314,7 @@ function switchToSessionCopy(path, btn, verb, doneMessage) {
       });
     })
     .then(function (newId) {
+      chatPrefsCarry(sessionId, newId);
       sessionId = newId;
       rememberSession(sessionId);
       renderSessionChip();
@@ -1309,10 +1367,12 @@ el.sessionDelete.addEventListener("click", function () {
         .then(readJson)
         .then(function () {
           sessionNotice("Deleted. Started a new conversation.");
-          // Nothing left for the draft to belong to.
+          // Nothing left for the draft or the model pin to belong to.
           dropDraft(sessionId);
+          chatPrefsDrop(sessionId);
           sessionId = newSessionId();
           rememberSession(sessionId);
+          applyChatPrefs();
           el.transcript.textContent = "";
           renderSessionChip();
           return loadSessions();
@@ -1381,7 +1441,7 @@ function syncAdvancedSummary() {
   var effort = (el.paramEffort && el.paramEffort.value) || "";
   summary.textContent = effort ? "Advanced: effort " + effort : "Advanced";
   summary.title = effort
-    ? "Reasoning effort " + effort + ", sent with each new message. A message already running keeps the effort it started with. Click to change."
+    ? "Reasoning effort " + effort + ", pinned for this conversation and sent with each new message. A message already running keeps the effort it started with. Click to change."
     : "Fallback provider, sampling and reasoning-effort overrides";
   if (effort) params.setAttribute("data-active", "true");
   else params.removeAttribute("data-active");
@@ -1396,7 +1456,7 @@ function updateComposerModeHint() {
   if (el.researchMode && el.researchMode.checked) parts.push("Research mode · web search preferred");
   if (el.unlimitedIterations && el.unlimitedIterations.checked) parts.push("Long run · 1000-step budget");
   if (el.worktreeMode && el.worktreeMode.checked) parts.push("Isolated worktree · shared checkout untouched");
-  if (el.paramEffort && el.paramEffort.value) parts.push("Effort " + el.paramEffort.value + " · sent with each message");
+  if (el.paramEffort && el.paramEffort.value) parts.push("Effort " + el.paramEffort.value + " · pinned for this chat");
   if (attachImages.length) {
     parts.push(attachImages.length + (attachImages.length === 1 ? " image attached" : " images attached"));
   }
@@ -2452,6 +2512,9 @@ el.form.addEventListener("submit", function (e) {
     }catch(_){}
   }
   var opts = runOptions();
+  // This conversation now has history, and history keeps what it ran on: a
+  // model chosen later in another tab must not retro-fit it.
+  chatPrefsPinFirstTurn();
   var statsRendered = false;
   var splitter = makeLineSplitter(function (line) {
     if (line.charCodeAt(0) === 1) {
@@ -5037,7 +5100,7 @@ el.runCopy.addEventListener("click", function () {
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })
           .then(function(d){
             el.sessionStatus.textContent = "Imported.";
-            if (d.id){ sessionId = d.id; rememberSession(sessionId); renderSessionChip(); }
+            if (d.id){ chatPrefsCarry(sessionId, d.id); sessionId = d.id; rememberSession(sessionId); renderSessionChip(); }
             return loadSessions();
           }).catch(function(err){ uiToast("Import failed: "+err.message); });
       };
@@ -5217,7 +5280,7 @@ document.querySelectorAll("[data-system-jump]").forEach(function (btn) {
 });
 
 var providerCacheHolder = { list: providerCache };
-mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder, onModelChange: renderSessionChip });
+mpBind({ el: el, readJson: readJson, fmtInt: fmtInt, allUsage: allUsage, renderUsage: renderUsage, renderContextMeter: renderContextMeter, providerCacheHolder: providerCacheHolder, onModelChange: renderSessionChip, chatPrefs: { get: chatPrefsGet, set: chatPrefsSet } });
 // Header chip and composer pill mirror the hidden select.
 if (el.modelSelect) el.modelSelect.addEventListener("change", renderSessionChip);
 

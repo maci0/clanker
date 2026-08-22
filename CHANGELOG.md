@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The streaming `POST /api/run` response emits an `llm_start` control
+  frame at the top of each agent iteration, carrying `served_by`, `model`
+  and the zero-based `iteration`. The web UI's live run graph has always
+  had a handler for that event and no server path emitted one, so
+  iterations were drawn without the model that served them. `served_by`
+  is who the turn started on; the `done` trailer stays the record of who
+  finished it, since the fallback chain can repoint the provider
+  mid-turn.
+
 - `clanker gate` runs a `js-suite-coverage` gate: every `ui/**/*.test.mjs`
   on disk is registered in `build.zig` as a `node --test` step. The web UI
   suites are named there one by one — node has no working directory mode
@@ -52,6 +61,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker reports --help` states the byte caps the tool enforces, in their
+  own LIMITS section: title 180, summary 500, status note 500, search query
+  240. They were discoverable only by exceeding one and reading the refusal.
+  A test pins the numbers against `tools/zig/reports.zig`, so a cap that
+  moves in the guest cannot leave the help quoting the old one.
+
+- `POST /api/steer` reaches every run the keys it names address, not the
+  first slot found: two concurrent runs registered under one goal id — a
+  goal resumed at serve startup while a browser streams the same goal —
+  left one of them silently unsteerable behind a 200. A body naming both
+  `goal` and `session` is now an AND, so a pair belonging to no single run
+  addresses nothing instead of steering whichever run matched one half,
+  and a body naming neither key cannot broadcast. The success body carries
+  how many runs took the message: `{"ok":true,"delivered":N}`.
+
 - `improve-self` survives a reasoning model that answers entirely in
   `reasoning_content` with empty `content` (`finish_reason: stop`). The
   engine used to re-ask the identical question (reasoning still on), the
@@ -79,6 +103,31 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   separately as a switched-off module, with no retry, because retrying it
   answers the same thing forever. `readJson` carries the HTTP status onto
   the error it throws, which is what tells those two apart.
+
+- A mid-run steering message is no longer saved as the user having typed
+  the harness's framing sentence. `POST /api/steer` and the REPL composer
+  each prefixed the message with "[The user interjected while this run was
+  in progress...]" and the run stored that text verbatim as a `role=user`
+  message, so every transcript reader — the web UI, exports, search — read
+  the harness's words as the user's. Senders now queue the user's words
+  alone; the agent loop applies the framing to the *request* copy only, and
+  the saved message carries a `steered` marker instead (persisted in the
+  session store, emitted by `GET /api/sessions/<id>`, rendered by the web
+  UI as the interjection it was). The bytes the model receives are
+  unchanged, on the steering turn and on every later one. Transcripts saved
+  before this change still render correctly: the web UI falls back to
+  detecting the framing sentence in the text.
+
+- The web UI composer's model and reasoning-effort choices are pinned per
+  conversation instead of per browser. Both were single `localStorage` keys,
+  so changing the model while reading one chat silently changed what every
+  other chat and every other tab sent next. A conversation is pinned when a
+  select is changed while it is open, or by its first turn, to whatever it
+  ran on; switching conversation puts its own values back. The two old keys
+  stay as the default a *new* chat starts from, a fork or import carries the
+  pin onto the new id, and deleting a conversation drops it. The effort
+  fold's summary and the composer hint say "pinned for this conversation"
+  again, which is true once more.
 
 - The web UI chat's Archive, Delete and Rename buttons work again and say
   what they did. Their feedback went only to a visually hidden live region,

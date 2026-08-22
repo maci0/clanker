@@ -44,7 +44,8 @@ const schema: [:0]const u8 =
     \\  content TEXT,
     \\  images TEXT,
     \\  tool_calls TEXT,
-    \\  tool_call_id TEXT
+    \\  tool_call_id TEXT,
+    \\  steered INTEGER NOT NULL DEFAULT 0
     \\);
     \\CREATE TABLE IF NOT EXISTS events (
     \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,6 +69,16 @@ pub fn validSessionId(id: []const u8) bool {
     return true;
 }
 
+/// Columns added to `messages` after the table's first shipped shape. Applied
+/// on every open, in order, each ignoring the duplicate-column error an
+/// already-migrated database raises. Append here as well as to `schema`:
+/// `CREATE TABLE IF NOT EXISTS` never touches a database that already has
+/// the table, so a column added only to `schema` is missing from every
+/// session written by an older build and every read of it fails.
+const added_message_columns = [_][:0]const u8{
+    "ALTER TABLE messages ADD COLUMN steered INTEGER NOT NULL DEFAULT 0;",
+};
+
 /// Opens (creating if needed) the per-session database at
 /// `<sessions_dir>/<id>.db` with the schema in place. The path is built and
 /// sentinel-terminated in the arena.
@@ -80,6 +91,11 @@ fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !s
         conn.close();
         return err;
     };
+    // `CREATE TABLE IF NOT EXISTS` leaves a database created before a column
+    // existed untouched, so every added column needs its own ALTER here.
+    // SQLite refuses a duplicate column, which is exactly the "already
+    // migrated" case: the error is the idempotence, not a failure.
+    for (added_message_columns) |ddl| conn.exec(ddl) catch {};
     return conn;
 }
 
@@ -185,8 +201,8 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
 
     try conn.exec("DELETE FROM messages;");
     var ins = try conn.prepare(
-        \\INSERT INTO messages (role, content, images, tool_calls, tool_call_id)
-        \\VALUES (?1, ?2, ?3, ?4, ?5);
+        \\INSERT INTO messages (role, content, images, tool_calls, tool_call_id, steered)
+        \\VALUES (?1, ?2, ?3, ?4, ?5, ?6);
     );
     defer ins.finalize();
     for (session.messages) |m| {
@@ -196,6 +212,7 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         try ins.bindText(3, try encodeImages(arena, m.images));
         try ins.bindText(4, try encodeToolCalls(arena, m.tool_calls));
         try ins.bindText(5, try utf8.sanitize(arena, m.tool_call_id orelse ""));
+        try ins.bindInt(6, if (m.steered) 1 else 0);
         _ = try ins.step();
     }
     try tx.commit();
@@ -223,6 +240,9 @@ pub const StoredMessage = struct {
     images: ?[]const StoredImage = null,
     tool_calls: ?[]const StoredToolCall = null,
     tool_call_id: ?[]const u8 = null,
+    /// A message the user interjected mid-run rather than typed as a turn of
+    /// its own; see `types.Message.steered`.
+    steered: bool = false,
 };
 
 /// Reads a session's meta + transcript rows from an open connection. Copies
@@ -231,7 +251,7 @@ fn loadStored(conn: *sqlite.Connection, arena: std.mem.Allocator, id: []const u8
     _ = id;
     var out: std.ArrayList(StoredMessage) = .empty;
     var stmt = try conn.prepare(
-        \\SELECT role, content, images, tool_calls, tool_call_id FROM messages ORDER BY seq;
+        \\SELECT role, content, images, tool_calls, tool_call_id, steered FROM messages ORDER BY seq;
     );
     defer stmt.finalize();
     while (true) {
@@ -251,6 +271,7 @@ fn loadStored(conn: *sqlite.Connection, arena: std.mem.Allocator, id: []const u8
             .images = if (imgs.len > 0) imgs else null,
             .tool_calls = if (calls.len > 0) calls else null,
             .tool_call_id = tc_id,
+            .steered = stmt.columnInt(5) != 0,
         });
     }
     return .{ .items = try out.toOwnedSlice(arena) };
@@ -291,6 +312,7 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
             .role = try roleFromStr(sm.role),
             .content = sm.content,
             .tool_call_id = sm.tool_call_id,
+            .steered = sm.steered,
         };
         if (sm.images) |imgs| {
             if (imgs.len > 0) {
@@ -944,7 +966,7 @@ pub fn importChat(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, 
         if (sm.content == null or sm.content.?.len == 0) continue;
         const role = roleFromStr(sm.role) catch continue;
         if (role != .user and role != .assistant) continue;
-        try out.append(arena, .{ .role = role, .content = sm.content });
+        try out.append(arena, .{ .role = role, .content = sm.content, .steered = sm.steered });
     }
     if (out.items.len == 0) return error.MissingField;
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
@@ -1046,6 +1068,86 @@ test "a saved session round-trips messages, attachments and the system prompt" {
     try std.testing.expectEqual(@as(usize, 1), metas.len);
     try std.testing.expectEqual(@as(usize, 3), metas[0].messages);
     try std.testing.expect(metas[0].bytes > 0);
+}
+
+test "a steered message round-trips as the user's own words plus the flag" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "write the report" },
+        .{ .role = .user, .content = "cite the source", .steered = true },
+    };
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "steered",
+        .title = "interjection",
+        .messages = &messages,
+        .created = 1,
+        .updated = 2,
+    });
+
+    const s = try loadSession(io, std.testing.allocator, arena, dir, "steered");
+    try std.testing.expectEqual(@as(usize, 2), s.messages.len);
+    // The stored text is what the user typed, with no harness framing in it.
+    try std.testing.expectEqualStrings("cite the source", s.messages[1].content.?);
+    // The flag survives, so the next turn's request re-applies the identical
+    // framing instead of sending a prefix that changed under the provider.
+    try std.testing.expect(s.messages[1].steered);
+    try std.testing.expect(!s.messages[0].steered);
+}
+
+test "a session written before the steered column still opens and saves" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    // The pre-migration table shape, written by hand: this is what every
+    // session on disk from before the column looks like, and `CREATE TABLE
+    // IF NOT EXISTS` will not touch it.
+    {
+        const path = try std.fmt.allocPrint(arena, "{s}/legacy{s}", .{ dir, db_suffix });
+        const pathz = try arena.dupeZ(u8, path);
+        var conn: sqlite.Connection = .{};
+        try conn.open(pathz);
+        defer conn.close();
+        try conn.exec(
+            \\CREATE TABLE messages (
+            \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            \\  role TEXT NOT NULL,
+            \\  content TEXT,
+            \\  images TEXT,
+            \\  tool_calls TEXT,
+            \\  tool_call_id TEXT
+            \\);
+            \\INSERT INTO messages (role, content) VALUES ('user', 'the old turn');
+        );
+    }
+
+    // Reading it migrates the table rather than failing on the missing
+    // column, and a message from before the flag existed reads as untouched.
+    const before = try loadSession(io, std.testing.allocator, arena, dir, "legacy");
+    try std.testing.expectEqual(@as(usize, 1), before.messages.len);
+    try std.testing.expectEqualStrings("the old turn", before.messages[0].content.?);
+    try std.testing.expect(!before.messages[0].steered);
+
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "the old turn" },
+        .{ .role = .user, .content = "and an interjection", .steered = true },
+    };
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "legacy",
+        .title = "legacy",
+        .messages = &messages,
+        .created = 1,
+        .updated = 2,
+    });
+    const after = try loadSession(io, std.testing.allocator, arena, dir, "legacy");
+    try std.testing.expect(after.messages[1].steered);
 }
 
 test "the events table is append-only: UPDATE and DELETE are refused" {

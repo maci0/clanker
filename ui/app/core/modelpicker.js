@@ -3,6 +3,7 @@
 
 import { icon } from "./icons.js";
 import { callableProviders } from "./utils.js";
+import { effectiveModel as cpEffectiveModel, effectiveEffort as cpEffectiveEffort } from "./chatprefs.js";
 
 var _providerCache = [];
 var _modelIndex = [];
@@ -15,6 +16,11 @@ var _renderUsage = null;
 var _renderContextMeter = null;
 var _providerCacheHolder = null;
 var _onModelChange = null;
+/* The conversation's own model/effort pin, wired by app.js (which owns the
+   session id): `{ get(): {model, effort}|null, set(patch) }`. Absent in any
+   surface that mounts the picker without a conversation, in which case the
+   two browser-default keys below are the whole story. */
+var _chatPrefs = null;
 
 var _picker = null;
 var _search = null;
@@ -26,6 +32,63 @@ var _open = false;
 
 export function getProviderCache() { return _providerCache; }
 export function getModelIndex() { return _modelIndex; }
+
+/* The two browser-global keys are the default a *new* conversation starts
+   from; a conversation that has been pinned reads its own value instead. Both
+   are written on a change: the pin so this chat keeps it, the default so the
+   next new chat opens on the model you last chose. */
+var model_key = "clanker.model";
+var effort_key = "clanker.effort";
+
+function readDefault(key) {
+  try { return window.localStorage.getItem(key) || ""; } catch (e) { return ""; }
+}
+
+function writeDefault(key, value) {
+  try { window.localStorage.setItem(key, value); } catch (e) {}
+}
+
+function chatPin() {
+  if (!_chatPrefs || !_chatPrefs.get) return null;
+  try { return _chatPrefs.get(); } catch (e) { return null; }
+}
+
+function pinChat(patch) {
+  if (!_chatPrefs || !_chatPrefs.set) return;
+  try { _chatPrefs.set(patch); } catch (e) {}
+}
+
+/* What this conversation should send: its pin when it has one, the browser
+   default otherwise. */
+function effectiveModel() {
+  return cpEffectiveModel(chatPin(), readDefault(model_key));
+}
+
+function effectiveEffort() {
+  return cpEffectiveEffort(chatPin(), readDefault(effort_key));
+}
+
+function hasOption(select, value) {
+  if (!select || !value) return false;
+  return !!select.querySelector('option[value="' + String(value).replace(/"/g, "") + '"]');
+}
+
+/* Puts the current conversation's model and effort back on the selects.
+   Called on every conversation switch: the selects are shared DOM, so without
+   this the chat you just opened would keep showing the one you left. */
+export function applyChatPrefs() {
+  if (!_el) return;
+  if (_el.modelSelect) {
+    var model = effectiveModel();
+    if (hasOption(_el.modelSelect, model)) _el.modelSelect.value = model;
+  }
+  if (_el.paramEffort) {
+    var effort = effectiveEffort();
+    _el.paramEffort.value = hasOption(_el.paramEffort, effort) ? effort : "";
+  }
+  if (_renderContextMeter) _renderContextMeter();
+  if (_onModelChange) _onModelChange();
+}
 
 function ensurePill(btn) {
   if (!btn) return;
@@ -307,7 +370,8 @@ export function toggleModelPicker(anchor) {
 function selectValue(value) {
   if (!_el || !_el.modelSelect) return;
   _el.modelSelect.value = value;
-  try { window.localStorage.setItem("clanker.model", value); } catch (e) {}
+  writeDefault(model_key, value);
+  pinChat({ model: value });
   _el.modelSelect.dispatchEvent(new Event("change", { bubbles: true }));
   if (_renderContextMeter) _renderContextMeter();
   if (_onModelChange) _onModelChange();
@@ -375,11 +439,10 @@ export function loadProviders() {
           _el.fallbackProvider.value = fbSaved;
         }
       }
-      var saved = null;
-      try { saved = window.localStorage.getItem("clanker.model"); } catch (e) {}
-      if (saved && _el.modelSelect.querySelector('option[value="' + saved.replace(/\"/g, "") + '"]')) {
-        _el.modelSelect.value = saved;
-      }
+      // The conversation's pin first, the browser default only when it has
+      // none: reloading a chat must not adopt whatever another tab last chose.
+      var saved = effectiveModel();
+      if (hasOption(_el.modelSelect, saved)) _el.modelSelect.value = saved;
       if (_onModelChange) _onModelChange();
       if (_open) renderList(_search ? _search.value : "");
     })
@@ -435,13 +498,15 @@ export function bindModelPicker(ctx) {
   _renderContextMeter = ctx.renderContextMeter;
   _providerCacheHolder = ctx.providerCacheHolder || null;
   _onModelChange = ctx.onModelChange || null;
+  _chatPrefs = ctx.chatPrefs || null;
 
   ensurePill(_el.headerModel);
   ensurePill(_el.composerModel);
   ensurePickerDom();
 
   _el.modelSelect.addEventListener("change", function () {
-    try { window.localStorage.setItem("clanker.model", _el.modelSelect.value); } catch (e) {}
+    writeDefault(model_key, _el.modelSelect.value);
+    pinChat({ model: _el.modelSelect.value });
     _renderContextMeter();
     if (_onModelChange) _onModelChange();
   });
@@ -459,14 +524,11 @@ export function bindModelPicker(ctx) {
   }
 
   if (_el.paramEffort) {
-    try {
-      var savedEffort = window.localStorage.getItem("clanker.effort") || "";
-      if (savedEffort && _el.paramEffort.querySelector('option[value="' + savedEffort + '"]')) {
-        _el.paramEffort.value = savedEffort;
-      }
-    } catch (e) {}
+    var savedEffort = effectiveEffort();
+    if (hasOption(_el.paramEffort, savedEffort)) _el.paramEffort.value = savedEffort;
     _el.paramEffort.addEventListener("change", function () {
-      try { window.localStorage.setItem("clanker.effort", _el.paramEffort.value); } catch (e) {}
+      writeDefault(effort_key, _el.paramEffort.value);
+      pinChat({ effort: _el.paramEffort.value });
     });
   }
 }

@@ -2130,7 +2130,7 @@ const specs = [_]Spec{
     .{ .command = .plugins, .usage = "plugins [list|on <name>|off <name>|validate [path]|new <name>]", .blurb = "list, switch, validate, or scaffold plugins", .group = .inspect, .detail = "A plugin is one WASM module plus a *.tool.json manifest. The full field\nreference is docs/manifest.md.\n\nlist              every registered plugin and whether it is on\non <name>         switch an optional plugin on\noff <name>        switch an optional plugin off\nvalidate [path]   check a manifest, or every *.tool.json in a directory\n                  (default: agent.tools_dir). Exits non-zero on any error\nnew <name>        write tools/manifests/<name>.tool.json and\n                  tools/zig/<name>.zig, then run `zig build tools`\n\nCore tools cannot be switched off. Changes take effect in the next command; a\nrunning REPL reloads its tool catalog immediately.\n\nvalidate reports the file and the offending key, and reports warnings for keys\nthat load but do nothing: the loader ignores an unknown key, so a typo'd\ngrant is silent until the tool fails to do its job." },
     .{ .command = .plugin, .usage = "<plugin-command> [args...]", .blurb = "run a CLI plugin from cli-plugins/ or PATH", .group = .work, .detail = "A short single word that is not a built-in Command resolves against PRD\n0012's two tiers, in order: Tier 1 is an enabled {command, description,\ntool}.json in agent.cli_plugins_dir, dispatching to a sandboxed tool with\nthe remaining argv passed as {\"args\":[...]} - no new trust surface. Tier\n2 is a clanker-<name> executable on PATH or under ~/.clanker/plugins/,\nexec'd with the remaining argv and inherited stdio, trusted like anything\nelse the operator put on their PATH. A bare clanker help lists both\nsources, marked external with their origin." },
     .{ .command = .preset, .usage = "preset [list|show <name>|new <name>]", .blurb = "list, inspect, or scaffold presets", .group = .inspect, .detail = "A preset is one preset.toml from presets/ (plus configured roots).\nFilters the already-loaded Registry, no recompile. Examples: research\n(read/search only) and full (no filter).\n\nlist              every preset with its description\nshow <name>       print the preset.toml\nnew <name>        scaffold presets/<name>.toml" },
-    .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status|rename]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n  rename <path> <new-slug>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, missing-tool, or runbook. Report slugs start\nYYYY-MM-DD-, runbook slugs are lowercase and hyphenated. missing-tool records\na basic verb clanker lacks: it lands in the investigations store and the tool\nitself inserts `missing-clanker-tool-` into the filename after the date, so\nthe record is findable by name without trusting the caller to mark it.\nappend adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead. rename moves a\nrecord to a new filename in its own store, rewrites its inventory link, and\nlists every file in the two stores still naming the old record; a\nmissing-clanker-tool- marker survives the rename whether or not the new slug\ncarries it.\n\nAll of these are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
+    .{ .command = .reports, .usage = "reports [list|search|open|create|append|update|status|rename]", .blurb = "read and record operational reports and runbooks", .group = .inspect, .flags = &.{.reports_kind}, .detail = "Reports preserve the evidence behind a diagnosis; runbooks preserve the\ncurrent recovery procedure. These are the same records the agent reads\nthrough the `reports` tool, in docs/reports/ and docs/runbooks/.\n\nREADING\n  list                       every report and runbook, with its status\n  search <query>             one literal text search across both stores\n  open <path>                print one record in full\n\n  --kind all|report|runbook  narrow a search to one store (default all)\n\nWRITING\n  create <kind> <slug> <title> <summary>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n  rename <path> <new-slug>\n\nSTATES\n  open           a confirmed defect that is not fixed yet\n  investigating  a symptom still being traced\n  resolved       fixed and verified; the note names the fix and the check\n  reopened       the symptom came back after a resolution\n  closed         traced to no defect\n\nLIMITS\n  title      180 bytes   create\n  summary    500 bytes   create, the TL;DR line\n  note       500 bytes   status\n  query      240 bytes   search\n\nOver the cap the write is refused and the record is left untouched.\n\ncreate scaffolds a TL;DR-first record and adds it to the matching inventory;\nits kind is bug, investigation, missing-tool, or runbook. Report slugs start\nYYYY-MM-DD-, runbook slugs are lowercase and hyphenated. missing-tool records\na basic verb clanker lacks: it lands in the investigations store and the tool\nitself inserts `missing-clanker-tool-` into the filename after the date, so\nthe record is findable by name without trusting the caller to mark it.\nappend adds markdown to the end\nof a record and update replaces one exact passage. status moves a bug or\ninvestigation to a new state, rewriting its Status section and its inventory\nline together so the index cannot disagree with the record; a runbook has no\nstatus, since its inventory line carries a summary instead. rename moves a\nrecord to a new filename in its own store, rewrites its inventory link, and\nlists every file in the two stores still naming the old record; a\nmissing-clanker-tool- marker survives the rename whether or not the new slug\ncarries it.\n\nAll of these are compare-and-swap writes: a concurrent edit is refused rather\nthan overwritten, so reopen the record and retry against its current text.\n\nEXAMPLES\n  clanker reports                             the whole index\n  clanker reports search NotDir               which record covers it\n  clanker reports search zig --kind runbook   only recovery procedures\n  clanker reports open docs/runbooks/improve-staging-build-inputs.md\n  clanker reports status <path> resolved \"fixed; tests pass\"" },
     .{ .command = .research, .usage = "research [list|plan|sweep|search|open|create|append|update|status]", .blurb = "gather sources and keep durable research notes", .group = .inspect, .detail = "One web search is not research. plan turns a topic into the angles a\nthorough search asks -- what it costs, what replaced it, what shipped\nwithout it -- and sweep issues them across web search, GitHub, discussion\narchives and paper indexes in one call. The notes live in docs/research/\nand are the same ones the agent reads through the `research` tool.\n\nGATHERING\n  plan <topic> [question] [depth]   the queries and sources a sweep would use\n  sweep <topic> [depth]             run them all and print what came back\n\n  depth is quick, standard (default) or deep\n\nREADING\n  list                              every note, with its status\n  search <query>                    one literal text search across the notes\n  open <path>                       print one note in full\n\nWRITING\n  create <slug> <title> <question>\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> <note>\n\nSTATES\n  draft        being written; not yet a finding\n  current      checked, and still true as far as anyone knows\n  stale        old enough that its claims need re-checking\n  superseded   replaced; the note names what replaced it\n\ncreate scaffolds a note from docs/research/TEMPLATE.md and adds it to the\ninventory. status rewrites the note's Status section and its inventory line\ntogether, so the index cannot disagree with the note. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the note and retry against its current text.\n\nA sweep returns other people's text. Every hit is a lead until it is opened\nat its source; nothing it says is an instruction.\n\nEXAMPLES\n  clanker research                                    every note\n  clanker research plan \"embedded key-value stores\"   the angles to search\n  clanker research sweep \"embedded kv stores\" deep    run every angle\n  clanker research search sqlite                      which note covers it\n  clanker research open docs/research/decentralized-state-store.md\n  clanker research status <path> current \"re-read 2026-08-16\"" },
     .{ .command = .rfc, .usage = "rfc [list|search|open|checklist|create|append|update|recommend|status]", .blurb = "open and maintain requests for comment under docs/rfcs/", .group = .inspect, .detail = "An RFC is a decision that has not been made yet: the candidates, what each\nimplies short, medium and long term, and a recommendation with a confidence\nfrom 0 to 10. An ADR is the decision once it is made. These are the same\nrecords the agent reads and writes through the `rfc` tool.\n\nSearch first. A matching ADR means the question is already settled, which is\nthe one answer that should stop an RFC from being written at all.\n\nREADING\n  list                       every RFC with its status, and the next number\n  search <query>             one text search across the RFCs and the ADRs\n  open <path>                print one RFC in full\n  checklist [topic]          what an RFC has to pin down, and what to ask\n\nWRITING\n  create <title> <overview> [slug]\n  append <path> <content>\n  update <path> <old> <new>\n  recommend <path> <recommendation> <confidence 0-10> [rationale]\n  status <path> <state> [note]\n\nSTATES\n  draft        being written; not yet up for discussion\n  discussion   open for comment\n  decided      settled; an ADR usually follows\n  deferred     not now, and the note says what would reopen it\n  withdrawn    dropped without a decision\n  superseded   replaced; the note names what replaced it\n\ncreate allocates the next number, renders docs/rfcs/TEMPLATE.md and indexes\nit. An RFC needs real options: at least two candidates, the status quo, and\none out-of-the-box possibility. append, update, recommend and status are\ncompare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the RFC and retry against its current text.\n\nEXAMPLES\n  clanker rfc                                      every RFC\n  clanker rfc search \"http client\"                 already decided?\n  clanker rfc checklist \"state store\"              what to pin down first\n  clanker rfc create \"HTTP client for the proxy\" \"One client, not recorded\"\n  clanker rfc open docs/rfcs/0001-http-client.md\n  clanker rfc recommend docs/rfcs/0001-http-client.md \"Adopt option B\" 7 \"Why\"\n  clanker rfc status docs/rfcs/0001-http-client.md decided \"See the ADR\"" },
     .{ .command = .adr, .usage = "adr [list|search|open|create|append|update|status]", .blurb = "record and maintain architecture decisions under docs/adrs/", .group = .inspect, .detail = "An ADR is a decision that has already been made: the constraint that forced\nit, the choice, and what the choice costs. The RFC that may precede it argues\nthe alternatives; neither store requires the other. These are the same records\nthe agent reads and writes through the `adr` tool.\n\nSearch first. A matching ADR means the question is settled, and the answer is\nto read it — or supersede it — rather than decide it again.\n\nREADING\n  list                       every ADR with its status, and the next number\n  search <query>             one text search across the ADRs, RFCs and PRDs\n  open <path>                print one ADR in full\n\nWRITING\n  create <title> <context> <decision> <consequences> [rfc path]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n\nSTATES\n  proposed     drafted, not yet agreed\n  accepted     in force; this is the default a new ADR is created in\n  superseded   replaced; the note names what replaced it\n  deprecated   no longer applies; the note says what stopped being true\n\nThe title is the choice made, not the question: \"Providers are a native\nvtable\", not \"How should providers work?\". Consequences is required and has\nto name the honest downside — an ADR that only argues for its own decision is\nuseless to the one reader it is written for, whoever is deciding whether to\nrevisit it.\n\nPassing the RFC a decision came from links it from Status and quotes that\nRFC's recommendation under the Decision, so a divergence between what was\nrecommended and what was chosen is visible while it is still being written.\n\nA later reversal supersedes an ADR rather than editing it. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the ADR and retry against its current text.\n\nEXAMPLES\n  clanker adr                                      every decision on record\n  clanker adr search \"provider vtable\"             already decided?\n  clanker adr open docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md\n  clanker adr create \"Providers are a native vtable\" \\\n      \"Keys must not enter the sandbox\" \\\n      \"Each provider is one vtable file plus a registry row\" \\\n      \"Adding one is three edits; a provider cannot be hot-swapped\"\n  clanker adr status docs/adrs/0004-providers.md superseded \\\n      \"Superseded by ADR 0021.\"" },
@@ -9096,6 +9096,22 @@ fn runStreamToolResult(ms: u64) void {
     writeStreamEvent(fd, "tool_result", .{ .ms = ms });
 }
 
+/// Announces the model about to serve an agent iteration, so a live viewer can
+/// draw the turn's LLM step while it runs rather than learning which model
+/// answered from the `done` trailer after the fact. Field names match that
+/// trailer (`served_by`, `model`) so a client needs one vocabulary, not two.
+/// Fired on the run thread before the request goes out, which is why the
+/// fallback chain can still repoint `served_by` afterwards -- this is what the
+/// turn started on, and `done` is what finished it.
+fn runStreamLlmStart(provider_name: []const u8, model_name: []const u8, iteration: u32) void {
+    const fd = run_stream_socket orelse return;
+    writeStreamEvent(fd, "llm_start", .{
+        .served_by = provider_name,
+        .model = model_name,
+        .iteration = iteration,
+    });
+}
+
 fn runStreamUsage(stats: agent.RunStats) void {
     const fd = run_stream_socket orelse return;
     writeStreamEvent(fd, "usage", .{
@@ -9420,27 +9436,61 @@ fn appendRunningGoals(w: *std.Io.Writer) void {
 
 const SteerEnqueue = enum { ok, no_run, full, out_of_memory };
 
-/// Queues a steering message for the in-flight run keyed by `goal_id` and/or
-/// `session_id` (the caller passes whichever the client named). The copy is
-/// made with `gpa` (the serve allocator, the same one runRelease and steerPoll
-/// free with). Returns no_run when nothing currently works that key.
-fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, session_id: []const u8, message: []const u8) SteerEnqueue {
+/// What one POST /api/steer did: the outcome, plus how many in-flight runs
+/// the message actually landed on. `delivered` exists because a key can
+/// address more than one run (two connection threads working the same goal),
+/// and a bare `{"ok":true}` left the sender to assume it was exactly one.
+const SteerOutcome = struct { status: SteerEnqueue, delivered: usize = 0 };
+
+/// Does a slot keyed `slot_goal`/`slot_session` answer to the keys a steer
+/// body named? Every key the caller named must match, and a key the slot
+/// does not carry matches nothing: `{"goal":g,"session":s}` addresses the one
+/// run holding both, so a pair whose halves name different runs addresses
+/// neither. A body naming one key matches on that key alone, which is what
+/// both web UI senders do today (goals send `goal`, chat sends `session`).
+/// Naming nothing addresses nothing — an empty body must never broadcast.
+fn steerKeysMatch(slot_goal: []const u8, slot_session: []const u8, want_goal: []const u8, want_session: []const u8) bool {
+    if (want_goal.len == 0 and want_session.len == 0) return false;
+    if (want_goal.len != 0 and !std.mem.eql(u8, slot_goal, want_goal)) return false;
+    if (want_session.len != 0 and !std.mem.eql(u8, slot_session, want_session)) return false;
+    return true;
+}
+
+/// Queues a steering message for *every* in-flight run the caller's keys
+/// address (see steerKeysMatch), not the first one found: a goal id two
+/// connection threads registered under names both of them, and stopping at
+/// the first left the other silently unsteerable. The copy is made with
+/// `gpa` (the serve allocator, the same one runRelease and steerPoll free
+/// with), one per receiving slot. Returns no_run when the keys address
+/// nothing, and full/out_of_memory only when no addressed run took it.
+fn steerEnqueue(gpa: std.mem.Allocator, goal_id: []const u8, session_id: []const u8, message: []const u8) SteerOutcome {
     _ = std.c.pthread_mutex_lock(&steer_mutex);
     defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
+    var delivered: usize = 0;
+    var addressed = false;
+    var out_of_memory = false;
     for (&steer_slots) |*slot| {
         if (!slot.occupied()) continue;
-        const goal_hit = goal_id.len != 0 and slot.goal_len != 0 and std.mem.eql(u8, slot.goalId(), goal_id);
-        const session_hit = session_id.len != 0 and slot.session_len != 0 and std.mem.eql(u8, slot.sessionId(), session_id);
-        if (!goal_hit and !session_hit) continue;
-        if (slot.queue.items.len >= steer_message_cap) return .full;
-        const copy = gpa.dupe(u8, message) catch return .out_of_memory;
+        if (!steerKeysMatch(slot.goalId(), slot.sessionId(), goal_id, session_id)) continue;
+        addressed = true;
+        if (slot.queue.items.len >= steer_message_cap) continue;
+        const copy = gpa.dupe(u8, message) catch {
+            out_of_memory = true;
+            continue;
+        };
         slot.queue.append(gpa, copy) catch {
             gpa.free(copy);
-            return .out_of_memory;
+            out_of_memory = true;
+            continue;
         };
-        return .ok;
+        delivered += 1;
     }
-    return .no_run;
+    // One run taking it is a success even if a second was full: the message
+    // is in flight, and `delivered` is what says how widely.
+    if (delivered != 0) return .{ .status = .ok, .delivered = delivered };
+    if (out_of_memory) return .{ .status = .out_of_memory };
+    if (addressed) return .{ .status = .full };
+    return .{ .status = .no_run };
 }
 
 /// Agent.steer_fn for streaming web runs: pops the next queued message for
@@ -9489,14 +9539,19 @@ fn handleSteer(gpa: std.mem.Allocator, cfg: *const config.Config, stream: std.Io
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"message is too long (8 KB cap)\"}");
         return;
     }
-    // Framed so the model reads it as a mid-run course correction from the
-    // user, not as a fresh task replacing the one it is working.
-    const framed = std.fmt.allocPrint(arena, "[The user interjected while this run was in progress; take the message into account and adjust course.]\n\n{s}", .{msg}) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-        return;
-    };
-    switch (steerEnqueue(gpa, req.goal, req.session, framed)) {
-        .ok => respond(stream, 200, "OK", "{\"ok\":true}"),
+    // The user's own words are what is queued, and what the session stores.
+    // The framing that makes the model read this as a mid-run course
+    // correction is applied to the request copy by the agent loop
+    // (`agent/loop.zig` applySteerFraming): framing it here saved the
+    // harness's sentence as the opening line of a `role=user` message, so
+    // every transcript reader showed it as something the user typed.
+    const outcome = steerEnqueue(gpa, req.goal, req.session, msg);
+    switch (outcome.status) {
+        .ok => {
+            var ok_buf: [48]u8 = undefined;
+            const ok_body = std.fmt.bufPrint(&ok_buf, "{{\"ok\":true,\"delivered\":{d}}}", .{outcome.delivered}) catch "{\"ok\":true}";
+            respond(stream, 200, "OK", ok_body);
+        },
         .no_run => respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no run is currently working that goal or session\"}"),
         .full => respond(stream, 429, "Too Many Requests", "{\"ok\":false,\"error\":\"too many queued messages for this run; wait for it to catch up\"}"),
         .out_of_memory => respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}"),
@@ -9740,9 +9795,9 @@ test "steer registry: register by goal or session, steer, poll, release" {
     try std.testing.expect(runRegister("g-123", "sess-1"));
     defer runRelease();
 
-    try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "", "hi"));
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "", "go left"));
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "sess-1", "then right"));
+    try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "", "hi").status);
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-123", "", "go left").status);
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "sess-1", "then right").status);
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -9764,7 +9819,7 @@ test "steer registry: a session-only (chat) run steers by session" {
     // A chat run has a session but no goal; it must still register and steer.
     try std.testing.expect(runRegister("", "chat-sess"));
     defer runRelease();
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "chat-sess", "adjust"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "chat-sess", "adjust").status);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -9791,11 +9846,80 @@ test "steer registry: a resumed goal run has no session and still shows as runni
     appendRunningGoals(&w);
     try std.testing.expectEqualStrings("[{\"id\":\"g-resumed\",\"session\":\"\"}]", buf[0..w.end]);
     // And it is steerable by that goal id, which is the other half of the slot.
-    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-resumed", "", "stop after this turn"));
+    try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "g-resumed", "", "stop after this turn").status);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const got = steerPoll(arena_state.allocator()) orelse return error.TestExpectedSteer;
     try std.testing.expectEqualStrings("stop after this turn", got);
+}
+
+test "steer registry: a message reaches every run working the named key" {
+    serve_gpa = std.testing.allocator;
+    defer serve_gpa = null;
+    // Two runs are working the same goal from different sessions — the shape
+    // the board produces when a goal is resumed while a client still streams
+    // it. Steering the goal must reach both, not whichever slot is scanned
+    // first, or one of the two runs is silently unsteerable.
+    try std.testing.expect(runRegister("g-dup", "sess-a"));
+    const slot_a = current_steer_slot orelse return error.TestExpectedSlot;
+    // runRegister keys the slot off this thread's threadlocal; clearing it
+    // lets the second registration claim a slot of its own, standing in for
+    // the second connection thread.
+    current_steer_slot = null;
+    try std.testing.expect(runRegister("g-dup", "sess-b"));
+    const slot_b = current_steer_slot orelse return error.TestExpectedSlot;
+    defer {
+        current_steer_slot = slot_a;
+        runRelease();
+    }
+    defer {
+        current_steer_slot = slot_b;
+        runRelease();
+    }
+
+    const both = steerEnqueue(std.testing.allocator, "g-dup", "", "both of you stop");
+    try std.testing.expectEqual(SteerEnqueue.ok, both.status);
+    try std.testing.expectEqual(@as(usize, 2), both.delivered);
+
+    // Naming both keys addresses the one run carrying both: an AND, so the
+    // second run's queue does not grow.
+    const one = steerEnqueue(std.testing.allocator, "g-dup", "sess-b", "b only");
+    try std.testing.expectEqual(SteerEnqueue.ok, one.status);
+    try std.testing.expectEqual(@as(usize, 1), one.delivered);
+
+    // And a pair whose halves name different runs addresses neither, rather
+    // than landing on whichever half happens to match.
+    const mismatched = steerEnqueue(std.testing.allocator, "g-dup", "sess-nobody", "nowhere");
+    try std.testing.expectEqual(SteerEnqueue.no_run, mismatched.status);
+    try std.testing.expectEqual(@as(usize, 0), mismatched.delivered);
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    current_steer_slot = slot_a;
+    try std.testing.expectEqualStrings("both of you stop", steerPoll(arena) orelse return error.TestExpectedSteer);
+    try std.testing.expect(steerPoll(arena) == null);
+    current_steer_slot = slot_b;
+    try std.testing.expectEqualStrings("both of you stop", steerPoll(arena) orelse return error.TestExpectedSteer);
+    try std.testing.expectEqualStrings("b only", steerPoll(arena) orelse return error.TestExpectedSteer);
+}
+
+test "steer key match: every key the caller named must match" {
+    // Nothing named addresses nothing: an empty body must not broadcast.
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "", ""));
+    // One key named matches on that key alone, either side.
+    try std.testing.expect(steerKeysMatch("g-1", "s-1", "g-1", ""));
+    try std.testing.expect(steerKeysMatch("g-1", "s-1", "", "s-1"));
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "g-2", ""));
+    // Both named is an AND, so a half-right pair matches nothing.
+    try std.testing.expect(steerKeysMatch("g-1", "s-1", "g-1", "s-1"));
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "g-1", "s-2"));
+    try std.testing.expect(!steerKeysMatch("g-1", "s-1", "g-2", "s-1"));
+    // A key the slot does not carry cannot be matched: a goal-only run
+    // (no session) is not addressable by session, and vice versa.
+    try std.testing.expect(!steerKeysMatch("g-1", "", "", "s-1"));
+    try std.testing.expect(!steerKeysMatch("g-1", "", "g-1", "s-1"));
+    try std.testing.expect(!steerKeysMatch("", "s-1", "g-1", ""));
 }
 
 /// JSON `{"ok":false,"error":...}` body when the webui *descriptor* is absent
@@ -13260,6 +13384,13 @@ fn sessionJSON(arena: std.mem.Allocator, s_in: session.Session) ![]const u8 {
         try s.write(if (m.role == .user) "user" else "assistant");
         try s.objectField("content");
         try s.write(m.content.?);
+        // Only when set: a transcript reader renders a steered turn as an
+        // interjection rather than as a typed turn, and it must not have to
+        // sniff the harness's framing sentence out of the text to know.
+        if (m.steered) {
+            try s.objectField("steered");
+            try s.write(true);
+        }
         try s.endObject();
     }
     try s.endArray();
@@ -15567,6 +15698,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // without the stream there is no channel to carry the question.
         if (cfg.agent.confirm_writes != .never) a.confirm_fn = &serveConfirm;
         a.on_token = &runStreamDelta;
+        a.on_llm_start = &runStreamLlmStart;
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
         a.on_todos = &runStreamTodos;
@@ -18958,4 +19090,73 @@ test "chatCounts groups every session by workspace in one pass" {
     try std.testing.expectEqualStrings("proj", counts.keys()[0]);
     try std.testing.expectEqualStrings("", counts.keys()[1]);
     try std.testing.expectEqualStrings("other", counts.keys()[2]);
+}
+
+test "runStreamLlmStart frames the serving model as one \\x01 llm_start event" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+
+    // Same stand-in as the todos event test: writeAllFd only ever writes to a
+    // raw fd, and a file is one that reads back without a reader thread.
+    var sink = try env.tmp.dir.createFile(io, "stream.bin", .{});
+    const arena = env.arena();
+
+    run_stream_socket = sink.handle;
+    runStreamLlmStart("deepseek", "deepseek-reasoner", 2);
+    run_stream_socket = null;
+    sink.close(io);
+
+    const line = try env.tmp.dir.readFileAlloc(io, "stream.bin", arena, .limited(64 * 1024));
+    try std.testing.expect(line.len > 0);
+    try std.testing.expectEqual(@as(u8, 1), line[0]);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, line, "\n"));
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, arena, line[1 .. line.len - 1], .{});
+    defer parsed.deinit();
+    // The web UI's live-graph branch keys on `type` and reads `model`; the
+    // `done` trailer's names are reused so one client vocabulary covers both.
+    try std.testing.expectEqualStrings("llm_start", parsed.value.object.get("type").?.string);
+    try std.testing.expectEqualStrings("deepseek", parsed.value.object.get("served_by").?.string);
+    try std.testing.expectEqualStrings("deepseek-reasoner", parsed.value.object.get("model").?.string);
+    try std.testing.expectEqual(@as(i64, 2), parsed.value.object.get("iteration").?.integer);
+}
+
+test "runStreamLlmStart without a stream is a no-op, not a crash" {
+    run_stream_socket = null;
+    runStreamLlmStart("openai", "gpt-5", 0);
+}
+
+test "reports --help states the caps the reports tool enforces" {
+    // The caps live in the guest (`tools/zig/reports.zig`) and the help text
+    // in this file, so nothing but this test keeps them in step: a cap raised
+    // in the guest leaves the help quoting the old number, and a cap the help
+    // never mentions is only discoverable by hitting it (which is how the
+    // 500-byte `status` note was found).
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const guest = try std.Io.Dir.cwd().readFileAlloc(io, "tools/zig/reports.zig", gpa, .limited(1 << 20));
+    defer gpa.free(guest);
+
+    var detail: []const u8 = "";
+    for (specs) |sp| {
+        if (sp.command == .reports) detail = sp.detail;
+    }
+    try std.testing.expect(detail.len > 0);
+
+    for ([_][]const u8{ "title", "summary", "note", "query" }) |field| {
+        var needle_buf: [64]u8 = undefined;
+        const needle = try std.fmt.bufPrint(&needle_buf, "{s} is too long (maximum ", .{field});
+        const at = std.mem.find(u8, guest, needle) orelse return error.CapNotEnforced;
+        const rest = guest[at + needle.len ..];
+        const end = std.mem.findScalar(u8, rest, ' ') orelse return error.CapNotEnforced;
+        const cap = rest[0..end];
+        // The number the guest refuses on has to appear in the help.
+        if (std.mem.find(u8, detail, cap) == null) {
+            std.debug.print("reports help does not state the {s} cap of {s} bytes\n", .{ field, cap });
+            return error.CapNotDocumented;
+        }
+    }
 }
