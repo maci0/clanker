@@ -55,6 +55,29 @@ so read the diff rather than trusting the sign:
 git cherry -v main clanker/improve-self-<id>
 ```
 
+How much that sign is worth depends on how far the base has drifted, and
+`origin/main` can move dozens of commits inside one session. Landing a batch
+measured 54 `+` commits across seven branches on 2026-08-22; the real count
+was 3. Twenty applied *empty* (already upstream in another form), two cancelled
+each other, one re-added a test main already had, and 28 targeted regions main
+had moved past.
+
+Rebase and cherry-pick disagree about how they show you that drift, and the
+difference decides which one to reach for:
+
+- **Rebase** surfaces drift as conflicts, once, at the point of the change.
+  Forty-two upstream commits cost one CHANGELOG conflict in the same period.
+- **Cherry-pick** surfaces drift as a *diff that looks like a revert*. Picking
+  onto a base that has since moved produced a diff showing another session's
+  work as deletions — nothing was being reverted, the base was simply older,
+  but it is indistinguishable at a glance from the stale-checkout revert that
+  produced 124d592e and deleted two promotions.
+
+So rebase onto the current remote tip before reading any verdict, and treat a
+cherry-picked diff full of deletions as a stale base until proven otherwise —
+never as a patch to force through with `--strategy-option=theirs`, which
+turns exactly that case into a real revert.
+
 Preserve anything genuinely unique before it goes. Uncommitted work needs both
 halves — the tracked diff and the untracked files:
 
