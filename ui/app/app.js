@@ -1180,6 +1180,30 @@ function currentSessionMeta() {
   return null;
 }
 
+/* Session actions report here. #session-status is an sr-only live region, so
+   a message that lands only there is invisible to a sighted user — which
+   reads as "the button does nothing". Toast it; the live region stays as the
+   fallback when the toast host is missing (toasts are themselves aria-live,
+   so writing both would announce everything twice). */
+function sessionNotice(msg) {
+  if (!uiToast(msg)) el.sessionStatus.textContent = msg;
+}
+
+/* knownSessions refreshes only when the conversation list reloads, and a run
+   that ended early (stopped, dropped connection, no done event) skips that
+   reload — the transcript then has turns the picker does not know about, and
+   every session action died on the missing meta with no visible feedback.
+   Refresh once and retry before giving up. */
+function withSessionMeta(then) {
+  var meta = currentSessionMeta();
+  if (meta) { then(meta); return; }
+  loadSessions().then(function () {
+    var found = currentSessionMeta();
+    if (found) then(found);
+    else sessionNotice("This conversation has no saved turns yet.");
+  });
+}
+
 /* A fork is a branch you can abandon: the same messages under a new id, so
    trying a different direction never costs the conversation it came from.
    Branching is the same move with a cut point, so both go through here: POST,
@@ -1215,58 +1239,52 @@ el.sessionFork.addEventListener("click", function () {
 });
 
 el.sessionRename.addEventListener("click", function () {
-  var meta = currentSessionMeta();
-  if (!meta) {
-    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
-    return;
-  }
-  textPrompt({ title: "Rename conversation", label: "Title", value: meta.title || "" }).then(function (next) {
-    if (next === null) return;
-    next = next.trim();
-    if (!next) {
-      el.sessionStatus.textContent = "A conversation needs a title.";
-      return;
-    }
-    el.sessionRename.disabled = true;
-    fetch("/api/sessions/" + encodeURIComponent(sessionId), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: next })
-    }).then(readJson).then(function () {
-      el.sessionStatus.textContent = "Renamed to " + next + ".";
-      return loadSessions();
-    }).catch(function (err) {
-      el.sessionStatus.textContent = "Could not rename: " + err.message;
-    }).finally(function () { el.sessionRename.disabled = false; });
+  withSessionMeta(function (meta) {
+    textPrompt({ title: "Rename conversation", label: "Title", value: meta.title || "" }).then(function (next) {
+      if (next === null) return;
+      next = next.trim();
+      if (!next) {
+        sessionNotice("A conversation needs a title.");
+        return;
+      }
+      el.sessionRename.disabled = true;
+      fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: next })
+      }).then(readJson).then(function () {
+        sessionNotice("Renamed to " + next + ".");
+        return loadSessions();
+      }).catch(function (err) {
+        sessionNotice("Could not rename: " + err.message);
+      }).finally(function () { el.sessionRename.disabled = false; });
+    });
   });
 });
 
 el.sessionDelete.addEventListener("click", function () {
-  var meta = currentSessionMeta();
-  if (!meta) {
-    el.sessionStatus.textContent = "This conversation has no saved turns yet.";
-    return;
-  }
-  // Deleting a transcript cannot be undone from here, so it is confirmed.
-  // The run graphs survive it: they record runs that really happened and are
-  // addressed by run id, not by session.
-  uiConfirm("Delete \"" + (meta.title || sessionId) + "\"? This cannot be undone. Its recorded runs are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
-    if (!yes) return;
-    el.sessionDelete.disabled = true;
-    fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
-      .then(readJson)
-      .then(function () {
-        el.sessionStatus.textContent = "Deleted. Started a new conversation.";
-        // Nothing left for the draft to belong to.
-        dropDraft(sessionId);
-        sessionId = newSessionId();
-        rememberSession(sessionId);
-        el.transcript.textContent = "";
-        renderSessionChip();
-        return loadSessions();
-      }).catch(function (err) {
-        el.sessionStatus.textContent = "Could not delete: " + err.message;
-      }).finally(function () { el.sessionDelete.disabled = false; });
+  withSessionMeta(function (meta) {
+    // Deleting a transcript cannot be undone from here, so it is confirmed.
+    // The run graphs survive it: they record runs that really happened and are
+    // addressed by run id, not by session.
+    uiConfirm("Delete \"" + (meta.title || sessionId) + "\"? This cannot be undone. Its recorded runs are kept.", { danger: true, confirmLabel: "Delete" }).then(function (yes) {
+      if (!yes) return;
+      el.sessionDelete.disabled = true;
+      fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "DELETE" })
+        .then(readJson)
+        .then(function () {
+          sessionNotice("Deleted. Started a new conversation.");
+          // Nothing left for the draft to belong to.
+          dropDraft(sessionId);
+          sessionId = newSessionId();
+          rememberSession(sessionId);
+          el.transcript.textContent = "";
+          renderSessionChip();
+          return loadSessions();
+        }).catch(function (err) {
+          sessionNotice("Could not delete: " + err.message);
+        }).finally(function () { el.sessionDelete.disabled = false; });
+    });
   });
 });
 
@@ -2534,10 +2552,6 @@ el.form.addEventListener("submit", function (e) {
     // Attachments belong to the turn that just went out, not the next one.
     pendingImages.length = 0;
     renderAttachments();
-    // The turn just gave this session its title and a newer timestamp, and a
-    // first turn created it server-side at all — so the picker is refreshed
-    // rather than left describing the conversation as it was before.
-    loadSessions();
   }).catch(function (err) {
     splitter.flush();
     if (err && err.name === "AbortError") {
@@ -2557,6 +2571,13 @@ el.form.addEventListener("submit", function (e) {
     showCaret(turn, false);
     turn.root.removeAttribute("data-live");
     setTurnPhase(turn, "");
+    // The first turn created the session server-side and gave it a title and
+    // timestamp; refresh the picker on every outcome, not only the fully
+    // finished one — a stopped or half-streamed run still saved the session,
+    // and a picker that never learns about it leaves knownSessions without
+    // this id, which used to dead-end every session action (archive, delete,
+    // rename) on this page.
+    loadSessions();
     // A run that errored or was stopped never emits `done`, so the turn
     // would end with no way to copy what did arrive and no way to retry the
     // task that just failed — the two things most wanted after a failure.
@@ -4920,23 +4941,30 @@ el.runCopy.addEventListener("click", function () {
   var archBtn = document.getElementById("session-archive");
   var importBtn = document.getElementById("session-import");
   var tog = document.getElementById("archived-toggle");
+  // upgradePfButton wrapped the label in a .pf-v6-c-button__text span;
+  // assigning textContent on the button itself would tear that wrapper out.
+  function setArchiveLabel(text){
+    if (!archBtn) return;
+    var span = archBtn.querySelector(".pf-v6-c-button__text");
+    if (span) span.textContent = text; else archBtn.textContent = text;
+  }
   if (archBtn) archBtn.addEventListener("click", function(){
-    var meta = currentSessionMeta && currentSessionMeta();
-    if (!meta){ el.sessionStatus.textContent = "This conversation has no saved turns yet."; return; }
-    var next = !meta.archived;
-    archBtn.disabled = true;
-    fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ archived: next }) })
-      .then(readJson).then(function(){
-        el.sessionStatus.textContent = next ? "Archived — toggle Show archived to see it." : "Unarchived.";
-        archBtn.textContent = next ? "Unarchive" : "Archive";
-        return loadSessions();
-      }).catch(function(err){ el.sessionStatus.textContent = "Archive failed: " + err.message; })
-      .finally(function(){ archBtn.disabled = false; });
+    withSessionMeta(function(meta){
+      var next = !meta.archived;
+      archBtn.disabled = true;
+      fetch("/api/sessions/" + encodeURIComponent(sessionId), { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ archived: next }) })
+        .then(readJson).then(function(){
+          sessionNotice(next ? "Archived. Toggle Show archived to see it." : "Unarchived.");
+          setArchiveLabel(next ? "Unarchive" : "Archive");
+          return loadSessions();
+        }).catch(function(err){ sessionNotice("Archive failed: " + err.message); })
+        .finally(function(){ archBtn.disabled = false; });
+    });
   });
   function syncArchiveLabel(){
     try {
       var meta = currentSessionMeta && currentSessionMeta();
-      if (archBtn) archBtn.textContent = meta && meta.archived ? "Unarchive" : "Archive";
+      setArchiveLabel(meta && meta.archived ? "Unarchive" : "Archive");
     } catch(_){}
   }
   // Session metadata changes only when the conversation list is rendered.

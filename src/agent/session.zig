@@ -83,6 +83,18 @@ fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !s
     return conn;
 }
 
+/// Opens `<sessions_dir>/<id>.db` for a metadata edit, refusing to create it:
+/// an edit addressed to a conversation that was never saved must fail (the
+/// HTTP routes turn it into a 404), not mint an empty database that the
+/// listing then silently filters out for having no title. The JSON store
+/// returned FileNotFound here by construction; SQLite's open-with-create
+/// lost that behavior in the port.
+fn openExistingDb(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !sqlite.Connection {
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
+    _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return error.FileNotFound;
+    return openDb(arena, sessions_dir, id);
+}
+
 fn metaSet(conn: *sqlite.Connection, key: []const u8, value: []const u8) !void {
     var stmt = try conn.prepare(
         \\INSERT INTO meta (key, value) VALUES (?1, ?2)
@@ -307,13 +319,16 @@ pub fn loadSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
     };
 }
 
-/// Removes a saved conversation: the database file is deleted. Its execution
-/// graphs stay: they are the record of runs that really happened, and are
-/// addressed by run id rather than by session.
+/// Removes a saved conversation: the database file is deleted, and so are
+/// its rows in the cross-session search index — a deleted transcript's text
+/// must not stay findable there. Its execution graphs stay: they are the
+/// record of runs that really happened, and are addressed by run id rather
+/// than by session.
 pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !void {
     if (!validSessionId(id)) return error.InvalidSessionId;
     const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
     try std.Io.Dir.cwd().deleteFile(io, path);
+    session_fts.removeSession(arena, id);
 }
 
 /// Forks a conversation: the same messages written back under a new id,
@@ -584,10 +599,9 @@ test "titleFromTask handles non-Latin tasks" {
 /// Auto titles are a couple of content words from the opening task. A
 /// picker full of 60-character prefixes is what this replaced.
 pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8, title: []const u8) !void {
-    _ = io;
     _ = gpa;
     if (!validSessionId(id)) return error.InvalidSessionId;
-    var conn = try openDb(arena, sessions_dir, id);
+    var conn = try openExistingDb(io, arena, sessions_dir, id);
     defer conn.close();
     try metaSet(&conn, "title", try utf8.sanitize(arena, title));
 }
@@ -913,10 +927,9 @@ fn roleFromStr(s: []const u8) !types.Role {
 }
 
 pub fn setArchived(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8, archived: bool) !void {
-    _ = io;
     _ = gpa;
     if (!validSessionId(id)) return error.InvalidSessionId;
-    var conn = try openDb(arena, sessions_dir, id);
+    var conn = try openExistingDb(io, arena, sessions_dir, id);
     defer conn.close();
     try metaSet(&conn, "archived", if (archived) "true" else "false");
 }
@@ -955,10 +968,9 @@ pub fn setWorkspace(
     id: []const u8,
     workspace: []const u8,
 ) !void {
-    _ = io;
     _ = gpa;
     if (!validSessionId(id)) return error.InvalidSessionId;
-    var conn = try openDb(arena, sessions_dir, id);
+    var conn = try openExistingDb(io, arena, sessions_dir, id);
     defer conn.close();
     if (workspace.len > 0) {
         try metaSet(&conn, "workspace", workspace);
@@ -1112,4 +1124,21 @@ test "setArchived, setWorkspace and renameSession update the record" {
     try std.testing.expectEqualStrings("renamed", s.title);
     try std.testing.expect(s.archived);
     try std.testing.expectEqualStrings("research", s.workspace);
+}
+
+test "meta edits on an unknown id fail and mint no database" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    // The SQLite port's open-with-create made these silently succeed: the
+    // route answered 200, the rail did not change, and a junk titleless
+    // <id>.db was left behind that the listing then filtered out.
+    try std.testing.expectError(error.FileNotFound, setArchived(io, std.testing.allocator, arena, dir, "never-saved", true));
+    try std.testing.expectError(error.FileNotFound, renameSession(io, std.testing.allocator, arena, dir, "never-saved", "x"));
+    try std.testing.expectError(error.FileNotFound, setWorkspace(io, std.testing.allocator, arena, dir, "never-saved", "ws"));
+    const path = try std.fmt.allocPrint(arena, "{s}/never-saved{s}", .{ dir, db_suffix });
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, path, .{}));
 }
