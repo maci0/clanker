@@ -146,11 +146,17 @@ Re-running the scan afterwards leaves this record as the only hit.
 ## Follow-up
 
 - The other four record stores (`rfc`, `adr`, `prd`, `research`) share
-  `doc_scaffold.zig`. Whether their status paths reach `replaceTldrField` with
-  a multi-line bullet has not been checked here.
-- Nothing detects the damage after the fact. The scan above is a shell one-off;
-  if this proves to have happened more widely, it belongs in a gate or in
-  `clanker doctor` rather than in a session's notes.
+  `doc_scaffold.zig` but never reach `replaceTldrField`. Checked 2026-08-22 with
+  `grep -oE "\bdoc\.[a-zA-Z]+" tools/zig/{rfc,adr,prd,research,reports}.zig`:
+  `replaceTldrField` and `tldrField` are called from `reports.zig` alone, and
+  the other four status paths use `replaceFirstLine` on `## Status` only, which
+  is first-line-only by design and unaffected. They cannot carry this defect.
+- Nothing detects the damage after the fact. Re-running the scan on 2026-08-22
+  across `docs/reports/` and `docs/runbooks/` — a TL;DR bullet whose value is
+  `<State> on <date>.` followed by an indented continuation line — returned no
+  hits, so the store carries no known remaining damage. It stays a one-off; if
+  it recurs more widely, it belongs in a gate or in `clanker doctor` rather
+  than in a session's notes.
 
 ## References
 
