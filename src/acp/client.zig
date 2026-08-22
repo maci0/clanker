@@ -233,10 +233,26 @@ pub const Client = struct {
 fn idAsInt(v: json.Value) i64 {
     return switch (v) {
         .integer => |n| n,
-        .float => |f| @intFromFloat(f),
+        .float => |f| floatIdToInt(f),
         .number_string => |s| std.fmt.parseInt(i64, s, 10) catch -1,
         else => -1,
     };
+}
+
+/// A peer controls the ids it sends, so a float id is untrusted input to a
+/// fixed-width conversion. Integer-valued floats (some encoders emit `5.0`)
+/// truncate to their integer value; anything outside i64 -- including the
+/// infinity an overflowing literal like `1e999` parses to, or NaN -- answers
+/// -1 like the non-numeric branches rather than trapping `@intFromFloat`.
+fn floatIdToInt(f: f64) i64 {
+    if (!std.math.isFinite(f)) return -1;
+    const t = @trunc(f);
+    // Both bounds are exact in f64 (powers of two); 2^63 itself is out of
+    // range for i64, hence the exclusive upper comparison.
+    const lo: f64 = -9223372036854775808.0;
+    const hi: f64 = 9223372036854775808.0;
+    if (!(t >= lo and t < hi)) return -1;
+    return @intFromFloat(t);
 }
 
 fn encodeValue(alloc: std.mem.Allocator, v: json.Value) ![]const u8 {
@@ -719,4 +735,32 @@ test "ACP client refuses fs/* from the agent" {
         if (std.mem.find(u8, line, "capability not supported") != null) saw_error = true;
     }
     try std.testing.expect(saw_error);
+}
+
+test "idAsInt truncates in-range float ids and answers -1 outside i64" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const val = struct {
+        fn of(a: std.mem.Allocator, text: []const u8) json.Value {
+            return json.parseFromSliceLeaky(json.Value, a, text, .{}) catch unreachable;
+        }
+    }.of;
+
+    try std.testing.expectEqual(@as(i64, 5), idAsInt(val(arena, "5")));
+    // Some encoders emit integer ids with a fractional part.
+    try std.testing.expectEqual(@as(i64, 5), idAsInt(val(arena, "5.0")));
+    // The exact edges of i64 survive the round trip through f64: minInt is a
+    // power of two and 9223372036854774784 (2^63 minus 1024) is the largest
+    // integer f64 can hold below 2^63.
+    try std.testing.expectEqual(@as(i64, std.math.minInt(i64)), idAsInt(val(arena, "-9223372036854775808.0")));
+    try std.testing.expectEqual(@as(i64, 9223372036854774784), idAsInt(val(arena, "9223372036854774784.0")));
+
+    // An overflowing literal parses to +inf and a too-large float rounds past
+    // every i64: both must answer the same fallback as a non-numeric id
+    // instead of trapping @intFromFloat.
+    try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "1e999")));
+    try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "1e300")));
+    try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "-1e300")));
+    try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "9223372036854775808.0")));
 }
