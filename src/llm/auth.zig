@@ -107,7 +107,7 @@ pub fn selectStrategy(spec: Spec, provider: *const config.Provider, raw: ?[]cons
 /// owns the result and must `deinit` it.
 pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credential {
     const raw: ?[]const u8 = if (provider.api_key_env) |env_name|
-        env.environ_map.get(env_name)
+        if (env.environ_map.get(env_name)) |v| trimTrailingNewlines(v) else null
     else
         null;
     const strategy = selectStrategy(spec, provider, raw);
@@ -158,6 +158,17 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
         .quota_project = quotaProject(spec, provider),
     };
     return .{ .strategy = strategy, .quota_project = quotaProject(spec, provider) };
+}
+
+/// Trims trailing newlines and carriage returns from a credential read from
+/// the environment. Copy-pasting a key from a terminal or a script that
+/// appends a line ending produces a credential the API rejects; trimming
+/// only trailing \r/\n characters fixes the common misconfiguration without
+/// altering any well-formed key.
+fn trimTrailingNewlines(s: []const u8) []const u8 {
+    var end = s.len;
+    while (end > 0 and (s[end - 1] == '\n' or s[end - 1] == '\r')) end -= 1;
+    return s[0..end];
 }
 
 fn quotaProject(spec: Spec, provider: *const config.Provider) []const u8 {
