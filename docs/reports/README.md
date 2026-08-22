@@ -98,7 +98,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [Non-streaming runs never register a steer slot](bugs/2026-08-22-nonstreaming-runs-unsteerable.md) — Open
 
-- [steerEnqueue delivers to the first matching slot only](bugs/2026-08-22-steer-enqueue-first-match-only.md) — Open
+- [steerEnqueue delivers to the first matching slot only](bugs/2026-08-22-steer-enqueue-first-match-only.md) — Resolved
 
 - [REPL log sink frees the logger's stack buffer on the first [ERROR] record](bugs/2026-08-22-repl-log-sink-frees-the-loggers-stack-buffer.md) — Resolved
 
