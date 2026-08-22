@@ -106,10 +106,13 @@ pub fn selectStrategy(spec: Spec, provider: *const config.Provider, raw: ?[]cons
 /// Resolves the provider's credential into a ready-to-send form. The caller
 /// owns the result and must `deinit` it.
 pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credential {
-    const raw: ?[]const u8 = if (provider.api_key_env) |env_name|
+    var raw: ?[]const u8 = if (provider.api_key_env) |env_name|
         if (env.environ_map.get(env_name)) |v| trimTrailingNewlines(v) else null
     else
         null;
+    if (raw) |r| {
+        if (r.len == 0) raw = null;
+    }
     const strategy = selectStrategy(spec, provider, raw);
     // An explicit `auth = "api_key"` / `"oauth_static"` names a credential the
     // user must supply; with none present it is a misconfiguration that must
