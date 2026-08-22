@@ -329,7 +329,7 @@ pub const Options = struct {
     /// is the ask for more, and asking for more and less at once is not a
     /// mistake worth failing an invocation over.
     quiet: bool = false,
-    /// `serve --webui-port <port>` (and the older `--port`, still accepted).
+    /// `serve --webui-port <port>`.
     /// Named for the surface it serves rather than for the process, leaving
     /// room for a second surface to get its own port without either name
     /// becoming ambiguous.
@@ -338,9 +338,6 @@ pub const Options = struct {
     /// config table and `CLANKER_WEBUI_PORT` still have a say; the effective
     /// default is `default_webui_port`, applied in `resolveListen`.
     webui_port: ?u16 = null,
-    /// Set when the operator used the deprecated `--port` spelling instead of
-    /// `--webui-port`, so `cmdServe` can emit the policy-mandated warning.
-    webui_port_deprecated_alias: bool = false,
     /// `serve --host <addr>`: the interface to bind to. Deliberately not
     /// per-surface: the process binds one address, and a second surface would
     /// add a port next to `webui_port` rather than a host next to this.
@@ -809,18 +806,6 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     setDiag(diag, v);
                     return error.BadPort;
                 };
-                used = .webui_port;
-            } else if (std.mem.eql(u8, a, "--port")) {
-                // `--port` is the original spelling, kept working so existing
-                // service files and scripts do not break. `--webui-port` is
-                // the documented one: it names the surface, so a second
-                // listener added later is --proxy-port rather than a rename.
-                const v = try takeValue(args, &idx, inline_value, a, diag);
-                opts.webui_port = std.fmt.parseInt(u16, v, 10) catch {
-                    setDiag(diag, v);
-                    return error.BadPort;
-                };
-                opts.webui_port_deprecated_alias = true;
                 used = .webui_port;
             } else if (std.mem.eql(u8, a, "--proxy-port")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
@@ -1736,7 +1721,7 @@ pub fn suggestFlag(input: []const u8) ?[]const u8 {
     return best;
 }
 
-const extra_flag_spellings = [_][]const u8{ "--help", "--version", "--no-worktree", "--port", "--no-proxy" };
+const extra_flag_spellings = [_][]const u8{ "--help", "--version", "--no-worktree", "--no-proxy" };
 
 fn primaryFlagName(f: Flag) []const u8 {
     const n = f.name();
@@ -2128,7 +2113,6 @@ fn flagForHelp(arg: []const u8, command: Command) ?Flag {
     if (std.mem.eql(u8, arg, "-m")) return .model;
     if (std.mem.eql(u8, arg, "-c")) return .continue_last;
     if (std.mem.eql(u8, arg, "-wt") or std.mem.eql(u8, arg, "--no-worktree")) return .worktree;
-    if (std.mem.eql(u8, arg, "--port")) return .webui_port;
     if (std.mem.eql(u8, arg, "--no-proxy")) return .proxy;
     return null;
 }
@@ -2175,7 +2159,7 @@ const specs = [_]Spec{
     .{ .command = .autoresearch, .usage = "autoresearch [--target <file>] [--harness \"<cmd>\"]", .blurb = "measurement-driven research loop", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run, .research_target, .research_harness, .research_metric, .research_direction, .research_pattern, .research_budget }, .detail = "--target <file>    file the agent may edit (repeatable, comma-separated)\n--harness \"<cmd>\"  shell command whose output contains the metric\n--metric <name>    metric key (default: score)\n--direction min|max whether lower or higher is better (default: min)\n--pattern <sub>    substring before the number to extract\n--budget <sec>     per-experiment wall seconds (default 300)\n--iters <n>        max experiments (default 3)\n--dry-run          validate without running the agent\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>" },
     .{ .command = .arena, .usage = "arena \"<question>\" --for X --against Y", .blurb = "judged debate between two positions, or a battle royale", .group = .work, .flags = &.{ .provider, .arena_for, .arena_against, .arena_for_provider, .arena_against_provider, .arena_position, .arena_defend, .arena_alternative, .arena_rounds, .arena_judge, .arena_judge_provider, .arena_match }, .detail = "Combatants argue opposing stances, each seeing every prior move, until a\nverdict. Use it to compare designs before any is built; use `eval` when the\nquestion has a measurable answer instead.\n\n--for \"<stance>\"        the position the first combatant defends\n--against \"<stance>\"    the opposing position; must differ from --for\n--for-provider <p>      who argues \"for\" (default: --provider, then config)\n--against-provider <p>  who argues \"against\" (two different providers is the\n                        interesting case, but one on both sides is allowed)\n--position \"<stance>\"   repeat 3-8 times for a battle royale, instead of\n                        --for/--against: every combatant argues against all the\n                        others, each attack names a target, a combatant can only\n                        block the one attack it names, and running out of HP\n                        eliminates it without ending the match\n--rounds <n>            round cap (tool default 4, clamped to 12)\n--judge self|third      self: each side reports how much the other landed,\n                        cheap and gameable. third: a provider that is not\n                        fighting scores every move (one extra call per move)\n--judge-provider <p>    who judges; must not be a combatant\n--defend <text|file>    design review: the implementation or wording to defend.\n                        A path is read in; the path travels with it so the\n                        verdict names a file\n--alternative <text|file> the alternative to attack it from. Derives both\n                        positions, so it replaces --for/--against\n--match <id>            print a stored match instead of running one\n\nEach round is one model call per surviving combatant, so an 8-way match costs\n4x a pairwise one per round. Matches land in state/arena/<id>.json; `arena`\nwith no arguments is not a listing; use the arena tool from a run, or read\nstate/arena/log.jsonl." },
     .{ .command = .compare, .usage = "compare \"<prompt>\" [--with <provider[@model]>]...", .blurb = "one prompt to several models at once, answers shown unlabeled", .group = .work, .flags = &.{ .compare_with, .compare_judge, .compare_show, .compare_pick, .compare_synthesize, .compare_reveal }, .detail = "Every model gets the same prompt, the calls run side by side, and the answers\ncome back as A, B, C with nothing saying which model wrote which. Use it to\ndecide where to route a class of work; use `providers check` for connectivity\nand latency, which says nothing about answer quality, and `arena` when you want\nthe models to argue with each other rather than answer independently.\n\n--with <provider>          add a model on its provider's configured model\n--with <provider@model>    add a specific model, so two models of one provider\n                           is expressible. Repeat 2-8 times; with no --with at\n                           all, every configured provider enters\n--judge <provider>         who scores the answers. Default \"auto\": the\n                           configured default provider, with a caveat on the\n                           verdict when it is itself an entrant, since it may\n                           recognise its own answer. \"none\" leaves the pick to\n                           you\n--synthesize               also merge the answers into one, as an extra call\n--reveal                   print the label-to-model key even with no verdict\n--show <id>                print a stored comparison instead of running one\n--pick <letter>            with --show, record that answer as your pick\n\nThe display order comes from the comparison id, not the order you typed the\nmodels in, and each model's own names are struck out of its own answer, so\nnothing before the reveal says who wrote what. Comparisons land in\nstate/compare/<id>.json; `compare --show` with no id is not a listing, use the\ncompare tool from a run or read state/compare/log.jsonl." },
-    .{ .command = .serve, .usage = "serve [options]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as, .proxy, .proxy_port }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n                       Also accepted as --port, the original spelling.\n--proxy                mount an OpenAI/Anthropic compatibility proxy at\n                       /proxy/v1 on this socket. Off by default. --no-proxy\n                       forces it off even if the file enabled it.\n--proxy-port <port>    optional dedicated proxy listener. When it differs\n                       from --webui-port, /v1 lives at the root on that port\n                       and /api/* is not mounted there.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name. The optional second\nlistener is --proxy-port, not a rename of --webui-port.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as, proxy, proxy_port\n  CLANKER_HOST, CLANKER_WEBUI_PORT, CLANKER_PROXY_PORT\n  --host, --webui-port, --serve-as, --proxy, --no-proxy, --proxy-port\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Without --proxy the process still opens exactly\none socket. --proxy keeps that true and mounts /proxy/v1 on it. A distinct\n--proxy-port is the only way a second socket is opened. Configured\n[[peers]] are outbound URLs this process connects to, never anything it\nlistens on." },
+    .{ .command = .serve, .usage = "serve [options]", .blurb = "HTTP API + web UI", .group = .work, .flags = &.{ .webui_port, .host, .serve_as, .proxy, .proxy_port }, .detail = "Binds 127.0.0.1 (loopback) by default.\n\n--host <addr>          interface to bind. Default 127.0.0.1; use 0.0.0.0 (or\n                       ::) to reach the web UI and HTTP API from the LAN.\n                       Binding broadly exposes whatever the server can do\n                       (tool calls, write confirmations) to anyone who can\n                       reach the port, so pair it with a firewall.\n--serve-as <name>      a hostname this server may present itself as, so a\n                       reverse proxy or tailnet name is served. Repeatable.\n--webui-port <port>    port the web UI and its API answer on (default 17921).\n--proxy                mount an OpenAI/Anthropic compatibility proxy at\n                       /proxy/v1 on this socket. Off by default. --no-proxy\n                       forces it off even if the file enabled it.\n--proxy-port <port>    optional dedicated proxy listener. When it differs\n                       from --webui-port, /v1 lives at the root on that port\n                       and /api/* is not mounted there.\n\nOne interface, named ports: --host is the address the process binds, and\neach surface gets its own port under its own name. The optional second\nlistener is --proxy-port, not a rename of --webui-port.\n\nWhatever it binds to, a request is served only when its Host header names\nthis listener. An IP literal at this port always passes, so --host 0.0.0.0\nis reachable from the LAN by IP with nothing else set. A hostname is not:\nDNS rebinding needs a name whose resolution an attacker controls, and an IP\nliteral cannot be rebound. Only localhost and the names listed by\n--serve-as pass, so a reverse proxy or a tailnet name has to be named:\n--serve-as clanker.lan.\n\nThe listener can also be set without flags, for a service file or a\ncontainer that cannot pass them. Three layers, weakest first:\n\n  [serve] in config.toml       host, webui_port, serve_as, proxy, proxy_port\n  CLANKER_HOST, CLANKER_WEBUI_PORT, CLANKER_PROXY_PORT\n  --host, --webui-port, --serve-as, --proxy, --no-proxy, --proxy-port\n\nEach overrides the one above it, so a flag always wins over the env, which\nalways wins over the file. Without --proxy the process still opens exactly\none socket. --proxy keeps that true and mounts /proxy/v1 on it. A distinct\n--proxy-port is the only way a second socket is opened. Configured\n[[peers]] are outbound URLs this process connects to, never anything it\nlistens on." },
     .{ .command = .mcp, .usage = "mcp", .blurb = "serve tools over MCP (stdio)", .group = .work },
     .{ .command = .acp, .usage = "acp", .blurb = "serve clanker as an ACP coding agent (stdio)", .group = .work },
 
@@ -7505,9 +7489,6 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // decide what gets bound, and the env and the flags override it in turn.
     const listen = resolveListen(&cfg, init.environ_map, opts);
     const port = listen.port;
-    if (opts.webui_port_deprecated_alias) {
-        log.log(.warn, "serve --port is deprecated; use --webui-port instead", .{});
-    }
 
     const addr = try parseBindAddr(listen.host, port);
     // reuse_address lets a restarted `clanker serve` rebind immediately even
@@ -10864,7 +10845,12 @@ fn compactSession(
     var first: usize = 0;
     // Never touch the last two messages: that is the most recent exchange.
     const floor = if (s.messages.len > 2) s.messages.len - 2 else 0;
-    while (first < floor and transcriptBytes(s.messages[first..]) > target) : (first += 1) {}
+    // Running total: re-summing the remaining slice per drop made the trim
+    // quadratic in message count.
+    var total = transcriptBytes(s.messages);
+    while (first < floor and total > target) : (first += 1) {
+        total -= transcriptBytes(s.messages[first .. first + 1]);
+    }
     // A tool result whose call was just dropped is orphaned; drop it too.
     while (first < floor and s.messages[first].tool_call_id != null) : (first += 1) {}
     if (first > 0) {
@@ -16934,7 +16920,7 @@ test "flags take their value in either form" {
     // An empty value is missing, not empty.
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "serve", "--webui-port=" }, null));
 
-    // --host/--port are null when absent rather than pre-filled with the
+    // --host/--webui-port are null when absent rather than pre-filled with the
     // default, because `resolveListen` has to be able to tell "the operator
     // asked for loopback" apart from "nobody said", the second of which lets
     // the [serve] table and CLANKER_HOST answer instead.
@@ -17034,28 +17020,6 @@ test "an oversized usage message is truncated, never blanked" {
         "error: unrecognized argument '--wroktree'\n",
         renderUsageError(&buf, "unrecognized argument '{s}'", .{"--wroktree"}),
     );
-}
-
-test "--port still works as an alias for --webui-port" {
-    // The flag was renamed to name its surface, so a later API port reads as
-    // a peer of it. Existing service files and scripts say --port, and a
-    // rename that turned those into `error.UnknownArg` at startup would be a
-    // silent outage for anyone who upgraded without reading the changelog.
-    const aliased = try parse(&.{ "clanker", "serve", "--port", "9099" }, null);
-    try std.testing.expectEqual(@as(u16, 9099), aliased.webui_port.?);
-    try std.testing.expect(aliased.webui_port_deprecated_alias);
-    const inline_form = try parse(&.{ "clanker", "serve", "--port=9099" }, null);
-    try std.testing.expectEqual(@as(u16, 9099), inline_form.webui_port.?);
-    try std.testing.expect(inline_form.webui_port_deprecated_alias);
-    const canonical = try parse(&.{ "clanker", "serve", "--webui-port", "9099" }, null);
-    try std.testing.expect(!canonical.webui_port_deprecated_alias);
-
-    // Both spellings land on the same Flag, so the alias is accepted on serve
-    // and refused everywhere the real flag is refused, with no second entry
-    // in the help table.
-    var diag: []const u8 = "";
-    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--port", "1" }, &diag));
-    try std.testing.expectEqualStrings("--webui-port", diag);
 }
 
 test "parseWithCommand resolves the real command when a global flag precedes it" {
@@ -17521,7 +17485,6 @@ test "every registered option routes a following help flag to itself" {
         .{ "-c", .continue_last },
         .{ "-wt", .worktree },
         .{ "--no-worktree", .worktree },
-        .{ "--port", .webui_port },
         .{ "--no-proxy", .proxy },
     };
     for (aliases) |alias| {

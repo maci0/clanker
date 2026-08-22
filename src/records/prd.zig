@@ -75,10 +75,7 @@ fn list(io: std.Io, arena: std.mem.Allocator, tool: Tool) !void {
 }
 
 fn search(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    const query = opts.arg1 orelse {
-        common.usageError("prd search needs a query: clanker prd search \"kanban board\"", .{});
-        return Error.MissingArg;
-    };
+    const query = try common.requireQuery("prd", opts.arg1);
 
     const input = try common.request(arena, &.{
         .{ .name = "action", .value = .{ .text = "search" } },

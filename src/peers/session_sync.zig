@@ -304,10 +304,19 @@ pub fn pullTranscript(
     store.conn.exec("DELETE FROM messages;") catch return;
     var ins = store.conn.prepare("INSERT INTO messages (role, content) VALUES (?1, ?2);") catch return;
     defer ins.finalize();
+    var stored_bytes: usize = 0;
     for (parsed.messages) |m| {
         ins.reset();
         ins.bindText(1, m.role) catch continue;
         ins.bindText(2, m.content) catch continue;
         _ = ins.step() catch continue;
+        stored_bytes += m.content.len;
     }
+    // Keep the listing's cached counts beside the rows they describe, the
+    // same invariant saveSession maintains; a stale figure here would make
+    // every later listing scan this transcript instead of trusting meta.
+    var nbuf: [24]u8 = undefined;
+    store.setMeta("message_count", std.fmt.bufPrint(&nbuf, "{d}", .{parsed.messages.len}) catch return) catch {};
+    var bbuf: [24]u8 = undefined;
+    store.setMeta("message_bytes", std.fmt.bufPrint(&bbuf, "{d}", .{stored_bytes}) catch return) catch {};
 }

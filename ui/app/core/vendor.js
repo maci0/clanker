@@ -95,16 +95,3 @@ export function copyText(text, btn, restoreLabel, selectTarget) {
     restore();
   }, selectInstead);
 }
-
-
-// Backward-compat: app.js classic script expects globals; keep duplicated there
-// for now — mirror so future modules can import while app.js still works.
-if (typeof window !== "undefined") {
-  window.readJson = window.readJson || readJson;
-  window.copyText = window.copyText || copyText;
-  window.loadVendor = window.loadVendor || loadVendor;
-  window.loadD3 = window.loadD3 || loadD3;
-  window.loadHljs = window.loadHljs || loadHljs;
-  window.registerToml = window.registerToml || registerToml;
-  window.vendorLoads = window.vendorLoads || vendorLoads;
-}

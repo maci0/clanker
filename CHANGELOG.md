@@ -5,6 +5,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Removed the deprecated `serve --port` alias; use `--webui-port`.
+
 ### Fixed
 
 - `preset.toml` files are parsed by the same TOML parser as `config.toml`
@@ -47,6 +51,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   provider's answer open so the steer lands while the run is provably alive.
 
 ### Added
+
+- A bundled `Ponytail` skill brings the minimal-code ladder and its review,
+  audit, debt, gain, and help commands into clanker's native skill system.
 
 - The Web UI Models page now has an enable checkbox for every configured
   model. Disabled models keep their full configuration in `config.local.toml`

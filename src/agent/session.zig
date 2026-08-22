@@ -205,16 +205,28 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         \\VALUES (?1, ?2, ?3, ?4, ?5, ?6);
     );
     defer ins.finalize();
+    var stored_bytes: usize = 0;
     for (session.messages) |m| {
         ins.reset();
+        const content = try utf8.sanitize(arena, m.content orelse "");
         try ins.bindText(1, m.role.asStr());
-        try ins.bindText(2, try utf8.sanitize(arena, m.content orelse ""));
+        try ins.bindText(2, content);
         try ins.bindText(3, try encodeImages(arena, m.images));
         try ins.bindText(4, try encodeToolCalls(arena, m.tool_calls));
         try ins.bindText(5, try utf8.sanitize(arena, m.tool_call_id orelse ""));
         try ins.bindInt(6, if (m.steered) 1 else 0);
         _ = try ins.step();
+        // The listing's per-session byte total (LENGTH of the stored
+        // content), computed from what is actually bound so the cached
+        // figure stays exact even when sanitization shrinks a message.
+        stored_bytes += content.len;
     }
+    // The listing reads these instead of scanning every message row
+    // (`SELECT COUNT(*), SUM(LENGTH(content))` over a multi-MB transcript on
+    // every picker open). Same transaction as the rows, so they can never
+    // disagree with what was just written.
+    try metaSet(&conn, "message_count", try std.fmt.bufPrint(&buf, "{d}", .{session.messages.len}));
+    try metaSet(&conn, "message_bytes", try std.fmt.bufPrint(&buf, "{d}", .{stored_bytes}));
     try tx.commit();
     // Cross-session full-text index (fail-open: a missing index only costs
     // the next search its speedup).
@@ -641,7 +653,15 @@ fn sessionMetaFromDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []c
 
     var count: i64 = 0;
     var bytes: i64 = 0;
-    {
+    // `saveSession` stamps the counts beside the rows it writes; reading
+    // them is O(1) where the aggregate below re-reads every message body.
+    // Databases written before the keys existed fall back to the scan.
+    const cached_count = metaGet(&conn, arena, "message_count");
+    const cached_bytes = metaGet(&conn, arena, "message_bytes");
+    if (cached_count != null and cached_bytes != null) {
+        count = std.fmt.parseInt(i64, cached_count.?, 10) catch 0;
+        bytes = std.fmt.parseInt(i64, cached_bytes.?, 10) catch 0;
+    } else {
         var c = conn.prepare("SELECT COUNT(*), COALESCE(SUM(LENGTH(COALESCE(content, ''))), 0) FROM messages;") catch null;
         if (c) |*stmt| {
             defer stmt.finalize();
@@ -809,20 +829,21 @@ pub fn searchSessions(
     // exactly for the turn/role/snippet the caller expects. No index ->
     // full linear scan.
     const fts_ids = session_fts.candidates(io, gpa, arena, query);
+    // Membership test per session against the candidate list; a hash set
+    // keeps this O(1) instead of rescanning the list per session.
+    var indexed: ?std.StringHashMap(void) = null;
+    if (fts_ids) |ids| {
+        var set: std.StringHashMap(void) = .init(arena);
+        for (ids) |cid| try set.put(cid, {});
+        indexed = set;
+    }
     for (metas) |meta| {
         if (out.items.len >= max_hits) break;
         // Indexed: only candidate sessions are scanned. No index: every
         // session is scanned (the title is never a pre-filter, a query may
         // match only inside messages).
-        if (fts_ids) |ids| {
-            var in_index = false;
-            for (ids) |cid| {
-                if (std.mem.eql(u8, cid, meta.id)) {
-                    in_index = true;
-                    break;
-                }
-            }
-            if (!in_index) continue;
+        if (indexed) |*set| {
+            if (!set.contains(meta.id)) continue;
         }
         var conn = openDb(arena, sessions_dir, meta.id) catch continue;
         defer conn.close();
@@ -1148,6 +1169,52 @@ test "a session written before the steered column still opens and saves" {
     });
     const after = try loadSession(io, std.testing.allocator, arena, dir, "legacy");
     try std.testing.expect(after.messages[1].steered);
+}
+
+test "listing reads counts stamped at save and scans a database without them" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const messages = [_]types.Message{
+        .{ .role = .user, .content = "hello" },
+        .{ .role = .assistant, .content = "hi there" },
+    };
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "counted",
+        .title = "counted",
+        .messages = &messages,
+        .created = 1,
+        .updated = 2,
+    });
+    // The stamped figures match what the aggregate scan used to compute:
+    // two messages, 5 + 8 content bytes.
+    const stamped = try listSessions(io, arena, dir);
+    try std.testing.expectEqual(@as(usize, 1), stamped.len);
+    try std.testing.expectEqual(@as(usize, 2), stamped[0].messages);
+    try std.testing.expectEqual(@as(usize, 13), stamped[0].bytes);
+
+    // A database whose meta predates the cached keys (written by an older
+    // build or a foreign writer) still lists correctly via the scan.
+    {
+        var conn = try openDb(arena, dir, "uncounted");
+        defer conn.close();
+        try metaSet(&conn, "title", "uncounted");
+        var ins = try conn.prepare("INSERT INTO messages (role, content) VALUES ('user', 'legacy body');");
+        defer ins.finalize();
+        _ = try ins.step();
+        try conn.exec("DELETE FROM meta WHERE key IN ('message_count','message_bytes');");
+    }
+    const both = try listSessions(io, arena, dir);
+    try std.testing.expectEqual(@as(usize, 2), both.len);
+    for (both) |meta| {
+        if (std.mem.eql(u8, meta.id, "uncounted")) {
+            try std.testing.expectEqual(@as(usize, 1), meta.messages);
+            try std.testing.expectEqual(@as(usize, 11), meta.bytes);
+        }
+    }
 }
 
 test "the events table is append-only: UPDATE and DELETE are refused" {

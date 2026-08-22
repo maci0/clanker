@@ -6991,23 +6991,38 @@ fn scrollPage(avail_rows: u16) usize {
 /// transcript could overflow the screen in rows while the guards saw it
 /// fitting in lines and refused to scroll at all — with the anchor floor
 /// stranded mid-fold when they did.
+/// The fold whose region contains `line_idx`, or null.
+///
+/// Same invariant as `foldIndexAtStart`: `folds` is sorted ascending by
+/// `start`, so the containing fold is the last one starting at or before
+/// `line_idx` — a binary search, not a scan of every fold per line.
+fn foldContainingAt(folds: []const Fold, line_idx: usize) ?Fold {
+    var lo: usize = 0;
+    var hi: usize = folds.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (folds[mid].start <= line_idx) lo = mid + 1 else hi = mid;
+    }
+    if (lo == 0) return null;
+    const f = folds[lo - 1];
+    if (line_idx < f.start + f.count) return f;
+    return null;
+}
+
 fn topWindowEnd(lines: []const Line, folds: []const Fold, avail_rows: u16, width: u16) usize {
     var rows: usize = 0;
     var i: usize = 0;
     while (i < lines.len) {
         var line_rows: usize = lineRows(lines[i].text, width);
         var next: usize = i + 1;
-        for (folds) |f| {
-            if (i >= f.start and i < f.start + f.count) {
-                const shown = foldShownLines(f);
-                if (shown >= f.count) {
-                    if (i == f.start) line_rows += 1;
-                } else {
-                    line_rows = 1;
-                    for (lines[f.start .. f.start + shown]) |l| line_rows += lineRows(l.text, width);
-                    next = f.start + f.count;
-                }
-                break;
+        if (foldContainingAt(folds, i)) |f| {
+            const shown = foldShownLines(f);
+            if (shown >= f.count) {
+                if (i == f.start) line_rows += 1;
+            } else {
+                line_rows = 1;
+                for (lines[f.start .. f.start + shown]) |l| line_rows += lineRows(l.text, width);
+                next = f.start + f.count;
             }
         }
         if (rows + line_rows > avail_rows) return @max(1, i);
@@ -7223,6 +7238,29 @@ test "inline markdown splits into styled segments and leaves plain text whole" {
     var nest: std.ArrayList(vaxis.Segment) = .empty;
     try mdLineSegments(&theme, arena, "  - nested", &nest);
     try std.testing.expectEqualStrings("• ", nest.items[1].text);
+}
+
+test "foldContainingAt agrees with a linear scan over sorted folds" {
+    // The binary search replaced a per-line linear scan in the draw path;
+    // this pins the two answers together over gaps, adjacency, and the
+    // line just past a fold's end.
+    const folds = [_]Fold{
+        .{ .start = 0, .count = 3, .expanded = false, .anim = 0 },
+        .{ .start = 5, .count = 2, .expanded = true, .anim = 1 },
+        .{ .start = 9, .count = 4, .expanded = false, .anim = 0.5 },
+    };
+    var line: usize = 0;
+    while (line <= 14) : (line += 1) {
+        var expected: ?Fold = null;
+        for (folds) |f| {
+            if (line >= f.start and line < f.start + f.count) {
+                expected = f;
+                break;
+            }
+        }
+        try std.testing.expectEqual(expected, foldContainingAt(&folds, line));
+    }
+    try std.testing.expectEqual(@as(?Fold, null), foldContainingAt(&folds, 100));
 }
 
 test "a collapsed fold reserves exactly the rows the draw loop will use" {

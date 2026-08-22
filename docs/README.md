@@ -1533,7 +1533,7 @@ A `CLANKER_WEBUI_PORT` or `CLANKER_PROXY_PORT` that is not a 16-bit number
 (or is `0`) warns and is ignored, leaving the layer below it in force, rather
 than refusing to start.
 
-Ports are named per surface. `--host` is deliberately *not*: the process binds one address, so a second surface split out later (an API port separate from the web UI) would add its own port next to `webui_port` rather than its own host. `--port` remains accepted as an alias for `--webui-port` so existing service files keep working.
+Ports are named per surface. `--host` is deliberately *not*: the process binds one address, so a second surface split out later (an API port separate from the web UI) would add its own port next to `webui_port` rather than its own host.
 
 ### `POST /api/run`
 

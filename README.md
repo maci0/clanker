@@ -190,7 +190,6 @@ and `--webui-port` to change them), then open the URL it prints
 `--host` is the interface the process binds; `--webui-port` is the port the
 web UI and its same-origin API answer on. Ports are named per surface so that
 a surface added later gets its own name rather than a rename of this one.
-`--port` is still accepted as an alias for `--webui-port`.
 
 `--host 0.0.0.0` makes it reachable from the LAN by IP. There is no
 authentication, so anyone who can reach the port gets full agent and tool
