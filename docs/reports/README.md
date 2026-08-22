@@ -80,15 +80,17 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [loadSessions folds every failure into an empty conversation list](bugs/2026-08-22-webui-loadsessions-swallows-failure.md) — Open
+- [A hand-made git worktree loses config.local.toml and .env, so clanker verbs fall back to the committed default provider](bugs/2026-08-22-hand-made-worktree-falls-back-to-committed-provider.md) — Open
+
+- [loadSessions folds every failure into an empty conversation list](bugs/2026-08-22-webui-loadsessions-swallows-failure.md) — Resolved
 
 - [webui model and effort choices are stored browser-global, not per chat](bugs/2026-08-22-webui-model-effort-storage-is-global.md) — Open
 
 - [webui handles llm_start stream events the server never emits](bugs/2026-08-22-webui-llm-start-event-never-emitted.md) — Open
 
-- [node --test on ui/app fails in directory mode while every file passes](bugs/2026-08-22-node-test-dir-mode-fails-on-ui-app.md) — Open
+- [node --test on ui/app fails in directory mode while every file passes](bugs/2026-08-22-node-test-dir-mode-fails-on-ui-app.md) — Resolved
 
-- [REPL slash commands typed mid-run are steered, not run](bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md) — Open
+- [REPL slash commands typed mid-run are steered, not run](bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md) — Resolved
 
 - [Post-launch DAP ops block unbounded on a silent adapter](bugs/2026-08-22-dap-post-launch-ops-block-unbounded.md) — Resolved
 
@@ -96,7 +98,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [Non-streaming runs never register a steer slot](bugs/2026-08-22-nonstreaming-runs-unsteerable.md) — Open
 
-- [steerEnqueue delivers to the first matching slot only](bugs/2026-08-22-steer-enqueue-first-match-only.md) — Open
+- [steerEnqueue delivers to the first matching slot only](bugs/2026-08-22-steer-enqueue-first-match-only.md) — Resolved
 
 - [REPL log sink frees the logger's stack buffer on the first [ERROR] record](bugs/2026-08-22-repl-log-sink-frees-the-loggers-stack-buffer.md) — Resolved
 
@@ -237,6 +239,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [REPL UI thread and run worker allocate from one unlocked ArenaAllocator](investigations/2026-08-22-repl-ui-thread-and-worker-share-one-unlocked-arena.md) — Investigating
+
 - [Plugin-philosophy alignment gap analysis](investigations/2026-08-20-plugin-philosophy-alignment.md) — Resolved
 
 - [zig build test crashed once with an ISCONN panic in the peers connect path](investigations/2026-08-19-peers-connect-isconn-panic.md) — Closed

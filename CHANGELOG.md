@@ -7,6 +7,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker gate` runs a `js-suite-coverage` gate: every `ui/**/*.test.mjs`
+  on disk is registered in `build.zig` as a `node --test` step. The web UI
+  suites are named there one by one — node has no working directory mode
+  (`node --test ui/app/` resolves the positional as a module path and fails
+  on the directory itself) — so a suite nobody adds a line for is never run,
+  and a green `zig build test` cannot show it. Sweeping the suites by hand
+  is `node --test 'ui/**/*.test.mjs'`.
+
 - The web UI composer's Advanced fold gains a per-chat reasoning-effort
   select (`none`/`low`/`medium`/`high`/`max`, default leaves the
   classifier, per-model setting and sampling profile in charge). It rides
@@ -43,6 +51,34 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   already did.
 
 ### Fixed
+
+- `POST /api/steer` reaches every run the keys it names address, not the
+  first slot found: two concurrent runs registered under one goal id — a
+  goal resumed at serve startup while a browser streams the same goal —
+  left one of them silently unsteerable behind a 200. A body naming both
+  `goal` and `session` is now an AND, so a pair belonging to no single run
+  addresses nothing instead of steering whichever run matched one half,
+  and a body naming neither key cannot broadcast. The success body carries
+  how many runs took the message: `{"ok":true,"delivered":N}`.
+
+- REPL slash commands and `!` shell escapes typed while a turn streams are
+  no longer queued as steering text. `/help` and `/quit` run at once (the
+  exit path stops and joins the in-flight worker); every other command
+  is answered with a notice that it runs once the turn is idle (Ctrl+C
+  stops it) and the line is repeated so it can be re-sent; a typo'd
+  `/command` gets the same unknown-command diagnostic as at the idle
+  prompt. Before, the model read `/help` as a course correction and the
+  user got no command.
+
+- The web UI conversation rail states a failed load instead of showing the
+  empty state. `loadSessions()` caught every fetch and JSON failure and
+  rendered an empty list, so a stopped server, an auth failure and a
+  genuinely empty history were indistinguishable. The rail now shows
+  "Could not load conversations: <reason>" with a Try again button, and
+  says so in the live region too; `modules.sessions = false` is reported
+  separately as a switched-off module, with no retry, because retrying it
+  answers the same thing forever. `readJson` carries the HTTP status onto
+  the error it throws, which is what tells those two apart.
 
 - The web UI chat's Archive, Delete and Rename buttons work again and say
   what they did. Their feedback went only to a visually hidden live region,
