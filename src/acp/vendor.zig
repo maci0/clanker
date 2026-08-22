@@ -24,6 +24,25 @@ pub const Name = enum {
     pub fn cliName(self: Name) []const u8 {
         return @tagName(self);
     }
+
+    /// Provider-table row used by the direct HTTP/API-key path for the same
+    /// vendor. OAuth subscriptions stay in the vendor CLI child; API keys
+    /// stay in clanker's in-process provider client.
+    pub fn apiKeyProvider(self: Name) []const u8 {
+        return switch (self) {
+            .codex => "openai",
+            .grok => "xai",
+            .claude => "anthropic",
+        };
+    }
+
+    pub fn apiKeyEnv(self: Name) []const u8 {
+        return switch (self) {
+            .codex => "OPENAI_API_KEY",
+            .grok => "XAI_API_KEY",
+            .claude => "ANTHROPIC_API_KEY",
+        };
+    }
 };
 
 /// Default ACP spawn argv for this vendor. Grok speaks first-party
@@ -160,4 +179,25 @@ test "installed is PATH presence, not an API key" {
     const grok_bin = try std.fmt.allocPrint(std.testing.allocator, "{s}/grok", .{dir_path});
     defer std.testing.allocator.free(grok_bin);
     try std.testing.expect(installed(io, .claude, "/no/such/path", grok_bin));
+}
+
+test "codex supports oauth backend and api key provider" {
+    try std.testing.expectEqualStrings("codex", Name.codex.cliName());
+    try std.testing.expectEqualStrings("openai", Name.codex.apiKeyProvider());
+    try std.testing.expectEqualStrings("OPENAI_API_KEY", Name.codex.apiKeyEnv());
+    try std.testing.expect(std.mem.find(u8, defaultAcpArgv(.codex)[2], "codex") != null);
+}
+
+test "grok supports oauth backend and api key provider" {
+    try std.testing.expectEqualStrings("grok", Name.grok.cliName());
+    try std.testing.expectEqualStrings("xai", Name.grok.apiKeyProvider());
+    try std.testing.expectEqualStrings("XAI_API_KEY", Name.grok.apiKeyEnv());
+    try std.testing.expectEqualStrings("grok", defaultAcpArgv(.grok)[0]);
+}
+
+test "claude supports oauth backend and api key provider" {
+    try std.testing.expectEqualStrings("claude", Name.claude.cliName());
+    try std.testing.expectEqualStrings("anthropic", Name.claude.apiKeyProvider());
+    try std.testing.expectEqualStrings("ANTHROPIC_API_KEY", Name.claude.apiKeyEnv());
+    try std.testing.expect(std.mem.find(u8, defaultAcpArgv(.claude)[2], "claude") != null);
 }

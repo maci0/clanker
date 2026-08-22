@@ -7,6 +7,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `preset.toml` files are parsed by the same TOML parser as `config.toml`
+  (`util/toml_bridge.zig`) instead of a line-based approximation. The
+  approximation silently read a `tools_allow`/`tools_deny` written across
+  multiple lines as empty, which flipped a preset's access posture (an empty
+  deny list exposes every write-capable tool), truncated strings at the first
+  escaped quote, and mistook any key starting with a known key's name for that
+  key. An array field holding the wrong shape now fails the load loudly rather
+  than reading as empty.
+- `clanker auth login` now streams and flushes its authorization URL and
+  device code before entering the polling loop. It previously buffered all
+  login output until authorization completed, leaving the terminal apparently
+  blank while waiting for a code the operator had never been shown.
+- The shipped Codex OAuth provider now defaults to the subscription-supported
+  `gpt-5.6-sol` SKU instead of the API-only `gpt-5.6` alias, which the Codex
+  backend rejects after an otherwise successful ChatGPT login.
+
 - ACP hang handling actually unblocks a silent child: `ChildTransport.readLine`
   used to wait forever on `readStreaming`, so `timeout_ms` between reads never
   fired and hang → cancel → failed ACP node → headless could not run. A watchdog
@@ -31,6 +47,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   provider's answer open so the steer lands while the run is provably alive.
 
 ### Added
+
+- Native Codex, Grok, and Claude provider plugins now support clanker-owned
+  OAuth alongside their usual API-key environment variables. `clanker auth
+  login|status|logout` runs device authorization for Codex/Grok and PKCE for
+  Claude, stores refreshable tokens as owner-only files under
+  `agent.state_dir/oauth`, rotates refresh tokens in process, and sends model
+  traffic directly through the Responses or Anthropic Messages transports.
+  An available API key wins, making the same provider usable interactively
+  with OAuth and in CI with a key. This path does not use ACP, launch a vendor
+  CLI, or import another application's credentials.
 
 - `--backend` / `[agent] backend` on `run`, `repl`, and `goal` (and the
   same field on `POST /api/run`) drives a local coding-agent CLI — `grok`,

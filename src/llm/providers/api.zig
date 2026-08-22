@@ -39,8 +39,8 @@ pub const RequestParams = struct {
 pub const BuildError = error{OutOfMemory} || std.Io.Writer.Error;
 
 /// How many `extra_headers` slots a provider's `authHeaders` may fill.
-/// Anthropic uses both (an auth header plus `anthropic-version`).
-pub const max_extra_headers = 2;
+/// Codex OAuth uses account, Responses opt-in, and honest client origin.
+pub const max_extra_headers = 3;
 
 pub const ExtraHeaders = [max_extra_headers]std.http.Header;
 

@@ -11,6 +11,7 @@ const std = @import("std");
 const utf8 = @import("../util/utf8.zig");
 const types = @import("types.zig");
 const providers = @import("registry.zig");
+const oauth_plugins = @import("oauth_plugins/registry.zig");
 const auth = @import("auth.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
@@ -148,7 +149,12 @@ pub const Ctx = struct {
 
     /// The slice of this context credential resolution needs.
     fn authEnv(self: *Ctx) auth.Env {
-        return .{ .io = self.io, .gpa = self.gpa, .environ_map = self.environ_map };
+        return .{
+            .io = self.io,
+            .gpa = self.gpa,
+            .environ_map = self.environ_map,
+            .state_dir = if (self.cfg) |cfg| cfg.agent.state_dir else "state",
+        };
     }
 };
 
@@ -274,6 +280,33 @@ fn baseHeaders() std.http.Client.Request.Headers {
     };
 }
 
+fn wireProviderForCredential(provider: *const config.Provider, cred: auth.Credential) !config.Provider {
+    var wire = provider.wireProvider();
+    if (cred.strategy == .oauth_refresh and provider.oauth_plugin.len > 0) {
+        const plugin = oauth_plugins.find(provider.oauth_plugin) orelse return error.UnknownOAuthPlugin;
+        wire.base_url = plugin.api_base_url;
+    }
+    return wire;
+}
+
+test "native OAuth switches to the plugin API while API keys keep their configured API" {
+    const provider = config.Provider{ .name = "codex", .kind = .codex, .base_url = "https://api.openai.com/v1", .default_model = "gpt", .oauth_plugin = "codex" };
+    const keyed = try wireProviderForCredential(&provider, .{ .strategy = .api_key });
+    try std.testing.expectEqualStrings("https://api.openai.com/v1", keyed.base_url);
+    const oauth = try wireProviderForCredential(&provider, .{ .strategy = .oauth_refresh });
+    try std.testing.expectEqualStrings("https://chatgpt.com/backend-api/codex", oauth.base_url);
+}
+
+test "every native OAuth transport routes keys and grants independently" {
+    for (oauth_plugins.plugins) |plugin| {
+        const provider = config.Provider{ .name = plugin.name, .kind = plugin.provider_kind, .base_url = "https://key-api.test/v1", .default_model = "model", .oauth_plugin = plugin.name };
+        const keyed = try wireProviderForCredential(&provider, .{ .strategy = .api_key });
+        try std.testing.expectEqualStrings("https://key-api.test/v1", keyed.base_url);
+        const oauth = try wireProviderForCredential(&provider, .{ .strategy = .oauth_refresh });
+        try std.testing.expectEqualStrings(plugin.api_base_url, oauth.base_url);
+    }
+}
+
 pub fn chat(
     ctx: *Ctx,
     arena: std.mem.Allocator,
@@ -293,7 +326,7 @@ pub fn chat(
     // Endpoint override: a model can point at a different host/path than
     // its provider entry (local vLLM vs the hosted API). URL only — auth
     // and the rest of the request still come from `provider`.
-    const wire = provider.wireProvider();
+    const wire = try wireProviderForCredential(provider, cred);
     const url = try impl.endpointUrl(ctx.gpa, &wire, false);
     defer ctx.gpa.free(url);
 
@@ -1099,7 +1132,7 @@ pub fn chatStream(
     defer ctx.gpa.free(body);
 
     // Same endpoint override as chat(): URL only, auth stays the provider's.
-    const wire = provider.wireProvider();
+    const wire = try wireProviderForCredential(provider, cred);
     const url = try impl.endpointUrl(ctx.gpa, &wire, true);
     defer ctx.gpa.free(url);
 

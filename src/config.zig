@@ -54,6 +54,12 @@ pub const ProviderKind = enum {
     azure_openai,
     /// Google Gemini generateContent (AI Studio).
     gemini,
+    /// OpenAI Responses API through a ChatGPT/Codex OAuth grant or API key.
+    codex,
+    /// xAI Responses API through native OAuth or API key.
+    grok,
+    /// Anthropic Messages API through native Claude OAuth or API key.
+    claude,
 
     pub fn fromStr(s: []const u8) ?ProviderKind {
         return std.meta.stringToEnum(ProviderKind, s);
@@ -221,6 +227,10 @@ pub const Provider = struct {
     /// are not distinguishable by shape, since guessing wrong sends the
     /// secret on the wrong header.
     auth: ?AuthStrategy = null,
+    /// Native OAuth plugin used when `auth = "oauth_refresh"`. The plugin
+    /// supplies public protocol metadata; clanker's native auth core owns the
+    /// browser/device flow, token refresh, and secret store.
+    oauth_plugin: []const u8 = "",
     /// vertex / vertex_anthropic only: the GCP project and region that serve
     /// the model, and an optional service account JSON. When the file is
     /// omitted, minting falls through to gcloud ADC.
@@ -1676,6 +1686,7 @@ pub const Config = struct {
             "location",
             "api_key_env",
             "auth",
+            "oauth_plugin",
             "service_account_file",
             "path",
             "api_version",
@@ -1738,6 +1749,11 @@ pub const Config = struct {
                 log.log(.error_, "provider '{s}': unknown auth \"{s}\" (expected \"api_key\", \"oauth_static\" or \"oauth_refresh\")", .{ name, s });
                 return error.UnknownAuthStrategy;
             };
+        }
+        if (obj.get("oauth_plugin")) |k| {
+            const name_value = try jsonStr(k, "oauth_plugin");
+            if (name_value.len == 0) return error.OAuthPluginEmpty;
+            p.oauth_plugin = name_value;
         }
         if (obj.get("path")) |k| {
             p.path = try jsonStr(k, "path");
@@ -5285,6 +5301,28 @@ test "the auth strategy is optional, parsed by name, and rejected when misspelt"
         error.UnknownAuthStrategy,
         Config.load(io, arena_state.allocator(), tmp.dir, "bad.toml", "missing.toml"),
     );
+}
+
+test "a provider preserves its native OAuth plugin selection beside API-key fallback" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(threaded.io(), .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "openai"
+        \\providers = { openai = { base_url = "https://chatgpt.com/backend-api/codex", api_key_env = "OPENAI_API_KEY", auth = "oauth_refresh", oauth_plugin = "codex" } }
+        \\models = { "openai/gpt" = { provider = "openai" } }
+        ,
+    });
+    var cfg = try Config.load(threaded.io(), arena_state.allocator(), tmp.dir, "config.toml", "missing.toml");
+    const provider = cfg.providers.get("openai").?;
+    try std.testing.expectEqual(AuthStrategy.oauth_refresh, provider.auth.?);
+    try std.testing.expectEqualStrings("codex", provider.oauth_plugin);
+    try std.testing.expectEqualStrings("OPENAI_API_KEY", provider.api_key_env.?);
 }
 
 test "a vertex_anthropic provider missing project/location is rejected at load" {

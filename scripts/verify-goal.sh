@@ -1,15 +1,15 @@
-#!/usr/bin/env bash
-# Verify the goal "Fix the clanker build": `zig build && zig build tools`
-# must both complete with exit code 0 and no compilation errors.
-#
-# Exits 0 only when the criterion is met; any failing build step exits
-# non-zero via `set -e`.
-#
-# Usage: scripts/verify-goal.sh
-set -euo pipefail
+#!/bin/sh
+set -eu
+
 cd "$(dirname "$0")/.."
+export ZIG_GLOBAL_CACHE_DIR="${TMPDIR:-/tmp}/clanker-verify-zig-cache"
 
-zig build
-zig build tools
+# The focused names are also the machine-readable contract for this goal:
+# every vendor must retain its API-key provider path and expose its OAuth
+# subscription path through the native backend driver.
+for vendor in codex grok claude; do
+    rg -q "test \"${vendor} supports oauth backend and api key provider\"" src
+    zig build test -Dtest-filter="${vendor} supports oauth backend and api key provider"
+done
 
-echo "verify-goal: OK — zig build && zig build tools passed"
+zig build test

@@ -1,9 +1,15 @@
 //! Agent presets: preset.toml schema + Registry filter.
 //! One preset.toml per preset under presets/ (plus user-configured roots in future).
 //! Tools filtering reuses the same predicate plan_mode/confirm_writes use for write-capable checks.
+//!
+//! Parsing goes through util/toml_bridge.zig, the same TOML parser config.zig
+//! uses: a preset.toml is operator-authored TOML and gets one parser, not a
+//! second line-based approximation (the approximation silently dropped a
+//! tools_deny written across multiple lines).
 
 const std = @import("std");
 const glob = @import("../util/glob.zig");
+const toml_bridge = @import("../util/toml_bridge.zig");
 
 pub const Preset = struct {
     description: []const u8 = "",
@@ -15,45 +21,40 @@ pub const Preset = struct {
 };
 
 pub fn parseString(alloc: std.mem.Allocator, toml_text: []const u8) !Preset {
-    // Minimal TOML-like parse for the shipped keys: description, system_prompt_append, tools_allow/deny arrays.
-    // Defer full config.toml parser reuse until PRD needs hot-reload or complex quoting.
+    // Leaky: every slice is allocated from `alloc`, which must outlive the
+    // returned Preset. Production callers pass a run/session arena.
+    const value = toml_bridge.parseToJsonValue(alloc, toml_text) catch return error.PresetSyntax;
+    if (value != .object) return error.PresetSyntax;
+    const obj = value.object;
+
     var p = Preset{};
-    var lines = std.mem.splitScalar(u8, toml_text, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (line.len == 0 or line[0] == '#') continue;
-        if (std.mem.startsWith(u8, line, "description")) {
-            if (findQuoted(line)) |q| p.description = try alloc.dupe(u8, q);
-        } else if (std.mem.startsWith(u8, line, "system_prompt_append")) {
-            if (findQuoted(line)) |q| p.system_prompt_append = try alloc.dupe(u8, q);
-        } else if (std.mem.startsWith(u8, line, "tools_allow")) {
-            p.tools_allow = try parseStringArray(alloc, line);
-        } else if (std.mem.startsWith(u8, line, "tools_deny")) {
-            p.tools_deny = try parseStringArray(alloc, line);
-        } else if (std.mem.startsWith(u8, line, "default_provider")) {
-            if (findQuoted(line)) |q| p.default_provider = try alloc.dupe(u8, q);
-        } else if (std.mem.startsWith(u8, line, "default_model")) {
-            if (findQuoted(line)) |q| p.default_model = try alloc.dupe(u8, q);
-        }
-    }
+    p.description = try fieldString(alloc, obj, "description");
+    p.system_prompt_append = try fieldString(alloc, obj, "system_prompt_append");
+    p.default_provider = try fieldString(alloc, obj, "default_provider");
+    p.default_model = try fieldString(alloc, obj, "default_model");
+    p.tools_allow = try fieldStringArray(alloc, obj, "tools_allow");
+    p.tools_deny = try fieldStringArray(alloc, obj, "tools_deny");
     return p;
 }
 
-fn findQuoted(line: []const u8) ?[]const u8 {
-    const a = std.mem.indexOfScalar(u8, line, '"') orelse return null;
-    const b = std.mem.indexOfScalarPos(u8, line, a + 1, '"') orelse return null;
-    return line[a + 1 .. b];
+/// Absent or non-string reads as "", matching how a preset omits a field.
+fn fieldString(alloc: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) ![]const u8 {
+    const v = obj.get(key) orelse return "";
+    if (v != .string) return "";
+    return alloc.dupe(u8, v.string);
 }
 
-fn parseStringArray(alloc: std.mem.Allocator, line: []const u8) ![]const []const u8 {
-    const l = std.mem.indexOfScalar(u8, line, '[') orelse return &.{};
-    const r = std.mem.indexOfScalarPos(u8, line, l, ']') orelse return &.{};
-    const inner = line[l + 1 .. r];
+/// Absent reads as empty; present-but-wrong-shape is refused rather than read
+/// as empty. An allow/deny list that silently vanished flips the preset's
+/// whole access posture (a dropped tools_deny exposes write-capable tools),
+/// so the file fails loudly instead.
+fn fieldStringArray(alloc: std.mem.Allocator, obj: std.json.ObjectMap, key: []const u8) ![]const []const u8 {
+    const v = obj.get(key) orelse return &.{};
+    if (v != .array) return error.PresetSchema;
     var out: std.ArrayList([]const u8) = .empty;
-    var it = std.mem.splitScalar(u8, inner, ',');
-    while (it.next()) |part| {
-        const t = std.mem.trim(u8, part, " \t\"'");
-        if (t.len > 0) try out.append(alloc, try alloc.dupe(u8, t));
+    for (v.array.items) |item| {
+        if (item != .string) return error.PresetSchema;
+        try out.append(alloc, try alloc.dupe(u8, item.string));
     }
     return out.toOwnedSlice(alloc);
 }
@@ -89,23 +90,63 @@ pub fn loadFromFile(io: std.Io, alloc: std.mem.Allocator, dir: std.Io.Dir, prese
 }
 
 test "preset parse + filter" {
-    const alloc = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
     const txt =
         \\description = "Research-only"
         \\tools_allow = []
         \\tools_deny = ["edit_file", "kanban_*"]
     ;
     const p = try parseString(alloc, txt);
-    defer {
-        alloc.free(p.description);
-        for (p.tools_deny) |s| alloc.free(s);
-        alloc.free(p.tools_deny);
-        if (p.tools_allow.len > 0) alloc.free(p.tools_allow);
-    }
     try std.testing.expect(!allowed(p, "edit_file"));
     try std.testing.expect(!allowed(p, "kanban_add"));
     try std.testing.expect(allowed(p, "read_file"));
     try std.testing.expect(allowed(p, "web_search"));
+}
+
+test "preset parse reads real TOML shapes the field-level read used to lose" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    const p = try parseString(alloc,
+        \\# a deny list written across lines, and a trailing comment
+        \\tools_deny = [
+        \\  "exec",
+        \\  "patch_apply", # mutating
+        \\]
+        \\description = "say \"hi\""
+        \\description_extra = "not the description"
+        \\unknown_key = "ignored"
+        \\
+    );
+    // The multi-line deny list is the load-bearing one: the old line-based
+    // reader answered empty here, which exposed every write-capable tool.
+    try std.testing.expectEqual(@as(usize, 2), p.tools_deny.len);
+    try std.testing.expectEqualStrings("exec", p.tools_deny[0]);
+    try std.testing.expectEqualStrings("patch_apply", p.tools_deny[1]);
+    try std.testing.expect(!allowed(p, "exec"));
+    try std.testing.expectEqualStrings("say \"hi\"", p.description);
+    try std.testing.expectEqualStrings("", p.system_prompt_append);
+}
+
+test "preset wrong-shaped fields are refused or defaulted, never silently emptied" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    // A scalar where the array belongs: reading it as an empty allow list
+    // would flip minimal's posture to "everything allowed".
+    try std.testing.expectError(error.PresetSchema, parseString(alloc, "tools_allow = \"read_file\"\n"));
+    try std.testing.expectError(error.PresetSchema, parseString(alloc, "tools_deny = [1]\n"));
+    // Broken TOML fails loudly rather than parsing as an all-allow preset.
+    try std.testing.expectError(error.PresetSyntax, parseString(alloc, "description = \"unterminated\n"));
+
+    // Absent arrays are the legitimate empty case.
+    const p = try parseString(alloc, "description = \"x\"\n");
+    try std.testing.expectEqual(@as(usize, 0), p.tools_allow.len);
+    try std.testing.expectEqual(@as(usize, 0), p.tools_deny.len);
 }
 
 test "preset allowlist" {
@@ -132,8 +173,10 @@ test "preset loadFromFile validates name and missing preset" {
     const io = std.testing.io;
     try std.testing.expectError(error.PresetNameInvalid, loadFromFile(io, std.testing.allocator, tmp.dir, "../evil"));
     try std.testing.expectError(error.PresetNotFound, loadFromFile(io, std.testing.allocator, tmp.dir, "nope"));
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
     try tmp.dir.writeFile(io, .{ .sub_path = "ok.toml", .data = "description = \"hi\"\n" });
-    const p = try loadFromFile(io, std.testing.allocator, tmp.dir, "ok");
-    defer std.testing.allocator.free(p.description);
+    const p = try loadFromFile(io, arena_state.allocator(), tmp.dir, "ok");
     try std.testing.expectEqualStrings("hi", p.description);
 }

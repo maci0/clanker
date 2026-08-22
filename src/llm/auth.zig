@@ -18,6 +18,10 @@
 const std = @import("std");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
+const oauth_plugins = @import("oauth_plugins/registry.zig");
+const oauth_store = @import("oauth_store.zig");
+const oauth_native = @import("oauth_native.zig");
+const file_lock = @import("../util/file_lock.zig");
 
 pub const Strategy = config.AuthStrategy;
 
@@ -28,6 +32,8 @@ pub const Env = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     environ_map: *std.process.Environ.Map,
+    state_dir: []const u8 = "state",
+    state_base: std.Io.Dir = std.Io.Dir.cwd(),
 };
 
 /// How one wire kind acquires its credential. Declared by each provider in
@@ -81,10 +87,13 @@ pub const Credential = struct {
     /// Vertex user ADC needs a billing project on the request
     /// (`x-goog-user-project`). Borrowed from `provider.project`; not owned.
     quota_project: []const u8 = "",
+    /// Provider account selected by the OAuth grant (Codex workspace header).
+    account_id: []const u8 = "",
 
     pub fn deinit(self: Credential, gpa: std.mem.Allocator) void {
         if (self.bearer) |b| gpa.free(b);
         if (self.owns_value) if (self.value) |v| gpa.free(v);
+        if (self.account_id.len > 0) gpa.free(self.account_id);
     }
 };
 
@@ -93,6 +102,11 @@ pub const Credential = struct {
 /// credential is present, then the credential's own shape, then the wire
 /// kind's default.
 pub fn selectStrategy(spec: Spec, provider: *const config.Provider, raw: ?[]const u8) Strategy {
+    if (provider.auth) |explicit| if (explicit == .api_key or explicit == .oauth_static) return explicit;
+    // A native OAuth plugin and an API-key env are deliberately compatible:
+    // an available key wins for CI, while an absent key selects clanker's
+    // stored/refreshable OAuth login for interactive use.
+    if (provider.oauth_plugin.len > 0) return if (raw != null) .api_key else .oauth_refresh;
     if (provider.auth) |explicit| return explicit;
     // An env var still wins over minting: a short-lived token pasted in by
     // hand is the documented way to bypass the service account or ADC.
@@ -122,6 +136,39 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
     const explicit_needs_secret = if (provider.auth) |a| a == .api_key or a == .oauth_static else false;
 
     if (strategy == .oauth_refresh and raw == null) {
+        if (provider.oauth_plugin.len > 0) {
+            const plugin = oauth_plugins.find(provider.oauth_plugin) orelse return error.UnknownOAuthPlugin;
+            var oauth_arena_state = std.heap.ArenaAllocator.init(env.gpa);
+            defer oauth_arena_state.deinit();
+            const oauth_arena = oauth_arena_state.allocator();
+            var record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
+            const now_ms: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(env.io, .real).nanoseconds, std.time.ns_per_ms));
+            if (record.needsRefresh(now_ms, 5 * 60 * 1000)) {
+                // Refresh tokens commonly rotate on use. Serialize across
+                // clanker processes, then reload: another process may have
+                // refreshed while this one waited for the lock.
+                const lock_dir = try std.fmt.allocPrint(oauth_arena, "{s}/oauth", .{env.state_dir});
+                const lock_name = try std.fmt.allocPrint(oauth_arena, "{s}.refresh", .{plugin.name});
+                var guard = file_lock.acquire(env.io, env.state_base, lock_dir, lock_name, env.gpa);
+                defer guard.release();
+                record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
+                if (record.needsRefresh(now_ms, 5 * 60 * 1000)) {
+                    record = try oauth_native.refresh(env.io, env.gpa, oauth_arena, plugin.*, record, now_ms);
+                    try oauth_store.save(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name, record);
+                }
+            }
+            const tok = try env.gpa.dupe(u8, record.access_token);
+            errdefer env.gpa.free(tok);
+            const account_id = if (record.account_id.len > 0) try env.gpa.dupe(u8, record.account_id) else "";
+            errdefer if (account_id.len > 0) env.gpa.free(account_id);
+            return .{
+                .value = tok,
+                .bearer = try std.fmt.allocPrint(env.gpa, "Bearer {s}", .{tok}),
+                .strategy = .oauth_refresh,
+                .owns_value = true,
+                .account_id = account_id,
+            };
+        }
         const mint = spec.mint orelse {
             log.log(.error_, "provider '{s}': auth \"oauth_refresh\" is not supported by kind \"{s}\"", .{
                 provider.name,
@@ -309,4 +356,61 @@ test "an explicit credential strategy with no credential fails loudly" {
     var q = config.Provider{ .name = "y", .base_url = "https://y", .default_model = "m" };
     q.auth = .oauth_static;
     try std.testing.expectError(error.MissingApiKey, resolve(env, .{}, &q));
+}
+
+test "native OAuth plugin uses API key when present and stored OAuth otherwise" {
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("OPENAI_API_KEY", "api-secret");
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var provider = config.Provider{ .name = "codex", .kind = .codex, .base_url = "https://x", .default_model = "m", .oauth_plugin = "codex", .api_key_env = "OPENAI_API_KEY" };
+    const env = Env{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map, .state_base = tmp.dir };
+
+    const keyed = try resolve(env, .{}, &provider);
+    defer keyed.deinit(std.testing.allocator);
+    try std.testing.expectEqual(Strategy.api_key, keyed.strategy);
+    try std.testing.expectEqualStrings("api-secret", keyed.value.?);
+
+    var oauth_env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer oauth_env_map.deinit();
+    try oauth_store.save(threaded.io(), tmp.dir, std.testing.allocator, "state", "codex", .{
+        .access_token = "oauth-secret",
+        .refresh_token = "refresh-secret",
+        .expires_at_ms = 0,
+    });
+    const oauth_env = Env{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &oauth_env_map, .state_base = tmp.dir };
+    const oauth = try resolve(oauth_env, .{}, &provider);
+    defer oauth.deinit(std.testing.allocator);
+    try std.testing.expectEqual(Strategy.oauth_refresh, oauth.strategy);
+    try std.testing.expectEqualStrings("oauth-secret", oauth.value.?);
+    try std.testing.expectEqualStrings("Bearer oauth-secret", oauth.bearer.?);
+}
+
+test "native OAuth plugin without a login fails before provider HTTP" {
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const provider = config.Provider{ .name = "claude", .kind = .claude, .base_url = "https://x", .default_model = "m", .oauth_plugin = "claude" };
+    const env = Env{ .io = threaded.io(), .gpa = std.testing.allocator, .environ_map = &env_map, .state_base = tmp.dir };
+    try std.testing.expectError(error.OAuthLoginRequired, resolve(env, .{}, &provider));
+}
+
+test "Codex Grok and Claude native plugins all retain API-key fallback" {
+    for (oauth_plugins.plugins) |plugin| {
+        const provider = config.Provider{
+            .name = plugin.name,
+            .kind = plugin.provider_kind,
+            .base_url = plugin.api_base_url,
+            .default_model = "model",
+            .oauth_plugin = plugin.name,
+        };
+        try std.testing.expectEqual(Strategy.api_key, selectStrategy(.{}, &provider, "api-key"));
+        try std.testing.expectEqual(Strategy.oauth_refresh, selectStrategy(.{}, &provider, null));
+    }
 }

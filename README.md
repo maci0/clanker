@@ -102,6 +102,19 @@ Set the API key env var for your chosen provider (see [config.toml](config.toml)
 ./zig-out/bin/clanker run "hello"
 ```
 
+Codex, Grok, and Claude can instead use OAuth owned entirely by clanker:
+
+```sh
+./zig-out/bin/clanker auth login codex   # or grok / claude
+./zig-out/bin/clanker auth status
+```
+
+Their native provider plugins store refreshable grants under `state/oauth/`
+with owner-only permissions and call the providers directly. If the matching
+`OPENAI_API_KEY`, `XAI_API_KEY`, or `ANTHROPIC_API_KEY` is set, that API key
+wins for the request; unset it to use the saved OAuth login. This is separate
+from `--backend`: OAuth does not invoke ACP or a vendor CLI.
+
 ## Configuration
 
 clanker loads **[config.toml](config.toml)** (committed example) and merges **`config.local.toml`** on top when present (gitignored, for machine-local overrides). TOML is the only supported config format. API keys are never stored in config: each provider points at an env var via `api_key_env`. Copy **[.env.example](.env.example)** to `.env` and fill in the keys for the providers you use; it is loaded automatically when `modules.dotenv` is enabled.
@@ -109,7 +122,7 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | Key | Purpose |
 |-----|---------|
 | `default_provider` | Name of the active entry under `providers` |
-| `providers` | Map of named backends: `kind`, `base_url`, `api_key_env`, optional `auth`, `default_model` |
+| `providers` | Map of named backends: `kind`, `base_url`, `api_key_env`, optional `auth`, `oauth_plugin`, `default_model` |
 | `models` | Top-level map of `"<provider>/<model>"` → per-model settings (`context_window`, `max_tokens`, `reasoning_effort`, …), each naming its `provider`. Per-model settings on a provider entry, or a `models` table nested inside one, are rejected at load |
 | `agent` | Loop limits, paths, sandbox, compaction, fallback, confirmation, and worktree defaults |
 | `improve` | Self-improvement gates, iteration, context, and cache caps |

@@ -5,7 +5,7 @@ default_provider = "moonshotai"
 # each provider, since most configs never need them.
 #
 #   kind             openai_compat (default) | anthropic | vertex_anthropic
-#                    | vertex | azure_openai | gemini
+#                    | vertex | azure_openai | gemini | codex | grok | claude
 #   base_url         required
 #   api_key_env      name of the env var holding the key, never the key itself
 #   default_model    which [models."<name>/..."] entry is active; with exactly
@@ -22,6 +22,10 @@ default_provider = "moonshotai"
 # # tokens are not distinguishable by shape -- guessing wrong sends the secret
 # # on the wrong header.
 # auth = "api_key"
+# # Attach one of clanker's native OAuth plugins. If the API-key environment
+# # variable is set it wins; otherwise clanker uses and refreshes its own
+# # `clanker auth login <name>` grant.
+# oauth_plugin = "codex"
 #
 # # Endpoint path override. Defaults per kind: /chat/completions for
 # # openai_compat, /v1/messages for anthropic.
@@ -93,6 +97,18 @@ kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 
+[providers.claude]
+kind = "claude"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+oauth_plugin = "claude"
+
+[providers.codex]
+kind = "codex"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+oauth_plugin = "codex"
+
 [providers.deepseek]
 kind = "openai_compat"
 base_url = "https://api.deepseek.com"
@@ -102,6 +118,12 @@ api_key_env = "DEEPSEEK_API_KEY"
 kind = "gemini"
 base_url = "https://generativelanguage.googleapis.com/v1beta"
 api_key_env = "GOOGLE_API_KEY"
+
+[providers.grok]
+kind = "grok"
+base_url = "https://api.x.ai/v1"
+api_key_env = "XAI_API_KEY"
+oauth_plugin = "grok"
 
 [providers.meta]
 kind = "openai_compat"
@@ -164,11 +186,20 @@ base_url = "http://127.0.0.1:8000/v1"
 [models."anthropic/claude-opus-5"]
 provider = "anthropic"
 
+[models."claude/claude-opus-5"]
+provider = "claude"
+
+[models."codex/gpt-5.6-sol"]
+provider = "codex"
+
 [models."deepseek/deepseek-v4-pro"]
 provider = "deepseek"
 
 [models."google/gemini-3.6-flash"]
 provider = "google"
+
+[models."grok/grok-4"]
+provider = "grok"
 
 [models."meta/muse-spark-1.2"]
 provider = "meta"

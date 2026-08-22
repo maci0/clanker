@@ -15,7 +15,9 @@ const log = @import("log.zig");
 /// Total bytes of the regular files under `rel`, following no symlinks.
 /// Missing directory means zero, not an error: there is nothing to cap.
 pub fn dirSize(io: std.Io, base: std.Io.Dir, gpa: std.mem.Allocator, rel: []const u8) u64 {
-    var dir = base.openDir(io, rel, .{ .iterate = true }) catch return 0;
+    // A cache path can be replaced by a symlink between runs. Following it
+    // would measure (and later remove) an unrelated tree outside the checkout.
+    var dir = base.openDir(io, rel, .{ .iterate = true, .follow_symlinks = false }) catch return 0;
     defer dir.close(io);
 
     var total: u64 = 0;
@@ -77,7 +79,10 @@ pub fn isBuildCachePath(rel: []const u8) bool {
 /// other non-directory entries. Callers are responsible for validating that
 /// `rel` is safe to remove: this walks and deletes unconditionally.
 pub fn removeTree(gpa: std.mem.Allocator, io: std.Io, base: std.Io.Dir, rel: []const u8) void {
-    var dir = base.openDir(io, rel, .{ .iterate = true }) catch return;
+    // Keep the same no-follow boundary as dirSize. This also closes the race
+    // where a directory discovered by the iterator is swapped for a symlink
+    // before the recursive open.
+    var dir = base.openDir(io, rel, .{ .iterate = true, .follow_symlinks = false }) catch return;
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
         const sub = std.fmt.allocPrint(gpa, "{s}/{s}", .{ rel, entry.name }) catch continue;
@@ -131,4 +136,21 @@ test "a cache over the limit is dropped, one under it is left alone" {
     try tmp.dir.writeFile(io, .{ .sub_path = "src/main.zig", .data = "0123456789" });
     try std.testing.expect(!capBuildCache(std.testing.allocator, io, tmp.dir, "src", 1));
     try std.testing.expectEqual(@as(u64, 10), dirSize(io, tmp.dir, std.testing.allocator, "src"));
+}
+
+test "cache cap does not follow a symlinked cache root" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "outside");
+    try tmp.dir.writeFile(io, .{ .sub_path = "outside/keep", .data = "0123456789" });
+    try tmp.dir.symLink(io, "outside", ".zig-cache", .{ .is_directory = true });
+
+    try std.testing.expect(!capBuildCache(std.testing.allocator, io, tmp.dir, ".zig-cache", 1));
+    const kept = try tmp.dir.readFileAlloc(io, "outside/keep", std.testing.allocator, .limited(32));
+    defer std.testing.allocator.free(kept);
+    try std.testing.expectEqualStrings("0123456789", kept);
 }

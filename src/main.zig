@@ -113,6 +113,10 @@ comptime {
     _ = @import("llm/providers/azure.zig");
     _ = @import("llm/providers/gemini.zig");
     _ = @import("llm/auth.zig");
+    _ = @import("llm/oauth_store.zig");
+    _ = @import("llm/oauth_native.zig");
+    _ = @import("llm/oauth_command.zig");
+    _ = @import("llm/oauth_plugins/registry.zig");
     _ = @import("llm/client.zig");
     _ = @import("llm/cache_cold.zig");
     _ = @import("sandbox/protocol.zig");
@@ -163,6 +167,7 @@ comptime {
     _ = @import("util/glob.zig");
     _ = @import("util/utf8.zig");
     _ = @import("util/http_client.zig");
+    _ = @import("util/deadline.zig");
     _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("improve/proposal.zig");

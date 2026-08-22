@@ -5,6 +5,7 @@ const std = @import("std");
 const mesh = @import("../peers/mesh.zig");
 const config = @import("../config.zig");
 const log = @import("../util/log.zig");
+const deadline_mod = @import("../util/deadline.zig");
 const json_util = @import("../util/json.zig");
 const live = @import("live.zig");
 
@@ -520,41 +521,17 @@ pub fn start(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, on_c
 /// timeout (~2 minutes on Linux when SYNs are dropped) on the CLI thread.
 const join_wait_ns: i96 = 10 * std.time.ns_per_s;
 
-/// `addr.connect` runs the TCP handshake on the caller's thread, and the
-/// Threaded io has no connect timeout of its own (its `ConnectOptions.timeout`
-/// is an unimplemented stub that panics). An unreachable peer therefore hung
-/// the JOIN on the kernel connect timeout. Run the connect as a concurrent
-/// task and cancel it at the deadline, the same shape as `httpGetDeadline` in
-/// cli.zig: cancel interrupts the blocking syscall and joins the task, and the
-/// connect itself errdefers its socket, so nothing leaks out of the window.
+/// The TCP handshake runs as a concurrent task under the window: the Threaded
+/// io has no connect timeout of its own (its `ConnectOptions.timeout` is an
+/// unimplemented stub that panics), so an unreachable peer hung the JOIN on
+/// the kernel connect timeout. util/deadline.zig owns the wait loop; cancel
+/// interrupts the blocking syscall and joins the task, and the connect itself
+/// errdefers its socket, so nothing leaks out of the window.
 fn connectBounded(io: std.Io, addr: std.Io.net.IpAddress) !std.Io.net.Stream {
-    var done: std.Io.Event = .unset;
-    var fut = io.concurrent(connectTask, .{ io, addr, &done }) catch return error.ConcurrencyUnavailable;
-    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
-        .clock = .awake,
-        .raw = .{ .nanoseconds = join_wait_ns },
-    });
-    while (!done.isSet()) {
-        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
-            // Spurious wakeups report Timeout too, so the deadline decides
-            // whether the budget is really spent, not this return.
-            error.Timeout => {
-                if (done.isSet()) break;
-                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                _ = fut.cancel(io) catch {};
-                return error.Timeout;
-            },
-            error.Canceled => {
-                _ = fut.cancel(io) catch {};
-                return error.Canceled;
-            },
-        };
-    }
-    return fut.await(io);
+    return deadline_mod.runBounded(io, @intCast(@divTrunc(join_wait_ns, std.time.ns_per_ms)), connectTask, .{ io, addr });
 }
 
-fn connectTask(io: std.Io, addr: std.Io.net.IpAddress, done: *std.Io.Event) anyerror!std.Io.net.Stream {
-    defer done.set(io);
+fn connectTask(io: std.Io, addr: std.Io.net.IpAddress) anyerror!std.Io.net.Stream {
     var a = addr;
     return a.connect(io, .{ .mode = .stream });
 }

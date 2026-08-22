@@ -7,6 +7,7 @@
 //! shape as `peers/command.zig:callWithTimeout` and `cli.zig:httpGetDeadline`.
 
 const std = @import("std");
+const deadline = @import("deadline.zig");
 
 pub const version = @import("build_options").version;
 
@@ -21,9 +22,7 @@ fn fetchTask(
     method: std.http.Method,
     payload: []const u8,
     body: *std.Io.Writer.Allocating,
-    done: *std.Io.Event,
 ) anyerror!u16 {
-    defer done.set(io);
     var http: std.http.Client = .{ .allocator = gpa, .io = io };
     defer http.deinit();
     const res = try http.fetch(.{
@@ -54,38 +53,9 @@ pub fn fetchStatus(
     body: ?[]const u8,
     timeout_ms: i64,
 ) !FetchResult {
-    const payload = body orelse "";
-    if (timeout_ms <= 0) {
-        var out: std.Io.Writer.Allocating = .init(gpa);
-        defer out.deinit();
-        var done: std.Io.Event = .unset;
-        const st = try fetchTask(io, gpa, url, method, payload, &out, &done);
-        return .{ .status = st, .body = try arena.dupe(u8, out.written()) };
-    }
-    var done: std.Io.Event = .unset;
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
-    var fut = io.concurrent(fetchTask, .{ io, gpa, url, method, payload, &out, &done }) catch
-        return error.ConcurrencyUnavailable;
-    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
-        .clock = .awake,
-        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
-    });
-    while (!done.isSet()) {
-        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
-            error.Timeout => {
-                if (done.isSet()) break;
-                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                if (fut.cancel(io)) |_| {} else |_| {}
-                return error.Timeout;
-            },
-            error.Canceled => {
-                if (fut.cancel(io)) |_| {} else |_| {}
-                return error.Canceled;
-            },
-        };
-    }
-    const st = try fut.await(io);
+    const st = try deadline.runBounded(io, timeout_ms, fetchTask, .{ io, gpa, url, method, body orelse "", &out });
     return .{ .status = st, .body = try arena.dupe(u8, out.written()) };
 }
 
@@ -117,8 +87,7 @@ fn fetchUnbounded(
 ) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
-    var done: std.Io.Event = .unset;
-    const status_n = try fetchTask(io, gpa, url, method, payload, &out, &done);
+    const status_n = try fetchTask(io, gpa, url, method, payload, &out);
     if (status_n >= 400) return error.HttpStatus;
     return arena.dupe(u8, out.written());
 }

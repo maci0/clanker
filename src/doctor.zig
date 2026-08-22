@@ -19,6 +19,7 @@ const log = @import("util/log.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const llm_registry = @import("llm/registry.zig");
+const oauth_store = @import("llm/oauth_store.zig");
 /// For the one list of paths a linked worktree gets as symlinks back to its
 /// main checkout. Reading the names from the module that creates the links is
 /// what keeps the assertion here from drifting away from the linking there.
@@ -276,13 +277,17 @@ fn runChecks(
         }
         if (p.api_key_env) |env_name| {
             const set = if (environ_map.get(env_name)) |v| v.len > 0 else false;
-            if (set) usable += 1;
+            const oauth_set = if (!set and p.oauth_plugin.len > 0)
+                (try oauth_store.load(io, std.Io.Dir.cwd(), arena, cfg.agent.state_dir, p.oauth_plugin)) != null
+            else
+                false;
+            if (set or oauth_set) usable += 1;
             // The value is never printed: doctor output gets pasted into
             // issues. Only whether the variable holds something.
             rep.line(
-                if (set) .ok else if (is_default) .fail else .warn,
+                if (set or oauth_set) .ok else if (is_default) .fail else .warn,
                 label,
-                if (set) env_name else try std.fmt.allocPrint(arena, "{s} is not set", .{env_name}),
+                if (set) env_name else if (oauth_set) "OAuth login" else try std.fmt.allocPrint(arena, "{s} is not set; OAuth is logged out", .{env_name}),
             );
         } else if (llm_registry.forKind(p.kind).auth.file_credential) {
             // The path is not printed: it is usually under a home directory
@@ -492,6 +497,8 @@ fn wouldWork(io: std.Io, environ_map: *std.process.Environ.Map, cfg: *const conf
             if (environ_map.get(env_name)) |v| {
                 if (v.len > 0) return try arena.dupe(u8, p.name);
             }
+            if (p.oauth_plugin.len > 0 and (try oauth_store.load(io, std.Io.Dir.cwd(), arena, cfg.agent.state_dir, p.oauth_plugin)) != null)
+                return try arena.dupe(u8, p.name);
         } else if (llm_registry.forKind(p.kind).auth.file_credential) {
             if (vertex_token.resolveCredentialsPath(arena, p.service_account_file, environ_map)) |path| {
                 if (fileExists(io, path)) return try arena.dupe(u8, p.name);
@@ -539,7 +546,9 @@ pub fn cmdSetup(init: std.process.Init) !void {
     const active_ok = blk: {
         const p = cfg.provider(active) catch break :blk false;
         if (p.api_key_env) |env_name| {
-            break :blk if (init.environ_map.get(env_name)) |v| v.len > 0 else false;
+            if (init.environ_map.get(env_name)) |v| if (v.len > 0) break :blk true;
+            if (p.oauth_plugin.len > 0 and (try oauth_store.load(io, dir, arena, cfg.agent.state_dir, p.oauth_plugin)) != null) break :blk true;
+            break :blk false;
         }
         if (llm_registry.forKind(p.kind).auth.file_credential) {
             const path = vertex_token.resolveCredentialsPath(arena, p.service_account_file, init.environ_map) orelse break :blk false;
@@ -558,7 +567,10 @@ pub fn cmdSetup(init: std.process.Init) !void {
             const p = cfg.provider(active) catch null;
             if (p) |prov| {
                 if (prov.api_key_env) |env_name| {
-                    w.print("  Export {s}, or point default_provider at a local runtime.\n", .{env_name}) catch {};
+                    if (prov.oauth_plugin.len > 0)
+                        w.print("  Export {s}, run `clanker auth login {s}`, or point default_provider at a local runtime.\n", .{ env_name, prov.oauth_plugin }) catch {}
+                    else
+                        w.print("  Export {s}, or point default_provider at a local runtime.\n", .{env_name}) catch {};
                 }
             }
         }

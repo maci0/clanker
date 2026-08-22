@@ -21,6 +21,9 @@ pub const vertex = @import("providers/vertex.zig");
 pub const vertex_anthropic = @import("providers/vertex_anthropic.zig");
 pub const azure = @import("providers/azure.zig");
 pub const gemini = @import("providers/gemini.zig");
+pub const codex = @import("providers/codex.zig");
+pub const grok = @import("providers/grok.zig");
+pub const claude = @import("providers/claude.zig");
 
 /// Re-exported so callers keep saying `providers.RequestParams` rather than
 /// reaching into the interface module.
@@ -41,6 +44,9 @@ pub const registry = [_]Provider{
     vertex_anthropic.provider,
     azure.provider,
     gemini.provider,
+    codex.provider,
+    grok.provider,
+    claude.provider,
 };
 
 /// The vtable for a configured provider. Resolved once per request by the
@@ -84,7 +90,7 @@ pub fn unconfiguredReason(
         if (environ_map.get(env_name)) |val| {
             if (val.len == 0)
                 return std.fmt.allocPrint(arena, "{s} is set but empty", .{env_name}) catch "api key env is empty";
-        } else return std.fmt.allocPrint(arena, "{s} not set", .{env_name}) catch "api key env not set";
+        } else if (p.oauth_plugin.len == 0) return std.fmt.allocPrint(arena, "{s} not set", .{env_name}) catch "api key env not set";
     }
     return null;
 }
@@ -269,6 +275,10 @@ test "unconfiguredReason gates on URL scheme and api_key_env, keyless local pass
     var missing = config.Provider{ .name = "remote", .base_url = "https://x", .default_model = "m" };
     missing.api_key_env = "UNSET_KEY";
     try std.testing.expect(unconfiguredReason(arena, &env, &missing) != null);
+
+    var oauth = missing;
+    oauth.oauth_plugin = "codex";
+    try std.testing.expectEqual(@as(?[]const u8, null), unconfiguredReason(arena, &env, &oauth));
 
     var set = missing;
     set.api_key_env = "SET_KEY";

@@ -59,6 +59,7 @@ const live = @import("serve/live.zig");
 const webui_assets = @import("serve/webui_assets.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
+const oauth_command = @import("llm/oauth_command.zig");
 const doctor_mod = @import("doctor.zig");
 const log = @import("util/log.zig");
 const redact = @import("util/redact.zig");
@@ -66,6 +67,7 @@ const atomic_write = @import("util/atomic_write.zig");
 const disk_cap = @import("util/disk_cap.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 const run_lock = @import("util/run_lock.zig");
+const deadline_mod = @import("util/deadline.zig");
 const file_lock = @import("util/file_lock.zig");
 const utf8 = @import("util/utf8.zig");
 const secret_dotenv = @import("util/secret_dotenv.zig");
@@ -129,6 +131,7 @@ pub const Command = enum {
     version,
     init,
     providers_check,
+    auth,
     run,
     sessions,
     /// `session export <id>`: one conversation as a self-contained HTML file.
@@ -221,6 +224,8 @@ pub const Options = struct {
     /// "fill", or "refresh". `provider` doubles as the catalog search query
     /// for "catalog" and the provider name for "fill".
     providers_sub: []const u8 = "check",
+    /// Native provider credentials: status (default), login, or logout.
+    auth_sub: []const u8 = "status",
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     /// `--reasoning-effort <none|low|medium|high|max>`: pin every turn's
@@ -929,6 +934,9 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (std.mem.eql(u8, a, "provide") or std.mem.eql(u8, a, "providers")) {
                 opts.command = .providers_check;
                 pending_sub = "";
+            } else if (std.mem.eql(u8, a, "auth")) {
+                opts.command = .auth;
+                pending_sub = "";
             } else if (std.mem.eql(u8, a, "run")) {
                 opts.command = .run;
             } else if (std.mem.eql(u8, a, "sessions") or std.mem.eql(u8, a, "history")) {
@@ -1071,6 +1079,13 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     opts.provider = a;
                 }
                 pending_sub = null;
+            } else if (opts.command == .auth and sub.len == 0) {
+                if (std.mem.eql(u8, a, "status") or std.mem.eql(u8, a, "login") or std.mem.eql(u8, a, "logout")) {
+                    opts.auth_sub = a;
+                } else {
+                    opts.provider = a;
+                }
+                pending_sub = null;
             } else if (opts.command == .chat and sub.len == 0 and (std.mem.eql(u8, a, "send") or std.mem.eql(u8, a, "history") or std.mem.eql(u8, a, "rooms") or std.mem.eql(u8, a, "subscribe"))) {
                 opts.chat_sub = a;
                 pending_sub = null; // sub consumed; next tokens are room etc.
@@ -1097,6 +1112,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         } else if (opts.command == .improve_self and opts.task == null) {
             opts.task = a;
         } else if (opts.command == .providers_check and opts.provider == null) {
+            opts.provider = a;
+        } else if (opts.command == .auth and opts.provider == null) {
             opts.provider = a;
         } else if (opts.command == .session_export and opts.session == null) {
             opts.session = a;
@@ -2177,6 +2194,7 @@ const specs = [_]Spec{
     .{ .command = .adr, .usage = "adr [list|search|open|create|append|update|status|rename]", .blurb = "record and maintain architecture decisions under docs/adrs/", .group = .inspect, .detail = "An ADR is a decision that has already been made: the constraint that forced\nit, the choice, and what the choice costs. The RFC that may precede it argues\nthe alternatives; neither store requires the other. These are the same records\nthe agent reads and writes through the `adr` tool.\n\nSearch first. A matching ADR means the question is settled, and the answer is\nto read it — or supersede it — rather than decide it again.\n\nREADING\n  list                       every ADR with its status, and the next number\n  search <query>             one text search across the ADRs, RFCs and PRDs\n  open <path>                print one ADR in full\n\nWRITING\n  create <title> <context> <decision> <consequences> [rfc path]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n  rename <path> <new-slug>\n\nSTATES\n  proposed     drafted, not yet agreed\n  accepted     in force; this is the default a new ADR is created in\n  superseded   replaced; the note names what replaced it\n  deprecated   no longer applies; the note says what stopped being true\n\nThe title is the choice made, not the question: \"Providers are a native\nvtable\", not \"How should providers work?\". Consequences is required and has\nto name the honest downside — an ADR that only argues for its own decision is\nuseless to the one reader it is written for, whoever is deciding whether to\nrevisit it.\n\nPassing the RFC a decision came from links it from Status and quotes that\nRFC's recommendation under the Decision, so a divergence between what was\nrecommended and what was chosen is visible while it is still being written.\n\nA later reversal supersedes an ADR rather than editing it. append, update and\nstatus are compare-and-swap writes: a concurrent edit is refused rather than\noverwritten, so reopen the ADR and retry against its current text.\n\nrename moves an ADR to a new filename and rewrites its inventory link. The\nADR keeps its number: decisions are cited by number across the tree and\nsuperseding links forward to one, and a rename reports leftover references by\nsearching filenames, so it could not find a citation written as \"ADR 0031\".\n\nEXAMPLES\n  clanker adr                                      every decision on record\n  clanker adr search \"provider vtable\"             already decided?\n  clanker adr open docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md\n  clanker adr create \"Providers are a native vtable\" \\\n      \"Keys must not enter the sandbox\" \\\n      \"Each provider is one vtable file plus a registry row\" \\\n      \"Adding one is three edits; a provider cannot be hot-swapped\"\n  clanker adr status docs/adrs/0004-providers.md superseded \\\n      \"Superseded by ADR 0021.\"" },
     .{ .command = .prd, .usage = "prd [list|search|open|checklist|create|append|update|status|rename]", .blurb = "write and maintain product requirement docs under docs/prds/", .group = .inspect, .detail = "A PRD is what a feature is meant to be: the problem, the goals, the mechanism,\nand the acceptance criteria it is checked against. It is not a decision (that\nis an ADR), not an open question (an RFC), and not the shipped narrative (the\nROADMAP). These are the same records the agent reads and writes through the\n`prd` tool.\n\nThe listing groups by status with the unfinished work first, because \"what is\nstill open\" is the question this store is read to answer.\n\nREADING\n  list                       every PRD, grouped by status, and the next number\n  search <query>             one text search across the PRDs and the ADRs\n  open <path>                print one PRD in full\n  checklist                  what a Draft has to pin down before it is planned\n\nWRITING\n  create <title> <problem> <goals> [draft|in_progress|shipped]\n  append <path> <content>\n  update <path> <old> <new>\n  status <path> <state> [note]\n  rename <path> <new-slug>\n\nSTATES\n  draft         not built; Design must settle the blockers first\n  in_progress   partially built; Status names what is live and what is open\n  shipped       code is the source of truth; the note has to name those files\n\nA Draft is not planned until its dependencies are named, its blocking\nquestions are settled in Design rather than parked under Open questions, and\nits implementation phases name files. Run checklist when the request is too\nvague to draft from, and put its questions to whoever asked.\n\nGoals and acceptance criteria have to cover each other. A bug belongs in Known\nissues, never in Open questions. When the code drifts from the document, fix\nthe document the same day.\n\nappend, update and status are compare-and-swap writes: a concurrent edit is\nrefused rather than overwritten, so reopen the PRD and retry.\n\nrename moves a PRD to a new filename and rewrites its inventory row. The PRD\nkeeps its number: the ROADMAP and other records cite it by number, and a\nrename reports leftover references by searching filenames, so it could not\nfind a citation written as \"PRD 0021\".\n\nEXAMPLES\n  clanker prd                                      every PRD, open work first\n  clanker prd checklist                            what to pin down first\n  clanker prd search \"kanban board\"                is it already specified?\n  clanker prd open docs/prds/0002-kanban-board.md\n  clanker prd create \"Scheduled runs\" \\\n      \"Nothing fires unless something outside clanker invokes it\" \\\n      \"1. Fire due entries on a cron spec  2. Never run two sweeps\"\n  clanker prd status docs/prds/0009-schedule.md shipped \\\n      \"src/schedule/ is the source of truth; clanker schedule exposes it\"" },
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
+    .{ .command = .auth, .usage = "auth [status|login|logout] [codex|grok|claude]", .blurb = "manage clanker's native provider OAuth credentials", .group = .maintain, .detail = "status [provider]  show OAuth and API-key availability without revealing secrets (default)\nlogin <provider>   authorize clanker directly using the provider's native OAuth flow\nlogout <provider>  remove clanker's saved OAuth tokens; API keys are untouched\n\nOAuth tokens live under agent.state_dir/oauth with owner-only permissions.\nLogin and refresh are implemented by native provider plugins; no ACP backend,\nvendor CLI, or external credential store is involved." },
 
     .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
@@ -2289,6 +2307,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
             try doctor_mod.cmdSetup(init);
         },
         .providers_check => try cmdProvidersCheck(init, opts),
+        .auth => try cmdAuth(init, opts),
         .run => try cmdRun(init, opts),
         .sessions => try cmdSessions(init),
         .session_export => try cmdSessionExport(init, opts),
@@ -2684,6 +2703,30 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
 }
 
 // --------------------------------------------------------- providers check --
+
+fn cmdAuth(init: std.process.Init, opts: Options) !void {
+    const arena = init.arena.allocator();
+    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    if (std.mem.eql(u8, opts.auth_sub, "login")) {
+        const name = opts.provider orelse return error.MissingOAuthProvider;
+        var stdout_buf: [4096]u8 = undefined;
+        var stdout = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
+        try oauth_command.login(init, &cfg, name, &stdout.interface);
+        try stdout.interface.flush();
+        return;
+    }
+    var output: std.Io.Writer.Allocating = .init(arena);
+    if (std.mem.eql(u8, opts.auth_sub, "status")) {
+        try oauth_command.status(init.io, std.Io.Dir.cwd(), arena, &cfg, opts.provider, init.environ_map, &output.writer);
+    } else {
+        const name = opts.provider orelse return error.MissingOAuthProvider;
+        if (std.mem.eql(u8, opts.auth_sub, "logout")) {
+            const removed = try oauth_command.logout(init.io, std.Io.Dir.cwd(), arena, &cfg, name);
+            try output.writer.print("{s}: {s}\n", .{ name, if (removed) "OAuth login removed" else "already logged out" });
+        } else return error.BadSubcommand;
+    }
+    try writeStdOut(init.io, output.written());
+}
 
 /// What a sweep concluded about one provider. A closed vocabulary of five, so
 /// the overview reads as a table instead of as prose, and so the two ways of
@@ -3426,49 +3469,10 @@ fn httpGetDeadline(
     bearer: ?[]const u8,
     budget_ms: i64,
 ) ![]const u8 {
-    var done: std.Io.Event = .unset;
-    if (budget_ms <= 0) return httpGetTask(io, gpa, arena, url, bearer, &done);
-    var fut = io.concurrent(httpGetTask, .{ io, gpa, arena, url, bearer, &done }) catch
-        return error.ConcurrencyUnavailable;
-    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
-        .clock = .awake,
-        .raw = .{ .nanoseconds = @as(i96, budget_ms) * std.time.ns_per_ms },
-    });
-    while (!done.isSet()) {
-        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
-            // Spurious wakeups report Timeout too, so the deadline decides
-            // whether the budget is really spent, not this return.
-            error.Timeout => {
-                if (done.isSet()) break;
-                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                // cancel() interrupts the blocking syscall and joins the task,
-                // so nothing is left writing into `arena` after this returns.
-                // Whatever the joined task was about to return is moot; the
-                // budget already decided the answer.
-                if (fut.cancel(io)) |_| {} else |_| {}
-                return error.Timeout;
-            },
-            error.Canceled => {
-                if (fut.cancel(io)) |_| {} else |_| {}
-                return error.Canceled;
-            },
-        };
-    }
-    return fut.await(io);
-}
-
-/// The fetch half of `httpGetDeadline`, as a concurrent task. Every exit has
-/// to set `done`, cancelation included, or the waiter is never woken.
-fn httpGetTask(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    arena: std.mem.Allocator,
-    url: []const u8,
-    bearer: ?[]const u8,
-    done: *std.Io.Event,
-) anyerror![]const u8 {
-    defer done.set(io);
-    return httpGet(io, gpa, arena, url, bearer);
+    // Unlike the provider sweep this does not fall back to an unbounded call
+    // when there is no spare concurrency: waiting without a ceiling is the
+    // thing being avoided, so a missing worker is an error, not a hang.
+    return deadline_mod.runBounded(io, budget_ms, httpGet, .{ io, gpa, arena, url, bearer });
 }
 
 /// `clanker autolearn`, review usage observations, refresh the roadmap
@@ -18773,6 +18777,16 @@ test "renderModelSnippet emits a valid, pasteable TOML models table" {
 test "providers refresh is a recognized subcommand" {
     const opts = try parse(&.{ "clanker", "providers", "refresh" }, null);
     try std.testing.expectEqualStrings("refresh", opts.providers_sub);
+}
+
+test "auth parses native provider lifecycle commands" {
+    const login = try parse(&.{ "clanker", "auth", "login", "codex" }, null);
+    try std.testing.expectEqual(Command.auth, login.command);
+    try std.testing.expectEqualStrings("login", login.auth_sub);
+    try std.testing.expectEqualStrings("codex", login.provider.?);
+    const status = try parse(&.{ "clanker", "auth", "grok" }, null);
+    try std.testing.expectEqualStrings("status", status.auth_sub);
+    try std.testing.expectEqualStrings("grok", status.provider.?);
 }
 
 test "catalogCapabilities is the one translation both the CLI snippet and /api/catalog use" {
