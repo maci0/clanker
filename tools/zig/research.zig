@@ -22,6 +22,7 @@
 //!         {"action":"append", "path":"...", "content":"\n## ...\n"}
 //!         {"action":"update", "path":"...", "old":"...", "new":"..."}
 //!         {"action":"status", "path":"...", "status":"current"}
+//!         {"action":"rename", "path":"docs/research/x.md", "slug":"new-name"}
 //! Output: {"ok":true, ...}
 
 const std = @import("std");
@@ -75,7 +76,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "append")) return append(obj, out);
     if (std.mem.eql(u8, action, "update")) return update(obj, out);
     if (std.mem.eql(u8, action, "status")) return status(obj, out);
-    return lib.fail(out, "action must be plan, sweep, create, list, search, open, append, update, or status");
+    if (std.mem.eql(u8, action, "rename")) return rename(obj, out);
+    return lib.fail(out, "action must be plan, sweep, create, list, search, open, append, update, status, or rename");
 }
 
 // ----------------------------------------------------------------- planning
@@ -1066,4 +1068,11 @@ fn labelFor(wanted: []const u8) ?[]const u8 {
 
 fn currentYear() i64 {
     return doc.civilFromUnix(@trunc(lib.nowSeconds())).year;
+}
+
+/// Move a research note to a new filename in `docs/research/`. The store is
+/// unnumbered, so the slug is the whole stem. `records_grep.renameRecord` is
+/// the shared half, and the reply lists every note still naming the old one.
+fn rename(obj: std.json.Value, out: *lib.Out) !void {
+    return records_grep.renameRecord(out, obj, dir, index_path, false, "a research note");
 }

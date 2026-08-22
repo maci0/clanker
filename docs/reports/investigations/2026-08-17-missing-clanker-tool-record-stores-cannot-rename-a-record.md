@@ -4,11 +4,11 @@
 
 - **Missing tool:** A record created under the wrong name (wrong slug, wrong taxonomy marker) can only be renamed by hand: git mv plus a hand edit of the README inventory link, exactly the ad-hoc fallback the stores exist to remove. Every store verb addresses records by path, so a rename also breaks inbound references silently.
 - **Finding:** Resolved on 2026-08-17. Resolved on 2026-08-17 for the reports store: clanker reports rename <path> <new-slug> moves the record in place, rewrites the inventory link under CAS, preserves the missing-clanker-tool- marker, and lists in-store references to the old name. The other four stores (rfc, adr, prd, research) still lack the action; tracked on the local board.
-- **Resolution:** Resolved on 2026-08-17. Resolved on 2026-08-17 for the reports store: clanker reports rename <path> <new-slug> moves the record in place, rewrites the inventory link under CAS, preserves the missing-clanker-tool- marker, and lists in-store references to the old name. The other four stores (rfc, adr, prd, research) still lack the action; tracked on the local board.
+- **Resolution:** Resolved on 2026-08-22. All four stores have rename now. Numbered records keep their number: RFCs, ADRs and PRDs are cited by number in prose, where a filename scan cannot follow, so the slug is the name and the number is identity; a slug carrying a different number is refused. Filename arithmetic in tools/zig/record_rename.zig (host-tested), host calls in tools/zig/records_grep.zig. Verified against real records: research rename moved the file and its inventory link, rfc rename kept 0035, a renumber was refused.
 
 ## Status
 
-Resolved on 2026-08-17. Resolved on 2026-08-17 for the reports store: clanker reports rename <path> <new-slug> moves the record in place, rewrites the inventory link under CAS, preserves the missing-clanker-tool- marker, and lists in-store references to the old name. The other four stores (rfc, adr, prd, research) still lack the action; tracked on the local board.
+Resolved on 2026-08-22. All four stores have rename now. Numbered records keep their number: RFCs, ADRs and PRDs are cited by number in prose, where a filename scan cannot follow, so the slug is the name and the number is identity; a slug carrying a different number is refused. Filename arithmetic in tools/zig/record_rename.zig (host-tested), host calls in tools/zig/records_grep.zig. Verified against real records: research rename moved the file and its inventory link, rfc rename kept 0035, a renumber was refused.
 
 ## What is missing
 

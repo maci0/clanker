@@ -109,6 +109,25 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   this before: `atomic_write.writeFile`'s unit tests pin the one writer the
   defect lived in, not the invariant that the links survive.
 
+- `rename` on the four record stores that lacked it: `clanker rfc rename`,
+  `clanker adr rename`, `clanker prd rename` and `clanker research rename`,
+  matching `clanker reports rename`. Each moves a record inside its own store
+  and rewrites its inventory link in the same call, then lists the in-store
+  files still naming the old record; mentions elsewhere in the tree are
+  outside the tool's grants and are called out as such rather than missed
+  silently. Renaming by hand with `git mv` leaves the inventory link dangling,
+  which is why this is a verb.
+
+  For the three numbered stores the record keeps its **number**. RFCs, ADRs
+  and PRDs are cited by number in prose across `CLAUDE.md`, `AGENTS.md` and
+  source comments, and a scan of filenames cannot see those citations — so
+  moving a number would break exactly the references `rename` exists to
+  protect, and an ADR's `superseded` forward link is only as stable as the
+  number it names. The slug is a name, the number is identity. A new slug
+  carrying a *different* number is refused by name rather than silently
+  ignored, since a caller who typed one meant to renumber and needs telling
+  that is not a thing. The unnumbered `research` store has no such rule.
+
 ### Fixed
 
 - `clanker reports --help` states the byte caps the tool enforces, in their

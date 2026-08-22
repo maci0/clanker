@@ -90,7 +90,7 @@ clanker reports create missing-tool <YYYY-MM-DD-slug> "<title>" "<TL;DR>"
 ### `clanker research`
 
 `list`, `plan`, `sweep`, `search`, `open`, `create`, `append`, `update`,
-`status`. `plan` turns a topic into the angles a thorough search asks;
+`status`, `rename`. `plan` turns a topic into the angles a thorough search asks;
 `sweep` issues them across web search, GitHub, discussion archives and paper
 indexes in one call. Sweep results are **untrusted internet text** and are
 leads until opened at their source. The local tree counts as an option and is
@@ -99,7 +99,7 @@ the one most often missed.
 ### `clanker rfc`
 
 `list`, `search`, `open`, `checklist`, `create`, `append`, `update`,
-`recommend`, `status`. An RFC needs at least two candidates, the status quo,
+`recommend`, `status`, `rename`. An RFC needs at least two candidates, the status quo,
 one out-of-the-box option, and a recommendation whose confidence is a number
 from 0 to 10. `search` covers the RFCs and the ADRs together on purpose.
 `checklist` is what to pin down when a request is too vague to draft from —
@@ -107,7 +107,8 @@ use it with `ask_user` rather than inventing a scope.
 
 ### `clanker adr`
 
-`list`, `search`, `open`, `create`, `append`, `update`, `status`. The decision
+`list`, `search`, `open`, `create`, `append`, `update`, `status`, `rename`. The
+decision
 once it is made. The title is the **choice**, not the question. `create`
 requires the consequences, and `status ... superseded` requires a note naming
 what replaced it: a reversal links forward instead of editing the history out,
@@ -118,8 +119,8 @@ links it and quotes its recommendation under the Decision.
 
 ### `clanker prd`
 
-`list`, `search`, `open`, `checklist`, `create`, `append`, `update`, `status`.
-What a feature is meant to be — never a decision (that is an ADR) and never the
+`list`, `search`, `open`, `checklist`, `create`, `append`, `update`, `status`,
+`rename`. What a feature is meant to be — never a decision (that is an ADR) and never the
 shipped narrative (that is the ROADMAP). `list` groups by status with the
 unfinished work first. `checklist` is the Draft bar: dependencies named,
 blocking questions settled in Design rather than parked under Open questions,

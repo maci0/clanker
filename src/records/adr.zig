@@ -47,7 +47,7 @@ const status_column_max: usize = 12;
 
 /// Every subcommand the dispatch below accepts, in the order `--help`
 /// lists them. The spec's usage line in `cli.zig` is pinned to this list.
-pub const subcommands = [_][]const u8{ "list", "search", "open", "create", "append", "update", "status" };
+pub const subcommands = [_][]const u8{ "list", "search", "open", "create", "append", "update", "status", "rename" };
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
@@ -61,6 +61,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "append")) return append(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
+    if (std.mem.eql(u8, sub, "rename")) return rename(io, arena, opts, tool);
 
     return common.badSubcommand("adr", &subcommands, sub);
 }
@@ -413,4 +414,20 @@ test "renderCreated reports an inventory that could not be updated" {
     const text = try renderCreated(arena, "docs/adrs/0018-x.md", "", false);
     try testing.expect(std.mem.find(u8, text, "inventory was not updated") != null);
     try testing.expect(std.mem.find(u8, text, "docs/adrs/README.md") != null);
+}
+
+/// `clanker adr rename <path> <new-slug>`. The ADR's number is its identity
+/// and stays: a decision is cited by number, and `status ... superseded`
+/// links forward to one.
+fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+    try common.out(io, try common.renameRecord(
+        arena,
+        "adr",
+        "docs/adrs/<NNNN-name>.md",
+        "lowercase letters, digits and hyphens; the ADR keeps its number",
+        "docs/adrs/",
+        opts.arg1,
+        opts.arg2,
+        tool,
+    ));
 }

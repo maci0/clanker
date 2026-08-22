@@ -1,7 +1,7 @@
 {
   "name": "prd",
-  "description": "Write and maintain product requirement docs under docs/prds/: what a feature is meant to be, as opposed to a decision (docs/adrs/), an open question (docs/rfcs/), or the shipped narrative (docs/ROADMAP.md). Actions: list shows every PRD with its real status and the next free number; checklist returns what a Draft has to pin down before it counts as planned — dependencies named, blocking questions settled in Design rather than parked under Open questions, and implementation phases that name files — because the failure mode here is not a missing document but a Draft that reads finished and cannot be started from; use it with ask_user when the request is too vague to draft from. search {query} covers the PRDs and the ADRs together, so a spec that would contradict a recorded decision is caught before it is written. create {title, problem, goals, status?, slug?, notes?} allocates the number, renders docs/prds/TEMPLATE.md and adds the inventory row. open, append, update maintain the body; status {path, status, note?} moves it between draft, in_progress and shipped, and a shipped PRD needs a note naming the source files that are now the single source of truth. Goals and acceptance criteria must cover each other; a bug belongs in Known issues, never in Open questions; and when the code drifts, the PRD is fixed the same day.",
-  "llm_description": "Product requirement docs under docs/prds/ — what a feature is meant to be. {action:\"list\"} shows status and the next number; {action:\"checklist\"} gives the Draft bar (problem from the situation, numbered goals, non-goals, dependencies, file-level implementation phases, failure modes, honest acceptance boxes) with the question to ask the operator for each; {action:\"search\",query} covers PRDs and ADRs (an ADR match constrains this design). {action:\"create\",title,problem,goals,status?,slug?,notes?} numbers, renders and indexes it. Then open/append/update, {action:\"status\",path,status:\"draft\"|\"in_progress\"|\"shipped\",note?} — shipped needs a note naming the source files that are now the source of truth. Settle blocking questions in Design, not Open questions; put bugs in Known issues. Mutations are compare-and-swap — re-open after a conflict.",
+  "description": "Write and maintain product requirement docs under docs/prds/: what a feature is meant to be, as opposed to a decision (docs/adrs/), an open question (docs/rfcs/), or the shipped narrative (docs/ROADMAP.md). Actions: list shows every PRD with its real status and the next free number; checklist returns what a Draft has to pin down before it counts as planned \u2014 dependencies named, blocking questions settled in Design rather than parked under Open questions, and implementation phases that name files \u2014 because the failure mode here is not a missing document but a Draft that reads finished and cannot be started from; use it with ask_user when the request is too vague to draft from. search {query} covers the PRDs and the ADRs together, so a spec that would contradict a recorded decision is caught before it is written. create {title, problem, goals, status?, slug?, notes?} allocates the number, renders docs/prds/TEMPLATE.md and adds the inventory row. open, append, update maintain the body; status {path, status, note?} moves it between draft, in_progress and shipped, and a shipped PRD needs a note naming the source files that are now the single source of truth. Goals and acceptance criteria must cover each other; a bug belongs in Known issues, never in Open questions; and when the code drifts, the PRD is fixed the same day. rename moves a PRD to a new filename, rewrites its inventory row, and lists PRDs still naming the old one; the PRD keeps its number.",
+  "llm_description": "Product requirement docs under docs/prds/ \u2014 what a feature is meant to be. {action:\"list\"} shows status and the next number; {action:\"checklist\"} gives the Draft bar (problem from the situation, numbered goals, non-goals, dependencies, file-level implementation phases, failure modes, honest acceptance boxes) with the question to ask the operator for each; {action:\"search\",query} covers PRDs and ADRs (an ADR match constrains this design). {action:\"create\",title,problem,goals,status?,slug?,notes?} numbers, renders and indexes it. Then open/append/update, {action:\"status\",path,status:\"draft\"|\"in_progress\"|\"shipped\",note?} \u2014 shipped needs a note naming the source files that are now the source of truth. Settle blocking questions in Design, not Open questions; put bugs in Known issues. Mutations are compare-and-swap \u2014 re-open after a conflict. {action:\"rename\",path,slug} moves a PRD to a new filename and rewrites its inventory row; pass the new name without a number -- a PRD's number is its identity and is not renamable, and citations written as \"PRD 0021\" are never found by the filename scan the reply lists.",
   "wasm": "zig-out/tools/prd.wasm",
   "input_schema": {
     "type": "object",
@@ -16,9 +16,10 @@
           "search",
           "append",
           "update",
-          "status"
+          "status",
+          "rename"
         ],
-        "description": "list is the default; checklist before drafting a vague request; create scaffolds a numbered PRD."
+        "description": "list is the default; checklist before drafting a vague request; create scaffolds a numbered PRD. rename moves a PRD to a new filename, keeping its number."
       },
       "title": {
         "type": "string",
@@ -34,7 +35,7 @@
       },
       "slug": {
         "type": "string",
-        "description": "Filename stem after the number: lowercase letters, digits and hyphens. Derived from the title when omitted."
+        "description": "Filename stem after the number: lowercase letters, digits and hyphens. Derived from the title when omitted for create; for rename it is the new name only -- the record keeps its number, which is not renamable."
       },
       "notes": {
         "type": "string",

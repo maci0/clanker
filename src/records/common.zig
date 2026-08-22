@@ -390,6 +390,57 @@ pub fn updateRecord(
     return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
 }
 
+/// `<store> rename <path> <new-slug>`. `example_path` is the placeholder the
+/// usage line shows, and `slug_hint` says what a new name may look like in
+/// this store -- the numbered stores keep the record's `NNNN-` prefix, which
+/// is the one thing an operator has to be told before typing.
+///
+/// The rendering is the same everywhere because the guest's reply is: the new
+/// path, whether the inventory link followed, and what still names the old
+/// record. `reports` predates this and renders its own, because its rename
+/// spans two stores; folding the two together is a later change.
+pub fn renameRecord(
+    arena: std.mem.Allocator,
+    store: []const u8,
+    example_path: []const u8,
+    slug_hint: []const u8,
+    store_dir: []const u8,
+    path_arg: ?[]const u8,
+    slug_arg: ?[]const u8,
+    tool: Tool,
+) ![]const u8 {
+    const path = path_arg orelse {
+        usageError("{s} rename needs a path and the new filename stem: clanker {s} rename {s} <new-slug>", .{ store, store, example_path });
+        return Error.MissingArg;
+    };
+    const slug = slug_arg orelse {
+        usageError("{s} rename needs the new filename stem after the path ({s})", .{ store, slug_hint });
+        return Error.MissingArg;
+    };
+    const input = try request(arena, &.{
+        .{ .name = "action", .value = .{ .text = "rename" } },
+        .{ .name = "path", .value = .{ .text = path } },
+        .{ .name = "slug", .value = .{ .text = slug } },
+    });
+    const result = try callTool(arena, store, tool, input);
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    errdefer w.deinit();
+    try w.writer.print("renamed {s}\n     -> {s}\n", .{ path, json_util.strFieldOrEmpty(result.object, "to") });
+    if (!boolField(result, "indexed")) {
+        try w.writer.writeAll("\nThe inventory link was not rewritten (missing or changed concurrently);\nfix the README line by hand.\n");
+    }
+    const refs = arrayField(result, "references");
+    if (refs.len > 0) {
+        try w.writer.writeAll("\nStill naming the old record:\n");
+        for (refs) |r| {
+            if (r == .string) try w.writer.print("  {s}\n", .{r.string});
+        }
+    }
+    try w.writer.print("\nMentions outside {s} are not visible to the {s} tool; search the\ntree for the old name to catch them.\n", .{ store_dir, store });
+    return w.written();
+}
+
 /// What a store's `status` usage line and its inventory warning say. These
 /// four strings are the whole of what the five stores differ in; the request,
 /// the confirmation line and the inventory check are the same everywhere.

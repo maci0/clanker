@@ -1,7 +1,7 @@
 {
   "name": "adr",
-  "description": "Record and maintain architecture decisions under docs/adrs/. An ADR is a decision that has already been made: the constraint that forced it, the choice, and what the choice costs. The RFC that may precede it argues the alternatives; neither store requires the other. Actions: list shows every ADR with its real status and the next free number; search {query} covers the ADRs, the RFCs and the PRDs together, so a settled decision surfaces before it is re-litigated and a feature spec that would contradict one is caught early. create {title, context, decision, consequences, rfc?, slug?} allocates the number, renders docs/adrs/TEMPLATE.md and indexes it; consequences is required because an ADR that only argues for its own decision is useless to the one reader it is written for, whoever is deciding whether to revisit it. Passing an RFC path links it from Status and lifts that RFC's recommendation in as a quoted line under the Decision, so a divergence between what was recommended and what was chosen is visible while it is being written. open, append, update maintain the body; status {path, status, note?} moves it between proposed, accepted, superseded and deprecated. A superseded ADR needs a note naming what replaced it: link forward rather than editing the history out of the record, because the reasoning is the only thing that survives to tell a later reader whether the original constraint still holds.",
-  "llm_description": "Architecture decision records under docs/adrs/ — decisions already made, as opposed to the open questions in docs/rfcs/. {action:\"list\"} shows status and the next number; {action:\"search\",query} covers ADRs, RFCs and PRDs (an ADR match means it is already decided — read it before re-litigating). {action:\"create\",title,context,decision,consequences,rfc?,slug?} numbers, renders and indexes it; title is phrased as the choice made, not the question, and consequences must name the honest downside. A docs/rfcs/ path is linked from Status and its recommendation quoted under Decision. Then open/append/update, {action:\"status\",path,status:\"proposed\"|\"accepted\"|\"superseded\"|\"deprecated\",note?}; superseded and deprecated need a note. Mutations are compare-and-swap — re-open after a conflict.",
+  "description": "Record and maintain architecture decisions under docs/adrs/. An ADR is a decision that has already been made: the constraint that forced it, the choice, and what the choice costs. The RFC that may precede it argues the alternatives; neither store requires the other. Actions: list shows every ADR with its real status and the next free number; search {query} covers the ADRs, the RFCs and the PRDs together, so a settled decision surfaces before it is re-litigated and a feature spec that would contradict one is caught early. create {title, context, decision, consequences, rfc?, slug?} allocates the number, renders docs/adrs/TEMPLATE.md and indexes it; consequences is required because an ADR that only argues for its own decision is useless to the one reader it is written for, whoever is deciding whether to revisit it. Passing an RFC path links it from Status and lifts that RFC's recommendation in as a quoted line under the Decision, so a divergence between what was recommended and what was chosen is visible while it is being written. open, append, update maintain the body; status {path, status, note?} moves it between proposed, accepted, superseded and deprecated. A superseded ADR needs a note naming what replaced it: link forward rather than editing the history out of the record, because the reasoning is the only thing that survives to tell a later reader whether the original constraint still holds. rename moves an ADR to a new filename, rewrites its inventory link, and lists ADRs still naming the old one; the ADR keeps its number.",
+  "llm_description": "Architecture decision records under docs/adrs/ \u2014 decisions already made, as opposed to the open questions in docs/rfcs/. {action:\"list\"} shows status and the next number; {action:\"search\",query} covers ADRs, RFCs and PRDs (an ADR match means it is already decided \u2014 read it before re-litigating). {action:\"create\",title,context,decision,consequences,rfc?,slug?} numbers, renders and indexes it; title is phrased as the choice made, not the question, and consequences must name the honest downside. A docs/rfcs/ path is linked from Status and its recommendation quoted under Decision. Then open/append/update, {action:\"status\",path,status:\"proposed\"|\"accepted\"|\"superseded\"|\"deprecated\",note?}; superseded and deprecated need a note. Mutations are compare-and-swap \u2014 re-open after a conflict. {action:\"rename\",path,slug} moves an ADR to a new filename and rewrites its inventory link; pass the new name without a number -- an ADR's number is its identity and is not renamable, and citations written as \"ADR 0031\" are never found by the filename scan the reply lists.",
   "wasm": "zig-out/tools/adr.wasm",
   "input_schema": {
     "type": "object",
@@ -15,9 +15,10 @@
           "search",
           "append",
           "update",
-          "status"
+          "status",
+          "rename"
         ],
-        "description": "list is the default; search before create so a decision is not recorded twice."
+        "description": "list is the default; search before create so a decision is not recorded twice. rename moves an ADR to a new filename, keeping its number."
       },
       "title": {
         "type": "string",
@@ -41,7 +42,7 @@
       },
       "slug": {
         "type": "string",
-        "description": "Filename stem after the number: lowercase letters, digits and hyphens. Derived from the title when omitted."
+        "description": "Filename stem after the number: lowercase letters, digits and hyphens. Derived from the title when omitted for create; for rename it is the new name only -- the record keeps its number, which is not renamable."
       },
       "path": {
         "type": "string",
