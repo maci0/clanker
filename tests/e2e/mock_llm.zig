@@ -167,6 +167,21 @@ pub fn jsonTurn(gpa: std.mem.Allocator, text: []const u8) ![]const u8 {
     return w.toOwnedSlice();
 }
 
+/// An OpenAI-compat *non-streaming* completion body whose `content` is empty
+/// and whose entire output lives in `reasoning_content`, ending `finish_reason:
+/// "stop"` -- the shape a thinking model that never closed its think block
+/// returns (observed on qwen3-family models via llama.cpp). The improve engine
+/// must answer this by retrying without reasoning, not by failing the attempt.
+pub fn reasoningOnlyTurn(gpa: std.mem.Allocator, reasoning: []const u8) ![]const u8 {
+    var w: std.Io.Writer.Allocating = .init(gpa);
+    defer w.deinit();
+    try w.writer.print(
+        "{{\"id\":\"e2e\",\"object\":\"chat.completion\",\"choices\":[{{\"index\":0,\"message\":{{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":{f}}},\"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}}}",
+        .{std.json.fmt(reasoning, .{})},
+    );
+    return w.toOwnedSlice();
+}
+
 /// An OpenAI-compat streaming SSE body carrying a single tool call, whole
 /// (arguments in one delta fragment rather than split across chunks — the
 /// client folds fragments by index either way, so one fragment is a faithful

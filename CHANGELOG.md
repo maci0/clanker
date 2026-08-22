@@ -94,6 +94,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   and a body naming neither key cannot broadcast. The success body carries
   how many runs took the message: `{"ok":true,"delivered":N}`.
 
+- `improve-self` survives a reasoning model that answers entirely in
+  `reasoning_content` with empty `content` (`finish_reason: stop`). The
+  engine used to re-ask the identical question (reasoning still on), the
+  model re-buried its answer in chain-of-thought, and every attempt of an
+  iteration failed the same way. A response with empty content now pins the
+  next proposal/plan call to `reasoning_effort: "none"` — forcing the JSON
+  answer into `content` — and the pin clears as soon as content comes back.
+  Plan and proposal both honor it.
+
 - REPL slash commands and `!` shell escapes typed while a turn streams are
   no longer queued as steering text. `/help` and `/quit` run at once (the
   exit path stops and joins the in-flight worker); every other command

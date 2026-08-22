@@ -83,3 +83,75 @@ test "improve-self falls back to a configured provider when the primary is down"
     // fallback rather than dying with ProposalRequestFailed.
     try std.testing.expect(mock.requestCount() >= 1);
 }
+
+/// A single healthy mock provider with a reasoning model (thinking schema
+/// default `reasoning_effort`). Used to prove the improve engine answers a
+/// reasoning-only empty-content response by retrying with reasoning disabled.
+fn writeImproveReasoningConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, mock_port: u16) !void {
+    const toml = try std.fmt.allocPrint(gpa, "default_provider = \"e2e-mock\"\n" ++
+        "\n" ++
+        "[providers.e2e-mock]\n" ++
+        "kind = \"openai_compat\"\n" ++
+        "base_url = \"http://127.0.0.1:{d}\"\n" ++
+        "default_model = \"mock\"\n" ++
+        "\n" ++
+        "[models.\"e2e-mock/mock\"]\n" ++
+        "provider = \"e2e-mock\"\n" ++
+        "context_window = 32000\n" ++
+        "max_tokens = 4096\n" ++
+        "reasoning_effort = \"medium\"\n" ++
+        "\n" ++
+        "[agent]\n" ++
+        "tools_dir = {f}\n" ++
+        "\n", .{ mock_port, std.json.fmt(e2e_options.tools_manifests_dir, .{}) });
+    defer gpa.free(toml);
+    try dir.writeFile(io, .{ .sub_path = "config.toml", .data = toml });
+}
+
+test "improve-self retries with reasoning disabled after a reasoning-only empty-content response" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Request 0 is the plan phase (an empty idea list parses to zero ideas and
+    // the iteration runs unplanned). Request 1 is proposal attempt 1, which
+    // answers entirely in reasoning with empty content -- the model defect
+    // under test. Request 2 is proposal attempt 2, which must have been sent
+    // with reasoning_effort "none" and returns a valid no-op proposal that
+    // ends the iteration cleanly under --dry-run.
+    const plan = try mock_llm.jsonTurn(gpa, "{\"ideas\":[]}");
+    defer gpa.free(plan);
+    // Pure chain-of-thought with no draft JSON: nothing for lastProposalJson to
+    // recover, so the empty-content path really fires and the engine must retry
+    // without reasoning. (A reasoning text that happened to contain a complete
+    // proposal would be recovered instead, which is fine behaviour but not the
+    // case under test.)
+    const reasoning_only = try mock_llm.reasoningOnlyTurn(gpa, "I should propose a patch. Let me weigh what to change in the scheduling code before writing the JSON answer.");
+    defer gpa.free(reasoning_only);
+    const proposal = try mock_llm.jsonTurn(gpa, "{\"summary\":\"noop\",\"rationale\":\"dry run\",\"changes\":[]}");
+    defer gpa.free(proposal);
+
+    const mock = try mock_llm.Server.start(io, gpa, &.{ plan, reasoning_only, proposal });
+    defer mock.stop();
+
+    try writeImproveReasoningConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "improve-self", "--dry-run", "--iters", "1", "test improvement" });
+    defer result.deinit(gpa);
+
+    try std.testing.expect(result.ok());
+
+    // Attempt 1 (request index 1) rode the model's configured "medium"; the
+    // retry (request index 2) must have forced reasoning off so the model
+    // cannot bury the JSON in chain-of-thought again.
+    const attempt2 = mock.request(2) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.find(u8, attempt2, "\"reasoning_effort\":\"none\"") != null);
+    // The model's own configured effort still shows on the first attempt.
+    const attempt1 = mock.request(1) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.find(u8, attempt1, "\"reasoning_effort\":\"medium\"") != null);
+}
