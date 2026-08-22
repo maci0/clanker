@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The streaming `POST /api/run` response emits an `llm_start` control
+  frame at the top of each agent iteration, carrying `served_by`, `model`
+  and the zero-based `iteration`. The web UI's live run graph has always
+  had a handler for that event and no server path emitted one, so
+  iterations were drawn without the model that served them. `served_by`
+  is who the turn started on; the `done` trailer stays the record of who
+  finished it, since the fallback chain can repoint the provider
+  mid-turn.
+
 - `clanker gate` runs a `js-suite-coverage` gate: every `ui/**/*.test.mjs`
   on disk is registered in `build.zig` as a `node --test` step. The web UI
   suites are named there one by one — node has no working directory mode

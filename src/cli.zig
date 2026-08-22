@@ -9096,6 +9096,22 @@ fn runStreamToolResult(ms: u64) void {
     writeStreamEvent(fd, "tool_result", .{ .ms = ms });
 }
 
+/// Announces the model about to serve an agent iteration, so a live viewer can
+/// draw the turn's LLM step while it runs rather than learning which model
+/// answered from the `done` trailer after the fact. Field names match that
+/// trailer (`served_by`, `model`) so a client needs one vocabulary, not two.
+/// Fired on the run thread before the request goes out, which is why the
+/// fallback chain can still repoint `served_by` afterwards -- this is what the
+/// turn started on, and `done` is what finished it.
+fn runStreamLlmStart(provider_name: []const u8, model_name: []const u8, iteration: u32) void {
+    const fd = run_stream_socket orelse return;
+    writeStreamEvent(fd, "llm_start", .{
+        .served_by = provider_name,
+        .model = model_name,
+        .iteration = iteration,
+    });
+}
+
 fn runStreamUsage(stats: agent.RunStats) void {
     const fd = run_stream_socket orelse return;
     writeStreamEvent(fd, "usage", .{
@@ -15675,6 +15691,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // without the stream there is no channel to carry the question.
         if (cfg.agent.confirm_writes != .never) a.confirm_fn = &serveConfirm;
         a.on_token = &runStreamDelta;
+        a.on_llm_start = &runStreamLlmStart;
         a.on_tool_call = &runStreamToolCall;
         a.on_tool_result = &runStreamToolResult;
         a.on_todos = &runStreamTodos;
@@ -19066,4 +19083,39 @@ test "chatCounts groups every session by workspace in one pass" {
     try std.testing.expectEqualStrings("proj", counts.keys()[0]);
     try std.testing.expectEqualStrings("", counts.keys()[1]);
     try std.testing.expectEqualStrings("other", counts.keys()[2]);
+}
+
+test "runStreamLlmStart frames the serving model as one \\x01 llm_start event" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+
+    // Same stand-in as the todos event test: writeAllFd only ever writes to a
+    // raw fd, and a file is one that reads back without a reader thread.
+    var sink = try env.tmp.dir.createFile(io, "stream.bin", .{});
+    const arena = env.arena();
+
+    run_stream_socket = sink.handle;
+    runStreamLlmStart("deepseek", "deepseek-reasoner", 2);
+    run_stream_socket = null;
+    sink.close(io);
+
+    const line = try env.tmp.dir.readFileAlloc(io, "stream.bin", arena, .limited(64 * 1024));
+    try std.testing.expect(line.len > 0);
+    try std.testing.expectEqual(@as(u8, 1), line[0]);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, line, "\n"));
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, arena, line[1 .. line.len - 1], .{});
+    defer parsed.deinit();
+    // The web UI's live-graph branch keys on `type` and reads `model`; the
+    // `done` trailer's names are reused so one client vocabulary covers both.
+    try std.testing.expectEqualStrings("llm_start", parsed.value.object.get("type").?.string);
+    try std.testing.expectEqualStrings("deepseek", parsed.value.object.get("served_by").?.string);
+    try std.testing.expectEqualStrings("deepseek-reasoner", parsed.value.object.get("model").?.string);
+    try std.testing.expectEqual(@as(i64, 2), parsed.value.object.get("iteration").?.integer);
+}
+
+test "runStreamLlmStart without a stream is a no-op, not a crash" {
+    run_stream_socket = null;
+    runStreamLlmStart("openai", "gpt-5", 0);
 }

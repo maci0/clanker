@@ -86,7 +86,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [webui model and effort choices are stored browser-global, not per chat](bugs/2026-08-22-webui-model-effort-storage-is-global.md) — Open
 
-- [webui handles llm_start stream events the server never emits](bugs/2026-08-22-webui-llm-start-event-never-emitted.md) — Open
+- [webui handles llm_start stream events the server never emits](bugs/2026-08-22-webui-llm-start-event-never-emitted.md) — Resolved
 
 - [node --test on ui/app fails in directory mode while every file passes](bugs/2026-08-22-node-test-dir-mode-fails-on-ui-app.md) — Resolved
 
@@ -239,6 +239,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [Two pty e2e journeys fail on an untouched base: the REPL's vaxis capability queries never arrive](investigations/2026-08-22-pty-e2e-capability-queries-unanswered.md) — Investigating
+
 - [REPL UI thread and run worker allocate from one unlocked ArenaAllocator](investigations/2026-08-22-repl-ui-thread-and-worker-share-one-unlocked-arena.md) — Investigating
 
 - [Plugin-philosophy alignment gap analysis](investigations/2026-08-20-plugin-philosophy-alignment.md) — Resolved
