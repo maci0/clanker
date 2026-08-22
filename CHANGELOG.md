@@ -89,6 +89,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   answers the same thing forever. `readJson` carries the HTTP status onto
   the error it throws, which is what tells those two apart.
 
+- A mid-run steering message is no longer saved as the user having typed
+  the harness's framing sentence. `POST /api/steer` and the REPL composer
+  each prefixed the message with "[The user interjected while this run was
+  in progress...]" and the run stored that text verbatim as a `role=user`
+  message, so every transcript reader — the web UI, exports, search — read
+  the harness's words as the user's. Senders now queue the user's words
+  alone; the agent loop applies the framing to the *request* copy only, and
+  the saved message carries a `steered` marker instead (persisted in the
+  session store, emitted by `GET /api/sessions/<id>`, rendered by the web
+  UI as the interjection it was). The bytes the model receives are
+  unchanged, on the steering turn and on every later one. Transcripts saved
+  before this change still render correctly: the web UI falls back to
+  detecting the framing sentence in the text.
+
 - The web UI chat's Archive, Delete and Rename buttons work again and say
   what they did. Their feedback went only to a visually hidden live region,
   so every outcome — including the silent refusal when the conversation was

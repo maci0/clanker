@@ -89,6 +89,20 @@ export function steerFramedText(content) {
   return c.slice(steer_frame_sentence.length).replace(/^\s+/, "");
 }
 
+/* The user's own words when this transcript message was interjected mid-run,
+   null when it was a typed turn.
+
+   The server marks it: `steered:true` on the message, with `content` holding
+   what the user actually typed. Transcripts saved before that flag existed
+   carry the framing sentence inside the content instead, which is what the
+   fallback reads -- so an old conversation keeps rendering its interjections
+   as interjections. */
+export function steeredText(message) {
+  if (!message) return null;
+  if (message.steered) return String(message.content == null ? "" : message.content);
+  return steerFramedText(message.content == null ? "" : message.content);
+}
+
 /* Rebuild the visible list. A full rebuild is cheap: the server caps the
    queue at 16 messages per run, so there is nothing worth diffing. */
 export function renderSteerList(ledger, listEl, doc) {

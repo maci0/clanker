@@ -7,7 +7,7 @@ import { SLASH_CMDS, slashReady, runSlashEntry } from "./core/slash.js";
 import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartnerMod, isDm as isDmMod, clankerMark as clankerMarkMod, CLANKER_MARKS as CLANKER_MARKSMod, messageKey as chatMessageKey, hasServerId as chatHasServerId } from "./core/chat.js";
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, pumpInto, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
-import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steerFramedText, renderSteerList } from "./core/steer.js";
+import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steeredText as steeredMessageText, renderSteerList } from "./core/steer.js";
 import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
@@ -929,12 +929,13 @@ function renderSessionHistory(messages) {
       try {
         while (idx < messages.length && performance.now() < until) {
           var m = messages[idx];
-          // A steering message is persisted as a user turn carrying the
-          // server's framing sentence. Rendered as a plain user message it
-          // closed the real question as unanswered and impersonated the
-          // user with text they never typed — show it as the mid-run
-          // interjection it was, inside the turn it steered.
-          var steeredText = m.role === "user" && pendingTurn ? steerFramedText(m.content) : null;
+          // A steering message is persisted as a user turn the server marks
+          // `steered` (older transcripts carry the framing sentence in the
+          // text instead). Rendered as a plain user message it closed the
+          // real question as unanswered and impersonated the user with text
+          // they never typed — show it as the mid-run interjection it was,
+          // inside the turn it steered.
+          var steeredText = m.role === "user" && pendingTurn ? steeredMessageText(m) : null;
           if (steeredText != null) {
             if (span) span.to = idx;
             appendText(pendingTurn, "\n[ steered mid-run: " + steeredText + " ]\n", true);
