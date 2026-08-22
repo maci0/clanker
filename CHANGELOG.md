@@ -15,6 +15,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   to parse or persist the backend then still call `Agent.run` for each work
   turn. Work turns now go through `runIfBackend`.
 
+- A non-streaming `POST /api/run` never claimed a steer slot, so every
+  `POST /api/steer` naming that run answered 404 `no_run` while the run was
+  still going — the same answer a finished run gives, so a caller could not
+  tell "already over" from "never steerable". Only the streaming branch called
+  `runRegister`; both branches do now.
+
+  `runRegister` also returned a bare `bool`, collapsing three unrelated
+  outcomes into one answer: no key to register under, every one of the 64 slots
+  taken, and a key over the length cap. It returns a `SteerRegister` enum
+  (`ok`, `unkeyed`, `key_too_long`, `table_full`) instead, so an unsteerable run
+  can be explained rather than merely observed. None of them stops the run: an
+  unkeyed one-shot has nothing to address it by and is the ordinary case.
+  Covered by `tests/e2e/steer_nonstreaming_test.zig`, which holds the mock
+  provider's answer open so the steer lands while the run is provably alive.
+
 ### Added
 
 - `--backend` / `[agent] backend` on `run`, `repl`, and `goal` (and the

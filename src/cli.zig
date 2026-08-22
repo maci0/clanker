@@ -9694,13 +9694,20 @@ var live_runs = std.atomic.Value(u32).init(0);
 /// function pointer (like AskFn), so the threadlocal is its context.
 threadlocal var current_steer_slot: ?usize = null;
 
-/// Claims a slot for a streaming run starting on this thread, keyed by its
-/// goal id and/or its session id (either may be empty, but not both). Returns
-/// false (and registers nothing) when the run has no key, a key is oversize,
-/// or every slot is taken; the run proceeds unsteerable rather than failing.
-fn runRegister(goal_id: []const u8, session_id: []const u8) bool {
-    if (goal_id.len > goal_id_cap or session_id.len > session_id_cap) return false;
-    if (goal_id.len == 0 and session_id.len == 0) return false;
+/// Why a run did or did not claim a steer slot. Three distinct failures used
+/// to share one `false`, which is what made an unsteerable run impossible to
+/// explain to its operator: `unkeyed` is the ordinary one-shot with nothing to
+/// address it by, `table_full` is a load signal, and `key_too_long` is a
+/// caller bug. None of them stops the run.
+const SteerRegister = enum { ok, unkeyed, key_too_long, table_full };
+
+/// Claims a slot for a run starting on this thread, keyed by its goal id
+/// and/or its session id (either may be empty, but not both). Registers
+/// nothing on any non-`ok` answer; the run proceeds unsteerable rather than
+/// failing.
+fn runRegister(goal_id: []const u8, session_id: []const u8) SteerRegister {
+    if (goal_id.len > goal_id_cap or session_id.len > session_id_cap) return .key_too_long;
+    if (goal_id.len == 0 and session_id.len == 0) return .unkeyed;
     _ = std.c.pthread_mutex_lock(&steer_mutex);
     defer _ = std.c.pthread_mutex_unlock(&steer_mutex);
     for (&steer_slots, 0..) |*slot, i| {
@@ -9710,9 +9717,9 @@ fn runRegister(goal_id: []const u8, session_id: []const u8) bool {
         @memcpy(slot.session_buf[0..session_id.len], session_id);
         slot.session_len = session_id.len;
         current_steer_slot = i;
-        return true;
+        return .ok;
     }
-    return false;
+    return .table_full;
 }
 
 /// Frees this thread's slot and whatever steering messages were never polled.
@@ -10059,7 +10066,7 @@ fn resumeGoal(
     // longest-running kind there is, so it registers like the streaming
     // /api/run path does. No session id: a resumed run has no client
     // transcript to point at, and `appendRunningGoals` reports that as "".
-    if (runRegister(g.id, "")) a.steer_fn = &steerPoll;
+    if (runRegister(g.id, "") == .ok) a.steer_fn = &steerPoll;
     defer runRelease();
 
     const condition = if (g.completion_criterion.len > 0) g.completion_criterion else g.objective;
@@ -10108,9 +10115,9 @@ test "steer registry: register by goal or session, steer, poll, release" {
     serve_gpa = std.testing.allocator;
     defer serve_gpa = null;
     // A run with neither key cannot register.
-    try std.testing.expect(!runRegister("", ""));
+    try std.testing.expectEqual(SteerRegister.unkeyed, runRegister("", ""));
     // A goal run registers by goal; steer it by goal.
-    try std.testing.expect(runRegister("g-123", "sess-1"));
+    try std.testing.expectEqual(SteerRegister.ok, runRegister("g-123", "sess-1"));
     defer runRelease();
 
     try std.testing.expectEqual(SteerEnqueue.no_run, steerEnqueue(std.testing.allocator, "other-goal", "", "hi").status);
@@ -10135,7 +10142,7 @@ test "steer registry: a session-only (chat) run steers by session" {
     serve_gpa = std.testing.allocator;
     defer serve_gpa = null;
     // A chat run has a session but no goal; it must still register and steer.
-    try std.testing.expect(runRegister("", "chat-sess"));
+    try std.testing.expectEqual(SteerRegister.ok, runRegister("", "chat-sess"));
     defer runRelease();
     try std.testing.expectEqual(SteerEnqueue.ok, steerEnqueue(std.testing.allocator, "", "chat-sess", "adjust").status);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -10157,7 +10164,7 @@ test "steer registry: a resumed goal run has no session and still shows as runni
     // startup has no client transcript to point at. It must still land in
     // /api/goals' `running` overlay, or the board draws an idle goal while
     // the server spends its whole turn budget on it.
-    try std.testing.expect(runRegister("g-resumed", ""));
+    try std.testing.expectEqual(SteerRegister.ok, runRegister("g-resumed", ""));
     defer runRelease();
     var buf: [128]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
@@ -10178,13 +10185,13 @@ test "steer registry: a message reaches every run working the named key" {
     // the board produces when a goal is resumed while a client still streams
     // it. Steering the goal must reach both, not whichever slot is scanned
     // first, or one of the two runs is silently unsteerable.
-    try std.testing.expect(runRegister("g-dup", "sess-a"));
+    try std.testing.expectEqual(SteerRegister.ok, runRegister("g-dup", "sess-a"));
     const slot_a = current_steer_slot orelse return error.TestExpectedSlot;
     // runRegister keys the slot off this thread's threadlocal; clearing it
     // lets the second registration claim a slot of its own, standing in for
     // the second connection thread.
     current_steer_slot = null;
-    try std.testing.expect(runRegister("g-dup", "sess-b"));
+    try std.testing.expectEqual(SteerRegister.ok, runRegister("g-dup", "sess-b"));
     const slot_b = current_steer_slot orelse return error.TestExpectedSlot;
     defer {
         current_steer_slot = slot_a;
@@ -16038,6 +16045,33 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         live.noteRun(anyRunLive());
     }
 
+    // A run in flight is steerable (POST /api/steer) for exactly as long as
+    // this connection works it, keyed by its goal id (a goal run) and/or its
+    // session id (a chat run), whichever the client can name. `resolved
+    // .goal_id` so an auto-steered run registers too, not only one named by
+    // explicit id. The session id (may be empty) lets a different
+    // browser/session find and open this run's transcript.
+    //
+    // Not the streaming branch's business, and registering there was the bug:
+    // a steering message is queued by a *separate* request and drained by the
+    // agent loop between iterations, so neither half needs this connection to
+    // be a stream. Keyed off `req.stream`, every `stream:false` run claimed no
+    // slot and answered 404 no_run to every steer for its whole life
+    // (docs/reports/bugs/2026-08-22-nonstreaming-runs-unsteerable.md).
+    const steer_goal_key: []const u8 = resolved.goal_id orelse "";
+    const steer_registration = runRegister(steer_goal_key, req.session);
+    if (steer_registration == .ok) a.steer_fn = &steerPoll;
+    defer runRelease();
+    // Failing to register is not fatal -- the run proceeds, it just cannot be
+    // steered -- but it must not be silent either. `unkeyed` is the ordinary
+    // keyless one-shot and says nothing; the other two are conditions an
+    // operator can act on.
+    switch (steer_registration) {
+        .ok, .unkeyed => {},
+        .table_full => log.log(.warn, "run: all {d} steer slots are busy; this run cannot be steered", .{steer_slots.len}),
+        .key_too_long => log.log(.warn, "run: steer key too long (goal {d} bytes, session {d} bytes, cap {d}/{d}); this run cannot be steered", .{ steer_goal_key.len, req.session.len, goal_id_cap, session_id_cap }),
+    }
+
     if (req.stream) {
         // Streaming mode: send headers up front, then the agent's tokens as
         // they are produced; the final newline + Connection: close ends the
@@ -16046,16 +16080,6 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         raw_http.writeAllFd(stream.socket.handle, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n");
         run_stream_socket = stream.socket.handle;
         defer run_stream_socket = null;
-        // A streaming run in flight is steerable (POST /api/steer) for exactly
-        // as long as this connection works it, keyed by its goal id (a goal
-        // run) and/or its session id (a chat run), whichever the client can
-        // name. Registration failing (full table, oversize key) just means
-        // this run cannot be steered, not that it cannot run. `resolved
-        // .goal_id` so an auto-steered run registers too, not only one named
-        // by explicit id. The session id (may be empty) lets a different
-        // browser/session find and open this run's transcript.
-        if (runRegister(resolved.goal_id orelse "", req.session)) a.steer_fn = &steerPoll;
-        defer runRelease();
         // With a browser on the other end of this stream, ask_user has
         // somebody to ask: the question goes down as an `ask` control event
         // and the answer comes back through POST /api/ask. Streaming runs
@@ -16080,6 +16104,11 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // line: it is a control event, so a client that does not know it just
         // skips it and streams the answer as before.
         writeStreamEvent(stream.socket.handle, "status", .{ .message = "Contacting the model provider and processing…" });
+        // The panel offers a steer box on every run, so a run that took no
+        // slot has to say so up front; otherwise the only signal is a 404 on
+        // the message the user already typed.
+        if (steer_registration == .table_full or steer_registration == .key_too_long)
+            writeStreamEvent(stream.socket.handle, "status", .{ .message = "This run cannot be steered: no steering slot was available for it." });
         // When the selected provider could not take the image and the run was
         // routed to a fallback provider, say so, the user asked for model X
         // and is getting model Y, and should not have to guess why.
