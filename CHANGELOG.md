@@ -44,6 +44,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- REPL slash commands and `!` shell escapes typed while a turn streams are
+  no longer queued as steering text. `/help` and `/quit` run at once (the
+  exit path stops and joins the in-flight worker); every other command
+  is answered with a notice that it runs once the turn is idle (Ctrl+C
+  stops it) and the line is repeated so it can be re-sent; a typo'd
+  `/command` gets the same unknown-command diagnostic as at the idle
+  prompt. Before, the model read `/help` as a course correction and the
+  user got no command.
+
 - The web UI chat's Archive, Delete and Rename buttons work again and say
   what they did. Their feedback went only to a visually hidden live region,
   so every outcome — including the silent refusal when the conversation was

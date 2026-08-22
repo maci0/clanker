@@ -88,7 +88,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [node --test on ui/app fails in directory mode while every file passes](bugs/2026-08-22-node-test-dir-mode-fails-on-ui-app.md) — Open
 
-- [REPL slash commands typed mid-run are steered, not run](bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md) — Open
+- [REPL slash commands typed mid-run are steered, not run](bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md) — Resolved
 
 - [Post-launch DAP ops block unbounded on a silent adapter](bugs/2026-08-22-dap-post-launch-ops-block-unbounded.md) — Resolved
 
@@ -237,6 +237,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [REPL UI thread and run worker allocate from one unlocked ArenaAllocator](investigations/2026-08-22-repl-ui-thread-and-worker-share-one-unlocked-arena.md) — Investigating
+
 - [Plugin-philosophy alignment gap analysis](investigations/2026-08-20-plugin-philosophy-alignment.md) — Resolved
 
 - [zig build test crashed once with an ISCONN panic in the peers connect path](investigations/2026-08-19-peers-connect-isconn-panic.md) — Closed
