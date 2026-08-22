@@ -7,6 +7,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker gate` runs a `js-suite-coverage` gate: every `ui/**/*.test.mjs`
+  on disk is registered in `build.zig` as a `node --test` step. The web UI
+  suites are named there one by one — node has no working directory mode
+  (`node --test ui/app/` resolves the positional as a module path and fails
+  on the directory itself) — so a suite nobody adds a line for is never run,
+  and a green `zig build test` cannot show it. Sweeping the suites by hand
+  is `node --test 'ui/**/*.test.mjs'`.
+
 - The web UI composer's Advanced fold gains a per-chat reasoning-effort
   select (`none`/`low`/`medium`/`high`/`max`, default leaves the
   classifier, per-model setting and sampling profile in charge). It rides
