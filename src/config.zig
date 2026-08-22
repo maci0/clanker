@@ -431,6 +431,19 @@ pub const Agent = struct {
     /// It never changes which prefixes a tool is granted.
     sandbox_follow_symlinks: bool = false,
 
+    /// Whether `clanker worktree prepare` (and `worktree add`) may link the
+    /// checkout's `.env` and `config.local.toml` into a hand-made worktree.
+    /// On by default: without them every verb in that worktree resolves the
+    /// committed `config.toml` default with no key behind it, which is the
+    /// defect the verb exists to fix.
+    ///
+    /// Read from the MAIN CHECKOUT's config, never the worktree's -- the
+    /// worktree cannot see `config.local.toml` yet, so asking it would answer
+    /// from the committed defaults every time. Turn it off for a checkout
+    /// whose worktrees must not reach the main tree's credentials; `prepare`
+    /// then reports each name as skipped rather than quietly doing nothing.
+    worktree_link_local_config: bool = true,
+
     /// Absolute path of the checkout an isolated run was started from, set at
     /// runtime by `run --worktree` (see cmdRun) and deliberately NOT readable
     /// from a config file: it describes how this process was invoked, not a
@@ -657,6 +670,7 @@ pub const AgentFields = struct {
     state_dir: bool = false,
     sandbox_root: bool = false,
     sandbox_follow_symlinks: bool = false,
+    worktree_link_local_config: bool = false,
     workflows_dir: bool = false,
     chains_dir: bool = false,
     tui_plugins_dir: bool = false,
@@ -2348,6 +2362,7 @@ pub const Config = struct {
             "thinking_classifier_model",      "thinking_classifier_timeout_ms", "worktree",                "goal_worktree",
             "git_worktree_on",                "isolated_cli",                   "isolated_tui",            "isolated_webui",
             "reasoning_effort",               "repeat_tool_abort_threshold",    "request_timeout_ms",      "stream_idle_timeout_ms",
+            "worktree_link_local_config",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -2450,6 +2465,10 @@ pub const Config = struct {
         if (obj.get("sandbox_follow_symlinks")) |k| {
             a.sandbox_follow_symlinks = try jsonBool(k, "sandbox_follow_symlinks");
             f.sandbox_follow_symlinks = true;
+        }
+        if (obj.get("worktree_link_local_config")) |k| {
+            a.worktree_link_local_config = try jsonBool(k, "worktree_link_local_config");
+            f.worktree_link_local_config = true;
         }
         if (obj.get("workflows_dir")) |k| {
             a.workflows_dir = try jsonStr(k, "workflows_dir");
@@ -2626,6 +2645,7 @@ pub const Config = struct {
         if (fields.state_dir) dst.state_dir = src.state_dir;
         if (fields.sandbox_root) dst.sandbox_root = src.sandbox_root;
         if (fields.sandbox_follow_symlinks) dst.sandbox_follow_symlinks = src.sandbox_follow_symlinks;
+        if (fields.worktree_link_local_config) dst.worktree_link_local_config = src.worktree_link_local_config;
         if (fields.workflows_dir) dst.workflows_dir = src.workflows_dir;
         if (fields.chains_dir) dst.chains_dir = src.chains_dir;
         if (fields.tui_plugins_dir) dst.tui_plugins_dir = src.tui_plugins_dir;

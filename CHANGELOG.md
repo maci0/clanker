@@ -16,6 +16,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   finished it, since the fallback chain can repoint the provider
   mid-turn.
 
+- `clanker worktree prepare [<path>]` and `clanker worktree add <path>
+  [<base>]` give a worktree made by hand with `git worktree add` the two
+  gitignored files it does not inherit: `.env` and `config.local.toml`.
+  Without them every verb inside that worktree resolved the committed
+  `config.toml` `default_provider` with no key behind it, so `clanker commit`
+  fell back to the degraded one-commit plan that `--yes` refuses and every
+  other model-calling verb failed the same way. The worktrees clanker makes
+  for itself already linked both files (`src/improve/worktree.zig`); the
+  worktree the repository rules require of every agent session had no such
+  step. `add` also fetches `origin` and branches from the remote tip, which
+  is what those rules ask for. The new `[agent]
+  worktree_link_local_config = false` refuses the link for a checkout whose
+  worktrees must not reach the main tree's credentials; it is read from the
+  main checkout's config, since the worktree cannot see `config.local.toml`
+  yet. Guest wasm is deliberately not linked — a build writes into
+  `zig-out` — so `prepare` reports whether `zig-out/tools` is built and
+  prints the `zig build tools` line instead.
+
 - `clanker gate` runs a `js-suite-coverage` gate: every `ui/**/*.test.mjs`
   on disk is registered in `build.zig` as a `node --test` step. The web UI
   suites are named there one by one — node has no working directory mode

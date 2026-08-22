@@ -846,6 +846,7 @@ iter 2
 | `reports [list\|search <query>\|open <path>\|create\|append\|update]` | Read and record the operational reports and runbooks in `docs/reports/` and `docs/runbooks/`; see [Reports and runbooks](#reports-and-runbooks) |
 | `stats` | Token usage per provider/model |
 | `serve [--host A] [--serve-as N]... [--webui-port N]` | HTTP server + web UI (loopback, port 17921 by default) |
+| `worktree [prepare [<path>]\|add <path> [<base>]]` | Give a hand-made `git worktree add` worktree the gitignored files it does not inherit (`.env`, `config.local.toml`); see [Preparing a hand-made worktree](#preparing-a-hand-made-worktree) |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials and build outputs (read-only, offline) |
 | `janitor [--yes]` | Sweep up staging copies, old run graphs and improve logs left behind by killed runs, plus `state/locks/` entries unused for 12h and spilled tool results past retention (also `clanker prune`) |
@@ -861,6 +862,83 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 - The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`.
 
 `clanker providers check <name>` checks one provider: the same provenance line and `default=true`/`default=false` marker, no summary table. It exits non-zero when the named provider is unknown (`UnknownProvider`) or did not come back OK (`ProviderCheckFailed`); a full sweep does not fail on a provider that is down.
+
+### Preparing a hand-made worktree
+
+`git worktree add` checks out **tracked** files only. `.env` and
+`config.local.toml` are both gitignored, so a worktree made by hand has
+neither, and `Config.load` there sees only the committed `config.toml` — whose
+`default_provider` is `moonshotai`, which nobody has a key for. Every
+model-calling verb then fails inside that worktree, and `clanker commit` in
+particular falls back to the degraded one-commit plan that `--yes` refuses.
+
+The worktrees clanker makes for itself never had this problem: `linkSharedState`
+in `src/improve/worktree.zig` links both files into every one of them. The
+worktree the repository rules require of an agent session
+(`.agents/agent-rules/repo-rules-merge-workflow.md`) went through no such step.
+`clanker worktree` is that step, over the same list of names so the two paths
+cannot drift.
+
+Prepare the worktree you are standing in:
+
+```bash
+clanker worktree prepare
+```
+
+Prepare another one:
+
+```bash
+clanker worktree prepare /tmp/wt-probe
+```
+
+Create a worktree and prepare it in one command — this fetches `origin` and
+branches from the current branch's remote tip, which is what the repository
+rules ask for, naming the branch after the directory:
+
+```bash
+clanker worktree add .local/worktrees/fix-alarm-parse
+```
+
+Both files are linked as **leaf symlinks**, matching what `worktree.zig` does.
+That is safe here because both are read by the *host*: native I/O follows
+links, and `atomic_write.writeFile` resolves a leaf link before renaming, so an
+edit made inside the worktree lands in the main checkout's file rather than
+detaching from it. Both names are gitignored, so a link can never enter a
+commit. A file of either name that is already in the worktree is reported and
+left alone, never overwritten.
+
+`zig-out` is deliberately **not** linked, for the reason `linkSharedState`
+gives: a build *writes* into it, so a shared `zig-out` would have the
+worktree's own `zig build` clobber the binaries the main tree is running.
+`prepare` reports whether `zig-out/tools` is built and prints the command
+instead, because a worktree without it fails every guest-backed verb with
+`ToolWasmMissing`:
+
+```bash
+zig build tools
+```
+
+Verify the whole thing resolved:
+
+```bash
+clanker doctor
+```
+
+`default_provider` must read the main checkout's choice with its key `[ok]`.
+
+An operator who does not want worktrees reaching the main tree's credentials
+sets `worktree_link_local_config = false` under `[agent]`; `prepare` then
+reports both names as `skipped` rather than quietly doing nothing. That key is
+read from the **main checkout's** config, never the worktree's — the worktree
+cannot see `config.local.toml` yet, which is the whole defect, so asking it
+would answer from the committed defaults every time.
+
+The verb is native rather than a WASM guest, against the usual rule, for one
+reason: the guest ABI has no symlink call (`ck_fs_*` reads, writes, copies,
+renames and deletes; nothing links), and adding one would let any tool plant a
+link inside its own granted prefix and reach past it — exactly the risk
+[ADR 0017](adrs/0017-sandbox-symlink-traversal-is-opt-in.md) keeps behind an
+opt-in flag. Creating the link is a host job.
 
 ### Reports and runbooks
 

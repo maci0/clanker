@@ -223,6 +223,8 @@ Adding one is one file, one registry row, one `ProviderKind` tag — never a new
 | Diagnose config, credentials, build outputs | `clanker doctor` |
 | Create `config.local.toml` and `state/` | `clanker init` |
 | Build, test, tools, fmt, lint gates | `clanker gate` |
+| Prepare a hand-made git worktree | `clanker worktree prepare` |
+| Create a worktree and prepare it | `clanker worktree add <path>` |
 | Run evals: all, or one by name | `clanker eval [name]` |
 | Undo an applied improvement | `clanker revert <id>` |
 | Fold recent runs into the ROADMAP | `clanker autolearn` |
@@ -271,6 +273,41 @@ belongs in neither form: it reads as "edit my last commit" and behaves as a
 commit with no pathspec, so it takes the whole index and folds a concurrent
 session's staged slice into your commit
 ([runbook](docs/runbooks/concurrent-agent-sessions-on-one-checkout.md)).
+
+### Working in a hand-made worktree
+
+The repository rules make every session create its own worktree with `git
+worktree add`, and that checks out **tracked** files only. `.env` and
+`config.local.toml` are gitignored, so a fresh worktree has neither and every
+verb there resolves the committed `config.toml` `default_provider` — moonshotai,
+which nobody has a key for. `clanker commit` then degrades to the one-commit
+fallback plan `--yes` refuses, and every other model-calling verb fails the same
+way. Prepare the worktree **before the first model-calling verb**, or you hit
+the bug you are working in:
+
+```bash
+clanker worktree prepare
+```
+
+Both at once — this fetches `origin`, branches from the remote tip and prepares
+the result, which is the whole flow the rules ask for:
+
+```bash
+clanker worktree add .local/worktrees/<slug>
+```
+
+Guest wasm is deliberately not linked (a build writes into `zig-out`, so a
+shared one would clobber the binaries the main tree is running), so the
+worktree still needs its own:
+
+```bash
+zig build tools
+```
+
+`prepare` reports what it did to each name and whether `zig-out/tools` is
+built. `[agent] worktree_link_local_config = false` refuses the link
+([ADR 0048](docs/adrs/0048-preparing-a-hand-made-worktree-is-an-explicit-verb-not-a.md),
+[runbook](docs/runbooks/hand-made-worktree-has-no-local-config.md)).
 
 ### Cleaning up after runs
 

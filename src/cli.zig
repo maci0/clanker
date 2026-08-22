@@ -192,6 +192,13 @@ pub const Command = enum {
     prd,
     /// `preset list|show|new`: named tool + persona bundles (PRD 0033).
     preset,
+    /// `worktree prepare|add`: give a worktree made by hand with `git worktree
+    /// add` the two gitignored files it does not inherit (`.env` and
+    /// `config.local.toml`). Without them every verb there resolves the
+    /// committed `config.toml` default with no key behind it.
+    /// `src/improve/worktree.zig` owns the linking, shared with the worktrees
+    /// clanker makes for itself so the two cannot drift.
+    worktree_cmd,
     /// `config [get <key>|set <key> <value>]`: read or pin one dotted key of
     /// the merged config, through the same `config` tool the agent uses.
     /// `set` writes config.local.toml only. Bare `config` dumps both files.
@@ -498,6 +505,11 @@ pub const Options = struct {
     /// "leave"/"admit"/"deny" take a peer id. Absent leave is self-leave.
     mesh_sub: []const u8 = "status",
     mesh_arg1: ?[]const u8 = null,
+    /// `worktree <sub> [arg1] [arg2]`. Defaults to `prepare` so a bare
+    /// `clanker worktree` in a fresh worktree does the useful thing.
+    worktree_sub: ?[]const u8 = null,
+    worktree_arg1: ?[]const u8 = null,
+    worktree_arg2: ?[]const u8 = null,
 };
 
 fn isMeshSub(name: []const u8) bool {
@@ -975,6 +987,8 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.command = .schedule;
             } else if (std.mem.eql(u8, a, "reports") or std.mem.eql(u8, a, "report")) {
                 opts.command = .reports;
+            } else if (std.mem.eql(u8, a, "worktree") or std.mem.eql(u8, a, "worktrees")) {
+                opts.command = .worktree_cmd;
             } else if (std.mem.eql(u8, a, "config")) {
                 opts.command = .config;
             } else if (std.mem.eql(u8, a, "mesh")) {
@@ -1129,6 +1143,17 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                 opts.schedule_arg1 = a;
             } else if (opts.schedule_arg2 == null) {
                 opts.schedule_arg2 = a;
+            } else {
+                setDiag(diag, a);
+                return error.UnknownArg;
+            }
+        } else if (opts.command == .worktree_cmd) {
+            if (opts.worktree_sub == null) {
+                opts.worktree_sub = a;
+            } else if (opts.worktree_arg1 == null) {
+                opts.worktree_arg1 = a;
+            } else if (opts.worktree_arg2 == null) {
+                opts.worktree_arg2 = a;
             } else {
                 setDiag(diag, a);
                 return error.UnknownArg;
@@ -2147,6 +2172,7 @@ const specs = [_]Spec{
     .{ .command = .doctor, .usage = "doctor", .blurb = "diagnose config, credentials and build outputs", .group = .maintain, .detail = "Read-only and offline. Exits non-zero when something is broken, so it can\nguard a script or CI step. Connectivity is `clanker providers check`." },
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\njs-suite-coverage, sandbox-abi, tools-ts-toolchain and the release contract\n(CHANGELOG/RELEASES.md) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
+    .{ .command = .worktree_cmd, .usage = "worktree [prepare [<path>]|add <path> [<base>]]", .blurb = "give a hand-made git worktree the files it does not inherit", .group = .maintain, .detail = "`git worktree add` checks out TRACKED files only, and .env and\nconfig.local.toml are both gitignored. A worktree made by hand therefore\nresolves the committed config.toml default_provider with no key behind it,\nand every model-calling verb fails there -- clanker commit falls back to a\ndegraded one-commit plan that --yes refuses. The worktrees clanker makes for\nitself never had this problem: they link both files already.\n\n  prepare [<path>]     link .env and config.local.toml from the main checkout\n                       into an existing worktree (default: the current one)\n  add <path> [<base>]  fetch origin, create the worktree and a branch named\n                       after its directory, then prepare it. <base> defaults\n                       to the current branch\'s tip on origin\n\nThe links are leaves, the same shape src/improve/worktree.zig uses: both\nfiles are read by the host, and an atomic write resolves a leaf link before\nrenaming, so an edit made in the worktree lands in the main checkout\'s file\ninstead of detaching from it. Both names are gitignored, so a link can never\nenter a commit. An existing file of either name is never overwritten.\n\nSet [agent] worktree_link_local_config = false to refuse the link; prepare\nthen reports both names as skipped. The key is read from the MAIN CHECKOUT\'s\nconfig, since the worktree cannot see config.local.toml yet.\n\nGuest wasm is NOT linked: a build writes into zig-out, so a shared one would\nclobber the binaries the main tree is running. Run zig build tools in the\nworktree instead; prepare reports whether they are there and prints it.\n\nEXAMPLES\n  clanker worktree add .local/worktrees/fix-alarm   create it and prepare it\n  clanker worktree prepare                          prepare the one you are in\n  clanker worktree prepare /tmp/wt-probe            prepare another one" },
     .{ .command = .config, .usage = "config [get <key>|set <key> <value>]", .blurb = "read or pin one key of the merged config", .group = .maintain, .detail = "Reads and writes through the same `config` tool the agent uses. Every\nCLI flag with a persistent twin in config (say --reasoning-effort and\n[agent] reasoning_effort) can be pinned here instead of hand-editing\nconfig.local.toml.\n\n  (no subcommand)      dump config.toml + config.local.toml raw, local last\n  get <key>            print one dotted key of the merged config\n  set <key> <value>    pin the key in config.local.toml -- never config.toml\n\nset refuses a key the loader does not know (a typo'd TOML key would be\nsilently ignored; this is the checked path), refuses a value that does not\nparse as the key's merged type, and refuses the table sections (providers,\nmodels, mcp_servers), whose quoted-key disk shape a line edit does not\nspeak: edit config.local.toml by hand there. The write replaces one line\nand leaves the rest of the file byte-identical, comments included. A\nchange applies from the next command, not to processes already running.\n\nEXAMPLES\n  clanker config get agent.reasoning_effort\n  clanker config set agent.reasoning_effort high\n  clanker config set default_provider deepseek\n  clanker config set tui.mascot_size mini" },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model, .seed }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model\n--seed <n>          pin the tool-RNG seed (agent.seed) so the evals draw the\n                    identical ck_random stream and a failure can be re-run\n                    byte-identically" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
@@ -2300,6 +2326,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         .plugins => try cmdPlugins(init, opts),
         .schedule => try cmdSchedule(init, opts),
         .reports => try cmdReports(init, opts),
+        .worktree_cmd => try cmdWorktree(init, opts),
         .config => try cmdConfig(init, opts),
         .plugin => try cmdPlugin(init, opts),
         .research => try cmdResearch(init, opts),
@@ -7015,6 +7042,186 @@ fn cmdGit(init: std.process.Init, opts: Options) !void {
         // nonzero already tells a script the command did not succeed.
         else => std.process.exit(128),
     }
+}
+
+/// `clanker worktree prepare|add`: the preparation step the repository rules'
+/// hand-made worktree never had.
+///
+/// Native rather than a WASM guest, for one reason that survives the
+/// "everything is a plugin" question: the guest ABI has no symlink call --
+/// `ck_fs_*` reads, writes, copies, renames and deletes, and nothing links --
+/// and adding one would let any tool plant a link inside its own granted
+/// prefix and reach past it. That is precisely the risk ADR 0017 keeps behind
+/// an opt-in flag, so widening the ABI to save a native verb would trade a
+/// sandbox invariant for a convenience. Creating the link is a host job.
+fn cmdWorktree(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
+    const sub = opts.worktree_sub orelse "prepare";
+
+    if (std.mem.eql(u8, sub, "prepare")) {
+        return worktreePrepare(init, opts.worktree_arg1 orelse ".");
+    }
+    if (std.mem.eql(u8, sub, "add")) {
+        const path = opts.worktree_arg1 orelse usageExitFor(
+            io,
+            "worktree",
+            "worktree add needs a path: clanker worktree add <path> [<base>]",
+            .{},
+        );
+        try worktreeAdd(init, path, opts.worktree_arg2);
+        return worktreePrepare(init, path);
+    }
+    usageExitFor(io, "worktree", "unknown worktree subcommand '{s}'; expected prepare or add", .{sub});
+}
+
+/// `git fetch origin`, then `git worktree add -b <basename> <path> <base>`.
+///
+/// The fetch is what the repository rule asks for and what a stale local copy
+/// of the default branch otherwise costs: a branch cut from it lands a PR that
+/// silently reverts whatever the remote gained meanwhile. It is best-effort --
+/// an offline machine still gets its worktree, from the local ref, with the
+/// warning saying so.
+fn worktreeAdd(init: std.process.Init, path: []const u8, base: ?[]const u8) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+
+    if (!gitRunQuiet(init, &.{ "git", "fetch", "origin" }))
+        log.log(.warn, "worktree: git fetch origin failed; branching from the local refs instead", .{});
+
+    const branch = std.fs.path.basename(path);
+    if (branch.len == 0) return error.MissingArg;
+
+    const start = base orelse blk: {
+        const current = gitCapture(gpa, io, arena, &.{ "git", "rev-parse", "--abbrev-ref", "HEAD" }) orelse
+            break :blk "HEAD";
+        const remote = try std.fmt.allocPrint(arena, "origin/{s}", .{current});
+        // Only if origin actually has it: a branch that exists nowhere but
+        // here (a first push pending) must not fail the whole command.
+        if (gitRunQuiet(init, &.{ "git", "rev-parse", "--verify", "--quiet", remote })) break :blk remote;
+        break :blk current;
+    };
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(gpa);
+    try argv.appendSlice(gpa, &.{ "git", "worktree", "add", "-b", branch, path, start });
+    var child = try std.process.spawn(io, .{ .argv = argv.items });
+    switch (try child.wait(io)) {
+        .exited => |code| if (code != 0) std.process.exit(code),
+        else => std.process.exit(128),
+    }
+    const out = std.Io.File.stdout();
+    try out.writeStreamingAll(io, try std.fmt.allocPrint(
+        arena,
+        "created {s} on branch {s}, from {s}\n\n",
+        .{ path, branch, start },
+    ));
+}
+
+/// Runs git with its output discarded and answers only "did it succeed".
+fn gitRunQuiet(init: std.process.Init, argv: []const []const u8) bool {
+    const res = std.process.run(init.gpa, init.io, .{ .argv = argv }) catch return false;
+    defer init.gpa.free(res.stdout);
+    defer init.gpa.free(res.stderr);
+    return switch (res.term) {
+        .exited => |c| c == 0,
+        else => false,
+    };
+}
+
+/// Trimmed stdout of a successful git command, or null.
+fn gitCapture(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator, argv: []const []const u8) ?[]const u8 {
+    const res = std.process.run(gpa, io, .{ .argv = argv }) catch return null;
+    defer gpa.free(res.stdout);
+    defer gpa.free(res.stderr);
+    switch (res.term) {
+        .exited => |c| if (c != 0) return null,
+        else => return null,
+    }
+    const trimmed = std.mem.trim(u8, res.stdout, " \t\r\n");
+    if (trimmed.len == 0) return null;
+    return arena.dupe(u8, trimmed) catch null;
+}
+
+fn worktreePrepare(init: std.process.Init, path: []const u8) !void {
+    const gpa = init.gpa;
+    const io = init.io;
+    const arena = init.arena.allocator();
+
+    // A linked worktree's `.git` is a FILE naming the main checkout's git dir;
+    // in the main checkout it is a directory, and there is nothing to prepare.
+    const git_path = try std.fmt.allocPrint(arena, "{s}/.git", .{path});
+    const contents = std.Io.Dir.cwd().readFileAlloc(io, git_path, arena, .limited(64 * 1024)) catch |err| switch (err) {
+        error.IsDir => {
+            printUsageError(io, "{s} is a main checkout, not a linked worktree: it has its own config.local.toml and .env already", .{path});
+            std.process.exit(2);
+        },
+        error.FileNotFound => {
+            printUsageError(io, "{s} is not a git worktree: no .git there", .{path});
+            std.process.exit(2);
+        },
+        else => return err,
+    };
+    const main_checkout = worktree_mod.mainCheckoutFromGitFile(contents) orelse {
+        printUsageError(io, "{s}/.git does not name a linked worktree of a main checkout", .{path});
+        std.process.exit(2);
+    };
+
+    // The flag is the MAIN CHECKOUT's, deliberately: the worktree cannot read
+    // config.local.toml yet, which is the whole defect, so loading the config
+    // from there would answer from the committed defaults every time.
+    var main_dir = std.Io.Dir.cwd().openDir(io, main_checkout, .{}) catch |err| {
+        printUsageError(io, "cannot open the main checkout {s}: {s}", .{ main_checkout, @errorName(err) });
+        std.process.exit(1);
+    };
+    defer main_dir.close(io);
+    const main_cfg = config.Config.loadQuiet(io, arena, main_dir, "config.toml", "config.local.toml") catch |err| {
+        printUsageError(io, "cannot read the main checkout's config: {s}", .{@errorName(err)});
+        std.process.exit(1);
+    };
+
+    const results = try worktree_mod.prepareLinked(gpa, io, main_checkout, path, .{
+        .link_local_config = main_cfg.agent.worktree_link_local_config,
+    });
+
+    var out_buf: std.Io.Writer.Allocating = .init(arena);
+    const w = &out_buf.writer;
+    var real_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const shown = blk: {
+        var d = std.Io.Dir.cwd().openDir(io, path, .{}) catch break :blk path;
+        defer d.close(io);
+        const n = d.realPath(io, &real_buf) catch break :blk path;
+        break :blk real_buf[0..n];
+    };
+    try w.print("prepared {s}\n  from    {s}\n\n", .{ shown, main_checkout });
+    for (results) |r| {
+        const note = switch (r.outcome) {
+            .linked => "linked",
+            .already_present => "already there, left alone",
+            .absent_in_checkout => "not in the main checkout, nothing to link",
+            .skipped => "skipped ([agent] worktree_link_local_config = false)",
+        };
+        try w.print("  {s: <20}{s}\n", .{ r.name, note });
+    }
+
+    const tools_path = try std.fmt.allocPrint(arena, "{s}/zig-out/tools", .{path});
+    const tools_built = blk: {
+        std.Io.Dir.cwd().access(io, tools_path, .{}) catch break :blk false;
+        break :blk true;
+    };
+    try w.print("  {s: <20}{s}\n", .{
+        "zig-out/tools",
+        if (tools_built) "built" else "not built; every guest-backed verb fails ToolWasmMissing until it is",
+    });
+
+    // zig-out is deliberately never linked: a build WRITES into it, so a
+    // shared one would have this worktree's `zig build` clobber the binaries
+    // the main tree is running (the same reason linkSharedState excludes it).
+    try w.writeAll("\nNEXT\n");
+    if (!tools_built)
+        try w.print("  {s: <26}{s}\n", .{ "zig build tools", "build the WASM guests this worktree's verbs load" });
+    try w.print("  {s: <26}{s}\n", .{ "clanker doctor", "check that the provider and its key resolve here" });
+    try std.Io.File.stdout().writeStreamingAll(io, out_buf.written());
 }
 
 fn cmdRevert(init: std.process.Init, opts: Options) !void {
