@@ -25,6 +25,10 @@ const atomic_write = @import("../util/atomic_write.zig");
 /// list, shared with the sandbox that routes them, so the links here and the
 /// routing there cannot drift into disagreeing about what is shared.
 const host = @import("../sandbox/host.zig");
+/// For `prepareLinked`'s test and the `worktree_link_local_config` flag: the
+/// hand-made-worktree path is judged by whether `Config.load` in the worktree
+/// answers with the operator's provider, which is the defect it fixes.
+const config = @import("../config.zig");
 
 /// Absolute path to the cwd as a plain (non-sentinel) owned slice.
 /// std.process.currentPathAlloc returns a [:0]u8 whose allocation is one byte
@@ -995,4 +999,263 @@ fn updateRefCas(gpa: std.mem.Allocator, io: std.Io, branch: []const u8, new_sha:
         .exited => |c| c == 0,
         else => false,
     };
+}
+
+// ---------------------------------------------------------------------------
+// Preparing a HAND-MADE worktree (`clanker worktree prepare`).
+//
+// Everything above prepares the worktrees clanker creates for itself. The
+// repository rules make every agent session create its own with `git worktree
+// add` instead, and that path had no preparation step at all: `git worktree
+// add` checks out TRACKED files only, so a hand-made worktree has neither
+// `.env` nor `config.local.toml` (both gitignored) and every verb there
+// resolves the committed `config.toml` default with no key behind it -- see
+// docs/reports/bugs/2026-08-22-hand-made-worktree-falls-back-to-committed-provider.md.
+//
+// The two names live in one list, shared with `linkSharedState` above, so the
+// hand-made path and clanker's own cannot drift into linking different files.
+// ---------------------------------------------------------------------------
+
+/// The gitignored files that carry the operator's provider choice and its key.
+/// Nothing else provides them, and `git worktree add` never will.
+pub const local_config_names = [_][]const u8{ ".env", "config.local.toml" };
+
+pub const PrepareOptions = struct {
+    /// `agent.worktree_link_local_config`, read from the MAIN CHECKOUT's
+    /// config rather than the worktree's: the worktree cannot yet see the
+    /// operator's `config.local.toml`, which is the whole defect, so asking it
+    /// would answer from the committed defaults every time.
+    ///
+    /// On by default. Off is for a checkout whose worktrees must not reach the
+    /// main tree's credentials at all; `prepare` then reports each name as
+    /// `skipped` rather than silently doing nothing.
+    link_local_config: bool = true,
+};
+
+pub const LinkOutcome = enum {
+    /// The link was created by this call.
+    linked,
+    /// A file (or link) of that name was already in the worktree; left alone.
+    already_present,
+    /// The main checkout has no such file, so there is nothing to link.
+    absent_in_checkout,
+    /// `agent.worktree_link_local_config = false`.
+    skipped,
+};
+
+pub const LinkResult = struct {
+    name: []const u8,
+    outcome: LinkOutcome,
+};
+
+/// The main checkout a linked worktree's `.git` FILE points back at.
+///
+/// `git worktree add` writes `gitdir: <main>/.git/worktrees/<name>` into the
+/// worktree's `.git`, so the main checkout is the text before `/.git/worktrees/`.
+/// Returns null when the contents are not that shape: a normal checkout (where
+/// `.git` is a directory and this is never read), a bare repo, or a submodule
+/// pointer -- none of which have a main checkout to link from.
+pub fn mainCheckoutFromGitFile(contents: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, contents, " \t\r\n");
+    if (!std.mem.startsWith(u8, trimmed, "gitdir:")) return null;
+    const gitdir = std.mem.trim(u8, trimmed["gitdir:".len..], " \t\r\n");
+    const marker = "/.git/worktrees/";
+    const at = std.mem.lastIndexOf(u8, gitdir, marker) orelse return null;
+    if (at == 0) return null;
+    return gitdir[0..at];
+}
+
+/// Links the two gitignored local-config files from `main_checkout` into
+/// `worktree_path`, and reports what happened to each.
+///
+/// Leaf symlinks, matching `linkSharedState`: both files are read by the HOST
+/// (native I/O follows links) and `atomic_write.writeFile` resolves a leaf link
+/// before renaming, so an edit made in the worktree lands in the main
+/// checkout's file instead of detaching from it. Both names are gitignored, so
+/// the links can never enter a commit.
+pub fn prepareLinked(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    main_checkout: []const u8,
+    worktree_path: []const u8,
+    opts: PrepareOptions,
+) ![local_config_names.len]LinkResult {
+    var out: [local_config_names.len]LinkResult = undefined;
+    for (local_config_names, 0..) |name, i| {
+        out[i] = .{ .name = name, .outcome = .skipped };
+        if (!opts.link_local_config) continue;
+
+        const target = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ main_checkout, name });
+        defer gpa.free(target);
+        const link_path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ worktree_path, name });
+        defer gpa.free(link_path);
+
+        // Nothing to link is not a failure: a checkout with no `.env` (keys in
+        // the environment instead) is an ordinary setup, and creating a
+        // dangling link there would break every later read.
+        std.Io.Dir.cwd().access(io, target, .{}) catch {
+            out[i].outcome = .absent_in_checkout;
+            continue;
+        };
+
+        std.Io.Dir.cwd().symLink(io, target, link_path, .{}) catch |err| switch (err) {
+            // Never overwrite: the name may hold the worktree's own deliberate
+            // copy, or the link this call already made on an earlier run.
+            error.PathAlreadyExists => {
+                out[i].outcome = .already_present;
+                continue;
+            },
+            else => return err,
+        };
+        out[i].outcome = .linked;
+    }
+    return out;
+}
+
+/// The committed `config.toml` as this repository actually ships it: a
+/// default_provider nobody has a key for, and an `[instance]` table. The
+/// instance name matters to the test -- without one, `Config.load` persists a
+/// generated name into `config.local.toml` (`persistInstanceName`) and the
+/// worktree ends up with a file of that name before `prepare` ever runs.
+const committed_config =
+    \\default_provider = "moonshotai"
+    \\
+    \\[instance]
+    \\name = "clanker"
+    \\id = "main"
+    \\
+;
+
+test "a hand-made worktree resolves the checkout's default_provider once prepared" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // The main checkout: the committed default nobody has a key for, and the
+    // operator's own choice beside it in the gitignored file.
+    try tmp.dir.createDir(io, "main", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "main/config.toml", .data = committed_config });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main/config.local.toml", .data = "default_provider = \"deepseek\"\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main/.env", .data = "DEEPSEEK_API_KEY=sk-test\n" });
+
+    // The worktree as `git worktree add` leaves it: tracked files only, plus
+    // the `.git` file pointing back at the main checkout.
+    try tmp.dir.createDir(io, "wt", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "wt/config.toml", .data = committed_config });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+
+    const gitfile = try std.fmt.allocPrint(gpa, "gitdir: {s}/main/.git/worktrees/wt\n", .{root});
+    defer gpa.free(gitfile);
+    try tmp.dir.writeFile(io, .{ .sub_path = "wt/.git", .data = gitfile });
+
+    // The defect, asserted before the fix runs: the worktree sees only the
+    // committed default.
+    {
+        var wt_dir = try tmp.dir.openDir(io, "wt", .{});
+        defer wt_dir.close(io);
+        const before = try config.Config.load(io, arena, wt_dir, "config.toml", "config.local.toml");
+        try std.testing.expectEqualStrings("moonshotai", before.default_provider);
+    }
+
+    // The `.git` file is the only thing naming the main checkout.
+    const contents = try tmp.dir.readFileAlloc(io, "wt/.git", gpa, .limited(4096));
+    defer gpa.free(contents);
+    const main_checkout = mainCheckoutFromGitFile(contents) orelse
+        return error.MainCheckoutNotFound;
+    const expected_main = try std.fmt.allocPrint(gpa, "{s}/main", .{root});
+    defer gpa.free(expected_main);
+    try std.testing.expectEqualStrings(expected_main, main_checkout);
+
+    const worktree_path = try std.fmt.allocPrint(gpa, "{s}/wt", .{root});
+    defer gpa.free(worktree_path);
+    const results = try prepareLinked(gpa, io, main_checkout, worktree_path, .{});
+    for (results) |r| try std.testing.expectEqual(LinkOutcome.linked, r.outcome);
+
+    // The point of the whole change: the same load now answers with the
+    // operator's provider, read through the link.
+    {
+        var wt_dir = try tmp.dir.openDir(io, "wt", .{});
+        defer wt_dir.close(io);
+        const after = try config.Config.load(io, arena, wt_dir, "config.toml", "config.local.toml");
+        try std.testing.expectEqualStrings("deepseek", after.default_provider);
+    }
+
+    const env = try tmp.dir.readFileAlloc(io, "wt/.env", gpa, .limited(128));
+    defer gpa.free(env);
+    try std.testing.expectEqualStrings("DEEPSEEK_API_KEY=sk-test\n", env);
+}
+
+test "preparing a worktree leaves an existing file alone and reports what is absent" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A main checkout with no .env at all, and a worktree that already has its
+    // own config.local.toml.
+    try tmp.dir.createDir(io, "main", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "main/config.local.toml", .data = "default_provider = \"deepseek\"\n" });
+    try tmp.dir.createDir(io, "wt", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "wt/config.local.toml", .data = "default_provider = \"zai\"\n" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+    const main_checkout = try std.fmt.allocPrint(gpa, "{s}/main", .{root});
+    defer gpa.free(main_checkout);
+    const worktree_path = try std.fmt.allocPrint(gpa, "{s}/wt", .{root});
+    defer gpa.free(worktree_path);
+
+    const results = try prepareLinked(gpa, io, main_checkout, worktree_path, .{});
+    try std.testing.expectEqualStrings(".env", results[0].name);
+    try std.testing.expectEqual(LinkOutcome.absent_in_checkout, results[0].outcome);
+    try std.testing.expectEqualStrings("config.local.toml", results[1].name);
+    try std.testing.expectEqual(LinkOutcome.already_present, results[1].outcome);
+
+    // The worktree's own file must survive untouched.
+    const kept = try tmp.dir.readFileAlloc(io, "wt/config.local.toml", gpa, .limited(128));
+    defer gpa.free(kept);
+    try std.testing.expectEqualStrings("default_provider = \"zai\"\n", kept);
+}
+
+test "worktree_link_local_config off leaves the worktree alone" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDir(io, "main", .default_dir);
+    try tmp.dir.writeFile(io, .{ .sub_path = "main/.env", .data = "K=v\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "main/config.local.toml", .data = "default_provider = \"deepseek\"\n" });
+    try tmp.dir.createDir(io, "wt", .default_dir);
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+    const main_checkout = try std.fmt.allocPrint(gpa, "{s}/main", .{root});
+    defer gpa.free(main_checkout);
+    const worktree_path = try std.fmt.allocPrint(gpa, "{s}/wt", .{root});
+    defer gpa.free(worktree_path);
+
+    const results = try prepareLinked(gpa, io, main_checkout, worktree_path, .{ .link_local_config = false });
+    for (results) |r| try std.testing.expectEqual(LinkOutcome.skipped, r.outcome);
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "wt/.env", .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "wt/config.local.toml", .{}));
+}
+
+test "a git file that names no worktree has no main checkout" {
+    try std.testing.expect(mainCheckoutFromGitFile("ref: refs/heads/main\n") == null);
+    try std.testing.expect(mainCheckoutFromGitFile("gitdir: /srv/repo.git\n") == null);
+    try std.testing.expectEqualStrings(
+        "/home/y/code/clanker",
+        mainCheckoutFromGitFile("gitdir: /home/y/code/clanker/.git/worktrees/fix\n").?,
+    );
 }

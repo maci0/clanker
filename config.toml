@@ -222,6 +222,13 @@ sandbox_root = "."
 # lives elsewhere -- a `state/` symlinked into backed-up storage, where leaving
 # it off refuses every guest read and write under state/. See ADR 0017.
 sandbox_follow_symlinks = false
+# Whether `clanker worktree prepare` may link this checkout's .env and
+# config.local.toml into a worktree made by hand with `git worktree add`.
+# Both are gitignored, so git never populates them and every verb in such a
+# worktree otherwise falls back to the default_provider committed above, with
+# no key behind it. Set false for a checkout whose worktrees must not reach
+# the main tree's credentials; prepare then reports both names as skipped.
+worktree_link_local_config = true
 seed = 0
 # 0 = compact when history reaches half the model context window; a positive
 # value is a byte cap converted to tokens (see docs/configuration.md).
