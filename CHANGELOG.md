@@ -53,6 +53,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   prompt. Before, the model read `/help` as a course correction and the
   user got no command.
 
+- The web UI conversation rail states a failed load instead of showing the
+  empty state. `loadSessions()` caught every fetch and JSON failure and
+  rendered an empty list, so a stopped server, an auth failure and a
+  genuinely empty history were indistinguishable. The rail now shows
+  "Could not load conversations: <reason>" with a Try again button, and
+  says so in the live region too; `modules.sessions = false` is reported
+  separately as a switched-off module, with no retry, because retrying it
+  answers the same thing forever. `readJson` carries the HTTP status onto
+  the error it throws, which is what tells those two apart.
+
 - The web UI chat's Archive, Delete and Rename buttons work again and say
   what they did. Their feedback went only to a visually hidden live region,
   so every outcome — including the silent refusal when the conversation was

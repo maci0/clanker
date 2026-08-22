@@ -147,14 +147,41 @@ export function fmtDeadline(ts) {
    replace all of it with a status code, so a switched-off module read as a
    broken page. Every response goes through here. */
 export function readJson(r) {
+  // The status rides along on the error: the reason string alone cannot tell
+  // a switched-off module (404 with its own words) from a server that broke
+  // while answering, and callers have to tell those apart.
+  var fail = function (msg) {
+    var err = new Error(msg);
+    err.status = r.status;
+    return err;
+  };
   return r.json().then(function (d) {
-    if (!r.ok) throw new Error((d && d.error) || "HTTP " + r.status);
+    if (!r.ok) throw fail((d && d.error) || "HTTP " + r.status);
     return d;
   }, function () {
     // A body that is not JSON at all still has to fail with something useful.
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) throw fail("HTTP " + r.status);
     return {};
   });
+}
+
+/* A list load fails in two shapes a panel must not confuse. A module the
+   operator switched off is a settled state — the route answers 404 with its
+   own reason and retrying it will answer the same thing forever. Anything
+   else is a load that did not complete and is worth another try. Folding both
+   into an empty list is what made a dead server read as "no conversations
+   yet" (docs/reports/bugs/2026-08-22-webui-loadsessions-swallows-failure.md).
+   A fetch rejected before any response has no status and no useful message,
+   so it is named here rather than shown as "undefined". */
+export function classifyLoadFailure(err) {
+  var msg = (err && err.message) || "";
+  if (err && err.status === 404 && /\bdisabled\b/i.test(msg)) {
+    return { kind: "disabled", retry: false, message: msg };
+  }
+  if (!msg || !err || typeof err.status !== "number") {
+    return { kind: "failed", retry: true, message: "Could not reach the server." };
+  }
+  return { kind: "failed", retry: true, message: msg };
 }
 
 export function newSessionId() {
