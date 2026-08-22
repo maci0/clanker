@@ -356,3 +356,21 @@ test "recordRunTo writes a run event with all fields" {
     try std.testing.expectEqualStrings("read_file", arr.items[0].string);
     try std.testing.expectEqualStrings("git", arr.items[1].string);
 }
+
+test "recordRunTo writes a coding-agent backend run autolearn can read" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    recordRunTo(env.tmp.dir, io, std.testing.allocator, arena, .{
+        .provider = "grok",
+        .model = "acp",
+        .duration_ms = 42,
+    });
+    const raw = try env.tmp.dir.readFileAlloc(io, event_path, std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(raw);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("run", parsed.object.get("type").?.string);
+    try std.testing.expectEqualStrings("grok", parsed.object.get("provider").?.string);
+    try std.testing.expectEqualStrings("acp", parsed.object.get("model").?.string);
+}

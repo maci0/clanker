@@ -20,6 +20,8 @@ const retire = @import("improve/retire.zig");
 const history = @import("improve/history.zig");
 const mcp = @import("mcp/server.zig");
 const acp = @import("acp/server.zig");
+const acp_vendor = @import("acp/vendor.zig");
+const acp_driver = @import("acp/driver.zig");
 const session = @import("agent/session.zig");
 const workspace_mod = @import("agent/workspace.zig");
 const subprocess = @import("agent/subprocess.zig");
@@ -227,6 +229,9 @@ pub const Options = struct {
     /// the precedence). Validated at parse time so a typo is a usage error,
     /// not a provider 400 mid-run. Null means the config decides.
     reasoning_effort: ?config.ReasoningEffort = null,
+    /// `--backend <grok|claude|codex>`: drive a local coding-agent CLI
+    /// instead of the in-process LLM loop. Null means the config decides.
+    backend: ?[]const u8 = null,
     task: ?[]const u8 = null,
     /// CLI plugin subcommand name (PRD 0012): set by parse when the first
     /// positional is a short single word that is neither a Command nor a
@@ -771,6 +776,14 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
                     return error.BadReasoningEffort;
                 };
                 used = .reasoning_effort;
+            } else if (std.mem.eql(u8, a, "--backend")) {
+                const v = try takeValue(args, &idx, inline_value, a, diag);
+                if (acp_vendor.Name.parse(v) == null) {
+                    setDiag(diag, v);
+                    return error.BadBackend;
+                }
+                opts.backend = v;
+                used = .backend;
             } else if (std.mem.eql(u8, a, "--iters")) {
                 const v = try takeValue(args, &idx, inline_value, a, diag);
                 opts.iters = std.fmt.parseInt(u32, v, 10) catch {
@@ -1901,6 +1914,7 @@ const Flag = enum {
     provider,
     model,
     reasoning_effort,
+    backend,
     session,
     continue_last,
     mascot,
@@ -1957,6 +1971,7 @@ const Flag = enum {
             .provider => "--provider",
             .model => "--model, -m",
             .reasoning_effort => "--reasoning-effort",
+            .backend => "--backend",
             .session => "--session",
             .continue_last => "--continue, -c",
             .mascot => "--mascot[=<mode>]",
@@ -2019,6 +2034,7 @@ const Flag = enum {
             .provider => "use this provider instead of the configured default",
             .model => "the model to use, or <provider>/<model>",
             .reasoning_effort => "pin reasoning effort for every turn: none, low, medium, high, or max (beats config and auto-thinking)",
+            .backend => "drive a local coding-agent CLI (grok, claude, or codex) instead of the in-process LLM loop",
             .session => "resume a saved conversation by id",
             .continue_last => "pick up the most recently touched session",
             .mascot => "run the mascot: off, type, loop, place, or input",
@@ -2133,9 +2149,9 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--quiet`/`-q`, `--help`/`-h` and `--version` are accepted
 /// everywhere and so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
-    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  default or inverted: which way the mascot faces.\n                   tui.mascot_facing. Applies to loop and place; place\n                   faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that." },
-    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop; [agent] backend is the\n                   same key. Unset keeps today's in-process loop\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
+    .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  default or inverted: which way the mascot faces.\n                   tui.mascot_facing. Applies to loop and place; place\n                   faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that." },
+    .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop" },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
     .{ .command = .add_goal, .usage = "add-goal \"<objective>\" [\"<completion criterion>\"]", .blurb = "persist a goal without running it", .group = .work, .detail = "Calls the goal_add tool directly. It appends the durable goal record to\nstate/goals.json and prints the id, but never starts work. The board card\nappears when the web UI mirrors goals onto the board; this command does not\ncreate it. The criterion\nis optional: the goal loop drafts a measurable one on its first turn. Run\nit later with `clanker run --goal <id>` or from the goal board. Use\n`write-goal` first if you need help drafting the fields." },
     .{ .command = .improve_self, .usage = "improve-self [flags] \"<instructions>\"", .blurb = "self-improvement loop over this codebase", .group = .work, .flags = &.{ .provider, .model, .iters, .dry_run }, .detail = "Flags may appear before or after the instructions.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--iters <n>        cap the number of attempts (default 3)\n--dry-run          propose changes without applying them" },
@@ -2307,6 +2323,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
                 .provider = opts.provider,
                 .model = opts.model,
                 .reasoning_effort = opts.reasoning_effort,
+                .backend = opts.backend,
                 .session = opts.session,
                 .continue_last = opts.continue_last,
                 .mascot = opts.mascot,
@@ -4020,6 +4037,44 @@ fn goalSlashIntent(task: []const u8) ?[]const u8 {
 // marks the result as a continuing goal loop; this entry point recognizes the
 // `/goal` alias. Name the error set to
 // keep that intentional routing cycle out of Zig's inferred-error analysis.
+fn runCodingBackend(
+    init: std.process.Init,
+    cfg: *const config.Config,
+    reg: *const registry.Registry,
+    task: []const u8,
+) ![]const u8 {
+    return runCodingBackendCtx(init.io, init.gpa, init.arena.allocator(), init.environ_map, cfg, reg, task);
+}
+
+fn runCodingBackendCtx(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config.Config,
+    reg: *const registry.Registry,
+    task: []const u8,
+) ![]const u8 {
+    const name = acp_vendor.Name.parse(cfg.agent.backend) orelse return error.BadBackend;
+    const cwd = std.process.currentPathAlloc(io, arena) catch "";
+    var result = try acp_driver.run(.{
+        .io = io,
+        .gpa = gpa,
+        .arena = arena,
+        .name = name,
+        .prompt = task,
+        .cwd = cwd,
+        .timeout_ms = cfg.agent.backend_timeout_ms,
+        .acp_argv = cfg.agent.backend_acp_argv,
+        .cfg = cfg,
+        .environ_map = environ_map,
+        .reg = reg,
+        .session_id = "backend",
+    });
+    result.graph.deinit(gpa);
+    return result.answer;
+}
+
 fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     if (opts.task) |task| {
         if (goalSlashIntent(task)) |intent| {
@@ -4037,6 +4092,7 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     // The flag is the config key for one invocation; the agent loop reads
     // only cfg, so apply it before anything captures the config.
     if (opts.reasoning_effort) |re| cfg.agent.reasoning_effort = re;
+    if (opts.backend) |b| cfg.agent.backend = b;
     var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = init.environ_map, .cfg = &cfg };
 
     var provider_val = try resolveProvider(&cfg, opts);
@@ -4362,6 +4418,20 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
         if (resolved_task.goal_id) |gid| {
             recordGoalLoopOutcome(io, init.gpa, arena, &cfg, init.environ_map, gid, outcome);
         }
+    } else if (cfg.agent.backend.len > 0) {
+        const answer = runCodingBackend(init, &cfg, &reg, task_text) catch |err| {
+            const detail = switch (err) {
+                error.BadBackend => "unknown backend; use grok, claude, or codex",
+                error.AdapterNotFound => "coding-agent backend is not installed",
+                else => @errorName(err),
+            };
+            printUsageError(init.io, "{s}", .{detail});
+            if (opts.nested_run) return err;
+            std.process.exit(1);
+        };
+        try out_w.interface.writeAll(answer);
+        try out_w.interface.writeAll("\n");
+        try out_w.interface.flush();
     } else {
         const turn_start = std.Io.Timestamp.now(io, .awake);
         const resp = a.run(&messages, task_text, &err_detail) catch |err| {
@@ -9178,6 +9248,9 @@ const RunRequestBody = struct {
     /// picker. Empty means "leave the classifier, per-model config and
     /// sampling profile in charge".
     reasoning_effort: []const u8 = "",
+    /// Local coding-agent backend (grok/claude/codex). Empty keeps the
+    /// in-process LLM loop. Same names as `--backend` / `[agent] backend`.
+    backend: []const u8 = "",
     /// Plan mode (webui-plan 2.2): the run researches and proposes but the
     /// harness refuses write-capable tools, so nothing changes until the
     /// user applies the plan as a follow-up run.
@@ -11561,8 +11634,53 @@ fn handleProviders(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         return;
     };
     const annotated = annotateProviderUsability(arena, cfg, environ_map, io, raw) orelse raw;
-    const body = overlayLiveProviderModels(io, gpa, arena, cfg, environ_map, annotated) orelse annotated;
+    const filled = overlayLiveProviderModels(io, gpa, arena, cfg, environ_map, annotated) orelse annotated;
+    const body = overlayCodingBackends(arena, cfg, environ_map, io, filled) orelse filled;
     respondTool(stream, body);
+}
+
+/// Adds a `backends` array of installed local coding-agent CLIs (PATH /
+/// configured command), listed independently of API-key presence.
+fn overlayCodingBackends(
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    io: std.Io,
+    raw: []const u8,
+) ?[]const u8 {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return null;
+    if (parsed != .object) return null;
+    const path_env = environ_map.get("PATH") orelse "";
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
+    s.beginObject() catch return null;
+    var top = parsed.object.iterator();
+    while (top.next()) |kv| {
+        if (std.mem.eql(u8, kv.key_ptr.*, "backends")) continue;
+        s.objectField(kv.key_ptr.*) catch return null;
+        s.write(kv.value_ptr.*) catch return null;
+    }
+    s.objectField("backends") catch return null;
+    s.beginArray() catch return null;
+    const configured0: []const u8 = if (cfg.agent.backend_acp_argv.len > 0) cfg.agent.backend_acp_argv[0] else "";
+    for (std.enums.values(acp_vendor.Name)) |name| {
+        const argv0 = if (cfg.agent.backend.len > 0 and std.mem.eql(u8, cfg.agent.backend, name.cliName()) and configured0.len > 0)
+            configured0
+        else
+            "";
+        if (!acp_vendor.installed(io, name, path_env, argv0)) continue;
+        s.beginObject() catch return null;
+        s.objectField("name") catch return null;
+        s.write(name.cliName()) catch return null;
+        s.objectField("kind") catch return null;
+        s.write("coding-agent") catch return null;
+        s.objectField("group") catch return null;
+        s.write("Local coding-agent backend") catch return null;
+        s.endObject() catch return null;
+    }
+    s.endArray() catch return null;
+    s.endObject() catch return null;
+    return out.written();
 }
 
 /// Adds `usable` (and `reason` when false) to each provider row of the
@@ -15620,6 +15738,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             return;
         };
     }
+    if (req.backend.len > 0) {
+        if (acp_vendor.Name.parse(req.backend) == null) {
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"unknown backend; use grok, claude, or codex\"}");
+            return;
+        }
+        run_cfg.agent.backend = req.backend;
+    }
     const ws_root = workspaceSandboxPath(io, arena, run_workspace);
     var wt: ?worktree_mod.Worktree = null;
     defer if (wt) |*w| w.deinit(gpa);
@@ -15692,7 +15817,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // (`providers.unusableReason`), so a refusal here means a stale or
     // hand-written client, never a row the picker offered. A request that
     // names no provider keeps the configured default and its fallback chain.
-    if (req.provider.len > 0) {
+    if (req.provider.len > 0 and run_cfg.agent.backend.len == 0) {
         if (providers.unusableReason(arena, environ_map, provider, io)) |reason| {
             const err_body = std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"provider '{s}' is not callable from this server: {s}\"}}", .{ provider.name, reason }) catch
                 "{\"ok\":false,\"error\":\"provider is not callable from this server\"}";
@@ -15963,6 +16088,15 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             loop_outcome = outcome;
             writeStreamEvent(stream.socket.handle, "status", .{ .message = std.fmt.allocPrint(arena, "Goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason }) catch "Goal loop finished." });
             break :blk answers.items;
+        } else if (run_cfg.agent.backend.len > 0) blk: {
+            const answer = runCodingBackendCtx(io, gpa, arena, environ_map, &run_cfg, &reg, final_task) catch |err| {
+                const detail = @errorName(err);
+                log.log(.error_, "run failed phase=backend: {s}", .{detail});
+                writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
+                return;
+            };
+            if (cfg.modules.streaming) raw_http.writeAllFd(stream.socket.handle, answer);
+            break :blk answer;
         } else blk: {
             const resp = a.run(&messages, final_task, &err_detail) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
@@ -16057,6 +16191,12 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         };
         loop_outcome = outcome;
         break :blk answers.items;
+    } else if (run_cfg.agent.backend.len > 0) blk: {
+        const answer = runCodingBackendCtx(io, gpa, arena, environ_map, &run_cfg, &reg, final_task) catch |err| {
+            respondRunError(stream, @errorName(err), "{\"ok\":false,\"error\":\"backend run failed\"}");
+            return;
+        };
+        break :blk answer;
     } else blk: {
         const resp = a.run(&messages, final_task, &err_detail) catch |err| {
             const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
@@ -17193,6 +17333,27 @@ test "--reasoning-effort parses on the agent commands and validates its value" {
     try std.testing.expectEqualStrings("--reasoning-effort", diag);
 }
 
+test "--backend parses on run/repl/goal and refuses unknown names" {
+    const ok = try parse(&.{ "clanker", "run", "--backend", "grok", "do a thing" }, null);
+    try std.testing.expectEqualStrings("grok", ok.backend.?);
+    const repl_ok = try parse(&.{ "clanker", "repl", "--backend", "claude" }, null);
+    try std.testing.expectEqualStrings("claude", repl_ok.backend.?);
+    const goal_ok = try parse(&.{ "clanker", "goal", "--backend=codex", "done" }, null);
+    try std.testing.expectEqualStrings("codex", goal_ok.backend.?);
+    try std.testing.expect(ok.command == .run);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.BadBackend, parse(&.{ "clanker", "run", "--backend", "openai", "x" }, &diag));
+    try std.testing.expectEqualStrings("openai", diag);
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--backend", "grok" }, &diag));
+    try std.testing.expectEqualStrings("--backend", diag);
+}
+
+test "unset --backend leaves the in-process loop" {
+    const bare = try parse(&.{ "clanker", "run", "do a thing" }, null);
+    try std.testing.expect(bare.backend == null);
+}
+
 test "every flag a command accepts has a help description" {
     // printCommandHelp renders each flag as a bullet with describe(); a flag
     // with an empty or missing description would render a bare token with no
@@ -17793,6 +17954,8 @@ test "the run request body carries optional images, and the cap counts decoded b
     const with_effort = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"reasoning_effort\":\"high\"}", .{ .ignore_unknown_fields = true });
     try std.testing.expectEqualStrings("high", with_effort.reasoning_effort);
     try std.testing.expectEqual(config.ReasoningEffort.high, config.ReasoningEffort.fromStr(with_effort.reasoning_effort).?);
+    const with_backend = try std.json.parseFromSliceLeaky(RunRequestBody, arena, "{\"task\":\"hi\",\"backend\":\"grok\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqualStrings("grok", with_backend.backend);
     try std.testing.expectEqual(@as(?config.ReasoningEffort, null), config.ReasoningEffort.fromStr("turbo"));
 }
 
@@ -18197,6 +18360,28 @@ test "provider list marks a dead loopback endpoint not usable" {
     const dead = annotateProviderUsability(arena, &cfg, &env, io, raw).?;
     try std.testing.expect(std.mem.find(u8, dead, "\"usable\":false") != null);
     try std.testing.expect(std.mem.find(u8, dead, "listening") != null);
+}
+
+test "overlayCodingBackends lists PATH-installed CLIs in their own group" {
+    var tenv: @import("util/test_env.zig").Env = .init();
+    defer tenv.deinit();
+    const io = tenv.io();
+    const arena = tenv.arena();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const file = try tenv.tmp.dir.createFile(io, "grok", .{});
+    file.close(io);
+    const dir_path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tenv.tmp.sub_path});
+    defer std.testing.allocator.free(dir_path);
+    try env.put("PATH", dir_path);
+
+    var cfg = config.Config{};
+    const raw = "{\"ok\":true,\"default\":\"a\",\"providers\":[]}";
+    const body = overlayCodingBackends(arena, &cfg, &env, io, raw).?;
+    try std.testing.expect(std.mem.find(u8, body, "\"backends\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"name\":\"grok\"") != null);
+    try std.testing.expect(std.mem.find(u8, body, "Local coding-agent backend") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"name\":\"claude\"") == null);
 }
 
 test "a live /models listing fills the picker, skipping entries it cannot name" {

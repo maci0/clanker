@@ -542,6 +542,16 @@ pub const Agent = struct {
     /// default) leaves those lower layers in charge. The CLI's
     /// `--reasoning-effort` (repl/run/goal) sets this for one invocation.
     reasoning_effort: ?ReasoningEffort = null,
+    /// Coding-agent backend: `grok`, `claude`, or `codex`. Empty keeps the
+    /// in-process LLM loop. `--backend` on run/repl/goal is the same key
+    /// for one invocation (ADR 0032 / PRD 0043).
+    backend: []const u8 = "",
+    /// Optional full argv for the selected backend's ACP spawn. Empty uses
+    /// the vendor default (`grok agent stdio`, or the published adapter).
+    backend_acp_argv: []const []const u8 = &.{},
+    /// How long an ACP handshake/prompt may block before the client cancels
+    /// the child, records a failed ACP node, and falls through to headless.
+    backend_timeout_ms: u32 = 120_000,
     /// Opt-in per-turn classifier that selects a sampling-profile
     /// `reasoning_effort` row. Off until a calibration eval justifies it.
     auto_thinking: bool = false,
@@ -685,6 +695,9 @@ pub const AgentFields = struct {
     confirm_writes: bool = false,
     fallback_provider: bool = false,
     reasoning_effort: bool = false,
+    backend: bool = false,
+    backend_acp_argv: bool = false,
+    backend_timeout_ms: bool = false,
     auto_thinking: bool = false,
     thinking_classifier_model: bool = false,
     thinking_classifier_timeout_ms: bool = false,
@@ -2362,7 +2375,7 @@ pub const Config = struct {
             "thinking_classifier_model",      "thinking_classifier_timeout_ms", "worktree",                "goal_worktree",
             "git_worktree_on",                "isolated_cli",                   "isolated_tui",            "isolated_webui",
             "reasoning_effort",               "repeat_tool_abort_threshold",    "request_timeout_ms",      "stream_idle_timeout_ms",
-            "worktree_link_local_config",
+            "backend",                        "backend_acp_argv",               "backend_timeout_ms",      "worktree_link_local_config",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -2571,6 +2584,23 @@ pub const Config = struct {
             };
             f.reasoning_effort = true;
         }
+        if (obj.get("backend")) |k| {
+            const s = try jsonStr(k, "backend");
+            if (s.len > 0 and std.meta.stringToEnum(enum { grok, claude, codex }, s) == null) {
+                log.log(.error_, "agent: backend \"{s}\" is not one of \"grok\", \"claude\", \"codex\"", .{s});
+                return error.UnknownBackend;
+            }
+            a.backend = s;
+            f.backend = true;
+        }
+        if (obj.get("backend_acp_argv")) |k| {
+            a.backend_acp_argv = try jsonNameList(arena, k, "backend_acp_argv");
+            f.backend_acp_argv = true;
+        }
+        if (obj.get("backend_timeout_ms")) |k| {
+            a.backend_timeout_ms = try jsonUnsigned(u32, k, "backend_timeout_ms");
+            f.backend_timeout_ms = true;
+        }
         if (obj.get("auto_thinking")) |k| {
             a.auto_thinking = try jsonBool(k, "auto_thinking");
             f.auto_thinking = true;
@@ -2660,6 +2690,9 @@ pub const Config = struct {
         if (fields.confirm_writes) dst.confirm_writes = src.confirm_writes;
         if (fields.fallback_provider) dst.fallback_providers = src.fallback_providers;
         if (fields.reasoning_effort) dst.reasoning_effort = src.reasoning_effort;
+        if (fields.backend) dst.backend = src.backend;
+        if (fields.backend_acp_argv) dst.backend_acp_argv = src.backend_acp_argv;
+        if (fields.backend_timeout_ms) dst.backend_timeout_ms = src.backend_timeout_ms;
         if (fields.auto_thinking) dst.auto_thinking = src.auto_thinking;
         if (fields.thinking_classifier_model) dst.thinking_classifier_model = src.thinking_classifier_model;
         if (fields.thinking_classifier_timeout_ms) dst.thinking_classifier_timeout_ms = src.thinking_classifier_timeout_ms;
@@ -4995,6 +5028,45 @@ test "agent.reasoning_effort pins the per-turn effort and rejects unknown values
         ,
     });
     try std.testing.expectError(error.UnknownReasoningEffort, Config.load(io, arena, tmp3.dir, "config.toml", "config.local.toml"));
+}
+
+test "agent.backend accepts grok/claude/codex and refuses unknown names" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[agent]
+        \\backend = "grok"
+        \\backend_acp_argv = ["fake-acp"]
+        \\backend_timeout_ms = 5000
+        ,
+    });
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("grok", cfg.agent.backend);
+    try std.testing.expectEqual(@as(usize, 1), cfg.agent.backend_acp_argv.len);
+    try std.testing.expectEqualStrings("fake-acp", cfg.agent.backend_acp_argv[0]);
+    try std.testing.expectEqual(@as(u32, 5000), cfg.agent.backend_timeout_ms);
+
+    var tmp2 = std.testing.tmpDir(.{});
+    defer tmp2.cleanup();
+    try tmp2.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[agent]
+        \\backend = "openai"
+        ,
+    });
+    try std.testing.expectError(error.UnknownBackend, Config.load(io, arena, tmp2.dir, "config.toml", "config.local.toml"));
 }
 
 test "agent.git_remote_ops and exec_pattern_allow parse from config" {
