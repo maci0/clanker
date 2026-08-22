@@ -52,6 +52,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `POST /api/steer` reaches every run the keys it names address, not the
+  first slot found: two concurrent runs registered under one goal id — a
+  goal resumed at serve startup while a browser streams the same goal —
+  left one of them silently unsteerable behind a 200. A body naming both
+  `goal` and `session` is now an AND, so a pair belonging to no single run
+  addresses nothing instead of steering whichever run matched one half,
+  and a body naming neither key cannot broadcast. The success body carries
+  how many runs took the message: `{"ok":true,"delivered":N}`.
+
 - REPL slash commands and `!` shell escapes typed while a turn streams are
   no longer queued as steering text. `/help` and `/quit` run at once (the
   exit path stops and joins the in-flight worker); every other command
