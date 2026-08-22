@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve-self exhausts all attempts when the model answers only in reasoning](bugs/2026-08-22-improve-self-reasoning-only-empty-content.md) — Resolved
+
 - [loadSessions folds every failure into an empty conversation list](bugs/2026-08-22-webui-loadsessions-swallows-failure.md) — Open
 
 - [webui model and effort choices are stored browser-global, not per chat](bugs/2026-08-22-webui-model-effort-storage-is-global.md) — Open

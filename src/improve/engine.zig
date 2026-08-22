@@ -398,6 +398,16 @@ pub const Engine = struct {
     /// container-level `var`, or concurrent Engine instances would share and
     /// corrupt each other's feedback.
     feedback: ?[]const u8 = null,
+    /// Set when the model answered entirely in `reasoning_content` with an
+    /// empty `content` field -- a thinking model that never closed its think
+    /// block, observed repeatedly on qwen3-family models served by llama.cpp
+    /// (`finish_reason: stop`, 30k+ chars of reasoning, empty content). The
+    /// next proposal/plan call then sends `reasoning_effort: "none"` so the
+    /// model cannot bury the answer in chain-of-thought and must emit the JSON
+    /// in content. Cleared as soon as a response carries content again, so a
+    /// healthy model returns to normal reasoning. Per-instance for the same
+    /// reason `feedback` is.
+    retry_without_reasoning: bool = false,
     /// The last advisory Arena verdict, when `improve.arena_advisory` is on.
     ///
     /// Deliberately not part of any decision: it is appended to the feedback a
@@ -656,6 +666,10 @@ pub const Engine = struct {
             .provider = self.provider,
             .messages = &messages,
             .max_tokens = opts.response_tokens,
+            // A previous attempt that answered entirely in reasoning with
+            // empty content set this flag; disabling reasoning forces the
+            // model to emit the JSON in content instead of re-burying it.
+            .reasoning_effort = if (self.retry_without_reasoning) "none" else null,
         }, &err_detail, null, null) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.error_, "proposal request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
@@ -673,6 +687,11 @@ pub const Engine = struct {
                     json_text = js;
                 }
             }
+        } else {
+            // The model answered in content (directly, or the proposal was
+            // recovered from its reasoning), so it is healthy; clear the
+            // no-reasoning pin so normal reasoning is not crippled.
+            self.retry_without_reasoning = false;
         }
         if (json_text.len == 0) {
             // Distinguish the two ways content can come back empty so a retry
@@ -693,9 +712,17 @@ pub const Engine = struct {
             if (resp.raw) |raw| log.log(.debug, "raw response length: {d} chars", .{raw.len});
             // A reasoning model that hit its output ceiling spent the budget
             // before the answer; the recovery is to leave room for it, not to
-            // restate the same formatting demand.
+            // restate the same formatting demand. A stop-reason with a large
+            // reasoning body is the worse shape: the model answered entirely
+            // in chain-of-thought and never emitted content, so retrying with
+            // reasoning on just reproduces the same empty content.
+            const reasoning_only = !budget_cut and reasoning_len > 0;
+            self.retry_without_reasoning = true;
+            log.log(.info, "retrying without reasoning after empty-content response (finish_reason={s})", .{resp.finish_reason orelse "none"});
             self.feedback = if (budget_cut)
-                "Your previous response was cut off by the output limit before the JSON answer (chain-of-thought likely ate the budget). Keep your reasoning short and put the complete JSON object in the content field."
+                "Your previous response was cut off by the output limit before the JSON answer (chain-of-thought ate the budget). Reasoning is being disabled for the next attempt; put the complete JSON object in the content field."
+            else if (reasoning_only)
+                "Your entire response came back as chain-of-thought with an empty content field. Reasoning is being disabled for the next attempt so you cannot bury the answer in thinking -- emit the complete JSON object as your final message content."
             else
                 "Your previous response had an empty content field. Output the JSON object in the content field.";
             const empty_id = self.newId() catch null;
@@ -1378,6 +1405,10 @@ pub const Engine = struct {
             // An idea list is a few hundred tokens; the full patch budget
             // only invites the model to write the patches here too.
             .max_tokens = @min(opts.response_tokens, 4096),
+            // Same recovery as the proposal call: a previous empty-content
+            // response means this model buries its answer in reasoning, so
+            // force it to emit content here too.
+            .reasoning_effort = if (self.retry_without_reasoning) "none" else null,
         }, &err_detail, null, null) catch |err| {
             var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
             log.log(.warn, "plan request failed: {s} ({s})", .{ @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
@@ -1390,6 +1421,15 @@ pub const Engine = struct {
             if (resp.reasoning) |rc| {
                 if (lastProposalJson(self.arena, rc)) |js| json_text = js;
             }
+        } else {
+            self.retry_without_reasoning = false;
+        }
+        // A plan that also came back content-empty is the same model defect
+        // (everything in reasoning); arm the pin so the proposal call this
+        // iteration cannot repeat it.
+        if (json_text.len == 0 and content.len == 0) {
+            self.retry_without_reasoning = true;
+            log.log(.info, "plan came back content-empty; proposal call will run without reasoning", .{});
         }
         const ideas = (plan_mod.parsePlan(self.arena, json_text, 6, opts.max_request_files) catch null) orelse {
             log.log(.warn, "plan: response was not a usable idea list", .{});
@@ -2762,7 +2802,18 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
     var best_end: ?usize = null;
     var in_string = false;
     for (text, 0..) |ch, i| {
-        if (ch == '"' and (i == 0 or text[i - 1] != '\\')) in_string = !in_string;
+        if (ch == '"') {
+            // A quote opens or closes a JSON string unless it is escaped. The
+            // `\\"` case (escaped backslash then quote) is a real string
+            // boundary that the naive `text[i-1] != '\\'` test misreads as
+            // escaped, which can unbalance the brace scan for the rest of the
+            // text and hide a proposal that is actually there. Count the
+            // run of backslashes: an even count leaves the quote unescaped.
+            var backslashes: usize = 0;
+            var j = i;
+            while (j > 0 and text[j - 1] == '\\') : (j -= 1) backslashes += 1;
+            if (backslashes % 2 == 0) in_string = !in_string;
+        }
         if (in_string) continue;
         if (ch == '{') {
             if (depth == 0) start = i;
@@ -2786,6 +2837,40 @@ fn lastProposalJson(arena: std.mem.Allocator, text: []const u8) ?[]const u8 {
         }
     }
     return null;
+}
+
+test "lastProposalJson returns the last balanced changes object" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // A proposal embedded in prose, followed by a trailing unbalanced `{`
+    // from the model's still-thinking reasoning -- the object before it is
+    // still a complete, extractable proposal.
+    const text = "Some reasoning {\"summary\":\"s\",\"changes\":[{\"file\":\"a\",\"old\":\"b\",\"new\":\"c\"}]} and then { unfinished";
+    const got = lastProposalJson(a, text).?;
+    try std.testing.expect(std.mem.find(u8, got, "\"changes\"") != null);
+    try std.testing.expect(!std.mem.endsWith(u8, got, "{ unfinished"));
+}
+
+test "lastProposalJson treats escaped backslash-then-quote as a string boundary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    // The `old` field holds source with an escaped backslash before a quote
+    // (`\\"` in the JSON source). The old escape test read `text[i-1] != '\\'`
+    // as "escaped" and never closed the string, unbalancing the brace scan so
+    // the proposal was missed. It must be recovered.
+    const text = "{\"summary\":\"s\",\"changes\":[{\"file\":\"a\",\"old\":\"q\\\\\",\"new\":\"z\"}]}";
+    const got = lastProposalJson(a, text).?;
+    try std.testing.expect(std.mem.find(u8, got, "\"changes\"") != null);
+    try std.testing.expect(std.mem.find(u8, got, "\"old\":\"q\\\\\"") != null);
+}
+
+test "lastProposalJson returns null when the reasoning has no proposal object" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expect(lastProposalJson(a, "the model only thought about it, no JSON drafted") == null);
 }
 
 /// Staged `src/config.zig` must keep the improve-gate defaults enabled.

@@ -44,6 +44,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `improve-self` survives a reasoning model that answers entirely in
+  `reasoning_content` with empty `content` (`finish_reason: stop`). The
+  engine used to re-ask the identical question (reasoning still on), the
+  model re-buried its answer in chain-of-thought, and every attempt of an
+  iteration failed the same way. A response with empty content now pins the
+  next proposal/plan call to `reasoning_effort: "none"` — forcing the JSON
+  answer into `content` — and the pin clears as soon as content comes back.
+  Plan and proposal both honor it.
+
 - The web UI chat's Archive, Delete and Rename buttons work again and say
   what they did. Their feedback went only to a visually hidden live region,
   so every outcome — including the silent refusal when the conversation was
