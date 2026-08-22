@@ -578,6 +578,39 @@ fn missingStatusArg(store: []const u8, usage: StatusUsage, what: []const u8) Err
     return Error.MissingArg;
 }
 
+/// The column the CLI's own help is held to, so this output sits in the same
+/// terminal without a different margin.
+pub const help_columns: usize = 80;
+
+/// Writes `text` at `indent`, breaking between words so no line exceeds
+/// `columns`. A word longer than the column is emitted whole and overruns: a
+/// path or identifier split across two lines is no longer copy-pasteable,
+/// which is worse than the overrun.
+pub fn wrapInto(w: *std.Io.Writer, text: []const u8, indent: []const u8, columns: usize) !void {
+    const room = columns -| indent.len;
+    var line_len: usize = 0;
+    var it = std.mem.tokenizeAny(u8, text, " \t\n");
+    while (it.next()) |word| {
+        if (line_len == 0) {
+            try w.writeAll(indent);
+            try w.writeAll(word);
+            line_len = word.len;
+            continue;
+        }
+        if (line_len + 1 + word.len > room) {
+            try w.writeByte('\n');
+            try w.writeAll(indent);
+            try w.writeAll(word);
+            line_len = word.len;
+            continue;
+        }
+        try w.writeByte(' ');
+        try w.writeAll(word);
+        line_len += 1 + word.len;
+    }
+    if (line_len > 0) try w.writeByte('\n');
+}
+
 // ----------------------------------------------------------------- tests --
 
 const testing = std.testing;
@@ -754,4 +787,23 @@ test "callTool fails the call for a refusal and for an unreadable answer" {
     var negative: Canned = .{ .answer = "{\"ok\":true,\"next_number\":-1}" };
     const wrapped = try callTool(arena_state.allocator(), "adr", .{ .ctx = &negative, .call = Canned.call }, "{}");
     try testing.expectEqual(@as(u64, 0), unsignedField(wrapped, "next_number"));
+}
+
+test "wrapInto breaks between words and never mid-word" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var w: std.Io.Writer.Allocating = .init(arena);
+    defer w.deinit();
+    try wrapInto(&w.writer, "aaa bbb ccc ddd", "..", 9);
+    // Two columns of indent, then at most 7 more.
+    try testing.expectEqualStrings("..aaa bbb\n..ccc ddd\n", w.written());
+
+    var long: std.Io.Writer.Allocating = .init(arena);
+    defer long.deinit();
+    // A single word wider than the column is emitted whole rather than cut:
+    // a broken path or identifier is worse than one long line.
+    try wrapInto(&long.writer, "supercalifragilistic x", "", 5);
+    try testing.expectEqualStrings("supercalifragilistic\nx\n", long.written());
 }
