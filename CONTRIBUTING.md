@@ -28,6 +28,10 @@ test suites (pinned in `.nvmrc`).
   nothing passes with 0 tests; the JS suites still run.
 - One JS suite: `node --test ui/app/core/scroll.test.mjs` (or whichever
   `.test.mjs` you changed).
+- Every JS suite, without the Zig half: `node --test 'ui/**/*.test.mjs'`.
+  Quote the pattern — node expands it, and a directory positional such as
+  `node --test ui/app/` does not work at all: node resolves the path as a
+  module and fails with `MODULE_NOT_FOUND` on the directory itself.
 - The e2e journeys (`zig build e2e`) spawn the real `clanker repl` on a pty,
   so they need the dependency patches applied: run `scripts/apply-patches.sh`
   once after the first `zig build` (idempotent; `scripts/verify.sh` does it
@@ -40,7 +44,8 @@ test suites (pinned in `.nvmrc`).
 ## What must pass
 
 - `clanker gate` — build, test, tools, fmt, lint, and the self-integrity
-  gates (provider-kind, test-root-coverage, sandbox-abi, tools-ts-toolchain,
+  gates (provider-kind, test-root-coverage, js-suite-coverage, sandbox-abi,
+  tools-ts-toolchain,
   release-contract). This is what the self-improvement loop demands of its
   own proposals, so a human change must clear the same bar.
 - CI — the workflow in `.github/workflows/ci.yml` additionally checks shell
