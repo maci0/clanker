@@ -61,8 +61,8 @@ test("the picker leaves Enter/Space to the option buttons", function () {
 test("closing the picker hands focus back to the toggle", function () {
   // A hidden element keeps focus: without this the page falls back to <body>
   // and the next Tab restarts at the top of the document.
-  assert.match(themeJs, /function closePicker\(\)[\s\S]*?_picker\.contains\(document\.activeElement\)/);
-  assert.match(themeJs, /function closePicker\(\)[\s\S]*?anchor\.focus\(\)/);
+  assert.match(themeJs, /function closePicker\([^)]*\)[\s\S]*?_picker\.contains\(document\.activeElement\)/);
+  assert.match(themeJs, /function closePicker\([^)]*\)[\s\S]*?anchor\.focus\(\)/);
 });
 
 test("Tab closes the picker without trapping focus", function () {
