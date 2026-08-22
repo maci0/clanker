@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Goal-loop work turns ignore --backend and call Agent.run](bugs/2026-08-22-goal-loop-ignores-backend.md) — Resolved
+
+- [ACP hang never unblocks a silent vendor child](bugs/2026-08-22-acp-hang-never-unblocks-a-silent-child.md) — Resolved
+
 - [Two backend runs in the same second wrote one graph file](bugs/2026-08-22-backend-run-id-seconds-collide.md) — Resolved
 
 - [improve-self exhausts all attempts when the model answers only in reasoning](bugs/2026-08-22-improve-self-reasoning-only-empty-content.md) — Resolved
