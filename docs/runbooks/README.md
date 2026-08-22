@@ -51,6 +51,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 ## Inventory
 
 <!-- inventory:runbook:start -->
+- [A hand-made git worktree has no config.local.toml or .env](hand-made-worktree-has-no-local-config.md) — Current
+
 - [gh pr merge --delete-branch reports failure after the merge landed, when run from a worktree](2026-08-22-gh-pr-merge-delete-branch-in-a-worktree.md) — Current
 
 - [Push a diverged main when fetch is denied](push-diverged-main-fetch-denied.md) — Current

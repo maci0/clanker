@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A hand-made git worktree loses config.local.toml and .env, so clanker verbs fall back to the committed default provider](bugs/2026-08-22-hand-made-worktree-falls-back-to-committed-provider.md) — Open
+
 - [loadSessions folds every failure into an empty conversation list](bugs/2026-08-22-webui-loadsessions-swallows-failure.md) — Resolved
 
 - [webui model and effort choices are stored browser-global, not per chat](bugs/2026-08-22-webui-model-effort-storage-is-global.md) — Open
