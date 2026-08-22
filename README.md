@@ -309,7 +309,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `autolearn` | Aggregate usage into roadmap items |
 | `worktree [prepare [<path>]\|add <path> [<base>]]` | Give a hand-made `git worktree add` worktree the gitignored files it does not inherit (`.env`, `config.local.toml`), which every verb there needs to resolve the provider you configured |
 | `setup` | Guided first run: check config, keys and tools |
-| `doctor` | Diagnose config, credentials and build outputs |
+| `doctor` | Diagnose config, credentials, build outputs, and a worktree's links |
 | `janitor [--yes]` | Sweep up what old runs left behind: staging copies, old run graphs and improve logs, compare-and-swap lock files unused for 12h, and spilled tool results (also `clanker prune`) |
 
 For full documentation, see [docs/README.md](docs/README.md).

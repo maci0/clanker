@@ -926,6 +926,29 @@ clanker doctor
 
 `default_provider` must read the main checkout's choice with its key `[ok]`.
 
+Inside a linked worktree `doctor` also prints a **worktree links** section: the
+main checkout the `.git` file names, and one line per gitignored entry that
+worktree is given as a symlink back to it. Each line prints where the link
+goes, so a link into the wrong checkout is visible rather than reading as
+`[ok]`. An entry that is a private *file* instead is called out by name with
+the path it should point at:
+
+- `state/improvements.jsonl` and `state/history` **fail**. They are the
+  improve loop's cross-run memory, and a private copy means every write goes
+  somewhere thrown away with the worktree — the defect in
+  [the ledger bug](reports/bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md),
+  where 21 improvements were lost that way.
+- `.env` and `config.local.toml` **warn**. `prepareLinked` never overwrites an
+  existing name, so a worktree may be holding its own copy on purpose; it is
+  still worth saying that the main checkout's edits will not reach it.
+
+An ordinary checkout has no main checkout to link back to (its `.git` is a
+directory, not a file), so the section does not appear at all. The names come
+from `local_config_names` and `shared_state_link_names` in
+`src/improve/worktree.zig` — the same lists the linking reads, so the check
+and the links cannot drift apart. Recovery is
+[worktree-state-link-replaced-by-a-copy](runbooks/worktree-state-link-replaced-by-a-copy.md).
+
 An operator who does not want worktrees reaching the main tree's credentials
 sets `worktree_link_local_config = false` under `[agent]`; `prepare` then
 reports both names as `skipped` rather than quietly doing nothing. That key is

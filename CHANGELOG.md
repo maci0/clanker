@@ -98,6 +98,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   note path, so `create` can link `docs/research/` the way the `rfc` tool
   already did.
 
+- `clanker doctor` gains a `worktree links` section when it runs inside a
+  linked git worktree: it names the main checkout and asserts that each
+  gitignored entry the worktree is given as a symlink back to that checkout
+  is still a symlink. `state/improvements.jsonl` and `state/history` fail
+  when they are a private copy — that is the improve ledger silently
+  detaching, where a run's writes are thrown away with the worktree — and
+  `.env` / `config.local.toml` warn, since a worktree may hold its own on
+  purpose. Every line prints the path it should point at. Nothing asserted
+  this before: `atomic_write.writeFile`'s unit tests pin the one writer the
+  defect lived in, not the invariant that the links survive.
+
 ### Fixed
 
 - `clanker reports --help` states the byte caps the tool enforces, in their
