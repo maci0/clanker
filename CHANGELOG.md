@@ -7,6 +7,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `--backend` / `[agent] backend` on `run`, `repl`, and `goal` (and the
+  same field on `POST /api/run`) drives a local coding-agent CLI — `grok`,
+  `claude`, or `codex` — instead of the in-process LLM loop. clanker is the
+  ACP *client* (initialize, authenticate when required, session/new,
+  session/prompt, session/update, session/request_permission); first-party
+  headless spawn (`grok -p`, `claude -p`, `codex exec`) is the fallback when
+  ACP is missing, hangs, or a vendor update breaks it. The vendor credential
+  never enters clanker. The web UI model picker and TUI `/model` list
+  installed CLIs (PATH / configured command) in a "Local coding-agent
+  backend" group. Unset keeps today's in-process loop. ADR 0032 / PRD 0043.
+
 - The streaming `POST /api/run` response emits an `llm_start` control
   frame at the top of each agent iteration, carrying `served_by`, `model`
   and the zero-based `iteration`. The web UI's live run graph has always
