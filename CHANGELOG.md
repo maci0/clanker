@@ -295,6 +295,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   parameters). This is the improvement the improve-self loop tried five
   times to land and failed because each patch only touched `sanitize.zig`.
 
+- `clanker reports status` no longer keeps the old text of a multi-line
+  TL;DR bullet. `findTldrField` in `tools/zig/doc_scaffold.zig` returned
+  `line_end` at the bullet's first `\n`, so `replaceTldrField` wrote the new
+  value and then re-emitted every continuation line of the old one, leaving
+  two contradictory accounts stacked under one bullet with nothing reported.
+  A markdown list item's indented continuation lines belong to the item, so
+  `findTldrField` now extends over them — non-blank, indented deeper than the
+  marker, stopping at the next bullet, a blank line, or the section end — and
+  `tldrField` reads the bullet whole. `replaceFirstLine`, which handles the
+  `## Status` section, stays deliberately first-line-only: there the prose
+  underneath explains what the state means and must survive.
+
 ### Added
 
 - **Sessions moved to SQLite**: one database per conversation
