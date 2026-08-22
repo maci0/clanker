@@ -19,6 +19,10 @@ const log = @import("util/log.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const llm_registry = @import("llm/registry.zig");
+/// For the one list of paths a linked worktree gets as symlinks back to its
+/// main checkout. Reading the names from the module that creates the links is
+/// what keeps the assertion here from drifting away from the linking there.
+const worktree = @import("improve/worktree.zig");
 const build_options = @import("build_options");
 const plat_os: []const u8 = switch (@import("builtin").os.tag) {
     .linux => "linux",
@@ -88,6 +92,111 @@ fn dirHasEntries(io: std.Io, path: []const u8) bool {
     var it = d.iterate();
     const entry = it.next(io) catch null;
     return entry != null;
+}
+
+/// One gitignored path a linked worktree gets as a SYMLINK back to its main
+/// checkout, and what a private file in its place costs.
+const LinkedPath = struct {
+    name: []const u8,
+    /// Severity when the name holds a real file instead of the link.
+    replaced: Status,
+    /// What the detached copy costs, printed after the target.
+    cost: []const u8,
+};
+
+/// The names come from `improve/worktree.zig`, never a second copy here:
+/// `local_config_names` is what `prepareLinked` (and `clanker worktree
+/// prepare`) links, `shared_state_link_names` what `linkSharedState` links for
+/// an improve run. A list restated here would drift the moment either grows.
+///
+/// The two halves differ in severity, not in kind. A worktree may legitimately
+/// hold its own `config.local.toml` -- `prepareLinked` never overwrites an
+/// existing name for exactly that reason -- so a real file there is worth
+/// saying and not worth failing over. The shared-state pair has no such
+/// reading: a private ledger is silent data loss, which is the defect in
+/// docs/reports/bugs/2026-08-17-improve-ledger-written-to-a-worktree-copy.md.
+const linked_worktree_paths = blk: {
+    var out: [worktree.local_config_names.len + worktree.shared_state_link_names.len]LinkedPath = undefined;
+    var i: usize = 0;
+    for (worktree.local_config_names) |name| {
+        out[i] = .{
+            .name = name,
+            .replaced = .warn,
+            .cost = "edits here never reach the checkout, and its edits never reach this tree",
+        };
+        i += 1;
+    }
+    for (worktree.shared_state_link_names) |name| {
+        out[i] = .{
+            .name = name,
+            .replaced = .fail,
+            .cost = "every write lands in a copy thrown away with the worktree",
+        };
+        i += 1;
+    }
+    break :blk out;
+};
+
+/// The main checkout a linked worktree's `.git` FILE points back at, or null
+/// when this is not a linked worktree. In an ordinary checkout `.git` is a
+/// DIRECTORY, so the read fails and doctor skips the whole section rather than
+/// reporting on names that were never meant to be links.
+fn worktreeMainCheckout(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir) ?[]const u8 {
+    const contents = dir.readFileAlloc(io, ".git", arena, .limited(4096)) catch return null;
+    return worktree.mainCheckoutFromGitFile(contents);
+}
+
+/// Asserts that the entries a linked worktree is given as symlinks are still
+/// symlinks.
+///
+/// Nothing else checks this. `atomic_write.writeFile` resolves a leaf link
+/// before renaming, which is where the defect lived and where its unit tests
+/// sit, but any other writer that renames onto one of these names replaces the
+/// link with a private regular file and nothing says so: the run keeps working,
+/// keeps writing, and its writes stop being visible to anyone else.
+fn checkWorktreeLinks(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    dir: std.Io.Dir,
+    main_checkout: []const u8,
+    rep: *Report,
+) !void {
+    for (linked_worktree_paths) |entry| {
+        const target = try std.fmt.allocPrint(arena, "{s}/{s}", .{ main_checkout, entry.name });
+        // Nothing in the main checkout to link TO: both linkers skip a name
+        // the checkout does not have, so a real file at that name here is the
+        // worktree's own and never was a link. Absolute, so the cwd handle is
+        // ignored and this asks about the checkout rather than about `dir`.
+        std.Io.Dir.cwd().access(io, target, .{}) catch continue;
+
+        var buf: [4096]u8 = undefined;
+        const n = dir.readLink(io, entry.name, &buf) catch |err| switch (err) {
+            // Never provisioned. A fresh worktree legitimately has neither
+            // half of the pair, and `clanker worktree prepare` is the fix for
+            // the config half; absent is not detached.
+            error.FileNotFound => continue,
+            // The whole reason this check exists. A link is replaced by a
+            // regular file whenever a writer renames onto the link's own name
+            // instead of onto its target, and the run then reads and writes a
+            // copy nobody else sees.
+            error.NotLink => {
+                rep.line(entry.replaced, entry.name, try std.fmt.allocPrint(
+                    arena,
+                    "a private copy, not a link to {s}: {s}",
+                    .{ target, entry.cost },
+                ));
+                continue;
+            },
+            else => {
+                rep.line(.warn, entry.name, @errorName(err));
+                continue;
+            },
+        };
+        // The target is printed, not just "ok": a link pointing at the wrong
+        // checkout reads the same as a correct one until you can see where it
+        // goes.
+        rep.line(.ok, entry.name, try std.fmt.allocPrint(arena, "links to {s}", .{buf[0..n]}));
+    }
 }
 
 /// Every check doctor runs, so `setup` can end with the same report rather
@@ -265,6 +374,15 @@ fn runChecks(
     );
     if (dirExists(io, cfg.agent.skills_dir) and !dirHasEntries(io, cfg.agent.skills_dir)) {
         rep.line(.warn, "skills", try std.fmt.allocPrint(arena, "{s} is empty; no skill files found", .{cfg.agent.skills_dir}));
+    }
+
+    // Only inside a linked worktree, where these names are supposed to be
+    // symlinks back to the main checkout. An ordinary checkout has no main
+    // checkout and no section.
+    if (worktreeMainCheckout(io, arena, std.Io.Dir.cwd())) |main_checkout| {
+        rep.section("worktree links");
+        rep.line(.ok, "main checkout", main_checkout);
+        try checkWorktreeLinks(io, arena, std.Io.Dir.cwd(), main_checkout, rep);
     }
 
     rep.section("tools");
@@ -471,4 +589,119 @@ test "a report counts what it prints" {
     try std.testing.expect(std.mem.find(u8, text, "iffy") != null);
     try std.testing.expect(std.mem.find(u8, text, "detail") != null);
     try std.testing.expect(std.mem.find(u8, text, "FAIL") != null);
+}
+
+// The shape `linkSharedState` produces, with one entry already detached: a
+// worktree whose `state/history` link survived (nothing renames over a
+// directory) beside a `state/improvements.jsonl` that a whole-file rewrite
+// replaced with a private copy. That is the exact pair the ledger bug found
+// in ten worktrees, and it is what this check exists to name.
+test "doctor fails a worktree whose linked state entry is a private copy" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "checkout/state/history");
+    try tmp.dir.writeFile(io, .{ .sub_path = "checkout/state/improvements.jsonl", .data = "{}\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "checkout/config.local.toml", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "checkout/.env", .data = "" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+    const main_checkout = try std.fmt.allocPrint(arena, "{s}/checkout", .{root});
+
+    try tmp.dir.createDirPath(io, "wt/state");
+    try tmp.dir.symLink(
+        io,
+        try std.fmt.allocPrint(arena, "{s}/state/history", .{main_checkout}),
+        "wt/state/history",
+        .{ .is_directory = true },
+    );
+    try tmp.dir.symLink(
+        io,
+        try std.fmt.allocPrint(arena, "{s}/config.local.toml", .{main_checkout}),
+        "wt/config.local.toml",
+        .{},
+    );
+    // The defect: a real file where the link was.
+    try tmp.dir.writeFile(io, .{ .sub_path = "wt/state/improvements.jsonl", .data = "{}\n{}\n" });
+
+    var wt = try tmp.dir.openDir(io, "wt", .{});
+    defer wt.close(io);
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkWorktreeLinks(io, arena, wt, main_checkout, &rep);
+    const text = buf[0..w.end];
+
+    // The detached ledger is a failure, and the diagnostic names both the path
+    // and the file it should be pointing at.
+    try std.testing.expectEqual(@as(usize, 1), rep.failures);
+    try std.testing.expectEqual(@as(usize, 0), rep.warnings);
+    const expected_target = try std.fmt.allocPrint(arena, "{s}/state/improvements.jsonl", .{main_checkout});
+    try std.testing.expect(std.mem.find(u8, text, expected_target) != null);
+    try std.testing.expect(std.mem.find(u8, text, "FAIL") != null);
+    // The surviving link is reported as fine, with what it points at.
+    try std.testing.expect(std.mem.find(u8, text, "state/history") != null);
+    // `.env` is in the main checkout but was never given to this worktree.
+    // Absent is not detached, so it must produce no line at all.
+    try std.testing.expect(std.mem.find(u8, text, ".env") == null);
+}
+
+test "doctor passes a worktree whose links are intact" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "checkout/state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "checkout/state/improvements.jsonl", .data = "{}\n" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+    const main_checkout = try std.fmt.allocPrint(arena, "{s}/checkout", .{root});
+
+    try tmp.dir.createDirPath(io, "wt/state");
+    try tmp.dir.symLink(
+        io,
+        try std.fmt.allocPrint(arena, "{s}/state/improvements.jsonl", .{main_checkout}),
+        "wt/state/improvements.jsonl",
+        .{},
+    );
+
+    var wt = try tmp.dir.openDir(io, "wt", .{});
+    defer wt.close(io);
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkWorktreeLinks(io, arena, wt, main_checkout, &rep);
+    try std.testing.expectEqual(@as(usize, 0), rep.failures);
+    try std.testing.expectEqual(@as(usize, 0), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, buf[0..w.end], "links to") != null);
+}
+
+// An ordinary checkout has no main checkout to link back to: `.git` is a
+// directory, so the read fails and doctor prints nothing about links.
+test "a checkout that is not a linked worktree has no main checkout" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, ".git");
+    try std.testing.expect(worktreeMainCheckout(io, arena_state.allocator(), tmp.dir) == null);
 }

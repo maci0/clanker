@@ -335,13 +335,36 @@ touching only the final name. Beside the ledger, the one other leaf link an
 improve worktree gets today is `config.local.toml`, and `src/config.zig`
 rewrites it through this same helper. Both are fixed by the same change.
 
-### Still open: nothing asserts the links survive
+### Closed: `clanker doctor` asserts the links survive
 
-No gate or check asserts that an improve worktree's linked entries are still
-links. The unit tests added here pin the *write* helper's behaviour, which is
-where this defect lived, but they would not catch a future caller that
-rewrites a linked path some other way. `clanker doctor` remains the natural
-home for that assertion.
+This was open — "no gate or check asserts that an improve worktree's linked
+entries are still links". The unit tests added here pin the *write* helper's
+behaviour, which is where this defect lived, but they would not catch a future
+caller that rewrites a linked path some other way.
+
+`clanker doctor` now prints a `worktree links` section when it runs inside a
+linked worktree (`.git` is a FILE naming a main checkout, `mainCheckoutFromGitFile`)
+and asserts that each entry the worktree is given as a symlink is still one.
+`state/improvements.jsonl` and `state/history` fail when the name holds a
+private copy; `.env` and `config.local.toml` warn instead, because
+`prepareLinked` never overwrites an existing name and a worktree may be holding
+its own on purpose. Every line prints the path it should point at, so a link
+into the wrong checkout is visible rather than reading as `[ok]`.
+
+The names are read from `local_config_names` and `shared_state_link_names` in
+`src/improve/worktree.zig` — the same two lists `linkSharedState` and
+`prepareLinked` iterate, so the assertion cannot drift away from the linking.
+`checkWorktreeLinks` in `src/doctor.zig`, with two unit tests; against the
+empty stub the first failed `expected 1, found 0`. Run live in a linked
+worktree with the ledger replaced by a regular file, it reproduces the pair
+this record found in ten worktrees at once:
+
+```
+[FAIL] state/improvements.jsonl   a private copy, not a link to /home/yannick/code/maci0/clanker/state/improvements.jsonl: every write lands in a copy thrown away with the worktree
+[ok  ] state/history              links to /home/yannick/code/maci0/clanker/state/history
+```
+
+Recovery: [worktree-state-link-replaced-by-a-copy](../../runbooks/worktree-state-link-replaced-by-a-copy.md).
 
 ## References
 
