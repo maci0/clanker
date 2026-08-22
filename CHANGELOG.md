@@ -103,6 +103,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   before this change still render correctly: the web UI falls back to
   detecting the framing sentence in the text.
 
+- The web UI composer's model and reasoning-effort choices are pinned per
+  conversation instead of per browser. Both were single `localStorage` keys,
+  so changing the model while reading one chat silently changed what every
+  other chat and every other tab sent next. A conversation is pinned when a
+  select is changed while it is open, or by its first turn, to whatever it
+  ran on; switching conversation puts its own values back. The two old keys
+  stay as the default a *new* chat starts from, a fork or import carries the
+  pin onto the new id, and deleting a conversation drops it. The effort
+  fold's summary and the composer hint say "pinned for this conversation"
+  again, which is true once more.
+
 - The web UI chat's Archive, Delete and Rename buttons work again and say
   what they did. Their feedback went only to a visually hidden live region,
   so every outcome — including the silent refusal when the conversation was
