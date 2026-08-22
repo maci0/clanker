@@ -27,6 +27,12 @@ pub const Server = struct {
     next: usize = 0,
     requests: std.ArrayList([]const u8) = .empty,
     port: u16,
+    /// While set, `respond` holds the scripted turn back instead of writing
+    /// it, so a test can act on the harness while a run is genuinely inside
+    /// its provider call. The request is recorded before the gate, so
+    /// `requestCount` is what says the run arrived. Without this the only way
+    /// to observe an in-flight run is to race it to the finish line.
+    hold: std.atomic.Value(bool) = .init(false),
 
     pub fn start(io: std.Io, gpa: std.mem.Allocator, script: []const []const u8) !*Server {
         std.debug.assert(script.len > 0);
@@ -79,6 +85,17 @@ pub const Server = struct {
         return self.requests.items[index];
     }
 
+    /// Makes every later response wait in `respond` until `releaseHold`.
+    /// Call it before the run starts; `stop` also lets a held response go, so
+    /// a failing test tears down instead of hanging.
+    pub fn holdResponses(self: *Server) void {
+        self.hold.store(true, .release);
+    }
+
+    pub fn releaseHold(self: *Server) void {
+        self.hold.store(false, .release);
+    }
+
     pub fn requestCount(self: *Server) usize {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -119,6 +136,9 @@ pub const Server = struct {
     }
 
     fn respond(self: *Server, stream: std.Io.net.Stream, index: usize) void {
+        while (self.hold.load(.acquire) and !self.stop_flag.load(.acquire)) {
+            std.Io.sleep(self.io, .{ .nanoseconds = 5 * std.time.ns_per_ms }, .awake) catch break;
+        }
         const turn = self.script[@min(index, self.script.len - 1)];
         var hbuf: [4096]u8 = undefined;
         const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{turn.len}) catch return;

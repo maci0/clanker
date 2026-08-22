@@ -15,6 +15,7 @@ comptime {
     _ = @import("commit_apply_test.zig");
     _ = @import("fallback_graph_test.zig");
     _ = @import("run_stream_llm_start_test.zig");
+    _ = @import("steer_nonstreaming_test.zig");
     _ = @import("improve_fallback_test.zig");
     _ = @import("pty_resize_test.zig");
     _ = @import("pty.zig");
