@@ -30,10 +30,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const steps = lib.optStr(parsed, "steps_to_reproduce");
     const expected = lib.optStr(parsed, "expected");
     const actual = lib.optStr(parsed, "actual");
-    var severity = lib.optStr(parsed, "severity") orelse "";
-    if (severity.len == 0) severity = "normal";
     const environment = lib.optStr(parsed, "environment");
     const impact = lib.optStr(parsed, "impact");
+    var severity = lib.optStr(parsed, "severity") orelse "";
+    if (severity.len == 0) {
+        severity = inferSeverity(&.{ description, steps, expected, actual, environment, impact });
+    }
     var component: ?[]const u8 = lib.optStr(parsed, "component");
     if (component == null) {
         component = inferComponent(title_raw);
@@ -41,6 +43,22 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (component == null) {
         const desc = description orelse "";
         if (desc.len > 0) component = inferComponent(desc);
+    }
+    if (component == null) {
+        const repro_cmd = lib.optStr(parsed, "repro") orelse "";
+        if (repro_cmd.len > 0) component = inferComponent(repro_cmd);
+    }
+    if (component == null) {
+        const steps_txt = steps orelse "";
+        if (steps_txt.len > 0) component = inferComponent(steps_txt);
+    }
+    if (component == null) {
+        const env_txt = environment orelse "";
+        if (env_txt.len > 0) component = inferComponent(env_txt);
+    }
+    if (component == null) {
+        const impact_txt = impact orelse "";
+        if (impact_txt.len > 0) component = inferComponent(impact_txt);
     }
     const room = lib.optStr(parsed, "room");
     if (room) |r| {
@@ -74,6 +92,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try body_buf.appendSlice(lib.alloc, "## Bug Report\n\n");
     try appendField(&body_buf, "Severity", severity);
     try appendField(&body_buf, "Component", component);
+    try appendField(&body_buf, "Diagnosis", inferDiagnosis(&.{ description, steps, expected, actual, environment, impact }));
     try appendField(&body_buf, "Environment", environment);
     try appendField(&body_buf, "Impact", impact);
     try appendSection(&body_buf, "Description", description, null);
@@ -209,5 +228,61 @@ fn investigateHint(component: []const u8) ?[]const u8 {
     if (std.ascii.eqlIgnoreCase(component, "hooks")) return "src/hooks/";
     if (std.ascii.eqlIgnoreCase(component, "mcp")) return "src/mcp/";
     if (std.ascii.eqlIgnoreCase(component, "memory")) return "tools/zig/memory.zig";
+    return null;
+}
+
+/// Infer a severity level from the report's language when the caller did not
+/// specify one. High-signal words (crash, panic, deadlock, …) escalate;
+/// low-signal words (cosmetic, typo, …) de-escalate; everything else stays
+/// at the built-in default.
+fn inferSeverity(texts: []const ?[]const u8) []const u8 {
+    const high_kw = [_][]const u8{ "crash", "segfault", "panic", "data loss", "corrupt", "deadlock", "infinite loop", "security", "exploit", "vulnerab", "unrecoverable" };
+    const low_kw = [_][]const u8{ "cosmetic", "typo", "misspell", "nitpick", "aesthetic" };
+    for (texts) |t| {
+        if (t) |text| {
+            for (high_kw) |kw| {
+                if (std.ascii.indexOfIgnoreCase(text, kw)) |_| return "high";
+            }
+            for (low_kw) |kw| {
+                if (std.ascii.indexOfIgnoreCase(text, kw)) |_| return "low";
+            }
+        }
+    }
+    return "normal";
+}
+
+/// Categorize the likely root-cause area from the report's language, so a
+/// board card carries a diagnostic pointer even when the reporter did not
+/// supply one. Returns null when no known pattern matches.
+fn inferDiagnosis(texts: []const ?[]const u8) ?[]const u8 {
+    const cats = [_]struct { kw: []const u8, label: []const u8 }{
+        .{ .kw = "segfault", .label = "memory corruption / null dereference" },
+        .{ .kw = "panic", .label = "unhandled Zig error" },
+        .{ .kw = "deadlock", .label = "concurrency / deadlock" },
+        .{ .kw = "race condition", .label = "concurrency / race condition" },
+        .{ .kw = "timeout", .label = "resource exhaustion / timeout" },
+        .{ .kw = "out of memory", .label = "resource exhaustion" },
+        .{ .kw = "encoding", .label = "text encoding / UTF-8" },
+        .{ .kw = "corrupt", .label = "data corruption" },
+        .{ .kw = "infinite loop", .label = "control-flow / infinite loop" },
+        .{ .kw = "connection refused", .label = "network / connectivity" },
+        .{ .kw = "auth", .label = "authentication" },
+        .{ .kw = "permission denied", .label = "authorization" },
+        .{ .kw = "injection", .label = "input validation" },
+        .{ .kw = "error: expected", .label = "Zig compile error" },
+        .{ .kw = "no member named", .label = "Zig compile error" },
+        .{ .kw = "out of bounds", .label = "bounds / stack exhaustion" },
+        .{ .kw = "stack overflow", .label = "bounds / stack exhaustion" },
+        .{ .kw = "denied", .label = "sandbox / guest denial" },
+        .{ .kw = "sandbox", .label = "sandbox / guest denial" },
+        .{ .kw = "wasm", .label = "sandbox / guest denial" },
+    };
+    for (texts) |t| {
+        if (t) |text| {
+            for (cats) |cat| {
+                if (std.ascii.indexOfIgnoreCase(text, cat.kw)) |_| return cat.label;
+            }
+        }
+    }
     return null;
 }

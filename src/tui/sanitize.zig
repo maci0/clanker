@@ -45,6 +45,13 @@ pub fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
             if (i > start) w.writeAll(bytes[start..i]) catch {};
             i = csiEnd(bytes, i);
             start = i;
+        } else if (bytes[i] == 0x1B and i + 1 < bytes.len and bytes[i + 1] >= 0x20 and bytes[i + 1] <= 0x7E) {
+            // Other single-byte escape sequences (ESC M, ESC c, ESC 7, ESC (, ...):
+            // consume the introducer and its argument so the argument byte does
+            // not leak as visible text.
+            if (i > start) w.writeAll(bytes[start..i]) catch {};
+            i += 2;
+            start = i;
         } else if (isControl(bytes[i])) {
             if (i > start) w.writeAll(bytes[start..i]) catch {};
             i += 1;
@@ -88,6 +95,8 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
                     j = k;
                 } else if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5B) {
                     j = csiEnd(bytes, j);
+                } else if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] >= 0x20 and bytes[j + 1] <= 0x7E) {
+                    j += 2;
                 } else if (isControl(bytes[j])) {
                     j += 1;
                 } else if (bytes[j] == 0xC2 and j + 1 < bytes.len and bytes[j + 1] >= 0x80 and bytes[j + 1] <= 0x9F) {
@@ -168,10 +177,17 @@ test "sanitizeAlloc returns input unchanged when clean" {
 }
 
 test "sanitizeAlloc strips controls and allocates a copy" {
-    const dirty = "a\x1bb\xc2\x85c";
+    const dirty = "a\x00b\xc2\x85c";
     const result = try sanitizeAlloc(std.testing.allocator, dirty);
     defer std.testing.allocator.free(result);
     try std.testing.expectEqualStrings("abc", result);
+}
+
+test "writeSanitized strips single-byte escape sequences" {
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    writeSanitized(&w, "a\x1bMb\x1b7c"); // ESC M (reverse index) and ESC 7 (save cursor)
+    try std.testing.expectEqualStrings("abc", buf[0..w.end]);
 }
 
 test "sanitizeAlloc strips CSI sequences whole" {

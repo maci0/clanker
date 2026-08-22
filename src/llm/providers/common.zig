@@ -45,7 +45,14 @@ pub const Builder = struct {
 /// never ask for more completion tokens than half the window.
 pub fn clampedMaxTokens(params: api.RequestParams) u32 {
     const active = params.provider.activeModel();
-    return @min(params.max_tokens orelse active.max_tokens, active.context_window / 2);
+    const requested = params.max_tokens orelse active.max_tokens;
+    // An unknown context window (0) must not clamp a known budget down to
+    // zero: the window is filled from the models.dev snapshot at load, and a
+    // model the snapshot does not cover would otherwise ask for no completion
+    // at all. Clamp only when the window is actually known.
+    const window = active.context_window;
+    if (window == 0) return requested;
+    return @min(requested, window / 2);
 }
 
 /// Writes `temperature`, `top_p`, and `reasoning_effort`. Precedence is
@@ -300,8 +307,18 @@ pub fn parseGoogleErrorMessage(arena: std.mem.Allocator, body: []const u8) ?[]co
     }
     // Last resort: surface a capped slice of the raw body so the operator
     // sees something actionable rather than a bare HTTP status with no detail.
-    const cap = if (trimmed.len > 512) trimmed[0..512] else trimmed;
-    return std.mem.trim(u8, cap, " \t\r\n");
+    var end = trimmed.len;
+    if (end > 512) {
+        end = 512;
+        // Keep the surfaced detail valid UTF-8: drop a partial codepoint at the
+        // cap (trailing continuation bytes, plus the orphaned leading byte).
+        while (end > 0 and (trimmed[end - 1] & 0xC0) == 0x80) end -= 1;
+        if (end > 0 and (trimmed[end - 1] & 0xC0) == 0xC0) end -= 1;
+    }
+    const cap = trimmed[0..end];
+    const detail = std.mem.trim(u8, cap, " \t\r\n");
+    if (trimmed.len <= 512) return detail;
+    return std.fmt.allocPrint(arena, "{s} [truncated]", .{detail}) catch detail;
 }
 
 test "parseGoogleErrorMessage reads the object and array envelopes" {
@@ -328,4 +345,18 @@ test "parseGoogleErrorMessage reads the object and array envelopes" {
     try std.testing.expect(parseGoogleErrorMessage(arena, "{\"candidates\":[]}") == null);
     try std.testing.expect(parseGoogleErrorMessage(arena, "not json at all") == null);
     try std.testing.expect(parseGoogleErrorMessage(arena, "[]") == null);
+}
+
+test "clampedMaxTokens leaves the budget intact when the context window is unknown" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var p = try config.Provider.single(arena, "p", "https://p.test", .openai_compat, "m", .{ .max_tokens = 16384 });
+    // context_window is at its zero default here (no snapshot fill in a unit
+    // test): an unknown window must not clamp a known budget down to zero.
+    try std.testing.expectEqual(@as(u32, 16384), clampedMaxTokens(.{ .provider = &p, .messages = &.{} }));
+    // A known window still caps the budget at half of it.
+    var it = p.models.iterator();
+    it.next().?.value_ptr.context_window = 16384;
+    try std.testing.expectEqual(@as(u32, 8192), clampedMaxTokens(.{ .provider = &p, .messages = &.{} }));
 }
