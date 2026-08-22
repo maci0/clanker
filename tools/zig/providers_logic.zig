@@ -6,6 +6,7 @@
 const std = @import("std");
 
 pub const Model = struct {
+    enabled: bool = true,
     id: []const u8 = "",
     display: []const u8 = "",
     context_window: u32 = 0,
@@ -45,6 +46,8 @@ pub fn writeModel(s: *std.json.Stringify, name: []const u8, m: Model) !void {
     try s.beginObject();
     try s.objectField("name");
     try s.write(name);
+    try s.objectField("enabled");
+    try s.write(m.enabled);
     if (m.id.len > 0) {
         try s.objectField("id");
         try s.write(m.id);
@@ -226,6 +229,21 @@ test "writeList emits the picker contract and keeps check aliases" {
     try std.testing.expect(std.mem.find(u8, raw, "\"rpm\":30") != null);
     try std.testing.expect(std.mem.find(u8, raw, "\"tool_use\"") != null);
     try std.testing.expect(!listNeedsLiveModelsAlloc(arena, raw));
+}
+
+test "writeList exposes disabled models without dropping them from inventory" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var cfg = ConfigFile{};
+    var provider = Provider{};
+    try provider.models.map.put(arena, "hidden", .{ .enabled = false });
+    try cfg.providers.map.put(arena, "p", provider);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    try std.testing.expect(try writeList(&s, cfg, ""));
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"name\":\"hidden\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"enabled\":false") != null);
 }
 
 test "writeList filter misses and empty models flag a live fill" {

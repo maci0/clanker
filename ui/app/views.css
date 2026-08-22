@@ -843,7 +843,7 @@
 /* 24px is the WCAG 2.5.8 floor; pointer:coarse below raises these to 44px. */
 .chat-thread-bar button { min-height: 24px; padding: 0 0.5rem; font-size: var(--step--1); border-radius: var(--radius-pill); }
 
-.chat-thread-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; border-left: 2px solid var(--rule); padding-left: var(--space-3); }
+.chat-thread-list { flex-basis: 100%; display: flex; flex-direction: column; gap: 0.2rem; margin-top: 0.3rem; padding-left: var(--space-3); }
 
 .chat-thread-list[hidden] { display: none; }
 
@@ -986,13 +986,24 @@
 
 .models-group-toggle:hover { color: var(--accent); }
 
-.models-variant-row td:nth-child(2) { padding-left: 1.6rem; }
+.models-variant-row td:nth-child(3) { padding-left: 1.6rem; }
 
 .models-variant-row[hidden] { display: none; }
 
 /* A provider this serve process cannot call: kept in the inventory table,
    visibly not offered — the notice above the table carries the reason. */
 .models-uncallable-row { opacity: 0.55; }
+
+.models-enabled-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+.models-enabled-toggle input { width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
+.models-enabled-toggle:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
 
 .models-snippet-note {
   margin: var(--space-2) 0 0;

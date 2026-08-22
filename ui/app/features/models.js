@@ -353,6 +353,7 @@ function loadConfigured() {
         (prov.models || []).forEach(function (m) {
           var entry = {
             provider: prov.name, model: m.name, id: m.id || "", display: m.display || "", category: m.category || "",
+            enabled: m.enabled !== false,
             context_window: m.context_window, max_tokens: m.max_tokens, rpm: m.rpm,
             temperature: m.temperature, top_p: m.top_p, reasoning_effort: m.reasoning_effort,
             cost_per_1m_input: m.cost_per_1m_input, cost_per_1m_output: m.cost_per_1m_output,
@@ -364,6 +365,7 @@ function loadConfigured() {
           if (variants.length > 1 && variants[0] === m) {
             // First variant carries the fold row for the whole group.
             rows.push([
+              "",
               prov.name,
               groupToggle(m.display || sku, variants.length, groupKey),
               "", "", "", "", "", ""
@@ -371,6 +373,7 @@ function loadConfigured() {
             rowMeta.push({ group: groupKey, head: true, uncallable: uncallableReason });
           }
           rows.push([
+            enabledCheckbox(entry),
             prov.name,
             m.display || m.name,
             m.category || "",
@@ -415,7 +418,7 @@ function loadConfigured() {
           return p.name + " — " + providerUnusableReason(p);
         }).join("; ") + ". Still listed below; the chat picker hides them."));
       }
-      box.appendChild(table(["provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
+      box.appendChild(table(["enabled", "provider", "model", "category", "ctx", "in $/1M", "out $/1M", "", ""], rows));
       // Fold pass: hide variant rows behind their group's toggle row, and
       // dim the rows of a provider the server marked not callable.
       var trs = box.querySelectorAll("tbody tr");
@@ -435,6 +438,53 @@ function loadConfigured() {
     .catch(function (err) {
       failWithRetry(box, "Could not load providers: " + err.message, loadConfigured);
     });
+}
+
+function modelEntryPayload(entry) {
+  var payload = { provider: entry.provider, model: entry.model, enabled: entry.enabled !== false };
+  ["id", "display", "category", "reasoning_effort"].forEach(function (key) {
+    if (entry[key]) payload[key] = entry[key];
+  });
+  ["context_window", "max_tokens", "rpm", "temperature", "top_p", "cost_per_1m_input", "cost_per_1m_output"].forEach(function (key) {
+    if (entry[key] != null) payload[key] = entry[key];
+  });
+  if (entry.capabilities && entry.capabilities.length) payload.capabilities = entry.capabilities;
+  return payload;
+}
+
+function saveModelEntry(entry, checkbox) {
+  checkbox.disabled = true;
+  return fetch("/api/config/model/set", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(modelEntryPayload(entry))
+  }).then(readJson).then(function (d) {
+    if (!d.ok) throw new Error(d.error || "write failed");
+    checkbox.disabled = false;
+    status((entry.enabled ? "Enabled " : "Disabled ") + entry.provider + "/" + entry.model + ".");
+    window.dispatchEvent(new CustomEvent("clanker:model-visibility"));
+  }).catch(function (err) {
+    entry.enabled = !entry.enabled;
+    checkbox.checked = entry.enabled;
+    checkbox.disabled = false;
+    status("Could not update " + entry.provider + "/" + entry.model + ": " + err.message + ".");
+  });
+}
+
+function enabledCheckbox(entry) {
+  var label = document.createElement("label");
+  label.className = "models-enabled-toggle";
+  var checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = entry.enabled !== false;
+  checkbox.setAttribute("aria-label", (checkbox.checked ? "Disable " : "Enable ") + entry.provider + "/" + entry.model);
+  checkbox.addEventListener("change", function () {
+    entry.enabled = checkbox.checked;
+    checkbox.setAttribute("aria-label", (checkbox.checked ? "Disable " : "Enable ") + entry.provider + "/" + entry.model);
+    saveModelEntry(entry, checkbox);
+  });
+  label.appendChild(checkbox);
+  return label;
 }
 
 /* One SKU under several local names folds behind this row: the chevron
@@ -537,7 +587,7 @@ function numOrNull(id) {
 function editPayload() {
   var provider = editField("models-edit-provider").value.trim();
   var model = editField("models-edit-model").value.trim();
-  var payload = { provider: provider, model: model };
+  var payload = { provider: provider, model: model, enabled: !editEntry || editEntry.enabled !== false };
   var sku = editField("models-edit-id").value.trim();
   if (sku) payload.id = sku;
   var context = numOrNull("models-edit-context");
@@ -574,6 +624,7 @@ function editToml() {
   var p = editPayload();
   var lines = ["[models." + tomlStr(p.provider + "/" + p.model) + "]"];
   lines.push("provider = " + tomlStr(p.provider));
+  if (p.enabled === false) lines.push("enabled = false");
   if (p.id) lines.push("id = " + tomlStr(p.id));
   if (p.context_window != null) lines.push("context_window = " + p.context_window);
   if (p.max_tokens != null) lines.push("max_tokens = " + p.max_tokens);

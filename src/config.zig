@@ -149,6 +149,10 @@ pub const AuthStrategy = enum {
 };
 
 pub const Model = struct {
+    /// Whether model pickers offer this configured model. Disabled models
+    /// remain configured so an operator can restore them without rebuilding
+    /// their sampling, pricing, and capability metadata.
+    enabled: bool = true,
     /// SKU sent as the API `model` field. Empty means the table-key name
     /// (the part after `provider/`) is the SKU. Set this to give one SKU
     /// two local names with different sampling settings
@@ -2030,6 +2034,7 @@ pub const Config = struct {
             // entry belongs to, before the table-key prefix is stripped down
             // to the bare model name passed in here), accepted, not unknown.
             "provider",
+            "enabled",
             "id",
             "context_window",
             "max_tokens",
@@ -2048,6 +2053,7 @@ pub const Config = struct {
             "base_url",
             "path",
         }, name);
+        if (obj.get("enabled")) |k| m.enabled = try jsonBool(k, "enabled");
         if (obj.get("id")) |k| m.id = try jsonStr(k, "id");
         if (obj.get("context_window")) |k| {
             m.context_window = try jsonUnsigned(u32, k, "context_window");
@@ -5323,6 +5329,29 @@ test "a provider preserves its native OAuth plugin selection beside API-key fall
     try std.testing.expectEqual(AuthStrategy.oauth_refresh, provider.auth.?);
     try std.testing.expectEqualStrings("codex", provider.oauth_plugin);
     try std.testing.expectEqualStrings("OPENAI_API_KEY", provider.api_key_env.?);
+}
+
+test "a model can be disabled without removing its configuration" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(threaded.io(), .{ .sub_path = "config.toml", .data =
+        \\default_provider = "p"
+        \\[providers.p]
+        \\base_url = "https://example.test"
+        \\default_model = "visible"
+        \\[models."p/visible"]
+        \\provider = "p"
+        \\[models."p/hidden"]
+        \\provider = "p"
+        \\enabled = false
+    });
+    const cfg = try Config.load(threaded.io(), arena_state.allocator(), tmp.dir, "config.toml", "missing.local.toml");
+    try std.testing.expect(cfg.providers.get("p").?.models.get("visible").?.enabled);
+    try std.testing.expect(!cfg.providers.get("p").?.models.get("hidden").?.enabled);
 }
 
 test "a vertex_anthropic provider missing project/location is rejected at load" {

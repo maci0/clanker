@@ -34,6 +34,22 @@ test("choosing a backend row is what POST /api/run sends as backend", function (
   });
 });
 
+test("disabled configured models stay out of the picker", function () {
+  const index = pickerIndexFromPayload({
+    providers: [{
+      name: "anthropic",
+      usable: true,
+      models: [
+        { name: "claude-opus", enabled: true },
+        { name: "claude-haiku", enabled: false },
+        // Older servers omit the field; those models remain visible.
+        { name: "claude-sonnet" },
+      ],
+    }],
+  });
+  assert.deepEqual(index.map(function (row) { return row.model; }), ["claude-opus", "claude-sonnet"]);
+});
+
 test("the shipped picker and chat POST still name the backend field", function () {
   const picker = readFileSync(join(here, "modelpicker.js"), "utf8");
   assert.match(picker, /Local coding-agent backend/);

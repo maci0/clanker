@@ -45,6 +45,13 @@ test("Models edit form has a wire id field for aliases", function () {
   assert.match(js, /payload\.id = sku/);
 });
 
+test("Configured models expose an enabled checkbox that persists the full row", function () {
+  assert.match(js, /function enabledCheckbox\(entry\)/);
+  assert.match(js, /checkbox\.type = "checkbox"/);
+  assert.match(js, /entry\.enabled = checkbox\.checked/);
+  assert.match(js, /saveModelEntry\(entry/);
+});
+
 test("catalog Search stays disabled until the query is long enough", function () {
   assert.match(js, /function syncCatalogBtn/);
   assert.match(js, /tooShort = !q \|\| q\.value\.trim\(\)\.length < 2/);

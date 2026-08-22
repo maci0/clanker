@@ -28,7 +28,7 @@ toggles. CLI: `clanker <name>` resolves an enabled Tier 1 manifest
 (`agent.cli_plugins_dir`, default `cli-plugins/`, tool invoked with the
 remaining argv as `{"args":[...]}`), then a Tier 2 `clanker-<name>` binary
 on PATH or `~/.clanker/plugins/`, never shadowing a built-in `Command`
-(`src/cli_plugins.zig` + `cmdPlugin`); `clanker help` lists both tiers
+(`src/cli/cli_plugins.zig` + `cmdPlugin`); `clanker help` lists both tiers
 marked external. Enable via `state/tui_plugins.json` / `state/cli_plugins.json`
 enabled-lists, default off. Both follow the Design below; acceptance criteria
 are checked.

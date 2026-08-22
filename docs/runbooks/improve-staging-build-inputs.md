@@ -21,7 +21,7 @@ improve staging tree. It does not apply to a missing dependency fetched through
 source file.
 
 The underlying incident is [Improve staging misses UI build inputs](../reports/bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md), resolved by
-[`e10c868`](../src/improve/engine.zig).
+[`e10c868`](../../src/improve/engine.zig).
 
 A sibling of the same family: the `ui/app/core/*.test.mjs` suites run under
 `node --test` during the staging tests and read repo-root data *relative to
@@ -75,5 +75,5 @@ linked bug report with the new root and verification evidence.
 ## References
 
 - Reports: [UI build input omission](../reports/bugs/2026-08-14-improve-staging-misses-ui-build-inputs.md), [release-contract omission](../reports/bugs/2026-08-14-improve-staging-omits-release-contract-files.md)
-- Code: [`src/improve/engine.zig`](../src/improve/engine.zig), [`build.zig`](../build.zig)
+- Code: [`src/improve/engine.zig`](../../src/improve/engine.zig), [`build.zig`](../../build.zig)
 - Last verified: 2026-08-14, `e10c868`; node UI-test data roots (`themes/`, `commands/`) added 2026-08-15.

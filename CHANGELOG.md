@@ -48,6 +48,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- The Web UI Models page now has an enable checkbox for every configured
+  model. Disabled models keep their full configuration in `config.local.toml`
+  but disappear from the chat model selectors until they are enabled again.
+  The shared Web UI type scale is also more legible, and redundant/generated
+  helper copy was removed from the empty chat and Models surfaces.
+
 - Native Codex, Grok, and Claude provider plugins now support clanker-owned
   OAuth alongside their usual API-key environment variables. `clanker auth
   login|status|logout` runs device authorization for Codex/Grok and PKCE for

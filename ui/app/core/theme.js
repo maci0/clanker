@@ -116,6 +116,10 @@ function ensurePicker() {
     if (e.key === "Escape") {
       e.preventDefault();
       closePicker();
+    } else if (e.key === "Tab") {
+      var anchor = _anchor;
+      closePicker(false);
+      if (anchor && anchor.focus) anchor.focus();
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       moveFocus(e.key === "ArrowDown" ? 1 : -1);
@@ -203,14 +207,14 @@ function openPicker(anchor, current) {
   if (cur && cur.focus) cur.focus();
 }
 
-function closePicker() {
+function closePicker(restoreFocus) {
   if (!_open) return;
   var anchor = _anchor;
   // A hidden element keeps the focus it holds, so without handing it back the
   // page falls to <body> and the next Tab restarts at the top of the
   // document. Only when focus is inside the picker: a click outside must keep
   // the focus that click just moved.
-  var restore = _picker && _picker.contains(document.activeElement);
+  var restore = restoreFocus !== false && _picker && _picker.contains(document.activeElement);
   _open = false;
   if (_picker) _picker.hidden = true;
   if (anchor) anchor.setAttribute("aria-expanded", "false");

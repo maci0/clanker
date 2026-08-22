@@ -112,6 +112,8 @@ comptime {
     _ = @import("llm/providers/vertex_anthropic.zig");
     _ = @import("llm/providers/azure.zig");
     _ = @import("llm/providers/gemini.zig");
+    _ = @import("llm/providers/codex.zig");
+    _ = @import("llm/providers/responses.zig");
     _ = @import("llm/auth.zig");
     _ = @import("llm/oauth_store.zig");
     _ = @import("llm/oauth_native.zig");

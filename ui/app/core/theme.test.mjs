@@ -65,6 +65,11 @@ test("closing the picker hands focus back to the toggle", function () {
   assert.match(themeJs, /function closePicker\(\)[\s\S]*?anchor\.focus\(\)/);
 });
 
+test("Tab closes the picker without trapping focus", function () {
+  assert.match(themeJs, /e\.key === "Tab"[\s\S]*?closePicker\(false\)/);
+  assert.doesNotMatch(themeJs, /e\.key === "Tab"[\s\S]{0,80}?preventDefault/);
+});
+
 test("each option carries a swatch laid out beside its label", function () {
   assert.match(themeJs, /theme-picker__swatch/);
   assert.match(themeJs, /tokens\["--bg"\]/);

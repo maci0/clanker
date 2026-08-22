@@ -43,7 +43,7 @@ the two iterations' four attempts all as `"summary":"empty model response"`,
 `"detail":"no proposal content"`.
 
 This is distinct from the earlier
-[ck_llm-grant-spent-on-reasoning](../../../reports/bugs/2026-08-17-ck-llm-grant-spent-on-reasoning.md)
+[ck_llm-grant-spent-on-reasoning](2026-08-17-ck-llm-grant-spent-on-reasoning.md)
 defect: there `finish_reason` was `"length"` (the completion budget ran out
 mid-reasoning). Here `finish_reason` is `"stop"` — the model *concluded*
 without ever emitting a content token. The engine's then-feedback treated both

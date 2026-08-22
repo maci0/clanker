@@ -50,7 +50,7 @@ export function pickerIndexFromPayload(d, fmtInt) {
     });
   });
   callableProviders(d.providers).forEach(function (prov) {
-    var models = (prov.models || []).slice();
+    var models = (prov.models || []).filter(function (m) { return m.enabled !== false; }).slice();
     models.forEach(function (m) {
       var meta = [];
       if (m.category) meta.push(m.category);
@@ -462,7 +462,7 @@ export function loadProviders() {
       callable.forEach(function (prov) {
         var group = document.createElement("optgroup");
         group.label = prov.name;
-        var models = (prov.models || []).slice().sort(function (a, b) {
+        var models = (prov.models || []).filter(function (m) { return m.enabled !== false; }).slice().sort(function (a, b) {
           var ac = a.category || "", bc = b.category || "";
           if (!ac !== !bc) return ac ? -1 : 1;
           if (ac !== bc) return ac < bc ? -1 : 1;
@@ -559,6 +559,13 @@ export function bindModelPicker(ctx) {
   ensurePill(_el.headerModel);
   ensurePill(_el.composerModel);
   ensurePickerDom();
+
+  // Config writes hot-restart the server. Refresh after that short handoff so
+  // a disabled row disappears from both picker surfaces without requiring a
+  // browser reload, and an enabled row returns just as promptly.
+  window.addEventListener("clanker:model-visibility", function () {
+    window.setTimeout(loadProviders, 750);
+  });
 
   _el.modelSelect.addEventListener("change", function () {
     writeDefault(model_key, _el.modelSelect.value);

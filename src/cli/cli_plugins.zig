@@ -130,6 +130,6 @@ pub fn saveEnabled(io: std.Io, gpa: std.mem.Allocator, enabled: []const []const 
     try s.endArray();
     try s.endObject();
     std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    const atomic_write = @import("util/atomic_write.zig");
+    const atomic_write = @import("../util/atomic_write.zig");
     try atomic_write.writeFilePerms(io, std.Io.Dir.cwd(), state_path, out.written(), atomic_write.private_file);
 }

@@ -83,7 +83,7 @@ const proxy = @import("serve/proxy.zig");
 const schedule_runner = @import("schedule/runner.zig");
 const jobs = @import("sandbox/jobs.zig");
 const schedule_store = @import("schedule/store.zig");
-const cli_plugins = @import("cli_plugins.zig");
+const cli_plugins = @import("cli/cli_plugins.zig");
 const session_events = @import("agent/session_events.zig");
 const session_sync = @import("peers/session_sync.zig");
 
@@ -11501,6 +11501,8 @@ fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, str
 /// config with only the edited fields changed, not a diff.
 fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, name: []const u8, obj: std.json.ObjectMap) ![]const u8 {
     var fields: std.ArrayList([]const u8) = .empty;
+    if (obj.get("enabled")) |v| if (v == .bool and !v.bool)
+        try fields.append(arena, "enabled = false");
     if (json_util.strFieldOrNull(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
     if (jsonNum(obj, "rpm")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{@as(i64, @trunc(v))}));
     if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @trunc(v))}));
