@@ -3,7 +3,7 @@
 ## TL;DR
 
 - **Use when:** a clanker verb run inside a worktree you made with `git worktree add` names a provider you never configured (`no credential for provider 'moonshotai'`), `clanker commit` falls back to `chore: update working tree`, or every guest-backed verb fails with `ToolWasmMissing`.
-- **Recover by:** symlinking `config.local.toml` and `.env` from the main checkout into the worktree and running `zig build tools` there.
+- **Recover by:** running `clanker worktree prepare` in the worktree, then `zig build tools` there. Only a clanker older than the verb needs the two symlinks made by hand.
 - **Verify with:** `clanker doctor` in the worktree reporting the main checkout's `default_provider` with its key set.
 
 ## Scope and preconditions
@@ -22,7 +22,19 @@ The signature is `config.local.toml absent; defaults from config.toml only` toge
 
 ## Recover
 
-From inside the worktree, locate the main checkout through git (the common git dir lives there) and link the two gitignored files:
+From inside the worktree:
+
+```bash
+clanker worktree prepare
+```
+
+It reads the worktree's `.git` file to find the main checkout, links both
+gitignored files from there, and prints what it did to each — including
+whether `zig-out/tools` is built. `clanker worktree add <path>` does the same
+for a worktree it creates, fetching `origin` first.
+
+On a clanker older than that verb, do it by hand — the same two links, the
+main checkout named by the common git dir:
 
 ```bash
 MAIN=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
@@ -49,7 +61,11 @@ clanker doctor
 
 ## Escalate or follow up
 
-If the doctor still names the committed default, check that `config.local.toml` in the main checkout sets `default_provider` at the top level and that `.env` holds that provider's key; this runbook only carries what the main checkout has. The durable fix is tracked in the linked report.
+If the doctor still names the committed default, check that `config.local.toml` in the main checkout sets `default_provider` at the top level and that `.env` holds that provider's key; this runbook only carries what the main checkout has.
+
+If `prepare` reports a name as `skipped`, the main checkout sets `[agent]
+worktree_link_local_config = false`; that is an operator choice, and the
+worktree needs its own credentials or none.
 
 ## References
 
