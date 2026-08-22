@@ -53,7 +53,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 ### Added
 
 - A bundled `Ponytail` skill brings the minimal-code ladder and its review,
-  audit, debt, gain, and help commands into clanker's native skill system.
+  audit, debt, gain, and help commands into clanker's native skill system. A
+  matching `SessionStart` hook activates it for clanker agents without a
+  separate plugin runtime.
 
 - The Web UI Models page now has an enable checkbox for every configured
   model. Disabled models keep their full configuration in `config.local.toml`

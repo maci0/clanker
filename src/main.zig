@@ -269,12 +269,7 @@ pub fn main(init: std.process.Init) !void {
         switch (err) {
             error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task: clanker run \"fix the build\" (or just clanker \"fix the build\")", .{}),
             error.ExtraTask => cli.printUsageError(init.io, "`clanker run` takes one task but got a second argument: '{s}'. If that is part of the same task, the shell split it: a `\"` inside the task ends the quoted string, so quote the whole task and escape any inner ones as \\\"", .{shown}),
-            error.UnknownCommand => if (cli.suggestCommand(diag)) |suggestion|
-                cli.printUsageError(init.io, "unknown command '{s}'; did you mean `clanker {s}`?", .{ shown, suggestion })
-            else
-                // No "(see the list below)": no list follows, only the
-                // printUsageHint line naming `clanker --help`.
-                cli.printUsageError(init.io, "unknown command '{s}'", .{shown}),
+            error.UnknownCommand => cli.printUnknownCommand(init.io, shown),
             error.UnknownArg => if (cli.suggestFlag(diag)) |suggestion|
                 cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ shown, suggestion })
             else
@@ -323,9 +318,12 @@ pub fn main(init: std.process.Init) !void {
         }
         // These messages already name the next keystroke or the command's
         // own help. Repeating `clanker --help` after them restates the list.
+        // UnknownCommand is handled whole inside printUnknownCommand
+        // (did-you-mean, and the hint only when there is no suggestion), so
+        // it always skips the hint here.
         const skip_hint = switch (err) {
             error.MissingTask, error.ExtraTask, error.MissingArg, error.BadSessionId, error.FlagNotForCommand, error.BadSubcommand, error.PromptLooksLikeCommand => true,
-            error.UnknownCommand => cli.suggestCommand(diag) != null,
+            error.UnknownCommand => true,
             error.UnknownArg => cli.suggestFlag(diag) != null,
             else => false,
         };

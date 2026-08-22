@@ -302,8 +302,8 @@ git_remote_ops = false
 git_worktree_on = []
 exec_pattern_allow = []
 # Extra commands the REPL's `!cmd` escape may run, on top of the union of every
-# tool's exec_allow. Empty = the escape can run exactly what the tools can.
-repl_exec_allow = []
+# tool's exec_allow. `printf` also powers the bundled Ponytail SessionStart hook.
+repl_exec_allow = ["printf"]
 
 # The rest of [agent], commented out at its built-in default. Uncommenting a
 # line pins it: the default stops applying, including a later change to it.
@@ -607,9 +607,10 @@ max_fires = 2
 # threshold = 0.35
 
 [hooks]
-# Claude Code-compatible lifecycle hooks. Off means hooks.json is not read.
-enabled = false
-config_path = "hooks.json"
+# Claude Code-compatible lifecycle hooks. Ponytail activation is bundled;
+# replace this path or disable hooks to use neither.
+enabled = true
+config_path = "hooks/ponytail.json"
 default_timeout_ms = 60000
 
 [kernel]

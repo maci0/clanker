@@ -530,7 +530,7 @@ fn isMeshSub(name: []const u8) bool {
 
 /// Optional out-param for `parse`: on a parse error, holds the offending
 /// token/flag/value so the caller can report *what* was wrong, not just the
-/// bare error name (e.g. "unknown command: 'relp'" instead of "UnknownCommand").
+/// bare error name (e.g. "unknown command 'relp'" instead of "UnknownCommand").
 fn setDiag(diag: ?*[]const u8, token: []const u8) void {
     if (diag) |d| d.* = token;
 }
@@ -1692,6 +1692,33 @@ pub fn suggestCommand(input: []const u8) ?[]const u8 {
         }
     }
     return best;
+}
+
+/// The diagnostic a typo'd command gets, worded once for both paths that
+/// refuse one: parse's own arm (`clanker help <typo>`) and cmdPlugin's
+/// deferred verdict (`clanker <typo>`), where no installed plugin claimed
+/// the name. `hint` says whether the usage hint should follow the line:
+/// once a did-you-mean names the next keystroke, the hint only restates it.
+pub fn formatUnknownCommand(buf: []u8, name: []const u8) struct { line: []const u8, hint: bool } {
+    if (suggestCommand(name)) |suggestion| {
+        if (std.fmt.bufPrint(buf, "unknown command '{s}'; did you mean `clanker {s}`?", .{ name, suggestion })) |line| {
+            return .{ .line = line, .hint = false };
+        } else |_| {}
+    }
+    // The bare form is strictly shorter, so this fits whenever the
+    // did-you-mean above did not; if even it overflows, naming the token
+    // alone still beats a contentless line.
+    const line = std.fmt.bufPrint(buf, "unknown command '{s}'", .{name}) catch return .{ .line = name, .hint = true };
+    return .{ .line = line, .hint = true };
+}
+
+/// Prints the typo'd-command diagnostic and, when no close spelling was
+/// found, the usage hint naming `clanker --help`.
+pub fn printUnknownCommand(io: std.Io, name: []const u8) void {
+    var buf: [256]u8 = undefined;
+    const rendered = formatUnknownCommand(&buf, name);
+    printUsageError(io, "{s}", .{rendered.line});
+    if (rendered.hint) printUsageHint(io);
 }
 
 /// Closest public flag spelling for a mistyped `--flag`.
@@ -5745,10 +5772,13 @@ fn cmdPlugin(init: std.process.Init, opts: Options) !void {
         }
     }
 
-    // Neither a plugin nor a built-in Command: the same diagnostic a typo'd
-    // command always got, now produced here since parse defers the verdict.
-    printUsageError(io, "unknown command: '{s}'; try `clanker --help`", .{name});
-    std.process.exit(1);
+    // Neither a plugin nor a built-in Command: the same diagnostic the
+    // parse path prints for `clanker help <typo>` — did-you-mean included,
+    // exit 2 like every other usage mistake. parse defers the verdict here
+    // so an installed plugin can claim the name; once nothing has, this is
+    // an ordinary typo, and it should not read as a lesser one.
+    printUnknownCommand(io, name);
+    std.process.exit(2);
 }
 
 /// Prints a plugin tool's "text" answer, passing the remaining argv to the
@@ -17538,6 +17568,17 @@ test "mistyped commands get conservative suggestions" {
     try std.testing.expect(suggestCommand("completely-different") == null);
 }
 
+test "unknown-command diagnostic wording is shared by both refusal paths" {
+    var buf: [256]u8 = undefined;
+    const hit = formatUnknownCommand(&buf, "relp");
+    try std.testing.expectEqualStrings("unknown command 'relp'; did you mean `clanker repl`?", hit.line);
+    try std.testing.expect(!hit.hint);
+
+    const miss = formatUnknownCommand(&buf, "completely-different");
+    try std.testing.expectEqualStrings("unknown command 'completely-different'", miss.line);
+    try std.testing.expect(miss.hint);
+}
+
 test "mistyped flags get a one-edit suggestion" {
     try std.testing.expectEqualStrings("--session", suggestFlag("--sesion").?);
     try std.testing.expectEqualStrings("--model", suggestFlag("--modell").?);
@@ -17931,6 +17972,9 @@ test "parse reports the offending token via the diag out-param" {
 
     try std.testing.expectError(error.UnknownArg, parse(&.{ "clanker", "--bogus" }, &diag));
     try std.testing.expectEqualStrings("--bogus", diag);
+
+    try std.testing.expectError(error.UnknownArg, parse(&.{ "clanker", "serve", "--port", "9099" }, &diag));
+    try std.testing.expectEqualStrings("--port", diag);
 
     try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "--provider" }, &diag));
     try std.testing.expectEqualStrings("--provider", diag);
