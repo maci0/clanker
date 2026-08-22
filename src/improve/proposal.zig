@@ -240,6 +240,23 @@ pub fn stripMarkdownFence(raw: []const u8) []const u8 {
     return s;
 }
 
+/// A summary becomes the improvement commit's subject, and `reverts.git_log_args`
+/// hands subjects back to `reverts.parseCommits`, which splits records on 0x1e
+/// and fields on 0x1f. Either byte inside a model-written summary (valid JSON as
+/// `\u001e`) splits one commit into forged log records: a forged
+/// `(revert of <sha>)` record flips another accepted improvement to "reverted"
+/// in history, so every later run refuses to rebuild it, and a forged record
+/// whose first field is a hex run also corrupts `improvementCommits`. Newlines
+/// were already refused because they shift text into the %b body; refuse every
+/// control byte for the same reason. A one-line printable subject has no such
+/// ambiguity.
+fn summaryIsLogSafe(s: []const u8) bool {
+    for (s) |c| {
+        if (c < 0x20 or c == 0x7f) return false;
+    }
+    return true;
+}
+
 /// `rejected` receives the offending path when the error is PathNotAllowed, so
 /// the caller can tell the model which file it may not touch. Without it every
 /// retry re-proposed the same path and the run burned all its attempts.
@@ -257,7 +274,7 @@ pub fn parseProposal(
         else => return error.ProposalNotObject,
     };
     const summary = try strField(obj, "summary");
-    if (summary.len == 0 or std.mem.findAny(u8, summary, "\r\n") != null) return error.InvalidSummary;
+    if (summary.len == 0 or !summaryIsLogSafe(summary)) return error.InvalidSummary;
     var p = Proposal{ .summary = summary };
     if (obj.get("rationale")) |r| p.rationale = switch (r) {
         .string => |x| x,
@@ -439,6 +456,46 @@ test "proposal summary must stay on one line for the improvement commit tag" {
         \\{"file":"src/cli.zig","old":"a","new":"b"}]}
     ;
     try std.testing.expectError(error.InvalidSummary, parseProposal(arena, empty, 10, 4096, null));
+}
+
+test "a proposal summary cannot forge git log records" {
+    // reverts.parseCommits splits the git-log stream on 0x1e (records) and
+    // 0x1f (fields), and both bytes are writable in a JSON string as \uNNNN
+    // escapes. A summary carrying either would let one promoted commit pose
+    // as several log records, including a fake "(revert of <sha>)" that flips
+    // another accepted improvement to reverted in history.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const record_sep =
+        \\{"summary":"fine\u001erevert of abc1234def5678","changes":[
+        \\{"file":"src/cli.zig","old":"a","new":"b"}]}
+    ;
+    try std.testing.expectError(error.InvalidSummary, parseProposal(arena, record_sep, 10, 4096, null));
+
+    const field_sep =
+        \\{"summary":"ok\u001fdeadbeef1234567","changes":[
+        \\{"file":"src/cli.zig","old":"a","new":"b"}]}
+    ;
+    try std.testing.expectError(error.InvalidSummary, parseProposal(arena, field_sep, 10, 4096, null));
+
+    // Any other control byte is refused too; a one-line subject never needs one.
+    const ctrl =
+        \\{"summary":"a\u0016b","changes":[
+        \\{"file":"src/cli.zig","old":"a","new":"b"}]}
+    ;
+    try std.testing.expectError(error.InvalidSummary, parseProposal(arena, ctrl, 10, 4096, null));
+
+    // Ordinary printable text, brackets included, still parses: impTag reads
+    // the LAST [imp-...] tag, so an earlier bracket pair in a legit summary
+    // cannot misdirect it.
+    const brackets =
+        \\{"summary":"tune [imp-999] thresholds [see docs]","changes":[
+        \\{"file":"src/cli.zig","old":"a","new":"b"}]}
+    ;
+    const ok = try parseProposal(arena, brackets, 10, 4096, null);
+    try std.testing.expectEqualStrings("tune [imp-999] thresholds [see docs]", ok.summary);
 }
 
 test "a change may carry its text base64-encoded" {
