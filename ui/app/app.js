@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
+import { readJson as utilReadJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { vendorLoads as vendorLoadsMod, loadVendor as loadVendorMod, loadHljs as loadHljsMod, registerToml as registerTomlMod, copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -35,6 +35,7 @@ document.addEventListener("DOMContentLoaded", function () {
 "use strict";
 
 var readJson = utilReadJson;
+var classifyLoadFailure = utilClassifyLoadFailure;
 var newSessionId = utilNewSessionId;
 var fmtBytes = utilFmtBytes;
 var clip = utilClip;
@@ -431,6 +432,13 @@ function toggleCollapsedGroup(g) {
    what is pinned here, and what is typed in the filter. Nothing else can put
    a row on screen, which is what stops the rail and the transcript
    disagreeing about which conversation is open. */
+/* Why the rail has nothing to show, when it has nothing to show. Null is
+   "the list loaded and it is what it is"; anything else is the classified
+   failure the rail renders instead of an empty state. Only loadSessions
+   writes it, so a re-render for a filter or a pin cannot clear a failure the
+   page has not retried. */
+var railFailure = null;
+
 var railState = uiState({ sessions: [], filter: "", pins: [], current: "", collapsed: collapsedGroups.slice() });
 
 function isArchived(s){ return !!s.archived; }
@@ -443,7 +451,8 @@ function renderSessionOptions(sessions) {
     pins: pins.slice(),
     current: sessionId,
     collapsed: collapsedGroups.slice(),
-    workspace: currentWorkspace
+    workspace: currentWorkspace,
+    failure: railFailure
   };
   renderSessionTitle();
 }
@@ -548,7 +557,23 @@ bind(el.railList, railState, function (s) {
         T.span({ class: "rail-item-title" }, "New conversation"),
         T.span({ class: "rail-item-meta" }, "unsaved"))));
   }
-  if (!matched && s.filter) {
+  /* A failed load is stated where the rows would have been, with the retry
+     next to it. It answers before the filter's own empty row, because "no
+     title matches" describes a list that loaded — saying that over a list
+     that never arrived is the same swallowed failure in a different shape. */
+  if (!matched && s.failure) {
+    if (s.failure.kind === "disabled") {
+      out.push(T.li({ class: "rail-empty" }, "Conversation history is off (" + s.failure.message + ")."));
+    } else {
+      out.push(T.li({ class: "rail-empty" },
+        "Could not load conversations: " + s.failure.message + " ",
+        T.button({
+          type: "button",
+          class: "rail-empty-action",
+          onclick: function () { loadSessions(); }
+        }, "Try again")));
+    }
+  } else if (!matched && s.filter) {
     out.push(T.li({ class: "rail-empty" },
       "No title matches. ",
       T.button({
@@ -771,12 +796,22 @@ function loadSessions() {
   return fetch("/api/sessions")
     .then(readJson)
     .then(function (data) {
+      railFailure = null;
       renderSessionOptions(data.sessions || []);
     })
-    .catch(function () {
-      // Sessions may simply be disabled; the picker still has to describe
-      // the conversation the composer is using.
+    .catch(function (err) {
+      // Sessions may simply be disabled, and the picker still has to describe
+      // the conversation the composer is using. Every other failure gets a
+      // visible failed state instead: an empty list and a dead server used to
+      // look the same.
+      railFailure = classifyLoadFailure(err);
       renderSessionOptions([]);
+      // The rail row is the visible half; this is the same sentence for a
+      // screen reader, and only for the kind worth acting on — a module the
+      // operator switched off would announce itself on every load.
+      if (railFailure.retry && el.sessionStatus) {
+        el.sessionStatus.textContent = "Could not load conversations: " + railFailure.message;
+      }
     });
 }
 
