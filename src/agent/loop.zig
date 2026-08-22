@@ -335,6 +335,14 @@ pub const Agent = struct {
     /// an actual change (`List.rev`), so a run that never touches todo_* never
     /// pays for it.
     on_todos: ?*const fn ([]const u8) void = null,
+    /// Fired at the top of each iteration, just before that iteration's
+    /// request goes out, with the provider name, the model that is about to
+    /// serve it, and the zero-based iteration number. Lets a live viewer draw
+    /// the LLM step of a turn while it runs; the `done` trailer only says who
+    /// answered last. Fired on the run thread, like `on_tool_call`, so a
+    /// callback reading threadlocal stream state (`run_stream_socket`) sees
+    /// this run's.
+    on_llm_start: ?*const fn ([]const u8, []const u8, u32) void = null,
     /// Fired after each LLM usage fold so a live viewer can tick tokens
     /// without waiting for the run's final `done` trailer.
     on_usage: ?*const fn (RunStats) void = null,
@@ -883,6 +891,7 @@ pub const Agent = struct {
 
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const effort = self.classifyEffort(messages.items);
+            if (self.on_llm_start) |cb| cb(self.provider.name, self.provider.activeModelName(), iteration);
             const request_messages = try self.requestMessages(messages.items);
             var ttsr_hit: ?*ttsr.Rule = null;
             const resp = if (self.on_token) |cb| blk: {
