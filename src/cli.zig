@@ -4992,10 +4992,30 @@ fn cliGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
     run_answer_started = false;
     run_md = .{};
     const started = std.Io.Timestamp.now(loop_ctx.ctx.io, .awake);
-    const resp = try loop_ctx.a.run(loop_ctx.messages, task, &err_detail);
+    var used_backend = false;
+    const content = if (try acp_driver.runIfBackend(.{
+        .io = loop_ctx.ctx.io,
+        .gpa = loop_ctx.ctx.gpa,
+        .arena = loop_ctx.arena,
+        .name = .grok,
+        .prompt = task,
+        .timeout_ms = loop_ctx.a.cfg.agent.backend_timeout_ms,
+        .acp_argv = loop_ctx.a.cfg.agent.backend_acp_argv,
+        .cfg = loop_ctx.a.cfg,
+        .environ_map = loop_ctx.ctx.environ_map,
+        .reg = loop_ctx.a.reg,
+        .session_id = if (loop_ctx.a.session_id.len > 0) loop_ctx.a.session_id else "backend",
+    }, loop_ctx.a.cfg.agent.backend)) |got| blk: {
+        used_backend = true;
+        var backend_result = got;
+        defer backend_result.graph.deinit(loop_ctx.ctx.gpa);
+        break :blk backend_result.answer;
+    } else blk: {
+        const resp = try loop_ctx.a.run(loop_ctx.messages, task, &err_detail);
+        break :blk resp.message.content orelse "";
+    };
     const streamed = loop_ctx.a.on_token != null and loop_ctx.a.cfg.modules.streaming;
-    const content = resp.message.content orelse "";
-    if (!streamed) {
+    if (used_backend or !streamed) {
         if (run_stdout_color) try out.interface.writeAll("\x1b[1;35m› \x1b[0m");
         if (run_stdout_color) {
             run_md.feed(&out.interface, content);
@@ -5061,8 +5081,26 @@ const ServerGoalLoopContext = struct {
 fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]const u8 {
     // goal_loop.run boxed this ServerGoalLoopContext as Callbacks.context.
     const loop_ctx: *ServerGoalLoopContext = @ptrCast(@alignCast(context));
-    const resp = loop_ctx.a.run(loop_ctx.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
-    const answer = resp.message.content orelse "";
+    const answer = if (try acp_driver.runIfBackend(.{
+        .io = loop_ctx.ctx.io,
+        .gpa = loop_ctx.ctx.gpa,
+        .arena = loop_ctx.arena,
+        .name = .grok,
+        .prompt = task,
+        .timeout_ms = loop_ctx.a.cfg.agent.backend_timeout_ms,
+        .acp_argv = loop_ctx.a.cfg.agent.backend_acp_argv,
+        .cfg = loop_ctx.a.cfg,
+        .environ_map = loop_ctx.ctx.environ_map,
+        .reg = loop_ctx.a.reg,
+        .session_id = if (loop_ctx.a.session_id.len > 0) loop_ctx.a.session_id else "backend",
+    }, loop_ctx.a.cfg.agent.backend)) |got| blk: {
+        var backend_result = got;
+        defer backend_result.graph.deinit(loop_ctx.ctx.gpa);
+        break :blk backend_result.answer;
+    } else blk: {
+        const resp = loop_ctx.a.run(loop_ctx.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
+        break :blk resp.message.content orelse "";
+    };
     if (loop_ctx.answers.items.len > 0) try loop_ctx.answers.appendSlice(loop_ctx.arena, "\n\n");
     try loop_ctx.answers.appendSlice(loop_ctx.arena, answer);
     return answer;
@@ -17347,6 +17385,37 @@ test "--backend parses on run/repl/goal and refuses unknown names" {
     try std.testing.expectEqualStrings("openai", diag);
     try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--backend", "grok" }, &diag));
     try std.testing.expectEqualStrings("--backend", diag);
+}
+
+test "goal --backend work turn invokes the coding-agent driver" {
+    const parsed = try parse(&.{ "clanker", "goal", "--backend", "grok", "the work is done" }, null);
+    try std.testing.expectEqual(Command.goal, parsed.command);
+    try std.testing.expectEqualStrings("grok", parsed.backend.?);
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var proc_reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer proc_reg.deinit();
+    // The same call the goal-loop work-turn callback makes once cmdGoal
+    // copies opts.backend onto cfg.agent.backend.
+    var result = (try acp_driver.runIfBackend(.{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena_state.allocator(),
+        .name = .claude,
+        .prompt = "hello",
+        .timeout_ms = 3000,
+        .acp_argv = &.{ "python3", "tests/fixtures/fake-acp-agent.py" },
+        .persist = false,
+        .session_id = "goalcmd1",
+        .acp_reg = &proc_reg,
+    }, parsed.backend.?)).?;
+    defer result.graph.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.find(u8, result.answer, "fake-acp-answer") != null);
+    try std.testing.expect(result.used_acp or result.used_headless);
 }
 
 test "unset --backend leaves the in-process loop" {
