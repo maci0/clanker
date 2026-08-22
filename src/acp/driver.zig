@@ -139,20 +139,7 @@ pub fn run(opts: RunOpts) !RunResult {
         };
         used_headless = true;
         answer = head.stdout;
-        try g.add(opts.gpa, .{
-            .kind = .llm,
-            .iteration = 1,
-            .label = "headless",
-            .output = graph_mod.truncatedPreview(answer),
-            .ok = head.term_ok,
-        });
-        try g.add(opts.gpa, .{
-            .kind = .final,
-            .iteration = 1,
-            .label = "final",
-            .output = graph_mod.finalAnswerPreview(answer),
-            .ok = head.term_ok,
-        });
+        try nodesFromHeadless(opts.gpa, &g, answer, head.term_ok);
     }
 
     g.duration_ms = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(opts.io, .awake)).nanoseconds, std.time.ns_per_ms));
@@ -199,35 +186,7 @@ fn runAcp(opts: RunOpts, g: *graph_mod.Graph, answer: *[]const u8) !AcpOutcome {
     };
     // Client.deinit frees answer_buf; persist and stdout run after that.
     answer.* = try opts.arena.dupe(u8, result.answer);
-    var iteration: u32 = 0;
-    for (result.updates) |u| {
-        iteration += 1;
-        if (std.mem.eql(u8, u.kind, "tool_call") or std.mem.eql(u8, u.kind, "tool_call_update")) {
-            try g.add(opts.gpa, .{
-                .kind = .tool,
-                .iteration = iteration,
-                .label = if (u.tool_name.len > 0) u.tool_name else "tool",
-                .output = graph_mod.truncatedPreview(u.text),
-                .ok = true,
-            });
-        } else {
-            try g.add(opts.gpa, .{
-                .kind = .llm,
-                .iteration = iteration,
-                .label = "acp",
-                .output = graph_mod.truncatedPreview(u.text),
-                .ok = true,
-            });
-        }
-    }
-    try g.add(opts.gpa, .{
-        .kind = .final,
-        .iteration = iteration + 1,
-        .label = "final",
-        .output = graph_mod.finalAnswerPreview(answer.*),
-        .detail = result.stop_reason,
-        .ok = true,
-    });
+    try nodesFromUpdates(opts.gpa, g, result.updates, answer.*, result.stop_reason);
     return .success;
 }
 
@@ -268,8 +227,10 @@ fn persistGraph(
     if (!resp.ok) log.log(.warn, "backend graph write: {s}", .{resp.@"error"});
 }
 
-/// Map ACP-shaped updates onto existing NodeKind values.
-pub fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []const acp_client.Update, answer: []const u8) !void {
+/// Map ACP-shaped updates onto existing NodeKind values. This is the one
+/// builder for the ACP success path: runAcp calls it, so the tests below
+/// exercise the same code production runs.
+pub fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []const acp_client.Update, answer: []const u8, stop_reason: []const u8) !void {
     var iteration: u32 = 0;
     for (updates) |u| {
         iteration += 1;
@@ -279,6 +240,7 @@ pub fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []
                 .iteration = iteration,
                 .label = if (u.tool_name.len > 0) u.tool_name else "tool",
                 .output = graph_mod.truncatedPreview(u.text),
+                .ok = true,
             });
         } else {
             try g.add(gpa, .{
@@ -286,6 +248,7 @@ pub fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []
                 .iteration = iteration,
                 .label = "acp",
                 .output = graph_mod.truncatedPreview(u.text),
+                .ok = true,
             });
         }
     }
@@ -294,21 +257,27 @@ pub fn nodesFromUpdates(gpa: std.mem.Allocator, g: *graph_mod.Graph, updates: []
         .iteration = iteration + 1,
         .label = "final",
         .output = graph_mod.finalAnswerPreview(answer),
+        .detail = stop_reason,
+        .ok = true,
     });
 }
 
-pub fn nodesFromHeadless(gpa: std.mem.Allocator, g: *graph_mod.Graph, stdout: []const u8) !void {
+/// The degraded pair a headless fallback writes: the child's exit status is
+/// what lands in `ok`, not a constant.
+pub fn nodesFromHeadless(gpa: std.mem.Allocator, g: *graph_mod.Graph, stdout: []const u8, term_ok: bool) !void {
     try g.add(gpa, .{
         .kind = .llm,
         .iteration = 1,
         .label = "headless",
         .output = graph_mod.truncatedPreview(stdout),
+        .ok = term_ok,
     });
     try g.add(gpa, .{
         .kind = .final,
         .iteration = 1,
         .label = "final",
         .output = graph_mod.finalAnswerPreview(stdout),
+        .ok = term_ok,
     });
 }
 
@@ -327,22 +296,36 @@ test "ACP-shaped updates map onto tool/llm/final NodeKind" {
         .{ .kind = "agent_message_chunk", .text = "hello" },
         .{ .kind = "tool_call", .tool_name = "edit", .text = "ok" },
     };
-    try nodesFromUpdates(std.testing.allocator, &g, &updates, "hello");
+    try nodesFromUpdates(std.testing.allocator, &g, &updates, "hello", "end_turn");
     try std.testing.expectEqual(@as(usize, 3), g.nodes.items.len);
     try std.testing.expectEqual(graph_mod.NodeKind.llm, g.nodes.items[0].kind);
     try std.testing.expectEqual(graph_mod.NodeKind.tool, g.nodes.items[1].kind);
-    try std.testing.expectEqualStrings("edit", g.nodes.items[1].label);
     try std.testing.expectEqual(graph_mod.NodeKind.final, g.nodes.items[2].kind);
+    // The success path stamps ok and carries the vendor stop reason on the
+    // final node: both are what runAcp's inline copy used to add by hand.
+    for (g.nodes.items) |n| try std.testing.expect(n.ok);
+    try std.testing.expectEqualStrings("edit", g.nodes.items[1].label);
+    try std.testing.expectEqualStrings("end_turn", g.nodes.items[2].detail);
 }
 
 test "headless writes a degraded llm/final pair" {
     var g = graph_mod.Graph{ .run_id = "run-1", .task = "t", .started_at = 0 };
     defer g.deinit(std.testing.allocator);
-    try nodesFromHeadless(std.testing.allocator, &g, "stdout-answer");
+    // term_ok=false: a failed child must not read as a healthy run in the
+    // graph, so the exit status has to propagate to both nodes.
+    try nodesFromHeadless(std.testing.allocator, &g, "stdout-answer", false);
     try std.testing.expectEqual(@as(usize, 2), g.nodes.items.len);
     try std.testing.expectEqual(graph_mod.NodeKind.llm, g.nodes.items[0].kind);
     try std.testing.expectEqual(graph_mod.NodeKind.final, g.nodes.items[1].kind);
+    try std.testing.expectEqualStrings("headless", g.nodes.items[0].label);
+    for (g.nodes.items) |n| try std.testing.expect(!n.ok);
+    try std.testing.expectEqualStrings("stdout-answer", g.nodes.items[0].output);
     try std.testing.expectEqualStrings("stdout-answer", g.nodes.items[1].output);
+
+    var ok_g = graph_mod.Graph{ .run_id = "run-2", .task = "t", .started_at = 0 };
+    defer ok_g.deinit(std.testing.allocator);
+    try nodesFromHeadless(std.testing.allocator, &ok_g, "fine", true);
+    for (ok_g.nodes.items) |n| try std.testing.expect(n.ok);
 }
 
 test "driver.run hangs a blocking child, persists a failed ACP node, then headless" {
@@ -474,7 +457,7 @@ test "runIfBackend is empty for the in-process loop and runs the driver when nam
 test "encodeWrite payload is the graph-guest write action with NodeKind names" {
     var g = graph_mod.Graph{ .run_id = "run-enc", .task = "do", .provider = "grok", .started_at = 1 };
     defer g.deinit(std.testing.allocator);
-    try nodesFromUpdates(std.testing.allocator, &g, &.{.{ .kind = "agent_message_chunk", .text = "hi" }}, "hi");
+    try nodesFromUpdates(std.testing.allocator, &g, &.{.{ .kind = "agent_message_chunk", .text = "hi" }}, "hi", "end_turn");
     const payload = try graph_mod.encodeWrite(std.testing.allocator, &g);
     defer std.testing.allocator.free(payload);
     try std.testing.expect(std.mem.find(u8, payload, "\"write\"") != null);

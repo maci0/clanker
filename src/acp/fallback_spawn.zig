@@ -76,12 +76,6 @@ pub fn spawnArgv(
     };
 }
 
-/// What the harness logs about a spawn: program + arity, never env values.
-pub fn spawnLogLine(buf: []u8, argv: []const []const u8) []const u8 {
-    if (argv.len == 0) return "backend-headless: spawning (0 arg(s)); credentials stay in the child";
-    return std.fmt.bufPrint(buf, "backend-headless: spawning {s} ({d} arg(s)); credentials stay in the child", .{ argv[0], argv.len }) catch buf[0..0];
-}
-
 test "headless argv is claude -p / codex exec / grok -p" {
     const g = try vendor.headlessArgv(std.testing.allocator, .grok, "p");
     defer std.testing.allocator.free(g);
