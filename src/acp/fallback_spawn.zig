@@ -99,16 +99,49 @@ test "headless argv is claude -p / codex exec / grok -p" {
     try std.testing.expectEqualStrings("exec", x[1]);
 }
 
-test "spawn log and argv never contain a vendor token from the child environment" {
-    const token = "sekrit-token-xyz";
-    const argv = [_][]const u8{ "grok", "-p", "hello" };
-    var buf: [256]u8 = undefined;
-    const line = spawnLogLine(&buf, &argv);
-    try std.testing.expect(std.mem.find(u8, line, token) == null);
+test "spawnArgv does not log a token present in the child environment" {
+    var tenv: @import("../util/test_env.zig").Env = .init();
+    defer tenv.deinit();
+    const io = tenv.io();
+    const arena = tenv.arena();
+    const token = "sekrit-token-xyz-headless";
+    const script = try std.fmt.allocPrint(arena,
+        \\#!/bin/sh
+        \\export SEKRIT_VENDOR_TOKEN={s}
+        \\printf %s "$SEKRIT_VENDOR_TOKEN" > "$1"
+        \\printf ok
+        \\
+    , .{token});
+    try tenv.tmp.dir.writeFile(io, .{ .sub_path = "wrap.sh", .data = script });
+    const wrap = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/wrap.sh", .{tenv.tmp.sub_path});
+    const probe = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/probe", .{tenv.tmp.sub_path});
+
+    const LogBuf = struct {
+        mu: std.atomic.Mutex = .unlocked,
+        bytes: std.ArrayList(u8) = .empty,
+        alloc: std.mem.Allocator,
+        fn write(ctx: *const anyopaque, line: []const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(ctx)));
+            while (!self.mu.tryLock()) {
+                std.Thread.yield() catch {};
+            }
+            defer self.mu.unlock();
+            self.bytes.appendSlice(self.alloc, line) catch {};
+        }
+    };
+    var logs = LogBuf{ .alloc = std.testing.allocator };
+    defer logs.bytes.deinit(std.testing.allocator);
+    log.setSink(.{ .ctx = @ptrCast(&logs), .write = LogBuf.write });
+    defer log.setSink(null);
+
+    const argv = [_][]const u8{ "sh", wrap, probe };
+    const result = try spawnArgv(io, std.testing.allocator, arena, &argv, "");
+    try std.testing.expect(result.term_ok);
+    try std.testing.expect(std.mem.find(u8, logs.bytes.items, token) == null);
     for (argv) |a| try std.testing.expect(std.mem.find(u8, a, token) == null);
-    // The token may exist in the environment we would inherit; it must not
-    // be copied into argv or the log line.
-    try std.testing.expect(std.mem.find(u8, line, "spawning grok") != null);
+    const inherited = try tenv.tmp.dir.readFileAlloc(io, "probe", std.testing.allocator, .limited(256));
+    defer std.testing.allocator.free(inherited);
+    try std.testing.expectEqualStrings(token, inherited);
 }
 
 test "spawnArgv captures stdout from a helper process, not a vendor CLI" {
