@@ -169,7 +169,7 @@ pub fn jsonTurn(gpa: std.mem.Allocator, text: []const u8) ![]const u8 {
 
 /// An OpenAI-compat *non-streaming* completion body whose `content` is empty
 /// and whose entire output lives in `reasoning_content`, ending `finish_reason:
-/// \"stop\"` -- the shape a thinking model that never closed its think block
+/// "stop"` -- the shape a thinking model that never closed its think block
 /// returns (observed on qwen3-family models via llama.cpp). The improve engine
 /// must answer this by retrying without reasoning, not by failing the attempt.
 pub fn reasoningOnlyTurn(gpa: std.mem.Allocator, reasoning: []const u8) ![]const u8 {

@@ -88,8 +88,7 @@ test "improve-self falls back to a configured provider when the primary is down"
 /// default `reasoning_effort`). Used to prove the improve engine answers a
 /// reasoning-only empty-content response by retrying with reasoning disabled.
 fn writeImproveReasoningConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, mock_port: u16) !void {
-    const toml = try std.fmt.allocPrint(gpa,
-        "default_provider = \"e2e-mock\"\n" ++
+    const toml = try std.fmt.allocPrint(gpa, "default_provider = \"e2e-mock\"\n" ++
         "\n" ++
         "[providers.e2e-mock]\n" ++
         "kind = \"openai_compat\"\n" ++
@@ -104,8 +103,7 @@ fn writeImproveReasoningConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocat
         "\n" ++
         "[agent]\n" ++
         "tools_dir = {f}\n" ++
-        "\n",
-        .{ mock_port, std.json.fmt(e2e_options.tools_manifests_dir, .{}) });
+        "\n", .{ mock_port, std.json.fmt(e2e_options.tools_manifests_dir, .{}) });
     defer gpa.free(toml);
     try dir.writeFile(io, .{ .sub_path = "config.toml", .data = toml });
 }
