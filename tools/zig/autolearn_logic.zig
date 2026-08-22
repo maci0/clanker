@@ -27,15 +27,9 @@ pub const system_prompt =
     \\beginning with the "## Autolearn" heading.
 ;
 
-/// The tail of `s` bounded to at most `max_bytes`, aligned to a line boundary
-/// (a leading partial line is dropped so only whole lines are fed).
-pub fn lastLines(s: []const u8, max_bytes: usize) []const u8 {
-    if (s.len <= max_bytes) return s;
-    const start = s.len - max_bytes;
-    const first_nl = std.mem.find(u8, s[start..], "\n") orelse return s[start..];
-    return s[start + first_nl + 1 ..];
-}
-
+/// The tail of the observations fed to the rewrite prompt is bounded by
+/// `tail.onLineBoundary` (`src/util/tail.zig`, `max_observation_bytes`),
+/// so only whole lines reach the model.
 pub fn userPrompt(alloc: std.mem.Allocator, observations: []const u8, mechanical: []const u8) ![]const u8 {
     return std.fmt.allocPrint(alloc,
         \\Raw observations (state/autolearn.jsonl, tail):
@@ -67,17 +61,6 @@ pub fn mergeRoadmap(alloc: std.mem.Allocator, existing: []const u8, section: []c
         return std.mem.concat(alloc, u8, &.{ existing, "\n", section });
     }
     return std.mem.concat(alloc, u8, &.{ existing, "\n\n", section });
-}
-
-test "lastLines keeps a short buffer and drops a leading partial line" {
-    const short = "one\ntwo\n";
-    try std.testing.expectEqualStrings(short, lastLines(short, 64));
-    try std.testing.expectEqualStrings("", lastLines("", 64));
-
-    const long = "aaaa\nbbbb\ncccc\ndddd\n";
-    try std.testing.expectEqualStrings("cccc\ndddd\n", lastLines(long, 11));
-    // No newline inside the window: keep the clipped tail as-is.
-    try std.testing.expectEqualStrings("yyyy", lastLines("xxxxxyyyy", 4));
 }
 
 test "mergeRoadmap replaces from the Autolearn marker and appends when missing" {

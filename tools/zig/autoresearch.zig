@@ -6,6 +6,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("autoresearch_logic.zig");
+const tail = @import("tail");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -58,8 +59,8 @@ fn appendEntry(out: *lib.Out, obj: std.json.ObjectMap) !void {
         .metric_name = jsonString(obj, "metric_name"),
         .duration_ms = jsonUnsigned(obj, "duration_ms"),
         .detail = jsonString(obj, "detail"),
-        .stdout_tail = logic.tail(jsonString(obj, "stdout"), logic.output_tail_bytes),
-        .stderr_tail = logic.tail(jsonString(obj, "stderr"), logic.output_tail_bytes),
+        .stdout_tail = tail.onLineBoundary(jsonString(obj, "stdout"), logic.output_tail_bytes),
+        .stderr_tail = tail.onLineBoundary(jsonString(obj, "stderr"), logic.output_tail_bytes),
     };
     const line = try logic.entryLine(alloc, entry);
     const path = try std.fmt.allocPrint(alloc, "state/autoresearch/{s}/ledger.jsonl", .{run_id});

@@ -11,6 +11,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("autolearn_logic.zig");
+const tail = @import("tail");
 
 const event_path = "state/autolearn.jsonl";
 const archive_path = "state/autolearn.old.jsonl";
@@ -203,7 +204,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var synthesized: []const u8 = "";
     if (synthesizing) {
-        const observations = logic.lastLines(data orelse "", logic.max_observation_bytes);
+        const observations = tail.onLineBoundary(data orelse "", logic.max_observation_bytes);
         if (observations.len == 0) return lib.fail(out, "no observations to synthesize");
         const prompt = logic.userPrompt(alloc, observations, section.items) catch
             return lib.fail(out, "could not build synthesis prompt");

@@ -6,6 +6,7 @@ const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const proposal_mod = @import("../improve/proposal.zig");
 const ledger = @import("autoresearch_logic");
+const tail = @import("../util/tail.zig");
 const harness_mod = @import("harness.zig");
 const registry = @import("../toolhost/registry.zig");
 const runtime = @import("../sandbox/runtime.zig");
@@ -265,8 +266,8 @@ pub const Loop = struct {
             .metric_name = opts.metric_name,
             .duration_ms = harness_res.duration_ms,
             .detail = harness_res.detail,
-            .stdout_tail = ledger.tail(harness_res.stdout, ledger.output_tail_bytes),
-            .stderr_tail = ledger.tail(harness_res.stderr, ledger.output_tail_bytes),
+            .stdout_tail = tail.onLineBoundary(harness_res.stdout, ledger.output_tail_bytes),
+            .stderr_tail = tail.onLineBoundary(harness_res.stderr, ledger.output_tail_bytes),
         });
         if (improved) {
             // `best` must not advance until every target's staged content is

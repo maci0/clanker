@@ -11,9 +11,11 @@ const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic",
 const linked_helpers = [_][]const u8{ "skills_logic", "schedule_cron", "cas_lock_record", "commit_logic", "thinking_logic", "llm_budget", "advisor_logic", "autoresearch_logic", "providers_logic", "workflows_logic", "spill_logic", "mention_expand", "compact_hint" };
 
 /// `base` plus one module per linked helper. Unlike the wasm guests and the
-/// `host_tested_helpers` test modules below, these get no `utf8` import:
-/// `src/main.zig` imports `util/utf8.zig` into `root`, and a file may belong
-/// to only one module, so a helper linked here carries its own cap.
+/// `host_tested_helpers` test modules below, these get no named-module import
+/// of a `src/util` file: `src/main.zig` imports those into `root`, and a file
+/// may belong to only one module per compilation, so a helper linked here
+/// cannot also see them by name (the recorded reason thinking_logic and
+/// advisor_logic carry their own cap).
 fn linkedHelperImports(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -457,6 +459,13 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The logs, autolearn, and autoresearch guests tail output through the
+    // host's one line-boundary helper rather than copies of it.
+    const tool_tail_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/tail.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
     // The gh and git guests mirror the host's exec_pattern_allow decision, so
     // they match with the host's own glob rather than a second copy of it.
     const tool_glob_mod = b.createModule(.{
@@ -512,6 +521,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = .ReleaseSmall,
                 .imports = &.{
                     .{ .name = "utf8", .module = tool_utf8_mod },
+                    .{ .name = "tail", .module = tool_tail_mod },
                     .{ .name = "glob", .module = tool_glob_mod },
                     .{ .name = "fs_skip", .module = tool_fs_skip_mod },
                 },

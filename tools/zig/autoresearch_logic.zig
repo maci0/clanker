@@ -23,15 +23,10 @@ pub const Entry = struct {
 };
 
 /// Bytes of harness output kept in a ledger entry: enough to re-read what the
-/// harness printed without bloating the run record.
+/// harness printed without bloating the run record. The tails are cut by
+/// `tail.onLineBoundary` (`src/util/tail.zig`), shared with the logs and
+/// autolearn guests.
 pub const output_tail_bytes = 2000;
-
-pub fn tail(text: []const u8, keep: usize) []const u8 {
-    if (text.len <= keep) return text;
-    const head = text[text.len - keep ..];
-    if (std.mem.findScalar(u8, head, '\n')) |nl| return head[nl + 1 ..];
-    return head;
-}
 
 /// Renders one ledger line, the exact shape the loop used to write natively:
 ///   {"iter":N,"ts":N,"summary":"...","ok":true,"metric":1.0,"metric_name":"x",
@@ -148,19 +143,6 @@ test "bestMetricOf skips non-finite ledger metrics" {
     try std.testing.expect(best != null and best.? == 2.0);
     const inf_only = "{\"iter\":0,\"ts\":1,\"ok\":true,\"metric\":1e999}\n";
     try std.testing.expect(bestMetricOf(arena, inf_only, "max") == null);
-}
-
-test "tail keeps last lines" {
-    try std.testing.expectEqualStrings("hello", tail("hello", 10));
-    // The last `keep` bytes, minus the partial line they start inside. For
-    // "a\nb\nc\nd\ne\nf" (11 bytes) the last 3 are "e\nf", whose first line is
-    // the partial "e", so only "f" survives; the last 4 are "\ne\nf", where the
-    // partial line is empty and "e\nf" survives whole. 5 lands mid-"d" and so
-    // keeps the same two lines as 4.
-    try std.testing.expectEqualStrings("f", tail("a\nb\nc\nd\ne\nf", 3));
-    try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 4));
-    try std.testing.expectEqualStrings("e\nf", tail("a\nb\nc\nd\ne\nf", 5));
-    try std.testing.expectEqualStrings("d\ne\nf", tail("a\nb\nc\nd\ne\nf", 7));
 }
 
 test "entryLine renders the ledger shape" {

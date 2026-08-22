@@ -10,6 +10,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const view = @import("log_view.zig");
+const tail = @import("tail");
 
 const logs_dir = "state/logs";
 
@@ -86,7 +87,7 @@ fn tailOne(out: *lib.Out, name: []const u8) !void {
     const size = statSize(st) orelse return lib.fail(out, "reading the log");
 
     const raw = try readTailWindow(path, size);
-    const text = view.tailOnLineBoundary(raw, view.tail_bytes);
+    const text = tail.onLineBoundary(raw, view.tail_bytes);
 
     var w = lib.writer(out);
     var s = lib.json(&w);

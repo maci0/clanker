@@ -167,6 +167,7 @@ comptime {
     _ = @import("util/tool_out.zig");
     _ = @import("util/fs_skip.zig");
     _ = @import("util/glob.zig");
+    _ = @import("util/tail.zig");
     _ = @import("util/utf8.zig");
     _ = @import("util/http_client.zig");
     _ = @import("util/deadline.zig");
