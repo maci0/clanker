@@ -61,6 +61,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker reports --help` states the byte caps the tool enforces, in their
+  own LIMITS section: title 180, summary 500, status note 500, search query
+  240. They were discoverable only by exceeding one and reading the refusal.
+  A test pins the numbers against `tools/zig/reports.zig`, so a cap that
+  moves in the guest cannot leave the help quoting the old one.
+
 - `POST /api/steer` reaches every run the keys it names address, not the
   first slot found: two concurrent runs registered under one goal id — a
   goal resumed at serve startup while a browser streams the same goal —
