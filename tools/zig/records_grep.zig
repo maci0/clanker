@@ -21,6 +21,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const doc = @import("doc_scaffold.zig");
+const record_rename = @import("record_rename.zig");
 
 /// Hits for the records under `dir` that contain every term in `query`, as the
 /// same `[{"file":...,"line":...,"text":...}]` array a single grep returns.
@@ -313,4 +314,157 @@ pub fn writeStatusReply(
     }
     try s.endObject();
     lib.commit(out, &w);
+}
+
+// -------------------------------------------------------------------- rename
+
+/// Move a record to a new filename inside its own store, for the four stores
+/// that share this half: `research` (flat) and `rfc`/`adr`/`prd` (numbered).
+///
+/// The store never changes -- the slug is a name, not a destination -- and in
+/// a numbered store the record's `NNNN-` prefix is kept rather than renamed.
+/// `record_rename.zig` carries that decision and the reasoning behind it, and
+/// is where `zig build test` checks the arithmetic; everything here is the
+/// host calls around it: the move, the compare-and-swap rewrite of the
+/// inventory link, and the scan for references the caller now has to fix.
+///
+/// A reference scan is a filename grep over this store's own directory, which
+/// is all the descriptor grants. It cannot see mentions elsewhere in the tree,
+/// and in a numbered store it cannot see a citation written as "ADR 0031"
+/// either, so the reply says both rather than letting an empty list read as
+/// "nothing else names it".
+///
+/// `reports` keeps its own copy of this, because its rename spans two stores
+/// (`docs/reports/` and `docs/runbooks/`) and re-applies the
+/// `missing-clanker-tool-` marker; folding the two together is a later change.
+pub fn renameRecord(
+    out: *lib.Out,
+    obj: std.json.Value,
+    dir: []const u8,
+    index_path: []const u8,
+    numbered: bool,
+    noun: []const u8,
+) !void {
+    const path = lib.str(obj, "path") catch
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "rename needs the current path of {s}", .{noun}));
+    if (!doc.isPathIn(dir, path))
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "path must be a markdown file directly below {s}/", .{dir}));
+    const slug = lib.str(obj, "slug") catch
+        return lib.fail(out, "rename needs the new filename stem in slug");
+    if (!doc.isSlug(slug))
+        return lib.fail(out, "a slug is lowercase letters, digits and single hyphens, and never starts or ends with one");
+
+    const plan = record_rename.plan(lib.alloc, path, slug, numbered) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => |e| return lib.fail(out, record_rename.reason(e)),
+    };
+
+    if (lib.fsRead(plan.new_path)) |_| {
+        return lib.fail(out, "a record already exists at the new name");
+    } else |_| {}
+    _ = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the record before rename");
+    lib.fsRename(path, plan.new_path) catch |err| return lib.failErr(out, err, "renaming the record");
+
+    // The inventory link is the second copy of the name; rewrite it under CAS
+    // like every other index edit. Links in these four stores are the bare
+    // filename, one directory level with a `.md` suffix, so a global replace
+    // cannot reach a different record's link as a substring. In a numbered
+    // store the link *text* ("ADR 0048 -- <title>") carries the number, and
+    // keeping the number is exactly what leaves that text still correct.
+    const indexed = renameInventoryLink(index_path, plan.old_stem, plan.new_stem) catch false;
+
+    var refs: std.ArrayList([]const u8) = .empty;
+    var refs_ok = true;
+    collectRenameReferences(&refs, dir, index_path, plan.old_stem) catch {
+        refs_ok = false;
+    };
+
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("rename");
+    try s.objectField("from");
+    try s.write(path);
+    try s.objectField("to");
+    try s.write(plan.new_path);
+    try s.objectField("indexed");
+    try s.write(indexed);
+    if (!indexed) {
+        try s.objectField("note");
+        try s.write("the record was renamed, but its inventory line could not be rewritten (missing link or a concurrent edit); fix the README link by hand");
+    }
+    try s.objectField("references");
+    try s.beginArray();
+    for (refs.items) |r| try s.write(r);
+    try s.endArray();
+    try s.objectField("references_note");
+    try s.write(if (!refs_ok)
+        try std.fmt.allocPrint(lib.alloc, "the reference scan failed, so this list is incomplete -- search {s}/ and the rest of the tree for the old name by hand", .{dir})
+    else if (numbered)
+        try std.fmt.allocPrint(lib.alloc, "files inside {s}/ still naming the old filename; mentions elsewhere in the tree are outside this tool's grants, and a citation written as a bare number is not a filename and is never listed here -- the number did not change, so those citations still resolve", .{dir})
+    else
+        try std.fmt.allocPrint(lib.alloc, "files inside {s}/ still naming the old record; mentions elsewhere in the tree are outside this tool's grants -- search for the old name there too", .{dir}));
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// Rewrite every inventory occurrence of `<old_stem>.md` to `<new_stem>.md` in
+/// one compare-and-swap write. False means the link is absent or the index
+/// changed concurrently, which leaves a renamed record with a stale index line
+/// rather than failing the move that already happened.
+fn renameInventoryLink(index_path: []const u8, old_stem: []const u8, new_stem: []const u8) !bool {
+    const old_link = try std.fmt.allocPrint(lib.alloc, "{s}.md", .{old_stem});
+    const new_link = try std.fmt.allocPrint(lib.alloc, "{s}.md", .{new_stem});
+    const idx = try readIndex(index_path);
+    if (std.mem.find(u8, idx.text, old_link) == null) return false;
+    const size = std.mem.replacementSize(u8, idx.text, old_link, new_link);
+    const updated = try lib.alloc.alloc(u8, size);
+    _ = std.mem.replace(u8, idx.text, old_link, new_link, updated);
+    return writeIndex(index_path, idx, updated);
+}
+
+/// Append to `refs` each file under `dir` still containing `needle`, skipping
+/// the inventory index (already rewritten) and duplicates. An unreadable store
+/// is no references; an unparsable grep result is an error, so a broken scan
+/// never reads as a clean one.
+///
+/// `ck_fs_grep` reports each hit's `file` relative to the *sandbox root*, not
+/// to the directory it was asked to search (`fsGrepRecurse` seeds its prefix
+/// with the requested path), so a hit already reads `docs/research/x.md` and
+/// prefixing the store onto it again produces `docs/research/docs/research/…`.
+fn collectRenameReferences(
+    refs: *std.ArrayList([]const u8),
+    dir: []const u8,
+    index_path: []const u8,
+    needle: []const u8,
+) !void {
+    const raw = lib.fsGrep(dir, needle) catch |err| switch (err) {
+        error.NotFound => return,
+        else => return err,
+    };
+    const hits = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return error.UnparsableGrepResult;
+    if (hits != .array) return error.UnparsableGrepResult;
+    for (hits.array.items) |hit| {
+        if (hit != .object) continue;
+        const file = hit.object.get("file") orelse continue;
+        if (file != .string) continue;
+        // Defensive: take the path as given when it is already store-rooted,
+        // and join only if some future host ever reports it store-relative.
+        const full = if (doc.isPathIn(dir, file.string))
+            try lib.alloc.dupe(u8, file.string)
+        else
+            try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, file.string });
+        if (std.mem.eql(u8, full, index_path)) continue;
+        var seen = false;
+        for (refs.items) |r| {
+            if (std.mem.eql(u8, r, full)) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen) try refs.append(lib.alloc, full);
+    }
 }

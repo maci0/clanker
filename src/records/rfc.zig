@@ -47,7 +47,7 @@ const status_column_max: usize = 12;
 
 /// Every subcommand the dispatch below accepts, in the order `--help`
 /// lists them. The spec's usage line in `cli.zig` is pinned to this list.
-pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "recommend", "status" };
+pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "recommend", "status", "rename" };
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     try common.out(init.io, try run(init.arena.allocator(), opts, tool));
@@ -68,6 +68,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "update")) return update(arena, opts, tool);
     if (std.mem.eql(u8, sub, "recommend")) return recommend(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "rename")) return rename(arena, opts, tool);
 
     return common.badSubcommand("rfc", &subcommands, sub);
 }
@@ -407,4 +408,19 @@ test "renderChecklist prints the question to ask under each requirement" {
     try testing.expect(std.mem.find(u8, text, "http client") != null);
     try testing.expect(std.mem.find(u8, text, "the decision as a question") != null);
     try testing.expect(std.mem.find(u8, text, "ask: What exactly is being decided?") != null);
+}
+
+/// `clanker rfc rename <path> <new-slug>`. The RFC's number is its identity
+/// and stays: pass the new name without one.
+fn rename(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
+    return common.renameRecord(
+        arena,
+        "rfc",
+        "docs/rfcs/<NNNN-name>.md",
+        "lowercase letters, digits and hyphens; the RFC keeps its number",
+        "docs/rfcs/",
+        opts.arg1,
+        opts.arg2,
+        tool,
+    );
 }

@@ -53,7 +53,7 @@ const snippet_bytes: usize = 96;
 
 /// Every subcommand the dispatch below accepts, in the order `--help`
 /// lists them. The spec's usage line in `cli.zig` is pinned to this list.
-pub const subcommands = [_][]const u8{ "list", "plan", "sweep", "search", "open", "create", "append", "update", "status" };
+pub const subcommands = [_][]const u8{ "list", "plan", "sweep", "search", "open", "create", "append", "update", "status", "rename" };
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     try common.out(init.io, try run(init.arena.allocator(), opts, tool));
@@ -74,6 +74,7 @@ pub fn run(arena: std.mem.Allocator, opts: Options, tool: Tool) anyerror![]const
     if (std.mem.eql(u8, sub, "append")) return append(arena, opts, tool);
     if (std.mem.eql(u8, sub, "update")) return update(arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(arena, opts, tool);
+    if (std.mem.eql(u8, sub, "rename")) return rename(arena, opts, tool);
 
     return common.badSubcommand("research", &subcommands, sub);
 }
@@ -581,4 +582,19 @@ test "a refused tool call and an unreadable answer both fail the research call" 
 
     canned.answer = "not json at all";
     try std.testing.expectError(Error.ToolFailed, common.callTool(arena.allocator(), "research", tool, "{}"));
+}
+
+/// `clanker research rename <path> <new-slug>`. Research notes are
+/// unnumbered, so the slug is the whole filename stem.
+fn rename(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
+    return common.renameRecord(
+        arena,
+        "research",
+        "docs/research/<name>.md",
+        "lowercase letters, digits and hyphens",
+        "docs/research/",
+        opts.arg1,
+        opts.arg2,
+        tool,
+    );
 }

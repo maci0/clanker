@@ -23,6 +23,7 @@
 //!         {"action":"recommend", "path":"...", "recommendation":"...", "confidence":7,
 //!          "rationale":"...", "reversibility":"...", "moves_confidence":"..."}
 //!         {"action":"status", "path":"...", "status":"decided", "note":"See ADR 0014."}
+//!         {"action":"rename", "path":"docs/rfcs/0001-x.md", "slug":"new-name"}
 //! Output: {"ok":true, ...}
 
 const std = @import("std");
@@ -67,7 +68,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (std.mem.eql(u8, action, "update")) return update(obj, out);
     if (std.mem.eql(u8, action, "recommend")) return recommend(obj, out);
     if (std.mem.eql(u8, action, "status")) return status(obj, out);
-    return lib.fail(out, "action must be list, checklist, create, open, search, append, update, recommend, or status");
+    if (std.mem.eql(u8, action, "rename")) return rename(obj, out);
+    return lib.fail(out, "action must be list, checklist, create, open, search, append, update, recommend, status, or rename");
 }
 
 // ---------------------------------------------------------------- checklist
@@ -592,4 +594,14 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
 /// back off an RFC cannot drift apart.
 fn labelFor(wanted: []const u8) ?[]const u8 {
     return doc.labelFrom(wanted, &statuses);
+}
+
+/// Move the record to a new filename in this store. In a numbered store the
+/// `NNNN-` prefix is the record's identity and is kept: records are cited by
+/// number across the tree ("ADR 0031", "PRD 0021") and a filename scan cannot
+/// find those citations, so a renumber would break references this tool could
+/// not even list. `records_grep.renameRecord` is the shared half;
+/// `record_rename.zig` carries the arithmetic and the full reasoning.
+fn rename(obj: std.json.Value, out: *lib.Out) !void {
+    return records_grep.renameRecord(out, obj, dir, index_path, true, "an RFC");
 }

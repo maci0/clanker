@@ -47,7 +47,7 @@ const status_order = [_][]const u8{ "Draft", "In progress", "Partial", "Implemen
 
 /// Every subcommand the dispatch below accepts, in the order `--help`
 /// lists them. The spec's usage line in `cli.zig` is pinned to this list.
-pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "status" };
+pub const subcommands = [_][]const u8{ "list", "search", "open", "checklist", "create", "append", "update", "status", "rename" };
 
 pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     const io = init.io;
@@ -62,6 +62,7 @@ pub fn cmd(init: std.process.Init, opts: Options, tool: Tool) !void {
     if (std.mem.eql(u8, sub, "append")) return append(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "update")) return update(io, arena, opts, tool);
     if (std.mem.eql(u8, sub, "status")) return setStatus(io, arena, opts, tool);
+    if (std.mem.eql(u8, sub, "rename")) return rename(io, arena, opts, tool);
 
     return common.badSubcommand("prd", &subcommands, sub);
 }
@@ -516,4 +517,19 @@ test "renderChecklist prints the question to ask under each requirement" {
     const text = try renderChecklist(arena, reqs.array.items);
     try testing.expect(std.mem.find(u8, text, "Numbered goals") != null);
     try testing.expect(std.mem.find(u8, text, "ask: What must be true for this to be done?") != null);
+}
+
+/// `clanker prd rename <path> <new-slug>`. The PRD's number is its identity
+/// and stays: the ROADMAP and the inventory table both cite it.
+fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
+    try common.out(io, try common.renameRecord(
+        arena,
+        "prd",
+        "docs/prds/<NNNN-name>.md",
+        "lowercase letters, digits and hyphens; the PRD keeps its number",
+        "docs/prds/",
+        opts.arg1,
+        opts.arg2,
+        tool,
+    ));
 }

@@ -1010,9 +1010,10 @@ clanker rfc create "HTTP client for the proxy" "The proxy needs one client and t
 clanker rfc append docs/rfcs/0022-http-client-for-the-proxy.md "## Option C"
 clanker rfc recommend docs/rfcs/0022-http-client-for-the-proxy.md "Adopt option B" 7 "Why, and what would move it"
 clanker rfc status docs/rfcs/0022-http-client-for-the-proxy.md decided "Chose option B; see the ADR"
+clanker rfc rename docs/rfcs/0022-http-client-for-the-proxy.md proxy-http-client
 ```
 
-`create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2.
+`create` allocates the next number, renders [docs/rfcs/TEMPLATE.md](rfcs/TEMPLATE.md) and indexes it; it refuses when that template is missing rather than inventing a skeleton. An RFC needs real options: at least two candidates, the status quo, and one out-of-the-box possibility. `recommend` takes a confidence from 0 to 10 — a recommendation without one is an opinion. Statuses are `draft`, `discussion`, `decided`, `deferred`, `withdrawn` and `superseded`. `append`, `update`, `recommend` and `status` are compare-and-swap writes: a concurrent edit is refused rather than overwritten, so reopen the RFC and retry against its current text. A refused write exits 1, a usage mistake exits 2. `rename <path> <new-slug>` moves a record to a new slug and rewrites its inventory link in the same call, and it keeps the **number**: these records are cited by number in prose across the tree, where a scan of filenames cannot follow, so the slug is a name and the number is identity. Pass the new name without a number; a slug carrying a different number is refused by name rather than silently ignored. The unnumbered `research` store has the same action with no such rule.
 
 ### Decisions already made (ADRs)
 
@@ -1038,6 +1039,7 @@ Write them:
 ```bash
 clanker adr create "Providers are a native vtable" "Keys must not enter the sandbox" "Each provider is one vtable file plus a registry row" "Adding one is three edits; a provider cannot be hot-swapped"
 clanker adr status docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md superseded "Superseded by ADR 0021."
+clanker adr rename docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md providers-are-a-native-vtable
 ```
 
 `create` takes the title as the *choice made* rather than the question, and
@@ -1080,6 +1082,7 @@ Write them:
 ```bash
 clanker prd create "Scheduled runs" "Nothing fires unless something outside clanker invokes it" "1. Fire due entries on a cron spec"
 clanker prd status docs/prds/0009-schedule.md shipped "src/schedule/ is the source of truth; clanker schedule exposes it"
+clanker prd rename docs/prds/0009-schedule.md scheduled-runs
 ```
 
 `shipped` requires a note naming the source files that are now the single
