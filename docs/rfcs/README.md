@@ -93,6 +93,7 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0036 — Which of an improve-self worktree's runtime state should rejoin the checkout](0036-improve-worktree-runtime-state-sharing.md) — Discussion
 - [RFC 0035 — How the REPL injects mid-stream like web steer](0035-repl-inject.md) — Decided
 - [RFC 0034 — How nested runs pick explore/plan/coder profiles](0034-nested-profiles.md) — Decided
 - [RFC 0033 — How a goal queue sits beside the one active goal](0033-goal-queue.md) — Decided

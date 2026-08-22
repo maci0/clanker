@@ -176,6 +176,7 @@ Two checks, because both have caught real errors in finished notes:
 ## Inventory
 
 <!-- inventory:research:start -->
+- [What an improve-self worktree shares, copies and discards under state/](improve-worktree-runtime-state-sharing.md) — Current
 - [Kimi Code CLI feature inventory for clanker](kimi-code-features.md) — Current
 - [jcode feature inventory for clanker](jcode-features.md) — Current
 - [Stage-1 spike — replicating one owner stream between two instances](t-stage1-stream-replication-spike.md) — Draft
