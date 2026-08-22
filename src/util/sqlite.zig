@@ -7,9 +7,10 @@
 //! host-tested beside the store (src/agent/session_events.zig).
 
 const std = @import("std");
-const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+// 0.16 deprecates @cImport: sqlite3.h is translated by the build system
+// (`addTranslateC` in build.zig) and linked here as a module. The amalgamation
+// itself (vendor/sqlite/sqlite3.c) is compiled into each consuming module.
+const c = @import("sqlite3_h");
 
 pub const Error = error{
     OpenFailed,

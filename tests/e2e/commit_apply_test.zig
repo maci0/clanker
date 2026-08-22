@@ -245,6 +245,61 @@ test "clanker commit writes one commit per group even when the index was already
     try std.testing.expect(std.mem.find(u8, left, "beta.md") == null);
 }
 
+test "clanker commit --all includes new files, tracked or not" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // The omission this pins: `git diff --name-only` cannot name a new file,
+    // so scope "all" once built a plan without it, committed nothing for it,
+    // and still reported success.
+    const plan =
+        "{\"commits\":[{\"message\":\"docs: add all three notes\",\"files\":[" ++
+        "\"tracked.md\",\"staged-new.md\",\"untracked-new.md\"]}]}";
+    const turn = try mock_llm.jsonTurn(gpa, plan);
+    defer gpa.free(turn);
+    const mock = try mock_llm.Server.start(io, gpa, &.{turn});
+    defer mock.stop();
+
+    try harness.writeMockConfig(io, tmp.dir, gpa, mock.port);
+    try harness.linkZigOut(io, tmp.dir);
+    try harness.initGitRepo(gpa, io, tmp.dir);
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.name", "e2e" }));
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "config", "user.email", "e2e@example.invalid" }));
+
+    // One tracked modification, one file already staged (new, so identical in
+    // index and worktree), one purely untracked.
+    try tmp.dir.writeFile(io, .{ .sub_path = "tracked.md", .data = "first\n" });
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "add", "tracked.md" }));
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "commit", "-m", "init: tracked.md" }));
+    try tmp.dir.writeFile(io, .{ .sub_path = "tracked.md", .data = "second\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "staged-new.md", .data = "staged\n" });
+    gpa.free(try git(gpa, io, tmp.dir, &.{ "git", "add", "staged-new.md" }));
+    try tmp.dir.writeFile(io, .{ .sub_path = "untracked-new.md", .data = "untracked\n" });
+
+    var result = try harness.run(gpa, io, tmp.dir, &.{ "commit", "--yes", "--all" });
+    defer result.deinit(gpa);
+    if (!result.ok()) std.debug.print("clanker commit --all failed.\nstdout: {s}\nstderr: {s}\n", .{ result.stdout, result.stderr });
+    try std.testing.expect(result.ok());
+
+    // Every planned path reached the commit, whichever of the three listings
+    // it came from.
+    const head_files = try git(gpa, io, tmp.dir, &.{ "git", "show", "--name-only", "--format=", "HEAD" });
+    defer gpa.free(head_files);
+    try std.testing.expect(std.mem.find(u8, head_files, "tracked.md") != null);
+    try std.testing.expect(std.mem.find(u8, head_files, "staged-new.md") != null);
+    try std.testing.expect(std.mem.find(u8, head_files, "untracked-new.md") != null);
+
+    // And none of them is left behind in the working tree.
+    const left = try git(gpa, io, tmp.dir, &.{ "git", "status", "--porcelain", "-uall", "--", "tracked.md", "staged-new.md", "untracked-new.md" });
+    defer gpa.free(left);
+    try std.testing.expectEqual(@as(usize, 0), countLines(left));
+}
+
 test "clanker commit --yes refuses to auto-apply a degraded fallback plan" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});

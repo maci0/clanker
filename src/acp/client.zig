@@ -243,16 +243,17 @@ fn idAsInt(v: json.Value) i64 {
 /// fixed-width conversion. Integer-valued floats (some encoders emit `5.0`)
 /// truncate to their integer value; anything outside i64 -- including the
 /// infinity an overflowing literal like `1e999` parses to, or NaN -- answers
-/// -1 like the non-numeric branches rather than trapping `@intFromFloat`.
+/// -1 like the non-numeric branches rather than trapping the conversion.
 fn floatIdToInt(f: f64) i64 {
     if (!std.math.isFinite(f)) return -1;
-    const t = @trunc(f);
     // Both bounds are exact in f64 (powers of two); 2^63 itself is out of
     // range for i64, hence the exclusive upper comparison.
     const lo: f64 = -9223372036854775808.0;
     const hi: f64 = 9223372036854775808.0;
-    if (!(t >= lo and t < hi)) return -1;
-    return @intFromFloat(t);
+    if (!(f >= lo and f < hi)) return -1;
+    // `@trunc` with an integer result type is the 0.16 replacement for the
+    // deprecated `@intFromFloat`; the guard above keeps it from trapping.
+    return @trunc(f);
 }
 
 fn encodeValue(alloc: std.mem.Allocator, v: json.Value) ![]const u8 {
@@ -758,7 +759,7 @@ test "idAsInt truncates in-range float ids and answers -1 outside i64" {
 
     // An overflowing literal parses to +inf and a too-large float rounds past
     // every i64: both must answer the same fallback as a non-numeric id
-    // instead of trapping @intFromFloat.
+    // instead of trapping the float-to-int conversion.
     try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "1e999")));
     try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "1e300")));
     try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "-1e300")));

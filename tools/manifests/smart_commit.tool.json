@@ -1,7 +1,7 @@
 {
   "name": "smart_commit",
-  "description": "Group the working-tree diff into atomic conventional commits. Input {dry_run, scope:staged|all, max_commits, commits}. scope staged commits the staged content as staged; scope all takes the working tree. Passing back a previewed `commits` list writes that plan instead of grouping again. Lock files are excluded. A dependency cycle that spans every group falls back to one commit with a note. Prefer dry_run first.",
-  "llm_description": "Group staged/unstaged files into conventional commits. {dry_run, scope:'staged'|'all', max_commits, commits}. scope staged commits the index as staged. Pass a previewed `commits` list back to write exactly that plan (no second grouping call). Lock files excluded. Degenerate import cycles become one commit + note. Prefer dry_run first.",
+  "description": "Group the working-tree diff into atomic conventional commits. Input {dry_run, scope:staged|all, max_commits, commits}. scope staged commits the staged content as staged; scope all takes the whole working tree, new (untracked) files included. Passing back a previewed `commits` list writes that plan instead of grouping again. Lock files are excluded. A dependency cycle that spans every group falls back to one commit with a note. Prefer dry_run first.",
+  "llm_description": "Group staged/unstaged files into conventional commits. {dry_run, scope:'staged'|'all', max_commits, commits}. scope staged commits the index as staged; scope all takes the working tree, new files included. Pass a previewed `commits` list back to write exactly that plan (no second grouping call). Lock files excluded. Degenerate import cycles become one commit + note. Prefer dry_run first.",
   "wasm": "zig-out/tools/smart_commit.wasm",
   "llm": true,
   "config": {

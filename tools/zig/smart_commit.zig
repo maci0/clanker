@@ -28,21 +28,29 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else => 10,
     };
 
-    const names = (if (std.mem.eql(u8, scope, "all"))
-        gitOut(&.{ "diff", "--name-only" })
-    else
-        gitOut(&.{ "diff", "--name-only", "--staged" })) catch
-        return lib.fail(out, "git diff failed");
     var files: std.ArrayList([]const u8) = .empty;
     var excluded: std.ArrayList([]const u8) = .empty;
-    var it = std.mem.splitScalar(u8, std.mem.trim(u8, names, " \t\r\n"), '\n');
-    while (it.next()) |line| {
-        if (line.len == 0) continue;
-        if (logic.isLockFile(line)) {
-            try excluded.append(lib.alloc, line);
-            continue;
-        }
-        try files.append(lib.alloc, line);
+    if (std.mem.eql(u8, scope, "all")) {
+        // `git diff --name-only` is worktree against index, so it can never
+        // name a new file: an untracked one is not in any diff, and one that
+        // was `git add`ed is identical in index and worktree. Scope "all"
+        // therefore unions the worktree diff with `--staged` (already added)
+        // and `ls-files --others --exclude-standard` (untracked, honouring
+        // .gitignore), or --all silently drops every new file while
+        // reporting success.
+        const listings = [_][]const u8{
+            gitOut(&.{ "diff", "--name-only" }) catch
+                return lib.fail(out, "git diff failed"),
+            gitOut(&.{ "diff", "--name-only", "--staged" }) catch
+                return lib.fail(out, "git diff failed"),
+            gitOut(&.{ "ls-files", "--others", "--exclude-standard" }) catch
+                return lib.fail(out, "git ls-files failed"),
+        };
+        try logic.collectFiles(lib.alloc, &listings, &files, &excluded);
+    } else {
+        const names = gitOut(&.{ "diff", "--name-only", "--staged" }) catch
+            return lib.fail(out, "git diff failed");
+        try logic.collectFiles(lib.alloc, &.{names}, &files, &excluded);
     }
     if (files.items.len == 0) {
         return writeEmpty(out, excluded.items);
@@ -117,6 +125,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                     return lib.failErr(out, err, "git commit");
                 };
                 if (detail.len > 0) return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "git commit: {s}", .{detail}));
+            }
+            // Every planned path was committed by pathspec, so a path git
+            // still reports as changed or untracked did not reach any commit. Reporting success there would repeat the silent
+            // omission this scope exists to prevent.
+            const left = uncommittedAmong(ordered) catch
+                return lib.fail(out, "the commits were written but the post-commit check could not run (git status failed)");
+            if (left.len > 0) {
+                return lib.fail(out, try std.fmt.allocPrint(
+                    lib.alloc,
+                    "{d} planned path(s) did not reach any commit: {s}",
+                    .{ left.len, joinLines(left) },
+                ));
             }
         } else {
             const problem = try commitGroupsFromIndex(ordered);
@@ -209,6 +229,45 @@ fn gitRun(args: []const []const u8, detail: *[]const u8) !void {
         else => "",
     };
     detail.* = if (stderr.len > 0) stderr else try std.fmt.allocPrint(lib.alloc, "exited {d}", .{code});
+}
+
+/// Paths from the plan that git still holds outside HEAD. One
+/// `git status --porcelain -uall -- <paths>` over every planned path; a path
+/// listed back in the output is one no commit collected.
+fn uncommittedAmong(groups: []const logic.Group) ![]const []const u8 {
+    var want: std.ArrayList([]const u8) = .empty;
+    for (groups) |g| try want.appendSlice(lib.alloc, g.files);
+    var args = try lib.alloc.alloc([]const u8, want.items.len + 4);
+    args[0] = "status";
+    args[1] = "--porcelain";
+    // Untracked directories otherwise collapse to `dir/`, hiding the exact
+    // file this check exists to catch.
+    args[2] = "-uall";
+    args[3] = "--";
+    @memcpy(args[4..], want.items);
+    const raw = try gitOut(args);
+    var left: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, std.mem.trim(u8, raw, " \t\r\n"), '\n');
+    while (it.next()) |line| {
+        if (line.len < 4) continue;
+        const reported = porcelainPath(line);
+        for (want.items) |w| {
+            if (std.mem.eql(u8, w, reported)) {
+                try left.append(lib.alloc, w);
+                break;
+            }
+        }
+    }
+    return left.items;
+}
+
+/// `git status --porcelain` line to path: two status bytes, one space, then
+/// the path; a rename line carries `old -> new` and only the new side is
+/// ours.
+fn porcelainPath(line: []const u8) []const u8 {
+    const rest = line[3..];
+    if (std.mem.indexOf(u8, rest, " -> ")) |arrow| return rest[arrow + 4 ..];
+    return rest;
 }
 
 /// The plan carried in the input, if there is one. Absent or empty means

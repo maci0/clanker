@@ -120,6 +120,24 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Translated sqlite3.h for src/util/sqlite.zig. 0.16 deprecates @cImport;
+    // C translation lives in the build system, so the header is translated
+    // once per target and imported as a module ("sqlite3_h"). One per target:
+    // the harness builds against `exe_target` while `zig build test` compiles
+    // for `test_target`, and C type sizes must follow whichever binary is
+    // being compiled. The amalgamation itself (sqlite3.c) is still compiled
+    // into each consuming module below.
+    const sqlite_h_exe = b.addTranslateC(.{
+        .root_source_file = b.path("vendor/sqlite/sqlite3.h"),
+        .target = exe_target,
+        .optimize = optimize,
+    });
+    const sqlite_h_test = b.addTranslateC(.{
+        .root_source_file = b.path("vendor/sqlite/sqlite3.h"),
+        .target = b.resolveTargetQuery(native_query),
+        .optimize = optimize,
+    });
+
     // ---------------------------------------------------------------- harness
     const exe = b.addExecutable(.{
         .name = "clanker",
@@ -159,6 +177,9 @@ pub fn build(b: *std.Build) void {
         },
     });
     exe.root_module.addIncludePath(b.path("vendor/sqlite"));
+    // The translated header module, beside the C source it declares (the
+    // import list above is built before `test_target`/`sqlite_h_exe` exist).
+    exe.root_module.addImport("sqlite3_h", sqlite_h_exe.createModule());
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -223,6 +244,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
             .{ .name = "toml", .module = toml_test_mod },
             .{ .name = "vendor", .module = ui_vendor_test_mod },
+            .{ .name = "sqlite3_h", .module = sqlite_h_test.createModule() },
         }),
     });
     // The committed config.toml, for the config.zig test that checks it still

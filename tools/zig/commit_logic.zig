@@ -67,6 +67,36 @@ fn appendExcluded(alloc: std.mem.Allocator, out: *std.ArrayList(u8), excluded: [
     for (excluded) |f| try out.print(alloc, "  {s}\n", .{f});
 }
 
+/// Unions newline-separated git listings into one file list.
+///
+/// Scope "all" of `smart_commit` reads more than one git listing (worktree
+/// diff, staged diff, untracked files); a path can arrive from two of them
+/// when it is staged and then modified again, and it must appear once or it
+/// would be grouped, shown, and committed twice. Lock files go to `excluded`
+/// so the preview can name what was left out rather than dropping it silently.
+pub fn collectFiles(
+    alloc: std.mem.Allocator,
+    listings: []const []const u8,
+    files: *std.ArrayList([]const u8),
+    excluded: *std.ArrayList([]const u8),
+) !void {
+    for (listings) |listing| {
+        var it = std.mem.splitScalar(u8, std.mem.trim(u8, listing, " \t\r\n"), '\n');
+        while (it.next()) |line| {
+            if (line.len == 0) continue;
+            const dest: *std.ArrayList([]const u8) = if (isLockFile(line)) excluded else files;
+            var seen = false;
+            for (dest.items) |f| {
+                if (std.mem.eql(u8, f, line)) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) try dest.append(alloc, line);
+        }
+    }
+}
+
 pub fn isLockFile(path: []const u8) bool {
     if (std.mem.endsWith(u8, path, ".lock")) return true;
     const base = std.fs.path.basename(path);
@@ -185,6 +215,41 @@ test "lock files are excluded" {
     try std.testing.expect(isLockFile("go.sum"));
     try std.testing.expect(isLockFile("package-lock.json"));
     try std.testing.expect(!isLockFile("src/foo.zig"));
+}
+
+test "collectFiles unions listings, dedupes, and routes lock files to excluded" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The scope-"all" shape: a tracked modification, a file staged and then
+    // modified again (listed by both diffs), a staged-only new file, and an
+    // untracked one.
+    const worktree = "src/a.zig\nsrc/b.zig\n";
+    const staged = "src/b.zig\nstaged-new.txt\n";
+    const others = "untracked.txt\npackage-lock.json\n";
+    var files: std.ArrayList([]const u8) = .empty;
+    var excluded: std.ArrayList([]const u8) = .empty;
+    try collectFiles(arena, &.{ worktree, staged, others }, &files, &excluded);
+
+    try std.testing.expectEqual(@as(usize, 4), files.items.len);
+    try std.testing.expectEqualStrings("src/a.zig", files.items[0]);
+    try std.testing.expectEqualStrings("src/b.zig", files.items[1]);
+    try std.testing.expectEqualStrings("staged-new.txt", files.items[2]);
+    try std.testing.expectEqualStrings("untracked.txt", files.items[3]);
+    try std.testing.expectEqual(@as(usize, 1), excluded.items.len);
+    try std.testing.expectEqualStrings("package-lock.json", excluded.items[0]);
+}
+
+test "collectFiles accepts empty listings and empty input" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var files: std.ArrayList([]const u8) = .empty;
+    var excluded: std.ArrayList([]const u8) = .empty;
+    try collectFiles(arena, &.{ "", "\n" }, &files, &excluded);
+    try std.testing.expectEqual(@as(usize, 0), files.items.len);
+    try std.testing.expectEqual(@as(usize, 0), excluded.items.len);
 }
 
 test "conventional commit regex" {
