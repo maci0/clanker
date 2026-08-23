@@ -2900,7 +2900,12 @@ const Model = struct {
     /// single-line widget (Enter either submits or is a no-op, there is no
     /// way to insert a literal newline into one), so a multi-line paste's
     /// embedded Enters would otherwise submit the task early, mid-paste.
-    /// While true, Enter is folded to a space and inserted instead.
+    /// While true, Enter is folded to a ⏎ marker and inserted instead.
+    ///
+    /// Only the terminal's own `.paste_start`/`.paste_end` pair sets this:
+    /// the terminal owes an end for every start. Shift+Insert used to set it
+    /// too, on the guess that the paste would arrive as raw keystrokes, and
+    /// that had no end to wait for — see `paste_window_until_ms`.
     in_paste: bool = false,
     /// vxfw.App.run() unconditionally enables mouse reporting (setMouseMode),
     /// which takes click-drag away from the terminal's own text selection in
@@ -2955,10 +2960,24 @@ const Model = struct {
     /// system clipboard used by Ctrl-Shift-C/V.
     kill_ring: std.ArrayList(u8) = .empty,
 
-    /// Non-null while an OSC 52 clipboard read is awaited (some terminals
-    /// answer on a delay, some never answer). A second paste shortcut while
-    /// pending re-sends the request, which is harmless.
+    /// True while an OSC 52 clipboard read is awaited (some terminals answer
+    /// on a delay, most never answer at all: reading the clipboard is a
+    /// privilege emulators disable by default). A second paste shortcut
+    /// while pending re-sends the request, which is harmless. Cleared by the
+    /// `.paste` answer, or by `closePasteWindow` once the wait times out.
     awaiting_clipboard: bool = false,
+    /// Deadline (ms on `monotonicMs`'s clock) for a Shift+Insert paste to
+    /// arrive as raw keystrokes; 0 when no window is open.
+    ///
+    /// Shift+Insert asks for the clipboard *and* hopes the terminal answers
+    /// by replaying the text as key events, whose embedded Enters must fold
+    /// to ⏎ markers rather than submit mid-paste. Unlike a bracketed paste
+    /// there is no end event to wait for, so the fold has to be bounded by
+    /// time: it used to latch `in_paste` forever, and since Enter then never
+    /// submitted, the composer could not send anything at all — `/quit`
+    /// included — with nothing on screen saying why (PRD 0040's contract for
+    /// this path is "fallback to submit; no crash").
+    paste_window_until_ms: i64 = 0,
 
     /// Every configured provider/model, flattened once at startup (config
     /// does not change mid-session). `/model` opens `picker_open`, and while
@@ -5288,9 +5307,9 @@ const Model = struct {
                     return ctx.consumeEvent();
                 }
                 if (key.matches(vaxis.Key.insert, .{ .shift = true })) {
-                    self.in_paste = true;
                     requestSystemClipboard(ctx.io);
                     self.awaiting_clipboard = true;
+                    self.openPasteWindow();
                     return ctx.consumeEvent();
                 }
                 // Keep readline editing separate from the system clipboard:
@@ -5362,14 +5381,17 @@ const Model = struct {
                     return ctx.consumeAndRedraw();
                 }
                 if (key.matches(vaxis.Key.enter, .{})) {
-                    if (self.in_paste) {
-                        // A bracketed paste delivers its newlines as raw
-                        // Enter presses; fold each to a ⏎ marker so the
-                        // pasted structure survives to submit.
+                    if (composerEnterAction(self.in_paste, self.paste_window_until_ms, monotonicMs()) == .newline) {
+                        // A paste delivers its newlines as raw Enter
+                        // presses; fold each to a ⏎ marker so the pasted
+                        // structure survives to submit.
                         try self.text_field.insertSliceAtCursor(newline_marker);
                         ctx.redraw = true;
                         return;
                     }
+                    // Past the deadline the window is over, whether or not
+                    // the terminal ever answered: say so once, then submit.
+                    self.closePasteWindow();
                     try self.submit(ctx);
                     // Every submitted line repaints, here, once. `submit`
                     // fans out to a dozen places that append to `self.lines`
@@ -5388,7 +5410,13 @@ const Model = struct {
                 try self.text_field.handleEvent(ctx, event);
             },
             .paste_start => self.in_paste = true,
-            .paste_end => self.in_paste = false,
+            .paste_end => {
+                self.in_paste = false;
+                // A Shift+Insert the terminal answered with a real bracketed
+                // paste needs no timeout and no "did not answer" notice.
+                self.paste_window_until_ms = 0;
+                self.awaiting_clipboard = false;
+            },
             // Answer to our OSC 52 clipboard request (Ctrl+Shift+V). The
             // payload is terminal-supplied text; its newlines become ⏎
             // markers (the TextField is single-line, a raw newline would
@@ -5398,6 +5426,9 @@ const Model = struct {
                 defer ctx.alloc.free(text);
                 self.in_paste = false;
                 self.awaiting_clipboard = false;
+                // The answer arrived as one payload, so there are no raw
+                // Enters left to fold and no timeout to report.
+                self.paste_window_until_ms = 0;
                 const flat = encodeComposerNewlines(ctx.alloc, text);
                 defer if (flat.ptr != text.ptr) ctx.alloc.free(flat);
                 // Clipboard content is untrusted too, and it is the one
@@ -5544,6 +5575,27 @@ const Model = struct {
             },
             .motion => {},
         }
+    }
+
+    /// Opens the bounded Shift+Insert paste window (see
+    /// `paste_window_until_ms`). Re-arming while one is open just extends it.
+    fn openPasteWindow(self: *Model) void {
+        self.paste_window_until_ms = monotonicMs() + paste_window_ms;
+    }
+
+    /// Ends the paste window. When the terminal never answered at all — no
+    /// `.paste` payload, no bracketed pair, both of which clear
+    /// `awaiting_clipboard` themselves — say so, once, instead of letting
+    /// Enter quietly change meaning under the user.
+    fn closePasteWindow(self: *Model) void {
+        if (self.paste_window_until_ms == 0) return;
+        self.paste_window_until_ms = 0;
+        if (!self.awaiting_clipboard) return;
+        self.awaiting_clipboard = false;
+        self.lines.append(self.arena, .{
+            .text = "notice: the terminal did not answer the clipboard read (most refuse it); paste with the terminal's own shortcut instead",
+            .dim = true,
+        }) catch {};
     }
 
     /// Asks the terminal for its OSC 52 clipboard contents; the answer (if
@@ -7378,6 +7430,55 @@ test "inline markdown splits into styled segments and leaves plain text whole" {
     try std.testing.expectEqualStrings("• ", nest.items[1].text);
 }
 
+test "snake_case identifiers survive inline markdown, spaced _emphasis_ still works" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const theme = theme_mod.Theme.mocha;
+
+    const join = struct {
+        fn f(a: std.mem.Allocator, segs: []const vaxis.Segment) ![]u8 {
+            var buf: std.ArrayList(u8) = .empty;
+            for (segs) |s| try buf.appendSlice(a, s.text);
+            return buf.items;
+        }
+    }.f;
+
+    // `_` between word bytes is not a delimiter: every byte of the
+    // identifier reaches the screen, so the draw matches what `lineRows`
+    // measured.
+    var ident: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "see bridge_stream_buf now", &ident);
+    try std.testing.expectEqualStrings("see bridge_stream_buf now", try join(arena, ident.items));
+    for (ident.items) |s| try std.testing.expect(!s.style.italic);
+
+    // Two identifiers on one line: the old scan paired the first `_` of one
+    // with the first `_` of the next and italicised everything between.
+    var two: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "in_paste and awaiting_clipboard", &two);
+    try std.testing.expectEqualStrings("in_paste and awaiting_clipboard", try join(arena, two.items));
+
+    // Word-boundary `_emphasis_` is still emphasis, markers stripped.
+    var em: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "a _really_ big deal", &em);
+    try std.testing.expectEqualStrings("a really big deal", try join(arena, em.items));
+    var italic_seen = false;
+    for (em.items) |s| {
+        if (std.mem.eql(u8, s.text, "really")) italic_seen = s.style.italic;
+    }
+    try std.testing.expect(italic_seen);
+
+    // Emphasis around an identifier still closes at the word boundary.
+    var mixed: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "the _snake_case field_ here", &mixed);
+    try std.testing.expectEqualStrings("the snake_case field here", try join(arena, mixed.items));
+
+    // `*` keeps CommonMark's looser intraword rule, unchanged by this fix.
+    var star: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "a *b* c", &star);
+    try std.testing.expectEqualStrings("a b c", try join(arena, star.items));
+}
+
 test "foldContainingAt agrees with a linear scan over sorted folds" {
     // The binary search replaced a per-line linear scan in the draw path;
     // this pins the two answers together over gaps, adjacency, and the
@@ -7933,6 +8034,39 @@ fn mdStyles(active: *const theme_mod.Theme) MdStyles {
 /// `` `code` ``) into styled segments. Text slices point into `text` (the
 /// caller's arena-owned line), so they stay valid until the frame flushes.
 /// An unmatched marker is left literal.
+/// A byte that makes `_` intraword. ASCII alphanumerics plus every
+/// continuation/lead byte of a multi-byte codepoint: a UTF-8 letter is not
+/// punctuation, and treating it as such would re-open the same bug for
+/// non-ASCII prose.
+fn isWordByte(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c >= 0x80;
+}
+
+/// Where the `_` emphasis opened at `open` closes, or null when this `_` is
+/// not emphasis at all.
+///
+/// CommonMark deliberately excludes intraword `_`, and this repo's prose is
+/// full of snake_case identifiers: `bridge_stream_buf` used to render as
+/// `bridge` + italic `stream` + `buf`, drawn as `bridgestreambuf`, with the
+/// underscores dropped and `lineRows` measuring a longer string than the
+/// draw produced. `*` keeps the looser rule (CommonMark allows intraword
+/// `*`), and `src/tui/transcript.zig`'s `MdStream` never had a `_` branch,
+/// so this brings the two renderers back together.
+fn underscoreEmphasisEnd(text: []const u8, open: usize) ?usize {
+    // An opener may not be preceded by a word byte, and may not be followed
+    // by whitespace (`a _ b` is a literal underscore).
+    if (open > 0 and isWordByte(text[open - 1])) return null;
+    if (open + 1 >= text.len or text[open + 1] == ' ' or text[open + 1] == '\t') return null;
+    var from = open + 2;
+    while (std.mem.findScalarPos(u8, text, from, '_')) |end| {
+        const closes_word = end + 1 < text.len and isWordByte(text[end + 1]);
+        const blank_before = text[end - 1] == ' ' or text[end - 1] == '\t';
+        if (!closes_word and !blank_before) return end;
+        from = end + 1;
+    }
+    return null;
+}
+
 fn appendInline(arena: std.mem.Allocator, text: []const u8, st: MdStyles, out: *std.ArrayList(vaxis.Segment)) !void {
     var i: usize = 0;
     var seg_start: usize = 0;
@@ -7961,7 +8095,7 @@ fn appendInline(arena: std.mem.Allocator, text: []const u8, st: MdStyles, out: *
                     continue;
                 }
             }
-        } else if (c == '*' or c == '_') {
+        } else if (c == '*') {
             if (std.mem.findScalarPos(u8, text, i + 1, c)) |end| {
                 if (end > i + 1) {
                     try flush(arena, out, text[seg_start..i], st.plain);
@@ -7970,6 +8104,14 @@ fn appendInline(arena: std.mem.Allocator, text: []const u8, st: MdStyles, out: *
                     seg_start = i;
                     continue;
                 }
+            }
+        } else if (c == '_') {
+            if (underscoreEmphasisEnd(text, i)) |end| {
+                try flush(arena, out, text[seg_start..i], st.plain);
+                try out.append(arena, .{ .text = text[i + 1 .. end], .style = st.italic });
+                i = end + 1;
+                seg_start = i;
+                continue;
             }
         }
         i += 1;
@@ -8337,6 +8479,55 @@ test "isCopyChord recovers the collapsed Ctrl+Shift+C byte only with a selection
 /// literal U+23CE typed or pasted into the field is indistinguishable and
 /// becomes a newline too; the character exists to mean exactly that.
 const newline_marker = "\u{23CE}"; // ⏎
+
+/// Milliseconds on a monotonic clock. Monotonic rather than wall time: an
+/// ntp step or a suspend must not be able to hold the composer in paste mode
+/// (the bug this bounds) or end the window early mid-paste.
+///
+/// Residual std.c clock: vxfw event handlers carry no `std.Io` handle.
+fn monotonicMs() i64 {
+    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i64, @intCast(ts.sec)) * std.time.ms_per_s +
+        @divTrunc(@as(i64, @intCast(ts.nsec)), std.time.ns_per_ms);
+}
+
+/// How long Shift+Insert keeps folding Enter into a ⏎ marker while it waits
+/// for the terminal to replay the clipboard as keystrokes. A terminal that
+/// honours the request bursts the whole payload at once, so this only has to
+/// cover one read of the tty; a terminal that refuses (most do) costs the
+/// user this much before Enter submits normally again.
+const paste_window_ms: i64 = 1500;
+
+/// What Enter means in the composer right now.
+const ComposerEnterAction = enum { newline, submit };
+
+/// Enter folds to a line break only while a paste is genuinely in flight:
+/// inside a bracketed-paste pair (the terminal owes a `.paste_end`), or
+/// inside the bounded Shift+Insert window. Everything else submits — a
+/// clipboard read the terminal never answers must not be able to leave the
+/// composer unable to send anything, `/quit` included.
+fn composerEnterAction(bracketed: bool, paste_window_until_ms: i64, now_ms: i64) ComposerEnterAction {
+    if (bracketed) return .newline;
+    if (paste_window_until_ms != 0 and now_ms < paste_window_until_ms) return .newline;
+    return .submit;
+}
+
+test "composerEnterAction submits once an unanswered paste window expires" {
+    const now: i64 = 1_000_000;
+    // Bracketed paste: no deadline, the terminal owes an end event.
+    try std.testing.expectEqual(ComposerEnterAction.newline, composerEnterAction(true, 0, now));
+    try std.testing.expectEqual(ComposerEnterAction.newline, composerEnterAction(true, now - 10_000, now));
+    // Shift+Insert, reply still plausible: fold, so a raw-keystroke paste
+    // keeps its line structure instead of submitting mid-paste.
+    try std.testing.expectEqual(ComposerEnterAction.newline, composerEnterAction(false, now + paste_window_ms, now));
+    // The regression: the terminal refused the OSC 52 read, so nothing ever
+    // cleared the flag. Past the deadline Enter submits again.
+    try std.testing.expectEqual(ComposerEnterAction.submit, composerEnterAction(false, now - 1, now));
+    try std.testing.expectEqual(ComposerEnterAction.submit, composerEnterAction(false, now, now));
+    // Idle composer, no paste of any kind.
+    try std.testing.expectEqual(ComposerEnterAction.submit, composerEnterAction(false, 0, now));
+}
 
 /// Rewrites "\r\n", '\r' and '\n' each to one `newline_marker` so multi-line
 /// text can enter the single-line composer without corrupting the render or

@@ -42,6 +42,7 @@ Constraints: Zig 0.16, vaxis-native, preserve Enter-to-submit, keep sanitize/wid
 | Shift+Enter on single-line TextField without handler | No action (fallback to submit); no crash |
 | Very long multi-line paste | Wrapped rendering, no O(n^2) |
 | Newlines in history recall | Recalled verbatim |
+| Shift+Insert and the terminal never answers the clipboard read | Enter folds to a newline for 1500 ms, then submits again with a one-line notice (see Known issues) |
 
 
 ## Acceptance criteria
@@ -50,6 +51,20 @@ Constraints: Zig 0.16, vaxis-native, preserve Enter-to-submit, keep sanitize/wid
 - [x] Joined buffer preserves newlines to agent task/history
 - [x] Existing line-level/block markdown tests still pass
 - [x] `zig build test` + `zig build tools` green, fmt clean
+
+## Known issues
+
+- **(Fixed) An unanswered clipboard read used to latch the composer out of
+  submitting.** Shift+Insert set `in_paste` on the guess that the terminal
+  would replay the clipboard as raw keystrokes, and only a `.paste` payload or
+  a bracketed `.paste_end` cleared it. Most terminals refuse an OSC 52 read,
+  so neither ever arrived: Enter took the paste branch forever and nothing
+  could be sent, `/quit` included, against this PRD's "no action / fallback to
+  submit" row. `in_paste` now means only "inside a bracketed-paste pair", the
+  Shift+Insert guess is bounded by `paste_window_until_ms` (1500 ms,
+  monotonic), and `composerEnterAction` (src/tui/repl.zig) decides Enter from
+  the two. Resolved in
+  `docs/reports/bugs/2026-08-23-repl-composer-latches-into-paste-mode.md`.
 
 ## Open questions / future work
 

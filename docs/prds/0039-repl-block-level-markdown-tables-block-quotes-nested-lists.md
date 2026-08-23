@@ -54,6 +54,19 @@ Constraint: Zig 0.16 only, vaxis-native, no new runtime dependency, must reuse `
 - [x] Existing line-level markdown (headings/bold/italic/bullets) still passes its tests
 - [x] `zig build test` + `zig build tools` green, `zig fmt` clean
 
+## Known issues
+
+- **(Fixed) `appendInline` treated `_` as an emphasis delimiter anywhere.**
+  The `*`/`_` branch was shared, so the first `_` on a line paired with the
+  next one and the span between them was emitted italic with both underscores
+  dropped: `bridge_stream_buf` drew as `bridgestreambuf`, and `lineRows`
+  measured a longer string than the draw produced. `src/tui/transcript.zig`'s
+  `MdStream` — the renderer this PRD measures against — has no `_` branch at
+  all, so the same reply read correctly under `clanker run` and mangled in the
+  REPL. `_` now goes through `underscoreEmphasisEnd` (CommonMark's intraword
+  rule); `*` is unchanged. Resolved in
+  `docs/reports/bugs/2026-08-23-repl-markdown-eats-snake-case-underscores.md`.
+
 ## Open questions / future work
 
 - Shared extraction to `md_block.zig` once second consumer needs block markdown (per ADR 0021).
