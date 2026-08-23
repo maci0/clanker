@@ -91,12 +91,6 @@ pub const Connection = struct {
         const db = self.db orelse return 0;
         return c.sqlite3_last_insert_rowid(db);
     }
-
-    /// The current error message, for diagnostics.
-    pub fn errmsg(self: *Connection) []const u8 {
-        const db = self.db orelse return self.last_error;
-        return std.mem.span(@as([*:0]const u8, @ptrCast(c.sqlite3_errmsg(db))));
-    }
 };
 
 /// `c.SQLITE_TRANSIENT` is `(sqlite3_destructor_type)-1`, and translate-c
@@ -133,12 +127,6 @@ pub const Statement = struct {
     pub fn bindInt(self: *Statement, index: c_int, value: i64) Error!void {
         const s = self.stmt orelse return Error.NotOpen;
         const rc = c.sqlite3_bind_int64(s, index, value);
-        if (rc != c.SQLITE_OK) return Error.BindFailed;
-    }
-
-    pub fn bindNull(self: *Statement, index: c_int) Error!void {
-        const s = self.stmt orelse return Error.NotOpen;
-        const rc = c.sqlite3_bind_null(s, index);
         if (rc != c.SQLITE_OK) return Error.BindFailed;
     }
 

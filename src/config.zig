@@ -3633,8 +3633,8 @@ test "the startup --profile overlay reaches plain Config.load" {
         .sub_path = "config.toml",
         .data =
         \\default_provider = "a"
-        \\providers = { a = { base_url = "https://a.test" } }
-        \\models = { "a/m" = { provider = "a" } }
+        \\providers = { a = { base_url = "https://a.test" }, b = { base_url = "https://b.test" } }
+        \\models = { "a/m" = { provider = "a" }, "b/m" = { provider = "b" } }
         \\
         ,
     });

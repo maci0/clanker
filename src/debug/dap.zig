@@ -89,7 +89,6 @@ pub const Session = struct {
     seq: u32 = 1,
     events: std.ArrayList([]const u8) = .empty,
     pending_bps: ?PendingBreakpoint = null,
-    adapter_name: []const u8 = "",
     buf: std.ArrayList(u8) = .empty,
     launch_timeout_ms: u32 = 15_000,
     request_timeout_ms: u32 = 15_000,
@@ -375,7 +374,6 @@ pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
             break :blk findAdapter(opts.adapters, adapter) orelse return error.UnknownAdapter;
         };
         try sess.spawnAdapter(argv, opts.override_cwd);
-        sess.adapter_name = adapter;
         var args: std.Io.Writer.Allocating = .init(opts.arena);
         var s = std.json.Stringify{ .writer = &args.writer };
         try s.beginObject();

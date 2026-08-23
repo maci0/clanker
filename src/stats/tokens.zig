@@ -51,8 +51,6 @@ pub const Record = struct {
     err: []const u8 = "",
     /// Log correlation id when the call happened on an HTTP worker.
     request_id: []const u8 = "",
-    /// Optional advisor-completion tokens for this turn. Omitted when unset.
-    advisor_tokens: ?u64 = null,
     /// Classifier result from auto-thinking (`low`/`medium`/`high`/`xhigh`).
     thinking_level: ?[]const u8 = null,
     /// Round-trip ms of the thinking classifier call.
