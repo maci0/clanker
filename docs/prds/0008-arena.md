@@ -432,7 +432,16 @@ reader diffing doc against code knows they are decisions, not drift:
   left to be refused at, and dropping it would contradict "never dropped
   silently", so `defaultTarget` retaliates against whoever has damage in
   flight at the mover, else aims at the strongest opponent left, records the
-  move as `retargeted`, and pays the weak-confidence floor.
+  move as `retargeted`, and pays the weak-confidence floor. Re-verified as
+  implemented (with a live 3-way match) on 2026-08-23, with one real drift
+  found and fixed then: the floor used to be paid by *every* move that named
+  no usable target, including `concede` and `final_stand` — which the prompt
+  does not require a target for and whose target `score` ignores — so a
+  legitimate untargeted concession or closing argument was recorded `weak`
+  at confidence 0.15 and misreported in the verdict. The floor is now gated
+  on `needsTarget` (tools/zig/arena_match.zig): attack/block/counter only,
+  judged on the parsed move so a `final_stand` outside the last round is
+  floored once by `legalize`, not twice.
 
 ## Failure modes
 

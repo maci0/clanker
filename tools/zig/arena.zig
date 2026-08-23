@@ -684,14 +684,18 @@ fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !voi
 
             // Where the move is aimed. Pairwise has exactly one candidate, so
             // the field is not asked for and not needed; above that a move that
-            // named nobody usable is aimed by `defaultTarget` and pays the
-            // weak-confidence floor for it, since dropping the move outright
-            // would contradict "never dropped silently".
-            var retargeted = false;
+            // named nobody usable is aimed by `defaultTarget`. Only a move that
+            // actually needed aiming (`needsTarget`: attack/block/counter, the
+            // ones the prompt marks target REQUIRED for) pays the
+            // weak-confidence floor for the omission — an untargeted `concede`
+            // or `final_stand` is the protocol followed, not a weak move.
+            // Dropping any of them outright would contradict "never dropped
+            // silently".
+            var unaimed = false;
             const target: usize = blk: {
                 if (!royale) break :blk 1 - i;
                 if (m.resolveTarget(parsed.target, combatants, setup.labels, i)) |t| break :blk t;
-                retargeted = true;
+                unaimed = true;
                 break :blk m.defaultTarget(&board, combatants, i) orelse i;
             };
             // Nobody left to aim at: the match is already decided, so this turn
@@ -700,7 +704,11 @@ fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !voi
 
             const incoming = if (opening) 0 else board.incomingFrom(target, i);
             var reply = m.legalize(parsed, round >= setup.max_rounds, incoming);
-            if (retargeted) {
+            // The floor is judged on the parsed move, not the legalized one: a
+            // final_stand outside the last round is already reclassified to a
+            // weak attack and floored by `legalize` itself, and adding the
+            // no-target floor on top would double-charge one omission.
+            if (unaimed and m.needsTarget(parsed.move)) {
                 reply.weak = true;
                 reply.confidence = @min(reply.confidence, m.weak_confidence);
             }
@@ -746,7 +754,7 @@ fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !voi
                 .combatant = i,
                 .target = target,
                 .targeted = offensive,
-                .retargeted = retargeted and offensive,
+                .retargeted = unaimed and offensive,
                 .move = @tagName(reply.move),
                 .text = reply.text,
                 .confidence = confidence,
