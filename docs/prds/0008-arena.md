@@ -417,6 +417,21 @@ and 4–8 already shipped):
 
 ## Known issues
 
+- **(Fixed) The Arena view froze on a running match.** Phase 5 asks for
+  "`GET /api/arena/<id>` polling only while the match is running", and the
+  timer was started and stopped correctly, but its tick opened with a
+  `liveOk()` early return copied from the Fleet floor. Fleet is right because
+  `t:"mesh"` is published; nothing publishes `t:"arena"` — `Topic.arena`
+  exists in `src/serve/live.zig` and is in the default mask, but no
+  `publish(.arena, ...)` call site does, and `ck_publish` stamps every guest
+  event `t:"plugin"`. Since `onLive` opens the `EventSource` itself,
+  importing `ui/app/features/arena.js` made `liveOk()` true and every tick
+  returned early: stage, chips, HP graph and transcript stayed on the first
+  fetch until a manual refresh, and `wasRunning` never flipped so the
+  elimination sequence never played. The tick now always fetches; the
+  `onLive` hook stays as a documented no-op so a real publisher would be a
+  speed-up, not a rewrite.
+
 Two deliberate deviations from this PRD as first written, kept here so a
 reader diffing doc against code knows they are decisions, not drift:
 

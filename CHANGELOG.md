@@ -16,6 +16,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI Arena view follows a running match again. Its poll tick skipped
+  the fetch whenever the `/api/events` stream was up, but nothing publishes a
+  `t:"arena"` event, so stage, combatant chips, HP graph and transcript froze
+  on the first fetch until the page was refreshed by hand and the elimination
+  sequence never played.
+
 - A `kernel` cell now sees the environment the `kernel` tool's `env_allow`
   grants it, built by the same filter `ck_exec` and `ck_job` use. The
   supervisor was spawned with no environment named at all, which left it to the
