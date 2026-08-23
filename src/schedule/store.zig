@@ -2,11 +2,13 @@
 //! `state/schedule/log.jsonl`, the append-only record of what actually fired.
 //!
 //! Persistence follows the discipline the rest of `state/` already uses: a
-//! read-modify-write is serialised by `util/file_lock.zig` on a lock file of its
-//! own, and the write itself goes through `util/atomic_write.zig` so a process
-//! killed mid-write leaves the old list intact rather than a truncated one.
-//! Neither is optional here: `clanker schedule run-due` runs from cron, so two
-//! invocations overlapping is the normal case rather than the unlucky one.
+//! read-modify-write is serialised by the same compare-and-swap lock the
+//! sandbox hands guests (`util/cas_lock.zig`), and the write itself goes
+//! through `util/atomic_write.zig` so a process killed mid-write leaves the
+//! old list intact rather than a truncated one. Neither is optional here:
+//! `clanker schedule run-due` runs from cron, so two invocations overlapping
+//! is the normal case rather than the unlucky one, and the `schedule` guest
+//! writes this very file through `ck_fs_write_if`.
 //!
 //! Every path is taken relative to a `std.Io.Dir`, never resolved against the
 //! process cwd inside this file, so the tests drive the real code against a
@@ -15,6 +17,7 @@
 const std = @import("std");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const file_lock = @import("../util/file_lock.zig");
+const cas_lock = @import("../util/cas_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const log = @import("../util/log.zig");
 
@@ -22,6 +25,14 @@ pub const state_dir = "state";
 pub const store_path = "state/schedule.json";
 pub const ledger_dir = "state/schedule";
 pub const ledger_path = "state/schedule/log.jsonl";
+
+/// Where the store's write lock lives. The same directory, and for the same
+/// target the same lock inode, the sandbox's compare-and-swap uses
+/// (`util/cas_lock.zig`): the `schedule` guest writes this file through
+/// `ck_fs_write_if`, and a lock of our own invention beside it would exclude
+/// nothing -- a claim written while an operator ran `schedule add` would
+/// silently drop whichever write landed second.
+const locks_dir = state_dir ++ "/locks";
 
 /// Cap on the store. A schedule is a handful of lines; anything near this is a
 /// corrupt or hostile file, and reading it unbounded is how a state directory
@@ -113,10 +124,13 @@ pub const Session = struct {
     arena: std.mem.Allocator,
     base: std.Io.Dir,
     guard: file_lock.Guard,
+    lock_path: ?[]u8 = null,
     entries: std.ArrayList(Entry),
 
     pub fn close(self: *Session) void {
         self.guard.release();
+        if (self.lock_path) |p| self.gpa.free(p);
+        self.lock_path = null;
         self.entries.deinit(self.arena);
     }
 
@@ -141,12 +155,18 @@ pub fn open(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, base: 
     ensure_dir.ensureDir(base, io, state_dir) catch |err| {
         log.log(.warn, "schedule: could not create {s}: {s}", .{ state_dir, @errorName(err) });
     };
-    var guard = file_lock.acquire(io, base, state_dir, "schedule", gpa);
-    errdefer guard.release();
+    // On the CAS lock inode (`locks_dir` above), not a sidecar of our own:
+    // the `schedule` guest rewrites this file through `ck_fs_write_if`, and
+    // the claim below is only at-most-once if both writers queue on one lock.
+    var taken = cas_lock.acquire(io, base, gpa, locks_dir, store_path);
+    errdefer {
+        taken.guard.release();
+        if (taken.path) |p| gpa.free(p);
+    }
 
     var entries: std.ArrayList(Entry) = .empty;
     if (try readEntries(io, arena, base)) |parsed| try entries.appendSlice(arena, parsed);
-    return .{ .io = io, .gpa = gpa, .arena = arena, .base = base, .guard = guard, .entries = entries };
+    return .{ .io = io, .gpa = gpa, .arena = arena, .base = base, .guard = taken.guard, .lock_path = taken.path, .entries = entries };
 }
 
 /// The store, or null when there is no file yet. Only a missing file is an
@@ -368,6 +388,43 @@ test "entries round-trip through the store, keeping absent overrides absent" {
     try testing.expectEqualStrings("deepseek", back[1].provider.?);
     try testing.expectEqual(@as(i32, 120), back[1].tz_offset_minutes);
     try testing.expectEqual(false, back[1].enabled);
+}
+
+test "the store lock is the compare-and-swap inode, not a sidecar of our own" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The `schedule` guest writes this file through `ck_fs_write_if`, whose
+    // advisory lock lives at `state/locks/<sha256-of-target>.lock`. If open()
+    // took any other file, a claim racing `schedule add` would exclude
+    // nothing and whichever write landed second would be lost silently.
+    const expected = try cas_lock.lockPath(arena, io, tmp.dir, locks_dir, store_path);
+
+    {
+        var s = try open(io, testing.allocator, arena, tmp.dir);
+        defer s.close();
+        // The lock file exists exactly where the CAS looks for it.
+        _ = try tmp.dir.statFile(io, expected, .{});
+        // And no legacy sidecar was created beside it.
+        try testing.expectError(error.FileNotFound, tmp.dir.statFile(io, "state/schedule.lock", .{}));
+        try s.entries.append(arena, .{ .id = "sch-1", .cron = "* * * * *", .task = "say hi", .created = 100 });
+        try s.save();
+    }
+
+    // A second writer holding the same inode blocks: take it non-blocking to
+    // prove the first session released it (and that both mean one file).
+    var again = cas_lock.acquire(io, tmp.dir, testing.allocator, locks_dir, store_path);
+    defer {
+        again.guard.release();
+        if (again.path) |p| testing.allocator.free(p);
+    }
+    try testing.expect(again.guard.file != null);
 }
 
 test "the schedule store and its ledger are owner-only (0600)" {
