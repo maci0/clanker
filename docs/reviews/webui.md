@@ -1595,6 +1595,60 @@ went true on load.
   `GET /api/events` carried nine `t:"metrics"` events and no `t:"arena"` at
   all.
 
+## The 3D arena stage survives a tab switch, and HEAD stops sending bodies (2026-08-24)
+
+Two web-surface bugs from the store, both filed and unfixed.
+
+**The 3D stage was blank for good after one tab switch.** The Arena view's
+opt-in three.js stage is loaded lazily from the arena3d disk plugin, and
+`ensure3d` memoized the whole thing: `if (arena3d) return
+Promise.resolve(arena3d)`. But `arena3d` is the module object, and
+`unmountArena3D` only clears the plugin's scene state `S`. `stopArena()` calls
+it, and `stopArena()` runs on `visibilitychange` and on navigating out of the
+view, not just on the 3D toggle. So the second visit took the early return,
+`mountArena3D` was never called again, and `updateArena3D` returned on its
+`if (!S || !m)`: `#arena-canvas` hidden by `syncStageMode`, `#arena-stage3d` an
+empty div, no message. Switching to another tab and back was enough.
+
+- `ui/app/features/arena.js`: only the dynamic import is memoized. The mount
+  runs on every entry, which is free — `mountArena3D` opens with its own
+  `if (S) return Promise.resolve()`.
+- `ui/app/features/arena.test.mjs`: `ensure3d` is not exported, and importing
+  arena.js under node would pull in the whole `/webui` module graph, so the
+  function is lifted out of the shipped source and run in a `vm` over stubs
+  with `import(` — syntax, not a call — rewritten to a counter the harness
+  owns. Mount, tear down, mount again: imports stays 1, mounts reaches 2. It
+  fails on the second mount against the code as it was. Two more tests pin the
+  fallback path and the plugin half of the contract, since the fix depends on
+  `mountArena3D` staying idempotent.
+- Not verified in a browser: no browser here. What was verified live is that
+  the server ships the fixed bytes — `GET /webui/features/arena.js` carries the
+  new `loaded.then(...)` and `GET /webui/plugins/arena3d/app.js` is a 200.
+
+**`respond` sent a body on HEAD.** `AGENTS.md` asserts that every body-writing
+responder guards HEAD with `if (!request_head)`. The asset, JSON and plugin
+responders do; `respond` wrote the body anyway and compensated by forcing
+`Connection: close` so the bytes died with the connection. That is content RFC
+9110 §9.3.2 forbids, and it gave up keep-alive on every HEAD the shared JSON
+responder answered — including web UI paths, which is the case keep-alive was
+added for.
+
+- `src/cli.zig`: the body write is behind `if (!request_head)` and the
+  keep-alive kill is gone. `Content-Length` is unchanged and still states what
+  the GET would send.
+- `test "a HEAD answer carries the headers and none of the body, and keeps the
+  connection"` runs `respond` over a `socketpair` and counts the bytes after
+  the header terminator. Against the old code it reports `expected 0, found
+  32`. A GET control through the same helper still gets the whole body.
+- Verified live against two builds on loopback. Before:
+  `HEAD /webui/plugins/no-such-plugin/app.js` answered 404 with
+  `Connection: close` and 44 body bytes, and the socket was reset on the next
+  request. After: 404, `Connection: keep-alive`, `Content-Length: 44`, zero
+  body bytes, and a second and third request went down the same connection.
+  `HEAD /webui/app.js` is a 200 with `Content-Length: 248007` and no body.
+- `AGENTS.md`'s invariant sentence now names `respond` as the last holdout
+  rather than describing an intent.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from

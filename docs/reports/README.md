@@ -80,16 +80,18 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
+
 - [Bug — a run using the debug tool leaks a hash-map allocation when launch times out](bugs/2026-08-23-debug-tool-run-leaks-on-adapter-timeout.md) — Open
 
-- [cli.zig respond() sends a full body on HEAD, against RFC 9110 and its own stated invariant](bugs/2026-08-23-respond-sends-a-body-on-head.md) — Open
+- [cli.zig respond() sends a full body on HEAD, against RFC 9110 and its own stated invariant](bugs/2026-08-23-respond-sends-a-body-on-head.md) — Resolved
 
 - [A reports status note is written verbatim in two places, so the store's own update verb cannot edit it](bugs/2026-08-23-reports-status-note-lands-twice-and-cannot-be-edited.md) — Open
 
 - [The /api/events cap refusal declares a Content-Length four bytes longer than its body](bugs/2026-08-23-events-cap-503-declares-the-wrong-length.md) — Resolved
-- [PRDs 0052 through 0057 each carry a second, unfilled copy of four template sections](bugs/2026-08-23-prd-template-boilerplate-left-in-six-records.md) — Open
+- [PRDs 0052 through 0057 each carry a second, unfilled copy of four template sections](bugs/2026-08-23-prd-template-boilerplate-left-in-six-records.md) — Resolved
 
-- [The opt-in 3D arena stage is blank for good after one tab switch](bugs/2026-08-23-arena3d-stage-stays-blank-after-unmount.md) — Open
+- [The opt-in 3D arena stage is blank for good after one tab switch](bugs/2026-08-23-arena3d-stage-stays-blank-after-unmount.md) — Resolved
 
 - [The REPL transcript renders bridge_stream_buf as bridgestreambuf](bugs/2026-08-23-repl-markdown-eats-snake-case-underscores.md) — Open
 

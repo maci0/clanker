@@ -4,11 +4,11 @@
 
 - **What failed:** AGENTS.md records that every body-writing responder guards HEAD with 'if (!request_head)', and the asset, JSON and plugin responders do. respond() does not: it writes the body unconditionally and compensates by forcing the connection closed. Measured live, HEAD /api/does-not-exist returns 404 plus all 32 body bytes. Harmless because the close ends the message, but it is content RFC 9110 9.3.2 forbids and it costs keep-alive on every HEAD. Open, not fixed.
 - **Impact:** Nothing was observed to break: `respond` forces `Connection: close` on HEAD, so the extra bytes are discarded with the connection. The costs are non-conformance with RFC 9110 9.3.2, the loss of keep-alive on every HEAD including web UI assets, and an `AGENTS.md` invariant that reads as true when one responder does not hold it.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-23. respond() now guards the body write with if (!request_head) and keeps the connection alive; pinned by a socketpair test in src/cli.zig.
 
 ## Status
 
-Open.
+Resolved on 2026-08-23. respond() now guards the body write with if (!request_head) and keeps the connection alive; pinned by a socketpair test in src/cli.zig.
 
 ## Symptom and impact
 
@@ -74,24 +74,41 @@ already guard). So the body-on-HEAD is mostly on error responses.
 
 ## Resolution
 
-Open, not fixed. The one-line change (`if (!request_head)` around the body
-write, and dropping the keep-alive kill) is a behaviour change on every HEAD
-the surface answers, and the keep-alive half of it interacts with framing that
-already caused one regression (the asset responders' kept-alive HEAD, noted in
-`AGENTS.md`). It deserves its own change with its own test, not a rider on an
-unrelated fix.
+Fixed, as its own change with its own test, which is what the entry below
+asked for. `respond` (`src/cli.zig`) now writes the body behind
+`if (!request_head)`, the same guard the asset, JSON and plugin responders
+already used, and the `if (request_head) request_keep_alive = false;` line is
+gone: it existed only to hide the bytes this no longer writes.
+
+`Content-Length` is unchanged and still states what the GET would send, which
+is what RFC 9110 9.3.2 asks for. Dropping the keep-alive kill only reaches the
+requests that were keep-alive eligible in the first place -- `keep_alive_eligible`
+is `isWebuiRead(method)` on a `/webui` path, or `GET` on `/api/`, so the routes
+that change behaviour are HEAD on the web UI paths that fall through to the
+generic 404 or the module-disabled 404. HEAD on `/api/*` was never eligible and
+still closes.
 
 Found while fixing three serve bugs (#365, #368, #372); reading `respond` was
 incidental to that work.
 
 ## Verification
 
-None -- nothing was changed. The measurements in Symptom are what was observed.
+`test "a HEAD answer carries the headers and none of the body, and keeps the
+connection"` (`src/cli.zig`) runs `respond` over a `socketpair` and counts the
+bytes after the header terminator. Against the code as it was, it reports
+`expected 0, found 32` -- the same 32 bytes measured live in Symptom. With the
+guard it reads zero, `Content-Length: 32` is still declared, and
+`Connection: keep-alive` survives. A GET control through the same helper still
+gets the whole body.
 
 ## Follow-up
 
-A fix should also decide what the invariant sentence in `AGENTS.md` says
-afterwards, since today it describes an intent rather than the code.
+The invariant sentence in `AGENTS.md` now names `respond` as the last holdout
+and says what changed, rather than describing an intent.
+
+Not this bug, and still true: `HEAD /health/live` is a 404 because the health
+routes match `GET` only. Whether the liveness probe should answer HEAD is a
+product question.
 
 ## References
 

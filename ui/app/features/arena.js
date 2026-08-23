@@ -443,14 +443,22 @@ function syncStageMode() {
 }
 
 function ensure3d() {
-  if (arena3d) return Promise.resolve(arena3d);
   // The 3D stage is the arena3d disk plugin (`module` shape): the Arena view
   // imports its app.js directly so the bytes stay off a chat-only visit, and
   // the System → Web UI plugins checkbox gates the server side. A missing or
   // disabled plugin 404s here and the catch falls back to 2D, same as a
   // browser without WebGL.
-  return import("/webui/plugins/arena3d/app.js").then(function (mod) {
-    arena3d = mod;
+  //
+  // Only the *import* is memoized. Mounting is not: `unmountArena3D` drops the
+  // plugin's scene state but leaves the module object truthy, so a memo over
+  // the whole thing meant that after `stopArena` (which runs on
+  // visibilitychange and on leaving the view) re-entering never mounted again
+  // and left a blank stage with no fallback message. `mountArena3D` opens with
+  // its own `if (S) return`, so calling it every time is idempotent.
+  var loaded = arena3d
+    ? Promise.resolve(arena3d)
+    : import("/webui/plugins/arena3d/app.js").then(function (mod) { arena3d = mod; return mod; });
+  return loaded.then(function (mod) {
     var host = byId("arena-stage3d");
     return mod.mountArena3D(host).then(function () { return mod; });
   }).catch(function (err) {

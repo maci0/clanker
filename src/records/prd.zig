@@ -474,3 +474,174 @@ fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         tool,
     ));
 }
+
+// ------------------------------------------------- template-drift detection
+
+/// One `## ` section of a record: its heading line and everything under it up
+/// to the next heading.
+const Section = struct { heading: []const u8, body: []const u8 };
+
+/// Walks a markdown record's top-level sections in order. Nothing clever: a
+/// heading is a line that starts with `## `, and a body runs to the next one.
+const SectionIter = struct {
+    text: []const u8,
+    i: usize = 0,
+
+    fn lineEnd(self: SectionIter, from: usize) usize {
+        return std.mem.findScalarPos(u8, self.text, from, '\n') orelse self.text.len;
+    }
+
+    fn next(self: *SectionIter) ?Section {
+        while (self.i < self.text.len) {
+            const end = self.lineEnd(self.i);
+            const line = self.text[self.i..end];
+            if (!std.mem.startsWith(u8, line, "## ")) {
+                self.i = if (end < self.text.len) end + 1 else self.text.len;
+                continue;
+            }
+            const body_start = if (end < self.text.len) end + 1 else self.text.len;
+            var j = body_start;
+            while (j < self.text.len) {
+                const e = self.lineEnd(j);
+                if (std.mem.startsWith(u8, self.text[j..e], "## ")) break;
+                j = if (e < self.text.len) e + 1 else self.text.len;
+            }
+            self.i = j;
+            return .{ .heading = line, .body = self.text[body_start..j] };
+        }
+        return null;
+    }
+};
+
+fn trimmed(s: []const u8) []const u8 {
+    return std.mem.trim(u8, s, " \t\r\n");
+}
+
+/// The first thing wrong with `doc` as a filled-in record, or null when there
+/// is nothing wrong: a heading that appears twice, or a section whose body is
+/// still `template`'s instruction prose for that same heading.
+///
+/// Both are the same authoring accident seen from two sides. PRDs 0052-0057
+/// each carried a second, unfilled copy of `## Failure modes`,
+/// `## Acceptance criteria` and `## Open questions / future work` straight out
+/// of `TEMPLATE.md`, so `clanker prd open` printed the instructions as if they
+/// were the record and a reader diffing doc against code had two Failure modes
+/// tables to choose from. `prd create` renders the template exactly once
+/// (re-run against origin/main to be sure), so this is not a tool defect to
+/// fix once — it is drift a record can pick up any time a section is spliced
+/// in above the ones the template already wrote.
+fn templateDrift(arena: std.mem.Allocator, doc: []const u8, template: []const u8) !?[]const u8 {
+    var seen: std.ArrayList([]const u8) = .empty;
+    var it: SectionIter = .{ .text = doc };
+    while (it.next()) |sec| {
+        for (seen.items) |prior| {
+            if (std.mem.eql(u8, prior, sec.heading))
+                return try std.fmt.allocPrint(arena, "'{s}' appears twice", .{trimmed(sec.heading)});
+        }
+        try seen.append(arena, sec.heading);
+
+        var t: SectionIter = .{ .text = template };
+        while (t.next()) |tsec| {
+            if (!std.mem.eql(u8, tsec.heading, sec.heading)) continue;
+            if (std.mem.eql(u8, trimmed(tsec.body), trimmed(sec.body)))
+                return try std.fmt.allocPrint(arena, "'{s}' is still the template's instruction prose", .{trimmed(sec.heading)});
+        }
+    }
+    return null;
+}
+
+test "templateDrift names a duplicated heading and unfilled template prose" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const template =
+        \\# PRD NNNN — Title
+        \\
+        \\## Problem
+        \\
+        \\What breaks today.
+        \\
+        \\## Failure modes
+        \\
+        \\A table: condition -> behaviour.
+        \\
+    ;
+    const clean =
+        \\# PRD 0001 — A thing
+        \\
+        \\## Problem
+        \\
+        \\The board loses cards.
+        \\
+        \\## Failure modes
+        \\
+        \\| store missing | empty board |
+        \\
+    ;
+    try std.testing.expect(try templateDrift(arena, clean, template) == null);
+
+    const doubled = clean ++
+        \\
+        \\## Failure modes
+        \\
+        \\| store missing | empty board |
+        \\
+    ;
+    const dup = (try templateDrift(arena, doubled, template)).?;
+    try std.testing.expect(std.mem.find(u8, dup, "appears twice") != null);
+
+    const unfilled =
+        \\# PRD 0002 — Another thing
+        \\
+        \\## Problem
+        \\
+        \\Real text.
+        \\
+        \\## Failure modes
+        \\
+        \\A table: condition -> behaviour.
+        \\
+    ;
+    const prose = (try templateDrift(arena, unfilled, template)).?;
+    try std.testing.expect(std.mem.find(u8, prose, "instruction prose") != null);
+}
+
+test "no PRD in the live checkout carries template boilerplate" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const cwd = std.Io.Dir.cwd();
+    const template = cwd.readFileAlloc(io, "docs/prds/TEMPLATE.md", arena, .limited(1 << 20)) catch |err| switch (err) {
+        // A minimal checkout with no docs tree has nothing to check.
+        error.FileNotFound => return,
+        else => return err,
+    };
+
+    const scope = try cwd.openDir(io, "docs/prds", .{ .iterate = true });
+    defer scope.close(io);
+    var walk = scope.iterate();
+    var checked: usize = 0;
+    while (try walk.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
+        // Scaffolding, not records: the template is the prose everything else
+        // is measured against, and the inventory is a table with no sections.
+        if (std.mem.eql(u8, entry.name, "TEMPLATE.md")) continue;
+        if (std.mem.eql(u8, entry.name, "README.md")) continue;
+        const path = try std.fmt.allocPrint(arena, "docs/prds/{s}", .{entry.name});
+        const text = try cwd.readFileAlloc(io, path, arena, .limited(4 << 20));
+        checked += 1;
+        if (try templateDrift(arena, text, template)) |why| {
+            std.debug.print("{s}: {s}\n", .{ path, why });
+            return error.TemplateBoilerplateInRecord;
+        }
+    }
+    try std.testing.expect(checked > 0);
+}

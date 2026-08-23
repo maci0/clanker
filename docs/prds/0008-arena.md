@@ -417,6 +417,20 @@ and 4–8 already shipped):
 
 ## Known issues
 
+- **(Fixed) The opt-in 3D stage was blank for good after one tab switch.**
+  `ensure3d` (`ui/app/features/arena.js`) memoized the import *and* the mount
+  behind `if (arena3d) return Promise.resolve(arena3d)`, but `unmountArena3D`
+  clears the plugin's scene state and leaves the module object truthy. So after
+  `stopArena()` — which runs on `visibilitychange` and on leaving the view, not
+  just on the 3D toggle — re-entering took the early return, `mountArena3D` was
+  never called again, and `updateArena3D` no-opped on a null scene: the 2D
+  canvas hidden by `syncStageMode`, `#arena-stage3d` an empty div, and no
+  fallback message. Only the import is memoized now; `mountArena3D` runs on
+  every entry, which is free because it opens with its own `if (S) return`.
+  Pinned in `ui/app/features/arena.test.mjs`, which lifts `ensure3d` out of the
+  shipped source and runs it in a `vm` over a stub plugin: mount, tear down,
+  mount again, and the module is fetched once while the stage is mounted twice.
+
 - **(Fixed) A round-1 forfeit resolved damage the combatant never saw.** The
   round loop (tools/zig/arena.zig) branched on `opening` for a real reply —
   `openingTurn` versus `resolveTurn` — but called `forfeitTurn`
