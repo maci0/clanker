@@ -90,7 +90,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [corrupt TUI/CLI plugin state silently disabled every plugin](bugs/2026-08-23-corrupt-plugin-state-silently-disables.md) — Resolved
 
-- [A hung-up /api/events subscriber does not release its in-flight slot on macOS](bugs/2026-08-23-events-slot-not-released-on-hangup.md) — Open
+- [A hung-up /api/events subscriber does not release its in-flight slot on macOS](bugs/2026-08-23-events-slot-not-released-on-hangup.md) — Resolved
 
 - [A panic raised from a blocked Io.Threaded recurses forever instead of aborting](bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md) — Resolved
 

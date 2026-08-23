@@ -31,6 +31,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   function ADR 0010 describes has no production caller, so
   `scripts/setup-python-wasi.sh` does not change what a `kernel` call does.
   The `llm_description` said it too, so the model was being told it as well.
+- A `GET /api/events` subscriber that hangs up now releases its live-bus slot
+  and its connection thread within one 50ms tick on macOS, instead of holding
+  both until the 15s keepalive ping failed to write. The idle tick polled for
+  `POLLRDHUP` alone, and macOS has no such constant — so `events` was 0 and the
+  poll requested nothing, degrading the tick into a sleep that always answered
+  "still there". It now also asks for `POLLIN` and tells EOF from inbound bytes
+  with a zero-length `MSG_PEEK`, which additionally catches a peer that shut
+  only its write half (a case `POLLHUP` does not report, since the server's own
+  half stays open). A page reload opens two streams, so the leak accumulated
+  toward the 32-subscriber cap.
 - A `clanker-<name>` binary on `PATH` (or under `~/.clanker/plugins/`) is no
   longer exec'd unsandboxed unless `state/cli_plugins.json` names it. The
   Tier 2 dispatcher went through bare discovery with no enabled-list check, so
