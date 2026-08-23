@@ -4,11 +4,11 @@
 
 - **What failed:** `gh://pr/o/r/n/diff` concatenated the `patch` field of every file the API returned. GitHub's `patch` starts at the first `@@` hunk and names no file anywhere, so the output was a run of hunks with nothing to attribute them to as soon as a PR touched more than one file. PRD 0019's own output shape documents `--- a/<file>` / `+++ b/<file>` above the hunks and calls the result "unchanged from the API response"; both halves of that sentence could not be true at once.
 - **Impact:** A model reading a multi-file PR diff sees changes it cannot place in a file. On PR #379 (19 files) that is 19 patches run together with 18 unmarked boundaries. Files the API returns with no `patch` at all -- binary, or over GitHub's per-file diff limit -- were skipped silently, so a PR that only added an image read as an empty diff.
-- **Resolution:** Resolved on 2026-08-24. `tools/zig/gh_format.zig` writes the `--- a/` / `+++ b/` pair per file and emits `[no patch: <status>]` for a file the API gives no patch for. A `gh://pr/.../diff/<path>` that matches nothing now says so instead of returning an empty success.
+- **Resolution:** Resolved on 2026-08-23. `tools/zig/gh_format.zig` writes the `--- a/` / `+++ b/` pair per file and emits `[no patch: <status>]` for a file the API gives no patch for. A `gh://pr/.../diff/<path>` that matches nothing now says so instead of returning an empty success.
 
 ## Status
 
-Resolved on 2026-08-24.
+Resolved on 2026-08-23.
 
 ## Symptom and impact
 
