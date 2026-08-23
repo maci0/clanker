@@ -632,7 +632,7 @@ Internal tools, never offered to the model:
 | Tool | Filesystem | Purpose |
 |------|------------|---------|
 | `tools` | `tools/manifests/` | List registered tools |
-| `sessions` | `state/sessions/` | List saved conversations |
+| `sessions` | none — reads the host session store (ck_session) | List saved conversations |
 | `graph` | `state/runs/` | Render the latest execution graph |
 | `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
@@ -645,7 +645,7 @@ Internal tools, never offered to the model:
 | `notifications` | `state/notifications.jsonl` | The durable inbox behind `POST /api/notify`: append one notification, deduped by delivery id, trimmed at the 1 MiB ceiling. Never model-callable |
 | `knowledge` | `state/` | Knowledge collections behind `/api/knowledge`: list, create, delete, add or search documents |
 | `prompts` | `state/` | Saved prompt templates behind `/api/prompts` |
-| `session_export` | `state/` | Render one saved session as a self-contained HTML transcript (`clanker session export`) |
+| `session_export` | `state/exports/` | Render one saved session as a self-contained HTML transcript (`clanker session export`) |
 | `patch_apply` | `state/staging/`, `state/autoresearch/` | Materialize a proposed batch of exact-match edits; used by the improve and autoresearch loops, never by the model |
 | `mutate` | none | Generic mutator transform, off by default: rewrites tool results via an LLM instruction (translate, summarize, extract, redact) |
 | `statusline_clock` | none | Demo statusline plugin: current UTC time as a status-bar segment |

@@ -26,7 +26,6 @@
     }
   },
   "fs_prefixes": [
-    "state/sessions/",
     "state/exports/"
   ],
   "internal": true,

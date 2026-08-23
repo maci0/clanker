@@ -1,7 +1,7 @@
 {
   "name": "session_search",
   "description": "Search saved conversations for a substring. Input: {\"q\":\"text\"} (at least 3 characters). Returns matching lines. Resume a hit with clanker repl --session <id>.",
-  "llm_description": "Search past conversations. Input: {q} min 3 chars. Returns file:line hits under state/sessions. To continue a hit, tell the operator the session id (filename without .json).",
+  "llm_description": "Search past conversations. Input: {q} min 3 chars. Returns matching excerpts with session ids. To continue a hit, tell the operator the session id.",
   "wasm": "zig-out/tools/sessions.wasm",
   "input_schema": {
     "type": "object",
@@ -15,9 +15,7 @@
       "q"
     ]
   },
-  "fs_prefixes": [
-    "state/sessions/"
-  ],
+  "fs_prefixes": [],
   "confirm": false,
   "category": "harness",
   "session": true

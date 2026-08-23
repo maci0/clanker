@@ -18,9 +18,7 @@
       }
     }
   },
-  "fs_prefixes": [
-    "state/sessions/"
-  ],
+  "fs_prefixes": [],
   "internal": true,
   "category": "harness",
   "session": true
