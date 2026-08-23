@@ -1222,6 +1222,27 @@ fn truncatedEnvelope(family: Family) []const u8 {
     };
 }
 
+/// The envelope's writes, with one flag for "the buffer ran out" instead of a
+/// `catch {}` per call. Every one of those was swallowing the only signal that
+/// the body was half-written, and `Writer.fixed` fills the buffer before it
+/// fails, so the result looked like JSON and was not.
+const EnvelopeWriter = struct {
+    w: *std.Io.Writer,
+    over: bool = false,
+
+    fn raw(self: *@This(), literal: []const u8) void {
+        self.w.writeAll(literal) catch {
+            self.over = true;
+        };
+    }
+
+    fn jsonString(self: *@This(), value: []const u8) void {
+        std.json.Stringify.value(value, .{}, self.w) catch {
+            self.over = true;
+        };
+    }
+};
+
 fn writeEnvelope(ctx: Ctx, status: u16, code: ?[]const u8, message: []const u8) u16 {
     const family = familyOf(ctx.path, ctx.headers_raw);
     var buf: [1536]u8 = undefined;
@@ -1234,26 +1255,22 @@ fn writeEnvelope(ctx: Ctx, status: u16, code: ?[]const u8, message: []const u8) 
     // and a 2000-character model name really did produce 1536 bytes of
     // `{"error":{"message":"Unknown model \"aaaa…` with no closing braces,
     // under a Content-Length that stated 1536.
-    var over = false;
+    var env: EnvelopeWriter = .{ .w = &w };
     switch (family) {
         .openai => {
-            w.writeAll("{\"error\":{\"message\":") catch { over = true; };
-            std.json.Stringify.value(message, .{}, &w) catch { over = true; };
-            w.writeAll(",\"type\":\"invalid_request_error\",\"param\":null,\"code\":") catch { over = true; };
-            if (code) |c| {
-                std.json.Stringify.value(c, .{}, &w) catch { over = true; };
-            } else {
-                w.writeAll("null") catch { over = true; };
-            }
-            w.writeAll("}}") catch { over = true; };
+            env.raw("{\"error\":{\"message\":");
+            env.jsonString(message);
+            env.raw(",\"type\":\"invalid_request_error\",\"param\":null,\"code\":");
+            if (code) |c| env.jsonString(c) else env.raw("null");
+            env.raw("}}");
         },
         .anthropic => {
-            w.writeAll("{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":") catch { over = true; };
-            std.json.Stringify.value(message, .{}, &w) catch { over = true; };
-            w.writeAll("}}") catch { over = true; };
+            env.raw("{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":");
+            env.jsonString(message);
+            env.raw("}}");
         },
     }
-    const body = if (over) truncatedEnvelope(family) else w.buffered();
+    const body = if (env.over) truncatedEnvelope(family) else w.buffered();
     writeFixed(ctx, status, reasonPhrase(status), "application/json", body);
     return status;
 }
@@ -1807,8 +1824,8 @@ test "a proxy HEAD carries the headers and none of the body" {
     const head_len = std.mem.find(u8, head_out, "Content-Length:").?;
     const get_len = std.mem.find(u8, get_out, "Content-Length:").?;
     try std.testing.expectEqualStrings(
-        head_out[head_len..std.mem.find(u8, head_out[head_len..], "\r\n").? + head_len],
-        get_out[get_len..std.mem.find(u8, get_out[get_len..], "\r\n").? + get_len],
+        head_out[head_len .. std.mem.find(u8, head_out[head_len..], "\r\n").? + head_len],
+        get_out[get_len .. std.mem.find(u8, get_out[get_len..], "\r\n").? + get_len],
     );
 }
 
