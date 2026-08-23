@@ -120,16 +120,12 @@ test "operator journey: typing a / prefix previews matching commands with their 
     const cwd_z: [:0]const u8 = cwd_buf[0..cwd_len :0];
 
     var pty = try pty_mod.openPty();
-    defer _ = posix.system.close(pty.master);
+    defer pty.close();
     // Wide enough that a preview row's name + help fit without clipping.
     try pty_mod.setWinsize(pty.master, 40, 160);
 
     const pid = try pty_mod.spawnRepl(&pty, cwd_z, &.{"--mascot=off"});
-    defer {
-        _ = posix.system.kill(pid, posix.SIG.KILL);
-        var st: c_int = 0;
-        _ = posix.system.waitpid(pid, &st, 0);
-    }
+    defer pty_mod.killAndReap(&pty, pid);
 
     var seen: std.ArrayList(u8) = .empty;
     defer seen.deinit(gpa);
@@ -149,7 +145,7 @@ test "operator journey: typing a / prefix previews matching commands with their 
 
     // Bare "/" opens the discovery list: the first registry rows and the
     // "more" pointer at the palette (24 commands never fit the cap).
-    pty_mod.writeAll(pty.master, "/");
+    _ = pty_mod.writeAll(pty.master, "/");
     rows += 1;
     try pty_mod.setWinsize(pty.master, rows, 160);
     try std.testing.expect(try pumpUntilShown(io, pty.master, &seen, gpa, "show this help", 250));
@@ -158,7 +154,7 @@ test "operator journey: typing a / prefix previews matching commands with their 
     // "/go" narrows the preview to /goal: full spelling, argument hint, and
     // help, none of which the composer echo could have produced.
     seen.clearRetainingCapacity();
-    pty_mod.writeAll(pty.master, "go");
+    _ = pty_mod.writeAll(pty.master, "go");
     rows -= 1;
     try pty_mod.setWinsize(pty.master, rows, 160);
     try std.testing.expect(try pumpUntilShown(io, pty.master, &seen, gpa, "/goal <completion condition>", 250));
@@ -168,7 +164,7 @@ test "operator journey: typing a / prefix previews matching commands with their 
     // signature hint (a different command than /goal, so a stale frame
     // cannot satisfy the assertion).
     seen.clearRetainingCapacity();
-    pty_mod.writeAll(pty.master, "\x15/search embedded cache"); // Ctrl-U clears the draft first
+    _ = pty_mod.writeAll(pty.master, "\x15/search embedded cache"); // Ctrl-U clears the draft first
     rows += 1;
     try pty_mod.setWinsize(pty.master, rows, 160);
     try std.testing.expect(try pumpUntilShown(io, pty.master, &seen, gpa, "search saved conversations", 250));
@@ -178,7 +174,7 @@ test "operator journey: typing a / prefix previews matching commands with their 
     // 60-column terminal, so the tail after the cut must not appear and the
     // mark must.
     seen.clearRetainingCapacity();
-    pty_mod.writeAll(pty.master, "\x15/model");
+    _ = pty_mod.writeAll(pty.master, "\x15/model");
     rows += 1;
     try pty_mod.setWinsize(pty.master, rows, 60);
     try std.testing.expect(try pumpUntilShown(io, pty.master, &seen, gpa, "/model [query]", 250));

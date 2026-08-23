@@ -7,9 +7,29 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `-Dtest-filter` now reaches `zig build e2e` as well as `zig build test`.
+  The e2e step set no filters, so the flag was accepted and silently ignored
+  and the only way to re-run one journey was the whole suite; the pty resize
+  journey alone floods 4000 resizes.
+
 - Removed the deprecated `serve --port` alias; use `--webui-port`.
 
 ### Fixed
+
+- `zig build e2e` builds and runs on macOS. `tests/e2e/pty.zig` allocated its
+  pty with `/dev/ptmx` plus the Linux-only `TIOCSPTLCK`/`TIOCGPTN` ioctls and
+  sized it with `posix.T.IOCSWINSZ`, which the Darwin branch of `std.c.T` does
+  not declare, so the file failed to compile and took all 38 e2e journeys with
+  it. It now allocates the pty through POSIX `posix_openpt`/`grantpt`/
+  `unlockpt`/`ptsname` and holds one slave fd open on non-Linux targets, where
+  a master is not a terminal until a slave has been opened and a released
+  slave leaves the master hung up. The master is also non-blocking now, with a
+  bounded `POLLOUT` wait: both sides of the resize journey write more than they
+  drain, and a blocking master deadlocked the two of them against each other
+  with no timeout to end it. Teardown drains the pty while reaping and gives up
+  rather than blocking, and a repl that stops reading its tty now fails the
+  resize journey with a diagnostic instead of hanging it: a wedged child used
+  to hang the suite rather than fail it, in two separate unbounded waits.
 
 - An unknown provider `kind` in `config.toml` now fails with a diagnostic
   naming the provider, the offending spelling, and every kind the binary

@@ -47,7 +47,7 @@ test "operator journey: repl survives a SIGWINCH flood on a pty" {
     const cwd_z: [:0]const u8 = cwd_buf[0..cwd_len :0];
 
     var pty = try pty_mod.openPty();
-    defer _ = posix.system.close(pty.master);
+    defer pty.close();
     try pty_mod.setWinsize(pty.master, 40, 120);
 
     const pid = try pty_mod.spawnRepl(&pty, cwd_z, &.{
@@ -55,11 +55,7 @@ test "operator journey: repl survives a SIGWINCH flood on a pty" {
         "--mascot-size=large",
         "--mascot-speed=7",
     });
-    defer {
-        _ = posix.system.kill(pid, posix.SIG.KILL);
-        var st: c_int = 0;
-        _ = posix.system.waitpid(pid, &st, 0);
-    }
+    defer pty_mod.killAndReap(&pty, pid);
 
     var seen: std.ArrayList(u8) = .empty;
     defer seen.deinit(gpa);
@@ -105,12 +101,34 @@ test "operator journey: repl survives a SIGWINCH flood on a pty" {
         .{ 40, 120 }, .{ 24, 80 }, .{ 50, 200 }, .{ 30, 100 }, .{ 60, 240 }, .{ 20, 60 },
     };
     var i: usize = 0;
+    // Consecutive flood iterations in which the repl accepted none of the
+    // typed bytes. A wedged repl -- one that crashed into the recursive-panic
+    // hang, say (docs/reports/bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md)
+    // -- stops draining its tty while staying unreapable, so `reapIfDead`
+    // below reports it healthy forever and the journey used to hang rather
+    // than fail. Each give-up costs `pty.write_timeout_ms`, so this is seconds
+    // of the child accepting nothing, not a momentary stall under load.
+    var unread: usize = 0;
     while (i < 4000) : (i += 1) {
         const size = sizes[i % sizes.len];
         pty_mod.setWinsize(pty.master, size[0], size[1]) catch break;
         // Keystrokes that never submit a turn: the composer re-lays-out on
         // each one, which is what keeps the event queue contended.
-        pty_mod.writeAll(pty.master, "abc\x7f");
+        if (pty_mod.writeAll(pty.master, "abc\x7f")) {
+            unread = 0;
+        } else {
+            unread += 1;
+            if (unread >= 5) {
+                std.debug.print(
+                    "repl stopped reading its tty after {d} resizes (still unreaped, so not a clean crash); " ++
+                        "{d} bytes drawn. If this tree has not had scripts/apply-patches.sh run, " ++
+                        "vaxis still services SIGWINCH inside the signal handler and this is that crash. " ++
+                        "Trace tail:\n{s}\n",
+                    .{ i, seen.items.len, tailOf(seen.items) },
+                );
+                return error.ReplStoppedReadingTty;
+            }
+        }
 
         // Pace the flood. SIGWINCH is a standard signal, so a second one
         // raised while the first is still pending is *coalesced*, not queued:

@@ -80,6 +80,12 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A hung-up /api/events subscriber does not release its in-flight slot on macOS](bugs/2026-08-23-events-slot-not-released-on-hangup.md) — Open
+
+- [A panic raised from a blocked Io.Threaded recurses forever instead of aborting](bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md) — Open
+
+- [zig build e2e does not compile on macOS: the pty harness is Linux-only](bugs/2026-08-23-e2e-pty-harness-is-linux-only.md) — Open
+
 - [unknown provider kind failed with no naming diagnostic](bugs/2026-08-23-unknown-provider-kind-names-nothing.md) — Resolved
 
 - [Arena floored untargeted concede and final_stand moves](bugs/2026-08-23-arena-untargeted-concede-floored.md) — Resolved
