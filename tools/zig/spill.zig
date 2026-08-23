@@ -17,6 +17,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("spill_logic.zig");
+const sid = @import("session_id");
 
 /// A spilled tool result is the full pre-prune content, so a busy session's
 /// prune turn can legitimately exceed the normal 64 KiB tool-request buffer.
@@ -49,7 +50,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (!logic.validId(raw_id)) return lib.fail(out, "id must be 8 lowercase hex");
 
     const session_id = lib.optStr(req, "session") orelse "default";
-    if (!logic.validSessionId(session_id)) return lib.fail(out, "invalid session");
+    if (!sid.validSessionId(session_id)) return lib.fail(out, "invalid session");
     var path_buf: [96]u8 = undefined;
     const path = logic.pathFor(session_id, raw_id, &path_buf) catch return lib.fail(out, "bad session");
     const text = lib.fsRead(path) catch |err| return switch (err) {
@@ -67,7 +68,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
 fn writeOne(out: *lib.Out, w: std.json.Value) !void {
     const session_id = lib.optStr(w, "session") orelse "default";
-    if (!logic.validSessionId(session_id)) return lib.fail(out, "invalid session");
+    if (!sid.validSessionId(session_id)) return lib.fail(out, "invalid session");
     const id = lib.optStr(w, "id") orelse return lib.fail(out, "missing id");
     if (!logic.validId(id)) return lib.fail(out, "id must be 8 lowercase hex");
     const content = lib.optStr(w, "content") orelse return lib.fail(out, "missing content");
@@ -87,7 +88,7 @@ fn writeOne(out: *lib.Out, w: std.json.Value) !void {
 /// a delete path that has already dropped the transcript.
 fn forgetSession(out: *lib.Out, f: std.json.Value) !void {
     const session_id = lib.optStr(f, "session") orelse return lib.fail(out, "missing session");
-    if (!logic.validSessionId(session_id)) return lib.fail(out, "invalid session");
+    if (!sid.validSessionId(session_id)) return lib.fail(out, "invalid session");
     var dir_buf: [96]u8 = undefined;
     const dir = logic.dirFor(session_id, &dir_buf) catch return lib.fail(out, "bad session");
     lib.fsDeleteTree(lib.alloc, dir);

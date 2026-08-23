@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "calculator_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "compact_hint", "config_logic", "doc_scaffold", "feedback_logic", "flat_json", "gauntlet_logic", "gh_url", "goal_store", "graph_listing", "grep_outline", "hashline", "kernel_magic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "mention_expand", "model_reply", "model_stats_logic", "notifications_logic", "patch_logic", "plugin_config_logic", "providers_logic", "record_rename", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic", "write_goal_logic" };
+const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "calculator_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "compact_hint", "config_logic", "doc_scaffold", "feedback_logic", "flat_json", "gauntlet_logic", "gh_format", "gh_url", "goal_store", "graph_listing", "grep_outline", "hashline", "kernel_magic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "mention_expand", "model_reply", "model_stats_logic", "notifications_logic", "patch_logic", "plugin_config_logic", "providers_logic", "record_rename", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic", "write_goal_logic" };
 
 /// The `tools/zig` helpers the host links directly, so the CLI and the guest
 /// that shares a file run the same source rather than two copies of it.
@@ -409,6 +409,11 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    const helper_session_id_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/session_id.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
     for (host_tested_helpers) |stem| {
         const mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
@@ -419,6 +424,9 @@ pub fn build(b: *std.Build) void {
                 // caps text on a codepoint boundary reaches the one shared
                 // helper instead of carrying a second copy of the loop.
                 .{ .name = "utf8", .module = helper_utf8_mod },
+                // Same shape: the shared session-id alphabet, which
+                // `rewind_logic` validates through rather than re-spelling.
+                .{ .name = "session_id", .module = helper_session_id_mod },
             },
         });
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod, .filters = test_filters })).step);
@@ -489,6 +497,13 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The spill, rewind, and janitor guests validate session ids against the
+    // same alphabet the host session store enforces, from this one file.
+    const tool_session_id_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/session_id.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
     // The alarm guest owns state/alarms.json and the system prompt reads it;
     // both parse rows from this one record declaration, not a copy each.
     const tool_alarm_store_mod = b.createModule(.{
@@ -540,6 +555,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "tail", .module = tool_tail_mod },
                     .{ .name = "glob", .module = tool_glob_mod },
                     .{ .name = "fs_skip", .module = tool_fs_skip_mod },
+                    .{ .name = "session_id", .module = tool_session_id_mod },
                     .{ .name = "alarm_store", .module = tool_alarm_store_mod },
                 },
             }),

@@ -50,14 +50,6 @@ pub fn idFor(content: []const u8, salt: u64) [8]u8 {
     return out;
 }
 
-pub fn validSessionId(id: []const u8) bool {
-    if (id.len == 0 or id.len > 64) return false;
-    for (id) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
-}
-
 pub fn validId(id: []const u8) bool {
     if (id.len != 8) return false;
     for (id) |c| {
@@ -150,8 +142,6 @@ test "parseId accepts only 8 lowercase hex" {
     try std.testing.expect(parseId("[spill id=short]") == null);
     try std.testing.expect(validId("cafebabe"));
     try std.testing.expect(!validId("cafe"));
-    try std.testing.expect(validSessionId("default"));
-    try std.testing.expect(!validSessionId("../x"));
 }
 
 test "locator is 8 hex and round-trips" {
