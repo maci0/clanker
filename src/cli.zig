@@ -7739,6 +7739,11 @@ threadlocal var request_keep_alive: bool = false;
 threadlocal var request_webui_tagged: bool = false;
 /// HEAD on the printed `/webui` URL: same headers as GET, no body.
 threadlocal var request_head: bool = false;
+/// True while this request is the last one `max_keep_alive_requests` allows on
+/// this connection. `Connection: keep-alive` is a promise the server keeps, so
+/// the response that spends the budget has to say `close` instead: see
+/// `keepAliveBudgetLeft`.
+threadlocal var request_spends_keep_alive_budget: bool = false;
 var http_requests_total = std.atomic.Value(u64).init(0);
 var http_errors_total = std.atomic.Value(u64).init(0);
 var http_latency_le_10ms = std.atomic.Value(u64).init(0);
@@ -7793,6 +7798,18 @@ fn connectionThread(conn: *Connection) void {
     handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.serve_as_hosts, conn.stream, conn.surface);
 }
 
+/// Whether a connection that has already served `requests_served` responses may
+/// promise another one. `max_keep_alive_requests` bounds the loop below, so the
+/// response that takes the count to the bound is the connection's last: telling
+/// that client `Connection: keep-alive` and then closing is a promise broken in
+/// the same breath it is made. Browsers hide it by retrying an idempotent GET;
+/// a client that does not retry sees an empty reply on its next request. Split
+/// out so the arithmetic is testable without a listener, since `clanker serve`
+/// cannot accept a connection under this sandbox.
+fn keepAliveBudgetLeft(requests_served: u8) bool {
+    return requests_served + 1 < max_keep_alive_requests;
+}
+
 fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface) void {
     defer stream.close(io);
     // Residual posix: raw socket recv-timeout option for the hand-rolled HTTP
@@ -7807,6 +7824,7 @@ fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const confi
     var requests: u8 = 0;
     while (requests < max_keep_alive_requests) : (requests += 1) {
         request_keep_alive = false;
+        request_spends_keep_alive_budget = !keepAliveBudgetLeft(requests);
         // A hot-reload must never fire mid-request (would drop the client
         // mid-response); see HotReload's doc comment.
         if (hot_reload_active) |hr| hr.begin();
@@ -7912,7 +7930,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
                     switch (proxy.authorize(headers_raw, expected)) {
                         .ok => proxy_authorized = true,
                         .missing, .mismatch => {
-                            request_status = proxy.writeAuthError(stream, proxy.stripProxyPrefix(path, surface), headers_raw);
+                            request_status = proxy.writeAuthError(stream, method, proxy.stripProxyPrefix(path, surface), headers_raw);
                             return;
                         },
                     }
@@ -8040,7 +8058,10 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // connection never starts mid-body.
         const keep_alive_eligible = (is_webui and isWebuiRead(method) and cfg.modules.webui) or
             (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/"));
-        if (keep_alive_eligible) {
+        // The budget is part of eligibility, not an afterthought: the last
+        // response this connection is allowed to send has to say `close`,
+        // because it is the last one.
+        if (keep_alive_eligible and !request_spends_keep_alive_budget) {
             const conn_val = proxy.headerValue(headers_raw, "connection") orelse "";
             if (!std.ascii.eqlIgnoreCase(conn_val, "close")) request_keep_alive = true;
         }
@@ -14992,6 +15013,14 @@ fn handleCompare(
         respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
         return;
     }
+    // Told apart from the 400 below on purpose. "You posted a pick to the
+    // collection" and "your pick was blank" are different mistakes, and
+    // collapsing both into one `bad request` left a client unable to tell
+    // which it had made.
+    if (compareCollectionPost(method, path)) {
+        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        return;
+    }
     const tool_input = compareRouteToToolInput(arena, method, path, body) orelse {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request\"}");
         return;
@@ -15003,6 +15032,22 @@ fn handleCompare(
     // A refused read or a pick against a missing comparison is 404; a
     // pick letter that is not on the table is 400.
     respondTool(stream, result);
+}
+
+/// `POST /api/compare` with no id: a pick aimed at the collection rather than
+/// at a comparison.
+///
+/// `docs/prds/0006-webui.md` answers this `405 Method Not Allowed`, one row
+/// above the `400` for a pick with no letter, precisely so the two are
+/// distinguishable. `compareRouteToToolInput` returns null for both, and the
+/// caller's single `orelse` made both a `400` with the same body. Kept as its
+/// own predicate for the same reason that mapping is: a route decision only
+/// reachable through the listener is a route decision with no test.
+fn compareCollectionPost(method: []const u8, path: []const u8) bool {
+    if (!std.mem.eql(u8, method, "POST")) return false;
+    const prefix = "/api/compare";
+    if (!std.mem.startsWith(u8, path, prefix)) return false;
+    return std.mem.trim(u8, path[prefix.len..], "/").len == 0;
 }
 
 /// `/api/compare` -> the blind listing, `/api/compare/<id>` -> that comparison
@@ -15100,6 +15145,34 @@ test "compare route refuses a pick it cannot attribute" {
     // must not fall through to the read that a missing arm would make it.
     try std.testing.expect(compareRouteToToolInput(arena, "DELETE", "/api/compare/compare-1", "") == null);
     try std.testing.expect(compareRouteToToolInput(arena, "GET", "/api/arena", "") == null);
+}
+
+test "a pick aimed at the collection is a refused method, not a bad pick" {
+    // `compareRouteToToolInput` answers null for both, and the caller used to
+    // turn every null into the same 400 -- so a client could not tell "you
+    // posted to the collection" from "your pick was blank". PRD 0006 answers
+    // the first 405, one row above the 400 for the second.
+    try std.testing.expect(compareCollectionPost("POST", "/api/compare"));
+    try std.testing.expect(compareCollectionPost("POST", "/api/compare/"));
+    // A pick that names its comparison is the normal case and keeps its 400s.
+    try std.testing.expect(!compareCollectionPost("POST", "/api/compare/compare-1"));
+    // Reads of the collection are the listing, not a refused method.
+    try std.testing.expect(!compareCollectionPost("GET", "/api/compare"));
+    // And the prefix is not a substring match on some other route.
+    try std.testing.expect(!compareCollectionPost("POST", "/api/arena"));
+}
+
+test "the last response a connection may send does not promise another" {
+    // `handleConnectionGuarded` loops while `requests < max_keep_alive_requests`,
+    // so the response taken at count max-1 is the connection's last. It used to
+    // say `Connection: keep-alive` and then close: measured live, response 100
+    // was keep-alive and request 101 got an empty reply.
+    try std.testing.expect(keepAliveBudgetLeft(0));
+    try std.testing.expect(keepAliveBudgetLeft(max_keep_alive_requests - 2));
+    try std.testing.expect(!keepAliveBudgetLeft(max_keep_alive_requests - 1));
+    // Past the bound the loop has already exited; answering "no budget" there
+    // is the only safe reading, and it must not wrap around to true.
+    try std.testing.expect(!keepAliveBudgetLeft(max_keep_alive_requests));
 }
 
 fn promptsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: []const u8) ?[]const u8 {
