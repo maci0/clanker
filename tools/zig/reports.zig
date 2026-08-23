@@ -14,8 +14,13 @@
 //!          "title":"...", "summary":"..."}
 //!         {"action":"append", "path":"docs/reports/investigations/foo.md",
 //!          "content":"\n## New evidence\n\n...\n"}
+//!           a block headed by a section the record already carries *empty*
+//!           fills that section rather than adding a second copy of its heading
 //!         {"action":"update", "path":"docs/runbooks/foo.md",
-//!          "old":"old text", "new":"new text"}
+//!          "old":"old text", "new":"new text", "all":false}
+//!           all:true rewrites every copy instead of refusing a repeated match,
+//!           which is what a `status` note (written into the TL;DR and the
+//!           Status section alike) needs
 //!         {"action":"status", "path":"docs/reports/bugs/foo.md",
 //!          "status":"resolved", "note":"Fixed in <commit>."}
 //!         {"action":"rename", "path":"docs/reports/bugs/foo.md", "slug":"2026-08-15-topic"}
@@ -141,12 +146,19 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "create needs a filename stem in slug");
     if (title.len > 180) return lib.fail(out, "title is too long (maximum 180 bytes)");
     if (summary.len > 500) return lib.fail(out, "summary is too long (maximum 500 bytes)");
+    // The scaffold's `# ` line and the inventory link are both `<label> —
+    // <title>`, so a caller who wrote the label into the title got
+    // `# Bug — Bug — ...` and an inventory line that was the only one in the
+    // index carrying a label. Stripped here rather than trusted from the
+    // caller, the same way `markMissingToolSlug` enforces the slug marker.
+    const title_text = doc.stripLabelPrefix(kindLabel(kind), title);
+    if (title_text.len == 0) return lib.fail(out, "create needs a title that says more than the record's kind");
 
     const target = targetFor(kind, slug) orelse
         return lib.fail(out, "kind must be bug, investigation, missing-tool, or runbook; report slugs start YYYY-MM-DD-, runbook slugs use lowercase letters, digits, and hyphens");
     var rendered: std.Io.Writer.Allocating = .init(lib.alloc);
     defer rendered.deinit();
-    try renderScaffold(&rendered.writer, kind, title, summary);
+    try renderScaffold(&rendered.writer, kind, title_text, summary);
 
     // Empty expected hash means "file must not exist"; this prevents a second
     // run from replacing an authored report with another generated scaffold.
@@ -162,7 +174,7 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     // A missing-tool record lives in the investigations store and inventory;
     // its own kind exists to enforce the filename marker and its scaffold.
     const inventory_kind = if (std.mem.eql(u8, kind, "missing-tool")) "investigation" else kind;
-    const indexed = addToInventory(inventory_kind, target, title) catch false;
+    const indexed = addToInventory(inventory_kind, target, title_text) catch false;
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -199,18 +211,27 @@ fn append(obj: std.json.Value, out: *lib.Out) !void {
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    try updated.writer.writeAll(text);
-    if (text.len > 0 and text[text.len - 1] != '\n') try updated.writer.writeByte('\n');
-    try updated.writer.writeAll(content);
+    // A block headed by a section the scaffold left empty fills that section
+    // instead of landing at the end as a second copy of its heading. See
+    // `doc.appendOrFill`: that duplication is why 33 records in this store
+    // carry two `## Root cause` headings, one of them blank.
+    const placement = try doc.appendOrFill(&updated.writer, text, content);
     lib.fsWriteIf(path, expected, updated.written()) catch |err| switch (err) {
         error.Mismatch => return lib.fail(out, "the record changed while appending; open it again and retry against the current text"),
         else => return lib.failErr(out, err, "appending to the report or runbook"),
     };
-    return records_grep.mutationResult(out, "append", path);
+    return records_grep.appendResult(out, path, placement);
 }
 
 /// Replace one exact piece of a report or runbook. Requiring a unique old value
 /// prevents an agent from changing the wrong repeated heading or status line.
+///
+/// `"all":true` opts out of that uniqueness check and rewrites every copy. It
+/// exists because `status` writes its note into the TL;DR `Resolution` bullet
+/// and the `## Status` section byte-identically, which made the sentence the
+/// store had just written the one piece of a record `update` could not address
+/// by its own words. Those two are one fact written twice, so an edit that
+/// matches both is meant for both.
 fn update(obj: std.json.Value, out: *lib.Out) !void {
     const path = lib.str(obj, "path") catch
         return lib.fail(out, "update needs a report or runbook path");
@@ -221,24 +242,33 @@ fn update(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "update needs replacement text in new (it may be empty to remove old)");
     // `hash` overwrites the shared host response arena; all later slicing has
     // to use this guest-owned copy rather than the fsRead response.
+    const all = lib.optBool(obj, "all", false);
     const raw = lib.fsRead(path) catch |err| return lib.failErr(out, err, "opening the report or runbook before update");
     const text = try lib.alloc.dupe(u8, raw);
     const start = std.mem.find(u8, text, old) orelse
         return lib.fail(out, "old text was not found; open the current record and copy the exact text");
-    if (std.mem.findPos(u8, text, start + old.len, old) != null)
-        return lib.fail(out, "old text appears more than once; include more surrounding text so the update is unambiguous");
+    if (!all and std.mem.findPos(u8, text, start + old.len, old) != null)
+        return lib.fail(out, "old text appears more than once; include more surrounding text so the update is unambiguous, or ask for every copy with \"all\":true (`--replace-all` from the CLI), which is what editing a status note takes: that sentence is written into both the TL;DR bullet and the Status section");
     const expected = try lib.alloc.dupe(u8, try lib.hash(text));
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    try updated.writer.writeAll(text[0..start]);
-    try updated.writer.writeAll(new);
-    try updated.writer.writeAll(text[start + old.len ..]);
+    const replaced = if (all)
+        doc.spliceReplaceAll(&updated.writer, text, old, new) catch |err| switch (err) {
+            error.NotFound => return lib.fail(out, "old text was not found; open the current record and copy the exact text"),
+            else => |e| return e,
+        }
+    else blk: {
+        try updated.writer.writeAll(text[0..start]);
+        try updated.writer.writeAll(new);
+        try updated.writer.writeAll(text[start + old.len ..]);
+        break :blk 1;
+    };
     lib.fsWriteIf(path, expected, updated.written()) catch |err| switch (err) {
         error.Mismatch => return lib.fail(out, "the record changed while updating; open it again and retry against the current text"),
         else => return lib.failErr(out, err, "updating the report or runbook"),
     };
-    return records_grep.mutationResult(out, "update", path);
+    return records_grep.updateResult(out, path, replaced);
 }
 
 /// Moves a record through its lifecycle: the `## Status` line and the index
@@ -518,8 +548,16 @@ fn targetFor(kind: []const u8, slug: []const u8) ?Target {
     return null;
 }
 
+/// The word the record's `# ` line and its inventory entry are prefixed with.
+fn kindLabel(kind: []const u8) []const u8 {
+    if (std.mem.eql(u8, kind, "bug")) return "Bug";
+    if (std.mem.eql(u8, kind, "investigation")) return "Investigation";
+    if (std.mem.eql(u8, kind, "missing-tool")) return "Missing clanker tool";
+    return "Runbook";
+}
+
 fn renderScaffold(w: *std.Io.Writer, kind: []const u8, title: []const u8, summary: []const u8) !void {
-    const label = if (std.mem.eql(u8, kind, "bug")) "Bug" else if (std.mem.eql(u8, kind, "investigation")) "Investigation" else if (std.mem.eql(u8, kind, "missing-tool")) "Missing clanker tool" else "Runbook";
+    const label = kindLabel(kind);
     try w.print("# {s} — {s}\n\n", .{ label, title });
     try w.writeAll("## TL;DR\n\n");
     if (std.mem.eql(u8, kind, "missing-tool")) {

@@ -33,6 +33,9 @@ pub const Options = struct {
     /// `create`: the research note path (`docs/research/<name>.md`).
     /// `recommend`: the rationale.
     arg4: ?[]const u8 = null,
+    /// `--replace-all` for `update`: rewrite every copy of the old text rather
+    /// than refusing a repeated match.
+    replace_all: bool = false,
 };
 
 pub const Error = common.Error;
@@ -154,7 +157,7 @@ fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn update(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
-    return common.updateRecord(arena, "rfc", opts.arg1, opts.arg2, opts.arg3, tool);
+    return common.updateRecord(arena, "rfc", opts.arg1, opts.arg2, opts.arg3, opts.replace_all, tool);
 }
 
 /// The Recommendation section, which is the point of the document: a
