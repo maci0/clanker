@@ -225,6 +225,16 @@ the feature default-on without quotas is not.
 
 ## Known issues
 
+- **(Fixed) A cell's environment used to be whatever the `Io` carried.**
+  `eval` spawned the supervisor with no `environ_map`, so cells saw two
+  platform-injected variables and no `HOME` or `PATH`, and on an `Io` that
+  inherits they would have carried every harness key. `ckKernel` now passes
+  `host.execEnvironment`, the same `envAllowed` filter `ck_exec` and `ck_job`
+  use, and `EvalOpts.environ_map` is required so the question cannot go
+  unanswered again. The manifest, `config.toml` and `docs/configuration.md`
+  had also kept describing the WASI sandbox this path does not have, and now
+  do not.
+  [Record](../reports/bugs/2026-08-23-kernel-supervisor-environment-is-unspecified.md).
 - **(Fixed) `timeout_ms` used to be a schedule rather than a ceiling.** The
   watchdog in `roundTrip` (src/sandbox/kernel.zig) slept the whole budget and
   `roundTrip` joins it, so every cell was held for `timeout_ms` -- 10 s by

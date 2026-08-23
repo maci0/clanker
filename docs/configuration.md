@@ -481,24 +481,40 @@ Post-turn second-model critique. Off by default. Distinct from
 
 ## `[kernel]`
 
-Python/JS eval kernels. Off by default. The Python path runs under a real
-WASI sandbox when `./scripts/setup-python-wasi.sh` has fetched the
-interpreter; without it, calls fall back to an unsandboxed `python3`
-subprocess and log a deprecation warning (ADR 0010). Do not flip `enabled`
-on in a recommended config while relying on that fallback, until cgroups
-quotas exist for it — the WASI path needs no such quotas, it has its own
-fuel/memory/timeout limits.
+Python eval kernels. Off by default, and **not sandboxed on the path that
+ships**. `ck_kernel` reaches the persistent supervisor in
+`src/sandbox/kernel.zig`: a host `python3` subprocess that holds `__main__`
+across cells and has the clanker process's own filesystem and network reach,
+with `exec_allow` applied to neither `%%bash` nor `import subprocess`. Every
+reply carries `"sandboxed": false` and starting a supervisor logs the
+exposure.
+
+The WASI-confined interpreter the `python_wasi_*` keys configure is read only
+by `runPythonCell` (`src/sandbox/host.zig`), which has no production caller,
+so running `./scripts/setup-python-wasi.sh` does not change what a `kernel`
+call does. Open defect, with the candidate fixes:
+[kernel cells run unsandboxed](reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md).
+ADR 0010 describes the WASI path as primary and is marked as not implemented
+as written. Do not flip `enabled` on in a recommended config: cgroups quotas
+are a pre-default-on requirement (PRD 0016) and nothing bounds a cell today.
+
+A cell's environment is the `kernel` tool's `env_allow` set, built by the
+same `execEnvironment` filter `ck_exec` and `ck_job` use, so no API key the
+guest is denied through `ck_env` can reach a cell. With no `env_allow` that is
+the default set (`PWD`, `HOME`, `PATH`, `LANG`, `LC_ALL`, `TERM`, `TZ`,
+`USER`); naming any variable **replaces** those defaults rather than adding to
+them, so re-list what a cell still needs.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | Start kernels. Off = the tool returns a disabled error. |
 | `max_output_bytes` | 65536 | Cap on returned stdout/stderr/result. |
 | `cleanup_delay_ms` | 5000 | Delay before deleting `state/kernels/<session>/` after SIGTERM. |
-| `python_wasi_binary` | `vendor/python-wasi/bin/python-3.12.0.wasm` | Vendored WASI interpreter path; absent means the unsandboxed fallback. |
-| `python_wasi_stdlib` | `vendor/python-wasi/usr/local/lib` | Stdlib directory, preopened read-only into the guest at `/usr/local/lib`. |
-| `python_wasi_fuel` | 5000000000 | Instruction budget (engine-specific units, not wall-clock). |
-| `python_wasi_timeout_ms` | 30000 | Wall-clock deadline; a timeout traps the sandboxed cell. |
-| `python_wasi_max_memory_bytes` | 268435456 | Guest linear-memory cap. |
+| `python_wasi_binary` | `vendor/python-wasi/bin/python-3.12.0.wasm` | Vendored WASI interpreter path. Read only by the test-only `runPythonCell`; setting it confines nothing. |
+| `python_wasi_stdlib` | `vendor/python-wasi/usr/local/lib` | Stdlib directory, preopened read-only into the guest at `/usr/local/lib`. Same caveat. |
+| `python_wasi_fuel` | 5000000000 | Instruction budget (engine-specific units, not wall-clock). Same caveat. |
+| `python_wasi_timeout_ms` | 30000 | Wall-clock deadline; a timeout traps the sandboxed cell. Same caveat. |
+| `python_wasi_max_memory_bytes` | 268435456 | Guest linear-memory cap. Same caveat. |
 
 ## `[debug]`
 

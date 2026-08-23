@@ -275,8 +275,17 @@ const poll_dead: i16 = poll_hangup | std.posix.POLL.HUP | std.posix.POLL.ERR | s
 /// keepalive ping -- and the web UI opens two streams per page load (a probe
 /// fetch it cancels, then the EventSource), so reloads stacked up dead slots.
 /// Returns true when the peer is gone. Residual posix: raw-fd SSE push bus.
+///
+/// `POLL.IN` is requested alongside `poll_hangup`, and is not decoration: on
+/// macOS `poll_hangup` is 0 (no `POLLRDHUP` at all), so polling for it alone
+/// requested *no event*, and the tick degraded into a 50ms sleep that always
+/// answered "still there". Measured on aarch64-macos, a stream socket whose
+/// peer has fully closed answers `ready=0 revents=0` for `events=0` and
+/// `POLLIN|POLLHUP` for `events=POLLIN` -- the hangup is reported, but only to
+/// a caller that asked for something. See
+/// docs/reports/bugs/2026-08-23-events-slot-not-released-on-hangup.md.
 fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
-    var pfd = [1]std.posix.pollfd{.{ .fd = fd, .events = poll_hangup, .revents = 0 }};
+    var pfd = [1]std.posix.pollfd{.{ .fd = fd, .events = poll_hangup | std.posix.POLL.IN, .revents = 0 }};
     // poll retries EINTR itself, so what is left is NetworkDown /
     // SystemResources / Unexpected. None of those prove the peer is gone;
     // pace the tick on the clock instead and look again next time round.
@@ -284,7 +293,20 @@ fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
         std.Io.sleep(io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake) catch {};
         return false;
     };
-    return ready > 0 and (pfd[0].revents & poll_dead) != 0;
+    if (ready == 0) return false;
+    const revents = pfd[0].revents;
+    if ((revents & poll_dead) != 0) return true;
+    if ((revents & std.posix.POLL.IN) == 0) return false;
+    // Readable with no hangup flag. Either the peer shut only its write half
+    // -- an EOF `POLLHUP` does not report, because it wants both halves shut
+    // and ours stays open -- or it sent bytes on a stream that is one-way
+    // after the request. A zero-length peek is the first; anything else is
+    // not a hangup and must be paced on the clock, because a readable edge
+    // makes poll return at once and the tick would otherwise spin.
+    var probe: [1]u8 = undefined;
+    if (std.c.recv(fd, &probe, probe.len, std.posix.MSG.PEEK) == 0) return true;
+    std.Io.sleep(io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake) catch {};
+    return false;
 }
 
 /// Long-lived SSE write loop. Caller must have already decided this
@@ -321,6 +343,67 @@ pub fn serveSse(io: std.Io, fd: std.posix.fd_t, topics: []const u8) u16 {
             idle = 0;
         }
     }
+}
+
+/// A connected stream socket pair, standing in for one SSE connection: index
+/// 0 is the server end `serveSse` polls, index 1 is the subscriber.
+fn testSocketPair() ![2]std.posix.fd_t {
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) return error.NoSocketPair;
+    return pair;
+}
+
+test "the idle tick sees a subscriber that hung up, and leaves a live one alone" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const pair = try testSocketPair();
+    defer _ = std.c.close(pair[0]);
+    // A live subscriber that has sent nothing must not read as gone: holding
+    // the connection open with nothing to say is the normal SSE state.
+    try std.testing.expect(!idleTickSawHangup(io, pair[0]));
+
+    _ = std.c.close(pair[1]);
+    // The regression. macOS carries no `POLLRDHUP`, so `poll_hangup` is 0 and
+    // polling for it alone requested *no event at all*: the tick answered
+    // "still there" for a socket nobody was on, and `serveSse` held its
+    // `max_subs` slot and its connection thread until the 15s keepalive ping
+    // failed to write. Measured on aarch64-macos: events=0 answers ready=0
+    // revents=0, events=POLLIN answers POLLIN|POLLHUP.
+    try std.testing.expect(idleTickSawHangup(io, pair[0]));
+}
+
+test "the idle tick sees a subscriber that shut only its write half" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const pair = try testSocketPair();
+    defer _ = std.c.close(pair[0]);
+    defer _ = std.c.close(pair[1]);
+
+    // A half-close leaves our own half open, which is exactly the case
+    // `POLLHUP` does not report -- it wants both halves shut. The readable
+    // edge plus a zero-length peek is what catches it, and it is why the
+    // `POLLIN` branch cannot simply be treated as "not a hangup".
+    if (std.c.shutdown(pair[1], std.posix.SHUT.WR) != 0) return error.NoShutdown;
+    try std.testing.expect(idleTickSawHangup(io, pair[0]));
+}
+
+test "a subscriber that sends bytes is not mistaken for one that left" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const pair = try testSocketPair();
+    defer _ = std.c.close(pair[0]);
+    defer _ = std.c.close(pair[1]);
+
+    // Readable with data is not a hangup. Asking for POLLIN means the branch
+    // exists at all, so it has to be told apart from EOF rather than assumed.
+    try raw_http.writeAll(pair[1], "x");
+    try std.testing.expect(!idleTickSawHangup(io, pair[0]));
 }
 
 test "subscribe publish take, overflow drops oldest" {
