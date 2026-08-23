@@ -16,6 +16,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker schedule` read stepped day fields (`*/2`) as if they were bare
+  stars in the day-of-month/day-of-week rule: `0 0 */2 * 5` fired every
+  Friday instead of Fridays on an odd date, and two stepped day fields
+  (`0 0 */2 * */3`) fired every day. The star flag is now Vixie's — set
+  whenever the field starts with `*` (including star-led lists like `*,5`)
+  and a starred field ANDs with the other one — so these specs fire on the
+  intersection crontab(5) means.
 - Image attachments now reach a coding-agent backend (`--backend` /
   `[agent] backend`) over HTTP. `session/prompt` carries one ACP `image`
   ContentBlock per attachment after the text block, `POST /api/run` no longer

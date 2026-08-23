@@ -57,7 +57,8 @@ pub const Spec = struct {
     month: u16 = 0,
     /// bits 0..6, Sunday = 0
     dow: u8 = 0,
-    /// Whether the day-of-month field was written as a star (`*` or `*/n`).
+    /// Whether the day-of-month / day-of-week field was written starting
+    /// with a star (`*`, `*/n`, or a list whose first element is one).
     /// Needed on its own because the dom/dow rule below turns on *how the
     /// field was written*, not on which days it happens to select.
     dom_star: bool = true,
@@ -66,14 +67,14 @@ pub const Spec = struct {
     /// Vixie cron's rule, which surprises people often enough to be worth
     /// stating: when both day fields are restricted the entry fires when
     /// *either* matches, not both. `0 0 13 * 5` is "the 13th, and every
-    /// Friday", not "Friday the 13th". When one of them is a star, the other
-    /// alone decides.
+    /// Friday", not "Friday the 13th". When either field starts with a star,
+    /// the AND of both decides -- which for a bare `*` (every day selected)
+    /// leaves the other field alone to decide, but for `*/2` restricts to
+    /// the intersection, exactly as crontab(5) does.
     pub fn dayMatches(self: Spec, day: u8, weekday: u8) bool {
         const by_dom = bit32(self.dom, day);
         const by_dow = bit8(self.dow, weekday);
-        if (self.dom_star and self.dow_star) return true;
-        if (self.dom_star) return by_dow;
-        if (self.dow_star) return by_dom;
+        if (self.dom_star or self.dow_star) return by_dom and by_dow;
         return by_dom or by_dow;
     }
 
@@ -176,24 +177,13 @@ pub fn parse(spec: []const u8) ParseError!Spec {
     return out;
 }
 
-/// One field to a bitset over `lo..=hi`. `star` reports whether the field was
-/// written as a star (`*`, or `*/n` over the whole range) rather than whether
-/// it happens to select everything: `0-6` on day-of-week selects every day but
-/// is still a restriction, and Vixie's dom/dow rule turns on the difference.
+/// One field to a bitset over `lo..=hi`. `star` reports whether the field
+/// *starts* with a star (`*`, `*/n`, or `*,...`), matching Vixie: the flag is
+/// read off the first character before the list is parsed, because the dom/dow
+/// rule turns on how the field was written, not on which days it selects.
 fn parseField(text: []const u8, lo: u8, hi: u8, sunday_alias: bool, star: *bool) ParseError!u64 {
     if (text.len == 0) return ParseError.EmptyField;
-    // A star is the whole field being `*` or `*/n`, not merely starting with
-    // one: `*/2,15` selects a set the writer chose, so the dom/dow rule must
-    // treat it as the restriction it is.
-    star.* = blk: {
-        if (text[0] != '*') break :blk false;
-        if (text.len == 1) break :blk true;
-        if (text.len < 3 or text[1] != '/') break :blk false;
-        for (text[2..]) |ch| {
-            if (ch < '0' or ch > '9') break :blk false;
-        }
-        break :blk true;
-    };
+    star.* = text[0] == '*';
 
     var mask: u64 = 0;
     var it = std.mem.splitScalar(u8, text, ',');
@@ -524,8 +514,11 @@ test "field syntax: star, number, list, range and step" {
     try std.testing.expect(bit64(mixed.minute, 20));
     try std.testing.expect(bit64(mixed.minute, 40));
     try std.testing.expect(!bit64(mixed.minute, 1));
-    // A list is a restriction even when it starts with a star element.
-    try std.testing.expect(!(try parse("0 0 */2,15 * *")).dom_star);
+    // Vixie reads the star flag off the first character: a list starting
+    // with `*/n` counts as starred for the dom/dow rule even though the list
+    // as a whole selects a set the writer chose.
+    try std.testing.expect((try parse("0 0 */2,15 * *")).dom_star);
+    try std.testing.expect((try parse("0 0 *,5 * *")).dom_star);
 }
 
 test "day-of-week takes 0 and 7 for Sunday, in ranges too" {
@@ -609,6 +602,26 @@ test "next fire: day-of-month and day-of-week are OR'd when both are set" {
     try expectCivil(try nextCivil("0 0 13 * *", .{ 2026, 11, 1, 0, 0 }, 0), .{ 2026, 11, 13, 0, 0 });
     // With day-of-month starred, day-of-week alone decides.
     try expectCivil(try nextCivil("0 0 * * 5", .{ 2026, 11, 1, 0, 0 }, 0), .{ 2026, 11, 6, 0, 0 });
+}
+
+test "next fire: a stepped day field intersects the other day field" {
+    // Vixie flags a field starting with `*` even when it steps, so
+    // `*/2` on day-of-month ANDs with day-of-week instead of being ignored:
+    // Fridays on an odd date (`*/2` over 1..31 is 1,3,...,31). After
+    // Sat 2026-08-22, the Fridays Aug 28 and Sep 4 carry even dates and
+    // Sep 11 is odd. The old bare-star shortcut returned Aug 28.
+    try expectCivil(try nextCivil("0 0 */2 * 5", .{ 2026, 8, 22, 0, 0 }, 0), .{ 2026, 9, 11, 0, 0 });
+    // Symmetrically, a stepped day-of-week restricts day-of-month: the 16th
+    // falling on Sunday, Wednesday or Saturday (dow */3). Nov 16 2026 is a
+    // Monday, Dec 16 a Wednesday.
+    try expectCivil(try nextCivil("0 0 16 * */3", .{ 2026, 11, 2, 0, 0 }, 0), .{ 2026, 12, 16, 0, 0 });
+    // Both day fields stepped: odd dates that are also Sun/Wed/Sat. From
+    // Aug 15 that is Wednesday the 19th; the old both-starred shortcut
+    // returned true for every day and fired daily.
+    try expectCivil(try nextCivil("0 0 */2 * */3", .{ 2026, 8, 15, 0, 0 }, 0), .{ 2026, 8, 19, 0, 0 });
+    // A star-led list (`*,5`) is starred too, so it no longer widens the
+    // join to every day: Mondays only.
+    try expectCivil(try nextCivil("0 0 *,5 * 1", .{ 2026, 11, 1, 0, 0 }, 0), .{ 2026, 11, 2, 0, 0 });
 }
 
 test "next fire: a fixed offset shifts the wall clock the fields describe" {
