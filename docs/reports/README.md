@@ -82,13 +82,17 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [The kernel supervisor's environment was whatever the Io carried, not a policy](bugs/2026-08-23-kernel-supervisor-environment-is-unspecified.md) — Resolved
 
+- [A clanker-<name> binary on PATH is exec'd unsandboxed with no entry in the enabled-list](bugs/2026-08-23-cli-tier2-plugin-runs-without-consent.md) — Resolved
+
+- [A composer @path mention of a file over the 32 KiB cap is dropped instead of truncated](bugs/2026-08-23-mention-over-cap-file-dropped.md) — Resolved
+
 - [Every kernel cell was held for the full timeout_ms before its reply was returned](bugs/2026-08-23-kernel-timeout-watchdog-holds-every-reply.md) — Resolved
 
 - [corrupt TUI/CLI plugin state silently disabled every plugin](bugs/2026-08-23-corrupt-plugin-state-silently-disables.md) — Resolved
 
 - [A hung-up /api/events subscriber does not release its in-flight slot on macOS](bugs/2026-08-23-events-slot-not-released-on-hangup.md) — Open
 
-- [A panic raised from a blocked Io.Threaded recurses forever instead of aborting](bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md) — Open
+- [A panic raised from a blocked Io.Threaded recurses forever instead of aborting](bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md) — Resolved
 
 - [zig build e2e does not compile on macOS: the pty harness is Linux-only](bugs/2026-08-23-e2e-pty-harness-is-linux-only.md) — Resolved
 

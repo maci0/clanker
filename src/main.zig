@@ -39,7 +39,49 @@ fn claimTerminalRecovery() bool {
     return !recovery_claimed.swap(true, .seq_cst);
 }
 
+/// Per-thread "already panicking" latch. Zig's `defaultPanic` keeps its own
+/// stage counter and aborts on re-entry, but a custom `handlePanic` is entered
+/// *before* it and has to reproduce that itself: everything below --
+/// `vaxis.recover()`, `log.logPanic`, and `defaultPanic`'s own stack-trace
+/// printing -- can raise the very panic it is reporting, and without a latch
+/// the cycle is unbounded. Observed as an unkillable hang with no output: a
+/// panic from `Io.Threaded.Syscall.start`'s `.blocked => unreachable` whose
+/// report flushed stderr back through the same dispatcher, 789 of 789 samples
+/// in that cycle, nothing printed and nothing to reap.
+/// See docs/reports/bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md.
+///
+/// Thread-local, not process-wide, because re-entry is a same-thread
+/// phenomenon: killing the process from a *second* thread's first panic would
+/// cut off the report the first thread is still writing, which
+/// `defaultPanic`'s cross-thread handling already deals with.
+threadlocal var panicking_on_this_thread: bool = false;
+
+/// True for the first caller on this thread only. Kept separate from
+/// `handlePanic` for the same reason `claimTerminalRecovery` is: `handlePanic`
+/// is `noreturn` and so cannot be called from a test.
+fn claimPanicReport() bool {
+    if (panicking_on_this_thread) return false;
+    panicking_on_this_thread = true;
+    return true;
+}
+
+test "the panic report is claimed once per thread, so a nested panic aborts" {
+    defer panicking_on_this_thread = false;
+
+    try std.testing.expect(claimPanicReport());
+    // A panic raised while reporting a panic -- by `vaxis.recover()`, by the
+    // stderr write, or by `defaultPanic`'s trace -- re-enters `handlePanic`.
+    // Every re-entry must decline, which is what turns the cycle into an
+    // `abort()` instead of an unbounded recursion.
+    try std.testing.expect(!claimPanicReport());
+    try std.testing.expect(!claimPanicReport());
+}
+
 fn handlePanic(msg: []const u8, ret_addr: ?usize) noreturn {
+    // Re-entry: something in the reporting path below panicked. Terminate
+    // rather than report again -- a crash that cannot be printed is still a
+    // crash, and a hang is strictly worse to operate than a bare abort.
+    if (!claimPanicReport()) std.process.abort();
     if (claimTerminalRecovery()) vaxis.recover();
     // One structured record before the trace. Zig's default panic writes a
     // multi-line dump with no level, no timestamp and no correlation id, so in

@@ -31,6 +31,34 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   function ADR 0010 describes has no production caller, so
   `scripts/setup-python-wasi.sh` does not change what a `kernel` call does.
   The `llm_description` said it too, so the model was being told it as well.
+- A `clanker-<name>` binary on `PATH` (or under `~/.clanker/plugins/`) is no
+  longer exec'd unsandboxed unless `state/cli_plugins.json` names it. The
+  Tier 2 dispatcher went through bare discovery with no enabled-list check, so
+  a plain `clanker <word>` ran any executable `clanker-<word>` on PATH with no
+  opt-in, and *disabling* a sandboxed Tier 1 plugin promoted an unsandboxed
+  binary of the same name into its place. `clanker help` now also lists
+  `~/.clanker/plugins/` alongside PATH, names the source of each row, and
+  marks each one on or off.
+
+- A REPL composer `@path` mention of a file over the 32 KiB cap is truncated
+  with a `[truncated]` notice instead of being dropped. The read was
+  `readFileAlloc(.limited(per_file_cap + 1))`, and that limit answers
+  `error.StreamTooLong` when it is reached or exceeded, so every file at or
+  over the cap read as unreadable and the mention was sent to the model as a
+  bare `@path` token with no fenced block and no notice. The truncation also
+  lands on a UTF-8 codepoint boundary now, so a cut inside a multi-byte
+  character no longer puts invalid UTF-8 in the request body and the saved
+  session.
+- A panic now always terminates the process instead of sometimes turning into
+  a silent, unkillable hang. The panic reporter went through `std.debug.print`,
+  whose stderr flush re-enters `std.Io.Threaded`; when the panic came from that
+  dispatcher (`Syscall.start`'s `.blocked => unreachable`, which a signal
+  landing on a pool thread mid-syscall reaches) the flush raised the same panic
+  again, with no re-entry guard to stop it — nothing printed, no exit status,
+  and nothing for a supervisor to reap, so a crashed `clanker repl` wedged
+  instead of dying. The panic line is now written with a raw `write(2)` that
+  touches no `std.Io`, and `handlePanic` latches per thread and `abort()`s on
+  re-entry the way Zig's own default handler does.
 - A `kernel` cell now returns as soon as it finishes instead of being held for
   the whole of `timeout_ms`. The timeout watchdog slept the entire budget and
   only then checked whether it was still needed, and the round trip joins that
