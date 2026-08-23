@@ -16,6 +16,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `GET /api/events` at the 32-subscriber cap now sends a `503` a strict client
+  can actually read. The refusal was one hand-written literal whose
+  `Content-Length` said 52 for a 48-byte body, so a client honoring the header
+  waited for four bytes that never came and reported a truncated response
+  instead of `too many live subscribers` — Python's `http.client` raised
+  `IncompleteRead(48 bytes read, 4 more expected)`. `curl` and the browser's
+  `EventSource` take the connection close as end-of-body and were unaffected,
+  which is why it went unnoticed. The response is now framed from the body at
+  comptime, so the declared length cannot drift from it again.
 - The web UI Arena view follows a running match again. Its poll tick skipped
   the fetch whenever the `/api/events` stream was up, but nothing publishes a
   `t:"arena"` event, so stage, combatant chips, HP graph and transcript froze
