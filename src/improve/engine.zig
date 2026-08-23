@@ -3149,7 +3149,7 @@ fn cmdEvalShapeBroken(src: []const u8) ?[]const u8 {
 /// when the offset is on the first line. Used to pin a load-bearing line to
 /// its canonical zig-fmt indentation; see cmdEvalShapeBroken's wrap check.
 fn lineIndent(text: []const u8, at: usize) ?usize {
-    const line_start = std.mem.lastIndexOfScalar(u8, text[0..at], '\n') orelse return null;
+    const line_start = std.mem.findScalarLast(u8, text[0..at], '\n') orelse return null;
     var i = line_start + 1;
     var n: usize = 0;
     while (i < text.len and text[i] == ' ') : (i += 1) n += 1;
@@ -3243,7 +3243,7 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
 /// from the expected `indent` in the table above.
 fn requiredIndent(body: []const u8, required: []const u8) ?usize {
     const at = findCodeLine(body, required) orelse return null;
-    const line_start = std.mem.lastIndexOfScalar(u8, body[0..at], '\n') orelse return null;
+    const line_start = std.mem.findScalarLast(u8, body[0..at], '\n') orelse return null;
     var i = line_start + 1;
     var n: usize = 0;
     while (i < body.len and body[i] == ' ') : (i += 1) n += 1;

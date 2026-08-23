@@ -266,7 +266,7 @@ fn uncommittedAmong(groups: []const logic.Group) ![]const []const u8 {
 /// ours.
 fn porcelainPath(line: []const u8) []const u8 {
     const rest = line[3..];
-    if (std.mem.indexOf(u8, rest, " -> ")) |arrow| return rest[arrow + 4 ..];
+    if (std.mem.find(u8, rest, " -> ")) |arrow| return rest[arrow + 4 ..];
     return rest;
 }
 
@@ -466,7 +466,7 @@ fn mergeAll(groups: []const logic.Group) ![]logic.Group {
 
 fn parseGroups(raw: []const u8, all_files: []const []const u8, max_commits: usize) ![]logic.Group {
     const start = std.mem.findScalar(u8, raw, '{') orelse return error.InvalidArg;
-    const end = std.mem.lastIndexOfScalar(u8, raw, '}') orelse return error.InvalidArg;
+    const end = std.mem.findScalarLast(u8, raw, '}') orelse return error.InvalidArg;
     const v = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw[start .. end + 1], .{});
     if (v != .object) return error.InvalidArg;
     const arr = switch (v.object.get("commits") orelse return error.InvalidArg) {
@@ -528,7 +528,7 @@ fn groupDepends(a: logic.Group, b: logic.Group) bool {
     for (a.files) |af| {
         for (b.files) |bf| {
             const base = std.fs.path.basename(bf);
-            const stem = if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| base[0..dot] else base;
+            const stem = if (std.mem.findScalarLast(u8, base, '.')) |dot| base[0..dot] else base;
             if (logic.isTestPath(af) and std.mem.find(u8, af, stem) != null)
                 return true;
             if (logic.references(af, bf)) return true;

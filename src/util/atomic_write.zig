@@ -52,7 +52,7 @@ pub fn writeFilePerms(io: std.Io, dir: std.Io.Dir, sub_path: []const u8, data: [
         // handle for an absolute path. A relative one resolves against the
         // link's own directory, not against `dir`.
         if (link.len > 0 and link[0] == '/') break :blk link;
-        const dir_end = std.mem.lastIndexOfScalar(u8, sub_path, '/') orelse break :blk link;
+        const dir_end = std.mem.findScalarLast(u8, sub_path, '/') orelse break :blk link;
         break :blk std.fmt.bufPrint(&joined_buf, "{s}/{s}", .{ sub_path[0..dir_end], link }) catch break :blk link;
     } else |err| switch (err) {
         // Only a path that is provably not a symlink may be replaced

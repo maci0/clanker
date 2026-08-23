@@ -112,7 +112,7 @@ fn setKey(parsed: std.json.Value, out: *lib.Out) !void {
 
     // These sections' disk shape is quoted [models."p/m"] / [[providers]]
     // tables; refuse rather than guess where a line-based edit would land.
-    const head = key[0 .. std.mem.indexOfScalar(u8, key, '.') orelse key.len];
+    const head = key[0 .. std.mem.findScalar(u8, key, '.') orelse key.len];
     inline for (.{ "providers", "models", "mcp_servers" }) |table| {
         if (std.mem.eql(u8, head, table))
             return lib.fail(out, table ++ " is a table of dynamic keys; edit config.local.toml by hand");

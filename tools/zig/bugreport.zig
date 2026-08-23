@@ -72,9 +72,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const fix_hint = lib.optStr(parsed, "fix_hint");
     var repro_lang: []const u8 = "sh";
     if (lib.optStr(parsed, "repro_lang")) |rl| {
-        if (rl.len > 0 and std.mem.indexOf(u8, rl, "\n") == null and
-            std.mem.indexOf(u8, rl, "`") == null and
-            std.mem.indexOf(u8, rl, "\r") == null)
+        if (rl.len > 0 and std.mem.find(u8, rl, "\n") == null and
+            std.mem.find(u8, rl, "`") == null and
+            std.mem.find(u8, rl, "\r") == null)
         {
             repro_lang = utf8.cap(rl, 64);
         }
@@ -201,7 +201,7 @@ fn mapSeverity(sev: []const u8) ?[]const u8 {
 fn inferComponent(title: []const u8) ?[]const u8 {
     const tokens = [_][]const u8{ "llm", "tui", "sandbox", "schedule", "serve", "tools", "webui", "chat", "memory", "auth", "config", "agent", "evals", "improve", "peers", "records", "hooks", "mcp" };
     for (tokens) |tok| {
-        if (std.ascii.indexOfIgnoreCase(title, tok)) |_| return tok;
+        if (std.ascii.findIgnoreCase(title, tok)) |_| return tok;
     }
     return null;
 }
@@ -241,10 +241,10 @@ fn inferSeverity(texts: []const ?[]const u8) []const u8 {
     for (texts) |t| {
         if (t) |text| {
             for (high_kw) |kw| {
-                if (std.ascii.indexOfIgnoreCase(text, kw)) |_| return "high";
+                if (std.ascii.findIgnoreCase(text, kw)) |_| return "high";
             }
             for (low_kw) |kw| {
-                if (std.ascii.indexOfIgnoreCase(text, kw)) |_| return "low";
+                if (std.ascii.findIgnoreCase(text, kw)) |_| return "low";
             }
         }
     }
@@ -280,7 +280,7 @@ fn inferDiagnosis(texts: []const ?[]const u8) ?[]const u8 {
     for (texts) |t| {
         if (t) |text| {
             for (cats) |cat| {
-                if (std.ascii.indexOfIgnoreCase(text, cat.kw)) |_| return cat.label;
+                if (std.ascii.findIgnoreCase(text, cat.kw)) |_| return cat.label;
             }
         }
     }
