@@ -322,6 +322,55 @@ every document; "judged" is what a single ledger row can honestly say.
   newer query, and ended in an empty `catch` that left a stale list open; each
   request takes a ticket now and a failure closes the list.
 
+- **(Fixed) The keep-alive request budget was never in the `Connection`
+  header.** `handleConnectionGuarded` loops while
+  `requests < max_keep_alive_requests`, and nothing consulted `requests` when
+  deciding the header, so the response that spent the budget said
+  `Connection: keep-alive` and the server then closed. Measured live over one
+  socket: response 99 keep-alive, response 100 keep-alive, and request 101 got
+  an empty reply. A browser hides it by retrying an idempotent GET; a client
+  that does not retry sees the close as a failure. The budget is part of
+  eligibility now, so the last permitted response says `close` and the same
+  measurement reads keep-alive through 99 and `close` on 100.
+- **(Fixed) `POST /api/compare` with no id answered 400, documented as 405.**
+  The Failure modes row below distinguishes it from the 400 for a pick with no
+  letter precisely so a client can tell the two apart, and
+  `compareRouteToToolInput` returns null for both, which the caller's single
+  `orelse` turned into one `bad request`. There is a `compareCollectionPost`
+  predicate before the mapping now; verified live, the collection POST is 405 and
+  a blank pick against a real id is still 400.
+- **Documentation drift: the Compare view is a plugin, not a page module.** Three
+  passages here (Design, the blindness argument, and acceptance criterion 9.1)
+  describe `ui/app/features/compare.js` with a dedicated
+  `render_compare_view`/`gzip_compare_view` cache pair. There is no `compare` tag
+  in `src/serve/webui_assets.zig` and no such path in the asset list: Compare
+  ships as a disk plugin under `ui/plugins/compare/`, as `AGENTS.md` says. The
+  behaviour the criterion claims is real and the file it names is not.
+- The proxy's own two defects, both live-measured and both fixed, are recorded in
+  `docs/prds/0026-llm-proxy.md`'s Known issues rather than here: every proxy
+  response wrote a body on HEAD, and `writeEnvelope` truncated the 404 body
+  mid-JSON on a client-supplied model name.
+- **`HEAD` on an `/api` route answers 404 and closes.** The Failure modes row
+  below says HEAD on *any* route answers the status and headers the GET would.
+  Every `/api` route predicate compares the method to `GET` literally, and the
+  keep-alive eligibility line uses `isWebuiRead` (GET or HEAD) for `/webui` and a
+  bare `GET` compare for `/api` on the very next line. Measured live,
+  `HEAD /api/status` is a 404 with `Connection: close` where `GET /api/status` is
+  200. Not fixed here: `GET /api/events` is an SSE stream, so the fix belongs in
+  the route predicates rather than in a method rewrite at the top of dispatch.
+  Filed as [HEAD on api routes 404s and closes](../reports/bugs/2026-08-23-head-on-api-routes-404s-and-closes.md).
+- **`RenderCache`'s `.failed` state is a permanent latch.** It falls through to
+  rendering again, but the publish `cmpxchg` only accepts `.idle`, so a slot that
+  ever reads `.failed` can never become `.ready`; one transient `gpa.dupe`
+  failure pins that asset to the uncached path for the life of the process. Filed
+  as [RenderCache failed is a permanent latch](../reports/bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md).
+- **The saturation 503 is neither counted nor logged.** It is answered with
+  `respond` on the accept thread, outside `handleConnection`, where the metric
+  and completion-log defers live, so the one load condition an operator would
+  grep `/api/metrics` for is the one the server does not record; and `respond`
+  there reads two threadlocals only `handleConnection` resets. Filed as
+  [connection limit 503 runs on the accept thread](../reports/bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md).
+
 ## Failure modes
 
 | Condition | Behaviour |
@@ -342,6 +391,7 @@ every document; "judged" is what a single ledger row can honestly say.
 | Mermaid fence fails to render / renderer fails to load | Fence box gets `md-mermaid-error` and an alert role; text names the failure (`Diagram failed to render: …` or `Could not load the diagram renderer.`) instead of a blank card |
 | `POST /api/steer` when no run is working that goal/session | `404` with `"no run is currently working that goal or session"`; nothing is queued |
 | `HEAD` on any route | The status and headers the `GET` would send, `Content-Length` included, and no body; a keep-alive eligible HEAD keeps the connection |
+| A connection that has already served `max_keep_alive_requests` responses | The last of them says `Connection: close`, because it is the last one; a `keep-alive` there is a promise broken in the same breath it is made |
 
 ## Acceptance criteria
 
