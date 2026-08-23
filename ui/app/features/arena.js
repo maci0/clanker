@@ -12,7 +12,7 @@
 import { readJson, peerColor, themeToken, cssColorAlpha, wireRefresh } from "../core/utils.js";
 import { showLoadError } from "../core/ui.js";
 import { reducedMotion } from "../core/vendor.js";
-import { onLive, liveOk } from "../core/stream.js";
+import { onLive } from "../core/stream.js";
 
 function byId(id) { return document.getElementById(id); }
 
@@ -75,10 +75,22 @@ function startPolling() {
   stopPolling();
   state.pollFails = 0;
   state.timer = window.setInterval(function () {
-    if (liveOk()) return;
     fetchMatch(state.id, true);
   }, 1100);
 }
+
+/* Nothing publishes a `t:"arena"` event, so this hook is a standing no-op and
+   the interval above is the only thing following a running match.
+   `Topic.arena` exists in src/serve/live.zig and is in the default mask, but
+   no `publish(.arena, ...)` call site does, and a guest cannot make one
+   either: `ck_publish` stamps every guest event `t:"plugin"`. The tick above
+   used to open with a `liveOk()` early return, copied from the Fleet floor —
+   where `t:"mesh"` really is published. Importing this module opens the
+   EventSource (`onLive` calls `ensureLive`), so `liveOk()` went true on load
+   and every tick returned early: stage, chips, HP graph and transcript froze
+   at the first fetch until a manual refresh, and `wasRunning` never flipped,
+   so the elimination sequence never played either. The hook stays so a real
+   publisher lands as a speed-up rather than a rewrite. */
 onLive(function (ev) {
   if (!ev || ev.t !== "arena" || !state.id) return;
   fetchMatch(state.id, true);
