@@ -24,6 +24,30 @@ const max_learnings_prompt_bytes: usize = 4096;
 /// Claude-compatible hop limit for nested `@` imports.
 const max_import_depth: usize = 4;
 
+/// The newest `max_bytes` of an append-only notes file, starting on a line
+/// boundary.
+///
+/// `state/learnings.md` is written by the `note_write` guest as one appended
+/// `- <note>\n` line per note, newest last, with no size bound anywhere. The
+/// section used to be capped with `utf8.cap`, which is a *prefix* cap -- so
+/// once the file passed `max_learnings_prompt_bytes` the prompt froze on the
+/// oldest notes and every note the agent wrote from then on was invisible to
+/// every future prompt, while `note_write` kept answering `{"ok":true}`. The
+/// docstring on the cap says "keep recent notes"; this is that.
+///
+/// Cutting on a newline keeps a half note out of the prompt, and the result
+/// is a suffix of a valid-UTF-8 file cut at an ASCII byte, so it cannot split
+/// a codepoint.
+fn learningsTail(text: []const u8, max_bytes: usize) []const u8 {
+    if (text.len <= max_bytes) return text;
+    const window = text[text.len - max_bytes ..];
+    // The first newline inside the window ends the note the cut landed in;
+    // everything after it is whole notes. A window with no newline at all is
+    // one enormous note, and a suffix of it beats dropping the section.
+    const nl = std.mem.findScalar(u8, window, '\n') orelse return window;
+    return window[nl + 1 ..];
+}
+
 pub const PromptParts = struct {
     system_prompt_file: []const u8,
     skills_dir: []const u8,
@@ -502,8 +526,8 @@ pub fn build(
         if (l.len > 0) {
             try buf.appendSlice(arena, "## Learnings (persistent memory)\n\n" ++ self_authored_notice);
             if (l.len > max_learnings_prompt_bytes) {
-                try buf.appendSlice(arena, utf8.cap(l, max_learnings_prompt_bytes));
-                try buf.appendSlice(arena, "...");
+                try buf.appendSlice(arena, "[older learnings elided]\n");
+                try buf.appendSlice(arena, learningsTail(l, max_learnings_prompt_bytes));
             } else {
                 try buf.appendSlice(arena, l);
             }
@@ -1205,4 +1229,35 @@ test "resolveImportPath: relative, absolute, tilde" {
 
     const home = try resolveImportPath(arena, "AGENTS.md", "~/rules.md", "/home/u");
     try std.testing.expectEqualStrings("/home/u/rules.md", home);
+}
+
+test "the learnings section keeps the newest notes, not the oldest" {
+    // `state/learnings.md` is append-only with the newest note last, so a
+    // prefix cap pins the prompt to the notes the agent wrote first and hides
+    // every note it writes after the file passes the cap.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var buf: std.Io.Writer.Allocating = .init(arena_state.allocator());
+    var i: usize = 0;
+    while (i < 400) : (i += 1) {
+        try buf.writer.print("- note {d:0>4}\n", .{i});
+    }
+    const text = buf.written();
+    try std.testing.expect(text.len > max_learnings_prompt_bytes);
+
+    const kept = learningsTail(text, max_learnings_prompt_bytes);
+    try std.testing.expect(kept.len <= max_learnings_prompt_bytes);
+    // The newest note is present and the oldest is not: both halves, so a
+    // regression to a prefix cap fails rather than passing on "it is shorter".
+    try std.testing.expect(std.mem.find(u8, kept, "- note 0399\n") != null);
+    try std.testing.expect(std.mem.find(u8, kept, "- note 0000\n") == null);
+    // Whole notes only: the cut landed on a line boundary.
+    try std.testing.expect(std.mem.startsWith(u8, kept, "- note "));
+    try std.testing.expect(std.mem.endsWith(u8, kept, "\n"));
+
+    // Under the cap the text is returned untouched, and a single note longer
+    // than the cap still yields its tail rather than nothing.
+    try std.testing.expectEqualStrings("- a\n", learningsTail("- a\n", 4096));
+    const one_long = "- " ++ ("y" ** 100);
+    try std.testing.expectEqual(@as(usize, 10), learningsTail(one_long, 10).len);
 }

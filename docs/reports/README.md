@@ -80,6 +80,29 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [dump-config leaks the secret half of any header whose value contains an equals sign](bugs/2026-08-23-dump-config-header-redaction-cuts-on-equals.md) — Open
+
+- [the merge-base pin advances before the branch resync it depends on, and the resync failure is only a warning](bugs/2026-08-23-improve-merge-pin-advances-before-the-resync.md) — Open
+
+- [kind = grok discards per-model temperature and top_p and never consults the PRD 0024 profile table](bugs/2026-08-23-grok-kind-drops-model-sampling.md) — Open
+
+- [a missing profiles/<name>.toml is reported as config.toml not found, and the .local variant is never read](bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md) — Open
+
+- [a preset's denied tools are still offered to the model; repl --preset is a silent no-op](bugs/2026-08-23-preset-tool-filter-is-inert.md) — Open
+
+- [an unreadable or oversize improvements.jsonl reads as no history, disabling the improve loop's dedup and revert gates](bugs/2026-08-23-improve-history-read-failure-reads-as-empty.md) — Open
+
+- [a mis-escaped trim set lets a whitespace-only hook command through, and the warn log then indexes an empty argv](bugs/2026-08-23-hook-command-trim-set-is-mis-escaped.md) — Open
+
+- [the Anthropic wire is sent OpenAI's reasoning_effort field, and no thinking_schema value produces a valid Anthropic block](bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md) — Open
+
+- [auto-thinking runs the classifier once per iteration instead of once per turn, and classifies a blank submit](bugs/2026-08-23-auto-thinking-classifies-every-iteration.md) — Resolved
+
+- [the one-turn advisor block is removed only on the success path, so three exits leave it as message 0](bugs/2026-08-23-advisor-block-leaks-into-message-zero.md) — Resolved
+
+- [the persistent-learnings prompt section keeps the oldest 4 KiB, so every note past the cap is invisible forever](bugs/2026-08-23-learnings-prompt-keeps-the-oldest-notes.md) — Resolved
+
+- [advisor.model is parsed, documented and never read, so every critique bills the main model](bugs/2026-08-23-advisor-model-never-read.md) — Resolved
 - [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md) — Open
 
 - [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Open

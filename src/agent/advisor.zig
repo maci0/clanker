@@ -11,6 +11,7 @@ const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const log = @import("../util/log.zig");
 const logic = @import("advisor_logic");
+const json_mod = std.json;
 
 pub const system_prompt = logic.system_prompt;
 pub const Severity = logic.Severity;
@@ -52,10 +53,34 @@ pub fn review(
     summary: []const u8,
 ) ?Note {
     if (!cfg.advisor.enabled) return null;
-    const provider = cfg.provider(if (cfg.advisor.provider.len > 0) cfg.advisor.provider else null) catch |err| {
+    const configured = cfg.provider(if (cfg.advisor.provider.len > 0) cfg.advisor.provider else null) catch |err| {
         log.log(.debug, "advisor skipped: {s}", .{@errorName(err)});
         return null;
     };
+    // `advisor.model` is the whole point of the key -- "run the critique on a
+    // cheap model" (docs/configuration.md `[advisor]`, PRD 0015's
+    // `model = "gpt-4o-mini"  # cheap fast model`). It parsed, validated and
+    // documented cleanly while nothing read it, so every enabled-advisor turn
+    // silently billed the provider's `default_model`: the main, expensive
+    // model, 256 completion tokens per tool batch.
+    //
+    // The copy is a shallow one and only `default_model` is reassigned, which
+    // is the safe shape: `put`ting into a shallow-copied provider's `models`
+    // map would alias the global config's map. Same pattern, same reason, as
+    // `thinking.resolveClassifier`.
+    var picked = configured.*;
+    if (cfg.advisor.model.len > 0) {
+        if (!picked.models.contains(cfg.advisor.model)) {
+            // Not fatal: an unconfigured name still goes on the wire, exactly
+            // as `default_model` would. Said out loud because a typo otherwise
+            // reads as "the provider rejected the advisor".
+            log.log(.debug, "advisor model '{s}' has no [models.\"{s}/{s}\"] entry; sending it with default model settings", .{
+                cfg.advisor.model, picked.name, cfg.advisor.model,
+            });
+        }
+        picked.default_model = cfg.advisor.model;
+    }
+    const provider = &picked;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -108,4 +133,52 @@ test "summarizeTurn converts native messages into the shared helper" {
 
 test "advisor is off by default" {
     try std.testing.expect(!(config.Advisor{}).enabled);
+}
+
+test "review sends advisor.model, not the provider's default model" {
+    // `advisor.model` used to be parsed, validated, documented and unread, so
+    // the critique quietly ran on the main model. Read off the wire rather
+    // than off the call chain: a mock provider records the body, and the
+    // assertion is the `model` field it actually received.
+    const mock_server = @import("../llm/mock_server.zig");
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, gpa, .anthropic_text);
+    defer mock.stop();
+
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MOCK_ADVISOR_KEY", "sk-test");
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const base_url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{mock.port});
+
+    var p = try config.Provider.single(arena, "critic", base_url, .anthropic, "expensive-main", .{ .max_tokens = 256 });
+    p.api_key_env = "MOCK_ADVISOR_KEY";
+    try p.models.put(arena, "cheap-critic", .{ .max_tokens = 256 });
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "critic", p);
+    cfg.default_provider = "critic";
+    cfg.advisor = .{ .enabled = true, .provider = "critic", .model = "cheap-critic", .timeout_ms = 30_000 };
+
+    // The mock's canned prose is not a note, so `review` returns null; the
+    // body it sent on the way there is the subject of the test.
+    _ = review(io, gpa, &env, &cfg, "the turn summary");
+    const sent = mock.lastCaptured() orelse return error.TestExpectedEqual;
+    const body = try json_mod.parseFromSliceLeaky(json_mod.Value, arena, sent.body, .{});
+    try std.testing.expectEqualStrings("cheap-critic", body.object.get("model").?.string);
+
+    // Control: with no `advisor.model` the provider's default is what ships,
+    // so the fix cannot be read as "always send some other model".
+    cfg.advisor.model = "";
+    _ = review(io, gpa, &env, &cfg, "the turn summary");
+    const sent2 = mock.lastCaptured() orelse return error.TestExpectedEqual;
+    const body2 = try json_mod.parseFromSliceLeaky(json_mod.Value, arena, sent2.body, .{});
+    try std.testing.expectEqualStrings("expensive-main", body2.object.get("model").?.string);
 }

@@ -9,6 +9,17 @@ error. A `note`/`concern` is injected as a one-turn system block;
 concern. Sources of truth: `src/agent/advisor.zig`, `src/agent/loop.zig`
 (`reviewTurn`), `src/config.zig` (`Advisor`).
 
+`advisor.model` is honored since 2026-08-24: `review` shallow-copies the
+resolved provider and reassigns `default_model`, the same shape
+`thinking.resolveClassifier` uses. Before that the key parsed, validated and
+documented cleanly while nothing read it, so every enabled-advisor turn billed
+the provider's `default_model`
+([bug](../reports/bugs/2026-08-23-advisor-model-never-read.md)). The one-turn
+injection is also removed with a `defer` now, so a provider error, a TTSR retry
+or a mid-stream Ctrl-C cannot leave the note sitting where the loop requires the
+system prompt
+([bug](../reports/bugs/2026-08-23-advisor-block-leaks-into-message-zero.md)).
+
 ## Problem
 
 The main agent loop runs a single model's think-act-observe cycle with no
@@ -194,6 +205,22 @@ The main agent loop never sees an exception from the advisor path.
 | Advisor returns `blocker` in a headless run | The `ask_fn` branch is skipped (no channel); the blocker is downgraded to a `concern` note and injected for the next turn; the loop proceeds. No log line is emitted for the downgrade |
 | Main agent's turn itself errors | Advisor is not called; it reviews only completed turns |
 | Advisor call itself calls a tool (not possible by design, but malformed JSON could claim one) | Ignored; the advisor completion is a non-tool `client.chatWithTimeout` call, which returns text only |
+
+## Known issues
+
+1. **The one-turn injection has no test.** Nothing in the tree drives
+   `Agent.run`, so the pairing of the index-0 insert with its removal is
+   structural (a `defer`) rather than test-pinned, and the three exits that used
+   to leak it — a provider error, the TTSR retry `continue`, a mid-stream
+   Ctrl-C — are not exercised by anything. A fixture that drives the iteration
+   loop against a mock provider and a mock advisor would cover this and the TTSR
+   arm, which has the same "assert on `messages[0]`" shape and the same absence
+   of coverage. See
+   [the bug](../reports/bugs/2026-08-23-advisor-block-leaks-into-message-zero.md).
+
+2. **`scope` and `context_turns` were not audited** when `model` was fixed. The
+   `model` defect was "declared, parsed, allowlisted in `warnUnknownKeys`, and
+   unread"; the same shape has not been ruled out for these two.
 
 ## Acceptance criteria
 
