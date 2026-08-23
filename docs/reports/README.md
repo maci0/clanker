@@ -80,6 +80,12 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-24-connection-limit-503-runs-on-the-accept-thread.md) — Open
+
+- [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-24-rendercache-failed-is-a-permanent-latch.md) — Open
+
+- [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-24-head-on-api-routes-404s-and-closes.md) — Open
+
 - [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-24-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
 
 - [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-24-plugin-refresh-hook-is-unreachable.md) — Open

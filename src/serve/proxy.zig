@@ -83,7 +83,7 @@ pub const Ctx = struct {
 };
 
 /// 401 from `handleConnection` before CSRF, so an SDK error parser works.
-pub fn writeAuthError(stream: std.Io.net.Stream, path: []const u8, headers_raw: []const u8) u16 {
+pub fn writeAuthError(stream: std.Io.net.Stream, method: []const u8, path: []const u8, headers_raw: []const u8) u16 {
     // The shared socket serves the proxy under /proxy/v1; familyOf expects
     // the /v1 form. Normalize before shaping the error, so an Anthropic SDK
     // on /proxy/v1/messages gets an Anthropic-shaped 401 rather than an
@@ -94,7 +94,9 @@ pub fn writeAuthError(stream: std.Io.net.Stream, path: []const u8, headers_raw: 
         .gpa = undefined,
         .cfg = undefined,
         .environ_map = undefined,
-        .method = "GET",
+        // The real method, so a HEAD that fails auth is bodyless like every
+        // other HEAD rather than the "GET" this used to claim it was.
+        .method = method,
         .path = v1_path,
         .query = "",
         .headers_raw = headers_raw,
@@ -121,7 +123,9 @@ pub fn handle(ctx: Ctx) u16 {
         if (modelsId(ctx.path)) |id| return writeModelsGet(ctx, family, id);
     }
     if (isModelsList(ctx.path) or modelsId(ctx.path) != null) {
-        return writeAllow(ctx, 405, "GET");
+        // HEAD is served on these routes (`is_get` above), so it belongs in
+        // the `Allow` list a 405 hands back.
+        return writeAllow(ctx, 405, "GET, HEAD");
     }
     if (std.mem.eql(u8, ctx.path, "/v1/messages/count_tokens")) {
         return writeCountTokens(ctx);
@@ -461,22 +465,22 @@ fn pipe(
         const arena = arena_state.allocator();
         var err_detail: ?[]const u8 = null;
         const parsed = impl.parseResponse(arena, body_buf.items, &err_detail) catch {
-            writeFixed(ctx.stream, status, reason, "application/json", body_buf.items);
+            writeFixed(ctx, status, reason, "application/json", body_buf.items);
             return status;
         };
         const encoded = switch (family) {
             .openai => xcode.openaiCompletion(ctx.gpa, provider.activeModelName(), parsed),
             .anthropic => xcode.anthropicMessage(ctx.gpa, provider.activeModelName(), parsed),
         } catch {
-            writeFixed(ctx.stream, status, reason, "application/json", body_buf.items);
+            writeFixed(ctx, status, reason, "application/json", body_buf.items);
             return status;
         };
         defer ctx.gpa.free(encoded);
-        writeFixed(ctx.stream, status, reason, "application/json", encoded);
+        writeFixed(ctx, status, reason, "application/json", encoded);
         peekAndRecord(ctx, provider, status, encoded, false);
         return status;
     }
-    writeFixed(ctx.stream, status, reason, ctype, body_buf.items);
+    writeFixed(ctx, status, reason, ctype, body_buf.items);
     peekAndRecord(ctx, provider, status, body_buf.items, false);
     return status;
 }
@@ -586,7 +590,7 @@ fn writeCountTokens(ctx: Ctx) u16 {
     const n = @max(ctx.body.len / 4, 1);
     var buf: [64]u8 = undefined;
     const body = std.fmt.bufPrint(&buf, "{{\"input_tokens\":{d}}}", .{n}) catch "{\"input_tokens\":1}";
-    writeFixed(ctx.stream, 200, "OK", "application/json", body);
+    writeFixed(ctx, 200, "OK", "application/json", body);
     return 200;
 }
 
@@ -1010,15 +1014,29 @@ fn aliasOf(cfg: *const config.Config, name: []const u8) ?[]const u8 {
     return cfg.serve.proxy_aliases.map.get(name);
 }
 
+/// Both halves of `modelNotFoundMessage` are bounded, because both are things
+/// this process does not choose: the alias table comes from config, and the
+/// model name comes off the wire. `writeEnvelope`'s fallback is the guarantee
+/// that the body is valid JSON; these are what keep the useful message the
+/// normal outcome rather than the fallback. Sized so that even a
+/// worst-case JSON escape of both stays inside the envelope's 1536-byte buffer
+/// alongside the fixed prose.
+const alias_list_cap = 240;
+const requested_model_cap = 120;
+
 /// The configured [serve.proxy_aliases] keys as a comma-separated list, so a
-/// lookup miss can name what is actually available. Capped well under
-/// writeEnvelope's fixed header buffer so a large alias table cannot truncate
-/// the error body mid-JSON.
+/// lookup miss can name what is actually available.
 fn aliasList(arena: std.mem.Allocator, cfg: *const config.Config) []const u8 {
     var buf: std.ArrayList(u8) = .empty;
     var it = cfg.serve.proxy_aliases.map.iterator();
     while (it.next()) |kv| {
-        if (buf.items.len > 1000) break;
+        // Checked before the append, not after: a check on the way out bounds
+        // the list at the cap *plus* one whole key, which is how a 1000-byte
+        // cap ended up able to overrun a 1536-byte buffer.
+        if (buf.items.len + kv.key_ptr.*.len + 2 > alias_list_cap) {
+            buf.appendSlice(arena, if (buf.items.len > 0) ", …" else "…") catch {};
+            break;
+        }
         if (buf.items.len > 0) buf.appendSlice(arena, ", ") catch break;
         buf.appendSlice(arena, kv.key_ptr.*) catch break;
     }
@@ -1026,9 +1044,25 @@ fn aliasList(arena: std.mem.Allocator, cfg: *const config.Config) []const u8 {
 }
 
 /// The 404 diagnostic for an unmatched model: what was asked for and what the
-/// aliases are, instead of a generic miss the caller cannot act on.
+/// aliases are, instead of a generic miss the caller cannot act on. The name is
+/// echoed back so a caller can see the typo, which means it is echoed under a
+/// bound: it arrives in the request body and nothing else limits it to anything
+/// a diagnostic can hold.
+fn clampUtf8(s: []const u8, cap: usize) []const u8 {
+    if (s.len <= cap) return s;
+    var end = cap;
+    // Back off a continuation byte rather than cutting a codepoint in half:
+    // invalid UTF-8 makes the JSON encoder fail, which would cost the whole
+    // message to save a byte of it.
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
+}
+
 fn modelNotFoundMessage(arena: std.mem.Allocator, requested: ?[]const u8, cfg: *const config.Config) []const u8 {
-    return std.fmt.allocPrint(arena, "Unknown model \"{s}\" for this route; known aliases: {s}", .{ requested orelse "", aliasList(arena, cfg) }) catch "Unknown model for this route";
+    const name = requested orelse "";
+    const shown = clampUtf8(name, requested_model_cap);
+    const ellipsis: []const u8 = if (shown.len < name.len) "…" else "";
+    return std.fmt.allocPrint(arena, "Unknown model \"{s}{s}\" for this route; known aliases: {s}", .{ shown, ellipsis, aliasList(arena, cfg) }) catch "Unknown model for this route";
 }
 
 fn claudeSizeKey(name: []const u8) ?[]const u8 {
@@ -1076,7 +1110,7 @@ fn writeModelsList(ctx: Ctx, family: Family) u16 {
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &out.writer };
     collectModels(ctx.cfg, family, arena, &s) catch return writeEnvelope(ctx, 500, null, "Failed to list models");
-    writeFixed(ctx.stream, 200, "OK", "application/json", out.written());
+    writeFixed(ctx, 200, "OK", "application/json", out.written());
     return 200;
 }
 
@@ -1092,7 +1126,7 @@ fn writeModelsGet(ctx: Ctx, family: Family, id: []const u8) u16 {
     writeOneModel(&s, family, hit.id, hit.owned_by, hit.display) catch {
         return writeEnvelope(ctx, 500, null, "Failed to encode model");
     };
-    writeFixed(ctx.stream, 200, "OK", "application/json", out.written());
+    writeFixed(ctx, 200, "OK", "application/json", out.written());
     return 200;
 }
 
@@ -1177,29 +1211,50 @@ fn writeOneModel(s: *std.json.Stringify, family: Family, id: []const u8, owned_b
     try s.endObject();
 }
 
+/// The envelope this falls back to when the message would not fit. The whole
+/// point of the envelope shape is that an SDK error parser reads it, and a body
+/// that stops mid-string is worse for that parser than a generic one: it raises
+/// a JSON decode error instead of surfacing the status.
+fn truncatedEnvelope(family: Family) []const u8 {
+    return switch (family) {
+        .openai => "{\"error\":{\"message\":\"Request refused; the diagnostic was too long to return\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":null}}",
+        .anthropic => "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Request refused; the diagnostic was too long to return\"}}",
+    };
+}
+
 fn writeEnvelope(ctx: Ctx, status: u16, code: ?[]const u8, message: []const u8) u16 {
     const family = familyOf(ctx.path, ctx.headers_raw);
     var buf: [1536]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
+    // `Writer.fixed` fills the buffer and *then* fails, so a swallowed error
+    // here leaves valid-looking bytes that are not valid JSON. Every failure is
+    // recorded and the whole body is replaced rather than shipped half-written:
+    // the message reaching here is caller-controlled (`modelNotFoundMessage`
+    // splices the requested model name, bounded only by the 24 MiB body cap),
+    // and a 2000-character model name really did produce 1536 bytes of
+    // `{"error":{"message":"Unknown model \"aaaa…` with no closing braces,
+    // under a Content-Length that stated 1536.
+    var over = false;
     switch (family) {
         .openai => {
-            w.writeAll("{\"error\":{\"message\":") catch {};
-            std.json.Stringify.value(message, .{}, &w) catch {};
-            w.writeAll(",\"type\":\"invalid_request_error\",\"param\":null,\"code\":") catch {};
+            w.writeAll("{\"error\":{\"message\":") catch { over = true; };
+            std.json.Stringify.value(message, .{}, &w) catch { over = true; };
+            w.writeAll(",\"type\":\"invalid_request_error\",\"param\":null,\"code\":") catch { over = true; };
             if (code) |c| {
-                std.json.Stringify.value(c, .{}, &w) catch {};
+                std.json.Stringify.value(c, .{}, &w) catch { over = true; };
             } else {
-                w.writeAll("null") catch {};
+                w.writeAll("null") catch { over = true; };
             }
-            w.writeAll("}}") catch {};
+            w.writeAll("}}") catch { over = true; };
         },
         .anthropic => {
-            w.writeAll("{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":") catch {};
-            std.json.Stringify.value(message, .{}, &w) catch {};
-            w.writeAll("}}") catch {};
+            w.writeAll("{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":") catch { over = true; };
+            std.json.Stringify.value(message, .{}, &w) catch { over = true; };
+            w.writeAll("}}") catch { over = true; };
         },
     }
-    writeFixed(ctx.stream, status, reasonPhrase(status), "application/json", w.buffered());
+    const body = if (over) truncatedEnvelope(family) else w.buffered();
+    writeFixed(ctx, status, reasonPhrase(status), "application/json", body);
     return status;
 }
 
@@ -1221,11 +1276,25 @@ fn writeAllow(ctx: Ctx, status: u16, allow: []const u8) u16 {
         request_id,
     }) catch return status;
     raw_http.writeAllFd(ctx.stream.socket.handle, hdr);
-    raw_http.writeAllFd(ctx.stream.socket.handle, body);
+    if (!isHeadMethod(ctx.method)) raw_http.writeAllFd(ctx.stream.socket.handle, body);
     return status;
 }
 
-fn writeFixed(stream: std.Io.net.Stream, status: u16, reason: []const u8, content_type: []const u8, body: []const u8) void {
+/// RFC 9110 9.3.2: a HEAD response carries the headers the GET would send and
+/// none of its content. `AGENTS.md` states it as an invariant -- every
+/// body-writing responder guards HEAD -- and the proxy was the last holdout:
+/// `handle` accepts HEAD on the models routes (`is_get` is GET *or* HEAD) and
+/// every one of them went out through the two functions below, which wrote the
+/// body unconditionally. Measured live, `HEAD /proxy/v1/models` returned 200
+/// plus all 658 body bytes. Hardcoding `Connection: close` meant the stray
+/// bytes died with the socket, which is the same mitigation `respond` was
+/// carrying when its own version of this was fixed, and it was the bug there
+/// too.
+fn isHeadMethod(method: []const u8) bool {
+    return std.mem.eql(u8, method, "HEAD");
+}
+
+fn writeFixed(ctx: Ctx, status: u16, reason: []const u8, content_type: []const u8, body: []const u8) void {
     var hbuf: [768]u8 = undefined;
     const request_id = log.getContext();
     const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nX-Request-ID: {s}\r\nConnection: close\r\n\r\n", .{
@@ -1235,8 +1304,10 @@ fn writeFixed(stream: std.Io.net.Stream, status: u16, reason: []const u8, conten
         body.len,
         request_id,
     }) catch return;
-    raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, body);
+    raw_http.writeAllFd(ctx.stream.socket.handle, hdr);
+    // `Content-Length` above still states what the GET would have sent: a HEAD
+    // that lies about the length is no more useful than one that sends a body.
+    if (!isHeadMethod(ctx.method)) raw_http.writeAllFd(ctx.stream.socket.handle, body);
 }
 
 fn writeStreamHead(stream: std.Io.net.Stream, status: u16, reason: []const u8, content_type: []const u8) void {
@@ -1668,4 +1739,147 @@ test "models list and get are scoped to the route family" {
     try std.testing.expect(findAdvertised(&cfg, .anthropic, arena, "claude-sonnet-4-20250514") != null);
     try std.testing.expect(findAdvertised(&cfg, .openai, arena, "claude-sonnet-4-20250514") == null);
     try std.testing.expect(findAdvertised(&cfg, .anthropic, arena, "kimi-k3") == null);
+}
+
+/// A connected stream socket pair standing in for one proxy connection: index 0
+/// is the responder's end, index 1 reads back what it wrote. The proxy answers
+/// straight onto the fd, so "what came out" is only observable this way; the
+/// same shape `cli.zig` uses for `respond`.
+fn testProxySocketPair() ![2]std.posix.fd_t {
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) return error.NoSocketPair;
+    return pair;
+}
+
+/// Runs `writeEnvelope` over a socket pair and returns everything it wrote.
+/// `buf` is the caller's, so the slice outlives this frame.
+fn envelopeCapture(buf: []u8, method: []const u8, path: []const u8, status: u16, code: ?[]const u8, message: []const u8) ![]const u8 {
+    const pair = try testProxySocketPair();
+    defer _ = std.c.close(pair[1]);
+    _ = writeEnvelope(.{
+        .io = undefined,
+        .gpa = undefined,
+        .cfg = undefined,
+        .environ_map = undefined,
+        .method = method,
+        .path = path,
+        .query = "",
+        .headers_raw = "",
+        .body = "",
+        .stream = .{ .socket = .{ .handle = pair[0], .address = undefined } },
+    }, status, code, message);
+    // Close the writing half so the read sees EOF rather than blocking: the
+    // question is what came out, not how long a peer would wait for it.
+    _ = std.c.close(pair[0]);
+    var used: usize = 0;
+    while (used < buf.len) {
+        const n = std.c.read(pair[1], buf[used..].ptr, buf.len - used);
+        if (n <= 0) break;
+        used += @intCast(n);
+    }
+    return buf[0..used];
+}
+
+fn bodyOf(response: []const u8) ![]const u8 {
+    const sep = std.mem.find(u8, response, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    return response[sep + 4 ..];
+}
+
+test "a proxy HEAD carries the headers and none of the body" {
+    // RFC 9110 9.3.2 and AGENTS.md's invariant. `handle` accepts HEAD on the
+    // models routes, and every proxy response went out through writeFixed,
+    // which wrote the body unconditionally: measured live,
+    // `HEAD /proxy/v1/models` returned 200 and all 658 body bytes.
+    var head_buf: [2048]u8 = undefined;
+    const head_out = try envelopeCapture(&head_buf, "HEAD", "/v1/models", 404, "model_not_found", "No such model");
+    const head_body = try bodyOf(head_out);
+    try std.testing.expectEqual(@as(usize, 0), head_body.len);
+    // The declared length still says what the GET would have sent.
+    try std.testing.expect(std.mem.find(u8, head_out, "Content-Length: 0\r\n") == null);
+
+    // Control: the same call as a GET still writes the whole body.
+    var get_buf: [2048]u8 = undefined;
+    const get_out = try envelopeCapture(&get_buf, "GET", "/v1/models", 404, "model_not_found", "No such model");
+    const get_body = try bodyOf(get_out);
+    try std.testing.expect(get_body.len > 0);
+    try std.testing.expect(std.mem.find(u8, get_body, "No such model") != null);
+    // Both declare the same length: only the body differs.
+    const head_len = std.mem.find(u8, head_out, "Content-Length:").?;
+    const get_len = std.mem.find(u8, get_out, "Content-Length:").?;
+    try std.testing.expectEqualStrings(
+        head_out[head_len..std.mem.find(u8, head_out[head_len..], "\r\n").? + head_len],
+        get_out[get_len..std.mem.find(u8, get_out[get_len..], "\r\n").? + get_len],
+    );
+}
+
+test "an over-long diagnostic answers valid JSON instead of a half-written one" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The message the caller controls. A 2000-character model name filled the
+    // envelope's fixed 1536-byte buffer and every writer's error was swallowed,
+    // so the reply was `{"error":{"message":"Unknown model \"aaaa…` with no
+    // closing braces, under a Content-Length that agreed with it.
+    const huge = try arena.alloc(u8, 4000);
+    @memset(huge, 'a');
+    var buf: [4096]u8 = undefined;
+    const out = try envelopeCapture(&buf, "GET", "/v1/chat/completions", 404, "model_not_found", huge);
+    const body = try bodyOf(out);
+    const parsed = std.json.parseFromSlice(std.json.Value, arena, body, .{}) catch |err| {
+        std.debug.print("envelope body is not JSON ({s}): {s}\n", .{ @errorName(err), body });
+        return error.EnvelopeNotJson;
+    };
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.object.get("error") != null);
+
+    // And the message that reaches it is bounded in the first place, so the
+    // fallback above stays a backstop rather than the normal answer.
+    var cfg = config.Config{};
+    const msg = modelNotFoundMessage(arena, huge, &cfg);
+    try std.testing.expect(msg.len < 1024);
+    try std.testing.expect(std.mem.find(u8, msg, "…") != null);
+    var normal_buf: [2048]u8 = undefined;
+    const normal = try envelopeCapture(&normal_buf, "GET", "/v1/chat/completions", 404, "model_not_found", msg);
+    const normal_body = try bodyOf(normal);
+    const normal_parsed = try std.json.parseFromSlice(std.json.Value, arena, normal_body, .{});
+    defer normal_parsed.deinit();
+    // The useful diagnostic survived: this is not the generic fallback.
+    try std.testing.expect(std.mem.find(u8, normal_body, "known aliases") != null);
+}
+
+test "the alias list is bounded before the append, not after" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var cfg = config.Config{};
+    // The old check ran after the append, so the real bound was the cap plus
+    // one whole key: a single long alias could carry the list past it.
+    var name_buf: [64]u8 = undefined;
+    var i: usize = 0;
+    while (i < 40) : (i += 1) {
+        const key = try arena.dupe(u8, try std.fmt.bufPrint(&name_buf, "alias-number-{d}-with-a-long-name", .{i}));
+        try cfg.serve.proxy_aliases.map.put(arena, key, "kimi-k3");
+    }
+    const list = aliasList(arena, &cfg);
+    try std.testing.expect(list.len <= alias_list_cap + 4);
+    try std.testing.expect(std.mem.find(u8, list, "…") != null);
+
+    // No aliases at all still reads as a sentence rather than an empty gap.
+    var empty = config.Config{};
+    try std.testing.expectEqualStrings("(none configured)", aliasList(arena, &empty));
+}
+
+test "clampUtf8 never cuts a codepoint in half" {
+    // A truncated codepoint is invalid UTF-8, which makes the JSON encoder fail
+    // and costs the whole message to save a byte of it.
+    try std.testing.expectEqualStrings("ab", clampUtf8("ab", 8));
+    // "é" is two bytes: a cap of 3 must stop at 2, not split it.
+    try std.testing.expectEqualStrings("a", clampUtf8("aé", 2));
+    try std.testing.expectEqualStrings("aé", clampUtf8("aéb", 3));
+    // Three-byte codepoint, cap landing inside it.
+    try std.testing.expectEqualStrings("a", clampUtf8("a…b", 2));
+    try std.testing.expectEqualStrings("a", clampUtf8("a…b", 3));
+    try std.testing.expectEqualStrings("a…", clampUtf8("a…b", 4));
 }
