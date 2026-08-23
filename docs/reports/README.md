@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Arena floored untargeted concede and final_stand moves](bugs/2026-08-23-arena-untargeted-concede-floored.md) — Resolved
+
+- [DAP stop events were attached to the next tool call](bugs/2026-08-23-dap-stopped-event-misattributed.md) — Resolved
+
 - [improve gate skipped extra in-tree tools_dir entries](bugs/2026-08-23-descriptor-gate-skips-extra-tools-dirs.md) — Resolved
 
 - [Goal-loop work turns ignore --backend and call Agent.run](bugs/2026-08-22-goal-loop-ignores-backend.md) — Resolved
