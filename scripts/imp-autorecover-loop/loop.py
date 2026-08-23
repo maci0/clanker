@@ -20,7 +20,9 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
-DEFAULT_CLANKER_DIR = Path("/home/yannick/code/maci0/clanker")
+# The checkout this script lives in, so the default works wherever the tree
+# is cloned; --clanker-dir overrides it.
+DEFAULT_CLANKER_DIR = Path(__file__).resolve().parent.parent.parent
 BUILT_CLANKER = Path("zig-out/bin/clanker")
 IMPROVEMENT_GOALS = (
     "improve clanker",

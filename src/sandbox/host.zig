@@ -1808,6 +1808,29 @@ pub fn ckHttp(
 }
 
 // Host-side implementation for the docker tool; registered in runtime.zig linkHostFns.
+
+/// Where Docker's Unix socket lives, most specific first. The Linux package
+/// creates /var/run/docker.sock; rootless installs put it under
+/// XDG_RUNTIME_DIR (typically /run/user/<uid>); Docker Desktop on macOS
+/// exposes ~/.docker/run/docker.sock and does not create the system path by
+/// default. DOCKER_HOST names an override explicitly, but only the unix://
+/// scheme is speakable here. Callers probe in order rather than switching on
+/// the OS: a machine may carry more than one of these.
+fn dockerSocketCandidates(arena: std.mem.Allocator, env: *const std.process.Environ.Map) ![]const []const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    if (env.get("DOCKER_HOST")) |dh| {
+        if (std.mem.startsWith(u8, dh, "unix://")) try list.append(arena, dh["unix://".len..]);
+    }
+    if (env.get("XDG_RUNTIME_DIR")) |xdir| {
+        try list.append(arena, try std.fmt.allocPrint(arena, "{s}/docker.sock", .{xdir}));
+    }
+    if (env.get("HOME")) |home| {
+        try list.append(arena, try std.fmt.allocPrint(arena, "{s}/.docker/run/docker.sock", .{home}));
+    }
+    try list.append(arena, "/var/run/docker.sock");
+    return list.items;
+}
+
 pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
     // Docker's Unix socket is a privileged host-side channel that is not
@@ -1847,13 +1870,24 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 
     const method = methodFromDockerInput(obj);
 
-    // Connect to the Docker Unix socket (std.Io.net API in Zig 0.16).
-    const ua = std.Io.net.UnixAddress.init("/var/run/docker.sock") catch |err| {
-        log.log(.warn, "[docker] unixaddr init failed: {s}", .{@errorName(err)});
-        return Err.invalid;
-    };
-    const stream = ua.connect(h.sandbox.io) catch |err| {
-        log.log(.warn, "[docker] connect failed: {s}", .{@errorName(err)});
+    // Connect to the first Docker Unix socket that answers (std.Io.net API in
+    // Zig 0.16). The location is per install mode, not per OS name: see
+    // dockerSocketCandidates.
+    var last_connect_err: ?anyerror = null;
+    var found: ?std.Io.net.Stream = null;
+    const sockets = dockerSocketCandidates(arena_state.allocator(), h.sandbox.environ_map) catch return Err.invalid;
+    for (sockets) |sock| {
+        const ua = std.Io.net.UnixAddress.init(sock) catch continue;
+        found = ua.connect(h.sandbox.io) catch |err| {
+            last_connect_err = err;
+            continue;
+        };
+        break;
+    }
+    const stream = found orelse {
+        log.log(.warn, "[docker] no reachable socket ({s})", .{
+            if (last_connect_err) |e| @errorName(e) else "no candidates",
+        });
         return Err.network;
     };
     defer stream.close(h.sandbox.io);
@@ -2245,6 +2279,49 @@ test "docker request policy is query only" {
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/secrets/foo"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/configs"));
     try std.testing.expect(!dockerRequestAllowed("GET", "/v1.41/swarm"));
+}
+
+test "docker socket candidates follow install-mode precedence" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(arena);
+
+    // Bare Linux package install: only the system path.
+    {
+        const got = try dockerSocketCandidates(arena, &env);
+        try std.testing.expectEqual(@as(usize, 1), got.len);
+        try std.testing.expectEqualStrings("/var/run/docker.sock", got[0]);
+    }
+
+    // Docker Desktop on macOS: HOME path precedes the (absent) system one.
+    try env.put("HOME", "/Users/al");
+    {
+        const got = try dockerSocketCandidates(arena, &env);
+        try std.testing.expectEqual(@as(usize, 2), got.len);
+        try std.testing.expectEqualStrings("/Users/al/.docker/run/docker.sock", got[0]);
+        try std.testing.expectEqualStrings("/var/run/docker.sock", got[1]);
+    }
+
+    // Rootless Linux: XDG runtime dir wins over the Desktop path.
+    try env.put("XDG_RUNTIME_DIR", "/run/user/1000");
+    {
+        const got = try dockerSocketCandidates(arena, &env);
+        try std.testing.expectEqualStrings("/run/user/1000/docker.sock", got[0]);
+    }
+
+    // An explicit unix:// DOCKER_HOST overrides everything; other schemes are
+    // not speakable over a Unix socket and add no candidate.
+    try env.put("DOCKER_HOST", "unix:///tmp/custom.sock");
+    {
+        const got = try dockerSocketCandidates(arena, &env);
+        try std.testing.expectEqualStrings("/tmp/custom.sock", got[0]);
+    }
+    try env.put("DOCKER_HOST", "tcp://127.0.0.1:2375");
+    {
+        const got = try dockerSocketCandidates(arena, &env);
+        try std.testing.expectEqualStrings("/run/user/1000/docker.sock", got[0]);
+    }
 }
 
 test "custom headers with CRLF are rejected" {

@@ -3,10 +3,12 @@
 # escalation model and which repair harness to use, then run the loop.
 set -euo pipefail
 
-LOOP="$(dirname "$(readlink -f "$0")")/loop.py"
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+LOOP="$SCRIPT_DIR/loop.py"
 
-# Same knob as clank.sh, overridable from the environment.
-CLANKER_DIR="${CLANKER_DIR:-/home/yannick/code/maci0/clanker}"
+# Same knob as clank.sh. Defaults to the checkout this script lives in;
+# override from the environment to drive another one.
+CLANKER_DIR="${CLANKER_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 # Models for improve-self batches. The literal "default" passes no --model at
 # all, so the model in Clanker's own configuration applies. Clanker repair runs
@@ -60,7 +62,8 @@ REPAIR LEVELS
   4  --fix-repairs-with CMD     fixes a failed escalation run
 
 ENVIRONMENT
-  CLANKER_DIR  Clanker checkout to improve  (default: /home/yannick/code/maci0/clanker)
+  CLANKER_DIR  Clanker checkout to improve  (default: the checkout this
+                                             script lives in)
   CLANKER_BIN  clanker executable           (default: clanker on PATH, falling
                                              back to $CLANKER_DIR/zig-out/bin/clanker)
 
