@@ -132,7 +132,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "exec_pattern_allow must not name git commands" },
     .{ .file = "src/gate/checks.zig", .needle = "capability_gate must not be disabled" },
     .{ .file = "src/gate/checks.zig", .needle = "inert_gate must not be disabled" },
-    .{ .file = "src/gate/checks.zig", .needle = "max_consecutive_test_only must be positive" },
+    .{ .file = "src/gate/checks.zig", .needle = "max_consecutive_test_only must be between 1 and 64" },
     .{ .file = "src/gate/checks.zig", .needle = "plan_phase must not be disabled" },
     // The root-level TOML check that catches a proposal replacing just a
     // value line without the section header. Without these, the detail
@@ -258,6 +258,15 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/worktree.zig", .needle = "self.resyncLocalBranch(gpa, io, commit);" },
     .{ .file = "src/improve/worktree.zig", .needle = "self.resyncLocalBranch(gpa, io, branch_sha);" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"git\", \"update-ref\", full_ref, new_sha, old_sha" },
+    // runZigArgs substitutes argv[0] through resolveZigBin. Rewriting that
+    // substitution to hand back a benign executable ("/bin/true") keeps every
+    // needle above -- the process still runs, the exit code is still checked,
+    // `.argv = effective_argv` still matches -- while making build/test/tools/
+    // fmt report green without running zig at all. Pin both halves: the binary
+    // must come from the compiler that built this one, and the returned path
+    // must be that compiler.
+    .{ .file = "src/gate/checks.zig", .needle = "const zig_exe = build_options.zig_exe;" },
+    .{ .file = "src/gate/checks.zig", .needle = "return gpa.dupe(u8, zig_exe) catch null;" },
 };
 
 /// The next symbol worth looking up in `text`, reduced to its most specific
@@ -1248,13 +1257,19 @@ pub const Engine = struct {
             atomic_write.writeFile(self.ctx.io, std.Io.Dir.cwd(), c.file, data) catch |err| {
                 // A write failing partway through the set (disk full,
                 // permission error, ...) must not leave the live tree with
-                // some files promoted and others not: nothing here has been
-                // recorded to history yet, so it would look, to the next
-                // run, like a half-applied change nobody knows about.
+                // some files promoted and others not. The snapshot restore
+                // unwinds what was written, and the failure is recorded like
+                // every other failed attempt: an error return here would
+                // skip both the history entry and the end-of-run merge-back,
+                // and the next run would re-propose this exact patch with no
+                // memory of why it died.
                 log.log(.error_, "promotion of '{s}' failed: {s}, restoring the pre-promotion snapshot", .{ c.file, @errorName(err) });
                 self.hist.restoreFiles(id, files);
                 self.removeTree(staging);
-                return err;
+                self.hist.append(id, .failed, opts.instructions, proposal.summary, files, 0, 0, @errorName(err), fingerprints, verdict.class) catch |herr|
+                    log.log(.warn, "history append failed: {s}", .{@errorName(herr)});
+                self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch passed every gate but writing it into the tree failed ({s}). The pre-promotion content of every file in it was restored; re-propose the change.", .{@errorName(err)});
+                return .failed;
             };
         }
 
@@ -2028,7 +2043,9 @@ pub const Engine = struct {
 
     /// The first gate invariant the staged tree no longer satisfies, if any.
     /// Only files the proposal actually touched are read: everything else is a
-    /// verbatim copy of the tree these invariants already hold in.
+    /// verbatim copy of the tree these invariants already hold in. A touched
+    /// invariant file that cannot be read is a rejection, not a pass: the
+    /// sweep must not silently skip the one file a patch just rewrote.
     fn brokenInvariant(
         self: *Engine,
         staged_dir: std.Io.Dir,
@@ -2040,7 +2057,10 @@ pub const Engine = struct {
                 if (std.mem.eql(u8, c.file, inv.file)) touched = true;
             }
             if (!touched) continue;
-            const data = staged_dir.readFileAlloc(self.ctx.io, inv.file, self.arena, .limited(1 << 22)) catch continue;
+            const data = staged_dir.readFileAlloc(self.ctx.io, inv.file, self.arena, .limited(1 << 22)) catch {
+                log.log(.warn, "proposal rejected: staged {s} unreadable for the invariant sweep", .{inv.file});
+                return .{ .file = inv.file, .needle = "staged file unreadable" };
+            };
             if (std.mem.find(u8, data, inv.needle) == null) return .{ .file = inv.file, .needle = inv.needle };
         }
         return null;
@@ -2892,13 +2912,43 @@ fn stagedConfigWeakened(src: []const u8) ?[]const u8 {
         "capability_gate: bool = false",
         "inert_gate: bool = false",
         "plan_phase: bool = false",
-        "max_consecutive_test_only: u32 = 0",
         "|b| !b",
     };
     for (forbidden) |needle| {
         if (std.mem.find(u8, src, needle) != null) return needle;
     }
+    // 0 was already refused by exact text; a default above the streak window
+    // disables the rejection just as thoroughly while passing every
+    // "must be positive" check.
+    if (improveDefaultOutOfRange(src)) return "max_consecutive_test_only: u32 = ";
     return null;
+}
+
+/// The largest value of `max_consecutive_test_only` that still means
+/// anything. The streak it bounds is counted by `valueRejection` over at most
+/// 64 accepted improvements (`trailingClassStreak(..., 64)`), so a cap above
+/// 64 can never fire: it is the disabled gate spelled as a number, and every
+/// existing "must be positive" check waves it through.
+pub const max_consecutive_test_only_cap = 64;
+
+/// True when any `max_consecutive_test_only: u32 = <n>` declaration in `src`
+/// carries an n outside `1..=max_consecutive_test_only_cap`.
+fn improveDefaultOutOfRange(src: []const u8) bool {
+    const marker = "max_consecutive_test_only: u32 = ";
+    var rest = src;
+    while (std.mem.find(u8, rest, marker)) |at| {
+        var n: usize = 0;
+        var digits: usize = 0;
+        var j = at + marker.len;
+        while (j < rest.len and std.ascii.isDigit(rest[j])) : (j += 1) {
+            n = n * 10 + (rest[j] - '0');
+            digits += 1;
+            if (n > max_consecutive_test_only_cap) return true;
+        }
+        if (digits > 0 and n == 0) return true;
+        rest = rest[at + marker.len ..];
+    }
+    return false;
 }
 
 /// Staged `config.toml` must not flip the improve/agent safety keys the
@@ -2919,7 +2969,9 @@ fn stagedConfigTomlWeakened(src: []const u8) ?[]const u8 {
     for (false_keys) |key| {
         if (tomlKeyEquals(src, key, "false")) return key;
     }
-    if (tomlKeyEquals(src, "max_consecutive_test_only", "0"))
+    // 0 disables the test-only rejection outright; anything above the streak
+    // window does the same while passing every "must be positive" check.
+    if (tomlKeyUnsignedOutOfRange(src, "max_consecutive_test_only"))
         return "max_consecutive_test_only";
     if (tomlKeyEquals(src, "git_remote_ops", "true"))
         return "git_remote_ops";
@@ -2933,6 +2985,37 @@ fn stagedConfigTomlWeakened(src: []const u8) ?[]const u8 {
         if (std.mem.find(u8, src, needle) != null) return needle;
     }
     return null;
+}
+
+/// True when `src` assigns TOML `key` a decimal integer outside
+/// `1..max_consecutive_test_only_cap`. Spaces and tabs around `=` are ignored,
+/// with the same non-identifier boundaries as `tomlKeyEquals`. A value that
+/// does not parse as decimal digits is left alone: the config loader refuses
+/// it when the run loads, so the failure is already closed on that side.
+fn tomlKeyUnsignedOutOfRange(src: []const u8, key: []const u8) bool {
+    var i: usize = 0;
+    while (i + key.len <= src.len) : (i += 1) {
+        if (!std.mem.startsWith(u8, src[i..], key)) continue;
+        if (i > 0) {
+            const p = src[i - 1];
+            if (std.ascii.isAlphanumeric(p) or p == '_' or p == '-') continue;
+        }
+        var j = i + key.len;
+        while (j < src.len and (src[j] == ' ' or src[j] == '\t')) j += 1;
+        if (j >= src.len or src[j] != '=') continue;
+        j += 1;
+        while (j < src.len and (src[j] == ' ' or src[j] == '\t')) j += 1;
+        var n: usize = 0;
+        var digits: usize = 0;
+        while (j < src.len and std.ascii.isDigit(src[j])) : (j += 1) {
+            n = n * 10 + (src[j] - '0');
+            digits += 1;
+            if (n > max_consecutive_test_only_cap) return true;
+        }
+        if (digits == 0) return false;
+        return n == 0;
+    }
+    return false;
 }
 
 /// True when `src` assigns `value` to TOML `key`, ignoring spaces and tabs
@@ -3082,6 +3165,13 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         .{ .sig = "fn providerKindLeakGate(", .required = "hits += 1", .allow = &.{}, .indent = 16 },
         .{ .sig = "fn configWeakeningGate(", .required = "weakensImprove(", .allow = &.{}, .indent = 20 },
         .{ .sig = "fn runZigArgs(", .required = "std.process.run(", .allow = &.{}, .indent = 4 },
+        // The argv[0] substitution every zig gate flows through (see the
+        // resolveZigBin needles in gate_invariants). gateReturnsBefore would
+        // flag the honest accessAbsolute line's `catch return null`, so that
+        // line is allowed explicitly; anything else returning before the
+        // dupe-of-zig_exe is still refused. Last in this table so the
+        // fixtures below fail on the gate they are about, not on this one.
+        .{ .sig = "fn resolveZigBin(", .required = "return gpa.dupe(u8, zig_exe) catch null;", .allow = &.{"accessAbsolute"}, .indent = 8 },
     };
     for (gates) |g| {
         const body = fnBody(src, g.sig) orelse return g.sig;
@@ -3515,6 +3605,25 @@ test "the live config.toml does not disable improve gates" {
     try std.testing.expect(stagedConfigTomlWeakened("exec_pattern_allow = [\"git push\"]") != null);
     try std.testing.expect(stagedConfigTomlWeakened("git_remote_ops = true\n") != null);
     try std.testing.expect(stagedConfigTomlWeakened("git_remote_ops  =  true") != null);
+
+    // A cap above the streak window (64) can never fire, so it is the
+    // disabled gate spelled as a number; the old exact "= 0" needle missed it.
+    try std.testing.expect(stagedConfigTomlWeakened("max_consecutive_test_only = 0") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("max_consecutive_test_only=1000000") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("[improve]\nmax_consecutive_test_only = 65\n") != null);
+    try std.testing.expect(stagedConfigTomlWeakened("max_consecutive_test_only = 64") == null);
+    try std.testing.expect(stagedConfigTomlWeakened("max_consecutive_test_only = 3") == null);
+    try std.testing.expect(stagedConfigTomlWeakened("max_consecutive_test_only_extra = 0") == null);
+}
+
+test "a src/config.zig default outside the reachable streak window is refused" {
+    const live = @embedFile("../config.zig");
+    try std.testing.expect(!improveDefaultOutOfRange(live));
+    try std.testing.expect(improveDefaultOutOfRange("x: u8 = 0;\nmax_consecutive_test_only: u32 = 0,"));
+    try std.testing.expect(improveDefaultOutOfRange("max_consecutive_test_only: u32 = 65,"));
+    try std.testing.expect(improveDefaultOutOfRange("max_consecutive_test_only: u32 = 1000000,"));
+    try std.testing.expect(!improveDefaultOutOfRange("max_consecutive_test_only: u32 = 64,"));
+    try std.testing.expect(!improveDefaultOutOfRange("max_consecutive_test_only_extra: u32 = 0,"));
 }
 
 test "the live cmdEval still runs every task and prints its real result" {
@@ -3672,7 +3781,21 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
     const src = @embedFile("../gate/checks.zig");
     try std.testing.expect(checksZigShapeBroken(src) == null);
 
-    const early_build =
+    // An honest resolveZigBin, appended to every fixture below: checksZigShapeBroken
+    // requires it like every other gate, and a fixture without one would fail
+    // on "fn resolveZigBin(" instead of on the shape the fixture is about.
+    const ok_resolver =
+        \\fn resolveZigBin() ?[]u8 {
+        \\    const zig_exe = build_options.zig_exe;
+        \\    if (zig_exe.len > 0 and zig_exe[0] == '/') {
+        \\        std.Io.Dir.accessAbsolute(io, zig_exe, .{ .execute = true }) catch return null;
+        \\        return gpa.dupe(u8, zig_exe) catch null;
+        \\    }
+        \\    return null;
+        \\}
+    ;
+
+    const early_build_src =
         \\pub fn buildGate() !GateResult {
         \\    return .{ .ok = true, .label = "zig build" };
         \\    return runZigArgs(gpa, io, dir, argv.items, "zig build");
@@ -3706,9 +3829,10 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\    std.process.run(
         \\}
     ;
+    const early_build = early_build_src ++ "\n" ++ ok_resolver;
     try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_build).?);
 
-    const commented_build =
+    const commented_build_src =
         \\pub fn buildGate() !GateResult {
         \\    // return runZigArgs(gpa, io, dir, argv.items, "zig build");
         \\    return .{ .ok = true, .label = "zig build" };
@@ -3731,9 +3855,10 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\pub fn configWeakeningGate() GateResult { weakensImprove( }
         \\fn runZigArgs() !GateResult { std.process.run( }
     ;
+    const commented_build = commented_build_src ++ "\n" ++ ok_resolver;
     try std.testing.expectEqualStrings("return runZigArgs(gpa, io, dir, argv.items, \"zig build\")", checksZigShapeBroken(commented_build).?);
 
-    const early_run =
+    const early_run_src =
         \\pub fn buildGate() !GateResult {
         \\    return runZigArgs(gpa, io, dir, argv.items, "zig build");
         \\}
@@ -3766,6 +3891,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\    _ = std.process.run(
         \\}
     ;
+    const early_run = early_run_src ++ "\n" ++ ok_resolver;
     try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_run).?);
 
     // The wrap-with-trailing-stub shape: the real body is dead inside an
@@ -3773,7 +3899,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
     // live green stub follows it. gateReturnsBefore only scans *before* the
     // call, so the stub's return, sitting after the wrapped block, is never
     // seen; the canonical-indent pin on the call's line is what catches it.
-    const wrapped_run =
+    const wrapped_run_src =
         \\pub fn buildGate() !GateResult {
         \\    return runZigArgs(gpa, io, dir, argv.items, "zig build");
         \\}
@@ -3809,6 +3935,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\    return .{ .ok = true, .label = label };
         \\}
     ;
+    const wrapped_run = wrapped_run_src ++ "\n" ++ ok_resolver;
     try std.testing.expectEqualStrings("a load-bearing gate call must not be wrapped in dead code", checksZigShapeBroken(wrapped_run).?);
 }
 
@@ -4412,7 +4539,18 @@ test "a patch that drops a gate call from the engine is rejected before it compi
     try std.testing.expectEqualStrings("@import(\"../gate/checks.zig\")", bad_import.needle);
 
     // A proposal that does not touch the file is not checked against it: the
-    // rest of the tree is a verbatim copy where these already hold.
+    // rest of the tree is a verbatim copy where these already hold. Staging
+    // carries every readable root, so the neighbouring file exists here even
+    // though nothing was written into it -- and since the unreadable-file
+    // case now fails closed, it has to hold its own invariants.
+    var cli_stub: std.ArrayList(u8) = .empty;
+    for (gate_invariants) |inv| {
+        if (!std.mem.eql(u8, inv.file, "src/cli.zig")) continue;
+        try cli_stub.appendSlice(arena, inv.needle);
+        try cli_stub.appendSlice(arena, "\n");
+    }
+    try staged.createDirPath(io, "src");
+    try staged.writeFile(io, .{ .sub_path = "src/cli.zig", .data = cli_stub.items });
     const elsewhere = [_]proposal_mod.Change{.{ .file = "src/cli.zig", .old = "", .new = "" }};
     try std.testing.expect(try engine.brokenInvariant(staged, &elsewhere) == null);
 }
@@ -4485,6 +4623,39 @@ test "a patch that drops a load-bearing module from the test root is rejected" {
     // silently vanish -- the first half of a two-pass gutting of that
     // module's implementation.
     try expectInvariantCaught("src/main.zig", "_ = @import(\"improve/worktree.zig\");", "");
+}
+
+test "an unreadable staged invariant file fails closed instead of skipping the sweep" {
+    // brokenInvariant only reads files the proposal touched; one that cannot
+    // be read must reject rather than `continue` past the file a patch just
+    // rewrote. A directory where the file should be is the portable way to
+    // make the read fail.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    var ctx = client.Ctx{ .io = io, .gpa = std.testing.allocator, .environ_map = &env };
+    var engine = Engine{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = undefined,
+        .cfg = undefined,
+        .hist = undefined,
+        .instructions = "",
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "build.zig");
+    const changes = [_]proposal_mod.Change{.{ .file = "build.zig", .old = "", .new = "" }};
+    const bad = try engine.brokenInvariant(tmp.dir, &changes) orelse return error.TestExpectedRejection;
+    try std.testing.expectEqualStrings("build.zig", bad.file);
+    try std.testing.expectEqualStrings("staged file unreadable", bad.needle);
 }
 
 test "uncoveredCapabilityTasks fails closed on empty eval output" {

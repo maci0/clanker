@@ -928,6 +928,12 @@ fn weakensAgent(obj: std.json.ObjectMap) ?GateResult {
     return null;
 }
 
+/// The largest value of `max_consecutive_test_only` that still means
+/// anything. The engine counts the test-only streak over at most 64 accepted
+/// improvements, so a cap above 64 can never fire: it is the disabled gate
+/// spelled as a number, and the old "must be positive" check waved it through.
+pub const max_consecutive_test_only_cap = 64;
+
 fn weakensImprove(obj: std.json.ObjectMap) ?GateResult {
     if (isFalse(obj.get("capability_gate")))
         return .{ .ok = false, .label = "config-weakening", .detail = "capability_gate must not be disabled" };
@@ -935,8 +941,8 @@ fn weakensImprove(obj: std.json.ObjectMap) ?GateResult {
         return .{ .ok = false, .label = "config-weakening", .detail = "inert_gate must not be disabled" };
     if (obj.get("max_consecutive_test_only")) |v| {
         switch (v) {
-            .integer => |n| if (n <= 0)
-                return .{ .ok = false, .label = "config-weakening", .detail = "max_consecutive_test_only must be positive" },
+            .integer => |n| if (n <= 0 or n > max_consecutive_test_only_cap)
+                return .{ .ok = false, .label = "config-weakening", .detail = "max_consecutive_test_only must be between 1 and 64" },
             else => {},
         }
     }
@@ -975,13 +981,37 @@ fn forbiddenImproveDefault(src: []const u8) ?[]const u8 {
         "capability_gate: bool = false",
         "inert_gate: bool = false",
         "plan_phase: bool = false",
-        "max_consecutive_test_only: u32 = 0",
         "|b| !b",
     };
     for (forbidden) |needle| {
         if (std.mem.find(u8, src, needle) != null) return needle;
     }
+    // The exact `= 0` spelling is subsumed by the range scan below, which
+    // also refuses any default above the reachable streak window.
+    if (improveDefaultOutOfRange(src)) return "max_consecutive_test_only: u32 = ";
     return null;
+}
+
+/// True when any `max_consecutive_test_only: u32 = <n>` declaration in `src`
+/// carries an n outside `1..=max_consecutive_test_only_cap`. Zero and huge
+/// values are the same weakening as the flipped bools above, spelled as a
+/// number no existing needle covered.
+fn improveDefaultOutOfRange(src: []const u8) bool {
+    const marker = "max_consecutive_test_only: u32 = ";
+    var rest = src;
+    while (std.mem.find(u8, rest, marker)) |at| {
+        var n: usize = 0;
+        var digits: usize = 0;
+        var j = at + marker.len;
+        while (j < rest.len and std.ascii.isDigit(rest[j])) : (j += 1) {
+            n = n * 10 + (rest[j] - '0');
+            digits += 1;
+            if (n > max_consecutive_test_only_cap) return true;
+        }
+        if (digits > 0 and n == 0) return true;
+        rest = rest[at + marker.len ..];
+    }
+    return false;
 }
 
 fn isFalse(v: ?std.json.Value) bool {
@@ -1035,6 +1065,28 @@ test "configWeakeningGate rejects zeroing max_consecutive_test_only" {
     const result = configWeakeningGate(gpa, &files, &new_texts);
     try std.testing.expect(!result.ok);
     try std.testing.expectEqualStrings("config-weakening", result.label);
+}
+
+test "configWeakeningGate rejects a max_consecutive_test_only above the streak window" {
+    // The engine counts the streak over at most 64 accepted improvements, so
+    // a cap above 64 never fires: the disabled gate spelled as a number,
+    // invisible to every "must be positive" check.
+    const gpa = std.testing.allocator;
+    const files = [_][]const u8{"config.toml"};
+    const huge = [_][]const u8{
+        \\[improve]
+        \\max_consecutive_test_only = 1000000
+    };
+    const result = configWeakeningGate(gpa, &files, &huge);
+    try std.testing.expect(!result.ok);
+
+    const over_by_one = [_][]const u8{"max_consecutive_test_only = 65"};
+    const result2 = configWeakeningGate(gpa, &files, &over_by_one);
+    try std.testing.expect(!result2.ok);
+
+    const boundary = [_][]const u8{"max_consecutive_test_only = 64"};
+    const result3 = configWeakeningGate(gpa, &files, &boundary);
+    try std.testing.expect(result3.ok);
 }
 
 test "configWeakeningGate rejects negative max_consecutive_test_only" {
