@@ -36,6 +36,19 @@ const default_port: u16 = 17922;
 /// this (whole-repo prompt stuffing) is refused rather than buffered.
 const max_request_bytes = 32 * 1024 * 1024;
 
+/// Same bound as the full server's accept loop (cli.zig): each accepted
+/// connection gets a detached thread, so without a cap a flood of clients
+/// spawns threads without limit until the process dies of resource pressure.
+/// Over the cap the client gets a 503 instead of a thread.
+const max_connection_threads = 64;
+var connection_threads = std.atomic.Value(u32).init(0);
+
+/// Seconds a connection may sit without sending anything readable. This
+/// option is the only bound on the request read below: without it one client
+/// that connects and says nothing pins a thread forever, and enough of those
+/// exhaust the cap above and stop the proxy accepting.
+const connection_read_timeout_seconds = 5;
+
 var conn_gpa: std.mem.Allocator = undefined;
 
 /// Monotonic per-connection request id, the fallback correlation id when the
@@ -131,12 +144,23 @@ pub fn main(init: std.process.Init) !void {
             log.log(.error_, "accept error: {s}", .{@errorName(err)});
             continue;
         };
+        // Bound, not queue: a client waiting behind 64 in-flight forwards has
+        // already lost. Mirrors serveConnection in cli.zig.
+        const in_flight = connection_threads.fetchAdd(1, .acq_rel);
+        if (in_flight >= max_connection_threads) {
+            _ = connection_threads.fetchSub(1, .acq_rel);
+            respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
+            stream.close(io);
+            continue;
+        }
         const conn = gpa.create(Conn) catch {
+            _ = connection_threads.fetchSub(1, .acq_rel);
             stream.close(io);
             continue;
         };
         conn.* = .{ .io = io, .cfg = &cfg, .environ_map = init.environ_map, .stream = stream };
         const t = std.Thread.spawn(.{}, serveConn, .{conn}) catch {
+            _ = connection_threads.fetchSub(1, .acq_rel);
             stream.close(io);
             gpa.destroy(conn);
             continue;
@@ -181,8 +205,16 @@ const Conn = struct {
 };
 
 fn serveConn(conn: *Conn) void {
-    defer conn_gpa.destroy(conn);
+    defer {
+        conn_gpa.destroy(conn);
+        _ = connection_threads.fetchSub(1, .acq_rel);
+    }
     defer conn.stream.close(conn.io);
+    // Residual posix: raw socket recv-timeout option for the request read in
+    // handleRequest. A failure is named rather than left to look like a hang.
+    const tv: std.posix.timeval = .{ .sec = connection_read_timeout_seconds, .usec = 0 };
+    std.posix.setsockopt(conn.stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch |err|
+        log.log(.warn, "proxy: read timeout not set on connection, reads are unbounded: {s}", .{@errorName(err)});
     handleRequest(conn) catch |err| {
         log.log(.debug, "connection dropped: {s}", .{@errorName(err)});
     };

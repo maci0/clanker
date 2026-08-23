@@ -18,6 +18,17 @@ const path = "state/alarms.json";
 const max_alarms = 50;
 const max_message = 500;
 
+/// The integer part of `f`, or null when it does not fit an i64 (nan and inf
+/// never do). Model-supplied floats go through here first: the raw narrowing
+/// conversion traps the guest on those, turning a bad argument into a tool
+/// failure instead of a validation message.
+fn intFromFloatChecked(f: f64) ?i64 {
+    if (!std.math.isFinite(f)) return null;
+    const t = @trunc(f);
+    if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) return null;
+    return @intFromFloat(t);
+}
+
 const Alarm = alarm_store.Alarm;
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -53,7 +64,8 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         if (obj.get("in_minutes")) |v| {
             const mins: i64 = switch (v) {
                 .integer => |i| i,
-                .float => |f| @trunc(f),
+                .float => |f| intFromFloatChecked(f) orelse
+                    return lib.fail(out, "in_minutes must be a number"),
                 else => return lib.fail(out, "in_minutes must be a number"),
             };
             if (mins < 0) return lib.fail(out, "in_minutes must not be negative");
@@ -84,7 +96,8 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         const v = obj.get("every_minutes") orelse break :blk 0;
         const mins: i64 = switch (v) {
             .integer => |i| i,
-            .float => |f| @trunc(f),
+            .float => |f| intFromFloatChecked(f) orelse
+                return lib.fail(out, "every_minutes must be a number"),
             else => return lib.fail(out, "every_minutes must be a number"),
         };
         if (mins < 1) return lib.fail(out, "every_minutes must be at least 1");

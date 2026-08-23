@@ -691,7 +691,14 @@ fn objInt(v: std.json.Value, name: []const u8) ?i64 {
     if (v != .object) return null;
     return switch (v.object.get(name) orelse return null) {
         .integer => |n| n,
-        .float => |f| @trunc(f),
+        // nan/inf and values past i64 read as absent: the raw narrowing
+        // conversion traps the guest on those.
+        .float => |f| blk: {
+            if (!std.math.isFinite(f)) break :blk null;
+            const t = @trunc(f);
+            if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) break :blk null;
+            break :blk @as(i64, @intFromFloat(t));
+        },
         else => null,
     };
 }

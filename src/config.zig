@@ -683,6 +683,18 @@ pub fn firstFallbackProvider(dirs: []const []const u8) []const u8 {
     return if (dirs.len > 0) dirs[0] else "";
 }
 
+/// The integer part of `f`, or null when it does not fit an i64 (nan and
+/// inf never do). Shared by every JSON-float-to-i64 read in src/: the raw
+/// narrowing conversion traps on those values, and callers want a value they
+/// can reject by name rather than a dead process.
+pub fn intFromFloatChecked(f: f64) ?i64 {
+    if (!std.math.isFinite(f)) return null;
+    const t = @trunc(f);
+    // -2^63 is exactly representable; 2^63 is the first value past maxInt.
+    if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) return null;
+    return @intFromFloat(t);
+}
+
 /// First configured manifest directory, used by `plugins new` and similar
 /// "write into one place" surfaces. An empty list is treated as the in-tree
 /// default so a malformed config cannot strand the scaffolder.
@@ -3331,10 +3343,16 @@ pub const Config = struct {
         };
     }
 
+    /// A TOML/JSON number as i64. Integral floats are accepted (`60.0`), but
+    /// anything whose integer part does not fit — or nan/inf, both legal TOML
+    /// floats — is rejected by name: the raw narrowing conversion traps on
+    /// those, and a config that cannot be honoured must fail its load, not
+    /// kill startup with a panic naming no key.
     fn jsonInt(v: json.Value, key: []const u8) !i64 {
         return switch (v) {
             .integer => |i| i,
-            .float => |f| @trunc(f),
+            .float => |f| intFromFloatChecked(f) orelse
+                invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
             .number_string => |s| std.fmt.parseInt(i64, s, 10) catch return invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
             else => invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
         };
@@ -3436,6 +3454,40 @@ test "tui mascot speed is an integer from zero through ten" {
         \\{"tui":{"mascot_speed":11}}
     , .{});
     try std.testing.expectError(error.MascotSpeedOutOfRange, Config.parseConfig(arena, out_of_range));
+}
+
+test "an integer setting given as a float is range-checked, not trapped" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // TOML floats reach jsonInt as json.Value floats (`webui_port = 1e19`,
+    // `nan`, `inf` are all legal TOML). The narrowing conversion traps on a
+    // value past i64, which killed every startup; it must be a named error.
+    const huge = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"serve":{"webui_port":1e19}}
+    , .{});
+    try std.testing.expectError(error.FieldNotInt, Config.parseConfig(arena, huge));
+
+    // An integral float in range still parses (`60.0`), including the
+    // representable extremes.
+    const integral = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"serve":{"webui_port":8080.0}}
+    , .{});
+    const cfg = try Config.parseConfig(arena, integral);
+    try std.testing.expectEqual(@as(u16, 8080), cfg.serve.webui_port);
+}
+
+test "intFromFloatChecked accepts integral floats in range and rejects the rest" {
+    try std.testing.expectEqual(@as(?i64, 60), intFromFloatChecked(60.0));
+    try std.testing.expectEqual(@as(?i64, -3), intFromFloatChecked(-3.9));
+    try std.testing.expectEqual(@as(?i64, 0), intFromFloatChecked(-0.9));
+    try std.testing.expectEqual(@as(?i64, std.math.minInt(i64)), intFromFloatChecked(-9223372036854775808.0));
+    try std.testing.expectEqual(@as(?i64, null), intFromFloatChecked(9223372036854775808.0));
+    try std.testing.expectEqual(@as(?i64, null), intFromFloatChecked(1e19));
+    try std.testing.expectEqual(@as(?i64, null), intFromFloatChecked(std.math.nan(f64)));
+    try std.testing.expectEqual(@as(?i64, null), intFromFloatChecked(std.math.inf(f64)));
+    try std.testing.expectEqual(@as(?i64, null), intFromFloatChecked(-std.math.inf(f64)));
 }
 
 test "config errors retain base and local TOML source paths" {

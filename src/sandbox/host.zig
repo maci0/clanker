@@ -5029,25 +5029,18 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, struct {
             /// Runs the nested agent, reports its completion to the job table,
             /// then releases the heap-allocated call and every gpa-owned copy
-            /// it holds. `registerSub` keeps its own copies of `task` and the
-            /// id, and `finishSub` its own copy of `result`, so nothing freed
-            /// here is still reachable once the row exists.
+            /// it holds. The row's copies of `task` and the id are made by
+            /// the starter below (`task_row`/`id_row`), owned by the starter
+            /// until `registerSub` returns, so this worker can free its
+            /// originals as soon as its completion is recorded -- held in a
+            /// late-completion slot or attached to a row, either way the job
+            /// table has its own copies.
             fn run(c: *SubagentCall, job_id: []const u8) void {
                 c.run();
                 const err_name: ?[]const u8 = if (c.err) |e| @errorName(e) else null;
-                const registered = jobs_mod.finishSub(job_id, c.result, err_name);
-                // `registered` is the ownership signal for `task` and
-                // `job_id`: the row is visible under the job table's lock
-                // only after registerSub copied both (same lock, before the
-                // append), so the originals may be freed. When the completion
-                // beat the registration, registerSub may still copy them, so
-                // they stay with the caller, exactly as before. The response
-                // buffer is built from `id_owned` before registerSub takes
-                // over, so freeing it here never races the caller.
-                if (registered) {
-                    c.gpa.free(c.task);
-                    c.gpa.free(job_id);
-                }
+                _ = jobs_mod.finishSub(job_id, c.result, err_name);
+                c.gpa.free(c.task);
+                c.gpa.free(job_id);
                 if (c.provider_name) |p| c.gpa.free(p);
                 c.gpa.free(c.parent_run_id);
                 // The runner's result is gpa-owned (the synchronous path frees
@@ -5066,12 +5059,38 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
             return Err.invalid;
         };
         const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
-        // Build the response from `id_owned` before handing it over: the
-        // worker frees it once its completion is registered, so this read
-        // must happen while the caller still owns it.
+        // Registration copies: the worker frees `heap.task`/`id_owned` as
+        // soon as its completion lands, so they must not be what registerSub
+        // reads. These are owned here until the call returns.
+        const task_row = h.sandbox.gpa.dupe(u8, heap.task) catch {
+            th.join();
+            h.sandbox.gpa.free(id_owned);
+            h.sandbox.gpa.free(heap.task);
+            if (heap.provider_name) |p| h.sandbox.gpa.free(p);
+            h.sandbox.gpa.free(heap.parent_run_id);
+            if (heap.result) |r| h.sandbox.gpa.free(@constCast(r));
+            h.sandbox.gpa.destroy(heap);
+            return Err.invalid;
+        };
+        // Build the response from `id_owned` before handing the row's copy
+        // over; both stay alive until registerSub has made its own.
         var out_buf: [128]u8 = undefined;
-        const out = std.fmt.bufPrint(&out_buf, "{{\"ok\":true,\"job\":{f},\"status\":\"running\"}}", .{std.json.fmt(id_owned, .{})}) catch return Err.invalid;
-        jobs_mod.registerSub(h.sandbox.gpa, id_owned, sid, heap.task, th) catch return Err.invalid;
+        const out = std.fmt.bufPrint(&out_buf, "{{\"ok\":true,\"job\":{f},\"status\":\"running\"}}", .{std.json.fmt(id_owned, .{})}) catch {
+            th.join();
+            h.sandbox.gpa.free(task_row);
+            h.sandbox.gpa.free(id_owned);
+            h.sandbox.gpa.free(heap.task);
+            if (heap.provider_name) |p| h.sandbox.gpa.free(p);
+            h.sandbox.gpa.free(heap.parent_run_id);
+            if (heap.result) |r| h.sandbox.gpa.free(@constCast(r));
+            h.sandbox.gpa.destroy(heap);
+            return Err.invalid;
+        };
+        jobs_mod.registerSub(h.sandbox.gpa, id_owned, sid, task_row, th) catch {
+            h.sandbox.gpa.free(task_row);
+            return Err.invalid;
+        };
+        h.sandbox.gpa.free(task_row);
         return h.writeResult(bytes, out);
     }
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;

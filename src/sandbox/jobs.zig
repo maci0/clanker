@@ -145,7 +145,7 @@ fn waitExecThread(job: *ExecJob, io: std.Io, reg: *subprocess.Registry) void {
         // anywhere naming the reason.
         _ = job_errors_total.fetchAdd(1, .monotonic);
         _ = job_completions_total.fetchAdd(1, .monotonic);
-        _ = jobs_active.fetchSub(1, .monotonic);
+        subActive();
         log.log(.warn, "job reap failed job={s} session={s} pid={d} err={s}", .{
             job.id, job.session_id, job.pid, @errorName(err),
         });
@@ -156,7 +156,7 @@ fn waitExecThread(job: *ExecJob, io: std.Io, reg: *subprocess.Registry) void {
     job.term = term;
     const fields = termFields(term);
     _ = job_completions_total.fetchAdd(1, .monotonic);
-    _ = jobs_active.fetchSub(1, .monotonic);
+    subActive();
     if (fields.exit) |code| {
         if (code == 0) {
             log.log(.debug, "job exited job={s} session={s} pid={d} exit=0", .{ job.id, job.session_id, job.pid });
@@ -184,6 +184,46 @@ fn waitExecThread(job: *ExecJob, io: std.Io, reg: *subprocess.Registry) void {
 /// apiece) for the life of the process, plus a linear scan over the lot on
 /// every lookup.
 const max_retained_done = 64;
+
+/// Ceiling on jobs running at the same time, exec children and background
+/// subagents together (a swarm's own per-call bound is `max_swarm_tasks` in
+/// host.zig). Every accepted job holds one child process or one 128 MiB-stack
+/// nested-agent thread for its whole runtime, so without an admission gate a
+/// guest loop of start calls scales live jobs until fd/pid pressure kills the
+/// harness. Checked before anything is spawned; a race between concurrent
+/// starts can overshoot by a handful, never by unbounded.
+pub const max_active_jobs: usize = 16;
+
+fn activeLocked() usize {
+    var n: usize = 0;
+    for (execs.items) |j| {
+        if (!j.done.load(.acquire)) n += 1;
+    }
+    for (subs.items) |j| {
+        if (!j.done.load(.acquire)) n += 1;
+    }
+    return n;
+}
+
+/// Live-job count for admission checks made before the caller has spawned
+/// anything worth unwinding (the background-subagent thread). The
+/// authoritative check runs again under `mu` in `startExec`/`registerSub`.
+pub fn activeJobCount() usize {
+    mu.lock();
+    defer mu.unlock();
+    return activeLocked();
+}
+
+/// Decrements `jobs_active` without wrapping: one failure path (the append
+/// unwind in `startExec`) decrements from a start that was never added, and a
+/// plain fetchSub there read ~2^64 active jobs for the rest of the process.
+fn subActive() void {
+    while (true) {
+        const cur = jobs_active.load(.monotonic);
+        if (cur == 0) return;
+        if (jobs_active.cmpxchgWeak(cur, cur - 1, .acq_rel, .monotonic) == null) return;
+    }
+}
 
 /// Frees one job and joins its waiter thread. Caller must have removed it
 /// from its table first, so nothing else can reach it.
@@ -256,6 +296,12 @@ pub fn startExec(
     argv: []const []const u8,
 ) ![]const u8 {
     if (argv.len == 0) return error.InvalidArg;
+    // Refuse before anything is spawned, so a saturated harness owes no
+    // child, no registry row, and no waiter thread.
+    if (activeJobCount() >= max_active_jobs) {
+        log.log(.warn, "job refused kind=exec session={s}: {d} job(s) already running at the active cap {d}", .{ session_id, activeJobCount(), max_active_jobs });
+        return error.JobBusy;
+    }
     var id_buf: [16]u8 = undefined;
     const now_ns: u64 = @intCast(@max(std.Io.Timestamp.now(io, .awake).nanoseconds, 0));
     const id = makeId(now_ns, &id_buf);
@@ -395,11 +441,43 @@ pub fn waitExec(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
     });
 }
 
+/// A completion that landed before its row existed. The subagent thread is
+/// spawned before `registerSub` runs, so a fast finisher used to drop its
+/// result here and leave the row it was about to create reading `running`
+/// for the life of the process: never reaped, never decrementing
+/// `jobs_active`, and (ownership following the false return) leaking the
+/// caller's task/id copies. Held completions are consumed by the matching
+/// `registerSub`, which marks its row done at creation instead.
+const LateSub = struct {
+    id: []u8,
+    result: ?[]u8 = null,
+    err_name: ?[]u8 = null,
+};
+
+var late_subs: std.ArrayList(LateSub) = .empty;
+
+/// Bound on held completions: they exist only to close a race window of one
+/// registration, so a handful covers any real burst, and a table that only
+/// grows would trade the ghost-row leak for another one. Oldest entries are
+/// dropped past the cap.
+const max_late_subs = 16;
+
+fn freeLate(rec: LateSub, gpa: std.mem.Allocator) void {
+    gpa.free(rec.id);
+    if (rec.result) |r| gpa.free(r);
+    if (rec.err_name) |e| gpa.free(e);
+}
+
 pub fn registerSub(gpa: std.mem.Allocator, id: []const u8, session_id: []const u8, task: []const u8, thread: std.Thread) !void {
     mu.lock();
     defer mu.unlock();
     gpa_ref = gpa;
+    if (activeLocked() >= max_active_jobs) {
+        log.log(.warn, "job refused kind=subagent session={s}: {d} job(s) already running at the active cap {d}", .{ session_id, activeLocked(), max_active_jobs });
+        return error.JobBusy;
+    }
     const job = try gpa.create(SubJob);
+    errdefer gpa.destroy(job);
     job.* = .{
         .id = try gpa.dupe(u8, id),
         .session_id = try gpa.dupe(u8, session_id),
@@ -407,21 +485,52 @@ pub fn registerSub(gpa: std.mem.Allocator, id: []const u8, session_id: []const u
         .origin = Origin.capture(),
         .thread = thread,
     };
+    // Consume a completion that raced ahead of this registration: attach its
+    // outcome so the row is born done -- reapable like any other finished
+    // job instead of stuck running forever. Counters stay balanced by
+    // counting the completion here rather than adding an active that never
+    // was.
+    var late_done = false;
+    for (late_subs.items, 0..) |rec, i| {
+        if (!std.mem.eql(u8, rec.id, id)) continue;
+        job.result = rec.result;
+        job.err_name = rec.err_name;
+        job.done.store(true, .release);
+        const matched = late_subs.orderedRemove(i);
+        gpa.free(matched.id);
+        late_done = true;
+        break;
+    }
     reapDone(SubJob, &subs, gpa);
-    try subs.append(gpa, job);
+    subs.append(gpa, job) catch |err| {
+        // Never join here: in the non-late case the worker thread is still
+        // running the subagent, and it touches nothing left in `job`.
+        gpa.free(job.id);
+        gpa.free(job.session_id);
+        gpa.free(job.task);
+        if (job.result) |r| gpa.free(r);
+        if (job.err_name) |e| gpa.free(e);
+        return err;
+    };
     _ = job_starts_total.fetchAdd(1, .monotonic);
-    _ = jobs_active.fetchAdd(1, .monotonic);
-    log.log(.info, "job started kind=subagent job={s} session={s}", .{ id, session_id });
+    if (late_done) {
+        _ = job_completions_total.fetchAdd(1, .monotonic);
+        log.log(.debug, "job started kind=subagent job={s} session={s} (completion had raced ahead)", .{ id, session_id });
+    } else {
+        _ = jobs_active.fetchAdd(1, .monotonic);
+        log.log(.info, "job started kind=subagent job={s} session={s}", .{ id, session_id });
+    }
 }
 
 /// Marks a background subagent's row done and stores its result. Returns
-/// whether a row for `id` was found.
+/// whether the job table took ownership of the outcome -- either onto a
+/// matching row, or held in `late_subs` for the registration that is about
+/// to create one.
 ///
-/// A true return is also the ownership signal for the caller: the row is
-/// visible under `mu` only after `registerSub`'s copies of `id` and `task`
-/// (both made under the same lock before the append) are complete, so the
-/// caller may free its originals. A false return leaves ownership with the
-/// caller, because `registerSub` may still be about to copy them.
+/// A true return is the ownership signal for the caller: the job table holds
+/// its own copies, so the caller may free its originals. Only a completion
+/// that could not be copied at all returns false, leaving ownership with the
+/// caller.
 pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) bool {
     mu.lock();
     defer mu.unlock();
@@ -432,7 +541,7 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) boo
         if (err_name) |e| j.err_name = gpa.dupe(u8, e) catch null;
         j.done.store(true, .release);
         _ = job_completions_total.fetchAdd(1, .monotonic);
-        _ = jobs_active.fetchSub(1, .monotonic);
+        subActive();
         // A background subagent's failure reaches nobody unless the model
         // happens to call `wait` on it, and it is under no obligation to.
         // This is the only place the error name is guaranteed to be seen.
@@ -448,11 +557,31 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) boo
         }
         return true;
     }
-    // No row for this id. The thread is spawned before `registerSub` runs, so
-    // a subagent that finishes first lands here: its result is dropped and the
-    // row it is about to create will read `running` for the life of the
-    // process, never reaped and never decrementing `jobs_active`. Silent
-    // before; the drifting gauge and this line are what make it visible.
+    // No row yet: hold the completion so `registerSub` can mark its row done
+    // at creation (see `LateSub`). The completion counters are charged here,
+    // where the work actually finished; registration then adds only
+    // `starts_total`. The true return is also the caller's signal that the
+    // job system owns copies of everything now, exactly as when a row
+    // matched.
+    held: {
+        const id_copy = gpa.dupe(u8, id) catch break :held;
+        var rec: LateSub = .{ .id = id_copy };
+        if (result) |r| rec.result = gpa.dupe(u8, r) catch null;
+        if (err_name) |e| rec.err_name = gpa.dupe(u8, e) catch null;
+        while (late_subs.items.len >= max_late_subs) {
+            const oldest = late_subs.orderedRemove(0);
+            freeLate(oldest, gpa);
+        }
+        if (late_subs.append(gpa, rec)) {
+            _ = job_completions_total.fetchAdd(1, .monotonic);
+            log.log(.debug, "job completion raced ahead of registration job={s}; held for the row", .{id});
+            return true;
+        } else |_| {
+            freeLate(rec, gpa);
+        }
+    }
+    // Could not even copy the id: drop as before, loudly, with ownership
+    // left to the caller.
     log.log(.warn, "job completion has no registered row job={s} result_dropped={}", .{
         id, result != null or err_name != null,
     });
@@ -591,6 +720,9 @@ pub fn testingClear(gpa: std.mem.Allocator) void {
     execs = .empty;
     subs.deinit(gpa);
     subs = .empty;
+    for (late_subs.items) |rec| freeLate(rec, gpa);
+    late_subs.deinit(gpa);
+    late_subs = .empty;
 }
 
 test "makeId is 16 hex and unique at the same timestamp" {
@@ -672,7 +804,7 @@ test "Origin.capture copies the starter's log context and bounds it" {
     try std.testing.expectEqualStrings(long[0..32], capped.slice());
 }
 
-test "finishSub reports whether a row was registered" {
+test "finishSub reports whether the job table took the outcome" {
     const gpa = std.testing.allocator;
     defer testingClear(gpa);
     var id_buf: [16]u8 = undefined;
@@ -681,10 +813,36 @@ test "finishSub reports whether a row was registered" {
         fn run() void {}
     }.run, .{});
     try registerSub(gpa, id, "sess-flag", "task text", th);
-    // With gpa_ref set and a row registered, a completion for a *different*
-    // id reports false so its caller keeps its memory.
-    try std.testing.expect(!finishSub("0000000000000000", "late result", null));
+    // A completion for an id with no row is held for the registration that
+    // may still be about to create it, so the table owns the copies and the
+    // caller is told so.
+    try std.testing.expect(finishSub("0000000000000000", "late result", null));
     try std.testing.expect(finishSub(id, "result text", null));
+}
+
+test "a completion that beats its registration lands on the row" {
+    const gpa = std.testing.allocator;
+    defer testingClear(gpa);
+    // finishSub reads the allocator a prior registration left behind.
+    gpa_ref = gpa;
+    var id_buf: [16]u8 = undefined;
+    const id = makeId(2, &id_buf);
+    // The worker finishes before `registerSub` runs. The result used to be
+    // dropped and the row it was about to create read `running` for the life
+    // of the process, never reaped and never decrementing `jobs_active`.
+    try std.testing.expect(finishSub(id, "raced result", null));
+    const th = try std.Thread.spawn(.{}, struct {
+        fn run() void {}
+    }.run, .{});
+    try registerSub(gpa, id, "sess-race", "task text", th);
+    mu.lock();
+    defer mu.unlock();
+    try std.testing.expectEqual(@as(usize, 1), subs.items.len);
+    const row = subs.items[0];
+    try std.testing.expect(row.done.load(.acquire));
+    try std.testing.expectEqualStrings("raced result", row.result.?);
+    // The held entry is consumed, not left to accumulate.
+    try std.testing.expectEqual(@as(usize, 0), late_subs.items.len);
 }
 
 test "snapshotJobMetrics reports the live counters" {

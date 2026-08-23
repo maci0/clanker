@@ -232,7 +232,15 @@ pub fn renderPending(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const
         const name = json_util.strFieldOrEmpty(item.object, "name");
         const age = if (item.object.get("age_s")) |v| switch (v) {
             .integer => v.integer,
-            .float => @as(i64, @trunc(v.float)),
+            // nan/inf or a value past i64 reads as 0: the raw narrowing
+            // conversion would trap the render on wire-supplied data.
+            .float => blk: {
+                const f = v.float;
+                if (!std.math.isFinite(f)) break :blk @as(i64, 0);
+                const t = @trunc(f);
+                if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) break :blk @as(i64, 0);
+                break :blk @as(i64, @intFromFloat(t));
+            },
             else => 0,
         } else 0;
         try out.writer.print("  {s}", .{if (id.len > 0) id else "?"});

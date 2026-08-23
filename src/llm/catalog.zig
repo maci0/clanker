@@ -159,8 +159,10 @@ fn hitFrom(
     if (m != .object) return hit;
     if (fieldStr(m.object, "name")) |disp| hit.display = disp;
     if (m.object.get("limit")) |l| if (l == .object) {
-        if (models_dev.jsonNum(l.object, "context")) |ctx| hit.context = @as(i64, @trunc(ctx));
-        if (models_dev.jsonNum(l.object, "output")) |o| hit.output = @as(i64, @trunc(o));
+        // Catalog data is network input; a limit past i64 keeps the field
+        // unset rather than trapping the narrowing conversion.
+        if (models_dev.jsonNum(l.object, "context")) |ctx| hit.context = config.intFromFloatChecked(ctx) orelse hit.context;
+        if (models_dev.jsonNum(l.object, "output")) |o| hit.output = config.intFromFloatChecked(o) orelse hit.output;
     };
     if (m.object.get("cost")) |c| if (c == .object) {
         if (models_dev.jsonNum(c.object, "input")) |ci| hit.cost_in = ci;

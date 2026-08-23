@@ -3359,8 +3359,14 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
     if (m != .object) return std.fmt.allocPrint(arena, "# {s}: malformed catalog entry\n", .{name});
     var fields: std.ArrayList([]const u8) = .empty;
     if (m.object.get("limit")) |l| if (l == .object) {
-        if (jsonNum(l.object, "context")) |c| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @trunc(c))}));
-        if (jsonNum(l.object, "output")) |o| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @trunc(o))}));
+        // Catalog data is network input: a limit whose integer part does not
+        // fit an i64 drops that field from the snippet instead of trapping.
+        if (jsonNum(l.object, "context")) |c| if (config.intFromFloatChecked(c)) |n| {
+            try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{n}));
+        };
+        if (jsonNum(l.object, "output")) |o| if (config.intFromFloatChecked(o)) |n| {
+            try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{n}));
+        };
     };
     if (m.object.get("cost")) |c| if (c == .object) {
         if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
@@ -3673,7 +3679,10 @@ fn formatGoalSection(
 fn goalUpdated(obj: std.json.ObjectMap) i64 {
     if (obj.get("updated")) |v| switch (v) {
         .integer => |n| return n,
-        .float => |f| return @trunc(f),
+        // state/goals.json can be hand-edited; a float whose integer part
+        // does not fit an i64 reads as "unknown" (0), the same fallback an
+        // unparseable string gets, instead of trapping on the conversion.
+        .float => |f| return config.intFromFloatChecked(f) orelse 0,
         // Web UI / goal tool write timestamps as JSON numbers that may arrive
         // as strings when the file was hand-edited.
         .string => |s| return std.fmt.parseInt(i64, s, 10) catch 0,
@@ -3689,7 +3698,7 @@ fn goalMaxIterations(obj: std.json.ObjectMap) ?u32 {
     const v = obj.get("max_iterations") orelse return null;
     const n: i64 = switch (v) {
         .integer => |x| x,
-        .float => |f| @trunc(f),
+        .float => |f| config.intFromFloatChecked(f) orelse return null,
         else => return null,
     };
     if (n <= 0 or n > std.math.maxInt(u32)) return null;
@@ -11557,9 +11566,17 @@ fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, n
     if (obj.get("enabled")) |v| if (v == .bool and !v.bool)
         try fields.append(arena, "enabled = false");
     if (json_util.strFieldOrNull(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
-    if (jsonNum(obj, "rpm")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{@as(i64, @trunc(v))}));
-    if (jsonNum(obj, "context_window")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{@as(i64, @trunc(v))}));
-    if (jsonNum(obj, "max_tokens")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{@as(i64, @trunc(v))}));
+    // Numeric fields arrive from the browser's edit form; a value whose
+    // integer part does not fit an i64 drops the field rather than trapping.
+    if (jsonNum(obj, "rpm")) |v| if (config.intFromFloatChecked(v)) |n| {
+        try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{n}));
+    };
+    if (jsonNum(obj, "context_window")) |v| if (config.intFromFloatChecked(v)) |n| {
+        try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{n}));
+    };
+    if (jsonNum(obj, "max_tokens")) |v| if (config.intFromFloatChecked(v)) |n| {
+        try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{n}));
+    };
     if (jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
     if (jsonNum(obj, "top_p")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "top_p = {d}", .{v}));
     if (json_util.strFieldOrNull(obj, "reasoning_effort")) |re| try fields.append(arena, try std.fmt.allocPrint(arena, "reasoning_effort = {s}", .{try tomlQuoted(arena, re)}));
@@ -18345,6 +18362,8 @@ test "goalMaxIterations rejects non-positive and out-of-range values" {
         .{ .src = "{\"max_iterations\":-3}", .want = null },
         .{ .src = "{\"max_iterations\":5000000000}", .want = null },
         .{ .src = "{\"max_iterations\":12.9}", .want = 12 },
+        // A hand-edited float past i64 is "no budget", not a trap.
+        .{ .src = "{\"max_iterations\":1e300}", .want = null },
         .{ .src = "{}", .want = null },
     };
     for (cases) |c| {
@@ -18837,6 +18856,15 @@ test "renderModelSnippet emits a valid, pasteable TOML models table" {
     // A non-alias table key emits no `id` at all (the fixture's id equals the
     // key), so a fresh fill stays the minimal snippet it always was.
     try std.testing.expect(entry.get("id") == null);
+
+    // Catalog limits are network data: an entry whose limit does not fit an
+    // i64 drops that field from the snippet instead of trapping the fill.
+    const hostile = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"limit":{"context":1e300,"output":4096},"id":"x","name":"X"}
+    , .{});
+    const hostile_snippet = try renderModelSnippet(arena, "p", "m", hostile);
+    try std.testing.expect(std.mem.indexOf(u8, hostile_snippet, "context_window") == null);
+    try std.testing.expect(std.mem.find(u8, hostile_snippet, "max_tokens = 4096") != null);
 }
 
 test "providers refresh is a recognized subcommand" {
