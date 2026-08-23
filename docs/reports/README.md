@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [unknown provider kind failed with no naming diagnostic](bugs/2026-08-23-unknown-provider-kind-names-nothing.md) — Resolved
+
 - [Arena floored untargeted concede and final_stand moves](bugs/2026-08-23-arena-untargeted-concede-floored.md) — Resolved
 
 - [DAP stop events were attached to the next tool call](bugs/2026-08-23-dap-stopped-event-misattributed.md) — Resolved
