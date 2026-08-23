@@ -63,6 +63,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.okText(out, raw);
     }
 
+    // Listing is the fallback op, so an absent "list" means true. An explicit
+    // false with no other op named is a caller asking for none of the three
+    // verbs; refusing beats silently listing anyway, which is what made the
+    // flag a lie in the schema.
+    if (!lib.optBool(req, "list", true))
+        return lib.fail(out, "nothing to do: pass \"list\":true, \"snapshot\":true, or \"restore\":\"<hash>\"");
+
     const raw = lib.fsRead(path) catch |err| switch (err) {
         error.NotFound => return lib.okText(out, "no rewind checkpoints"),
         else => return lib.failErr(out, err, "reading rewind log"),

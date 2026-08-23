@@ -4,11 +4,7 @@
   "wasm": "zig-out/tools/status.wasm",
   "input_schema": {
     "type": "object",
-    "properties": {
-      "args": {
-        "type": "string"
-      }
-    }
+    "properties": {}
   },
   "fs_prefixes": [],
   "internal": true,
