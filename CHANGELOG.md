@@ -11,6 +11,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The improve loop's tool-descriptor gate now covers every configured
+  in-tree `tools_dir` entry instead of only the hardcoded `tools/manifests`.
+  A descriptor staged in a second in-tree directory used to reach a promoted
+  checkout without the duplicate-name/missing-wasm check; out-of-tree
+  entries (absolute, or escaping with `..`) remain outside the
+  staged-worktree gate by design.
 - `preset.toml` files are parsed by the same TOML parser as `config.toml`
   (`util/toml_bridge.zig`) instead of a line-based approximation. The
   approximation silently read a `tools_allow`/`tools_deny` written across

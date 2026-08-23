@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve gate skipped extra in-tree tools_dir entries](bugs/2026-08-23-descriptor-gate-skips-extra-tools-dirs.md) — Resolved
+
 - [Goal-loop work turns ignore --backend and call Agent.run](bugs/2026-08-22-goal-loop-ignores-backend.md) — Resolved
 
 - [ACP hang never unblocks a silent vendor child](bugs/2026-08-22-acp-hang-never-unblocks-a-silent-child.md) — Resolved
