@@ -80,6 +80,32 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A reply opening with a heading or a list draws its markdown markers literally](bugs/2026-08-23-turn-arrow-defeats-markdown-on-first-reply-line.md) — Resolved
+
+- [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Open
+
+- [/attach queues any file and fabricates an image MIME type for it](bugs/2026-08-23-repl-attach-has-no-type-or-vision-gate.md) — Open
+
+- [A steer typed while the final iteration streams is echoed as queued and then discarded](bugs/2026-08-23-repl-steer-after-last-poll-silently-dropped.md) — Open
+
+- [Fenced block comments and multi-line strings mis-highlight in the REPL but not in clanker run](bugs/2026-08-23-tui-syntax-state-not-carried-across-lines.md) — Open
+
+- [The same @path line inlines a file when idle and reaches the model literally mid-run](bugs/2026-08-23-repl-mentions-not-expanded-when-steering.md) — Open
+
+- [An escape sequence split across two deltas has its introducer dropped and its tail printed as prose](bugs/2026-08-23-mdstream-split-escape-tail-printed.md) — Open
+
+- [A fenced line longer than 4 KiB is silently cut, not emitted unhighlighted](bugs/2026-08-23-mdstream-fence-line-truncated-past-4kib.md) — Open
+
+- [Alt+Enter, the documented multi-line fallback, was bound nowhere and did nothing](bugs/2026-08-23-repl-alt-enter-newline-never-bound.md) — Resolved
+
+- [The TUI width table panics on a codepoint a streamed delta cut in half](bugs/2026-08-23-tui-width-panics-on-truncated-utf8.md) — Resolved
+
+- [The REPL transcript reserves rows for the markdown source and draws the rendered form](bugs/2026-08-23-repl-row-math-measures-markdown-source.md) — Resolved
+
+- [A tool card preview passes a raw escape sequence through behind a UTF-8 lead byte](bugs/2026-08-23-card-preview-escape-behind-lead-byte.md) — Resolved
+
+- [A nested ordered list in the REPL indents twice as far as the bullet beside it](bugs/2026-08-23-repl-nested-ordered-list-double-indent.md) — Resolved
+
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 
 - [Bug — a run using the debug tool leaks a hash-map allocation when launch times out](bugs/2026-08-23-debug-tool-run-leaks-on-adapter-timeout.md) — Open
