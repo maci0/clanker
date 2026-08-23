@@ -1,7 +1,10 @@
 /* music: local-file / URL player with a persistent dock.
  *
  * Nothing leaves this browser: files stay as object URLs, the playlist of
- * remote URLs is the only thing written to localStorage. The System → Web UI
+ * remote URLs is the only persisted state, written through the plugin's
+ * namespaced storage (api.storage). The pre-migration localStorage keys are
+ * read once as a fallback so existing playlists survive; nothing is written
+ * back to them. The System → Web UI
  * plugins checkbox is the on/off for the whole addon; the dock chevron only
  * tucks the chrome away. */
 

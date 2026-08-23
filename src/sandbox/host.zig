@@ -159,7 +159,7 @@ pub const ConfirmFn = *const fn (
 /// turn boundary. A queue cannot work here: ck_subagent joins the nested
 /// thread, so the parent never reaches a turn boundary while its sub-agent
 /// waits. The same join is what makes the re-entrant path safe: the subagent
-/// tool is `llm: true`, which pins it to the sequential tool path, so while
+/// tool is `sequential: true`, which pins it to the sequential tool path, so while
 /// this callback runs the parent is parked with no other tool of its own in
 /// flight, and its transcript cannot move under the reader.
 pub const ParentAsk = struct {

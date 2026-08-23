@@ -24,6 +24,6 @@
   "fs_prefixes": [],
   "network_allow": [],
   "category": "agent",
-  "llm": true,
+  "sequential": true,
   "confirm": true
 }

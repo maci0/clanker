@@ -30,5 +30,5 @@
   "config_editable": [
     "max_depth"
   ],
-  "llm": true
+  "sequential": true
 }
