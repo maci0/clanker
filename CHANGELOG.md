@@ -11,6 +11,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Hitting `agent.max_iterations` in the REPL now lands the turn on the
+  model's partial work instead of rendering `[error: ...]` and discarding
+  every tool round: the last prose the model produced renders as the partial
+  answer, followed by a note naming the limit and offering to continue with
+  "keep going" (the transcript persists across turns, so the follow-up
+  resumes where the run stopped). The turn receipt still prints. Other limit
+  errors (token budget, compaction stall) keep the error path.
+- DAP stop events are attached to the request that caused them. Event
+  buffering used to decode only bytes a previous blocking read had
+  over-read, so a `stopped` event sitting unread in the OS pipe was
+  invisible until the next request's response wait swallowed it — `continue`
+  to a breakpoint essentially never reported its own stop, which surfaced on
+  whatever tool call came next. Draining now polls the pipe without
+  blocking, and resuming ops (`continue`, `step_*`, `next`, `pause`) wait up
+  to `HandleOpts.stop_wait_ms` (default 1000ms, 0 disables) for a
+  stop-shaped event; expiry is not an error and never kills the adapter.
+- Arena Battle Royale no longer pays the weak-confidence floor for an
+  untargeted `concede` or `final_stand`. The move prompt requires `target`
+  only for attack, block and counter, and scoring ignores the target of the
+  other two — yet a protocol-following untargeted concession was recorded
+  `weak` at confidence 0.15 and misrepresented in the verdict. Untargeted
+  offensive moves keep the documented default-aim-plus-floor behaviour.
 - An unknown provider `kind` in `config.toml` now fails with a diagnostic
   naming the provider, the offending spelling, and every kind the binary
   accepts. It used to emit only the generic "configuration validation failed
