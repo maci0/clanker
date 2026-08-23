@@ -347,6 +347,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [The SIGWINCH flood journey fails in any worktree where apply-patches.sh has not been run](investigations/2026-08-23-pty-resize-journey-fails-in-an-unpatched-worktree.md) — Resolved
+
 - [The two pty e2e tests fail in any git worktree and pass in the main checkout](investigations/2026-08-22-pty-e2e-fails-in-a-worktree.md) — Resolved
 
 - [improve_history is granted a path that is a symlink inside an improve-self worktree](investigations/2026-08-22-improve-history-guest-in-an-improve-worktree.md) — Resolved
