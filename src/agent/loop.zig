@@ -3276,6 +3276,35 @@ pub const Agent = struct {
     }
 };
 
+/// The last thing the assistant said with words in it, or null when the run
+/// produced no prose at all. A capped run's final turns are usually tool
+/// calls with empty content, so this walks back past them; the caller uses
+/// it to land a limit-hit turn on the partial work instead of discarding it
+/// (the CLI's `reportUnfinishedRun` does the same walk for `clanker run`).
+pub fn lastAssistantProse(messages: []const types.Message) ?[]const u8 {
+    var i = messages.len;
+    while (i > 0) {
+        i -= 1;
+        const m = messages[i];
+        if (m.role != .assistant) continue;
+        const c = m.content orelse continue;
+        if (std.mem.trim(u8, c, " \t\r\n").len > 0) return c;
+    }
+    return null;
+}
+
+test "lastAssistantProse walks back past tool-call-only turns" {
+    const msgs = [_]types.Message{
+        .{ .role = .user, .content = "task" },
+        .{ .role = .assistant, .content = "progress so far" },
+        .{ .role = .assistant, .content = "   " },
+        .{ .role = .assistant, .content = null },
+    };
+    try std.testing.expectEqualStrings("progress so far", lastAssistantProse(&msgs).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), lastAssistantProse(msgs[2..]));
+    try std.testing.expectEqual(@as(?[]const u8, null), lastAssistantProse(&.{}));
+}
+
 /// How much of the parent's transcript a sub-agent's question gets to see:
 /// the most recent messages, each clipped, so the answer prompt stays bounded
 /// whatever the parent has been doing.

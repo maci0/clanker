@@ -4,11 +4,11 @@
 
 - **What failed:** `clanker commit --all` builds its file list from `git diff --name-only` (worktree vs index), which lists no new file: an untracked one is not in the diff at all, and a `git add`ed one is identical in index and worktree. The plan never mentions it, the commit does not contain it, and the command reports success. Observed on b59814fe's branch: a new runbook was left behind by two `--all` runs and needed a separate `git commit`.
 - **Impact:** Silent loss from the commit, not from the tree. The file stays in the working tree, so nothing is destroyed, but the branch and any PR built from it are missing it and the command exits 0. The `staged` scope is unaffected.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-23. Fixed by 5a6adecc: scope all unions worktree diff, staged diff, and untracked ls-files, plus a post-write git status --porcelain -uall check that every planned path reached a commit. Verified by the e2e test 'clanker commit --all includes new files, tracked or not' and a live dry-run on e41987de showing an untracked file in the plan.
 
 ## Status
 
-Open.
+Resolved on 2026-08-23. Fixed by 5a6adecc: scope all unions worktree diff, staged diff, and untracked ls-files, plus a post-write git status --porcelain -uall check that every planned path reached a commit. Verified by the e2e test 'clanker commit --all includes new files, tracked or not' and a live dry-run on e41987de showing an untracked file in the plan.
 
 ## Symptom and impact
 
@@ -96,3 +96,6 @@ Not fixed, so nothing to verify yet. What is checked, and how:
 - Investigation: none. The mechanism was clear from the source, so no tracing record was needed.
 - `tools/zig/smart_commit.zig` — the guest that owns the scope-to-git-command choice.
 - PRD 0021 (docs/prds/0021-smart-commit.md) — what `clanker commit` is meant to be.
+## Resolution verification (2026-08-23)
+
+Fixed on main by 5a6adecc ("fix: stop commit --all from silently dropping new files"). Scope "all" now unions `git diff --name-only`, `git diff --name-only --staged`, and `git ls-files --others --exclude-standard` in tools/zig/smart_commit.zig, and after writing it verifies with `git status --porcelain -uall` that every planned path reached a commit, failing loudly when one did not — both halves the Resolution section above asked for. Pinned by the e2e test "clanker commit --all includes new files, tracked or not" (tests/e2e/commit_apply_test.zig). Verified live on e41987de: with one untracked file in a fresh worktree, `clanker commit --all --dry-run` produced a plan naming that file (live DeepSeek grouping call); the pre-fix listing could not see it at all.

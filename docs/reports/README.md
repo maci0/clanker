@@ -86,7 +86,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [Two backend runs in the same second wrote one graph file](bugs/2026-08-22-backend-run-id-seconds-collide.md) — Resolved
 
-- [clanker commit --all silently omits every new file](bugs/2026-08-22-commit-all-omits-new-files.md) — Open
+- [clanker commit --all silently omits every new file](bugs/2026-08-22-commit-all-omits-new-files.md) — Resolved
 
 - [rfc create writes a seeded research link that does not resolve](bugs/2026-08-22-rfc-seeded-research-link-misses-the-parent-directory.md) — Resolved
 
