@@ -12,9 +12,61 @@ const subprocess = @import("../agent/subprocess.zig");
 const utf8 = @import("../util/utf8.zig");
 const log = @import("../util/log.zig");
 
+/// The supervisor script, written into the kernel's cwd and run by `python3`.
+///
+/// The JSON line protocol owns a descriptor of its own and fd 1 / fd 2 are
+/// repointed at capture files for the whole life of the process. That is not
+/// tidiness: fd 1 used to carry both the protocol and whatever a cell's
+/// children inherited, so `subprocess.run` without `capture_output` (or a bare
+/// `os.write(1, ...)`) put raw bytes in front of the reply and `parseResponse`
+/// reported a `SyntaxError` for a correct cell
+/// ([bug](../../docs/reports/bugs/2026-08-23-kernel-cell-stdout-corrupts-supervisor-protocol.md)).
+/// Repointing once at startup rather than around each cell is deliberate:
+/// there is no restore path to get wrong on an exception, a child that reopens
+/// `/dev/stdout` still lands in the capture, and `os.dup` returns a
+/// non-inheritable descriptor (PEP 446) so no child holds the protocol fd.
+/// `run_cell`'s `sys.stdout` swap stays: it is Python-level and keeps a plain
+/// `print` ordered against the cell, and the descriptor drain is appended
+/// after it because the true interleaving of two streams is not recoverable.
 pub const supervisor_src =
-    \\import ast, io, json, os, subprocess, sys, time, traceback
+    \\import ast, io, json, os, subprocess, sys, tempfile, time, traceback
     \\ns = {"__name__": "__main__"}
+    \\
+    \\_proto = os.fdopen(os.dup(1), "w", buffering=1)
+    \\_drain_max = 1 << 20
+    \\
+    \\def _capture(fd):
+    \\    cap, path = tempfile.mkstemp(prefix="clanker-kernel-fd%d-" % fd)
+    \\    os.unlink(path)
+    \\    os.dup2(cap, fd)
+    \\    return cap
+    \\
+    \\_cap1 = _capture(1)
+    \\_cap2 = _capture(2)
+    \\
+    \\def _drain(cap):
+    \\    end = os.lseek(cap, 0, os.SEEK_CUR)
+    \\    if end <= 0:
+    \\        return ""
+    \\    os.lseek(cap, 0, os.SEEK_SET)
+    \\    data = os.read(cap, min(end, _drain_max))
+    \\    os.lseek(cap, 0, os.SEEK_SET)
+    \\    os.truncate(cap, 0)
+    \\    text = data.decode("utf-8", "replace")
+    \\    if end > len(data):
+    \\        text += "\n[%d more byte(s) dropped]" % (end - len(data))
+    \\    return text
+    \\
+    \\def _flush_std():
+    \\    for s in (sys.__stdout__, sys.__stderr__):
+    \\        try:
+    \\            s.flush()
+    \\        except Exception:
+    \\            pass
+    \\
+    \\def _reply(obj):
+    \\    _proto.write(json.dumps(obj) + "\n")
+    \\    _proto.flush()
     \\
     \\def reset():
     \\    global ns
@@ -62,11 +114,12 @@ pub const supervisor_src =
     \\    try:
     \\        req = json.loads(line)
     \\    except Exception as e:
-    \\        print(json.dumps({"ok": False, "error": str(e), "stdout": "", "stderr": "", "result": None}), flush=True)
+    \\        _reply({"ok": False, "error": str(e), "stdout": "", "stderr": "", "result": None})
     \\        continue
     \\    if req.get("reset"):
     \\        reset()
-    \\        print(json.dumps({"ok": True, "reset": True, "stdout": "", "stderr": "", "result": None, "duration_ms": 0}), flush=True)
+    \\        _flush_std()
+    \\        _reply({"ok": True, "reset": True, "stdout": _drain(_cap1), "stderr": _drain(_cap2), "result": None, "duration_ms": 0})
     \\        continue
     \\    if "pip" in req:
     \\        ok, out, err, result = pip_install(req["pip"])
@@ -75,7 +128,10 @@ pub const supervisor_src =
     \\    else:
     \\        ok, out, err, result = run_cell(req.get("cell") or "")
     \\    ms = int((time.time() - t0) * 1000)
-    \\    print(json.dumps({"ok": ok, "stdout": out, "stderr": err, "result": result, "duration_ms": ms}), flush=True)
+    \\    _flush_std()
+    \\    out += _drain(_cap1)
+    \\    err += _drain(_cap2)
+    \\    _reply({"ok": ok, "stdout": out, "stderr": err, "result": result, "duration_ms": ms})
 ;
 
 pub const Request = struct {
@@ -593,11 +649,10 @@ test "every kernel reply states that this path is unsandboxed, and it really is"
     try std.testing.expect(std.mem.find(u8, shell_out, "AMBIENT-SHELL-REACHED") != null);
     try std.testing.expect(std.mem.find(u8, shell_out, "\"sandboxed\":false") != null);
 
-    // `capture_output=True` is not incidental. Without it the child inherits
-    // the supervisor's stdout and its bytes land in the middle of the JSON
-    // line, which the host then cannot parse -- see the separate report on the
-    // stdout-corruption bug. Capturing keeps this assertion about exec reach
-    // rather than about that.
+    // `capture_output=True` keeps this assertion about exec reach and nothing
+    // else. The uncaptured form no longer corrupts the reply -- the protocol
+    // moved off fd 1 and the descriptor is drained into `stdout` -- and that
+    // is pinned by its own test below rather than tangled into this one.
     var via_python = base;
     via_python.cell = "import subprocess; subprocess.run(['echo','AMBIENT-VIA-SUBPROCESS'],capture_output=True).stdout";
     const via_out = try eval(via_python);
@@ -613,6 +668,78 @@ test "every kernel reply states that this path is unsandboxed, and it really is"
     // An unparseable reply is passed through rather than dropped for a label.
     const junk = try annotatePosture(arena, try arena.dupe(u8, "not json"));
     try std.testing.expectEqualStrings("not json", junk);
+}
+
+test "descriptor-level cell output is captured, not spliced into the reply" {
+    // On the parent commit each of these three cells failed with a JSON
+    // `SyntaxError` out of `parseResponse`: the supervisor wrote its reply to
+    // the same fd 1 the cell (or its child) had just written to, and the host
+    // read the stray bytes as the start of the reply line. Asserting on the
+    // *content* of `stdout`/`stderr` rather than only on `ok` is the point --
+    // discarding the bytes would also stop the parse error, and would lose the
+    // cell's output instead.
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const base = EvalOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "fd1",
+        .cwd = .{ .dir = tmp.dir },
+        .timeout_ms = 15_000,
+    };
+    defer reg.terminateSession("fd1");
+
+    // 1. A bare descriptor write from the cell itself, no subprocess involved.
+    var raw_fd = base;
+    raw_fd.cell = "import os\nos.write(1, b'STRAY-FD1\\n')\n1 + 1";
+    const raw_out = eval(raw_fd) catch |err| switch (err) {
+        error.Python3NotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    const raw_parsed = try parseResponse(arena, raw_out);
+    try std.testing.expect(raw_parsed.ok);
+    try std.testing.expectEqualStrings("2", raw_parsed.result.?);
+    try std.testing.expect(std.mem.find(u8, raw_parsed.stdout, "STRAY-FD1") != null);
+
+    // 2. The shape a model actually writes: a child that inherits fd 1.
+    var child = base;
+    child.cell = "import subprocess\nsubprocess.run(['echo','UNCAPTURED-CHILD'])\n'done'";
+    const child_parsed = try parseResponse(arena, try eval(child));
+    try std.testing.expect(child_parsed.ok);
+    try std.testing.expectEqualStrings("'done'", child_parsed.result.?);
+    try std.testing.expect(std.mem.find(u8, child_parsed.stdout, "UNCAPTURED-CHILD") != null);
+
+    // 3. fd 2 is captured as `stderr` rather than discarded. The supervisor is
+    // spawned with `.stderr = .ignore`, so before the capture a child's
+    // diagnostics went to /dev/null and a failing command explained nothing.
+    var err_fd = base;
+    err_fd.cell = "import os\nos.write(2, b'STRAY-FD2\\n')\n7";
+    const err_parsed = try parseResponse(arena, try eval(err_fd));
+    try std.testing.expect(err_parsed.ok);
+    try std.testing.expectEqualStrings("7", err_parsed.result.?);
+    try std.testing.expect(std.mem.find(u8, err_parsed.stderr, "STRAY-FD2") != null);
+
+    // Python-level `print` still lands in `stdout`, and the drain does not
+    // bleed one cell's descriptor bytes into the next reply.
+    var plain = base;
+    plain.cell = "print('py-level')\n3";
+    const plain_parsed = try parseResponse(arena, try eval(plain));
+    try std.testing.expect(plain_parsed.ok);
+    try std.testing.expectEqualStrings("py-level\n", plain_parsed.stdout);
+    try std.testing.expect(std.mem.find(u8, plain_parsed.stdout, "STRAY") == null);
 }
 
 test "python cells persist, reset drops the name, persist works again" {
