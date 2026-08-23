@@ -13,6 +13,72 @@ const json = std.json;
 const log = @import("../util/log.zig");
 const subprocess = @import("../agent/subprocess.zig");
 const vendor = @import("vendor.zig");
+const llm_types = @import("../llm/types.zig");
+
+/// `session/prompt` params: one required text ContentBlock, then one `image`
+/// block per attachment.
+///
+/// The image block shape is ACP v1's `ImageContent`: `type`/`mimeType`/`data`,
+/// where `data` is the base64 payload. That maps 1:1 onto clanker's
+/// `ImagePart` (`mime` -> `mimeType`, `b64` -> `data`), so nothing is decoded
+/// or re-encoded here; the bytes the composer uploaded are the bytes the child
+/// sees.
+///
+/// Built with a JSON writer rather than `allocPrint` of a format string: the
+/// old single-block form interpolated two `std.json.fmt` values into hand-written
+/// braces, and an array of blocks is where that stops being readable.
+///
+/// Never logged. A base64 image is large and, for a screenshot of a terminal,
+/// can carry anything that was on screen.
+fn promptParams(
+    alloc: std.mem.Allocator,
+    session_id: []const u8,
+    text: []const u8,
+    images: []const llm_types.ImagePart,
+) ![]const u8 {
+    var out: std.Io.Writer.Allocating = .init(alloc);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try s.objectField("sessionId");
+    try s.write(session_id);
+    try s.objectField("prompt");
+    try s.beginArray();
+    try s.beginObject();
+    try s.objectField("type");
+    try s.write("text");
+    try s.objectField("text");
+    try s.write(text);
+    try s.endObject();
+    for (images) |im| {
+        // A part missing either half is not a block ACP can carry, and an empty
+        // `data` would read to the vendor as a zero-byte image rather than as
+        // an omission. Skipped, not sent malformed.
+        if (im.mime.len == 0 or im.b64.len == 0) continue;
+        try s.beginObject();
+        try s.objectField("type");
+        try s.write("image");
+        try s.objectField("mimeType");
+        try s.write(im.mime);
+        try s.objectField("data");
+        try s.write(im.b64);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+    return out.toOwnedSlice();
+}
+
+/// Test seam for `promptParams`, which is otherwise reachable only through a
+/// live child. Pinning the exact JSON is what keeps the required-first text
+/// block and the ACP `ImageContent` field names from drifting.
+pub fn promptParamsForTest(
+    alloc: std.mem.Allocator,
+    session_id: []const u8,
+    text: []const u8,
+    images: []const llm_types.ImagePart,
+) ![]const u8 {
+    return promptParams(alloc, session_id, text, images);
+}
 
 const protocol_version: u32 = 1;
 const client_name = "clanker";
@@ -79,6 +145,18 @@ pub const Client = struct {
 
     /// Full session: initialize, optional authenticate, session/new, prompt.
     pub fn prompt(self: *Client, cwd: []const u8, text: []const u8) !PromptResult {
+        return self.promptWith(cwd, text, &.{});
+    }
+
+    /// Same, with image attachments as ACP `image` ContentBlocks after the text
+    /// block (ACP v1, https://agentclientprotocol.com/protocol/content).
+    ///
+    /// Sent even when `initialize` omitted `promptCapabilities.image`. PRD 0043
+    /// settles that deliberately for the three vendors clanker drives: they take
+    /// images, and a silent drop is worse than a vendor reject, which surfaces
+    /// as `handshake_failed` and is handled. What must never happen is a 200
+    /// with the child having seen only the text.
+    pub fn promptWith(self: *Client, cwd: []const u8, text: []const u8, images: []const llm_types.ImagePart) !PromptResult {
         const init_result = try self.rpc("initialize", try self.initializeParams());
         const needs_auth = authRequired(self.alloc, init_result);
         if (needs_auth) {
@@ -93,11 +171,7 @@ pub const Client = struct {
         );
         const new_result = try self.rpc("session/new", new_params);
         const session_id = sessionIdOf(self.alloc, new_result) orelse return Error.HandshakeFailed;
-        const prompt_params = try std.fmt.allocPrint(
-            self.alloc,
-            "{{\"sessionId\":{f},\"prompt\":[{{\"type\":\"text\",\"text\":{f}}}]}}",
-            .{ std.json.fmt(session_id, .{}), std.json.fmt(text, .{}) },
-        );
+        const prompt_params = try promptParams(self.alloc, session_id, text, images);
         const prompt_result = self.rpc("session/prompt", prompt_params) catch |err| switch (err) {
             error.Timeout, Error.Hang => return Error.Hang,
             else => return err,

@@ -83,7 +83,8 @@ Policy when images are attached:
 
 ## Known issues
 
-- Image attachments never reach a coding-agent backend. Promised by Goal 6 (and by the composer, which will attach if the picker allows it). What happens: `session/prompt` is text-only (`src/acp/client.zig`); `runCodingBackend` does not take images (`src/cli.zig`); HTTP still gates on the LLM model's `image_in` (`imageAttachmentsSupported` in `src/cli.zig`). Fix belongs in the files listed under Design **Prompt capabilities (images)** / Implementation phase 6.
+- **(Partly fixed 2026-08-23.)** Image attachments now reach a coding-agent backend over HTTP. `Client.promptWith` (`src/acp/client.zig`) emits one ACP `image` ContentBlock per attachment after the required text block; `RunOpts.images` (`src/acp/driver.zig`) carries them; `runCodingBackendCtx` (`src/cli.zig`) takes them and both `POST /api/run` backend call sites pass them. The two behaviours the failure-modes table forbids are gone: HTTP no longer runs the LLM `image_in` gate or the vision-provider swap when `backend` is set, and a headless run with images returns a named `error.HeadlessImagesUnsupported` instead of spawning text-only.
+  **Still open**, so Goal 6 is not complete and its criteria stay unticked: the TUI (`src/tui/repl.zig`) still slices attachments into `Agent.pending_images` and does not pass them to its backend run, and the web UI picker (`ui/app/core/modelpicker.js`) does not advertise `image` on backend rows, so composer attach may still be disabled for a backend selection. Headless image argv for `claude -p` / `codex exec` / `grok -p` is still unpinned, which is why the refusal above is the settled behaviour rather than a gap.
 
 ## Failure modes
 
@@ -94,9 +95,10 @@ Policy when images are attached:
 | Child exits non-zero | Failed run; persistGraph records the failure. |
 | Unknown vendor | Refuse. |
 | Vendor update breaks ACP | B takes over; A is not a hard dependency for that vendor. |
-| Images attached + backend selected | Path A sends image ContentBlocks; never a 200 with the child seeing only text (Known issues until phase 6). |
-| Images attached + backend + LLM model lacks image_in | Do not 400 and do not fall back to a vision LLM provider. The backend is the worker. |
-| Images attached + ACP missing/hang and headless flags unpinned | Named refusal, not a text-only spawn. |
+| Images attached + backend selected | Path A sends image ContentBlocks; never a 200 with the child seeing only text. Holds over HTTP since 2026-08-23; the TUI still drops them. |
+| Images attached + backend + LLM model lacks image_in | Do not 400 and do not fall back to a vision LLM provider. The backend is the worker. Holds since 2026-08-23. |
+| Images attached + ACP missing/hang and headless flags unpinned | Named refusal, not a text-only spawn. `error.HeadlessImagesUnsupported`, with a failed `final` node on the graph. Holds since 2026-08-23. |
+| An attachment missing its mime or its base64 payload | Dropped from the block array rather than sent as a zero-byte image. |
 
 ## Acceptance criteria
 
@@ -107,9 +109,10 @@ Policy when images are attached:
 - [x] Each driven session writes a run-graph node and autolearn can read it. (Goal 4)
 - [x] Spawn is harness-native, not ck_job and not ck_exec's allowlist. (Goal 5)
 - [x] The web UI model picker (and TUI /model) lists installed coding-agent backends in their own group, headed as a local CLI backend rather than an API-key provider; choosing one is what POST /api/run and run/repl/goal send as the backend. (Operator surface)
-- [ ] Image attachments on grok, claude, and codex backends reach the child as ACP image ContentBlocks (`type`/`mimeType`/`data`) (Goal 6). Pinned by a driver.run test against the fake ACP agent, not a pre-built Graph.
-- [ ] Selecting a backend does not disable composer attach and does not run the LLM image_in gate. (Goal 6)
-- [ ] Headless fallback with images either uses vendor image flags pinned at that CLI help/docs, or refuses with a named error. It never strips the images and continues. (Goal 6)
+- [x] Image attachments on grok, claude, and codex backends reach the child as ACP image ContentBlocks (`type`/`mimeType`/`data`) (Goal 6). Pinned by a driver.run test against the fake ACP agent, not a pre-built Graph. The fake agent echoes the blocks it received, so the assertion is on what crossed the wire; the test goes red if the image loop is removed.
+- [ ] Selecting a backend does not disable composer attach and does not run the LLM image_in gate. (Goal 6) **Half done:** the `image_in` gate and the vision-provider swap no longer run for a backend run (`src/cli.zig`). Composer attach is untouched: `ui/app/core/modelpicker.js` still does not advertise `image` on backend rows.
+- [x] Headless fallback with images either uses vendor image flags pinned at that CLI help/docs, or refuses with a named error. It never strips the images and continues. (Goal 6) Refuses: `error.HeadlessImagesUnsupported`. No vendor argv is pinned, so refusal is the branch taken.
+- [ ] A backend run started from the TUI carries its attachments (Goal 6). `src/tui/repl.zig` still sets only `Agent.pending_images`, which the backend path does not read.
 
 ## Open questions / future work
 

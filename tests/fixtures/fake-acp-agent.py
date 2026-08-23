@@ -33,6 +33,33 @@ def main_acp():
         elif method == "session/prompt":
             if hang:
                 continue
+            # A prompt containing ECHO-BLOCKS makes the agent report the blocks
+            # it actually received, so a test can assert on what crossed the
+            # wire rather than on what the caller believed it sent. Keyed off
+            # the prompt and not an env var on purpose: this child inherits the
+            # test process's environment (spawn passes no .env), so an env gate
+            # set by the caller would never reach it.
+            blocks = msg.get("params", {}).get("prompt", [])
+            wants_echo = any(
+                b.get("type") == "text" and "ECHO-BLOCKS" in (b.get("text") or "")
+                for b in blocks
+            )
+            if wants_echo:
+                summary = " ".join(
+                    "block:{}/{}/{}".format(
+                        b.get("type", "?"),
+                        b.get("mimeType", "-"),
+                        b.get("data", b.get("text", "-")),
+                    )
+                    for b in blocks
+                )
+                send({"jsonrpc": "2.0", "method": "session/update", "params": {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {"type": "text", "text": summary},
+                    },
+                }})
             send({"jsonrpc": "2.0", "method": "session/update", "params": {
                 "sessionId": session_id,
                 "update": {

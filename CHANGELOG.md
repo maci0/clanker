@@ -16,6 +16,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Image attachments now reach a coding-agent backend (`--backend` /
+  `[agent] backend`) over HTTP. `session/prompt` carries one ACP `image`
+  ContentBlock per attachment after the text block, `POST /api/run` no longer
+  refuses a backend run because the configured *LLM* model lacks the `image_in`
+  capability, and it no longer swaps in a vision LLM provider that is not going
+  to be called. A headless fallback with images refuses with a named error
+  rather than spawning the child text-only, since no vendor's headless image
+  argv is pinned yet. The TUI and the web UI model picker are unchanged, so
+  PRD 0043's Goal 6 is not complete; see its Known issues.
+
 - Hitting `agent.max_iterations` in the REPL now lands the turn on the
   model's partial work instead of rendering `[error: ...]` and discarding
   every tool round: the last prose the model produced renders as the partial
