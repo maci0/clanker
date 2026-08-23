@@ -16,6 +16,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A `kernel` cell now returns as soon as it finishes instead of being held for
+  the whole of `timeout_ms`. The timeout watchdog slept the entire budget and
+  only then checked whether it was still needed, and the round trip joins that
+  thread before returning, so a cell the supervisor reported at 5 ms took the
+  full 10 second default. The watchdog now waits on an event the reader sets
+  when the round trip ends; the timeout itself and its SIGTERM are unchanged.
 - A `kernel` cell that writes to file descriptor 1 no longer breaks the reply.
   `subprocess.run(...)` without `capture_output`, or a bare `os.write(1, ...)`,
   put its bytes in front of the supervisor's JSON line and the host returned a
