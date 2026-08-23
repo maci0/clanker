@@ -192,9 +192,9 @@ fn jsonError(arena: std.mem.Allocator, raw: []const u8) ?[]const u8 {
 pub fn renderStatus(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     const listening = if (obj.get("listening")) |v| (v == .bool and v.bool) else false;
-    const listen = strField(obj, "listen");
-    const admission = strField(obj, "admission");
-    const id = strField(obj, "id");
+    const listen = json_util.strFieldOrEmpty(obj, "listen");
+    const admission = json_util.strFieldOrEmpty(obj, "admission");
+    const id = json_util.strFieldOrEmpty(obj, "id");
     try out.writer.print("mesh  {s}", .{if (listening) "listening" else "not listening"});
     if (listen.len > 0) try out.writer.print("  {s}", .{listen});
     if (admission.len > 0) try out.writer.print("  admission={s}", .{admission});
@@ -208,8 +208,8 @@ pub fn renderStatus(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const 
     }
     for (members) |item| {
         if (item != .object) continue;
-        const mid = strField(item.object, "id");
-        const name = strField(item.object, "name");
+        const mid = json_util.strFieldOrEmpty(item.object, "id");
+        const name = json_util.strFieldOrEmpty(item.object, "name");
         const up = json_util.boolFieldOrFalse(item.object, "up");
         const label = if (name.len > 0 and !std.mem.eql(u8, name, mid)) name else mid;
         try out.writer.print("  {s}", .{label});
@@ -228,8 +228,8 @@ pub fn renderPending(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const
     }
     for (rows) |item| {
         if (item != .object) continue;
-        const id = strField(item.object, "id");
-        const name = strField(item.object, "name");
+        const id = json_util.strFieldOrEmpty(item.object, "id");
+        const name = json_util.strFieldOrEmpty(item.object, "name");
         const age = if (item.object.get("age_s")) |v| switch (v) {
             .integer => v.integer,
             .float => @as(i64, @trunc(v.float)),
@@ -240,11 +240,6 @@ pub fn renderPending(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const
         try out.writer.print("  {d}s\n", .{age});
     }
     return out.toOwnedSlice();
-}
-
-fn strField(obj: std.json.ObjectMap, key: []const u8) []const u8 {
-    const v = obj.get(key) orelse return "";
-    return if (v == .string) v.string else "";
 }
 
 fn writeStdOut(io: std.Io, text: []const u8) !void {

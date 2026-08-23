@@ -330,10 +330,6 @@ pub fn renderChecklist(
 
 const testing = std.testing;
 
-fn parseValue(arena: std.mem.Allocator, text: []const u8) !std.json.Value {
-    return std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{});
-}
-
 test "renderList names the next free number when there is nothing to list" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -350,10 +346,10 @@ test "renderList prints status, path and title for each RFC" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rfcs = try parseValue(arena,
+    const rfcs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/rfcs/0001-http-client.md","title":"HTTP client for the proxy","status":"Discussion"},
         \\ {"path":"docs/rfcs/0002-store.md","title":"State store","status":"Decided"}]
-    );
+    , .{});
     const text = try renderList(arena, rfcs.array.items, 3);
     try testing.expect(std.mem.find(u8, text, "2 RFC(s)") != null);
     try testing.expect(std.mem.find(u8, text, "docs/rfcs/0001-http-client.md") != null);
@@ -368,9 +364,9 @@ test "renderList still lists an RFC whose status could not be read" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rfcs = try parseValue(arena,
+    const rfcs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/rfcs/0009-unreadable.md","title":"","status":""}]
-    );
+    , .{});
     const text = try renderList(arena, rfcs.array.items, 10);
     // The path is what a reader needs in order to go look; dropping the row
     // would make an unreadable record invisible.
@@ -383,9 +379,9 @@ test "renderSearch says a matching ADR may already have decided it" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"file":"docs/adrs/0003-zwasm.md","line":12,"text":"we use zwasm for the sandbox"}]
-    );
+    , .{});
     const text = try renderSearch(arena, "zwasm", &.{}, adrs.array.items);
     try testing.expect(std.mem.find(u8, text, "ADRS") != null);
     try testing.expect(std.mem.find(u8, text, "docs/adrs/0003-zwasm.md") != null);
@@ -432,9 +428,9 @@ test "renderChecklist prints the question to ask under each requirement" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const reqs = try parseValue(arena,
+    const reqs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"needs":"the decision as a question","why":"an RFC without one drifts","ask":"What exactly is being decided?"}]
-    );
+    , .{});
     const text = try renderChecklist(arena, "http client", reqs.array.items, &.{});
     try testing.expect(std.mem.find(u8, text, "http client") != null);
     try testing.expect(std.mem.find(u8, text, "the decision as a question") != null);
@@ -461,12 +457,12 @@ test "renderChecklist prints the tool's next steps under their own heading" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const reqs = try parseValue(arena,
+    const reqs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"needs":"the status quo","why":"doing nothing is an option","ask":"What happens today?"}]
-    );
-    const next = try parseValue(arena,
+    , .{});
+    const next = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\["Put what the request does not answer to the operator with ask_user.","Then create it with a title and an overview."]
-    );
+    , .{});
     const text = try renderChecklist(arena, "http client", reqs.array.items, next.array.items);
     try testing.expect(std.mem.find(u8, text, "NEXT") != null);
     try testing.expect(std.mem.find(u8, text, "ask_user") != null);

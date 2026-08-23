@@ -257,10 +257,6 @@ pub fn renderSearch(
 
 const testing = std.testing;
 
-fn parseValue(arena: std.mem.Allocator, text: []const u8) !std.json.Value {
-    return std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{});
-}
-
 test "renderList names the next free number when there is nothing to list" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -277,10 +273,10 @@ test "renderList prints status, path and title for each ADR" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/adrs/0004-providers.md","title":"Providers are a native vtable","status":"Accepted"},
         \\ {"path":"docs/adrs/0002-old.md","title":"An earlier call","status":"Superseded"}]
-    );
+    , .{});
     const text = try renderList(arena, adrs.array.items, 18);
     try testing.expect(std.mem.find(u8, text, "2 ADR(s)") != null);
     try testing.expect(std.mem.find(u8, text, "docs/adrs/0004-providers.md") != null);
@@ -296,11 +292,11 @@ test "renderList sorts by path, because the store is numbered" {
     const arena = arena_state.allocator();
 
     // The tool reports whatever order the directory listing came back in.
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/adrs/0011-c.md","title":"C","status":"Accepted"},
         \\ {"path":"docs/adrs/0002-a.md","title":"A","status":"Accepted"},
         \\ {"path":"docs/adrs/0004-b.md","title":"B","status":"Accepted"}]
-    );
+    , .{});
     const text = try renderList(arena, adrs.array.items, 18);
     const a = std.mem.find(u8, text, "0002-a.md").?;
     const b = std.mem.find(u8, text, "0004-b.md").?;
@@ -315,10 +311,10 @@ test "renderList drops the ADR number prefix the path already carries" {
     const arena = arena_state.allocator();
 
     // Both punctuations occur in the tree: "ADR 0001 — X" and "ADR 0014: X".
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/adrs/0001-board.md","title":"ADR 0001 — The board is a chatroom","status":"Accepted"},
         \\ {"path":"docs/adrs/0014-uploads.md","title":"ADR 0014: Uploads land in Knowledge","status":"Accepted"}]
-    );
+    , .{});
     const text = try renderList(arena, adrs.array.items, 18);
     try testing.expect(std.mem.find(u8, text, "The board is a chatroom") != null);
     try testing.expect(std.mem.find(u8, text, "Uploads land in Knowledge") != null);
@@ -332,9 +328,9 @@ test "renderList keeps a title that is not a number prefix" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/adrs/0001-x.md","title":"ADRs are a good idea","status":"Accepted"}]
-    );
+    , .{});
     const text = try renderList(arena, adrs.array.items, 2);
     try testing.expect(std.mem.find(u8, text, "ADRs are a good idea") != null);
 }
@@ -344,9 +340,9 @@ test "renderList still lists an ADR whose status could not be read" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/adrs/0009-unreadable.md","title":"","status":""}]
-    );
+    , .{});
     const text = try renderList(arena, adrs.array.items, 10);
     try testing.expect(std.mem.find(u8, text, "docs/adrs/0009-unreadable.md") != null);
     try testing.expect(std.mem.find(u8, text, "?") != null);
@@ -357,9 +353,9 @@ test "renderSearch says an ADR hit means the question is settled" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"file":"docs/adrs/0004-providers.md","line":12,"text":"providers are a native vtable"}]
-    );
+    , .{});
     const text = try renderSearch(arena, "vtable", adrs.array.items, &.{}, &.{});
     try testing.expect(std.mem.find(u8, text, "ADRS") != null);
     try testing.expect(std.mem.find(u8, text, "already decided") != null);
@@ -371,9 +367,9 @@ test "renderSearch distinguishes an open RFC from a settled ADR" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const rfcs = try parseValue(arena,
+    const rfcs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"file":"docs/rfcs/0006-locks.md","line":3,"text":"where ck_cas lock sidecars live"}]
-    );
+    , .{});
     const text = try renderSearch(arena, "lock", &.{}, rfcs.array.items, &.{});
     try testing.expect(std.mem.find(u8, text, "RFCS") != null);
     try testing.expect(std.mem.find(u8, text, "open, not settled") != null);

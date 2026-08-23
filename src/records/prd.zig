@@ -333,10 +333,6 @@ pub fn renderChecklist(arena: std.mem.Allocator, requirements: []const std.json.
 
 const testing = std.testing;
 
-fn parseValue(arena: std.mem.Allocator, text: []const u8) !std.json.Value {
-    return std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{});
-}
-
 test "renderList names the next free number when there is nothing to list" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
@@ -353,11 +349,11 @@ test "renderList puts unfinished work above shipped work" {
     const arena = arena_state.allocator();
 
     // Filename order would put the Shipped one first; the grouping must not.
-    const prds = try parseValue(arena,
+    const prds = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/prds/0001-shipped.md","title":"PRD — Chatrooms","status":"Shipped"},
         \\ {"path":"docs/prds/0032-draft.md","title":"PRD — MCP client bridge","status":"Draft"},
         \\ {"path":"docs/prds/0016-wip.md","title":"PRD — Eval kernel","status":"In progress"}]
-    );
+    , .{});
     const text = try renderList(arena, prds.array.items, 37);
 
     const draft = std.mem.find(u8, text, "0032-draft.md").?;
@@ -375,10 +371,10 @@ test "renderList groups an unknown status under OTHER instead of dropping it" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const prds = try parseValue(arena,
+    const prds = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"path":"docs/prds/0036-sixel.md","title":"PRD — SIXEL","status":"Superseded-ish"},
         \\ {"path":"docs/prds/0009-unreadable.md","title":"","status":""}]
-    );
+    , .{});
     const text = try renderList(arena, prds.array.items, 37);
     try testing.expect(std.mem.find(u8, text, "OTHER") != null);
     // A row whose status could not be read is still listed: the path is what
@@ -392,9 +388,9 @@ test "renderSearch says an ADR hit constrains the design" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const adrs = try parseValue(arena,
+    const adrs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"file":"docs/adrs/0001-board.md","line":9,"text":"the board is a chatroom"}]
-    );
+    , .{});
     const text = try renderSearch(arena, "board", &.{}, adrs.array.items);
     try testing.expect(std.mem.find(u8, text, "ADRS") != null);
     try testing.expect(std.mem.find(u8, text, "constrains this feature's design") != null);
@@ -431,11 +427,11 @@ test "renderChecklist keeps every line inside the terminal column" {
 
     // The real strings: the tool's `why` and `ask` sentences are long enough
     // to wrap mid-thought in an 80-column terminal if they are printed raw.
-    const reqs = try parseValue(arena,
+    const reqs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"needs":"Numbered goals, each checkable",
         \\  "why":"Goals and acceptance criteria have to cover each other; a goal with no matching checkbox is either wrong or untested",
         \\  "ask":"What must be true for this to be done, as a numbered list a reader can check off one at a time?"}]
-    );
+    , .{});
     const text = try renderChecklist(arena, reqs.array.items);
 
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -456,9 +452,9 @@ test "renderChecklist prints the question to ask under each requirement" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const reqs = try parseValue(arena,
+    const reqs = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"needs":"Numbered goals","why":"goals and criteria must cover each other","ask":"What must be true for this to be done?"}]
-    );
+    , .{});
     const text = try renderChecklist(arena, reqs.array.items);
     try testing.expect(std.mem.find(u8, text, "Numbered goals") != null);
     try testing.expect(std.mem.find(u8, text, "ask: What must be true for this to be done?") != null);

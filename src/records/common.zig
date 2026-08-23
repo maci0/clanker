@@ -615,10 +615,6 @@ pub fn wrapInto(w: *std.Io.Writer, text: []const u8, indent: []const u8, columns
 
 const testing = std.testing;
 
-fn parseValue(arena: std.mem.Allocator, text: []const u8) !std.json.Value {
-    return std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{});
-}
-
 test "request escapes strings, writes numbers unquoted, and omits an absent field" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
@@ -673,7 +669,7 @@ test "the field readers answer for a row that is not an object" {
 
     // A tool answer's array holds whatever the tool put there; a bare string
     // row used to reach `.object` and panic rather than read as empty.
-    const row = try parseValue(arena_state.allocator(), "\"not an object\"");
+    const row = try std.json.parseFromSliceLeaky(std.json.Value, arena_state.allocator(), "\"not an object\"", .{});
     try testing.expectEqual(false, boolField(row, "indexed"));
     try testing.expectEqual(@as(usize, 0), arrayField(row, "matches").len);
     try testing.expectEqual(@as(u64, 0), unsignedField(row, "line"));
@@ -691,7 +687,7 @@ test "renderMatchRows caps one file and says how many it refused" {
         try input.writer.print("{{\"file\":\"docs/a.md\",\"line\":{d},\"text\":\"hit\"}}", .{i + 1});
     }
     try input.writer.writeByte(']');
-    const matches = try parseValue(arena, input.written());
+    const matches = try std.json.parseFromSliceLeaky(std.json.Value, arena, input.written(), .{});
 
     var w: std.Io.Writer.Allocating = .init(arena);
     try renderMatchRows(&w.writer, matches.array.items);
@@ -714,12 +710,12 @@ test "sortedMatches orders by file then line so a record's hits stay one group" 
 
     // Interleaved the way an unsorted grep answer arrives: each file appears
     // twice, and one file's lines are out of order.
-    const input = try parseValue(arena,
+    const input = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\[{"file":"docs/b.md","line":7,"text":"x"},
         \\ {"file":"docs/a.md","line":40,"text":"x"},
         \\ {"file":"docs/a.md","line":12,"text":"x"},
         \\ {"file":"docs/b.md","line":3,"text":"x"}]
-    );
+    , .{});
     const sorted = try sortedMatches(arena, input.array.items);
     try testing.expectEqualStrings("docs/a.md", json_util.strFieldOrEmpty(sorted[0].object, "file"));
     try testing.expectEqual(@as(u64, 12), unsignedField(sorted[0], "line"));
