@@ -111,6 +111,7 @@ pub const Session = struct {
     }
 
     pub fn takeEvents(self: *Session, arena: std.mem.Allocator) ![][]const u8 {
+        self.fillAvailable(arena);
         self.drainAvailable(arena) catch {};
         const out = try arena.alloc([]const u8, self.events.items.len);
         for (self.events.items, 0..) |e, i| {
@@ -149,6 +150,57 @@ pub const Session = struct {
             // frames are consumed above), so this caps the declared length an
             // adapter can make us accumulate.
             if (self.buf.items.len > max_frame_bytes) return error.FrameTooLarge;
+        }
+    }
+
+    /// Pulls whatever the adapter has already written into `buf` without
+    /// ever blocking: reads only while poll(2) says a read cannot block.
+    /// Before this, `drainAvailable` decoded only bytes a previous blocking
+    /// read happened to over-read, so an event sitting in the OS pipe was
+    /// invisible until the next request's response wait swallowed it — the
+    /// drain-on-next-read misattribution PRD 0017 documented. Errors
+    /// (adapter exited, pipe gone) mean "nothing more to drain" here; the
+    /// next real request reports them.
+    fn fillAvailable(self: *Session, arena: std.mem.Allocator) void {
+        while (true) {
+            const readable = self.reg.stdoutReadable(self.session_id, self.kind, 0) catch return;
+            if (!readable) return;
+            const chunk = self.reg.readStdout(arena, self.session_id, self.kind, 4096) catch return;
+            self.buf.appendSlice(self.gpa, chunk) catch return;
+            if (self.buf.items.len > max_frame_bytes) return;
+        }
+    }
+
+    /// The events that mean "execution is no longer running": what a
+    /// resuming request waits for so they land on the call that caused them.
+    fn isStopShaped(frame: []const u8) bool {
+        return frameIs(frame, "event", "stopped") or
+            frameIs(frame, "event", "terminated") or
+            frameIs(frame, "event", "exited");
+    }
+
+    /// Waits up to `timeout_ms` for a stop-shaped event after a resuming
+    /// request (`continue`, steps, `pause`), so a `stopped` that arrives
+    /// moments after the response is attached to this tool call instead of
+    /// the next unrelated one. Unlike `runBounded`, expiry is not an error
+    /// and never touches the adapter process: a debuggee legitimately still
+    /// running just returns with no stop event, and whatever arrives later
+    /// surfaces on the next call's drain.
+    fn waitStopBounded(self: *Session, arena: std.mem.Allocator, timeout_ms: u32) void {
+        if (timeout_ms == 0) return;
+        const started = std.Io.Timestamp.now(self.io, .awake);
+        while (true) {
+            self.fillAvailable(arena);
+            self.drainAvailable(arena) catch return;
+            for (self.events.items) |e| {
+                if (isStopShaped(e)) return;
+            }
+            const elapsed_ms: u64 = @intCast(@divTrunc(started.durationTo(std.Io.Timestamp.now(self.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            if (elapsed_ms >= timeout_ms) return;
+            const remaining: i32 = @intCast(@min(timeout_ms - elapsed_ms, 1000));
+            const readable = self.reg.stdoutReadable(self.session_id, self.kind, remaining) catch return;
+            if (!readable) continue;
+            // Readable: the next fill consumes it without blocking.
         }
     }
 
@@ -343,6 +395,12 @@ pub const HandleOpts = struct {
     launch_timeout_ms: u32 = 15_000,
     request_timeout_ms: u32 = 15_000,
     disconnect_timeout_ms: u32 = 3_000,
+    /// How long a resuming request (`continue`, steps, `pause`) waits for a
+    /// stop-shaped event after its response, so the event is attached to
+    /// the call that caused it. Expiry is not an error and never kills the
+    /// adapter — a debuggee still running just returns eventless. 0 skips
+    /// the wait (the old drain-on-next-read behaviour).
+    stop_wait_ms: u32 = 1_000,
     /// Test hook: when set, launch uses this argv instead of config.
     override_argv: ?[]const []const u8 = null,
     override_cwd: std.process.Child.Cwd = .inherit,
@@ -417,11 +475,22 @@ pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
         return wrap(opts.arena, sess, body);
     }
 
-    if (std.mem.eql(u8, op, "continue")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "continue", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "step_in")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "stepIn", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "step_out")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "stepOut", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "next")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "next", "{\"threadId\":1}"));
-    if (std.mem.eql(u8, op, "pause")) return wrap(opts.arena, sess, try boundedSimple(sess, opts, "pause", "{\"threadId\":1}"));
+    // Resuming ops: after the response, wait (bounded, non-fatally) for the
+    // stop-shaped event it usually causes, so `continue` to a breakpoint
+    // reports `stopped` itself instead of donating it to the next call.
+    inline for (.{
+        .{ "continue", "continue" },
+        .{ "step_in", "stepIn" },
+        .{ "step_out", "stepOut" },
+        .{ "next", "next" },
+        .{ "pause", "pause" },
+    }) |pair| {
+        if (std.mem.eql(u8, op, pair[0])) {
+            const body = try boundedSimple(sess, opts, pair[1], "{\"threadId\":1}");
+            sess.waitStopBounded(opts.arena, opts.stop_wait_ms);
+            return wrap(opts.arena, sess, body);
+        }
+    }
     if (std.mem.eql(u8, op, "stack_trace")) {
         const body = try boundedSimple(sess, opts, "stackTrace", "{\"threadId\":1}");
         return flattenStack(opts.arena, sess, body);
@@ -1014,8 +1083,12 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
 
     const cont = try handle(&sess, opts, "{\"op\":\"continue\"}");
     try std.testing.expect(std.mem.find(u8, cont, "\"ok\":true") != null);
+    // The stopped event the adapter sends after the continue response is
+    // attached to the continue call itself, not donated to the next one.
+    try std.testing.expect(std.mem.find(u8, cont, "\"stopped\"") != null);
 
     const stack = try handle(&sess, opts, "{\"op\":\"stack_trace\"}");
+    try std.testing.expect(std.mem.find(u8, stack, "\"stopped\"") == null);
     try std.testing.expect(std.mem.find(u8, stack, "\"name\":\"main\"") != null);
     try std.testing.expect(std.mem.find(u8, stack, "src/main.c") != null);
     try std.testing.expect(std.mem.find(u8, stack, "42") != null);
@@ -1036,6 +1109,146 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
     const disc = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
     try std.testing.expect(std.mem.find(u8, disc, "\"ok\":true") != null);
     try std.testing.expect(reg.get("dbg-1", "dap") == null);
+}
+
+/// Answers like the fake adapter, but sends the `stopped` event from a
+/// background thread `sys.argv[1]` seconds after the continue response, so a
+/// test can put the event on either side of the stop wait window.
+const delayed_stop_adapter_src =
+    \\import json, sys, threading, time
+    \\delay = float(sys.argv[1]) if len(sys.argv) > 1 else 0.15
+    \\lock = threading.Lock()
+    \\def rf():
+    \\    h = {}
+    \\    while True:
+    \\        line = sys.stdin.buffer.readline()
+    \\        if not line: return None
+    \\        if line in (b"\r\n", b"\n"): break
+    \\        if b":" in line:
+    \\            k, v = line.decode().split(":", 1); h[k.strip().lower()] = v.strip()
+    \\    return json.loads(sys.stdin.buffer.read(int(h.get("content-length", "0"))).decode())
+    \\def send(o):
+    \\    raw = json.dumps(o).encode()
+    \\    with lock:
+    \\        sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw); sys.stdout.buffer.flush()
+    \\def late_stop():
+    \\    time.sleep(delay)
+    \\    send({"seq": 99, "type": "event", "event": "stopped", "body": {"reason": "breakpoint", "threadId": 1}})
+    \\while True:
+    \\    req = rf()
+    \\    if req is None: break
+    \\    cmd = req.get("command"); rid = req.get("seq", 0)
+    \\    if cmd == "initialize":
+    \\        send({"seq": 2, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {}})
+    \\    elif cmd in ("launch", "attach"):
+    \\        send({"seq": 3, "type": "event", "event": "initialized", "body": {}})
+    \\        send({"seq": 4, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {}})
+    \\    elif cmd == "continue":
+    \\        send({"seq": 5, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {"allThreadsContinued": True}})
+    \\        threading.Thread(target=late_stop, daemon=True).start()
+    \\    elif cmd in ("disconnect", "terminate"):
+    \\        send({"seq": 6, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {}})
+    \\        break
+    \\    else:
+    \\        send({"seq": 7, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {}})
+;
+
+test "a stopped event arriving after the continue response is attached to the continue call" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    tmp.dir.writeFile(io, .{ .sub_path = "late_dap.py", .data = delayed_stop_adapter_src }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var sess = Session{ .io = io, .gpa = std.testing.allocator, .reg = &reg, .session_id = "dbg-late" };
+    defer sess.deinit();
+
+    // 150ms of debuggee run time, well inside the 2s stop wait.
+    const argv = [_][]const u8{ "python3", "late_dap.py", "0.15" };
+    const opts = HandleOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "dbg-late",
+        .enabled = true,
+        .adapters = &.{},
+        .stop_wait_ms = 2_000,
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    };
+
+    _ = handle(&sess, opts, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./x\"}") catch |err| switch (err) {
+        error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    const cont = try handle(&sess, opts, "{\"op\":\"continue\"}");
+    try std.testing.expect(std.mem.find(u8, cont, "\"stopped\"") != null);
+    _ = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
+}
+
+test "an expired stop wait keeps the adapter alive and the late event is drained, not lost" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    tmp.dir.writeFile(io, .{ .sub_path = "late_dap.py", .data = delayed_stop_adapter_src }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var sess = Session{ .io = io, .gpa = std.testing.allocator, .reg = &reg, .session_id = "dbg-late2" };
+    defer sess.deinit();
+
+    // 400ms of debuggee run time against a 50ms window: the wait expires
+    // first, and that must not be an error, not kill the adapter, and not
+    // lose the event once it does arrive.
+    const argv = [_][]const u8{ "python3", "late_dap.py", "0.4" };
+    const opts = HandleOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "dbg-late2",
+        .enabled = true,
+        .adapters = &.{},
+        .stop_wait_ms = 50,
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    };
+
+    _ = handle(&sess, opts, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./x\"}") catch |err| switch (err) {
+        error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    const cont = try handle(&sess, opts, "{\"op\":\"continue\"}");
+    try std.testing.expect(std.mem.find(u8, cont, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, cont, "\"stopped\"") == null);
+    try std.testing.expect(reg.get("dbg-late2", "dap") != null);
+
+    // Give the event time to land in the OS pipe, with nothing reading it.
+    std.Io.sleep(io, .{ .nanoseconds = 600 * std.time.ns_per_ms }, .awake) catch {};
+    // takeEvents alone (no request in flight) must see it: this is the
+    // fillAvailable path — before it, bytes sitting unread in the pipe were
+    // invisible until the next request's response wait swallowed them.
+    const events = try sess.takeEvents(arena);
+    var saw_stopped = false;
+    for (events) |e| {
+        if (std.mem.find(u8, e, "\"stopped\"") != null) saw_stopped = true;
+    }
+    try std.testing.expect(saw_stopped);
+    _ = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
 }
 
 test "silent adapter: launch is bounded by launch_timeout_ms and reaped" {
