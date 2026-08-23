@@ -3182,11 +3182,8 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
 }
 
 /// Runs `httpFetchTask` under a wall-clock ceiling, returning null when the
-/// budget is spent. On timeout the armed connections are shut down *before*
-/// the task is cancelled: `Io.Future.cancel` cannot rescue a thread parked in
-/// a blocking read on an established connection and would wedge the canceller
-/// alongside it, whereas `shutdown(2)` makes that read return end-of-stream so
-/// the task unwinds on its own (see `client.Abort`).
+/// budget is spent. The abort-before-cancel ordering that unsticks a read
+/// wedged on a silent host lives in `client.awaitTaskWithTimeout`.
 fn httpWithTimeout(io: std.Io, args: HttpFetchArgs, timeout_ms: u32) ?HttpOutcome {
     var abort: client.Abort = .{};
     var done: std.Io.Event = .unset;
@@ -3199,30 +3196,7 @@ fn httpWithTimeout(io: std.Io, args: HttpFetchArgs, timeout_ms: u32) ?HttpOutcom
         log.log(.warn, "[sandbox] http request to '{s}' could not start: {s}", .{ args.url, @errorName(err) });
         return .{ .transport = @errorName(err) };
     };
-    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
-        .clock = .awake,
-        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
-    });
-    while (!done.isSet()) {
-        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
-            // Spurious wakeups report Timeout too, so the deadline decides
-            // whether the budget is really spent, not this return.
-            error.Timeout => {
-                if (done.isSet()) break;
-                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
-                abort.trigger(io);
-                // cancel() joins the task, so nothing is left writing into the
-                // caller's response buffer or header slice after this returns.
-                _ = future.cancel(io);
-                return null;
-            },
-            error.Canceled => {
-                abort.trigger(io);
-                _ = future.cancel(io);
-                return null;
-            },
-        };
-    }
+    if (!client.awaitTaskWithTimeout(io, &done, &future, &abort, timeout_ms)) return null;
     return future.await(io);
 }
 

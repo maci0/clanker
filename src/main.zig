@@ -196,6 +196,7 @@ comptime {
     _ = @import("util/redact.zig");
     _ = @import("util/append_line.zig");
     _ = @import("util/atomic_write.zig");
+    _ = @import("util/plugin_state.zig");
     _ = @import("util/file_lock.zig");
     _ = @import("util/cas_lock.zig");
     _ = @import("util/disk_cap.zig");

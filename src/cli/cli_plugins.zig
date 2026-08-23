@@ -24,6 +24,7 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+const plugin_state = @import("../util/plugin_state.zig");
 
 pub const state_path = "state/cli_plugins.json";
 
@@ -39,50 +40,15 @@ pub const Manifest = struct {
 const max_file_bytes: usize = 16 * 1024;
 const max_dir_entries: usize = 128;
 
-/// The enabled-list. Missing state file means everything is off.
-pub const EnabledState = struct {
-    enabled: []const []const u8 = &.{},
-};
-
+/// The enabled-list. Missing state file means everything is off. The read,
+/// parse and failure posture live in `util/plugin_state.zig`, shared with the
+/// TUI slash-command surface so the two tiers cannot drift apart.
 pub fn loadEnabled(io: std.Io, arena: std.mem.Allocator) []const []const u8 {
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, state_path, arena, .limited(max_file_bytes)) catch |err| {
-        // A missing state file is the normal everything-off default. Any
-        // other failure silently disabling every plugin is the defect PRD
-        // 0012's failure modes forbid: empty enabled-list, plus a warning.
-        if (err != error.FileNotFound)
-            log.log(.warn, "{s}: unreadable ({s}); treating every CLI plugin as disabled", .{ state_path, @errorName(err) });
-        return &.{};
-    };
-    return parseEnabled(arena, raw) orelse {
-        log.log(.warn, "{s}: not valid state JSON; treating every CLI plugin as disabled until the next toggle rewrites it", .{state_path});
-        return &.{};
-    };
+    return plugin_state.loadEnabled(io, arena, std.Io.Dir.cwd(), state_path, "CLI");
 }
 
-/// The parsed enabled-list, or null when the bytes are not the state file's
-/// shape. Split from loadEnabled so the corrupt-file fallback is testable.
-fn parseEnabled(arena: std.mem.Allocator, raw: []const u8) ?[]const []const u8 {
-    const st = std.json.parseFromSliceLeaky(EnabledState, arena, raw, .{ .ignore_unknown_fields = true }) catch return null;
-    return st.enabled;
-}
-
-test "parseEnabled reads the enabled-list and refuses corrupt bytes" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    const good = parseEnabled(arena, "{\"enabled\":[\"myreport\"]}").?;
-    try std.testing.expectEqual(@as(usize, 1), good.len);
-    try std.testing.expectEqualStrings("myreport", good[0]);
-    // Corrupt bytes and a wrong shape both fall back to null, which
-    // loadEnabled turns into "everything off" plus a warning.
-    try std.testing.expect(parseEnabled(arena, "{not json") == null);
-    try std.testing.expect(parseEnabled(arena, "42") == null);
-}
-
-pub fn isEnabled(enabled: []const []const u8, command: []const u8) bool {
-    for (enabled) |name| if (std.mem.eql(u8, name, command)) return true;
-    return false;
-}
+/// Consent check against the enabled-list; shared with the TUI surface.
+pub const isEnabled = plugin_state.isEnabled;
 
 /// Tier 1: the enabled manifest whose command matches, or null.
 pub fn resolveTier1(
@@ -96,10 +62,15 @@ pub fn resolveTier1(
     var dir = base.openDir(io, plugins_dir, .{ .iterate = true }) catch return null;
     defer dir.close(io);
 
+    // Bounded like the TUI surface's scanAll: a directory walk never reads
+    // more than max_dir_entries manifests.
+    var seen: usize = 0;
     var it = dir.iterate();
     while (it.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
+        seen += 1;
+        if (seen > max_dir_entries) break;
         const raw = dir.readFileAlloc(io, entry.name, arena, .limited(max_file_bytes)) catch continue;
         const m = std.json.parseFromSliceLeaky(Manifest, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
         if (m.tool.len == 0) continue;
@@ -172,18 +143,7 @@ fn executable(io: std.Io, path: []const u8) bool {
 /// Writes the enabled-list back to state/cli_plugins.json (used by tests and
 /// any future toggle surface).
 pub fn saveEnabled(io: std.Io, gpa: std.mem.Allocator, enabled: []const []const u8) !void {
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
-    try s.beginObject();
-    try s.objectField("enabled");
-    try s.beginArray();
-    for (enabled) |name| try s.write(name);
-    try s.endArray();
-    try s.endObject();
-    std.Io.Dir.cwd().createDirPath(io, "state") catch {};
-    const atomic_write = @import("../util/atomic_write.zig");
-    try atomic_write.writeFilePerms(io, std.Io.Dir.cwd(), state_path, out.written(), atomic_write.private_file);
+    return plugin_state.saveEnabled(io, gpa, std.Io.Dir.cwd(), state_path, enabled);
 }
 
 test "a PATH binary is discovered but not run until the enabled-list names it" {

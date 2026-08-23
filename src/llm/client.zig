@@ -129,6 +129,49 @@ pub const Abort = struct {
     }
 };
 
+/// Waits for one concurrent fetch task under a wall-clock budget, returning
+/// false when the budget is spent or the wait itself was cancelled. The task
+/// must set `done` on every exit, or the waiter is never woken.
+///
+/// On timeout the armed connections are shut down *before* the task is
+/// cancelled: `Io.Future.cancel` cannot rescue a thread parked in a blocking
+/// read on an established connection and would wedge the canceller alongside
+/// it, whereas `shutdown(2)` makes that read return end-of-stream so the task
+/// unwinds on its own (see `Abort`).
+pub fn awaitTaskWithTimeout(
+    io: std.Io,
+    done: *std.Io.Event,
+    future: anytype,
+    abort: *Abort,
+    timeout_ms: u32,
+) bool {
+    const deadline: std.Io.Clock.Timestamp = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    });
+    while (!done.isSet()) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            // Spurious wakeups report Timeout too, so the deadline decides
+            // whether the budget is really spent, not this return.
+            error.Timeout => {
+                if (done.isSet()) break;
+                if (deadline.durationFromNow(io).raw.nanoseconds > 0) continue;
+                abort.trigger(io);
+                // cancel() joins the task, so nothing is left writing into
+                // caller memory after this returns.
+                _ = future.cancel(io);
+                return false;
+            },
+            error.Canceled => {
+                abort.trigger(io);
+                _ = future.cancel(io);
+                return false;
+            },
+        };
+    }
+    return true;
+}
+
 pub const Ctx = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
