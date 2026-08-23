@@ -200,7 +200,7 @@ pub fn topoSort(arena: std.mem.Allocator, n: usize, deps: []const []const usize)
 
 pub fn references(src: []const u8, other_file: []const u8) bool {
     const base = std.fs.path.basename(other_file);
-    const stem = if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| base[0..dot] else base;
+    const stem = if (std.mem.findScalarLast(u8, base, '.')) |dot| base[0..dot] else base;
     if (std.mem.find(u8, src, other_file) != null) return true;
     if (std.mem.find(u8, src, stem) != null and
         (std.mem.find(u8, src, "import") != null or

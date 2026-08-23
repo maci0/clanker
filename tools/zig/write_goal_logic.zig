@@ -195,7 +195,7 @@ fn splitOn(alloc: std.mem.Allocator, list: *std.ArrayList([]const u8), text: []c
     var i: usize = 0;
     while (i < text.len) : (i += 1) {
         const c = text[i];
-        if (std.mem.indexOfScalar(u8, delims, c) == null) continue;
+        if (std.mem.findScalar(u8, delims, c) == null) continue;
         if (c != '\n' and i + 1 < text.len and !std.ascii.isWhitespace(text[i + 1])) continue;
         try appendTrimmed(alloc, list, text[start..i]);
         start = i + 1;
@@ -542,9 +542,9 @@ test "fuzz: any intent assembles a draft whose fields are honest and distinct" {
                 const name = fieldName(f);
                 const def = defaultFor(f);
                 try std.testing.expect(v.len > 0);
-                if (std.mem.indexOf(u8, intent_trim, def) != null) quotes_default = true;
+                if (std.mem.find(u8, intent_trim, def) != null) quotes_default = true;
 
-                if (std.mem.indexOf(u8, intent_trim, def) == null) {
+                if (std.mem.find(u8, intent_trim, def) == null) {
                     // Intent never quotes the default: defaulted ⟺ listed, and
                     // extracted never equals the default.
                     try std.testing.expectEqual(std.mem.eql(u8, v, def), containsName(d.assumptions, name));
@@ -578,7 +578,7 @@ test "fuzz: any intent assembles a draft whose fields are honest and distinct" {
             var seg_total: usize = 0;
             for (segs) |seg| {
                 try std.testing.expect(seg.len > 0);
-                try std.testing.expect(std.mem.indexOf(u8, intent, seg) != null);
+                try std.testing.expect(std.mem.find(u8, intent, seg) != null);
                 seg_total += seg.len;
             }
             try std.testing.expect(seg_total <= intent.len);

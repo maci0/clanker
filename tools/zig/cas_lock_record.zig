@@ -78,7 +78,7 @@ pub fn render(buf: *[record_len]u8, pid: u32, acquired_ms: i64, tool: []const u8
 fn field(record: []const u8, key: []const u8) ?[]const u8 {
     // Anchored on the key *with* its `=`, so `tool=` cannot match inside a
     // target path that happens to contain the word.
-    const at = std.mem.indexOf(u8, record, key) orelse return null;
+    const at = std.mem.find(u8, record, key) orelse return null;
     const rest = record[at + key.len ..];
     var end: usize = 0;
     while (end < rest.len and rest[end] != ' ' and rest[end] != '\n') end += 1;
@@ -114,9 +114,9 @@ pub fn agedOut(record: []const u8, now_ms: i64, window_ms: i64) bool {
 /// The target path this lock guards, or null if unreadable. Truncated for a
 /// very long path, so it is a diagnostic aid and not a path to open.
 pub fn targetPath(record: []const u8) ?[]const u8 {
-    const at = std.mem.indexOf(u8, record, "target=") orelse return null;
+    const at = std.mem.find(u8, record, "target=") orelse return null;
     const rest = record[at + "target=".len ..];
-    const end = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+    const end = std.mem.findScalar(u8, rest, '\n') orelse rest.len;
     const trimmed = std.mem.trimEnd(u8, rest[0..end], " ");
     if (trimmed.len == 0) return null;
     return trimmed;
@@ -142,7 +142,7 @@ test "a shorter record cannot leave the tail of a longer one behind" {
 
     try std.testing.expectEqualStrings("x.md", targetPath(&buf).?);
     try std.testing.expectEqual(@as(?i64, 2), acquiredMs(&buf));
-    try std.testing.expect(std.mem.indexOf(u8, &buf, "very-long") == null);
+    try std.testing.expect(std.mem.find(u8, &buf, "very-long") == null);
 }
 
 test "an over-long target keeps its tail, and the record stays exactly one line" {

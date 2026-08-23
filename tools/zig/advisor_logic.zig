@@ -50,7 +50,7 @@ fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
 pub fn parseNote(arena: std.mem.Allocator, raw: []const u8) ?Note {
     const trimmed = std.mem.trim(u8, raw, " \t\r\n`");
     const start = std.mem.findScalar(u8, trimmed, '{') orelse return null;
-    const end = std.mem.lastIndexOfScalar(u8, trimmed, '}') orelse return null;
+    const end = std.mem.findScalarLast(u8, trimmed, '}') orelse return null;
     const slice = trimmed[start .. end + 1];
     const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, slice, .{}) catch return null;
     if (parsed != .object) return null;
