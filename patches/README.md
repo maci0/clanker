@@ -46,10 +46,30 @@ path behind `sixel_supported`, which is `@hasField(vaxis.Vaxis.Capabilities,
 "sixel_graphics")`, so an unpatched dependency compiles the path out and the
 mascot falls back to cells exactly as it did before. That is what makes a
 patch (rather than a pinned fork) safe here: a fresh clone builds and passes
-`zig build test` and `clanker gate` with one fewer renderer. The e2e pty
-journeys (`zig build e2e`) are the exception: their shared harness answers
-the sixel geometry query that the patched query phase sends, so they fail on
-an unpatched dependency until `scripts/apply-patches.sh` has run.
+`zig build test` and `clanker gate` with one fewer renderer.
+
+The e2e pty journeys (`zig build e2e`) used to be the exception, and it cost
+two investigation records before anyone connected them to this paragraph. Their
+shared harness *required* an answer to the sixel geometry query, which only the
+patched query phase sends, and it gated its DA1 answer behind having sent that
+answer — so on an unpatched dependency DA1 went unanswered too, even though it
+had arrived, and both journeys failed at the handshake. Since `patches/` lands
+in gitignored `zig-pkg/`, every fresh worktree is unpatched, which is why this
+read first as a headless-session problem
+([2026-08-22-pty-e2e-capability-queries-unanswered.md](../docs/reports/investigations/2026-08-22-pty-e2e-capability-queries-unanswered.md))
+and then as a worktree problem
+([2026-08-22-pty-e2e-fails-in-a-worktree.md](../docs/reports/investigations/2026-08-22-pty-e2e-fails-in-a-worktree.md)).
+`answerQueries` now answers that query when it arrives and skips it when it does
+not, so both journeys complete their handshake either way.
+
+What a green `zig build e2e` on a pristine tree does **not** mean: with
+`sixel_supported` false every SIXEL path is compiled out, so those journeys then
+exercise strictly less than the same journeys in a patched checkout. It is not
+evidence about sixel. `pty_resize_test` is the sharper case — it is the
+regression test for the SIGWINCH crash that `vaxis-winch-self-pipe.patch` fixes,
+so on a pristine tree it reproduces that crash and fails by design
+(`error.ReplStoppedReadingTty`, whose message names this file). Run
+`scripts/apply-patches.sh` before reading anything into an e2e result.
 
 What the patch contains:
 

@@ -39,11 +39,25 @@ extern "c" fn grantpt(fd: c_int) c_int;
 extern "c" fn unlockpt(fd: c_int) c_int;
 extern "c" fn ptsname(fd: c_int) ?[*:0]u8;
 
-/// Answers to the two capability queries vaxis sends. The geometry report must
-/// go back *before* DA1 -- DA1 is what ends the query phase -- or the sixel
-/// renderer never engages.
+/// The capability queries this harness recognizes, and what it answers.
+///
+/// DA1 is what ends vaxis's query phase, so it is the one that must be
+/// answered for the repl to start drawing. The XTSMGRAPHICS geometry query is
+/// optional: only the sixel half of `patches/vaxis-sixel-graphics.patch` sends
+/// it, and its report must go back *before* DA1 or the sixel renderer never
+/// engages. `patches/` is applied into gitignored `zig-pkg/`, so whether it
+/// arrives is a property of the checkout, not of the code under test.
+pub const geometry_query = "\x1b[?2;1;0S";
 pub const geometry_reply = "\x1b[?2;0;10000;10000S";
+pub const da1_query = "\x1b[c";
 pub const da1_reply = "\x1b[?62;4;22c";
+
+/// Wall-clock budget for the handshake. A bare iteration count is not a
+/// timeout: `pump` returns the moment bytes are available, so a repl that
+/// writes a burst before its queries can burn any fixed number of iterations
+/// in milliseconds (`pty_resize_test` learned the same lesson for its own
+/// settle loops).
+const answer_timeout_ms: i64 = 5000;
 
 fn nowMs() i64 {
     var tv: std.c.timeval = undefined;
@@ -276,24 +290,37 @@ pub fn killAndReap(pty: *const Pty, pid: posix.pid_t) void {
 const reap_timeout_ms: i64 = 5000;
 
 /// Answers vaxis's startup capability queries as they arrive in `seen`.
-/// Returns true once both the geometry query and DA1 have been answered,
-/// which is what ends the repl's query phase.
+/// Returns true once DA1 has been answered, which is what ends the repl's
+/// query phase and lets it draw its first frame.
+///
+/// The geometry query is answered when it arrives and skipped when it does
+/// not. It used to be *required*, and waiting for it deadlocked the whole
+/// handshake on an unpatched dependency: upstream vaxis 0.6.0 declares
+/// `sixel_geometry_query` but never sends it (only
+/// `patches/vaxis-sixel-graphics.patch` does), and because the DA1 arm was
+/// gated behind `answered_geometry`, DA1 went unanswered too even though it
+/// was sitting in `seen`. That made `pty_resize_test` and `pty_preview_test`
+/// fail in any tree where `scripts/apply-patches.sh` had not run -- every
+/// fresh worktree, since `zig-pkg/` is gitignored -- for reasons neither
+/// journey is about (a SIGWINCH flood and the `/` command preview).
+///
+/// Ordering still holds where it matters: the patched query phase sends the
+/// geometry query *before* DA1, so a stream that carries both is seen in that
+/// order and answered in that order.
 pub fn answerQueries(master: posix.fd_t, seen: *std.ArrayList(u8), gpa: std.mem.Allocator) !bool {
     var answered_geometry = false;
     var answered_da1 = false;
-    var settle: usize = 0;
-    while (settle < 60 and !(answered_geometry and answered_da1)) : (settle += 1) {
+    const deadline = nowMs() + answer_timeout_ms;
+    while (!answered_da1 and nowMs() < deadline) {
         if (!try pump(master, seen, gpa, 50)) break;
-        if (!answered_geometry and std.mem.find(u8, seen.items, "\x1b[?2;1;0S") != null) {
+        if (!answered_geometry and std.mem.find(u8, seen.items, geometry_query) != null) {
             _ = writeAll(master, geometry_reply);
             answered_geometry = true;
         }
-        if (!answered_da1 and answered_geometry and
-            std.mem.find(u8, seen.items, "\x1b[c") != null)
-        {
+        if (std.mem.find(u8, seen.items, da1_query) != null) {
             _ = writeAll(master, da1_reply);
             answered_da1 = true;
         }
     }
-    return answered_geometry and answered_da1;
+    return answered_da1;
 }

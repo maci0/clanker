@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** zig build e2e fails pty_resize_test and pty_preview_test in a PRISTINE worktree at the same commit that passes in the main checkout. Both die at pty.answerQueries, the terminal-capability handshake, so the repl's queries never reach the test. Every agent session works in a worktree per the repository rules, so e2e is effectively unrunnable there. Root cause not yet found.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Resolved on 2026-08-23. Same defect as 2026-08-22-pty-e2e-capability-queries-unanswered.md: the split was patched-versus-pristine, not main-checkout-versus-worktree, because patches/ lands in gitignored zig-pkg/. Fixed in tests/e2e/pty.zig answerQueries. Checked with zig build e2e: pty_preview_test passes in a pristine worktree. pty_resize_test still fails on a pristine tree by design and now fails loudly instead of hanging.
+- **Resolution:** Resolved on 2026-08-23. Same defect as 2026-08-22-pty-e2e-capability-queries-unanswered.md: the split was patched-versus-pristine, not main-checkout-versus-worktree, because patches/ lands in gitignored zig-pkg/. Fixed in tests/e2e/pty.zig answerQueries. Checked with zig build e2e: pty_preview_test passes in a pristine worktree. pty_resize_test still fails on a pristine tree by design and now fails loudly instead of hanging.
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-23. Same defect as 2026-08-22-pty-e2e-capability-queries-unanswered.md: the split was patched-versus-pristine, not main-checkout-versus-worktree, because patches/ lands in gitignored zig-pkg/. Fixed in tests/e2e/pty.zig answerQueries. Checked with zig build e2e: pty_preview_test passes in a pristine worktree. pty_resize_test still fails on a pristine tree by design and now fails loudly instead of hanging.
 
 ## Trigger and scope
 
@@ -81,8 +81,9 @@ Untested, and recorded as hypotheses rather than findings:
 
 ## Finding
 
-Established: the failure is environmental, tied to running in a git worktree,
-and is not caused by any source change. Root cause not found.
+Superseded 2026-08-23. The failure is not tied to the worktree as such: it is
+tied to the worktree being *unpatched*, because `patches/` lands in gitignored
+`zig-pkg/`. Root cause found; see "Root cause and resolution" below.
 
 ## Resolution or handoff
 
@@ -100,3 +101,56 @@ they pass where it matters and the gap is the harness, not the assertions.
 ## References
 
 - Related bug: none yet
+
+## Root cause and resolution (2026-08-23)
+
+Found, and it is the same defect as
+`2026-08-22-pty-e2e-capability-queries-unanswered.md`. That record has the full
+evidence, including the instrumented byte stream this record's handoff asked
+for; the short version, and specifically what makes it look like a worktree
+problem:
+
+`answerQueries` waited for the XTSMGRAPHICS sixel geometry query
+(`\x1b[?2;1;0S`) and gated its DA1 answer behind having answered it. Upstream
+vaxis 0.6.0 -- the commit `build.zig.zon` pins -- declares that query and never
+sends it. Only `patches/vaxis-sixel-graphics.patch` sends it, and `patches/` is
+applied into **gitignored** `zig-pkg/`.
+
+That is the whole main-checkout-versus-worktree split this record established
+but could not explain. It is not the worktree. It is that the main checkout had
+`scripts/apply-patches.sh` run at some point and a fresh worktree has not, and
+`zig-pkg/` being gitignored is what makes "fresh worktree" and "unpatched" the
+same thing. The timing hypothesis ("a worktree build is colder") and the
+"reads something different under a worktree" hypothesis are both wrong; nothing
+was timing out, and nothing was read differently. The queries genuinely were
+not there.
+
+This record's own evidence was sound and its ruling-out was right -- not the
+change under test, not the new test, not the binary. The one hypothesis it did
+not list is the one that held: not the tree, the *dependency in* the tree.
+
+Resolution: `answerQueries` now answers the geometry query when it arrives,
+skips it when it does not, requires only DA1, and budgets by wall clock instead
+of iteration count. `pty_preview_test` passes in a pristine worktree, where it
+previously failed at this assertion.
+
+Two corrections to this record's working rule, which said "confirm by running
+`zig build e2e` in the main checkout, which is where the suite is currently
+trustworthy":
+
+- The main checkout was trustworthy only because it happened to be patched.
+  `scripts/apply-patches.sh` is the thing to run, not a different checkout, and
+  it is idempotent.
+- `pty_resize_test` still fails in a pristine tree after this fix, and
+  correctly: it is the regression test for the SIGWINCH crash that
+  `patches/vaxis-winch-self-pipe.patch` fixes, so an unpatched tree reproduces
+  that crash. It used to *hang* there rather than fail, which is part of why
+  this went undiagnosed for so long -- it now fails with
+  `error.ReplStoppedReadingTty` naming `scripts/apply-patches.sh`. See
+  `docs/reports/bugs/2026-08-23-e2e-pty-harness-is-linux-only.md` for that half
+  and for the three other unbounded waits in the same harness.
+
+The instruction "do not silence or skip the tests" was the right call and was
+followed: no assertion was weakened. What changed is that the harness no longer
+requires an optional local patch to complete a handshake that has nothing to do
+with sixel.
