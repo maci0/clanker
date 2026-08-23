@@ -40,6 +40,11 @@ const max_tool_call_slots: usize = 256;
 /// small. Shared with the proxy, which drives the same reader shapes.
 pub const http_scratch_buf_bytes: usize = 8192;
 
+/// Stack scratch for reading an error body before it is summarized: the
+/// provider's message is extracted, never the whole body, so one 16 KiB
+/// chunk is enough. A chunk size, not a cap (`resp_cap` bounds the body).
+const err_body_buf_bytes: usize = 16384;
+
 /// Lets a caller on another thread rescue a `chat` that is blocked reading a
 /// response which is never going to arrive.
 ///
@@ -1221,7 +1226,7 @@ pub fn chatStream(
         var err_decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
         var err_decompress: std.http.Decompress = undefined;
         const reader = response.readerDecompressing(&err_transfer_buffer, &err_decompress, &err_decompress_buffer);
-        var ebuf: [16384]u8 = undefined;
+        var ebuf: [err_body_buf_bytes]u8 = undefined;
         var err_body: std.ArrayList(u8) = .empty;
         defer err_body.deinit(ctx.gpa);
         while (true) {

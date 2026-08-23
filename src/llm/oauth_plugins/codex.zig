@@ -1,3 +1,6 @@
+//! OpenAI Codex OAuth plugin descriptor (two-stage device authorization,
+//! then a PKCE token exchange).
+
 const api = @import("api.zig");
 
 pub const plugin = api.Plugin{

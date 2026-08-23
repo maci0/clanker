@@ -1,3 +1,5 @@
+//! Registry of the shipped native OAuth plugins; `find` looks one up by name.
+
 const std = @import("std");
 const api = @import("api.zig");
 const codex = @import("codex.zig");

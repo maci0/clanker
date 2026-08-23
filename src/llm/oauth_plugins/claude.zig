@@ -1,3 +1,5 @@
+//! Anthropic Claude OAuth plugin descriptor (manual PKCE with pasted callback code).
+
 const api = @import("api.zig");
 
 pub const plugin = api.Plugin{

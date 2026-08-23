@@ -1,3 +1,5 @@
+//! Grok (x.ai) OAuth plugin descriptor (RFC 8628 device flow).
+
 const api = @import("api.zig");
 
 pub const plugin = api.Plugin{
