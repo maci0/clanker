@@ -52,6 +52,15 @@ pub const forbidden_keys = [_][]const u8{
     "agent.git_remote_ops",
     // The human-confirmation gate on guest writes.
     "agent.confirm_writes",
+    // Extra command-line globs for sandboxed exec. A set here was chosen by
+    // the model, and a matched pattern overrides the exec deny tokens for the
+    // args it grants (src/sandbox/host.zig execPolicyFor), so this is policy
+    // only the operator may pin.
+    "agent.exec_pattern_allow",
+    // Extra network hosts for the research-shaped tools (isResearchTool in
+    // src/sandbox/host.zig adds cfg.web.allow on top of each manifest's
+    // network_allow): a set here would widen every later run's network reach.
+    "web.allow",
     // Which interface serve binds; loopback is the trust boundary for every
     // /api route.
     "serve.host",
@@ -462,13 +471,17 @@ test "forbiddenReason refuses exactly the policy keys" {
     try std.testing.expectEqualStrings("agent.sandbox_follow_symlinks", forbiddenReason("agent.sandbox_follow_symlinks").?);
     try std.testing.expectEqualStrings("agent.git_remote_ops", forbiddenReason("agent.git_remote_ops").?);
     try std.testing.expectEqualStrings("agent.confirm_writes", forbiddenReason("agent.confirm_writes").?);
+    try std.testing.expectEqualStrings("agent.exec_pattern_allow", forbiddenReason("agent.exec_pattern_allow").?);
     try std.testing.expectEqualStrings("serve.host", forbiddenReason("serve.host").?);
     try std.testing.expectEqualStrings("improve.capability_gate", forbiddenReason("improve.capability_gate").?);
     try std.testing.expectEqualStrings("improve.inert_gate", forbiddenReason("improve.inert_gate").?);
+    try std.testing.expectEqualStrings("web.allow", forbiddenReason("web.allow").?);
 
     // Neighbours that share a prefix or a section stay settable.
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("agent.reasoning_effort"));
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("agent.sandbox"));
+    try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("web"));
+    try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("web.allow_wildcards"));
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("improve.plan_phase"));
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("serve.webui_port"));
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("sandbox_follow_symlinks"));

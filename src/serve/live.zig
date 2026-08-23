@@ -309,6 +309,24 @@ fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
     return false;
 }
 
+/// The `/api/events` refusal once every one of `max_subs` slots is taken.
+///
+/// Framed from the body at comptime rather than spelled out as one literal, so
+/// the declared length cannot drift from what is actually sent. The literal
+/// said `Content-Length: 52` for a 48-byte body: a client that honors the
+/// header waited for four bytes that never came and reported a truncated
+/// response instead of the refusal, so the operator saw a transport error
+/// where the server had named the cause. `Connection: close` hid it from
+/// anything that takes the close as end-of-body, but not from a conforming
+/// client -- Python's `http.client` raised `IncompleteRead(48 bytes read, 4
+/// more expected)` against a real `clanker serve`.
+/// See docs/reports/bugs/2026-08-23-events-cap-503-declares-the-wrong-length.md.
+const too_many_subs_body = "{\"ok\":false,\"error\":\"too many live subscribers\"}";
+const too_many_subs_response = std.fmt.comptimePrint(
+    "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {d}\r\n\r\n{s}",
+    .{ too_many_subs_body.len, too_many_subs_body },
+);
+
 /// Long-lived SSE write loop. Caller must have already decided this
 /// connection is not keep-alive. Residual posix: raw-fd SSE push bus, same
 /// hand-rolled HTTP family as cli.zig's server.
@@ -320,8 +338,7 @@ fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
 /// counted it in `/api/metrics`' `http.errors_total`.
 pub fn serveSse(io: std.Io, fd: std.posix.fd_t, topics: []const u8) u16 {
     const id = subscribe(parseTopics(topics)) orelse {
-        const body = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: 52\r\n\r\n{\"ok\":false,\"error\":\"too many live subscribers\"}";
-        raw_http.writeAll(fd, body) catch {};
+        raw_http.writeAll(fd, too_many_subs_response) catch {};
         return 503;
     };
     defer unsubscribe(id);
@@ -404,6 +421,20 @@ test "a subscriber that sends bytes is not mistaken for one that left" {
     // exists at all, so it has to be told apart from EOF rather than assumed.
     try raw_http.writeAll(pair[1], "x");
     try std.testing.expect(!idleTickSawHangup(io, pair[0]));
+}
+
+test "the subscriber-cap 503 declares the length of the body it actually sends" {
+    const sep = std.mem.find(u8, too_many_subs_response, "\r\n\r\n") orelse return error.NoHeaderEnd;
+    const body = too_many_subs_response[sep + 4 ..];
+    const declared = raw_http.parseContentLength(too_many_subs_response[0..sep]) orelse return error.NoContentLength;
+    // The hand-written literal said 52 for a 48-byte body, so a client that
+    // honors Content-Length read the refusal as a truncated response and
+    // reported a transport error instead of "too many live subscribers".
+    try std.testing.expectEqual(body.len, declared);
+    try std.testing.expectEqualStrings(too_many_subs_body, body);
+    try std.testing.expect(std.mem.startsWith(u8, too_many_subs_response, "HTTP/1.1 503 Service Unavailable\r\n"));
+    // A subscription the server refuses is not one it can keep reading on.
+    try std.testing.expect(std.mem.find(u8, too_many_subs_response[0..sep], "Connection: close") != null);
 }
 
 test "subscribe publish take, overflow drops oldest" {

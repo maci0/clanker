@@ -512,8 +512,18 @@ pub const ChildTransport = struct {
 // In-process fake ACP agent used by the unit tests. Not a second client.
 // ---------------------------------------------------------------------------
 
+/// Milliseconds on a monotonic clock. Every caller measures how long one
+/// call has taken (`waitResponse`'s budget, the silent-child watchdog, the
+/// test fake's mailbox poll), and a wall step mid-run must not stretch a
+/// hang window by the size of the step or fire one early.
+///
+/// Residual std.c clock: these loops run beside blocking reads that carry no
+/// `std.Io` handle to ask for `.awake` (same shape as util/mascot's clock).
 fn nowMs() i64 {
-    return @intCast(log.unixMilliseconds());
+    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(i64, @intCast(ts.sec)) * std.time.ms_per_s +
+        @divTrunc(@as(i64, @intCast(ts.nsec)), std.time.ns_per_ms);
 }
 
 fn pauseNs(ns: u64) void {

@@ -82,6 +82,13 @@ test "a run served by the fallback provider records the fallback in its graph" {
         if (entry.kind != .file) continue;
         if (!std.mem.startsWith(u8, entry.name, "run-")) continue;
         graphs += 1;
+        // The id is minted at nanosecond resolution: two top-level runs
+        // starting in the same second would otherwise share one file here and
+        // one graph would silently overwrite the other (the collision that
+        // moved sub-agent ids to nanoseconds). A seconds-wide id is 10 digits;
+        // a nanosecond one is 19.
+        const digits = entry.name["run-".len .. entry.name.len - ".json".len];
+        try std.testing.expect(digits.len > 10);
         const body = try runs.readFileAlloc(io, entry.name, gpa, .limited(1 << 20));
         defer gpa.free(body);
         try std.testing.expect(std.mem.find(u8, body, "\"provider\":\"e2e-mock\"") != null);

@@ -80,6 +80,7 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The /api/events cap refusal declares a Content-Length four bytes longer than its body](bugs/2026-08-23-events-cap-503-declares-the-wrong-length.md) — Resolved
 - [PRDs 0052 through 0057 each carry a second, unfilled copy of four template sections](bugs/2026-08-23-prd-template-boilerplate-left-in-six-records.md) — Open
 
 - [The opt-in 3D arena stage is blank for good after one tab switch](bugs/2026-08-23-arena3d-stage-stays-blank-after-unmount.md) — Open
