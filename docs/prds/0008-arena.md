@@ -417,6 +417,25 @@ and 4–8 already shipped):
 
 ## Known issues
 
+- **(Fixed) A round-1 forfeit resolved damage the combatant never saw.** The
+  round loop (tools/zig/arena.zig) branched on `opening` for a real reply —
+  `openingTurn` versus `resolveTurn` — but called `forfeitTurn`
+  unconditionally, and `forfeitTurn` took `board.incomingTotal(mover)` and
+  cleared the board. That is exactly what `openingTurn`'s doc comment says
+  must not happen in round 1. Failure modes below call a forfeit "a no-op
+  move, 0 damage dealt or blocked"; instead it cost the mover its whole
+  incoming, and since combatant index is turn order the cost scaled with the
+  seat number — in an 8-way match a round-1 silence by `p8` ate up to
+  7 x `base_damage` and could be eliminated on the opening round while `p1`'s
+  cost nothing, in the one round that is supposed to have no ordering effect.
+  Pairwise it wiped the opening attack off the board, so it could never be
+  blocked in round 2 and a garbage reply cost less than silence.
+  `forfeitTurn` now takes the `opening` flag — a parameter rather than a
+  second function, since the signatures are identical and a separate name is
+  one more thing the loop can pick wrong — and round 1 takes nothing and
+  clears nothing. Pinned by two host tests in tools/zig/arena_match.zig and a
+  live forfeiting match.
+  [Record](../reports/bugs/2026-08-23-arena-round-one-forfeit-eats-unseen-damage.md).
 - **(Fixed) The Arena view froze on a running match.** Phase 5 asks for
   "`GET /api/arena/<id>` polling only while the match is running", and the
   timer was started and stopped correctly, but its tick opened with a

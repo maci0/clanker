@@ -16,6 +16,12 @@ pub fn encodeFrame(alloc: std.mem.Allocator, payload: []const u8) ![]u8 {
 /// memory (the frame length is adapter-controlled and unchecked).
 const max_frame_bytes: usize = 16 << 20;
 
+/// How many responses read out of turn are kept for a later `waitResponse`.
+/// Only ever a handful in practice (one op's response overtaking one event);
+/// the cap keeps an adapter that answers requests nobody waits on from
+/// growing the list without bound.
+const max_parked_responses: usize = 32;
+
 pub const Decoded = struct {
     payload: []const u8,
     consumed: usize,
@@ -88,6 +94,9 @@ pub const Session = struct {
     kind: []const u8 = "dap",
     seq: u32 = 1,
     events: std.ArrayList([]const u8) = .empty,
+    /// Response frames read while waiting for something else, held for the
+    /// `waitResponse` that wants them. Never surfaced to the model.
+    responses: std.ArrayList([]const u8) = .empty,
     pending_bps: ?PendingBreakpoint = null,
     buf: std.ArrayList(u8) = .empty,
     launch_timeout_ms: u32 = 15_000,
@@ -98,6 +107,8 @@ pub const Session = struct {
         self.clearPendingBreakpoints();
         for (self.events.items) |e| self.gpa.free(e);
         self.events.deinit(self.gpa);
+        for (self.responses.items) |r| self.gpa.free(r);
+        self.responses.deinit(self.gpa);
         self.buf.deinit(self.gpa);
     }
 
@@ -217,7 +228,28 @@ pub const Session = struct {
     fn noteFrame(self: *Session, payload: []const u8) !void {
         if (frameIs(payload, "type", "event")) {
             try self.events.append(self.gpa, try self.gpa.dupe(u8, payload));
+            return;
         }
+        // Not an event, so not the model's business — but it may be the
+        // response some caller is about to wait for, read out of turn.
+        // Park it for `waitResponse` rather than dropping it.
+        if (frameRequestSeq(payload) == null) return;
+        if (self.responses.items.len >= max_parked_responses) {
+            self.gpa.free(self.responses.orderedRemove(0));
+        }
+        try self.responses.append(self.gpa, try self.gpa.dupe(u8, payload));
+    }
+
+    /// Takes a parked response matching `id`, if one was read out of turn.
+    /// Returned in `arena` so the caller's lifetime rules are unchanged.
+    fn takeParkedResponse(self: *Session, arena: std.mem.Allocator, id: u32) !?[]const u8 {
+        for (self.responses.items, 0..) |r, i| {
+            if (frameRequestSeq(r) != id) continue;
+            const owned = self.responses.orderedRemove(i);
+            defer self.gpa.free(owned);
+            return try arena.dupe(u8, owned);
+        }
+        return null;
     }
 
     fn sendRequest(self: *Session, arena: std.mem.Allocator, command: []const u8, args_json: []const u8) !u32 {
@@ -232,6 +264,9 @@ pub const Session = struct {
     }
 
     fn waitResponse(self: *Session, arena: std.mem.Allocator, id: u32) ![]const u8 {
+        // A preceding `waitEvent` or drain may already have read this
+        // response off the wire while looking for something else.
+        if (try self.takeParkedResponse(arena, id)) |parked| return parked;
         var spins: usize = 0;
         while (spins < 256) : (spins += 1) {
             const frame = self.readFrame(arena) catch |err| return err;
@@ -251,7 +286,15 @@ pub const Session = struct {
         var spins: usize = 0;
         while (spins < 256) : (spins += 1) {
             const frame = self.readFrame(arena) catch |err| return err;
-            try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
+            // Only event frames belong in the event queue. This used to
+            // append every frame, so an adapter that answered `attach`
+            // before emitting `initialized` had its response consumed here:
+            // the `waitResponse` right after could never match it, `attach`
+            // fell back to the literal `{"ok":true}`, and `writeEvents`
+            // handed the model a `"type":"response"` object labelled as an
+            // adapter event. A response read out of turn is parked instead,
+            // for `waitResponse` to pick up.
+            try self.noteFrame(frame);
             if (frameIs(frame, "event", event)) return;
         }
         return error.Timeout;
@@ -280,6 +323,8 @@ pub const Session = struct {
         self.seq = 1;
         for (self.events.items) |e| self.gpa.free(e);
         self.events.clearRetainingCapacity();
+        for (self.responses.items) |r| self.gpa.free(r);
+        self.responses.clearRetainingCapacity();
         self.buf.clearRetainingCapacity();
     }
 
@@ -290,7 +335,20 @@ pub const Session = struct {
 
     pub fn launch(self: *Session, arena: std.mem.Allocator, args_json: []const u8) ![]const u8 {
         const id = try self.sendRequest(arena, "launch", args_json);
+        // DAP lets the adapter emit `initialized` any time after it receives
+        // `initialize`, and `initialize`'s own `waitResponse` queues every
+        // event it read ahead of the response. So the event this loop waits
+        // for may already be in `self.events` — without this scan `saw_init`
+        // stays false, `readFrame` blocks on an adapter with nothing left to
+        // say, and `runBounded` kills a correct adapter with LaunchTimeout.
+        // `waitEvent` does the same scan.
         var saw_init = false;
+        for (self.events.items) |e| {
+            if (frameIs(e, "event", "initialized")) {
+                saw_init = true;
+                break;
+            }
+        }
         var resp: ?[]const u8 = null;
         var spins: usize = 0;
         while (spins < 64 and (resp == null or !saw_init)) : (spins += 1) {
@@ -1109,6 +1167,195 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
     const disc = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
     try std.testing.expect(std.mem.find(u8, disc, "\"ok\":true") != null);
     try std.testing.expect(reg.get("dbg-1", "dap") == null);
+}
+
+/// Emits `initialized` *before* its initialize response, which DAP allows —
+/// the adapter may send it any time after receiving `initialize`. Both other
+/// in-tree fakes send it after the launch request, the one ordering that
+/// worked before `launch` learned to scan the already-queued events.
+const early_init_adapter_src =
+    \\import json, sys
+    \\
+    \\def rf():
+    \\    h = {}
+    \\    while True:
+    \\        line = sys.stdin.buffer.readline()
+    \\        if not line:
+    \\            return None
+    \\        if line in (b"\r\n", b"\n"):
+    \\            break
+    \\        if b":" in line:
+    \\            k, v = line.decode().split(":", 1)
+    \\            h[k.strip().lower()] = v.strip()
+    \\    return json.loads(sys.stdin.buffer.read(int(h.get("content-length", "0"))).decode())
+    \\
+    \\def send(o):
+    \\    raw = json.dumps(o).encode()
+    \\    sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw)
+    \\    sys.stdout.buffer.flush()
+    \\
+    \\seq = 1
+    \\while True:
+    \\    req = rf()
+    \\    if req is None:
+    \\        break
+    \\    cmd = req.get("command")
+    \\    rid = req.get("seq", 0)
+    \\    seq += 1
+    \\    if cmd == "initialize":
+    \\        send({"seq": seq, "type": "event", "event": "initialized", "body": {}})
+    \\        seq += 1
+    \\        send({"seq": seq, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {}})
+    \\    elif cmd == "launch":
+    \\        send({"seq": seq, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {"earlyinit": True}})
+    \\    else:
+    \\        send({"seq": seq, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {}})
+    \\        if cmd in ("disconnect", "terminate"):
+    \\            break
+;
+
+test "launch accepts an initialized event that the initialize response already queued" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    tmp.dir.writeFile(io, .{ .sub_path = "early_dap.py", .data = early_init_adapter_src }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var sess = Session{ .io = io, .gpa = std.testing.allocator, .reg = &reg, .session_id = "dbg-early" };
+    defer sess.deinit();
+
+    const argv = [_][]const u8{ "python3", "early_dap.py" };
+    const opts = HandleOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "dbg-early",
+        .enabled = true,
+        .adapters = &.{},
+        // Short, so the pre-fix behaviour (block in readFrame until the
+        // watchdog kills a correct adapter) fails fast instead of stalling
+        // the suite for the 15s default.
+        .launch_timeout_ms = 5_000,
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    };
+
+    const launched = handle(&sess, opts, "{\"op\":\"launch\",\"adapter\":\"early\",\"program\":\"./myapp\"}") catch |err| switch (err) {
+        error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    try std.testing.expect(std.mem.find(u8, launched, "earlyinit") != null);
+    // Not killed and reaped by the launch watchdog: the adapter answered.
+    try std.testing.expect(reg.get("dbg-early", "dap") != null);
+    _ = handle(&sess, opts, "{\"op\":\"disconnect\"}") catch {};
+}
+
+/// Answers `attach` with its response first and only then, ~50 ms later,
+/// the `initialized` event — the ordering that used to have the response
+/// eaten by `waitEvent` and spliced into the tool's `events` array.
+const resp_first_attach_adapter_src =
+    \\import json, sys, threading, time
+    \\lock = threading.Lock()
+    \\
+    \\def rf():
+    \\    h = {}
+    \\    while True:
+    \\        line = sys.stdin.buffer.readline()
+    \\        if not line:
+    \\            return None
+    \\        if line in (b"\r\n", b"\n"):
+    \\            break
+    \\        if b":" in line:
+    \\            k, v = line.decode().split(":", 1)
+    \\            h[k.strip().lower()] = v.strip()
+    \\    return json.loads(sys.stdin.buffer.read(int(h.get("content-length", "0"))).decode())
+    \\
+    \\def send(o):
+    \\    raw = json.dumps(o).encode()
+    \\    with lock:
+    \\        sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode() + raw)
+    \\        sys.stdout.buffer.flush()
+    \\
+    \\def late_init():
+    \\    time.sleep(0.05)
+    \\    send({"seq": 999, "type": "event", "event": "initialized", "body": {}})
+    \\
+    \\seq = 1
+    \\while True:
+    \\    req = rf()
+    \\    if req is None:
+    \\        break
+    \\    cmd = req.get("command")
+    \\    rid = req.get("seq", 0)
+    \\    seq += 1
+    \\    if cmd == "attach":
+    \\        send({"seq": seq, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {"attached": True}})
+    \\        threading.Thread(target=late_init, daemon=True).start()
+    \\    else:
+    \\        send({"seq": seq, "type": "response", "request_seq": rid, "command": cmd, "success": True, "body": {}})
+    \\        if cmd in ("disconnect", "terminate"):
+    \\            break
+;
+
+test "an attach response arriving before initialized is not filed as an event" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    tmp.dir.writeFile(io, .{ .sub_path = "attach_dap.py", .data = resp_first_attach_adapter_src }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var sess = Session{ .io = io, .gpa = std.testing.allocator, .reg = &reg, .session_id = "dbg-attach" };
+    defer sess.deinit();
+
+    const argv = [_][]const u8{ "python3", "attach_dap.py" };
+    const opts = HandleOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "dbg-attach",
+        .enabled = true,
+        .adapters = &.{},
+        .launch_timeout_ms = 5_000,
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    };
+
+    const attached = handle(&sess, opts, "{\"op\":\"attach\",\"adapter\":\"late\"}") catch |err| switch (err) {
+        error.AdapterNotFound, error.FileNotFound => return error.SkipZigTest,
+        else => return err,
+    };
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, attached, .{});
+    defer parsed.deinit();
+    const root = parsed.value.object;
+
+    // The real response, not the `{"ok":true}` placeholder attach falls back
+    // to when `waitResponse` cannot find what `waitEvent` already ate.
+    const body = root.get("body").?.object;
+    try std.testing.expect(body.get("body").?.object.get("attached").?.bool);
+
+    // Every element of `events` is an adapter event. A `"type":"response"`
+    // here is the response handed to the model as if it were one.
+    for (root.get("events").?.array.items) |e| {
+        try std.testing.expectEqualStrings("event", e.object.get("type").?.string);
+    }
+    _ = handle(&sess, opts, "{\"op\":\"disconnect\"}") catch {};
 }
 
 /// Answers like the fake adapter, but sends the `stopped` event from a

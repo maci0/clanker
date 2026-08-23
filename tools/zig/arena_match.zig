@@ -463,10 +463,26 @@ pub fn openingTurn(
 }
 
 /// A combatant that never answered forfeits the turn: it deals nothing and
-/// blocks nothing, so everything aimed at it lands.
-pub fn forfeitTurn(board: *Board, combatants: []Combatant, mover: usize) Outcome {
-    const out = Outcome{ .taken = board.incomingTotal(mover) };
-    board.clearIncoming(mover);
+/// blocks nothing.
+///
+/// `opening` splits it the same way `openingTurn` splits from `resolveTurn`,
+/// and it is a parameter rather than a second function so the round loop
+/// cannot pick the wrong one: from round 2 on, everything aimed at the mover
+/// is damage it had a chance to answer and failed to, so it lands and the
+/// board clears; in round 1 nobody has seen anybody, so there is nothing the
+/// mover failed to answer — it takes nothing and clears nothing, and what is
+/// already in flight stays in flight to be answered from round 2.
+///
+/// Charging round 1 the same as any other round made a forfeit cost more the
+/// later you moved: combatant index is turn order, so in an 8-way match a
+/// round-1 silence by the last mover ate every earlier opening attack (up to
+/// 7 x `base_damage`) and could be eliminated outright, while the first
+/// mover's cost nothing — in the one round that is supposed to have no
+/// ordering effect at all. PRD 0008 calls a forfeit "a no-op move, 0 damage
+/// dealt or blocked".
+pub fn forfeitTurn(board: *Board, combatants: []Combatant, mover: usize, opening: bool) Outcome {
+    const out = if (opening) Outcome{} else Outcome{ .taken = board.incomingTotal(mover) };
+    if (!opening) board.clearIncoming(mover);
     applyOutcome(&combatants[mover], out);
     combatants[mover].forfeits +|= 1;
     return out;
@@ -1259,17 +1275,56 @@ test "royale headline names the field, not just the runner-up" {
     );
 }
 
-test "forfeitTurn eats everything aimed at the mover and counts the forfeit" {
+test "after round 1 a forfeit eats everything aimed at the mover and counts it" {
     var buf: [max_combatants]Combatant = undefined;
     const cs = royale(3, &buf);
     var board = Board{};
     board.add(1, 0, 14);
     board.add(2, 0, 9);
-    const out = forfeitTurn(&board, cs, 0);
+    const out = forfeitTurn(&board, cs, 0, false);
     try std.testing.expectEqual(@as(u16, 23), out.taken);
     try std.testing.expectEqual(@as(i32, 77), cs[0].hp);
     try std.testing.expectEqual(@as(u16, 1), cs[0].forfeits);
     try std.testing.expectEqual(@as(u16, 0), board.incomingTotal(0));
+}
+
+test "a round-1 forfeit takes nothing and leaves the opening attack in flight" {
+    // The mover has not had a chance to answer anything yet, so the opening
+    // attack must survive to be blockable in round 2 rather than landing on
+    // a combatant that never saw it.
+    var buf: [max_combatants]Combatant = undefined;
+    const cs = royale(2, &buf);
+    var board = Board{};
+    _ = openingTurn(&board, cs, 0, 1, .attack, 1.0);
+    const out = forfeitTurn(&board, cs, 1, true);
+    try std.testing.expectEqual(@as(u16, 0), out.taken);
+    try std.testing.expectEqual(@as(i32, 100), cs[1].hp);
+    try std.testing.expectEqual(@as(u16, 1), cs[1].forfeits);
+    try std.testing.expectEqual(@as(u16, base_damage), board.incomingFrom(0, 1));
+}
+
+test "a round-1 forfeit costs the same wherever the mover sits in turn order" {
+    // Combatant index is turn order in a battle royale, and round 1 is the
+    // one round with no ordering effect: p1 and p8 falling silent must cost
+    // the same. Before `opening` reached this function the last mover ate
+    // every earlier attack and the first mover ate nothing.
+    var first_buf: [max_combatants]Combatant = undefined;
+    const first = royale(8, &first_buf);
+    var first_board = Board{};
+    const first_out = forfeitTurn(&first_board, first, 0, true);
+    for (1..8) |i| _ = openingTurn(&first_board, first, i, (i + 1) % 8, .attack, 1.0);
+
+    var last_buf: [max_combatants]Combatant = undefined;
+    const last = royale(8, &last_buf);
+    var last_board = Board{};
+    for (0..7) |i| _ = openingTurn(&last_board, last, i, 7, .attack, 1.0);
+    const last_out = forfeitTurn(&last_board, last, 7, true);
+
+    try std.testing.expectEqual(first_out.taken, last_out.taken);
+    try std.testing.expectEqual(first[0].hp, last[7].hp);
+    try std.testing.expectEqual(@as(i32, 100), last[7].hp);
+    // Nothing was wiped: all seven opening attacks are still answerable.
+    try std.testing.expectEqual(@as(u16, 7 * base_damage), last_board.incomingTotal(7));
 }
 
 test "resolveTurn on a pairwise board matches the pairwise resolver exactly" {

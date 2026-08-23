@@ -656,7 +656,14 @@ fn startMatch(out: *lib.Out, obj: std.json.ObjectMap, question: []const u8) !voi
                 // forfeits the round: it deals nothing and blocks nothing, so
                 // whatever was in flight lands. The match continues rather
                 // than hanging.
-                const o = m.forfeitTurn(&board, combatants, i);
+                //
+                // `opening` matters here for the same reason it does for a
+                // real reply below: in round 1 nobody has seen anybody, so a
+                // silent combatant has not failed to answer anything and the
+                // in-flight damage stays in flight. This used to pass no flag
+                // at all, which made round-1 silence cost more the later in
+                // turn order you moved.
+                const o = m.forfeitTurn(&board, combatants, i, opening);
                 try moves.append(alloc, .{
                     .round = round,
                     .combatant = i,
