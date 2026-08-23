@@ -381,28 +381,28 @@ throw → tab error) if not already true in code.
   `refresh?` as part of the registration API without saying so, `mesh`'s own
   comment claims it covers re-entry, and `health` and `office` each bolt on a
   `MutationObserver` on the panel's `hidden` attribute instead. Filed as
-  [plugin refresh hook is unreachable](../reports/bugs/2026-08-24-plugin-refresh-hook-is-unreachable.md).
+  [plugin refresh hook is unreachable](../reports/bugs/2026-08-23-plugin-refresh-hook-is-unreachable.md).
 - **A plugin tab's arrow-key neighbours are its registration neighbours.** The
   loader inserts the tab inside its group heading and then indexes it at the end
   of `VIEWS`; `wireTab` moves focus purely by that index. For the eleven
   built-ins `VIEWS` is exactly the rail's DOM order, so a plugin is the first
   thing to break the invariant, against this PRD's "indistinguishable from a
   built-in view". Filed as
-  [plugin tab arrow keys follow registration order](../reports/bugs/2026-08-24-plugin-tab-arrow-keys-follow-registration-order.md).
+  [plugin tab arrow keys follow registration order](../reports/bugs/2026-08-23-plugin-tab-arrow-keys-follow-registration-order.md).
 - **`api.status` is one shared live region.** Every plugin and the loader's own
   five messages write `#webui-plugins-status`; Health writes it about once a
   second from its 1 Hz sample, so an enable confirmation is overwritten inside a
   second and a screen reader hears the same metrics line forever. Same shape as
   the `#models-status` defect already fixed in `docs/reviews/webui.md`, with N
   producers instead of three. Filed as
-  [plugin status line is one shared live region](../reports/bugs/2026-08-24-plugin-status-line-is-one-shared-live-region.md).
+  [plugin status line is one shared live region](../reports/bugs/2026-08-23-plugin-status-line-is-one-shared-live-region.md).
 - **`actionList` drops a slightly-wrong manifest with no diagnostic.** It goes
   out of its way to list an unparseable `plugin.json` with a diagnostic
   description, then silently `continue`s past `capabilitiesRejected`; and
   `validGroup` is enforced in `create`/`put` but never in `list`, so a manifest
   with a group that is not `Work`/`Watch`/`Set up` is listed verbatim and its tab
   lands outside the rail's nav list. Filed as
-  [webui addon list drops a bad manifest with no diagnostic](../reports/bugs/2026-08-24-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md).
+  [webui addon list drops a bad manifest with no diagnostic](../reports/bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md).
 
 ## Failure modes
 

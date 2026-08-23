@@ -80,11 +80,11 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-24-connection-limit-503-runs-on-the-accept-thread.md) — Open
+- [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md) — Open
 
-- [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-24-rendercache-failed-is-a-permanent-latch.md) — Open
+- [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Open
 
-- [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-24-head-on-api-routes-404s-and-closes.md) — Open
+- [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Open
 
 - [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-24-ck-http-hands-guests-no-response-headers.md) — Open
 
@@ -94,17 +94,17 @@ Project agents receive this workflow through the harness prompt and
 
 - [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-24-gh-read-diff-hunks-name-no-file.md) — Resolved
 
-- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-24-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
+- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
 
-- [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-24-plugin-refresh-hook-is-unreachable.md) — Open
+- [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-23-plugin-refresh-hook-is-unreachable.md) — Open
 
-- [Every plugin's api.status writes the same sr-only live region, and Health rewrites it about once a second](bugs/2026-08-24-plugin-status-line-is-one-shared-live-region.md) — Open
+- [Every plugin's api.status writes the same sr-only live region, and Health rewrites it about once a second](bugs/2026-08-23-plugin-status-line-is-one-shared-live-region.md) — Open
 
-- [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-24-plugin-tab-arrow-keys-follow-registration-order.md) — Open
+- [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-23-plugin-tab-arrow-keys-follow-registration-order.md) — Open
 
-- [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-24-board-card-member-avatar-nested-in-the-card-button.md) — Open
+- [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-23-board-card-member-avatar-nested-in-the-card-button.md) — Open
 
-- [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-24-webui-task-textarea-combobox-role.md) — Open
+- [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-23-webui-task-textarea-combobox-role.md) — Open
 
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 

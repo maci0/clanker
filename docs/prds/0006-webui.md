@@ -358,18 +358,18 @@ every document; "judged" is what a single ledger row can honestly say.
   `HEAD /api/status` is a 404 with `Connection: close` where `GET /api/status` is
   200. Not fixed here: `GET /api/events` is an SSE stream, so the fix belongs in
   the route predicates rather than in a method rewrite at the top of dispatch.
-  Filed as [HEAD on api routes 404s and closes](../reports/bugs/2026-08-24-head-on-api-routes-404s-and-closes.md).
+  Filed as [HEAD on api routes 404s and closes](../reports/bugs/2026-08-23-head-on-api-routes-404s-and-closes.md).
 - **`RenderCache`'s `.failed` state is a permanent latch.** It falls through to
   rendering again, but the publish `cmpxchg` only accepts `.idle`, so a slot that
   ever reads `.failed` can never become `.ready`; one transient `gpa.dupe`
   failure pins that asset to the uncached path for the life of the process. Filed
-  as [RenderCache failed is a permanent latch](../reports/bugs/2026-08-24-rendercache-failed-is-a-permanent-latch.md).
+  as [RenderCache failed is a permanent latch](../reports/bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md).
 - **The saturation 503 is neither counted nor logged.** It is answered with
   `respond` on the accept thread, outside `handleConnection`, where the metric
   and completion-log defers live, so the one load condition an operator would
   grep `/api/metrics` for is the one the server does not record; and `respond`
   there reads two threadlocals only `handleConnection` resets. Filed as
-  [connection limit 503 runs on the accept thread](../reports/bugs/2026-08-24-connection-limit-503-runs-on-the-accept-thread.md).
+  [connection limit 503 runs on the accept thread](../reports/bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md).
 
 ## Failure modes
 
