@@ -16,6 +16,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A `kernel` cell now sees the environment the `kernel` tool's `env_allow`
+  grants it, built by the same filter `ck_exec` and `ck_job` use. The
+  supervisor was spawned with no environment named at all, which left it to the
+  `Io` implementation: cells got two platform-injected variables and no `HOME`
+  or `PATH`, and on an `Io` that inherits they would have carried every key the
+  harness loaded, including API keys the guest is denied through `ck_env`.
+  Naming variables in `env_allow` replaces the default set (`PWD`, `HOME`,
+  `PATH`, `LANG`, `LC_ALL`, `TERM`, `TZ`, `USER`) rather than adding to them,
+  so re-list what a cell still needs. A cell has no `TMPDIR`.
+- The `kernel` tool's description, `config.toml` and `docs/configuration.md` no
+  longer claim Python cells run under a WASI sandbox. They do not: `ck_kernel`
+  reaches an unsandboxed host `python3` supervisor, and the WASI-confined
+  function ADR 0010 describes has no production caller, so
+  `scripts/setup-python-wasi.sh` does not change what a `kernel` call does.
+  The `llm_description` said it too, so the model was being told it as well.
 - A `GET /api/events` subscriber that hangs up now releases its live-bus slot
   and its connection thread within one 50ms tick on macOS, instead of holding
   both until the 15s keepalive ping failed to write. The idle tick polled for

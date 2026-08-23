@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The kernel supervisor's environment was whatever the Io carried, not a policy](bugs/2026-08-23-kernel-supervisor-environment-is-unspecified.md) — Resolved
+
 - [A clanker-<name> binary on PATH is exec'd unsandboxed with no entry in the enabled-list](bugs/2026-08-23-cli-tier2-plugin-runs-without-consent.md) — Resolved
 
 - [A composer @path mention of a file over the 32 KiB cap is dropped instead of truncated](bugs/2026-08-23-mention-over-cap-file-dropped.md) — Resolved

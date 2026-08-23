@@ -1,9 +1,17 @@
 //! Persistent eval kernels. Off by default (`kernel.enabled = false`).
-//! Python cells run WASI-sandboxed when the vendored interpreter is present
-//! (ADR 0010); without it the host falls back to a deprecated unsandboxed
-//! `python3` subprocess. This guest refuses when disabled and reports a
-//! missing runtime clearly. The host registry (PRD 0016/0017) owns process
-//! lifetime.
+//!
+//! Python cells are **not** sandboxed: `ck_kernel` reaches the persistent host
+//! `python3` supervisor in `src/sandbox/kernel.zig`, which has the harness's
+//! own filesystem and network reach. The WASI-confined path ADR 0010 describes
+//! (`runPythonCell`, `src/sandbox/host.zig`) has no production caller and is a
+//! one-shot, so it cannot hold `__main__` across cells and the kernel could
+//! not have adopted it; `scripts/setup-python-wasi.sh` therefore changes
+//! nothing about a `kernel` call. Open defect:
+//! docs/reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md.
+//!
+//! This guest refuses when disabled and reports a missing runtime clearly. The
+//! host registry (PRD 0016/0017) owns process lifetime, and the supervisor's
+//! environment is this tool's `env_allow` set, not the harness's.
 
 const std = @import("std");
 const lib = @import("lib.zig");
