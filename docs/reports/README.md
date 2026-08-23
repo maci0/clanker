@@ -80,6 +80,20 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [PRDs 0052 through 0057 each carry a second, unfilled copy of four template sections](bugs/2026-08-23-prd-template-boilerplate-left-in-six-records.md) — Open
+
+- [The opt-in 3D arena stage is blank for good after one tab switch](bugs/2026-08-23-arena3d-stage-stays-blank-after-unmount.md) — Open
+
+- [The REPL transcript renders bridge_stream_buf as bridgestreambuf](bugs/2026-08-23-repl-markdown-eats-snake-case-underscores.md) — Open
+
+- [A clipboard paste request the terminal never answers leaves the REPL composer unable to submit](bugs/2026-08-23-repl-composer-latches-into-paste-mode.md) — Open
+
+- [A round-1 arena forfeit resolves damage the combatant never had a chance to see](bugs/2026-08-23-arena-round-one-forfeit-eats-unseen-damage.md) — Open
+
+- [DAP waitEvent appends every frame to the event queue, so attach can lose its own response](bugs/2026-08-23-dap-waitevent-files-responses-as-events.md) — Open
+
+- [DAP launch waits for an initialized event that initialize already queued, so a correct adapter times out](bugs/2026-08-23-dap-launch-misses-a-queued-initialized-event.md) — Open
+
 - [The Arena view freezes on a running match: its poll skips every tick while the live stream is up](bugs/2026-08-23-arena-view-never-refreshes-a-running-match.md) — Resolved
 
 - [The kernel supervisor's environment was whatever the Io carried, not a policy](bugs/2026-08-23-kernel-supervisor-environment-is-unspecified.md) — Resolved
