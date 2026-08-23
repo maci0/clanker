@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [corrupt TUI/CLI plugin state silently disabled every plugin](bugs/2026-08-23-corrupt-plugin-state-silently-disables.md) — Resolved
+
 - [unknown provider kind failed with no naming diagnostic](bugs/2026-08-23-unknown-provider-kind-names-nothing.md) — Resolved
 
 - [Arena floored untargeted concede and final_stand moves](bugs/2026-08-23-arena-untargeted-concede-floored.md) — Resolved

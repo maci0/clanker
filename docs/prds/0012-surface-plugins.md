@@ -304,7 +304,19 @@ throw → tab error) if not already true in code.
   `src/toolhost/registry.zig:156,288`). For TUI/CLI the choice is now locked in
   Design decisions: enabled-list, default off, matching web UI. The tool
   system's on-by-default shape stays as-is for WASM tools; do not "unify"
-  them without a separate PRD.
+  them without a separate PRD. (Evaluated 2026-08-23: both shipped loaders
+  — `src/tui/slash_plugins.zig` and `src/cli/cli_plugins.zig` — implement
+  the locked enabled-list, default off. The divergence from the tool
+  system's disabled-list is design, not a defect.)
+- **(Fixed) Corrupt `state/tui_plugins.json` / `state/cli_plugins.json`
+  used to stay silent.** Both `loadEnabled`s swallowed a parse failure and
+  a non-NotFound read error into an empty enabled-list with no trace,
+  while the Failure modes table below promises "empty enabled-list +
+  warn" — the same defect fixed for `state/webui_plugins.json` in the
+  next bullet. They now warn through the host log naming the file and
+  what failed, keeping the empty-list fallback; a missing file stays
+  silent because off-by-default is the normal state, and the next
+  successful toggle rewrites a clean file.
 - **(Fixed) Corrupt `state/webui_plugins.json` used to stay silent.** The
   read moved from `handleWebuiPlugins` into the `webui_addon` guest, and its
   `loadState` swallowed both a parse failure and a non-NotFound read error

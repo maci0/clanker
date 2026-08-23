@@ -11,6 +11,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A corrupt or unreadable `state/tui_plugins.json` / `state/cli_plugins.json`
+  now logs a warning naming the file and what failed instead of silently
+  treating every TUI/CLI plugin as disabled. The empty enabled-list fallback
+  is unchanged, a missing file stays silent (off-by-default is the normal
+  state), and the next successful toggle rewrites a clean file — the
+  behaviour PRD 0012's failure modes promise, already delivered for
+  `state/webui_plugins.json`.
 - An unknown provider `kind` in `config.toml` now fails with a diagnostic
   naming the provider, the offending spelling, and every kind the binary
   accepts. It used to emit only the generic "configuration validation failed
