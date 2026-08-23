@@ -59,6 +59,9 @@ run.json
 chatrooms.jsonl
 /backups
 
+# Scratch space for agent sessions (experiments, bisect files); never project source.
+/.scratch
+
 # tree-sitter grammars built by tools/grammars/build.sh
 tools/grammars/*.so
 .playwright-mcp/

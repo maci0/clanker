@@ -548,6 +548,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
 | `rules/` | — | Rule files |
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |
+| `patches/` | — | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
 | `scripts/` | — | Development scripts (`verify.sh`, `apply-patches.sh`) |
@@ -565,6 +566,8 @@ dependency cache location is controlled by the Zig installation/environment.
 - `tools/ts/` — AssemblyScript tool sources.
 - `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
 - `tools/grammars/` — grammars used by tools that parse.
+- `tools/examples/manifests/` — descriptors parked until their sources exist; nothing loads them and `zig build tools` does not build them.
+- `patches/` — patches applied on top of vendored dependencies (`scripts/apply-patches.sh`).
 - `ui/plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
 - `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
 - `zig-out/tools/` — built WASM binaries from `zig build tools`.
