@@ -44,9 +44,38 @@ pub const EnabledState = struct {
 };
 
 pub fn loadEnabled(io: std.Io, arena: std.mem.Allocator) []const []const u8 {
-    const raw = std.Io.Dir.cwd().readFileAlloc(io, state_path, arena, .limited(max_file_bytes)) catch return &.{};
-    const st = std.json.parseFromSliceLeaky(EnabledState, arena, raw, .{ .ignore_unknown_fields = true }) catch return &.{};
+    const raw = std.Io.Dir.cwd().readFileAlloc(io, state_path, arena, .limited(max_file_bytes)) catch |err| {
+        // A missing state file is the normal everything-off default. Any
+        // other failure silently disabling every plugin is the defect PRD
+        // 0012's failure modes forbid: empty enabled-list, plus a warning.
+        if (err != error.FileNotFound)
+            log.log(.warn, "{s}: unreadable ({s}); treating every TUI plugin as disabled", .{ state_path, @errorName(err) });
+        return &.{};
+    };
+    return parseEnabled(arena, raw) orelse {
+        log.log(.warn, "{s}: not valid state JSON; treating every TUI plugin as disabled until the next toggle rewrites it", .{state_path});
+        return &.{};
+    };
+}
+
+/// The parsed enabled-list, or null when the bytes are not the state file's
+/// shape. Split from loadEnabled so the corrupt-file fallback is testable.
+fn parseEnabled(arena: std.mem.Allocator, raw: []const u8) ?[]const []const u8 {
+    const st = std.json.parseFromSliceLeaky(EnabledState, arena, raw, .{ .ignore_unknown_fields = true }) catch return null;
     return st.enabled;
+}
+
+test "parseEnabled reads the enabled-list and refuses corrupt bytes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const good = parseEnabled(arena, "{\"enabled\":[\"myreport\",\"other\"]}").?;
+    try std.testing.expectEqual(@as(usize, 2), good.len);
+    try std.testing.expectEqualStrings("myreport", good[0]);
+    // Corrupt bytes and a wrong shape both fall back to null, which
+    // loadEnabled turns into "everything off" plus a warning.
+    try std.testing.expect(parseEnabled(arena, "{not json") == null);
+    try std.testing.expect(parseEnabled(arena, "[\"myreport\"]") == null);
 }
 
 pub fn isEnabled(enabled: []const []const u8, command: []const u8) bool {
