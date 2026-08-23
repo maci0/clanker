@@ -726,9 +726,16 @@ pub const Agent = struct {
         }
         // Execution graph: record every LLM call and tool invocation, then
         // persist it to state/runs/<run-id>.json on every exit path.
-        const started_at: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.ctx.io, .real).nanoseconds, 1_000_000_000));
+        const started_ns = std.Io.Timestamp.now(self.ctx.io, .real).nanoseconds;
+        const started_at: i64 = @intCast(@divTrunc(started_ns, 1_000_000_000));
         var g = graph_mod.Graph{
-            .run_id = self.run_id_override orelse try std.fmt.allocPrint(self.arena, "run-{d}", .{started_at}),
+            // Nanosecond resolution because two top-level runs starting in the
+            // same second (a web UI run beside a goal loop) would otherwise
+            // share one state/runs/ file and one graph would silently
+            // overwrite the other -- the same collision that moved sub-agent
+            // ids to nanoseconds (src/agent/subagent.zig). Listing, retention,
+            // /api/runs and the web picker all read both widths.
+            .run_id = self.run_id_override orelse try std.fmt.allocPrint(self.arena, "run-{d}", .{started_ns}),
             .parent_run_id = self.parent_run_id,
             .task = task,
             .provider = self.provider.name,
