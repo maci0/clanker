@@ -82,6 +82,11 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.gitDenyGuardGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_checks.configWeakeningGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGate(" },
+    // The retry decides the capability verdict whenever the first eval pass
+    // fails: gutting it into an unconditional green return converts every
+    // failed case into "PASS on retry" while the self.capabilityGate( needle
+    // above still matches.
+    .{ .file = "src/improve/engine.zig", .needle = "self.capabilityGateRetry(" },
     .{ .file = "src/improve/engine.zig", .needle = "proposal_mod.isAppendOnly(" },
     .{ .file = "src/improve/engine.zig", .needle = "gate_invariants" },
     // The module binding is the one link between the call sites above and the
@@ -94,6 +99,17 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // trick against verifyGates and `clanker gate`.
     .{ .file = "src/improve/engine.zig", .needle = "@import(\"../gate/checks.zig\")" },
     .{ .file = "src/cli.zig", .needle = "@import(\"gate/checks.zig\")" },
+    // cli.zig's verifyGates is how an operator runs the whole gate over a
+    // promotion (`clanker gate`). The promote path calls build/test/tools/
+    // fmt/lint directly from this unwritable file, but the five checks below
+    // run ONLY there, and their implementations sit in writable checks.zig:
+    // deleting the call is the one way to stop them failing that leaves both
+    // files looking intact.
+    .{ .file = "src/cli.zig", .needle = "gate_checks.testRootCoverageGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.jsSuiteCoverageGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.sandboxAbiGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.toolsTsToolchainGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.releaseContractGate(" },
     // The one gate that asks whether a change does anything. It is the gate a
     // loop optimising for acceptance has the most to gain from removing, and
     // removing it would look, to every other check, like a clean patch.
@@ -4610,6 +4626,20 @@ test "a patch that guts a gate implementation in checks.zig is rejected too" {
 
 test "a patch that bypasses merge-back CAS is rejected" {
     try expectInvariantCaught("src/improve/worktree.zig", "updateRefCas(gpa, io, self.base_branch, commit, base_sha)", "");
+}
+
+test "a patch that guts the capability-eval retry is rejected too" {
+    // The retry decides the verdict whenever the first eval pass fails; an
+    // unconditional green return there passes the self.capabilityGate(
+    // needle, so the retry call site is pinned on its own.
+    try expectInvariantCaught("src/improve/engine.zig", "self.capabilityGateRetry(", "");
+}
+
+test "a patch that strips a clanker-gate-only check from verifyGates is rejected" {
+    // testRootCoverageGate and friends run only in cli.zig's verifyGates;
+    // their implementations are writable checks.zig code, so the call site
+    // is the only protected half.
+    try expectInvariantCaught("src/cli.zig", "gate_checks.testRootCoverageGate(", "");
 }
 
 test "a patch that flips improve defaults in src/config.zig is rejected" {
