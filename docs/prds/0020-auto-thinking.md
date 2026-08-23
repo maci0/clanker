@@ -196,6 +196,11 @@ a `totals.thinking_distribution` field in the `/api/stats` response.
    `GET /api/stats` / `clanker stats`.
 5. Tests: effort mapping, timeout fallback, unexpected-response → `medium`,
    empty-message skip, opt-in default (zero classifier calls when disabled).
+   The empty-message skip and the one-call-per-turn bound are covered by
+   `auto-thinking classifies once per turn and skips a blank submit` in
+   `src/agent/loop.zig`, which counts requests off a loopback mock server
+   rather than reading the call chain
+   ([bug](../reports/bugs/2026-08-23-auto-thinking-classifies-every-iteration.md)).
 
 ## Failure modes
 
@@ -206,7 +211,24 @@ a `totals.thinking_distribution` field in the `/api/stats` response.
 | Classifier times out | Main turn proceeds with default `reasoning_effort` |
 | Classifier provider rate-limited | Same as timeout; fallback to default |
 | Main provider does not support `reasoning_effort` | Classifier result is logged but the override has no effect (the field is simply not sent) |
-| User message is empty (e.g., a REPL submit with no text) | Classifier is skipped; default effort used |
+| User message is empty (e.g., a REPL submit with no text) | Classifier is skipped; default effort used. Whitespace-only counts as empty. Skipping is the load-bearing part rather than the saved call: `parseLevel("")` answers `medium`, so classifying blank text would not fall back to the default, it would pin the turn to `medium` |
+| Same turn, later iteration | No second call. The verdict is memoised against the exact user-message text for the run, so a turn that takes N iterations still costs one classifier call. A mid-run steer appends a new `.user` message and is therefore classified again |
+
+## Known issues
+
+1. **The "no classifier provider" path logs at debug, per turn, not as a
+   startup warning.** The failure-modes row above asks for a startup warning;
+   `thinking.classify` logs `auto-thinking skipped: no classifier provider` at
+   `.debug` and does it on every turn instead. A typo'd
+   `thinking_classifier_model` therefore disables the feature invisibly at the
+   default log level. Not fixed.
+
+2. **`xhigh` never selects a distinct row.** `effortFor` collapses
+   `.high, .xhigh => "high"`, so `config.ReasoningEffort`'s `max` row is
+   unreachable from the classifier. This is per spec (the mapping table above
+   says `xhigh` -> `high`) and the `xhigh` label does survive in
+   `ctx.thinking_level` and `token_stats.jsonl`; recorded here so a reader does
+   not re-diagnose it as drift.
 
 ## Acceptance criteria
 

@@ -190,6 +190,14 @@ fn applySteerFraming(arena: std.mem.Allocator, messages: []types.Message) !void 
     }
 }
 
+/// One turn's auto-thinking verdict, keyed by the user message it classified.
+/// All three slices are arena- or comptime-owned and outlive the run.
+const ThinkingCache = struct {
+    key: []const u8,
+    level: []const u8,
+    effort: []const u8,
+};
+
 /// Cumulative token usage across all LLM calls in a single agent run.
 pub const RunStats = struct {
     total_prompt_tokens: u64 = 0,
@@ -405,6 +413,11 @@ pub const Agent = struct {
     /// locator. Arena-backed, so it dies with the run, which is also the last
     /// moment a locator can be resolved.
     spilled_ids: std.StringHashMapUnmanaged(void) = .empty,
+
+    /// Last auto-thinking verdict and the exact user message that produced it,
+    /// so `classifyEffort` bills one classifier call per turn rather than one
+    /// per iteration. See `classifyEffort` for why the key is the text.
+    thinking_cache: ?ThinkingCache = null,
 
     /// Frees session-scoped resources (gpa-owned wasm_cache). Call when the
     /// Agent is no longer needed (end of a REPL session / single-shot run).
@@ -927,6 +940,25 @@ pub const Agent = struct {
                 self.ctx.gpa.free(note.text);
                 advisor_note = null;
             }
+            // A one-turn injection has to be removed on *every* way out of the
+            // iteration, not just the one that returns a response. It used to
+            // be undone at the bottom of the success path only, with three
+            // exits in between -- a provider error, the TTSR retry `continue`,
+            // and a mid-stream Ctrl-C -- and index 0 is where the rest of this
+            // loop requires the system prompt to be:
+            //   * the TTSR arm below appends the rule's `inject` text to
+            //     `messages.items[0]`, so a fire after the leak amended the
+            //     advisor note and the rule silently stopped working;
+            //   * `compactMiddle` preserves index 0 and replaces from index 1,
+            //     so the next compaction kept the stale note and destroyed the
+            //     real system prompt;
+            //   * `run`'s "prepend the system prompt if messages[0] is not a
+            //     system message" check saw the leftover note as one, so the
+            //     next REPL turn on the same Agent went out with two system
+            //     messages, the second of them mid-conversation.
+            defer if (injected_advisor and messages.items.len > 0) {
+                _ = messages.orderedRemove(0);
+            };
 
             const llm_t0 = std.Io.Timestamp.now(self.ctx.io, .awake);
             const effort = self.classifyEffort(messages.items);
@@ -1032,10 +1064,6 @@ pub const Agent = struct {
             // produced it crossed the session budget: the caller wants that exact
             // answer (and the answer_format eval asserts it). Return it before the
             // budget check below, which can then only terminate a run that still
-            if (injected_advisor and messages.items.len > 0) {
-                _ = messages.orderedRemove(0);
-            }
-
             // wants to call tools.
             if (maybe_calls == null or maybe_calls.?.len == 0) {
                 const stop_hook = try self.runLifecycleHook(.Stop, "", try self.hookPayload(.Stop, "", "", resp.message.content orelse ""));
@@ -2647,14 +2675,42 @@ pub const Agent = struct {
         var i = messages.len;
         while (i > 0) {
             i -= 1;
-            if (messages[i].role == .user) {
-                if (thinking.classify(self.ctx.io, self.ctx.gpa, self.ctx.environ_map, self.cfg, messages[i].content orelse "")) |classification| {
-                    self.ctx.thinking_level = @tagName(classification.level);
-                    self.ctx.thinking_classifier_ms = classification.duration_ms;
-                    return thinking.effortFor(classification.level);
+            if (messages[i].role != .user) continue;
+            const text = messages[i].content orelse "";
+            // PRD 0020's failure table: "user message is empty (e.g. a REPL
+            // submit with no text) -> classifier is skipped; default effort
+            // used". Skipping matters more than the saved call: `parseLevel`
+            // answers `medium` for a blank reply, so classifying blank text
+            // does not fall back to the configured default, it *pins* the
+            // turn to medium and pays a round trip to do it.
+            if (std.mem.trim(u8, text, " \t\r\n").len == 0) return null;
+            // One classification per turn, not per iteration. The classifier
+            // reads the last `.user` message and nothing else, and that
+            // message does not change while the model works through a tool
+            // batch -- so an unmemoised call here bought up to
+            // `max_iterations` (default 50) identical requests, answered
+            // identically (`temperature = 0`), for one distinct verdict.
+            // PRD 0020 Goal 1 is "one additional call before each main turn".
+            // The key is the message text, so a mid-run steer -- which
+            // appends a new `.user` message -- is classified again, which is
+            // what "each turn is classified independently" asks for.
+            if (self.thinking_cache) |cached| {
+                if (std.mem.eql(u8, cached.key, text)) {
+                    self.ctx.thinking_level = cached.level;
+                    // Deliberately left null: no classifier call was made on
+                    // this iteration, so there is no round trip to report.
+                    // The turn's first record carries that number.
+                    return cached.effort;
                 }
-                return null;
             }
+            if (thinking.classify(self.ctx.io, self.ctx.gpa, self.ctx.environ_map, self.cfg, text)) |classification| {
+                self.ctx.thinking_level = @tagName(classification.level);
+                self.ctx.thinking_classifier_ms = classification.duration_ms;
+                const effort = thinking.effortFor(classification.level);
+                self.thinking_cache = .{ .key = text, .level = @tagName(classification.level), .effort = effort };
+                return effort;
+            }
+            return null;
         }
         return null;
     }
@@ -4799,6 +4855,85 @@ test "nextFallbackProvider skips a configured provider that has no credential" {
     try std.testing.expectEqualStrings("kimi", next.name);
 }
 
+test "the fallback chain advances after the primary exhausts its own retries" {
+    // PRD 0025's headline claim, and the one acceptance criterion that had
+    // no test: `client.chat` retries the primary `max_attempts` times, and
+    // only then does the chain hand the *same* request to the next
+    // configured provider. Two live mock servers, so "the second one
+    // received the request" is read off that server's capture log rather
+    // than inferred from the call chain. The two halves are deliberately
+    // different kinds (openai_compat then anthropic) because a swap has to
+    // survive re-encoding the request for the next provider's codec.
+    const mock_server = @import("../llm/mock_server.zig");
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const down = try mock_server.MockServer.start(io, gpa, .http_503);
+    defer down.stop();
+    const up = try mock_server.MockServer.start(io, gpa, .anthropic_text);
+    defer up.stop();
+
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MOCK_PRIMARY_KEY", "sk-primary");
+    try env.put("MOCK_BACKUP_KEY", "sk-backup");
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const down_url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{down.port});
+    const up_url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{up.port});
+
+    var cfg = config.Config{};
+    // The deadline watchdog is a separate mechanism with its own tests; a
+    // 0 here keeps this test on the retry/chain path only.
+    cfg.agent.request_timeout_ms = 0;
+    cfg.agent.fallback_providers = &.{"backup"};
+
+    var primary = try config.Provider.single(arena, "primary", down_url, .openai_compat, "mock", .{ .max_tokens = 64 });
+    primary.api_key_env = "MOCK_PRIMARY_KEY";
+    try cfg.providers.put(arena, "primary", primary);
+    var backup = try config.Provider.single(arena, "backup", up_url, .anthropic, "claude-sonnet-5", .{ .max_tokens = 64 });
+    backup.api_key_env = "MOCK_BACKUP_KEY";
+    try cfg.providers.put(arena, "backup", backup);
+
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = &env };
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+
+    var current: *const config.Provider = cfg.providers.getPtr("primary").?;
+    var err_detail: ?[]const u8 = null;
+    const resp = try chatWithFallbackChain(&ctx, arena, &cfg, &current, .{
+        .provider = current,
+        .messages = &messages,
+    }, &err_detail, null, null);
+
+    try std.testing.expectEqualStrings("Hello from Anthropic-mock", resp.message.content orelse "");
+    // The primary got its whole retry budget before the chain moved on, and
+    // the backup got exactly one request: the chain is a fallback, not a
+    // duplicate send.
+    try std.testing.expectEqual(@as(usize, 3), down.captured.items.len);
+    try std.testing.expectEqual(@as(usize, 1), up.captured.items.len);
+    // `current` is repointed at whoever served, so the caller's cost and
+    // stats reads name the backup rather than the provider that failed.
+    try std.testing.expectEqualStrings("backup", current.name);
+
+    // Control on the other side of the branch: with no chain configured the
+    // same failing primary is terminal and the backup is never contacted.
+    cfg.agent.fallback_providers = &.{};
+    var current2: *const config.Provider = cfg.providers.getPtr("primary").?;
+    var err_detail2: ?[]const u8 = null;
+    try std.testing.expectError(error.ApiError, chatWithFallbackChain(&ctx, arena, &cfg, &current2, .{
+        .provider = current2,
+        .messages = &messages,
+    }, &err_detail2, null, null));
+    try std.testing.expectEqual(@as(usize, 6), down.captured.items.len);
+    try std.testing.expectEqual(@as(usize, 1), up.captured.items.len);
+    try std.testing.expectEqualStrings("primary", current2.name);
+}
+
 test "answerAsParent answers through the parent's provider" {
     // Test-only mock, imported locally like client.zig does: nothing in the
     // production build should carry the mock LLM server in its import surface.
@@ -4951,4 +5086,97 @@ test "steer framing is byte-identical across a save/load round trip" {
     const second = try arena.dupe(types.Message, &reloaded);
     try applySteerFraming(arena, second);
     try std.testing.expectEqualStrings(first[0].content.?, second[0].content.?);
+}
+
+test "auto-thinking classifies once per turn and skips a blank submit" {
+    // PRD 0020 Goal 1 is "one additional ck_llm call before each main turn",
+    // and its failure table says a blank user message skips the classifier
+    // entirely. `classifyEffort` runs inside the per-iteration loop, so both
+    // were wrong: a 20-iteration turn bought 20 identical classifier round
+    // trips, and a blank submit bought one whose `medium` verdict then pinned
+    // the turn. Counted off the mock server's capture log, not the call chain.
+    const mock_server = @import("../llm/mock_server.zig");
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const mock = try mock_server.MockServer.start(io, gpa, .anthropic_text);
+    defer mock.stop();
+
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("MOCK_CLASSIFIER_KEY", "sk-test");
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const base_url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}", .{mock.port});
+
+    var p = try config.Provider.single(arena, "classifier", base_url, .anthropic, "tiny", .{ .max_tokens = 8 });
+    p.api_key_env = "MOCK_CLASSIFIER_KEY";
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "classifier", p);
+    cfg.default_provider = "classifier";
+    cfg.agent.auto_thinking = true;
+    cfg.agent.thinking_classifier_model = "classifier";
+    cfg.agent.thinking_classifier_timeout_ms = 30_000;
+
+    var ctx = client.Ctx{ .io = io, .gpa = gpa, .environ_map = &env, .cfg = &cfg };
+    // classifyEffort reads only ctx, cfg and thinking_cache; the rest of the
+    // Agent is not on this path, so it is left out rather than faked.
+    var agent: Agent = undefined;
+    agent.ctx = &ctx;
+    agent.cfg = &cfg;
+    agent.arena = arena;
+    agent.thinking_cache = null;
+
+    const turn_one = [_]types.Message{
+        .{ .role = .system, .content = "system prompt" },
+        .{ .role = .user, .content = "refactor the concurrency model" },
+    };
+    const first = agent.classifyEffort(&turn_one);
+    try std.testing.expect(first != null);
+    try std.testing.expectEqual(@as(usize, 1), mock.captured.items.len);
+    // The mock's canned prose is not one of the four words, so `medium` is the
+    // documented fallback -- and it is what the cache must replay.
+    try std.testing.expectEqualStrings("medium", ctx.thinking_level.?);
+    try std.testing.expect(ctx.thinking_classifier_ms != null);
+
+    // Later iterations of the same turn append tool traffic; the last `.user`
+    // message, which is the whole classifier input, does not change.
+    const later = [_]types.Message{
+        turn_one[0],
+        turn_one[1],
+        .{ .role = .assistant, .content = "calling a tool" },
+        .{ .role = .tool, .content = "tool output", .tool_call_id = "1" },
+    };
+    const second = agent.classifyEffort(&later);
+    const third = agent.classifyEffort(&later);
+    try std.testing.expectEqualStrings(first.?, second.?);
+    try std.testing.expectEqualStrings(first.?, third.?);
+    try std.testing.expectEqual(@as(usize, 1), mock.captured.items.len);
+    // The level in effect is still reported; the round trip is not, because
+    // there was none on these iterations.
+    try std.testing.expectEqualStrings("medium", ctx.thinking_level.?);
+    try std.testing.expect(ctx.thinking_classifier_ms == null);
+
+    // Control on the other side: a genuinely new user turn (a mid-run steer
+    // is the same shape) is classified again rather than inheriting.
+    const steered = [_]types.Message{
+        later[0],                                                         later[1], later[2], later[3],
+        .{ .role = .user, .content = "actually, just tell me the time" },
+    };
+    _ = agent.classifyEffort(&steered);
+    try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
+
+    // A blank submit is skipped: no call, and no effort pinned.
+    const blank = [_]types.Message{
+        .{ .role = .system, .content = "system prompt" },
+        .{ .role = .user, .content = "   \n\t " },
+    };
+    try std.testing.expect(agent.classifyEffort(&blank) == null);
+    try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
+    try std.testing.expect(ctx.thinking_level == null);
 }

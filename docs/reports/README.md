@@ -82,6 +82,29 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [reports rename prints leftover-reference paths with the store prefix twice](bugs/2026-08-23-reports-rename-doubles-the-store-prefix.md) — Open
 
+- [dump-config leaks the secret half of any header whose value contains an equals sign](bugs/2026-08-23-dump-config-header-redaction-cuts-on-equals.md) — Open
+
+- [the merge-base pin advances before the branch resync it depends on, and the resync failure is only a warning](bugs/2026-08-23-improve-merge-pin-advances-before-the-resync.md) — Open
+
+- [kind = grok discards per-model temperature and top_p and never consults the PRD 0024 profile table](bugs/2026-08-23-grok-kind-drops-model-sampling.md) — Open
+
+- [a missing profiles/<name>.toml is reported as config.toml not found, and the .local variant is never read](bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md) — Open
+
+- [a preset's denied tools are still offered to the model; repl --preset is a silent no-op](bugs/2026-08-23-preset-tool-filter-is-inert.md) — Open
+
+- [an unreadable or oversize improvements.jsonl reads as no history, disabling the improve loop's dedup and revert gates](bugs/2026-08-23-improve-history-read-failure-reads-as-empty.md) — Open
+
+- [a mis-escaped trim set lets a whitespace-only hook command through, and the warn log then indexes an empty argv](bugs/2026-08-23-hook-command-trim-set-is-mis-escaped.md) — Open
+
+- [the Anthropic wire is sent OpenAI's reasoning_effort field, and no thinking_schema value produces a valid Anthropic block](bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md) — Open
+
+- [auto-thinking runs the classifier once per iteration instead of once per turn, and classifies a blank submit](bugs/2026-08-23-auto-thinking-classifies-every-iteration.md) — Resolved
+
+- [the one-turn advisor block is removed only on the success path, so three exits leave it as message 0](bugs/2026-08-23-advisor-block-leaks-into-message-zero.md) — Resolved
+
+- [the persistent-learnings prompt section keeps the oldest 4 KiB, so every note past the cap is invisible forever](bugs/2026-08-23-learnings-prompt-keeps-the-oldest-notes.md) — Resolved
+
+- [advisor.model is parsed, documented and never read, so every critique bills the main model](bugs/2026-08-23-advisor-model-never-read.md) — Resolved
 - [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md) — Open
 
 - [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Open
@@ -109,6 +132,32 @@ Project agents receive this workflow through the harness prompt and
 - [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-23-webui-task-textarea-combobox-role.md) — Open
 
 - [reports create writes the kind label into the title a second time](bugs/2026-08-23-reports-create-doubles-the-kind-label.md) — Resolved
+
+- [A reply opening with a heading or a list draws its markdown markers literally](bugs/2026-08-23-turn-arrow-defeats-markdown-on-first-reply-line.md) — Resolved
+
+- [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Open
+
+- [/attach queues any file and fabricates an image MIME type for it](bugs/2026-08-23-repl-attach-has-no-type-or-vision-gate.md) — Open
+
+- [A steer typed while the final iteration streams is echoed as queued and then discarded](bugs/2026-08-23-repl-steer-after-last-poll-silently-dropped.md) — Open
+
+- [Fenced block comments and multi-line strings mis-highlight in the REPL but not in clanker run](bugs/2026-08-23-tui-syntax-state-not-carried-across-lines.md) — Open
+
+- [The same @path line inlines a file when idle and reaches the model literally mid-run](bugs/2026-08-23-repl-mentions-not-expanded-when-steering.md) — Open
+
+- [An escape sequence split across two deltas has its introducer dropped and its tail printed as prose](bugs/2026-08-23-mdstream-split-escape-tail-printed.md) — Open
+
+- [A fenced line longer than 4 KiB is silently cut, not emitted unhighlighted](bugs/2026-08-23-mdstream-fence-line-truncated-past-4kib.md) — Open
+
+- [Alt+Enter, the documented multi-line fallback, was bound nowhere and did nothing](bugs/2026-08-23-repl-alt-enter-newline-never-bound.md) — Resolved
+
+- [The TUI width table panics on a codepoint a streamed delta cut in half](bugs/2026-08-23-tui-width-panics-on-truncated-utf8.md) — Resolved
+
+- [The REPL transcript reserves rows for the markdown source and draws the rendered form](bugs/2026-08-23-repl-row-math-measures-markdown-source.md) — Resolved
+
+- [A tool card preview passes a raw escape sequence through behind a UTF-8 lead byte](bugs/2026-08-23-card-preview-escape-behind-lead-byte.md) — Resolved
+
+- [A nested ordered list in the REPL indents twice as far as the bullet beside it](bugs/2026-08-23-repl-nested-ordered-list-double-indent.md) — Resolved
 
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 
@@ -332,6 +381,8 @@ Project agents receive this workflow through the harness prompt and
 ### Investigations
 
 <!-- inventory:investigation:start -->
+- [The SIGWINCH flood journey fails in any worktree where apply-patches.sh has not been run](investigations/2026-08-23-pty-resize-journey-fails-in-an-unpatched-worktree.md) — Resolved
+
 - [The two pty e2e tests fail in any git worktree and pass in the main checkout](investigations/2026-08-22-pty-e2e-fails-in-a-worktree.md) — Resolved
 
 - [improve_history is granted a path that is a symlink inside an improve-self worktree](investigations/2026-08-22-improve-history-guest-in-an-improve-worktree.md) — Resolved

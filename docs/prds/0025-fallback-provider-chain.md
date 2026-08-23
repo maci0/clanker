@@ -234,12 +234,18 @@ new structural surface on `Agent`, not a copy of the existing mechanism.
 - [x] `agent.fallback_provider` (string) and a new `fallback_providers`
       (array) both parse; a bare string behaves identically to today's
       single-fallback behavior.
-- [ ] A turn whose primary provider exhausts `client.zig`'s existing retry
+- [x] A turn whose primary provider exhausts `client.zig`'s existing retry
       budget is retried against the next configured fallback, verified by a
       test that fails the first provider deterministically and asserts the
-      second one received the request. (Helper + mock 503 mode are in;
-      a live two-server chain test is still open — same-provider retries
-      sleep ~1s+ per attempt.)
+      second one received the request. Shipped as the two-server test "the
+      fallback chain advances after the primary exhausts its own retries"
+      in `src/agent/loop.zig`: a `.http_503` mock is the primary and an
+      `.anthropic_text` mock is the backup, so the assertion is read off the
+      backup server's own capture log rather than inferred from the call
+      chain. The two halves are different provider kinds on purpose — the
+      swap has to survive re-encoding the request for the next codec. The
+      same test carries the control: with `fallback_providers` empty the
+      failing primary is terminal and the backup is never contacted.
 - [x] A turn that fails after streamed content has already been delivered
       does **not** trigger the chain (`stream_tally.n > 0` returns the
       stream error without advancing).

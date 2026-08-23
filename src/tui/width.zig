@@ -101,14 +101,47 @@ pub fn codepointWidth(cp: u21) u2 {
     return 1;
 }
 
+/// One codepoint's bytes from `s` at `i.*`, advancing `i.*` past them.
+///
+/// A byte that cannot start a sequence, and a sequence the slice cuts short,
+/// each yield that one byte — which `utf8Decode` then rejects, so the caller
+/// charges it width 1. That is the contract this module documents, and
+/// `std.unicode.Utf8Iterator` cannot honour it: `nextCodepointSlice`
+/// `catch unreachable`s an invalid start byte and returns
+/// `bytes[i - cp_len .. i]` after advancing `i` unchecked, so a truncated
+/// tail slices past the end. Both panic (and read out of bounds under
+/// `ReleaseFast`) before any `catch` in the loop can run. A tail cut mid
+/// codepoint is not exotic: streamed deltas split multi-byte characters
+/// routinely, and the live stream buffer is measured on every frame.
+pub fn nextCodepoint(s: []const u8, i: *usize) ?[]const u8 {
+    if (i.* >= s.len) return null;
+    const start = i.*;
+    const len = unicode.utf8ByteSequenceLength(s[start]) catch 1;
+    const end = if (start + len > s.len) start + 1 else start + len;
+    i.* = end;
+    return s[start..end];
+}
+
+/// `slice`'s codepoint, or null when the bytes are not one.
+///
+/// Not `unicode.utf8Decode` alone: that returns a one-byte slice's byte
+/// verbatim (`switch (bytes.len) { 1 => bytes[0], ... }`), so the malformed
+/// bytes `nextCodepoint` hands back one at a time would "decode" into a C1
+/// control (width 0) or a Latin-1 letter instead of being counted as the
+/// broken bytes they are. Only ASCII is a valid one-byte codepoint.
+fn decodeOne(slice: []const u8) ?u21 {
+    if (slice.len == 1) return if (slice[0] < 0x80) slice[0] else null;
+    return unicode.utf8Decode(slice) catch null;
+}
+
 /// Display width of a UTF-8 string: sum of each codepoint's width. Invalid
 /// UTF-8 bytes count as width 1 each so a malformed string still lays out
 /// deterministically instead of erroring mid-render.
 pub fn displayWidth(s: []const u8) usize {
     var total: usize = 0;
-    var it = unicode.Utf8Iterator{ .bytes = s, .i = 0 };
-    while (it.nextCodepointSlice()) |slice| {
-        const cp = unicode.utf8Decode(slice) catch {
+    var i: usize = 0;
+    while (nextCodepoint(s, &i)) |slice| {
+        const cp = decodeOne(slice) orelse {
             total += 1;
             continue;
         };
@@ -122,11 +155,11 @@ pub fn displayWidth(s: []const u8) usize {
 /// terminal width before it gets wrapped in styling.
 pub fn truncateToWidth(s: []const u8, max_cols: usize) []const u8 {
     var w: usize = 0;
-    var it = unicode.Utf8Iterator{ .bytes = s, .i = 0 };
-    while (it.i < s.len) {
-        const start = it.i;
-        const slice = it.nextCodepointSlice() orelse break;
-        const cp = unicode.utf8Decode(slice) catch {
+    var i: usize = 0;
+    while (i < s.len) {
+        const start = i;
+        const slice = nextCodepoint(s, &i) orelse break;
+        const cp = decodeOne(slice) orelse {
             w += 1;
             if (w > max_cols) return s[0..start];
             continue;
@@ -203,4 +236,32 @@ test "truncateToWidth never splits a wide codepoint in half" {
     // Each CJK ideograph is 2 columns; a width-3 budget fits only one.
     const s = "\xe4\xb8\xad\xe4\xb8\xad"; // two copies of 中
     try std.testing.expectEqualStrings("\xe4\xb8\xad", truncateToWidth(s, 3));
+}
+
+test "a codepoint cut short at the end of the slice is one byte, not a panic" {
+    // A streamed delta ends mid-codepoint all the time: 中 is three bytes and
+    // an SSE chunk can carry two of them. `std.unicode.Utf8Iterator` slices
+    // `bytes[i - 3 .. i]` out of a two-byte slice here and panics.
+    var i: usize = 0;
+    const first = nextCodepoint("\xe4\xb8", &i).?;
+    try std.testing.expectEqualStrings("\xe4", first);
+    try std.testing.expectEqual(@as(usize, 1), i);
+    const second = nextCodepoint("\xe4\xb8", &i).?;
+    try std.testing.expectEqualStrings("\xb8", second);
+    try std.testing.expect(nextCodepoint("\xe4\xb8", &i) == null);
+}
+
+test "malformed bytes lay out as width 1 each, the way this module documents" {
+    // A lone continuation byte cannot start a sequence: the std iterator
+    // `catch unreachable`s it.
+    try std.testing.expectEqual(@as(usize, 1), displayWidth("\x80"));
+    try std.testing.expectEqual(@as(usize, 1), displayWidth("\xff"));
+    // A truncated tail: two bytes of a three-byte 中, one column each.
+    try std.testing.expectEqual(@as(usize, 2), displayWidth("\xe4\xb8"));
+    // Valid text around the damage still measures normally: a + b are two
+    // columns, the three broken bytes one each.
+    try std.testing.expectEqual(@as(usize, 5), displayWidth("a\x80b\xe4\xb8"));
+    // And truncation walks the same bytes without panicking or over-cutting.
+    try std.testing.expectEqualStrings("a\x80", truncateToWidth("a\x80b", 2));
+    try std.testing.expectEqualStrings("\xe4\xb8", truncateToWidth("\xe4\xb8", 5));
 }

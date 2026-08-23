@@ -66,8 +66,24 @@ Constraints: Zig 0.16, vaxis-native, preserve Enter-to-submit, keep sanitize/wid
   the two. Resolved in
   `docs/reports/bugs/2026-08-23-repl-composer-latches-into-paste-mode.md`.
 
+- **(Fixed) Alt+Enter, this PRD's own fallback, was bound nowhere.** Goal 1
+  and ADR 0022 both read "Shift+Enter (and Alt+Enter fallback)", and only
+  `enter+shift`, `kp_enter` and `kp_enter+shift` were bound. `vaxis.Key.matches`
+  compares modifiers for exact equality, so `enter+alt` matched neither that
+  branch nor the bare-Enter submit, and `vxfw.TextField` drops it too — the
+  keystroke did nothing at all, not even the "fallback to submit" the Failure
+  modes table promises. That mattered most where it was meant to help: a
+  terminal outside the kitty keyboard protocol cannot report Shift+Enter, so
+  the chord arrives as a plain Enter and submits, leaving Alt+Enter as the
+  only line-break chord. `isComposerNewlineChord` (src/tui/repl.zig) now
+  collects all five spellings and `keys_help` names Alt-Enter. Resolved in
+  `docs/reports/bugs/2026-08-23-repl-alt-enter-newline-never-bound.md`.
+
 ## Open questions / future work
 
-- Key mapping for Shift+Enter vs. Alt+Enter on different terminals.
+- Key mapping for Shift+Enter vs. Alt+Enter on different terminals: settled
+  for the fallback (see Known issues) — Shift+Enter needs the kitty keyboard
+  protocol, keypad Enter covers Konsole's SS3 M, Alt+Enter covers the rest.
+  Shift+Alt+Enter is deliberately still unbound.
 
 
