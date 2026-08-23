@@ -66,7 +66,7 @@ so that line is where the text survives).
 | Enter while idle | submits a task, as always; steering needs a running turn |
 | Enter in the race window after the turn ended | `notice: no run to steer; the turn already ended` |
 | Queue at 16 | refusal line repeating the message; nothing queued |
-| Slash command typed mid-run | swallowed into the steer queue as literal text — see Known issues |
+| Slash command typed mid-run | classified before the steer queue: `/quit`/`/help` run, others get a wait notice, never steered as literal text — see Known issues |
 | Run ends with steers still queued | queue is cleared at next turn start; the count disappears |
 
 ## Acceptance criteria
@@ -82,14 +82,19 @@ so that line is where the text survives).
 
 ## Known issues
 
-- Slash commands typed while a turn runs are not parsed: `submit` branches
-  to `steerWhileRunning` before `parseCommand`, so `/help` or `/compact`
-  mid-run is sent to the model as literal steering text. If mid-run
-  commands should work, the parse has to happen before the steer branch in
-  `src/tui/repl.zig` `submit`. Filed as
+- **(Fixed) Slash commands typed while a turn runs used to be steered, not
+  parsed.** `steerWhileRunning` now classifies the line with
+  `classifyMidRunInput` (src/tui/repl.zig) before the steer queue: `/quit`
+  and `/help` run, every other command and a `!` escape gets a wait notice,
+  a typo'd `/command` the unknown-command diagnostic; none reaches the
+  model as steering text. Pinned by the unit test "classifyMidRunInput
+  keeps commands and shell escapes out of the steer queue". Resolved in
   `docs/reports/bugs/2026-08-22-repl-slash-commands-swallowed-mid-run.md`.
-- The framing sentence is persisted verbatim as the user's message in the
-  saved session (shared with the web path); see
+- **(Fixed) The framing sentence used to be persisted verbatim as the
+  user's message.** The framing moved out of both senders into
+  `applySteerFraming` (src/agent/loop.zig), applied to the request copy
+  only; the saved message keeps the user's own words plus
+  `types.Message.steered`. Resolved in
   `docs/reports/bugs/2026-08-22-steer-framing-persisted-in-transcript.md`.
 
 ## Open questions / future work
