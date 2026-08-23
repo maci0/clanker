@@ -1,4 +1,21 @@
-# Web UI bug+gap queue disposition — 2026-08-21
+# Investigation — Web UI bug+gap queue disposition
+
+## TL;DR
+
+- **Question:** does any open webui defect or planned gap remain in the
+  `ui/**` surface?
+- **Finding:** no. Both queues verified empty on 2026-08-21: failing ui tests
+  none, TODO/FIXME in shipped `ui/app/**` zero, PRD 0006 acceptance and ROADMAP
+  webui entries all landed. The two historical webui bug reports are Resolved;
+  the other 58 entries in `docs/reports/bugs/` name non-webui subsystems.
+- **Resolution:** none required; disposition recorded below.
+
+## Status
+
+Resolved — both queues verified empty (see Proof). A future webui repro that
+traces into a non-webui subsystem reopens this as a new bug report.
+
+## Trigger and scope
 
 Broadest queue per goal: bug queue = all `docs/reports/bugs/*` + rg TODO/FIXME in ui/app/** + failing ui tests; gap queue = docs/prds/0006-webui.md Phase 6 + docs/ROADMAP.md webui + any ui/app/** TODO-planned component.
 

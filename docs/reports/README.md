@@ -258,6 +258,8 @@ Project agents receive this workflow through the harness prompt and
 
 - [REPL UI thread and run worker allocate from one unlocked ArenaAllocator](investigations/2026-08-22-repl-ui-thread-and-worker-share-one-unlocked-arena.md) — Investigating
 
+- [Web UI bug+gap queue disposition](investigations/2026-08-21-webui-bug-gap-queue-disposition.md) — Resolved
+
 - [Plugin-philosophy alignment gap analysis](investigations/2026-08-20-plugin-philosophy-alignment.md) — Resolved
 
 - [zig build test crashed once with an ISCONN panic in the peers connect path](investigations/2026-08-19-peers-connect-isconn-panic.md) — Closed

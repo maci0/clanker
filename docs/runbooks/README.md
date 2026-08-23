@@ -65,6 +65,8 @@ both are compare-and-swap writes, so reopen the record after a conflict.
 
 - [Leftover improve-self worktrees pile up under .clanker-worktrees/](improve-worktree-backlog.md) — Current
 
+- [Restore clanker state from a backup snapshot](state-restore.md) — Pick a
+  snapshot, stop clanker, copy its `state/` tree back, verify, restart.
 - [State backups are not running](state-backups-not-running.md) — Current
 
 - [improve-self staging tests blocked by cwd-dependent and Io.Io mismatches](improve-self-staging-test-blocker.md) — Current
