@@ -2,7 +2,6 @@
   "name": "clanker-as-tools",
   "version": "0.1.0",
   "private": true,
-  "private": true,
   "scripts": {
     "build": "asc calc_ts.ts -o dist/calc_ts.wasm --optimize --bindings raw --noExportMemory",
     "build:all": "bash -ec 'for f in *.ts; do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"dist/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done'"

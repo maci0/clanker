@@ -118,6 +118,12 @@ fn setKey(parsed: std.json.Value, out: *lib.Out) !void {
             return lib.fail(out, table ++ " is a table of dynamic keys; edit config.local.toml by hand");
     }
 
+    // Policy keys are refused outright: this tool runs sandboxed, so a set
+    // here was chosen by the model, and these keys would let one run weaken
+    // the sandbox every later run inherits.
+    if (logic.forbiddenReason(key)) |k|
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "set refuses '{s}': it changes sandbox or safety policy; the operator edits config.local.toml by hand", .{k}));
+
     const merged = mergedConfig() catch return lib.fail(out, "could not parse the merged harness config");
     // The merged config is struct-serialized, defaults included, so a key
     // it does not carry is not in the loader's schema: a typo, refused

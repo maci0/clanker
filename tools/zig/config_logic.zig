@@ -39,6 +39,36 @@ pub fn lookup(root: std.json.Value, key: []const u8) ?std.json.Value {
     return cur;
 }
 
+/// Keys whose value *is* sandbox or safety policy. The config guest runs as
+/// a sandboxed tool, so anything it pins here was chosen by the model, not
+/// the operator; letting it write these would let a run weaken the boundary
+/// every later run inherits (the same reasoning that keeps git verbs out of
+/// agent.exec_pattern_allow in src/config.zig). The operator edits
+/// config.local.toml by hand instead.
+pub const forbidden_keys = [_][]const u8{
+    // Turns off safeJoinSecure's no-follow symlink walk (ADR 0017).
+    "agent.sandbox_follow_symlinks",
+    // Enables push/merge/checkout in the sandboxed git tool's deny list.
+    "agent.git_remote_ops",
+    // The human-confirmation gate on guest writes.
+    "agent.confirm_writes",
+    // Which interface serve binds; loopback is the trust boundary for every
+    // /api route.
+    "serve.host",
+    // Self-improvement gates: capability_gate is what stops a promotion with
+    // no green results, inert_gate what stops no-op patches.
+    "improve.capability_gate",
+    "improve.inert_gate",
+};
+
+/// Why `key` is refused, when it names policy the model must not set.
+pub fn forbiddenReason(key: []const u8) ?[]const u8 {
+    for (forbidden_keys) |k| {
+        if (std.mem.eql(u8, k, key)) return k;
+    }
+    return null;
+}
+
 pub const RenderError = error{ NotScalar, TypeMismatch, OutOfMemory };
 
 /// Human name of the type `renderValue` would hold `existing` to, for error
@@ -426,4 +456,20 @@ test "setKey never mistakes an array-of-tables header for a section" {
         \\name = "other"
         \\
     , got);
+}
+
+test "forbiddenReason refuses exactly the policy keys" {
+    try std.testing.expectEqualStrings("agent.sandbox_follow_symlinks", forbiddenReason("agent.sandbox_follow_symlinks").?);
+    try std.testing.expectEqualStrings("agent.git_remote_ops", forbiddenReason("agent.git_remote_ops").?);
+    try std.testing.expectEqualStrings("agent.confirm_writes", forbiddenReason("agent.confirm_writes").?);
+    try std.testing.expectEqualStrings("serve.host", forbiddenReason("serve.host").?);
+    try std.testing.expectEqualStrings("improve.capability_gate", forbiddenReason("improve.capability_gate").?);
+    try std.testing.expectEqualStrings("improve.inert_gate", forbiddenReason("improve.inert_gate").?);
+
+    // Neighbours that share a prefix or a section stay settable.
+    try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("agent.reasoning_effort"));
+    try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("agent.sandbox"));
+    try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("improve.plan_phase"));
+    try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("serve.webui_port"));
+    try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("sandbox_follow_symlinks"));
 }

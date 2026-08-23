@@ -1,7 +1,7 @@
 {
   "name": "config",
   "description": "read or pin the effective config (providers/models/modules/budgets)",
-  "llm_description": "Effective config. {action?:dump|get|set, section?, key?, value?}. dump shows both files or one merged {section}. get reads one dotted {key} of the merged config. set pins {key} to {value} in config.local.toml only, refusing unknown keys, mistyped values and table sections; applies from the next command. set checks the type, not the loader's semantic validation (enum spellings, ranges) — a value the loader refuses fails the next config load, so re-check with get/dump after setting an enum-like key.",
+  "llm_description": "Effective config. {action?:dump|get|set, section?, key?, value?}. dump shows both files or one merged {section}. get reads one dotted {key} of the merged config. set pins {key} to {value} in config.local.toml only, refusing unknown keys, mistyped values, table sections, and sandbox/safety-policy keys (agent.sandbox_follow_symlinks, agent.git_remote_ops, agent.confirm_writes, serve.host, improve.capability_gate, improve.inert_gate); applies from the next command. set checks the type, not the loader's semantic validation (enum spellings, ranges) — a value the loader refuses fails the next config load, so re-check with get/dump after setting an enum-like key.",
   "wasm": "zig-out/tools/config_view.wasm",
   "input_schema": {
     "type": "object",
