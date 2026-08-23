@@ -86,7 +86,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [A panic raised from a blocked Io.Threaded recurses forever instead of aborting](bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md) — Open
 
-- [zig build e2e does not compile on macOS: the pty harness is Linux-only](bugs/2026-08-23-e2e-pty-harness-is-linux-only.md) — Open
+- [zig build e2e does not compile on macOS: the pty harness is Linux-only](bugs/2026-08-23-e2e-pty-harness-is-linux-only.md) — Resolved
 
 - [unknown provider kind failed with no naming diagnostic](bugs/2026-08-23-unknown-provider-kind-names-nothing.md) — Resolved
 
