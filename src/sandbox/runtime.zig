@@ -121,11 +121,12 @@ pub const ToolModule = struct {
         self.h = try gpa.create(host.Host);
         const rng_seed = seedRng(sb.seed, wasm_bytes, io);
         if (sb.seed == 0) {
-            // The default seed is time-mixed (see seedRng), so the effective
-            // value below is the only record of what this run drew. Log it at
-            // info: replay the run by setting agent.seed to the logged value
-            // (same module bytes ⇒ same ck_random stream).
-            log.log(.info, "sandbox rng: agent.seed=0 was time-seeded, effective seed 0x{x}; replay with agent.seed=0x{x}", .{ rng_seed, rng_seed });
+            // The default seed is time-mixed (see seedRng), and the effective
+            // value is the only record of what this run drew. Stash it for the
+            // first `ck_random` call (see Host.seed_notice): logging here put
+            // a replay line above every read-only verb (`clanker stats`,
+            // `clanker sessions`) whose guest never draws.
+            self.h.seed_notice = rng_seed;
         } else {
             log.log(.debug, "sandbox rng: effective seed 0x{x} (agent.seed=0x{x})", .{ rng_seed, sb.seed });
         }

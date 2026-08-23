@@ -5222,7 +5222,8 @@ fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
         return error.ToolFailed;
     };
     if (hits.len == 0) {
-        try writeStdOut(io, "no conversations matched\n");
+        const line = try std.fmt.allocPrint(arena, "no conversations matched '{s}'; run `clanker sessions` for the full list\n", .{q});
+        try writeStdOut(io, line);
         return;
     }
     var buf: std.Io.Writer.Allocating = .init(arena);
