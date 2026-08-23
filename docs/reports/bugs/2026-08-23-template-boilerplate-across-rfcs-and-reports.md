@@ -3,7 +3,7 @@
 ## TL;DR
 
 - **What failed:** 27 of the 36 numbered RFCs carry at least one section whose body is docs/rfcs/TEMPLATE.md's instruction prose verbatim, 7 of them also carrying two '## Next steps / action items'. 17 bug reports, 15 investigations and 1 runbook carry a duplicated heading, which has a different cause: reports create scaffolds empty '## Resolution' and '## Verification' headings and a later reports append writes a second copy rather than filling the first. Eight PRDs (0037, 0045-0051) also still carry template instruction paragraphs under their real content, without a duplicated section. Found while fixing the same defect in PRDs 0052-0057.
-- **Impact:** Reading only, and the same cost the PRD bug had: `clanker rfc open` and `clanker reports open` print instructions or an empty scaffold as if they were the record, and a reader has two same-named sections to choose between. No code reads these files. Not fixed here: the RFC half needs a decision about `## Appendix`, and the reports half has a different cause worth fixing at the tool rather than by sweeping 33 records.
+- **Impact:** Reading only, and the same cost the PRD bug had: `clanker rfc open` and `clanker reports open` print instructions or an empty scaffold as if they were the record, and a reader has two same-named sections to choose between. No code reads these files. The reports cause is fixed (append now fills a matching empty section); the RFC half needs a decision about `## Appendix`, and the residue in 33 reports, 27 RFCs and 8 PRDs is still a sweep nobody has taken.
 - **Resolution:** Open.
 
 ## Status
@@ -94,20 +94,54 @@ written against one store's directory and template on purpose. Pointing it at
 `docs/rfcs` and `docs/reports` is a two-line change once those stores are
 clean, and is the natural close for this report.
 
-The reports half suggests one product change worth considering separately: a
-scaffold that writes only the headings the author has content for, or an
-`append` that fills a matching empty section instead of adding a second one.
-Neither is obviously right; both are cheaper than re-cleaning this store a
-third time.
+The reports half of the *cause* is fixed, 2026-08-23. Of the two product changes
+this record floated, the second was taken: `append` now fills a matching empty
+section instead of adding a second copy of its heading. `doc.appendOrFill`
+(tools/zig/doc_scaffold.zig) splices a block whose first line is a heading the
+record already carries **empty** into that section, and falls back to appending
+at the end when the section has any body at all, is not there, or the block does
+not open with a heading -- moving an author's paragraph under someone else's
+text would be a worse failure than the duplicate heading. All five record stores
+share it, so the RFC store cannot re-acquire the shape either, and the reply
+says `filled <heading>` rather than `appended to <path>` so a caller can tell
+which happened.
+
+The first change -- a scaffold that writes only the headings the author has
+content for -- was not taken. The empty headings are what tells an author which
+questions the record has to answer, which is most of what the scaffold is for.
+
+Still open, and what keeps this record open: the 33 records already carrying a
+duplicated heading, the RFC template prose in 27 records, the `## Appendix`
+decision, and the eight PRDs with instruction paragraphs under real content.
+None of those is a cause; they are residue, and the sweep is still the wide edit
+this record declined.
 
 ## Verification
 
-None -- nothing was changed. The counts above are what was measured.
+The counts above are what was measured, and nothing was swept.
+
+What the `append` fix is verified by:
+
+- Four `appendOrFill` tests in tools/zig/doc_scaffold.zig: filling a scaffold
+  section (asserting one heading, not two, and the blank lines around it),
+  filling a trailing section without growing a blank line, and the three
+  fall-through cases (section with a body, section absent, block with no
+  heading) plus the two near-misses that must not match -- a `###` block
+  against a `##` section, and `## Root` against `## Root cause`.
+- Live, on the built tool: this fix's own record,
+  `2026-08-23-reports-create-doubles-the-kind-label.md`, was written entirely
+  through `clanker reports append`, one section at a time, each answering
+  `filled ## <section> in <path>`; it carries nine headings and no duplicates.
+  Control, on the same tree with the guest changes stashed and
+  `zig build tools` re-run: the same append against a scratch record left two
+  `## Root cause` headings, the filled one dangling below `## References`.
 
 ## Follow-up
 
 See Resolution. The PRD half of this is fixed and closed:
 [PRD template boilerplate](2026-08-23-prd-template-boilerplate-left-in-six-records.md).
+The reports half of the *cause* is fixed as of 2026-08-23; the residue in the
+three stores is not, and that is what keeps this record open.
 
 ## References
 

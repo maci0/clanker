@@ -58,6 +58,7 @@ pub const Field = struct {
     pub const Value = union(enum) {
         text: []const u8,
         number: u64,
+        boolean: bool,
         absent,
     };
 
@@ -65,6 +66,13 @@ pub const Field = struct {
     /// = Field.optional(opts.arg3) }`.
     pub fn optional(s: ?[]const u8) Value {
         return if (s) |v| .{ .text = v } else .absent;
+    }
+
+    /// An opt-in switch: written only when it is on, because every one of
+    /// these tools defaults an absent boolean to false and a `false` on the
+    /// wire would say the caller had an opinion.
+    pub fn when(on: bool) Value {
+        return if (on) .{ .boolean = true } else .absent;
     }
 };
 
@@ -87,6 +95,10 @@ pub fn request(arena: std.mem.Allocator, fields: []const Field) ![]const u8 {
             .number => |n| {
                 try s.objectField(f.name);
                 try s.write(n);
+            },
+            .boolean => |b| {
+                try s.objectField(f.name);
+                try s.write(b);
             },
             .absent => {},
         }
@@ -354,18 +366,33 @@ pub fn appendRecord(
         .{ .name = "content", .value = .{ .text = content } },
     });
     const result = try callTool(arena, store, tool, input);
-    return std.fmt.allocPrint(arena, "appended to {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
+    const written = json_util.strFieldOrEmpty(result.object, "path");
+    // `filled` is the guest saying the block went into a section that was
+    // already there and blank, rather than to the end of the file. Worth a
+    // line: that is the difference between filling the scaffold and adding a
+    // second heading of the same name, and the caller cannot see which.
+    const filled = json_util.strFieldOrEmpty(result.object, "filled");
+    if (filled.len > 0)
+        return std.fmt.allocPrint(arena, "filled {s} in {s}\n", .{ filled, written });
+    return std.fmt.allocPrint(arena, "appended to {s}\n", .{written});
 }
 
 /// `<store> update <path> <old> <new>`. An empty replacement deletes the old
 /// text, which the tools support, so the third argument has to be present but
 /// may be "".
+///
+/// `replace_all` is `--replace-all`: rewrite every copy of `old` instead of
+/// refusing a repeated match. It exists for `reports status` notes, which are
+/// written into the TL;DR bullet and the `## Status` section byte-identically;
+/// stores that never write a sentence twice pass `false` and behave exactly as
+/// they did.
 pub fn updateRecord(
     arena: std.mem.Allocator,
     store: []const u8,
     path_arg: ?[]const u8,
     old_arg: ?[]const u8,
     new_arg: ?[]const u8,
+    replace_all: bool,
     tool: Tool,
 ) ![]const u8 {
     const path = path_arg orelse {
@@ -385,9 +412,19 @@ pub fn updateRecord(
         .{ .name = "path", .value = .{ .text = path } },
         .{ .name = "old", .value = .{ .text = old } },
         .{ .name = "new", .value = .{ .text = new } },
+        .{ .name = "all", .value = Field.when(replace_all) },
     });
     const result = try callTool(arena, store, tool, input);
-    return std.fmt.allocPrint(arena, "updated {s}\n", .{json_util.strFieldOrEmpty(result.object, "path")});
+    const written = json_util.strFieldOrEmpty(result.object, "path");
+    // How many copies the guest actually rewrote. Absent (an older tool build)
+    // or non-integer reads as the one an ordinary update replaces.
+    const replaced: i64 = if (result.object.get("replaced")) |v|
+        (if (v == .integer) v.integer else 1)
+    else
+        1;
+    if (replaced > 1)
+        return std.fmt.allocPrint(arena, "updated {s} ({d} copies)\n", .{ written, replaced });
+    return std.fmt.allocPrint(arena, "updated {s}\n", .{written});
 }
 
 /// `<store> rename <path> <new-slug>`. `example_path` is the placeholder the
@@ -660,6 +697,96 @@ test "request escapes strings, writes numbers unquoted, and omits an absent fiel
     try testing.expectEqualStrings(
         "{}",
         try request(arena, &.{.{ .name = "topic", .value = Field.optional(absent) }}),
+    );
+}
+
+test "an opt-in switch is on the wire only when it is on" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // `false` is left out rather than written: every one of these tools reads
+    // a missing boolean as off, and sending one would say the caller had an
+    // opinion about a default it never expressed.
+    try testing.expectEqualStrings(
+        "{\"action\":\"update\"}",
+        try request(arena, &.{
+            .{ .name = "action", .value = .{ .text = "update" } },
+            .{ .name = "all", .value = Field.when(false) },
+        }),
+    );
+    try testing.expectEqualStrings(
+        "{\"action\":\"update\",\"all\":true}",
+        try request(arena, &.{
+            .{ .name = "action", .value = .{ .text = "update" } },
+            .{ .name = "all", .value = Field.when(true) },
+        }),
+    );
+}
+
+/// A tool stand-in that keeps the request it was handed, for the tests that
+/// care what the CLI put on the wire rather than what it printed.
+const Recorder = struct {
+    answer: []const u8,
+    seen: []const u8 = "",
+
+    fn call(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
+        const self: *@This() = @ptrCast(@alignCast(ctx));
+        self.seen = input;
+        return self.answer;
+    }
+
+    fn tool(self: *@This()) Tool {
+        return .{ .ctx = self, .call = @This().call };
+    }
+};
+
+test "update sends all only with --replace-all, and says how many copies changed" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var one: Recorder = .{ .answer = "{\"ok\":true,\"action\":\"update\",\"path\":\"docs/reports/bugs/x.md\",\"replaced\":1}" };
+    try testing.expectEqualStrings(
+        "updated docs/reports/bugs/x.md\n",
+        try updateRecord(arena, "reports", "docs/reports/bugs/x.md", "old", "new", false, one.tool()),
+    );
+    try testing.expect(std.mem.find(u8, one.seen, "\"all\"") == null);
+
+    // The case the flag exists for: a `status` note is written into the TL;DR
+    // bullet and the Status section alike, so editing it by its own words
+    // touches two copies and the reply has to say so.
+    var both: Recorder = .{ .answer = "{\"ok\":true,\"action\":\"update\",\"path\":\"docs/reports/bugs/x.md\",\"replaced\":2}" };
+    try testing.expectEqualStrings(
+        "updated docs/reports/bugs/x.md (2 copies)\n",
+        try updateRecord(arena, "reports", "docs/reports/bugs/x.md", "old", "new", true, both.tool()),
+    );
+    try testing.expect(std.mem.find(u8, both.seen, "\"all\":true") != null);
+
+    // An older tool build that answers without `replaced` reads as the one an
+    // ordinary update replaces, not as zero.
+    var silent: Recorder = .{ .answer = "{\"ok\":true,\"path\":\"docs/reports/bugs/x.md\"}" };
+    try testing.expectEqualStrings(
+        "updated docs/reports/bugs/x.md\n",
+        try updateRecord(arena, "reports", "docs/reports/bugs/x.md", "old", "new", false, silent.tool()),
+    );
+}
+
+test "append says when the block filled an empty section instead of landing at the end" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var end: Recorder = .{ .answer = "{\"ok\":true,\"action\":\"append\",\"path\":\"docs/reports/bugs/x.md\"}" };
+    try testing.expectEqualStrings(
+        "appended to docs/reports/bugs/x.md\n",
+        try appendRecord(arena, "reports", "<path> <content>", "docs/reports/bugs/x.md", "## New\n\nx\n", end.tool()),
+    );
+
+    var filled: Recorder = .{ .answer = "{\"ok\":true,\"action\":\"append\",\"path\":\"docs/reports/bugs/x.md\",\"filled\":\"## Root cause\"}" };
+    try testing.expectEqualStrings(
+        "filled ## Root cause in docs/reports/bugs/x.md\n",
+        try appendRecord(arena, "reports", "<path> <content>", "docs/reports/bugs/x.md", "## Root cause\n\nx\n", filled.tool()),
     );
 }
 

@@ -113,7 +113,10 @@ only under Open questions:
 | The index changed concurrently | The record is still written; the answer carries `indexed:false` and names the line or row to reconcile by hand |
 | The index lacks its inventory markers | Same as above — the tool will not guess where the list belongs |
 | The record changed between read and write | `append`, `update` and `status` refuse with a message saying to re-open and retry against current text |
-| `update`'s old text occurs more than once | Refused as ambiguous, asking for more surrounding text; replacing "it" would be a guess |
+| `update`'s old text occurs more than once | Refused as ambiguous, asking for more surrounding text or `--replace-all`; replacing "it" would be a guess |
+| `update --replace-all` | Every copy is rewritten and the reply says how many. For the case it exists for see [reports status note lands twice](../reports/bugs/2026-08-23-reports-status-note-lands-twice-and-cannot-be-edited.md) |
+| `append` content headed by a section the record carries empty | Fills that section in place instead of adding a second copy of the heading; the reply names it in `filled` |
+| `append` content headed by a section that already has a body | Lands at the end, unchanged: moving an author's paragraph under someone else's text is worse than a duplicate heading |
 | A record's status word is unrecognised | Listed under its literal wording (`OTHER` for `prd list`), never dropped |
 | A record cannot be read at all | Still listed, with an empty status, because the path is what a reader needs in order to go look |
 | More than 60 records in a store | The remainder are listed without their status and the answer says so, rather than exhausting the 1 MiB host arena |

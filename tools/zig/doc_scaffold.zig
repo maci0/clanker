@@ -55,6 +55,33 @@ pub fn isSlug(slug: []const u8) bool {
     return true;
 }
 
+/// Drops a leading `<label> — ` from a title, so a caller who spelled the
+/// record's kind out does not get it twice.
+///
+/// Every record store writes its `# ` line and its inventory entry as
+/// `<label> — <title>`, so a title of "Bug — x" produced `# Bug — Bug — x`
+/// and, because the inventory line is written from the raw title, one index
+/// entry carrying a label no other entry has. Enforced here rather than
+/// trusted from the caller, the same way `markMissingToolSlug` enforces the
+/// filename marker. A hyphen or a colon is accepted as the separator, and the
+/// strip repeats, because "Bug — Bug — x" has been typed too.
+pub fn stripLabelPrefix(label: []const u8, title: []const u8) []const u8 {
+    var rest = std.mem.trim(u8, title, " \t");
+    while (rest.len > label.len and std.ascii.eqlIgnoreCase(rest[0..label.len], label)) {
+        const after = std.mem.trimStart(u8, rest[label.len..], " \t");
+        const sep: usize = if (std.mem.startsWith(u8, after, "—"))
+            "—".len
+        else if (after.len > 0 and (after[0] == '-' or after[0] == ':'))
+            1
+        else
+            break;
+        const next = std.mem.trimStart(u8, after[sep..], " \t");
+        if (next.len == 0) break;
+        rest = next;
+    }
+    return rest;
+}
+
 /// Derives a slug from a title so `create` can be called with a title alone.
 /// Everything outside the slug alphabet collapses to a single hyphen, and the
 /// result is cut at `max` bytes on a hyphen boundary rather than mid-word.
@@ -542,11 +569,89 @@ pub fn spliceReplace(w: *std.Io.Writer, text: []const u8, old: []const u8, new: 
 
 /// Appends a block to a document, guaranteeing the newline between them that a
 /// hand-built concatenation forgets exactly once and then silently welds two
-/// Markdown blocks into one paragraph.
+/// Markdown blocks into one paragraph -- and the one at the end, which a
+/// caller who passed content without it used to leave the record missing.
 pub fn appendBlock(w: *std.Io.Writer, text: []const u8, content: []const u8) !void {
     try w.writeAll(text);
     if (text.len > 0 and text[text.len - 1] != '\n') try w.writeByte('\n');
     try w.writeAll(content);
+    if (content.len > 0 and content[content.len - 1] != '\n') try w.writeByte('\n');
+}
+
+/// Where an appended block landed.
+pub const Placement = union(enum) {
+    /// At the end of the document, which is what `append` has always meant.
+    end,
+    /// Into a section that was already there and empty. Carries that heading
+    /// line so the caller can name it in its reply.
+    filled: []const u8,
+};
+
+/// `appendBlock`, except that a block opening with a heading the document
+/// already carries *empty* fills that section in place instead of adding a
+/// second copy of its heading.
+///
+/// This is the fix for the shape 33 records in `docs/reports/` are already in:
+/// `create` scaffolds every section heading with an empty body, `update` needs
+/// `old` text an empty section does not have, so an author who investigates and
+/// then appends what they found gets a second `## Root cause` at the bottom and
+/// leaves the scaffolded one blank above it.
+///
+/// The rule is deliberately narrow. A section with any body at all is left
+/// alone and the block still lands at the end: filling in place is only
+/// unambiguous when there is nothing there to reorder or contradict, and
+/// silently moving an author's paragraph under someone else's text would be a
+/// worse failure than the duplicate heading. A block that does not open with a
+/// heading is an ordinary append.
+pub fn appendOrFill(w: *std.Io.Writer, text: []const u8, content: []const u8) !Placement {
+    const block = std.mem.trim(u8, content, " \t\r\n");
+    if (leadingHeading(block)) |heading| {
+        if (findSection(text, heading)) |sec| {
+            if (std.mem.trim(u8, text[sec.body_start..sec.body_end], " \t\r\n").len == 0) {
+                try w.writeAll(text[0..sec.heading]);
+                try w.writeAll(block);
+                try w.writeByte('\n');
+                const rest = text[sec.body_end..];
+                // The blank line the next heading needs; skipped at EOF so the
+                // document does not grow a trailing empty line per append.
+                if (rest.len > 0) try w.writeByte('\n');
+                try w.writeAll(rest);
+                return .{ .filled = heading };
+            }
+        }
+    }
+    try appendBlock(w, text, content);
+    return .end;
+}
+
+/// The ATX heading on the first line of `block`, hashes included, or null when
+/// the block does not open with one. A lone `#` or a `##` with nothing after it
+/// is not a heading worth matching a section against.
+fn leadingHeading(block: []const u8) ?[]const u8 {
+    var hashes: usize = 0;
+    while (hashes < block.len and block[hashes] == '#') hashes += 1;
+    if (hashes == 0 or hashes >= block.len or block[hashes] != ' ') return null;
+    const line_end = std.mem.find(u8, block, "\n") orelse block.len;
+    const line = std.mem.trim(u8, block[0..line_end], " \t\r");
+    return if (line.len > hashes + 1) line else null;
+}
+
+/// Replaces every occurrence of `old`, returning how many there were. The
+/// caller asked for all of them, so a repeated match is the point rather than
+/// the ambiguity `spliceReplace` refuses.
+pub fn spliceReplaceAll(w: *std.Io.Writer, text: []const u8, old: []const u8, new: []const u8) !usize {
+    if (old.len == 0) return SpliceError.NotFound;
+    var at: usize = 0;
+    var count: usize = 0;
+    while (std.mem.findPos(u8, text, at, old)) |hit| {
+        try w.writeAll(text[at..hit]);
+        try w.writeAll(new);
+        at = hit + old.len;
+        count += 1;
+    }
+    if (count == 0) return SpliceError.NotFound;
+    try w.writeAll(text[at..]);
+    return count;
 }
 
 // -------------------------------------------------------------- inventory
@@ -1208,6 +1313,118 @@ test "appendBlock inserts the separating newline only when it is missing" {
     defer without.deinit();
     try appendBlock(&without.writer, "# Doc", "## New\n");
     try std.testing.expectEqualStrings("# Doc\n## New\n", without.written());
+
+    // And the newline at the end: content typed without one used to leave the
+    // record's last line unterminated, which the next append then welded to.
+    var unterminated: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer unterminated.deinit();
+    try appendBlock(&unterminated.writer, "# Doc\n", "## New\n\nlast line");
+    try std.testing.expectEqualStrings("# Doc\n## New\n\nlast line\n", unterminated.written());
+}
+
+/// The `create` scaffold's shape, which is what makes the duplicate heading
+/// happen: every section heading present, every body empty.
+const scaffold_body =
+    "# Bug — x\n\n## TL;DR\n\n- **What failed:** y\n\n## Status\n\nOpen.\n\n" ++
+    "## Symptom and impact\n\n## Reproduction\n\n## Root cause\n\n## Resolution\n\n## References\n\n- Investigation: none yet\n";
+
+test "appendOrFill fills an empty scaffold section instead of duplicating its heading" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const placement = try appendOrFill(&out.writer, scaffold_body, "## Root cause\n\nThe watchdog joins the reader.\n");
+    try std.testing.expectEqualStrings("## Root cause", placement.filled);
+    const text = out.written();
+    try std.testing.expectEqualStrings(
+        "## Reproduction\n\n## Root cause\n\nThe watchdog joins the reader.\n\n## Resolution\n",
+        text[std.mem.find(u8, text, "## Reproduction").? .. std.mem.find(u8, text, "## Resolution").? + "## Resolution\n".len],
+    );
+    // The whole point: one heading, not two.
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "## Root cause"));
+}
+
+test "appendOrFill fills a trailing empty section without growing a blank line" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const placement = try appendOrFill(&out.writer, "# Doc\n\n## Notes\n\n", "## Notes\n\nfilled\n");
+    try std.testing.expectEqualStrings("## Notes", placement.filled);
+    try std.testing.expectEqualStrings("# Doc\n\n## Notes\n\nfilled\n", out.written());
+}
+
+test "appendOrFill appends when the section has a body, is absent, or the block has no heading" {
+    // A section with content is never rewritten: the author's paragraph stays
+    // where the author put it.
+    var busy: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer busy.deinit();
+    try std.testing.expectEqual(Placement.end, try appendOrFill(&busy.writer, "## Root cause\n\nalready said\n", "## Root cause\n\nmore\n"));
+    try std.testing.expectEqualStrings("## Root cause\n\nalready said\n## Root cause\n\nmore\n", busy.written());
+
+    var absent: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer absent.deinit();
+    try std.testing.expectEqual(Placement.end, try appendOrFill(&absent.writer, "# Doc\n", "## Brand new\n\nx\n"));
+    try std.testing.expectEqualStrings("# Doc\n## Brand new\n\nx\n", absent.written());
+
+    var prose: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer prose.deinit();
+    try std.testing.expectEqual(Placement.end, try appendOrFill(&prose.writer, "## Root cause\n\n", "- one more line\n"));
+    try std.testing.expectEqualStrings("## Root cause\n\n- one more line\n", prose.written());
+
+    // `#` with nothing after it is not a heading to match against.
+    var hashes: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer hashes.deinit();
+    try std.testing.expectEqual(Placement.end, try appendOrFill(&hashes.writer, "## \n\n", "## \n\nx\n"));
+}
+
+test "appendOrFill matches the heading level and the whole heading line" {
+    // `## Status` must not be filled by a block headed `### Status`, and
+    // `## Root` must not match the document's `## Root cause`.
+    var level: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer level.deinit();
+    try std.testing.expectEqual(Placement.end, try appendOrFill(&level.writer, "## Status\n\n", "### Status\n\nx\n"));
+
+    var prefix: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer prefix.deinit();
+    try std.testing.expectEqual(Placement.end, try appendOrFill(&prefix.writer, "## Root cause\n\n", "## Root\n\nx\n"));
+    try std.testing.expectEqualStrings("## Root cause\n\n## Root\n\nx\n", prefix.written());
+}
+
+test "stripLabelPrefix drops a label the caller wrote, however it was spelled" {
+    try std.testing.expectEqualStrings("a run leaks a map", stripLabelPrefix("Bug", "Bug — a run leaks a map"));
+    try std.testing.expectEqualStrings("a run leaks a map", stripLabelPrefix("Bug", "bug - a run leaks a map"));
+    try std.testing.expectEqualStrings("a run leaks a map", stripLabelPrefix("Bug", "Bug: a run leaks a map"));
+    try std.testing.expectEqualStrings("a run leaks a map", stripLabelPrefix("Bug", "  Bug — Bug — a run leaks a map "));
+    try std.testing.expectEqualStrings("why the sweep dies", stripLabelPrefix("Investigation", "Investigation — why the sweep dies"));
+
+    // Untouched: no separator, a different word, the label as the whole title,
+    // and a title that merely starts with the label's letters.
+    try std.testing.expectEqualStrings("Bug fixes for the sweep", stripLabelPrefix("Bug", "Bug fixes for the sweep"));
+    try std.testing.expectEqualStrings("Runbook — recover the store", stripLabelPrefix("Bug", "Runbook — recover the store"));
+    try std.testing.expectEqualStrings("Bug", stripLabelPrefix("Bug", "Bug"));
+    try std.testing.expectEqualStrings("Bug —", stripLabelPrefix("Bug", "Bug —"));
+    try std.testing.expectEqualStrings("Bugbear — x", stripLabelPrefix("Bug", "Bugbear — x"));
+}
+
+test "spliceReplaceAll changes every copy and still refuses a missing target" {
+    // The case that motivates it: `reports status` writes its note into the
+    // TL;DR bullet and the Status section byte-identically, so the sentence it
+    // just wrote is the one `spliceReplace` can never address.
+    const record = "- **Resolution:** Resolved on 2026-08-16. fixed it.\n\n## Status\n\nResolved on 2026-08-16. fixed it.\n";
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    try std.testing.expectEqual(@as(usize, 2), try spliceReplaceAll(&out.writer, record, "fixed it.", "fixed in #400; gate green."));
+    try std.testing.expectEqualStrings(
+        "- **Resolution:** Resolved on 2026-08-16. fixed in #400; gate green.\n\n## Status\n\nResolved on 2026-08-16. fixed in #400; gate green.\n",
+        out.written(),
+    );
+
+    var one: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer one.deinit();
+    try std.testing.expectEqual(@as(usize, 1), try spliceReplaceAll(&one.writer, "a b", "b", "c"));
+    try std.testing.expectEqualStrings("a c", one.written());
+
+    var none: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer none.deinit();
+    try std.testing.expectError(SpliceError.NotFound, spliceReplaceAll(&none.writer, "abc", "z", "y"));
+    try std.testing.expectError(SpliceError.NotFound, spliceReplaceAll(&none.writer, "abc", "", "y"));
 }
 
 test "insertInventory prepends an entry and drops the placeholder" {

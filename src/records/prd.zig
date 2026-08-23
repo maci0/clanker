@@ -30,6 +30,9 @@ pub const Options = struct {
     arg3: ?[]const u8 = null,
     /// `create`: the initial status.
     arg4: ?[]const u8 = null,
+    /// `--replace-all` for `update`: rewrite every copy of the old text rather
+    /// than refusing a repeated match.
+    replace_all: bool = false,
 };
 
 pub const Error = common.Error;
@@ -155,7 +158,7 @@ fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 }
 
 fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {
-    try common.out(io, try common.updateRecord(arena, "prd", opts.arg1, opts.arg2, opts.arg3, tool));
+    try common.out(io, try common.updateRecord(arena, "prd", opts.arg1, opts.arg2, opts.arg3, opts.replace_all, tool));
 }
 
 const status_usage: common.StatusUsage = .{
