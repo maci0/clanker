@@ -4,11 +4,11 @@
 
 - **What failed:** handlePanic routes the message through util/log.zig logPanic -> std.debug.print, whose stderr flush goes back through the same std.Io.Threaded. When the panic came from Threaded.Syscall.start's blocked => unreachable, that flush re-enters the same unreachable and panics again, forever. Captured with sample on a wedged clanker repl: 789 of 789 samples in that cycle, 0 CPU growth, process alive and unreapable until an external SIGKILL. A crash becomes an unkillable hang with no trace.
 - **Impact:** Any panic reached while the `Io.Threaded` dispatcher is in that state stops being a crash and becomes a silent hang. Nothing is printed, nothing exits, and `waitpid` never reaps -- so a supervisor that judges liveness by "is it still running" reads a wedged process as healthy. `pty_resize_test`, whose entire assertion is `reapIfDead(pid) == null`, is exactly such a supervisor.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-23. Both halves shipped: logPanic writes fd 2 with a raw write(2) (writePanicLine), no std.Io; handlePanic latches per thread and abort()s on re-entry. Three unit tests, two of which fail against the old std.debug.print body. A standalone repro of the shape re-entered past 100000 times without the latch and aborts (exit 134) with it. clanker gate: all eleven PASS.
 
 ## Status
 
-Open.
+Resolved on 2026-08-23. Both halves shipped: logPanic writes fd 2 with a raw write(2) (writePanicLine), no std.Io; handlePanic latches per thread and abort()s on re-entry. Three unit tests, two of which fail against the old std.debug.print body. A standalone repro of the shape re-entered past 100000 times without the latch and aborts (exit 134) with it. clanker gate: all eleven PASS.
 
 ## Symptom and impact
 
@@ -78,10 +78,9 @@ Two independent faults, either of which alone would be enough:
 
 ## Resolution
 
-Open, and **not implemented**. Found while fixing the pty harness, and
-`src/util/log.zig` plus `handlePanic` in `src/main.zig` is the process entry
-path -- outside that change's blast radius and outside the territory it was
-found from. What follows is a *proposal*, not a description of the code:
+Fixed. Both halves of the proposal below shipped in
+`src/util/log.zig` and `handlePanic` in `src/main.zig`; what follows now
+describes the code rather than proposing it:
 
 - `src/util/log.zig` `logPanic`: write the already-formatted buffer straight to
   fd 2 with a raw `write(2)`, never `std.debug.print` / `std.Io`. The buffer is
@@ -93,9 +92,28 @@ found from. What follows is a *proposal*, not a description of the code:
 
 ## Verification
 
-None yet -- see Resolution. A regression test is available and cheap: assert
-that a `clanker repl` which panics under a resize flood *exits* (any status)
-within a bounded time, rather than asserting only that it has not exited.
+Three unit tests, all in the root test suite:
+
+- `writePanicLine reaches the fd without going through std.Io` and
+  `writePanicLine keeps a panic message on one physical line` capture the line
+  off a pipe. Both were run against the old `std.debug.print` body first and
+  both fail there, so they discriminate the fix rather than merely passing
+  beside it.
+- `the panic report is claimed once per thread, so a nested panic aborts` pins
+  the latch. It tests `claimPanicReport`, not `handlePanic`, because
+  `handlePanic` is `noreturn` and cannot be called from a test -- the same
+  shape as the existing `claimTerminalRecovery` test beside it.
+
+The recursion-to-abort behaviour itself is not synthesizable in-tree, so it was
+verified with a standalone reproduction of the shape: a custom
+`std.debug.FullPanic` handler whose reporting path raises the same panic.
+Without the latch it re-entered past 100000 times (a counter in the repro, not
+a natural bound); with the latch the second entry fires and `abort()` ends the
+process, exit 134 / SIGABRT. `clanker gate` all eleven checks PASS, and a live
+`clanker run` against deepseek still answers, so the handler install is intact.
+
+Not verified: the original `clanker repl` SIGWINCH reproduction on a pristine
+dependency tree. It needs the patches removed and was not re-run.
 
 ## Follow-up
 

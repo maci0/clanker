@@ -158,7 +158,25 @@ pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
 /// the accepted cost, and the process is about to die anyway. The level
 /// threshold is deliberately not consulted either: a crash is reportable at
 /// any configured level.
+///
+/// Nothing here may touch `std.Io`. This used to end in `std.debug.print`,
+/// whose stderr flush goes `Io.Threaded.unlockStderr` -> `File.writeStreaming`
+/// -> `Io.Threaded.operate` -> `Syscall.start`. When the panic *came from*
+/// that dispatcher (`Syscall.start`'s `.blocked => unreachable`, which a
+/// signal landing on a pool thread mid-syscall reaches) the flush re-entered
+/// the same `unreachable` and panicked again, forever: no message, no exit
+/// status, nothing to reap. The panic reporter cannot depend on the subsystem
+/// most likely to be the thing that failed, so the line goes out with a raw
+/// `write(2)`.
+/// See docs/reports/bugs/2026-08-23-panic-recurses-forever-instead-of-aborting.md.
 pub fn logPanic(msg: []const u8) void {
+    writePanicLine(std.posix.STDERR_FILENO, msg);
+}
+
+/// `logPanic`'s body with the destination named, so a test can capture the
+/// bytes off a pipe and prove they came from the raw write rather than from
+/// `std.Io`.
+pub fn writePanicLine(fd: std.posix.fd_t, msg: []const u8) void {
     var buf: [4096]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.print("[ERROR] ts_ms={d}", .{unixMilliseconds()}) catch {};
@@ -171,5 +189,42 @@ pub fn logPanic(msg: []const u8) void {
         buf[buf.len - 1] = '\n';
         w.end = buf.len;
     };
-    std.debug.print("{s}", .{buf[0..w.end]});
+    // Best effort and bounded: a short write is retried, anything else gives
+    // up rather than spin. A panic that cannot report itself must still reach
+    // the caller's `abort()`.
+    const line = buf[0..w.end];
+    var off: usize = 0;
+    while (off < line.len) {
+        const n = std.c.write(fd, line[off..].ptr, line.len - off);
+        if (n <= 0) return;
+        off += @intCast(n);
+    }
+}
+
+test "writePanicLine reaches the fd without going through std.Io" {
+    var fds: [2]std.posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return error.NoPipe;
+    defer _ = std.c.close(fds[0]);
+    writePanicLine(fds[1], "reached unreachable code");
+    // Closed before the read so the read cannot block waiting for more.
+    _ = std.c.close(fds[1]);
+    var buf: [4096]u8 = undefined;
+    const n = try std.posix.read(fds[0], &buf);
+    const got = buf[0..n];
+    try std.testing.expect(std.mem.find(u8, got, "[ERROR] ts_ms=") != null);
+    try std.testing.expect(std.mem.find(u8, got, "panic: reached unreachable code") != null);
+    try std.testing.expectEqual(@as(u8, '\n'), got[got.len - 1]);
+}
+
+test "writePanicLine keeps a panic message on one physical line" {
+    var fds: [2]std.posix.fd_t = undefined;
+    if (std.c.pipe(&fds) != 0) return error.NoPipe;
+    defer _ = std.c.close(fds[0]);
+    writePanicLine(fds[1], "first\nsecond\rthird");
+    _ = std.c.close(fds[1]);
+    var buf: [4096]u8 = undefined;
+    const n = try std.posix.read(fds[0], &buf);
+    const got = buf[0..n];
+    try std.testing.expect(std.mem.find(u8, got, "panic: first second third") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, got, "\n"));
 }
