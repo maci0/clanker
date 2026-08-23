@@ -1,6 +1,6 @@
---- a/src/interp/mvp.zig	2026-08-14 00:21:00.939835509 +0800
-+++ b/src/interp/mvp.zig	2026-08-14 00:11:15.874148973 +0800
-@@ -395,7 +395,7 @@
+--- a/src/interp/mvp.zig
++++ b/src/interp/mvp.zig
+@@ -396,7 +396,7 @@
          if (rt.host_calls[idx]) |hc| {
              // D-331A: fingerprint linear memory at every host-call boundary so an
              // interp trace can be diffed against the JIT's fd_write/poll_oneoff hooks.
@@ -9,9 +9,9 @@
              hc.fn_ptr(rt, hc.ctx) catch |err| {
                  // Cross-module EH (10.E-eh-tail cycle 120): a cross-
                  // module call's thunk transfers an uncaught throw into
---- a/src/wasi/jit_dispatch.zig	2026-08-14 00:21:00.941064572 +0800
-+++ b/src/wasi/jit_dispatch.zig	2026-08-14 00:11:15.874854681 +0800
-@@ -71,7 +71,7 @@
+--- a/src/wasi/jit_dispatch.zig
++++ b/src/wasi/jit_dispatch.zig
+@@ -72,7 +72,7 @@
      nwritten_ptr: i32,
  ) callconv(.c) i32 {
      // D-331A: fingerprint linear memory at the host-call boundary (interp-vs-jit diff).
@@ -20,7 +20,7 @@
      // D-489 fmtwatch: track the tinygo_json fmt string ("name=%s age=%d city=%s") in
      // guest rodata at each fd_write — the transition intact→corrupted localizes the
      // guest-mem corruption to a specific host-call boundary (rodata = random_get-free).
-@@ -197,7 +197,7 @@
+@@ -198,7 +198,7 @@
      precision: i64,
      time_ptr: i32,
  ) callconv(.c) i32 {
@@ -29,7 +29,7 @@
      // D-244: with a host attached (`--engine jit` + WASI), delegate to the
      // shared interp handler for a REAL clock read; the handler bounds-checks
      // and writes the nanoseconds itself.
-@@ -223,7 +223,7 @@
+@@ -224,7 +224,7 @@
  /// — fill `vm_base + buf_ptr` with `buf_len` random bytes via
  /// std.posix.getrandom (unix) / std.crypto.random (fallback).
  pub fn random_get(rt: *JitRuntime, buf_ptr: i32, buf_len: i32) callconv(.c) i32 {
@@ -38,7 +38,7 @@
      // D-244: with a host, delegate to the shared interp handler for REAL
      // cryptographic entropy (it bounds-checks + fills from host.io).
      if (rt.wasi_host) |hp| {
-@@ -249,7 +249,7 @@
+@@ -250,7 +250,7 @@
  /// d-2 stub returns 0/0 (no args). Real argv plumbing lands in
  /// d-3 alongside a `WasiContext` JitRuntime tail-extension.
  pub fn args_sizes_get(rt: *JitRuntime, argc_ptr: i32, argv_buf_size_ptr: i32) callconv(.c) i32 {
@@ -47,7 +47,7 @@
      if (rt.wasi_host) |hp| {
          const host: *wasi_host_mod.Host = @ptrCast(@alignCast(hp));
          const mem = rt.vm_base[0..@intCast(rt.mem_limit)];
-@@ -368,7 +368,7 @@
+@@ -369,7 +369,7 @@
  }
  
  pub fn poll_oneoff(rt: *JitRuntime, in_ptr: i32, out_ptr: i32, nsubscriptions: i32, nevents_ptr: i32) callconv(.c) i32 {

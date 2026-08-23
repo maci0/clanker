@@ -164,8 +164,11 @@ nothing in `git status` will say so. Verified 2026-08-17 to apply cleanly with
 
 ## zwasm-lazy-mem-cksum.patch
 
-Target: zwasm 2.4.1 (`zig-pkg/zwasm-2.4.1-*`). Apply with `patch -p1` inside
-that directory.
+Target: zwasm 2.5.0 (`zig-pkg/zwasm-2.5.0-*`, the `build.zig.zon` pin).
+Apply with `patch -p1` inside that directory. Originally written against
+2.4.1; re-derived against 2.5.0 (same six call sites, line numbers shifted
+by one) when the pin moved — `scripts/apply-patches.sh` applies it like the
+vaxis set.
 
 zwasm's D-331A diagnostic fingerprints linear memory at every host-call
 boundary: `dbg.print("mem.cksum", ..., .{dbg.fnv1a(rt.memory)})`. Zig
@@ -187,9 +190,3 @@ patch exist so the fix survives a `zig-pkg` wipe until then. Related tracked
 change that *is* in the repo: `build.zig` passes `target`/`optimize` through
 to the zwasm dependency, so release builds stop compiling the interpreter at
 zwasm's Debug default.
-
-**The pin has since moved to zwasm 2.5.0, which keeps the same unguarded
-`dbg.print("mem.cksum", ...)` call sites (verified in
-`src/wasi/jit_dispatch.zig`), so this patch no longer applies as written.**
-Re-derive it against 2.5.0 before applying; `scripts/apply-patches.sh`
-skips it for that reason.

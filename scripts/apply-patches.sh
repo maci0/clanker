@@ -32,14 +32,15 @@ if [ -d "$HOME/.cache/zig" ]; then roots+=("$HOME/.cache/zig"); fi
 # patches/<name>.patch -> directory prefix to search for. Order matters:
 # vaxis-winch-self-pipe also edits src/main.zig, which the sixel patch
 # touches, so the README's listing order is the apply order. The zwasm
-# patch targets 2.4.1, which the build.zig.zon pin no longer uses (2.5.0
-# keeps the same unguarded call sites), so it is skipped with a note rather
-# than applied to a stale tree.
-order=(vaxis-sixel-graphics vaxis-ss3-keypad-enter vaxis-winch-self-pipe)
+# patch is independent of the vaxis set (different package), so its place
+# in the list is arbitrary; it was re-derived against zwasm 2.5.0 when the
+# build.zig.zon pin moved from 2.4.1.
+order=(vaxis-sixel-graphics vaxis-ss3-keypad-enter vaxis-winch-self-pipe zwasm-lazy-mem-cksum)
 declare -A targets=(
   [vaxis-sixel-graphics]=vaxis-0.6.0-
   [vaxis-ss3-keypad-enter]=vaxis-0.6.0-
   [vaxis-winch-self-pipe]=vaxis-0.6.0-
+  [zwasm-lazy-mem-cksum]=zwasm-2.5.0-
 )
 
 status=0
@@ -77,13 +78,6 @@ for name in "${order[@]}"; do
         status=1
     fi
 done
-
-# The zwasm patch (zwasm-lazy-mem-cksum) targeted 2.4.1; the build.zig.zon
-# pin has since moved to 2.5.0, which keeps the same unguarded mem.cksum
-# call sites. Re-derive the patch against 2.5.0 before adding it back here.
-if [ -f patches/zwasm-lazy-mem-cksum.patch ]; then
-    echo "apply-patches: zwasm-lazy-mem-cksum skipped: its target (zwasm 2.4.1) is not the pinned dependency (2.5.0)"
-fi
 
 if [ "$status" -ne 0 ]; then
     echo "apply-patches: one or more patches could not be applied" >&2
