@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A clanker-<name> binary on PATH is exec'd unsandboxed with no entry in the enabled-list](bugs/2026-08-23-cli-tier2-plugin-runs-without-consent.md) — Resolved
+
 - [A composer @path mention of a file over the 32 KiB cap is dropped instead of truncated](bugs/2026-08-23-mention-over-cap-file-dropped.md) — Resolved
 
 - [Every kernel cell was held for the full timeout_ms before its reply was returned](bugs/2026-08-23-kernel-timeout-watchdog-holds-every-reply.md) — Resolved

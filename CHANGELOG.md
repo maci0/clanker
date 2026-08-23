@@ -26,6 +26,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   only its write half (a case `POLLHUP` does not report, since the server's own
   half stays open). A page reload opens two streams, so the leak accumulated
   toward the 32-subscriber cap.
+- A `clanker-<name>` binary on `PATH` (or under `~/.clanker/plugins/`) is no
+  longer exec'd unsandboxed unless `state/cli_plugins.json` names it. The
+  Tier 2 dispatcher went through bare discovery with no enabled-list check, so
+  a plain `clanker <word>` ran any executable `clanker-<word>` on PATH with no
+  opt-in, and *disabling* a sandboxed Tier 1 plugin promoted an unsandboxed
+  binary of the same name into its place. `clanker help` now also lists
+  `~/.clanker/plugins/` alongside PATH, names the source of each row, and
+  marks each one on or off.
+
 - A REPL composer `@path` mention of a file over the 32 KiB cap is truncated
   with a `[truncated]` notice instead of being dropped. The read was
   `readFileAlloc(.limited(per_file_cap + 1))`, and that limit answers
