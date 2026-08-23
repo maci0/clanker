@@ -323,12 +323,15 @@ fn append(obj: std.json.Value, out: *lib.Out) !void {
 
     var updated: std.Io.Writer.Allocating = .init(lib.alloc);
     defer updated.deinit();
-    try doc.appendBlock(&updated.writer, text, content);
+    // A block headed by a section this record already carries *empty* fills
+    // that section rather than adding a second copy of its heading; see
+    // `doc.appendOrFill` for why every store does this.
+    const placement = try doc.appendOrFill(&updated.writer, text, content);
     lib.fsWriteIf(path, expected, updated.written()) catch |err| switch (err) {
         error.Mismatch => return lib.fail(out, "the PRD changed while appending; open it again and retry against the current text"),
         else => return lib.failErr(out, err, "appending to the PRD"),
     };
-    return records_grep.mutationResult(out, "append", path);
+    return records_grep.appendResult(out, path, placement);
 }
 
 fn update(obj: std.json.Value, out: *lib.Out) !void {
