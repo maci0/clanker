@@ -87,6 +87,9 @@ Project agents receive this workflow through the harness prompt and
 - [Arena floored untargeted concede and final_stand moves](bugs/2026-08-23-arena-untargeted-concede-floored.md) — Resolved
 
 - [DAP stop events were attached to the next tool call](bugs/2026-08-23-dap-stopped-event-misattributed.md) — Resolved
+- [A kernel cell writing to fd 1 corrupts the supervisor's JSON line protocol](bugs/2026-08-23-kernel-cell-stdout-corrupts-supervisor-protocol.md) — Open
+
+- [Production kernel cells run unsandboxed while ADR 0010 specifies a WASI sandbox](bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md) — Open
 
 - [improve gate skipped extra in-tree tools_dir entries](bugs/2026-08-23-descriptor-gate-skips-extra-tools-dirs.md) — Resolved
 

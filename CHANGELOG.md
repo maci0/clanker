@@ -24,6 +24,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   (UnknownProviderKind); inspect the setting named by the preceding
   diagnostic" line, with no preceding diagnostic to inspect — most
   misleading when a stale binary reads a config written for a newer one.
+- `improve_history` reads the improve ledger over a new `ck_improve_history`
+  host channel instead of through the sandbox filesystem, and its
+  `fs_prefixes` grant is gone. Inside a `clanker improve-self` worktree that
+  path is a symlink to the checkout's file, which the sandbox's no-follow walk
+  refuses even for a granted leaf; the guest reported the refusal as
+  "no history yet", so every improve run was told it had never attempted
+  anything. An unreadable ledger is now a named read error rather than an
+  empty history.
+- `clanker`'s eval kernel no longer claims a confinement it does not have.
+  Every `kernel` reply carries `"sandboxed": false` with the reason, and
+  starting a kernel supervisor logs the exposure. ADR 0010 described a
+  WASI-sandboxed Python kernel, but the confined code path has no production
+  caller: cells run in a host `python3` process with the harness's full
+  filesystem and network access, and `exec_allow` applies to neither `%%bash`
+  nor `subprocess`. This is a reporting fix and adds no sandbox; the gap is
+  tracked in
+  `docs/reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md`.
 - The improve loop's tool-descriptor gate now covers every configured
   in-tree `tools_dir` entry instead of only the hardcoded `tools/manifests`.
   A descriptor staged in a second in-tree directory used to reach a promoted

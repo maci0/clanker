@@ -63,15 +63,27 @@ kernel can read a file or call another tool mid-execution.
 - Not a Jupyter server. There is no `.ipynb` format, no cell IDs, no checkpoint
   files. The kernel is a stateful process; clanker manages it, not a notebook
   server.
-- Python cells run under zwasm's own WASI sandbox (fuel, wall-clock timeout,
-  memory cap, one filesystem preopen, no network syscalls at all) when
-  `scripts/setup-python-wasi.sh` has fetched the interpreter; see
-  [ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md). Absent
-  that, and for the still-unimplemented Bun/JS kernel, the tool class stays
-  what ADR 0010 originally specced: a real host process with ambient
-  filesystem permissions, gated only by `"confirm": true` on the manifest and
+- Not sandboxed. Every Python cell that ships runs in the persistent host
+  `python3` supervisor with the harness's ambient filesystem and network
+  permission, gated only by `"confirm": true` on the manifest and
   `kernel.enabled = false` by default — not bounded by `fs_prefixes` once
-  running.
+  running. The WASI-confined path (fuel, wall-clock timeout, memory cap, one
+  preopen, no network syscalls) that
+  [ADR 0010](../adrs/0010-kernels-are-an-opt-in-unsandboxed-class.md) describes
+  exists in `src/sandbox/host.zig` but has no production caller, so
+  `scripts/setup-python-wasi.sh` does not change the posture of a kernel call.
+  Open defect, with the candidate fixes:
+  [kernel cells run unsandboxed](../reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md).
+  Since 2026-08-23 every reply carries `"sandboxed": false` and starting a
+  supervisor logs the exposure, so the gap is visible at runtime as well as
+  here.
+- **`exec_allow` on `%%bash` is a non-goal, not a pending item.** It was an
+  acceptance criterion until 2026-08-23 and was demoted deliberately rather than
+  dropped. Routing `%%bash` through `ck_exec` would put the allowlist back in
+  that one route while `import subprocess` stays in scope in the same
+  unsandboxed process, so it would read as a boundary without being one, and a
+  test for it could not fail for the right reason. It becomes reachable only
+  once the supervisor itself is confined; until then see the record above.
 - Not persistent across clanker restarts. Kernel state is in-memory plus the
   kernel directory; a clanker restart kills the process. The directory survives
   for inspection but re-running the session starts a fresh kernel. JS kernel
@@ -218,7 +230,10 @@ the feature default-on without quotas is not.
 - **`%pip` runs in the supervisor's interpreter, not a created venv.**
   Design still wants `state/kernels/<session>/python/venv/`.
 - **`%%bash` / `!cmd` run inside the supervisor (`bash -c`), not `ck_exec`.**
-  The exec_allow table is not applied.
+  The exec_allow table is not applied. Now a stated non-goal rather than a gap
+  to close on its own; see Non-goals for why, and
+  [the unsandboxed-kernel record](../reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md)
+  for what would have to change first.
 - **(Fixed) Session end used to SIGTERM processes but never delete
   `state/kernels/`.** `cleanupSessionDirs` (src/sandbox/kernel.zig) now
   removes the ending session's directory once its processes are reaped, and
@@ -227,13 +242,24 @@ the feature default-on without quotas is not.
   `kernel.enabled` is on.
 - **WASI one-shot (`python_wasi.zig`) is unused by the persist path.**
   Persist is a host `python3` supervisor so `__main__` can live across cells.
-  ADR 0010 (revised) disagrees: it frames `runPythonCell`
+  ADR 0010 (revised) disagreed: it framed `runPythonCell`
   (`src/sandbox/host.zig`) as the WASI-primary Python path, but that function
   has no production caller — the `kernel` guest reaches `ck_kernel` →
   `kernel_mod.eval` (`src/sandbox/kernel.zig`), a host `python3` subprocess,
-  and never `runPythonCell`. Resolution belongs in ADR 0010 (correct the
-  description) or `src/sandbox/host.zig` (wire `runPythonCell` into
-  `ck_kernel`).
+  and never `runPythonCell`. **Confirmed and split, 2026-08-23.** ADR 0010 has
+  been corrected, and the substance is now tracked as an open defect with its
+  candidate fixes:
+  [kernel cells run unsandboxed](../reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md).
+  Wiring `runPythonCell` into `ck_kernel` is not the remaining option: WASI here
+  is a one-shot and cross-cell `__main__` is a checked criterion below, so the
+  fix is a resident confined interpreter or OS-level confinement of the
+  supervisor, not a re-point.
+- **A cell writing to fd 1 corrupts the reply protocol.** `subprocess.run`
+  without `capture_output`, or `os.write(1, ...)`, interleaves bytes into the
+  supervisor's JSON line and the host reports a parse error for a valid cell.
+  `run_cell`'s `sys.stdout` swap is Python-level and does not cover the
+  descriptor.
+  [Record](../reports/bugs/2026-08-23-kernel-cell-stdout-corrupts-supervisor-protocol.md).
 
 ## Failure modes
 
@@ -269,7 +295,12 @@ the feature default-on without quotas is not.
       and returns the file content.
 - [ ] Bridge requests without the auth token return 401 and do not invoke the
       tool.
-- [ ] `%%bash` runs via `ck_exec`; the exec policy (exec_allow) is enforced.
+- ~~`%%bash` runs via `ck_exec`; the exec policy (exec_allow) is enforced.~~
+      **Withdrawn 2026-08-23, now a non-goal.** Unreachable while the kernel
+      supervisor is unsandboxed and `import subprocess` is in scope in the same
+      process; it would be a boundary in name only. Reason and preconditions in
+      Non-goals and in
+      [the unsandboxed-kernel record](../reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md).
 - [x] Cell execution exceeding `timeout_ms` kills the kernel and returns a
       timeout error; the next call starts a fresh kernel.
 - [x] Session cleanup removes `state/kernels/<session-id>/` within
