@@ -72,7 +72,7 @@ fn readLedger(out: *lib.Out, obj: std.json.ObjectMap) !void {
     const alloc = lib.alloc;
     var last: usize = 20;
     if (obj.get("last")) |v| if (v == .integer and v.integer > 0) {
-        last = @intCast(v.integer);
+        last = std.math.lossyCast(usize, v.integer);
     };
     const run_id: []const u8 = blk: {
         if (obj.get("run")) |v| if (v == .string) break :blk v.string;

@@ -9,7 +9,8 @@
 //! fmod): `@rem(-7, 3) == -1`, keeping `%` a true remainder rather than a
 //! floored modulo. Division and modulo by zero are the only runtime failures;
 //! everything else is total, so `pow`/`sqrt` may return NaN/Inf for an
-//! out-of-domain operand rather than erroring.
+//! out-of-domain operand rather than erroring; `requireFinite` is where a
+//! caller that must serialize the value into JSON refuses it instead.
 const std = @import("std");
 
 pub const ExprError = error{
@@ -34,6 +35,15 @@ pub fn opFromStr(s: []const u8) ?Op {
         .{ "^", .pow },
     });
     return table.get(s);
+}
+
+/// The guest serializes a result into JSON, and JSON has no spelling for NaN
+/// or Infinity: `{d}` would emit `nan`/`inf` and the host would refuse the
+/// whole tool output as malformed instead of answering. Callers turn this
+/// error into a plain failure naming the cause.
+pub fn requireFinite(v: f64) error{NotFinite}!f64 {
+    if (!std.math.isFinite(v)) return error.NotFinite;
+    return v;
 }
 
 /// Evaluate the two-operand form. Division and modulo by zero are the one
@@ -212,6 +222,14 @@ test "evalExpr honours precedence, parens, power associativity, and sqrt" {
     try expectClose(4, try evalExpr("sqrt(16)"));
     try expectClose(5, try evalExpr("sqrt(3^2+4^2)"));
     try expectClose(6, try evalExpr("2*sqrt(9)"));
+}
+
+test "requireFinite rejects NaN and infinities, accepts ordinary values" {
+    try std.testing.expectEqual(@as(f64, 2.5), try requireFinite(2.5));
+    try std.testing.expectEqual(@as(f64, 0), try requireFinite(0));
+    try std.testing.expectError(error.NotFinite, requireFinite(std.math.nan(f64)));
+    try std.testing.expectError(error.NotFinite, requireFinite(std.math.inf(f64)));
+    try std.testing.expectError(error.NotFinite, requireFinite(-std.math.inf(f64)));
 }
 
 test "evalExpr reports the exact malformed-input error" {

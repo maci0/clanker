@@ -22,7 +22,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var last: usize = 10;
     if (parsed == .object) {
         if (parsed.object.get("last")) |l| {
-            if (l == .integer and l.integer > 0) last = @intCast(l.integer);
+            if (l == .integer and l.integer > 0) last = std.math.lossyCast(usize, l.integer);
         }
     }
     // Over a host channel, not the sandbox filesystem. In a `clanker

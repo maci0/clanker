@@ -34,7 +34,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     var max: usize = 10;
     if (obj.get("max")) |m| {
-        if (m == .integer and m.integer > 0) max = @intCast(m.integer);
+        if (m == .integer and m.integer > 0) max = std.math.lossyCast(usize, m.integer);
     }
 
     const q = try encodeQuery(query);

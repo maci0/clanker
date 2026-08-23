@@ -28,9 +28,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .string => |s| s,
             else => return lib.fail(out, "expr must be a string"),
         };
-        const result = calc.evalExpr(expr) catch |err| {
+        const result = calc.requireFinite(calc.evalExpr(expr) catch |err| {
             return lib.fail(out, if (err == error.DivisionByZero) "division by zero" else "invalid expression");
-        };
+        }) catch
+            return lib.fail(out, "result is not a finite number (out of domain or overflow)");
         var buf: [128]u8 = undefined;
         const body = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"result\":{d}}}", .{result});
         try out.writeAll(body);
@@ -54,8 +55,9 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const op_enum = calc.opFromStr(op) orelse
         return lib.fail(out, "unknown op; use + - * / % ^");
 
-    const result = calc.applyOp(a, op_enum, b) catch
-        return lib.fail(out, "division by zero");
+    const result = calc.requireFinite(calc.applyOp(a, op_enum, b) catch
+        return lib.fail(out, "division by zero")) catch
+        return lib.fail(out, "result is not a finite number (out of domain or overflow)");
 
     var buf: [128]u8 = undefined;
     const body = try std.fmt.bufPrint(&buf, "{{\"ok\":true,\"result\":{d}}}", .{result});

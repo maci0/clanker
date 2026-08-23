@@ -3851,94 +3851,95 @@ test "gate_invariants needles still match the live tree" {
     }
 }
 
+// Honest fixture fragments shared by the checks.zig-shape tests below. They
+// live at file scope because two tests build fixtures from them: an honest
+// resolveZigBin, appended to every fixture (checksZigShapeBroken requires it
+// like every other gate, and a fixture without one would fail on
+// "fn resolveZigBin(" instead of on the shape the fixture is about), and
+// honest versions of the clanker-gate-only checks and their scan bodies
+// (the table requires them, so a fixture without them fails on
+// "fn testRootCoverageGate(" instead of on the shape it is about).
+const ok_resolver =
+    \\fn resolveZigBin() ?[]u8 {
+    \\    const zig_exe = build_options.zig_exe;
+    \\    if (zig_exe.len > 0 and zig_exe[0] == '/') {
+    \\        std.Io.Dir.accessAbsolute(io, zig_exe, .{ .execute = true }) catch return null;
+    \\        return gpa.dupe(u8, zig_exe) catch null;
+    \\    }
+    \\    return null;
+    \\}
+;
+
+const ok_cli_gates =
+    \\pub fn testRootCoverageGate() !GateResult {
+    \\    const main_src = dir.readFileAlloc(io, "src/main.zig", gpa, .limited(1 << 20)) catch {
+    \\        return .{ .ok = false, .label = "test-root-coverage", .detail = "unreadable" };
+    \\    };
+    \\    return scanForUnrootedTests(gpa, io, dir, files, main_src);
+    \\}
+    \\fn scanForUnrootedTests() !GateResult {
+    \\    var misses: usize = 0;
+    \\    for (files) |f| {
+    \\        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch {
+    \\            return .{ .ok = false, .label = "test-root-coverage", .detail = "unreadable" };
+    \\        };
+    \\        if (rootImports(main_src, rel)) continue;
+    \\        misses += 1;
+    \\    }
+    \\}
+    \\pub fn jsSuiteCoverageGate() !GateResult {
+    \\    const build_src = dir.readFileAlloc(io, "build.zig", gpa, .limited(4 << 20)) catch {
+    \\        return .{ .ok = false, .label = "js-suite-coverage", .detail = "unreadable" };
+    \\    };
+    \\    return scanUnrunJsSuites(gpa, io, dir, build_src);
+    \\}
+    \\fn scanUnrunJsSuites() !GateResult {
+    \\    collectJsSuites(io, arena, &suites, dir, "ui") catch |err| switch (err) {
+    \\        error.FileNotFound => return .{ .ok = true, .label = "js-suite-coverage", .detail = "no ui/ dir" },
+    \\        else => return .{ .ok = false, .label = "js-suite-coverage", .detail = "unwalkable" },
+    \\    };
+    \\    for (suites.items) |rel| {
+    \\        if (buildRegistersJsSuite(build_src, rel)) continue;
+    \\        misses += 1;
+    \\    }
+    \\}
+    \\pub fn sandboxAbiGate() !GateResult {
+    \\    const host_src = dir.readFileAlloc(io, "src/sandbox/host.zig", gpa, .limited(8 << 20)) catch {
+    \\        return .{ .ok = false, .label = "sandbox-abi", .detail = "unreadable" };
+    \\    };
+    \\    return scanUnregisteredHostFns(gpa, host_src, runtime_src);
+    \\}
+    \\fn scanUnregisteredHostFns() !GateResult {
+    \\    var misses: usize = 0;
+    \\    while (lines.next()) |line| {
+    \\        if (registeredInRuntime(runtime_src, name)) continue;
+    \\        misses += 1;
+    \\    }
+    \\}
+    \\pub fn toolsTsToolchainGate() !GateResult {
+    \\    const npmrc = dir.readFileAlloc(io, "tools/ts/.npmrc", gpa, .limited(4096)) catch {
+    \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "unreadable" };
+    \\    };
+    \\    if (std.mem.find(u8, npmrc, "ignore-scripts=true") == null) {
+    \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "scripts" };
+    \\    }
+    \\}
+    \\pub fn releaseContractGate() !GateResult {
+    \\    _ = std.SemanticVersion.parse(build_options.version) catch {
+    \\        return .{ .ok = false, .label = "release-contract", .detail = "version" };
+    \\    };
+    \\    const changelog = dir.readFileAlloc(io, "CHANGELOG.md", gpa, .limited(1 << 20)) catch {
+    \\        return .{ .ok = false, .label = "release-contract", .detail = "unreadable" };
+    \\    };
+    \\    if (std.mem.find(u8, changelog, "## [Unreleased]") == null) {
+    \\        return .{ .ok = false, .label = "release-contract", .detail = "changelog" };
+    \\    }
+    \\}
+;
+
 test "the live checks.zig gate functions still reach their load-bearing calls" {
     const src = @embedFile("../gate/checks.zig");
     try std.testing.expect(checksZigShapeBroken(src) == null);
-
-    // An honest resolveZigBin, appended to every fixture below: checksZigShapeBroken
-    // requires it like every other gate, and a fixture without one would fail
-    // on "fn resolveZigBin(" instead of on the shape the fixture is about.
-    const ok_resolver =
-        \\fn resolveZigBin() ?[]u8 {
-        \\    const zig_exe = build_options.zig_exe;
-        \\    if (zig_exe.len > 0 and zig_exe[0] == '/') {
-        \\        std.Io.Dir.accessAbsolute(io, zig_exe, .{ .execute = true }) catch return null;
-        \\        return gpa.dupe(u8, zig_exe) catch null;
-        \\    }
-        \\    return null;
-        \\}
-    ;
-
-    // Honest versions of the clanker-gate-only checks and their scan bodies,
-    // appended next to ok_resolver for the same reason: the table now requires
-    // them, so a fixture without them fails on "fn testRootCoverageGate("
-    // instead of on the shape it is about.
-    const ok_cli_gates =
-        \\pub fn testRootCoverageGate() !GateResult {
-        \\    const main_src = dir.readFileAlloc(io, "src/main.zig", gpa, .limited(1 << 20)) catch {
-        \\        return .{ .ok = false, .label = "test-root-coverage", .detail = "unreadable" };
-        \\    };
-        \\    return scanForUnrootedTests(gpa, io, dir, files, main_src);
-        \\}
-        \\fn scanForUnrootedTests() !GateResult {
-        \\    var misses: usize = 0;
-        \\    for (files) |f| {
-        \\        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch {
-        \\            return .{ .ok = false, .label = "test-root-coverage", .detail = "unreadable" };
-        \\        };
-        \\        if (rootImports(main_src, rel)) continue;
-        \\        misses += 1;
-        \\    }
-        \\}
-        \\pub fn jsSuiteCoverageGate() !GateResult {
-        \\    const build_src = dir.readFileAlloc(io, "build.zig", gpa, .limited(4 << 20)) catch {
-        \\        return .{ .ok = false, .label = "js-suite-coverage", .detail = "unreadable" };
-        \\    };
-        \\    return scanUnrunJsSuites(gpa, io, dir, build_src);
-        \\}
-        \\fn scanUnrunJsSuites() !GateResult {
-        \\    collectJsSuites(io, arena, &suites, dir, "ui") catch |err| switch (err) {
-        \\        error.FileNotFound => return .{ .ok = true, .label = "js-suite-coverage", .detail = "no ui/ dir" },
-        \\        else => return .{ .ok = false, .label = "js-suite-coverage", .detail = "unwalkable" },
-        \\    };
-        \\    for (suites.items) |rel| {
-        \\        if (buildRegistersJsSuite(build_src, rel)) continue;
-        \\        misses += 1;
-        \\    }
-        \\}
-        \\pub fn sandboxAbiGate() !GateResult {
-        \\    const host_src = dir.readFileAlloc(io, "src/sandbox/host.zig", gpa, .limited(8 << 20)) catch {
-        \\        return .{ .ok = false, .label = "sandbox-abi", .detail = "unreadable" };
-        \\    };
-        \\    return scanUnregisteredHostFns(gpa, host_src, runtime_src);
-        \\}
-        \\fn scanUnregisteredHostFns() !GateResult {
-        \\    var misses: usize = 0;
-        \\    while (lines.next()) |line| {
-        \\        if (registeredInRuntime(runtime_src, name)) continue;
-        \\        misses += 1;
-        \\    }
-        \\}
-        \\pub fn toolsTsToolchainGate() !GateResult {
-        \\    const npmrc = dir.readFileAlloc(io, "tools/ts/.npmrc", gpa, .limited(4096)) catch {
-        \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "unreadable" };
-        \\    };
-        \\    if (std.mem.find(u8, npmrc, "ignore-scripts=true") == null) {
-        \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "scripts" };
-        \\    }
-        \\}
-        \\pub fn releaseContractGate() !GateResult {
-        \\    _ = std.SemanticVersion.parse(build_options.version) catch {
-        \\        return .{ .ok = false, .label = "release-contract", .detail = "version" };
-        \\    };
-        \\    const changelog = dir.readFileAlloc(io, "CHANGELOG.md", gpa, .limited(1 << 20)) catch {
-        \\        return .{ .ok = false, .label = "release-contract", .detail = "unreadable" };
-        \\    };
-        \\    if (std.mem.find(u8, changelog, "## [Unreleased]") == null) {
-        \\        return .{ .ok = false, .label = "release-contract", .detail = "changelog" };
-        \\    }
-        \\}
-    ;
 
     const early_build_src =
         \\pub fn buildGate() !GateResult {

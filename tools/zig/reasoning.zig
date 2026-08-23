@@ -24,7 +24,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     var last: usize = 5;
     if (parsed == .object) {
         if (parsed.object.get("last")) |l| {
-            if (l == .integer and l.integer > 0) last = @intCast(l.integer);
+            if (l == .integer and l.integer > 0) last = std.math.lossyCast(usize, l.integer);
         }
     }
     // Newest traces only: the log can grow to 8 MiB, and a full ck_fs_read

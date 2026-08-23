@@ -52,7 +52,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     };
     var depth: u32 = 0;
     if (obj.get("depth")) |d| {
-        if (d == .integer and d.integer > 0) depth = @intCast(d.integer);
+        if (d == .integer and d.integer > 0) depth = std.math.lossyCast(u32, d.integer);
     }
 
     const max_depth = maxDepth();

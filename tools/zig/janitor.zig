@@ -128,7 +128,7 @@ fn dirSize(a: std.mem.Allocator, path: []const u8) u64 {
                     const sv = std.json.parseFromSliceLeaky(std.json.Value, a, st, .{}) catch continue;
                     if (sv == .object) {
                         if (sv.object.get("size")) |sz| {
-                            if (sz == .integer) total += @intCast(sz.integer);
+                            if (sz == .integer) total +|= std.math.lossyCast(u64, sz.integer);
                         }
                     }
                 }
@@ -137,7 +137,7 @@ fn dirSize(a: std.mem.Allocator, path: []const u8) u64 {
         }
     }
     if (parsed.object.get("size")) |sz| {
-        if (sz == .integer) return @intCast(sz.integer);
+        if (sz == .integer) return std.math.lossyCast(u64, sz.integer);
     }
     return 0;
 }

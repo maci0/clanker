@@ -743,7 +743,7 @@ pub const Registry = struct {
         if (obj.get("fuel")) |fv| {
             // Anything but a positive integer keeps the default: a fuel of 0
             // or a typo'd string must not turn into an unrunnable tool.
-            if (fv == .integer and fv.integer > 0) t.fuel = @intCast(fv.integer);
+            if (fv == .integer and fv.integer > 0) t.fuel = std.math.lossyCast(u64, fv.integer);
         }
         if (obj.get("internal")) |iv| {
             switch (iv) {
