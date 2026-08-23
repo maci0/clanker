@@ -38,6 +38,7 @@ const ensure_dir = @import("../util/ensure_dir.zig");
 const tail_util = @import("../util/tail.zig");
 const live_mod = @import("../serve/live.zig");
 const cas_lock_record = @import("cas_lock_record");
+const cas_lock = @import("../util/cas_lock.zig");
 
 /// Model access for tools whose descriptor sets `"llm": true` (a translate or
 /// summarize transform needs one). The harness hands over the same provider
@@ -4198,32 +4199,7 @@ fn casLockName(name: []const u8) bool {
 /// yet, and a lock keyed on a link's destination would be a different lock from
 /// the one a writer of the link's own name takes.
 fn resolvedLockKey(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
-    const cut = std.mem.findScalarLast(u8, full, '/');
-    const dir_part = if (cut) |i| (if (i == 0) full[0..1] else full[0..i]) else ".";
-    const leaf = if (cut) |i| full[i + 1 ..] else full;
-
-    // A first write into a missing directory has nothing below it to resolve,
-    // so walk up to the nearest ancestor that does exist and keep the rest as
-    // written. An absolute path floors at "/", a relative one at the base dir.
-    const floor: usize = if (dir_part[0] == '/') 1 else 0;
-    var end = dir_part.len;
-    while (true) {
-        const head = dir_part[0..end];
-        if (base.realPathFileAlloc(sb.io, if (head.len == 0) "." else head, sb.gpa)) |abs| {
-            defer sb.gpa.free(abs);
-            const tail = std.mem.trim(u8, dir_part[end..], "/");
-            const stem = std.mem.trimEnd(u8, abs, "/");
-            if (tail.len == 0) return std.fmt.allocPrint(sb.gpa, "{s}/{s}", .{ stem, leaf });
-            return std.fmt.allocPrint(sb.gpa, "{s}/{s}/{s}", .{ stem, tail, leaf });
-        } else |_| {
-            // Unresolvable all the way up: keep the path as written rather than
-            // fail the write. A lock keyed on the raw string is what this
-            // function replaced, so the fallback is never worse than that.
-            if (end <= floor) return sb.gpa.dupe(u8, full);
-            end = std.mem.findScalarLast(u8, dir_part[0..end], '/') orelse floor;
-            if (end < floor) end = floor;
-        }
-    }
+    return cas_lock.resolvedKey(sb.gpa, sb.io, base, full);
 }
 
 /// ck_getenv(name), alias of ck_env, kept for modules linked against the
