@@ -291,6 +291,36 @@ every document; "judged" is what a single ledger row can honestly say.
   is now behind the same guard as the others and the keep-alive kill is gone;
   `Content-Length` still states what the GET would send. Filed as
   [respond sends a body on HEAD](../reports/bugs/2026-08-23-respond-sends-a-body-on-head.md).
+- **(Fixed) A board card's hover actions were unreachable, and a third control
+  was painted over.** `cardNode` (`ui/app/features/board.js`) built the card as
+  a `<button>` and appended `Open card` and `Move to next column` into it. ARIA
+  gives `role=button` presentational children, so the accessibility tree
+  flattened both away and neither action could be reached at all; nesting
+  interactive content in a button is also invalid HTML, and it is the
+  `nested-interactive` count the 2026-08-12 axe sweep logged as a handoff item.
+  They are a sibling of the card button inside the card's own `<li>` now, with
+  `.board-card-item` as the positioning context, and each `aria-label` names its
+  card. Separately, `.card-quick-edit-btn` (28px, `top:4px right:4px`) sat
+  strictly inside `.card-quick-actions` (58x30, `top:2px right:2px`) at the same
+  `z-index` and later in DOM order, both revealed by the same `:hover`, so it
+  could never be clicked; its handler was identical to the bar's own `Open card`,
+  so it is deleted. Still open on the same view: the card's member avatar is a
+  `<span role="button">` inside the card button, which needs the card to stop
+  being a button.
+- **(Fixed) The composer's `@` and `#` suggestion lists bypassed
+  `hidePromptList()`.** `#task` owns `#prompt-list` through `aria-expanded` and
+  `aria-activedescendant`, and `hidePromptList()` is the one place that means
+  "no list is open". `renderFileMentionList` and `renderKbMentionList`
+  (`ui/app/app.js`) flipped `promptList.hidden` by hand instead, so the `@` list
+  opened with `aria-expanded="false"` still on `#task` and a screen reader was
+  never told a popup existed, and one `#` pick left `aria-expanded="true"` with
+  an `aria-activedescendant` pointing at an option no longer shown, permanently:
+  the composer's value is rewritten in code, so no `input` event follows to tidy
+  up. Both close through `hidePromptList()` now, and there is exactly one
+  `promptList.hidden = true` in the file. The same two functions also fired one
+  listing per keystroke with no ordering, so a slow reply could repaint over a
+  newer query, and ended in an empty `catch` that left a stale list open; each
+  request takes a ticket now and a failure closes the list.
 
 ## Failure modes
 

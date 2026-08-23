@@ -80,6 +80,18 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-24-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
+
+- [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-24-plugin-refresh-hook-is-unreachable.md) — Open
+
+- [Every plugin's api.status writes the same sr-only live region, and Health rewrites it about once a second](bugs/2026-08-24-plugin-status-line-is-one-shared-live-region.md) — Open
+
+- [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-24-plugin-tab-arrow-keys-follow-registration-order.md) — Open
+
+- [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-24-board-card-member-avatar-nested-in-the-card-button.md) — Open
+
+- [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-24-webui-task-textarea-combobox-role.md) — Open
+
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 
 - [Bug — a run using the debug tool leaks a hash-map allocation when launch times out](bugs/2026-08-23-debug-tool-run-leaks-on-adapter-timeout.md) — Open

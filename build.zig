@@ -333,6 +333,15 @@ pub fn build(b: *std.Build) void {
     const music_js_test = b.addSystemCommand(&.{ "node", "--test" });
     music_js_test.addFileArg(b.path("ui/plugins/music/music.test.mjs"));
     test_step.dependOn(&music_js_test.step);
+    const office_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    office_js_test.addFileArg(b.path("ui/plugins/office/office.test.mjs"));
+    test_step.dependOn(&office_js_test.step);
+    const composer_suggest_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    composer_suggest_js_test.addFileArg(b.path("ui/app/composer-suggest.test.mjs"));
+    test_step.dependOn(&composer_suggest_js_test.step);
+    const board_card_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    board_card_js_test.addFileArg(b.path("ui/app/features/board-card.test.mjs"));
+    test_step.dependOn(&board_card_js_test.step);
     const harden_js_test = b.addSystemCommand(&.{ "node", "--test" });
     harden_js_test.addFileArg(b.path("ui/app/core/harden.test.mjs"));
     test_step.dependOn(&harden_js_test.step);

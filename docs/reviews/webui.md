@@ -1649,6 +1649,73 @@ added for.
 - `AGENTS.md`'s invariant sentence now names `respond` as the last holdout
   rather than describing an intent.
 
+## Two controls nobody could reach, and a listbox nobody was told about (2026-08-24)
+
+Two defects on the page's own surface, both about a control existing and being
+unreachable rather than about a control being missing.
+
+**A board card's hover actions were inside the card button.** `cardNode`
+(`ui/app/features/board.js`) built the card as a `<button>` and then appended
+`Open card` and `Move to next column` into it. ARIA gives `role=button`
+presentational children, so the accessibility tree flattened both away: there
+was no way to reach either action with a screen reader, and nesting interactive
+content inside a button is invalid HTML besides. This is the
+`nested-interactive` count from the 2026-08-12 axe sweep further up this file,
+listed under Left / next ever since as a handoff item. They are now a sibling of
+the card button inside the card's own `<li>`, which is the positioning context
+(`.board-card-item { position: relative }`), so the overlay still sits on the
+card's top-right corner and still appears on hover or focus while both controls
+are ordinary buttons. Each one's `aria-label` now names its card, because a
+board is a list of near-identical rows and "Open card" alone does not say which.
+
+**And a third control was painted over.** `.card-quick-edit-btn` was a 28px
+pencil at `top:4px right:4px`; `.card-quick-actions` is a 58x30 bar at
+`top:2px right:2px`, at the same `z-index`, later in DOM order. The bar's box
+strictly contains the pencil's, both reveal on the same `:hover`, so the pencil
+could never be clicked at all. Its handler was character-for-character the
+bar's own `Open card` handler, so it is deleted rather than moved, CSS included.
+
+**The composer's `@` and `#` lists bypassed the one function that closes.**
+`#task` owns `#prompt-list` through `aria-expanded` and
+`aria-activedescendant`, and `hidePromptList()` is the single place that says no
+list is open. The `/` prompt list and the slash list both went through it; the
+`@` file list and the `#` knowledge list flipped `promptList.hidden` by hand
+(`ui/app/app.js`). So the `@` list opened with `aria-expanded="false"` still on
+`#task` and a screen reader was never told a popup was there, and picking a `#`
+collection left `aria-expanded="true"` plus an `aria-activedescendant` pointing
+at an option that was no longer shown, permanently: the composer's value is
+rewritten in code, so no `input` event follows to tidy up. Both renderers now
+close through `hidePromptList()`, and there is exactly one
+`promptList.hidden = true` in the file, which is the assertion that keeps it
+that way.
+
+Two smaller things came out of the same two functions. Each fired one listing
+per keystroke with no ordering, so a slow reply for `@sr` could repaint over the
+newer one for `@src/`; each now takes a ticket and only the newest may draw. And
+each ended in an empty `catch`, which left whatever was on screen there under an
+`aria-expanded` that no longer described the page; a failed listing closes the
+list now.
+
+### Verified
+
+`ui/app/features/board-card.test.mjs` lifts `cardQuickActions` out of the
+shipped source and runs it in a `vm` over stubs, the way `features/arena.test.mjs`
+drives `ensure3d`: two real buttons, `type="button"`, each `aria-label` naming
+its card; `Open card` sets `openCardId` and re-renders; `Move to next column`
+posts the move and does nothing from the last column; plus source and CSS
+assertions that the actions are a sibling of the card button and that the dead
+pencil is gone from both files. 0 of 5 pass against `origin/main`, 5 of 5 after.
+
+`ui/app/composer-suggest.test.mjs` lifts `hidePromptList`,
+`renderFileMentionList` and `renderKbMentionList` into a `vm` with a controllable
+`fetch`, so replies can be answered out of order: the `@` list reports itself
+open, picking a file clears the ARIA state, an empty listing closes, a failure
+after a successful listing closes rather than leaving the old one up, a stale
+reply that would still match the older needle does not redraw, and one `#` pick
+leaves `aria-expanded="false"` with no `aria-activedescendant`. 5 of 7 fail
+against `origin/main`, 7 of 7 after. Both suites are registered in `build.zig`
+as the `js-suite-coverage` gate requires.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
@@ -1659,6 +1726,28 @@ added for.
   default, an output cap before it is worth offering.
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
-- Resolve the pre-existing axe items logged in the sweep entry (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — they sit in the concurrent agent's board/run-compare/workspace surface.
+- The pre-existing axe items logged in the 2026-08-12 sweep entry, re-checked
+  against the source on 2026-08-24 (source read, not a fresh axe run — the
+  sweep itself still needs redoing to close them out):
+  - board `nested-interactive`: the two hover actions are fixed (entry above).
+    Still open on the same view is the card's member avatar, a
+    `<span role="button" tabindex="0">` built inside the card `<button>` by
+    `cardNode`, which also hosts the member picker popup and its buttons. It
+    needs the card to stop being the button, or the avatar to stop being a
+    control, so it is a bigger slice than the overlay was.
+  - `#rail-list` workspace headers: the group head is a
+    `T.li({ class: "rail-group-row", role: "presentation" })` now, so the
+    `list` violation is gone.
+  - run-compare B `select-name`: `#run-compare-b` carries an `sr-only`
+    `<label>` in `index.html`.
+  - goals `label-title-only`: no form control in `features/goals.js` is
+    labelled by `title` alone any more.
+  - composer `#task` `aria-allowed-role`: still open. The element is a
+    `<textarea>` carrying `role="combobox"`, which ARIA does not allow on a
+    textarea; closing it means moving the role onto a wrapper and keeping the
+    three list renderers' `aria-expanded` target in step, so it is its own
+    slice rather than a line change.
+  - board `aria-hidden-focus` and the board/goals/system contrast counts were
+    not re-measured; they need the axe harness back, not a source read.
 - If Kimi parity is to extend beyond the documented Phase 6: decompose remaining `app.js` view logic (`features/board.js`, `features/goals.js`), promote `axe-core` into `clanker gate`, and resolve the pre-existing axe handoff items (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — all already logged in the sweep entry. The composer Research toggle from this slice closes the last named parity candidate.
 - Kimi Code **harness** parity (open-source CLI, the corrected target): remaining gaps are MCP **client** configuration (clanker already serves MCP; `/mcp-config`-style client management is new), ACP/IDE integration (`kimi acp` equivalent), and lifecycle hooks surfaced from the page. Video input and the skills catalogue just landed; each remaining item is a bounded slice on its own.
