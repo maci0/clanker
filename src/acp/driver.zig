@@ -12,6 +12,7 @@ const config = @import("../config.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const registry = @import("../toolhost/registry.zig");
 const log = @import("../util/log.zig");
+const llm_types = @import("../llm/types.zig");
 
 pub const AcpOutcome = enum {
     success,
@@ -48,6 +49,11 @@ pub const RunOpts = struct {
     arena: std.mem.Allocator,
     name: vendor.Name,
     prompt: []const u8,
+    /// Image attachments for this turn. Path A sends them as ACP `image`
+    /// ContentBlocks; path B has no pinned image argv for any vendor, so a
+    /// headless run with images refuses instead of spawning text-only. Empty for
+    /// every text run, which is all of them today outside the HTTP composer.
+    images: []const llm_types.ImagePart = &.{},
     cwd: []const u8 = "",
     timeout_ms: u64 = 120_000,
     acp_argv: []const []const u8 = &.{},
@@ -107,6 +113,32 @@ pub fn run(opts: RunOpts) !RunResult {
     }
 
     if (afterAcp(acp_outcome) == .headless) {
+        // PRD 0043: "Headless image argv for `claude -p`, `codex exec`, and
+        // `grok -p` is unset until pinned at each vendor CLI help/docs", and the
+        // settled policy for that state is a named refusal, never a text-only
+        // spawn. Stripping the images and carrying on is the one outcome the PRD
+        // forbids outright, because the run then returns 200 with the child
+        // having seen only text and nothing anywhere says so.
+        //
+        // This fires only when ACP already declined the turn, so it is not a
+        // refusal of image support: path A carries images. It is a refusal to
+        // pretend the fallback does.
+        if (opts.images.len > 0) {
+            try g.add(opts.gpa, .{
+                .kind = .final,
+                .iteration = 1,
+                .label = "final",
+                .detail = "headless cannot carry image attachments",
+                .ok = false,
+            });
+            g.duration_ms = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(opts.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            if (opts.persist) persistAndRecord(opts, &g, false);
+            // Every other exit from this function hands the Graph to the caller
+            // inside a RunResult and the caller deinits it. This one returns an
+            // error instead, so the node added just above is ours to free.
+            g.deinit(opts.gpa);
+            return error.HeadlessImagesUnsupported;
+        }
         const head = fallback.spawn(
             opts.io,
             opts.gpa,
@@ -178,7 +210,7 @@ fn runAcp(opts: RunOpts, g: *graph_mod.Graph, answer: *[]const u8) !AcpOutcome {
     };
     defer client.deinit();
     const cwd = if (opts.cwd.len > 0) opts.cwd else "/tmp";
-    const result = client.prompt(cwd, opts.prompt) catch |err| switch (err) {
+    const result = client.promptWith(cwd, opts.prompt, opts.images) catch |err| switch (err) {
         acp_client.Error.Hang => return .hang,
         acp_client.Error.CapabilityRefused => return .capability_refused,
         acp_client.Error.HandshakeFailed, acp_client.Error.Protocol, acp_client.Error.Closed => return .handshake_failed,
@@ -279,6 +311,113 @@ pub fn nodesFromHeadless(gpa: std.mem.Allocator, g: *graph_mod.Graph, stdout: []
         .output = graph_mod.finalAnswerPreview(stdout),
         .ok = term_ok,
     });
+}
+
+test "images reach the ACP child as image ContentBlocks, and the headless path refuses instead of dropping them" {
+    // PRD 0043 Goal 6. Two behaviours it forbids outright, both of which shipped:
+    //
+    //   1. a 200 with the child having seen only the text, and
+    //   2. a text-only headless spawn that silently strips the images.
+    //
+    // Driven through the shipped `run` against the fake ACP agent, which echoes
+    // the prompt blocks it actually received when FAKE_ACP_ECHO_PROMPT=1. The
+    // assertion is on what crossed the wire, not on what the caller believed it
+    // sent, and not on a pre-built Graph.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var proc_reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer proc_reg.deinit();
+
+    const images = [_]llm_types.ImagePart{
+        .{ .mime = "image/png", .b64 = "AAAAPNGPAYLOAD" },
+        .{ .mime = "image/jpeg", .b64 = "BBBBJPEGPAYLOAD" },
+        // Skipped: neither half of a block can be empty.
+        .{ .mime = "", .b64 = "CCCCNOMIME" },
+    };
+
+    const base = RunOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena_state.allocator(),
+        .name = .grok,
+        .prompt = "look at this ECHO-BLOCKS",
+        .images = &images,
+        .timeout_ms = 5000,
+        .acp_argv = &.{ "python3", "tests/fixtures/fake-acp-agent.py" },
+        .persist = false,
+        .session_id = "imgblocks",
+        .acp_reg = &proc_reg,
+    };
+
+    // Path A: the blocks are on the wire, text first, then one per usable image.
+    {
+        var result = run(base) catch |err| switch (err) {
+            error.FileNotFound, error.AdapterNotFound => return error.SkipZigTest,
+            else => return err,
+        };
+        defer result.graph.deinit(std.testing.allocator);
+        try std.testing.expect(result.used_acp);
+
+        const echoed = result.answer;
+        try std.testing.expect(std.mem.find(u8, echoed, "block:text/-/look at this ECHO-BLOCKS") != null);
+        try std.testing.expect(std.mem.find(u8, echoed, "block:image/image/png/AAAAPNGPAYLOAD") != null);
+        try std.testing.expect(std.mem.find(u8, echoed, "block:image/image/jpeg/BBBBJPEGPAYLOAD") != null);
+        // The half-empty part was dropped rather than sent as a zero-byte image.
+        try std.testing.expect(std.mem.find(u8, echoed, "CCCCNOMIME") == null);
+    }
+
+    // Path B with images: a named refusal, never a text-only spawn. `skip_acp`
+    // is how a vendor with no ACP arrives here, which is the case the PRD's
+    // failure table covers.
+    {
+        var headless = base;
+        headless.skip_acp = true;
+        headless.session_id = "imgheadless";
+        headless.headless_argv = &.{ "python3", "tests/fixtures/fake-acp-agent.py", "-p", "look at this" };
+        try std.testing.expectError(error.HeadlessImagesUnsupported, run(headless));
+    }
+
+    // Control: the same headless run without images still works, so the refusal
+    // above is about the attachments and not about the spawn being broken.
+    {
+        var text_only = base;
+        text_only.skip_acp = true;
+        text_only.images = &.{};
+        text_only.session_id = "imgheadlesstext";
+        text_only.headless_argv = &.{ "python3", "tests/fixtures/fake-acp-agent.py", "-p", "look at this" };
+        var result = run(text_only) catch |err| switch (err) {
+            error.FileNotFound, error.AdapterNotFound => return error.SkipZigTest,
+            else => return err,
+        };
+        defer result.graph.deinit(std.testing.allocator);
+        try std.testing.expect(result.used_headless);
+        try std.testing.expect(std.mem.find(u8, result.answer, "fake-headless-answer") != null);
+    }
+}
+
+test "promptParams keeps text required-first and omits a half-empty image" {
+    const alloc = std.testing.allocator;
+    const only_text = try acp_client.promptParamsForTest(alloc, "s1", "hello", &.{});
+    defer alloc.free(only_text);
+    try std.testing.expectEqualStrings(
+        "{\"sessionId\":\"s1\",\"prompt\":[{\"type\":\"text\",\"text\":\"hello\"}]}",
+        only_text,
+    );
+
+    const with_image = try acp_client.promptParamsForTest(alloc, "s1", "hi", &.{
+        .{ .mime = "image/png", .b64 = "Zm8=" },
+        .{ .mime = "image/png", .b64 = "" },
+        .{ .mime = "", .b64 = "Zm8=" },
+    });
+    defer alloc.free(with_image);
+    try std.testing.expectEqualStrings(
+        "{\"sessionId\":\"s1\",\"prompt\":[{\"type\":\"text\",\"text\":\"hi\"}," ++
+            "{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"Zm8=\"}]}",
+        with_image,
+    );
 }
 
 test "afterAcp: hang, missing, refused, and handshake all take headless, not an error" {

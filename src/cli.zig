@@ -4058,7 +4058,9 @@ fn runCodingBackend(
     reg: *const registry.Registry,
     task: []const u8,
 ) ![]const u8 {
-    return runCodingBackendCtx(init.io, init.gpa, init.arena.allocator(), init.environ_map, cfg, reg, task);
+    // The CLI has no attachment surface, so no images. Spelled out rather than
+    // defaulted so adding `clanker run --image` is a visible edit here.
+    return runCodingBackendCtx(init.io, init.gpa, init.arena.allocator(), init.environ_map, cfg, reg, task, &.{});
 }
 
 fn runCodingBackendCtx(
@@ -4069,6 +4071,7 @@ fn runCodingBackendCtx(
     cfg: *const config.Config,
     reg: *const registry.Registry,
     task: []const u8,
+    images: []const types.ImagePart,
 ) ![]const u8 {
     const name = acp_vendor.Name.parse(cfg.agent.backend) orelse return error.BadBackend;
     const cwd = std.process.currentPathAlloc(io, arena) catch "";
@@ -4078,6 +4081,7 @@ fn runCodingBackendCtx(
         .arena = arena,
         .name = name,
         .prompt = task,
+        .images = images,
         .cwd = cwd,
         .timeout_ms = cfg.agent.backend_timeout_ms,
         .acp_argv = cfg.agent.backend_acp_argv,
@@ -15932,8 +15936,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // agent is built, because the agent holds the provider pointer. When the
     // fallback itself cannot take the image (or multimodal is off), the gate
     // further down refuses as before.
+    // A backend run's worker is the vendor CLI, not this provider, so nothing
+    // about the LLM catalog's vision support applies: swapping the provider here
+    // would route the run to a different *model* that is not going to be called,
+    // and PRD 0043 names that explicitly ("do not fall back to a vision LLM
+    // provider. The backend is the worker.").
     var used_fallback: ?[]const u8 = null;
-    if (req.images.len > 0 and cfg.modules.multimodal and !imageAttachmentsSupported(provider.activeModel())) {
+    if (req.images.len > 0 and run_cfg.agent.backend.len == 0 and cfg.modules.multimodal and !imageAttachmentsSupported(provider.activeModel())) {
         if (visionFallbackProvider(cfg, provider.name, if (req.fallback_provider.len > 0) req.fallback_provider else null)) |fb| {
             used_fallback = fb.name;
             provider_copy = fb;
@@ -15996,6 +16005,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     // does. Same module flag as the agent's own image handling, and the 4 MB
     // per-image cap the page promises is enforced here on decoded bytes.
     const had_images = req.images.len > 0;
+    var backend_images: []const types.ImagePart = &.{};
     if (had_images) {
         // A silent drop here is the worst failure mode: the run "succeeds"
         // and the model never sees the image. Tell the user the flag to set
@@ -16009,7 +16019,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         // but not vision: sending image_url blocks to a text-only endpoint
         // (DeepSeek v4-flash) fails with an opaque deserialize 400. Name the
         // model and the config knob, so the failure reads as a choice.
-        if (!imageAttachmentsSupported(provider.activeModel())) {
+        //
+        // Not for a backend run. The vendor CLI is the worker and takes the
+        // image over ACP, so the in-process provider's `image_in` says nothing
+        // about whether this request can be served. Running this gate anyway
+        // 400d a perfectly serviceable backend run whenever the configured LLM
+        // happened to be text-only, which is the default here.
+        if (run_cfg.agent.backend.len == 0 and !imageAttachmentsSupported(provider.activeModel())) {
             const reason = std.fmt.allocPrint(
                 arena,
                 "the selected model {s}/{s} does not declare vision support (the image_in capability); attach the image to a vision-capable model, or add image_in to that model's capabilities in config if it does accept images",
@@ -16031,7 +16047,14 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             }
             imgs.append(arena, .{ .mime = im.mime, .b64 = im.b64 }) catch {};
         }
-        if (imgs.items.len > 0) a.pending_images = imgs.items;
+        if (imgs.items.len > 0) {
+            a.pending_images = imgs.items;
+            // The backend branch below does not go through `a`, so the same
+            // validated list has to reach it by hand. Setting only
+            // `pending_images` is how a backend run used to return 200 with the
+            // child having seen nothing but the text.
+            backend_images = imgs.items;
+        }
     }
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
@@ -16210,7 +16233,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             writeStreamEvent(stream.socket.handle, "status", .{ .message = std.fmt.allocPrint(arena, "Goal loop {s} after {d} turn(s): {s}", .{ @tagName(outcome.verdict), outcome.turns, outcome.reason }) catch "Goal loop finished." });
             break :blk answers.items;
         } else if (run_cfg.agent.backend.len > 0) blk: {
-            const answer = runCodingBackendCtx(io, gpa, arena, environ_map, &run_cfg, &reg, final_task) catch |err| {
+            const answer = runCodingBackendCtx(io, gpa, arena, environ_map, &run_cfg, &reg, final_task, backend_images) catch |err| {
                 const detail = @errorName(err);
                 log.log(.error_, "run failed phase=backend: {s}", .{detail});
                 writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
@@ -16313,7 +16336,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         loop_outcome = outcome;
         break :blk answers.items;
     } else if (run_cfg.agent.backend.len > 0) blk: {
-        const answer = runCodingBackendCtx(io, gpa, arena, environ_map, &run_cfg, &reg, final_task) catch |err| {
+        const answer = runCodingBackendCtx(io, gpa, arena, environ_map, &run_cfg, &reg, final_task, backend_images) catch |err| {
             respondRunError(stream, @errorName(err), "{\"ok\":false,\"error\":\"backend run failed\"}");
             return;
         };
