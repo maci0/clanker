@@ -80,6 +80,18 @@ pub const ProviderKind = enum {
     pub fn fromStr(s: []const u8) ?ProviderKind {
         return std.meta.stringToEnum(ProviderKind, s);
     }
+
+    /// Every accepted `kind` spelling, comma-separated, for the diagnostic
+    /// when a config names one this binary does not know (commonly a stale
+    /// binary reading a config written for a newer one).
+    pub const known_names: []const u8 = blk: {
+        var out: []const u8 = "";
+        for (std.meta.fieldNames(ProviderKind), 0..) |field_name, i| {
+            if (i > 0) out = out ++ ", ";
+            out = out ++ field_name;
+        }
+        break :blk out;
+    };
 };
 
 /// Reasoning effort for models that expose it on the OpenAI-compatible wire
@@ -1747,7 +1759,16 @@ pub const Config = struct {
             }
         }
         if (obj.get("kind")) |k| {
-            p.kind = ProviderKind.fromStr(try jsonStr(k, "kind")) orelse return error.UnknownProviderKind;
+            const kind_str = try jsonStr(k, "kind");
+            p.kind = ProviderKind.fromStr(kind_str) orelse {
+                // The generic load-failure line promises "the setting named
+                // by the preceding diagnostic", so name it: which provider,
+                // which spelling, and what this binary accepts. The classic
+                // way to hit this is a stale binary reading a config.toml
+                // written for a newer one.
+                log.log(.error_, "provider '{s}': unknown kind \"{s}\" (this binary accepts: {s})", .{ name, kind_str, ProviderKind.known_names });
+                return error.UnknownProviderKind;
+            };
         }
         if (obj.get("project")) |k| {
             p.project = try jsonStr(k, "project");
@@ -4225,6 +4246,37 @@ test "legacy flat provider fields are rejected with a pointer to the fix" {
         error.ProviderLegacyModelFields,
         Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
+}
+
+test "an unknown provider kind is rejected at load" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // The classic occurrence: a stale binary reading a config.toml that names
+    // a kind added after it was built. It must fail loudly with the provider
+    // and the spelling named, not fall back to a guessed wire format.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "p"
+        \\providers = { p = { base_url = "https://example.test", kind = "flux_capacitor" } }
+        \\models = { "p/m" = { provider = "p" } }
+        ,
+    });
+    try std.testing.expectError(
+        error.UnknownProviderKind,
+        Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
+    );
+    // The diagnostic's list of accepted spellings is generated from the enum,
+    // so it can never drift from what fromStr accepts.
+    try std.testing.expect(std.mem.find(u8, ProviderKind.known_names, "openai_compat") != null);
+    try std.testing.expect(std.mem.find(u8, ProviderKind.known_names, "claude") != null);
+    try std.testing.expect(ProviderKind.fromStr("flux_capacitor") == null);
 }
 
 test "a single model needs no default_model" {

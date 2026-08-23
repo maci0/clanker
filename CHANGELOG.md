@@ -11,6 +11,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- An unknown provider `kind` in `config.toml` now fails with a diagnostic
+  naming the provider, the offending spelling, and every kind the binary
+  accepts. It used to emit only the generic "configuration validation failed
+  (UnknownProviderKind); inspect the setting named by the preceding
+  diagnostic" line, with no preceding diagnostic to inspect — most
+  misleading when a stale binary reads a config written for a newer one.
 - The improve loop's tool-descriptor gate now covers every configured
   in-tree `tools_dir` entry instead of only the hardcoded `tools/manifests`.
   A descriptor staged in a second in-tree directory used to reach a promoted
