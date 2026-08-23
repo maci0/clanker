@@ -157,7 +157,7 @@ fn update(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 const status_usage: common.StatusUsage = .{
     .example = "docs/adrs/<name>.md superseded \"Superseded by ADR 0021.\"",
     .path_arg = "an ADR path",
-    .status_arg = "a status: proposed, accepted, superseded or deprecated",
+    .status_arg = "a status: accepted, superseded or deprecated",
     .index_warning = "\nThe inventory line was not updated (the entry is missing or the index\nchanged concurrently). Set its status by hand in docs/adrs/README.md so\nthe index does not disagree with the record.\n",
 };
 

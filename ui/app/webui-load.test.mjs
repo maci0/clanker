@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -182,6 +182,34 @@ test("every named static import resolves to an export of its module", function (
     }
   }
   assert.ok(checked >= 20, `static import resolution covered ${checked} imported names`);
+});
+
+test("every relative dynamic import() resolves to a shipped module file", function () {
+  // Dynamic imports are invisible to the static-resolution check above, and
+  // two of them shipped broken: runs.js asked for "./lib/graph.js" from
+  // features/, which resolves beside runs.js (features/lib/graph.js, 404) so
+  // no run graph ever drew, and system.js dynamically imported
+  // "./core/ui.js" for a confirm dialog it already imported statically. Both
+  // were silent until clicked: a lazy chunk 404 only reaches the console and
+  // the view's error panel. Pin the paths, not just the exports.
+  const dirs = ["core", "lib", "features"];
+  let checked = 0;
+  for (const dir of dirs) {
+    const base = join(here, dir);
+    for (const entry of readdirSync(base)) {
+      if (!entry.endsWith(".js")) continue;
+      const src = readFileSync(join(base, entry), "utf8");
+      for (const mm of src.matchAll(/import\(\s*["'](\.\.?\/[^"']+)["']\s*\)/g)) {
+        const spec = mm[1];
+        assert.ok(
+          existsSync(join(base, spec)),
+          `${dir}/${entry} dynamic import("${spec}") resolves to no shipped module file`
+        );
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked >= 1, `dynamic import resolution covered ${checked} specifiers`);
 });
 
 test("shared UI helpers are called only where they are imported or defined", function () {

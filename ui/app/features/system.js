@@ -229,9 +229,7 @@ function bindMcpServers() {
   function removeServer() {
     var name = f("mcp-edit-name").value.trim();
     if (!name) return;
-    import("./core/ui.js").then(function (mod) {
-      return mod.uiConfirm("Remove MCP server " + name + " from config.local.toml?", { danger: true, confirmLabel: "Remove" });
-    }).then(function (yes) {
+    uiConfirm("Remove MCP server " + name + " from config.local.toml?", { danger: true, confirmLabel: "Remove" }).then(function (yes) {
       if (!yes) return;
       var header = "mcp_servers." + (/^[A-Za-z0-9_-]+$/.test(name) ? name : tomlStr(name));
       fetch("/api/config/table/remove", {

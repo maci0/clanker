@@ -45,9 +45,10 @@ Everything below is detail.
 
 | Status | Meaning |
 |---|---|
-| **Shipped** | Code is the source of truth; PRD tracks behavior + known drift |
-| **In progress** | Partially built; Status names what is live vs open |
 | **Draft** | Not built; Design must settle blockers + Implementation phases |
+| **In progress** | Partially built; Status names what is live vs open |
+| **Partial** | Some surfaces shipped, the rest still open; Notes names them |
+| **Shipped** | Code is the source of truth; PRD tracks behavior + known drift |
 
 A Draft is not "planned properly" until: Dependencies are named, blocking
 open questions are decided in Design (not parked under Open questions),

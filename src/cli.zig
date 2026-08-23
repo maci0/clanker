@@ -10573,16 +10573,15 @@ fn webuiAssetTag(
 /// untagged URL while the head preloaded the tagged one. Those browsers
 /// therefore fetched the three vendor modules twice (~6.9 KB gz of wasted
 /// preload) and never saw the cache-bust tag that makes a rebuild land.
-fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u8) ![]const u8 {
+fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u8, map_json: []const u8) ![]const u8 {
     const needle = "/webui/";
     const already = "/webui/~";
     const replacement = try std.fmt.allocPrint(arena, "/webui/~{s}/", .{tag});
-    var map_buf: [1024]u8 = undefined;
     const map = try std.fmt.allocPrint(
         arena,
         \\<script type="importmap">{s}</script>
     ,
-        .{try webuiImportMapJson(&map_buf, tag)},
+        .{map_json},
     );
 
     var out: std.ArrayList(u8) = .empty;
@@ -10633,6 +10632,31 @@ fn withWebuiCacheUrls(arena: std.mem.Allocator, html: []const u8, tag: []const u
 fn webuiAssetCacheControl(untagged: []const u8) []const u8 {
     if (request_webui_tagged) return "public, max-age=31536000, immutable";
     return untagged;
+}
+
+/// The document CSP gains the SHA-256 hash of the injected import-map JSON.
+///
+/// An inline `<script type="importmap">` is a script as far as
+/// `script-src 'self'` is concerned: without its hash in the policy Chromium
+/// blocks it (a console error on every page load), the map never registers,
+/// and every absolute `/webui/` specifier fetches the untagged URL — a second
+/// copy of each vendored module beside the preloaded tagged one, and for the
+/// arena3d plugin's `features/arena.js` import two module instances whose
+/// `lastMove` state diverge. The hash rides `handleWebui`, which is where the
+/// tag (and so the exact map bytes) is already known; when no tag could be
+/// computed nothing is injected and the static policy stands.
+fn webuiDocumentCsp(buf: []u8, map_json: []const u8) []const u8 {
+    const anchor = "script-src 'self'";
+    const at = std.mem.find(u8, webui_csp, anchor) orelse return webui_csp;
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(map_json, &digest, .{});
+    var b64_buf: [std.base64.standard.Encoder.calcSize(digest.len)]u8 = undefined;
+    const b64 = std.base64.standard.Encoder.encode(&b64_buf, &digest);
+    return std.fmt.bufPrint(
+        buf,
+        "{s} 'sha256-{s}'{s}",
+        .{ webui_csp[0 .. at + anchor.len], b64, webui_csp[at + anchor.len ..] },
+    ) catch webui_csp;
 }
 
 /// The page's stylesheet and script. Same tool, same sandbox, same size guard
@@ -10692,11 +10716,19 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
     const arena = arena_state.allocator();
 
     const body = renderWebuiCached(io, gpa, arena, cfg, environ_map, "/", &render_page, stream) orelse return;
-    const tagged = if (webuiAssetTag(io, gpa, cfg)) |tag|
-        withWebuiCacheUrls(arena, body, tag) catch body
-    else
-        body;
-    respondHtmlGz(gpa, stream, tagged, accepts_gzip, headers_raw);
+    var csp_buf: [512]u8 = undefined;
+    var csp: []const u8 = webui_csp;
+    var tagged = body;
+    if (webuiAssetTag(io, gpa, cfg)) |tag| {
+        var map_buf: [1024]u8 = undefined;
+        // The same JSON bytes go into the page and into the policy hash, so a
+        // mismatch between the two is unrepresentable.
+        if (webuiImportMapJson(&map_buf, tag)) |map_json| {
+            csp = webuiDocumentCsp(&csp_buf, map_json);
+            tagged = withWebuiCacheUrls(arena, body, tag, map_json) catch body;
+        } else |_| {}
+    }
+    respondHtmlGz(gpa, stream, tagged, accepts_gzip, headers_raw, csp);
 }
 
 /// Import map for first-party `/webui/...` specifiers. Keys are the untagged
@@ -16451,7 +16483,7 @@ const webui_csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsa
 /// ETag lets an unchanged reload confirm freshness with a 304 instead of a
 /// full response, while still picking up a rebuild immediately: the hash is
 /// taken from the actual served body, which hot-reload replaces process-wide.
-fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, accepts_gzip: bool, headers_raw: []const u8) void {
+fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []const u8, accepts_gzip: bool, headers_raw: []const u8, csp: []const u8) void {
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
     if (ifNoneMatchHits(headers_raw, etag)) {
@@ -16466,7 +16498,7 @@ fn respondHtmlGz(gpa: std.mem.Allocator, stream: std.Io.net.Stream, body: []cons
     request_status = 200;
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [4096]u8 = undefined;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\n{s}\r\n", .{ out.len, encoding, etag, webui_csp, connHeader() }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nContent-Security-Policy: {s}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-cache\r\n{s}\r\n", .{ out.len, encoding, etag, csp, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
@@ -19374,7 +19406,9 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
         \\<link rel="modulepreload" href="/webui/app.js">
         \\<script type="module" src="/webui/app.js"></script>
     ;
-    const out = try withWebuiCacheUrls(arena, html, "deadbeef");
+    var map_buf: [1024]u8 = undefined;
+    const map_json = try webuiImportMapJson(&map_buf, "deadbeef");
+    const out = try withWebuiCacheUrls(arena, html, "deadbeef", map_json);
     try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.css") != null);
     try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.js") != null);
     // A modulepreload link is rewritten like any other asset URL: if the head
@@ -19402,6 +19436,31 @@ test "webui import map keys do not match an already-tagged URL" {
     // A tagged module URL must not be a prefix hit for any key.
     try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/core/utils.js", "/webui/core/"));
     try std.testing.expect(!std.mem.startsWith(u8, "/webui/~deadbeef/app.js", "/webui/app.js"));
+}
+
+test "the document CSP carries the import map's own hash" {
+    // The map is an inline <script type="importmap">, so `script-src 'self'`
+    // blocks it unless its exact bytes are pinned in the policy: without the
+    // hash Chromium refuses it on every load (console error), the map never
+    // registers, and every absolute /webui/ specifier fetches the untagged
+    // URL — the vendor trio twice, and a second features/arena.js instance
+    // whose state diverges from the one app.js holds. The hash is over the
+    // JSON between the tags, which is what the browser hashes.
+    var buf: [1024]u8 = undefined;
+    const map_json = try webuiImportMapJson(&buf, "deadbeef");
+    var csp_buf: [512]u8 = undefined;
+    const csp = webuiDocumentCsp(&csp_buf, map_json);
+
+    var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(map_json, &digest, .{});
+    var b64_buf: [64]u8 = undefined;
+    const b64 = std.base64.standard.Encoder.encode(&b64_buf, &digest);
+    const want = try std.fmt.allocPrint(std.testing.allocator, "'sha256-{s}'", .{b64});
+    defer std.testing.allocator.free(want);
+    try std.testing.expect(std.mem.find(u8, csp, want) != null);
+    // The rest of the policy survives untouched around the inserted hash.
+    try std.testing.expect(std.mem.startsWith(u8, csp, "default-src 'none'; script-src 'self' 'sha256-"));
+    try std.testing.expect(std.mem.find(u8, csp, "; style-src 'self' 'unsafe-inline';") != null);
 }
 
 test "the cache-bust tag hashes every servable vendor file" {

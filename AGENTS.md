@@ -90,6 +90,28 @@ A proposal/plan response that comes back with empty `content` (a thinking model 
 
 `src/gate/checks.zig` is writable so loop can strengthen its gates. Substring needle still matches if real work skipped by early `return .{ .ok = true }` above it as dead code; `checksZigShapeBroken` in `src/improve/engine.zig` refuses that shape (same as `cmdEvalShapeBroken` for `cmdEval`). `gate_invariants` also pins module bindings (`@import("../gate/checks.zig")` in `engine.zig`, `@import("gate/checks.zig")` in `cli.zig`): call-site needles match shadow module under different name, and `checks.zig` is only file `checksZigShapeBroken` inspects, so import line tells a rewire to `checks2.zig`-style stubs would otherwise leave.
 
+## Docs: PRD / RFC / ADR series
+
+Three numbered series under `docs/`, one directory per series; the registry is
+each series' `README.md` and the required shape its `TEMPLATE.md`. Numbers are
+4-digit zero-padded and never reused; records are cited by number in prose, so
+a rename keeps the number.
+
+| Series | Lives in | Meaning | Tool |
+|---|---|---|---|
+| RFC | `docs/rfcs/NNNN-slug.md` | a decision still **open**: options, implications, recommendation + confidence | `clanker rfc` |
+| ADR | `docs/adrs/NNNN-slug.md` | a decision **made**: constraint, choice, cost | `clanker adr` |
+| PRD | `docs/prds/NNNN-slug.md` | what a feature is **meant to be** | `clanker prd` |
+
+Workflow: research note (`clanker research`) → RFC (≥2 candidates + status
+quo + one out-of-the-box option + recommendation, confidence 0-10) → ADR once
+decided (quote the RFC's recommendation under Decision), then close the RFC
+with `clanker rfc status <path> decided`. PRDs are independent product intent.
+Never write a record by hand: the tools allocate the next number, render
+`TEMPLATE.md`, and maintain the README registries. Cite by number (`ADR 0031`,
+`RFC 0001`, `PRD 0007`). ADR statuses are accepted / superseded / deprecated
+— a decision still being made is an RFC, not a proposed ADR.
+
 ## Living document
 
 This file and `docs/prompts/*-review.md` are living docs. When a turn surfaces a caveat/quirk/failure worth remembering (build gotcha, sandbox edge, non-obvious gate firing), fold it into whichever file it belongs to before turn ends. One slice per turn: smallest true addition, not rewrite. When fewer words say the same thing, tighten instead of appending: trim to what still holds.
