@@ -1991,6 +1991,15 @@ pub fn ckKernel(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const reg = h.sandbox.subprocs orelse subprocess.processRegistry(h.sandbox.gpa, h.sandbox.io) catch
         return h.writeResult(bytes, kernel_mod.errorJson(arena, "subprocess registry unavailable"));
 
+    // The cell's environment is the guest's own filtered set (execEnvironment),
+    // the same one ck_exec and ck_job give their children: a cell must not
+    // hold a credential ck_env denies the guest that started it. It also has
+    // to be *stated*: spawning with no map at all left the environment to the
+    // Io implementation, which gave cells two variables and no HOME.
+    var child_env = execEnvironment(h.sandbox.gpa, h.sandbox) catch
+        return h.writeResult(bytes, kernel_mod.errorJson(arena, "out of memory"));
+    defer child_env.deinit();
+
     const out = kernel_mod.eval(.{
         .io = h.sandbox.io,
         .gpa = h.sandbox.gpa,
@@ -1999,6 +2008,7 @@ pub fn ckKernel(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .session_id = sid,
         .kind = kind,
         .cwd = .{ .dir = kdir },
+        .environ_map = &child_env,
         .cell = cell,
         .reset = reset,
         .pip = pip,
@@ -2137,8 +2147,15 @@ fn runPythonCellSandboxed(sb: *const Sandbox, arena: std.mem.Allocator, cfg: *co
 }
 
 fn runPythonCellUnsandboxed(sb: *const Sandbox, arena: std.mem.Allocator, cell: []const u8) ![]const u8 {
+    // Same rule as ck_exec, ck_job and the kernel supervisor, even though this
+    // function has no production caller today (see the unsandboxed-kernel
+    // record): a spawn here that left the environment to the Io would be the
+    // defect ready-made for whoever wires it up.
+    var child_env = try execEnvironment(sb.gpa, sb);
+    defer child_env.deinit();
     var child = std.process.spawn(sb.io, .{
         .argv = &.{ "python3", "-c", python_cell_harness },
+        .environ_map = &child_env,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,

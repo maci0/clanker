@@ -149,3 +149,31 @@ exposure that no longer exists.
   under Known issues; that entry is what this record was opened from.
 - `src/sandbox/kernel.zig` — the unsandboxed supervisor that ships.
 - `src/sandbox/host.zig` — `ckKernel` (production) and `runPythonCell` (not).
+## Update 2026-08-23 — still open; two slices off it have landed
+
+This record stays **Open**. The kernel is still an unsandboxed host `python3`
+with the harness's filesystem and network reach, and none of the three real
+fixes above has been done. Two things that were part of the exposure have been
+split off and fixed, and neither should be read as progress toward
+confinement:
+
+- **The documents this record says lie now do not.** The correction of
+  2026-08-23 reached `src/config.zig`, ADR 0010 and PRD 0016 but missed
+  `tools/manifests/kernel.tool.json` (both `description` and
+  `llm_description`, so the *model* was still being told cells run
+  WASI-sandboxed), `config.toml`'s `[kernel]` comment, and
+  `docs/configuration.md`. All three now state the real posture.
+- **A cell's environment is now the guest's own `env_allow` set.** `eval`
+  spawned with no `environ_map`, so it was whatever the `Io` carried -- two
+  variables and no `HOME` in practice, and every harness key on an `Io` that
+  inherits. `ckKernel` now passes `execEnvironment`, the same filter `ck_exec`
+  and `ck_job` use. Own record:
+  [the supervisor's environment was unspecified](2026-08-23-kernel-supervisor-environment-is-unspecified.md).
+
+What that leaves is exactly the substance of this record: a cell has arbitrary
+code execution in a process with the harness's ambient filesystem and network
+access, and `exec_allow` reaches neither `%%bash` nor `import subprocess`. The
+credential surface is narrower; the confinement surface is unchanged.
+
+The posture test still asserts the exposure is real, and confining this path
+still breaks it on purpose.

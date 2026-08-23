@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The kernel supervisor's environment was whatever the Io carried, not a policy](bugs/2026-08-23-kernel-supervisor-environment-is-unspecified.md) — Resolved
+
 - [Every kernel cell was held for the full timeout_ms before its reply was returned](bugs/2026-08-23-kernel-timeout-watchdog-holds-every-reply.md) — Resolved
 
 - [corrupt TUI/CLI plugin state silently disabled every plugin](bugs/2026-08-23-corrupt-plugin-state-silently-disables.md) — Resolved

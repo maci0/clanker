@@ -239,6 +239,15 @@ pub const EvalOpts = struct {
     session_id: []const u8,
     kind: []const u8 = "python",
     cwd: std.process.Child.Cwd,
+    /// The environment the supervisor is spawned with. Deliberately required
+    /// and deliberately not optional: `std.process.spawn` reads a null
+    /// `environ_map` as "whatever the `Io` implementation carries", and this
+    /// call site left it null, so a cell's environment was an accident of
+    /// which `Io` had created the process rather than a policy -- observed
+    /// live as two variables and no `HOME`, while `ck_exec` and `ck_job` hand
+    /// their children `host.execEnvironment`'s filtered map. A caller must now
+    /// say what the cell may see, and an empty map is a legitimate answer.
+    environ_map: *const std.process.Environ.Map,
     cell: []const u8 = "",
     reset: bool = false,
     pip: ?[]const u8 = null,
@@ -333,6 +342,12 @@ fn ensureSupervisor(opts: EvalOpts) EvalError!void {
     var child = std.process.spawn(opts.io, .{
         .argv = &.{ opts.python, "supervisor.py" },
         .cwd = opts.cwd,
+        // Explicit, never inherited, and never left to the Io: the same rule
+        // ck_exec and ck_job follow. A cell must not hold a credential the
+        // guest itself is denied through ck_env, and it must not have to
+        // guess whether it has a PATH. `argv[0]` is resolved from the parent
+        // environment either way, so this cannot stop python3 being found.
+        .environ_map = opts.environ_map,
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .ignore,
@@ -542,6 +557,19 @@ fn testIo() std.Io.Threaded {
     return std.Io.Threaded.init(std.testing.allocator, .{});
 }
 
+/// The environment the tests hand a supervisor. `EvalOpts.environ_map` has no
+/// default, so a test has to decide as well: `PATH` from the real environment
+/// so a cell's own children still resolve, and nothing else, so no assertion
+/// can pass on a variable the harness happened to export.
+fn testEnv(gpa: std.mem.Allocator) !std.process.Environ.Map {
+    var env = std.process.Environ.Map.init(gpa);
+    errdefer env.deinit();
+    // Straight to libc: this std has no `std.posix.getenv`, and a test has no
+    // `std.process.Init` to take an environment from.
+    if (std.c.getenv("PATH")) |p| try env.put("PATH", std.mem.span(p));
+    return env;
+}
+
 test "cleanupSessionDirs removes the ending session and aged orphans, keeps live ones" {
     var threaded = testIo();
     defer threaded.deinit();
@@ -596,6 +624,8 @@ test "disabled gate refuses without spawning" {
     defer reg.deinit();
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
+    var env = try testEnv(std.testing.allocator);
+    defer env.deinit();
     try std.testing.expectError(error.KernelDisabled, eval(.{
         .io = threaded.io(),
         .gpa = std.testing.allocator,
@@ -603,6 +633,7 @@ test "disabled gate refuses without spawning" {
         .reg = &reg,
         .session_id = "off-1",
         .cwd = .inherit,
+        .environ_map = &env,
         .cell = "1 + 1",
         .enabled = false,
     }));
@@ -638,6 +669,8 @@ test "every kernel reply states that this path is unsandboxed, and it really is"
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    var env = try testEnv(std.testing.allocator);
+    defer env.deinit();
     const base = EvalOpts{
         .io = io,
         .gpa = std.testing.allocator,
@@ -645,6 +678,7 @@ test "every kernel reply states that this path is unsandboxed, and it really is"
         .reg = &reg,
         .session_id = "posture",
         .cwd = .{ .dir = tmp.dir },
+        .environ_map = &env,
         .timeout_ms = 15_000,
     };
     defer reg.terminateSession("posture");
@@ -695,6 +729,68 @@ test "every kernel reply states that this path is unsandboxed, and it really is"
     try std.testing.expectEqualStrings("not json", junk);
 }
 
+test "a cell's environment is exactly the one the caller named" {
+    // `eval` used to spawn the supervisor with no `environ_map` at all, which
+    // `std.process.spawn` reads as "whatever the Io implementation carries".
+    // So a cell's environment was an accident of which Io had created the
+    // process rather than a policy: live, `len(os.environ)` was 2 and `HOME`
+    // was absent, while every other child a guest starts (`ck_exec`,
+    // `ck_job`) gets `host.execEnvironment`'s filtered map.
+    //
+    // The assertion is on the *whole* set, not on one name, because both
+    // failure directions matter: a variable the caller did not name is a leak
+    // (an exported API key would reach a cell that `ck_env` denies), and a
+    // variable it did name going missing is the bug that was observed.
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("KERNEL_ENV_PROBE", "named-by-the-caller");
+    try env.put("HOME", "/kernel-probe-home");
+
+    defer reg.terminateSession("env");
+    const cell = EvalOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "env",
+        .cwd = .{ .dir = tmp.dir },
+        .environ_map = &env,
+        .timeout_ms = 15_000,
+        // Named variables carry the caller's values, and `PATH` -- which the
+        // harness running this test certainly has, and which this map does
+        // not name -- must not be there. Asserting on three answers rather
+        // than on `sorted(os.environ)` because the platform adds its own
+        // (macOS contributes `LC_CTYPE` and `__CF_USER_TEXT_ENCODING`), and
+        // those two were the entire environment a cell used to get.
+        .cell =
+        \\import os
+        \\[os.environ.get('KERNEL_ENV_PROBE'), os.environ.get('HOME'), 'PATH' in os.environ]
+        ,
+    };
+    const parsed = parseResponse(arena, eval(cell) catch |err| switch (err) {
+        error.Python3NotFound => return error.SkipZigTest,
+        else => return err,
+    }) catch |err| return err;
+    try std.testing.expect(parsed.ok);
+    try std.testing.expectEqualStrings(
+        "['named-by-the-caller', '/kernel-probe-home', False]",
+        parsed.result.?,
+    );
+}
+
 test "a finished cell returns at once instead of waiting out timeout_ms" {
     // `timeout_ms` is a ceiling, not a schedule. The watchdog used to
     // `io.sleep` the whole budget and only then read the flag saying the round
@@ -719,6 +815,8 @@ test "a finished cell returns at once instead of waiting out timeout_ms" {
     const arena = arena_state.allocator();
 
     const budget_ms: u32 = 8_000;
+    var env = try testEnv(std.testing.allocator);
+    defer env.deinit();
     const base = EvalOpts{
         .io = io,
         .gpa = std.testing.allocator,
@@ -726,6 +824,7 @@ test "a finished cell returns at once instead of waiting out timeout_ms" {
         .reg = &reg,
         .session_id = "prompt",
         .cwd = .{ .dir = tmp.dir },
+        .environ_map = &env,
         .timeout_ms = budget_ms,
     };
     defer reg.terminateSession("prompt");
@@ -777,6 +876,8 @@ test "descriptor-level cell output is captured, not spliced into the reply" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    var env = try testEnv(std.testing.allocator);
+    defer env.deinit();
     const base = EvalOpts{
         .io = io,
         .gpa = std.testing.allocator,
@@ -784,6 +885,7 @@ test "descriptor-level cell output is captured, not spliced into the reply" {
         .reg = &reg,
         .session_id = "fd1",
         .cwd = .{ .dir = tmp.dir },
+        .environ_map = &env,
         .timeout_ms = 15_000,
     };
     defer reg.terminateSession("fd1");
@@ -842,6 +944,8 @@ test "python cells persist, reset drops the name, persist works again" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    var env = try testEnv(std.testing.allocator);
+    defer env.deinit();
     const base = EvalOpts{
         .io = io,
         .gpa = std.testing.allocator,
@@ -849,6 +953,7 @@ test "python cells persist, reset drops the name, persist works again" {
         .reg = &reg,
         .session_id = "k1",
         .cwd = .{ .dir = tmp.dir },
+        .environ_map = &env,
         .timeout_ms = 15_000,
     };
 
