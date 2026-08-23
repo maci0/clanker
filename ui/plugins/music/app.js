@@ -445,7 +445,11 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
       pick.className = "music-track-name";
       pick.textContent = t.title;
       pick.addEventListener("click", function () { load(i, true); });
-      var drop = btn("×", "Remove " + t.title, function () { removeAt(i); });
+      // A name from the host's icon grid, not a glyph: api.icon returns an
+      // empty <span> for anything it does not know, so "×" drew a blank
+      // button. The dock's own controls were migrated to the grid; this row
+      // was missed.
+      var drop = btn("close", "Remove " + t.title, function () { removeAt(i); });
       row.appendChild(pick);
       row.appendChild(drop);
       list.appendChild(row);

@@ -2309,6 +2309,11 @@ function fileMentionQuery() {
   if (q.indexOf(" ") !== -1 || q.indexOf("\n") !== -1) return null;
   return { at: at, q: q };
 }
+/* Every keystroke after an `@` starts a listing. The replies are not ordered,
+   so a slow listing for `@sr` could land after the one for `@src/` and paint
+   the older directory over the newer query. Each request takes a ticket and
+   only the newest one is allowed to draw. */
+var fileMentionSeq = 0;
 function renderFileMentionList() {
   var mq = fileMentionQuery();
   if (!mq) return false;
@@ -2316,7 +2321,9 @@ function renderFileMentionList() {
   var slash = mq.q.lastIndexOf("/");
   if (slash !== -1) dir = mq.q.slice(0, slash);
   var needle = (slash === -1 ? mq.q : mq.q.slice(slash + 1)).toLowerCase();
+  var seq = ++fileMentionSeq;
   fetch("/api/files?path=" + encodeURIComponent(dir || ".")).then(function (r) { return r.json(); }).then(function (data) {
+    if (seq !== fileMentionSeq) return;
     var names = (data && (data.entries || data.files || data.names)) || [];
     var matches = [];
     names.forEach(function (n) {
@@ -2327,12 +2334,14 @@ function renderFileMentionList() {
       matches.push(full);
     });
     matches = matches.slice(0, 8);
-    if (!matches.length) { el.promptList.hidden = true; return; }
+    if (!matches.length) { hidePromptList(); return; }
     el.promptList.textContent = "";
     matches.forEach(function (path, i) {
       var li = document.createElement("li");
       li.className = "palette-item";
+      li.id = "prompt-item-" + i;
       li.setAttribute("role", "option");
+      li.setAttribute("aria-selected", String(i === 0));
       li.textContent = path;
       li.addEventListener("mousedown", function (e) {
         e.preventDefault();
@@ -2341,14 +2350,21 @@ function renderFileMentionList() {
         var after = el.task.value.slice(mq.at + 1 + mq.q.length);
         el.task.value = before + after;
         renderFileChips();
-        el.promptList.hidden = true;
+        hidePromptList();
         el.task.focus();
       });
       el.promptList.appendChild(li);
-      if (i === 0) li.setAttribute("aria-selected", "true");
     });
     el.promptList.hidden = false;
-  }).catch(function () {});
+    // The list is a listbox the composer owns. Opening it silently left
+    // `aria-expanded="false"` on #task, so a screen reader was never told the
+    // popup was there at all; every show and hide goes through the same pair
+    // of states now, exactly as the / and # lists do.
+    el.task.setAttribute("aria-expanded", "true");
+    el.task.setAttribute("aria-activedescendant", "prompt-item-0");
+    // A failed listing closes the list rather than leaving a stale one open
+    // under an `aria-expanded` that no longer describes the page.
+  }).catch(function () { if (seq === fileMentionSeq) hidePromptList(); });
   return true;
 }
 
@@ -5358,6 +5374,8 @@ try {
 // # prompt for knowledge — typing # shows collections to inject context
 var kbMentionActive = false;
 var kbMentionIndex = 0;
+// Same ticket as the @-mention list: only the newest listing may draw.
+var kbMentionSeq = 0;
 function kbMentionQuery() {
   var v = el.task.value;
   var hashAt = v.lastIndexOf("#");
@@ -5369,11 +5387,13 @@ function kbMentionQuery() {
 }
 function renderKbMentionList() {
   var mq = kbMentionQuery();
-  if (!mq) { kbMentionActive = false; el.promptList.hidden = true; return; }
+  if (!mq) { hidePromptList(); return; }
+  var seq = ++kbMentionSeq;
   fetch("/api/knowledge").then(function(r){ return r.json(); }).then(function(data){
+    if (seq !== kbMentionSeq) return;
     var cols = (data && data.collections) || [];
     var matches = cols.filter(function(c){ return c.title.toLowerCase().indexOf(mq.q) !== -1 || c.id.toLowerCase().indexOf(mq.q) !== -1; }).slice(0, 6);
-    if (!matches.length) { el.promptList.hidden = true; kbMentionActive = false; return; }
+    if (!matches.length) { hidePromptList(); return; }
     el.promptList.textContent = "";
     kbMentionActive = true;
     kbMentionIndex = Math.min(kbMentionIndex, matches.length - 1);
@@ -5389,8 +5409,7 @@ function renderKbMentionList() {
         var before = el.task.value.slice(0, mq.at);
         var after = el.task.value.slice(mq.at + 1 + mq.q.length);
         el.task.value = before + "#" + c.title + " " + after;
-        kbMentionActive = false;
-        el.promptList.hidden = true;
+        hidePromptList();
         el.task.focus();
         var hint = document.getElementById("knowledge-hint");
         if (hint) {
@@ -5403,7 +5422,7 @@ function renderKbMentionList() {
     el.promptList.hidden = false;
     el.task.setAttribute("aria-expanded","true");
     el.task.setAttribute("aria-activedescendant","prompt-item-"+kbMentionIndex);
-  }).catch(function(){});
+  }).catch(function(){ if (seq === kbMentionSeq) hidePromptList(); });
 }
 // Integrated input handler so #knowledge and / prompts + Delete share one promptList cleanly
 function integratedTaskInputHandler(){

@@ -486,6 +486,34 @@ pub fn httpGetHdr(url: []const u8, headers_json: []const u8) HostError![]const u
     return hostResult(rc);
 }
 
+/// What the server said when it refused: an HTTP status and as much of the
+/// error body as the host kept (2 KiB).
+pub const HttpFailure = struct { status: u16, body: []const u8 };
+
+/// The status behind the *immediately preceding* `error.NetworkError` from a
+/// `http*` call, or null when there was no status (DNS failure, refused
+/// connection, timeout -- all of which report the same error).
+///
+/// `ck_http` collapses every >= 400 response into `error.NetworkError`, so on
+/// its own a 404 is indistinguishable from an unreachable host. The host parks
+/// a `{"ck_http_status":N,"body":"..."}` envelope in the result slot on the
+/// status path only, and this reads it. Call it before any other host call: the
+/// result slot is shared and nothing clears it.
+pub fn httpLastFailure(gpa: std.mem.Allocator) ?HttpFailure {
+    const raw = readResult() orelse return null;
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, gpa, raw, .{}) catch return null;
+    if (parsed != .object) return null;
+    const status = switch (parsed.object.get("ck_http_status") orelse return null) {
+        .integer => |n| if (n >= 0 and n <= 599) @as(u16, @intCast(n)) else return null,
+        else => return null,
+    };
+    const body = switch (parsed.object.get("body") orelse std.json.Value{ .string = "" }) {
+        .string => |s| s,
+        else => "",
+    };
+    return .{ .status = status, .body = body };
+}
+
 pub fn httpPost(url: []const u8, body: []const u8) HostError![]const u8 {
     const u = sliceToMem(url);
     const b = sliceToMem(body);
