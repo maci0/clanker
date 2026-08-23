@@ -612,7 +612,7 @@ changes as tools are added.
 | `zig_test` | none | Run one Zig test file, optionally with `--test-filter` |
 | `config` | `config.toml` via direct file read for the whole-dump path; structured fields via ck_harness_config | Dump the effective config: providers, models, modules, budgets |
 | `roadmap` | `docs/` | Read the roadmap and list the planned (unchecked) items |
-| `improve_history` | `state/` | Review the self-improve history: successes, failures, summaries. Conversation search is `session_search` |
+| `improve_history` | none; the ledger arrives over `ck_improve_history` | Review the self-improve history: successes, failures, summaries. Conversation search is `session_search` |
 | `learnings` | `state/learnings.md` | Read the persisted learnings |
 | `note_write` | `state/` | Append a learning to `state/learnings.md`, included in later system prompts |
 | `skills` | `skills/`, `state/skills.json` | List, show, search, or enable/disable markdown skills. Same discovery the system prompt uses. `GET /api/skills` and `POST /api/skills` relay. Prompt inlines title+description |

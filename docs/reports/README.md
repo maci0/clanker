@@ -252,7 +252,7 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:investigation:start -->
 - [The two pty e2e tests fail in any git worktree and pass in the main checkout](investigations/2026-08-22-pty-e2e-fails-in-a-worktree.md) — Investigating
 
-- [improve_history is granted a path that is a symlink inside an improve-self worktree](investigations/2026-08-22-improve-history-guest-in-an-improve-worktree.md) — Investigating
+- [improve_history is granted a path that is a symlink inside an improve-self worktree](investigations/2026-08-22-improve-history-guest-in-an-improve-worktree.md) — Resolved
 
 - [Two pty e2e journeys fail on an untouched base: the REPL's vaxis capability queries never arrive](investigations/2026-08-22-pty-e2e-capability-queries-unanswered.md) — Investigating
 
