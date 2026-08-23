@@ -225,6 +225,13 @@ the feature default-on without quotas is not.
 
 ## Known issues
 
+- **(Fixed) `timeout_ms` used to be a schedule rather than a ceiling.** The
+  watchdog in `roundTrip` (src/sandbox/kernel.zig) slept the whole budget and
+  `roundTrip` joins it, so every cell was held for `timeout_ms` -- 10 s by
+  default -- however fast it ran. It now waits on a `std.Io.Event` the reader
+  sets when the round trip ends, under the same deadline, so the SIGTERM path
+  is unchanged and a finished cell returns at once.
+  [Record](../reports/bugs/2026-08-23-kernel-timeout-watchdog-holds-every-reply.md).
 - **JS/Bun supervisor is not started.** The guest returns a clear error.
 - **No loopback bridge.** Cells cannot call host WASM tools mid-eval.
 - **`%pip` runs in the supervisor's interpreter, not a created venv.**
@@ -254,11 +261,16 @@ the feature default-on without quotas is not.
   is a one-shot and cross-cell `__main__` is a checked criterion below, so the
   fix is a resident confined interpreter or OS-level confinement of the
   supervisor, not a re-point.
-- **A cell writing to fd 1 corrupts the reply protocol.** `subprocess.run`
-  without `capture_output`, or `os.write(1, ...)`, interleaves bytes into the
-  supervisor's JSON line and the host reports a parse error for a valid cell.
-  `run_cell`'s `sys.stdout` swap is Python-level and does not cover the
-  descriptor.
+- **(Fixed) A cell writing to fd 1 used to corrupt the reply protocol.**
+  `subprocess.run` without `capture_output`, or `os.write(1, ...)`, interleaved
+  bytes into the supervisor's JSON line and the host reported a parse error for
+  a valid cell. The supervisor now keeps the line protocol on its own
+  descriptor (`os.dup(1)`, non-inheritable per PEP 446) and repoints fd 1 and
+  fd 2 at capture files for the life of the process, draining them into the
+  cell's `stdout`/`stderr`. `run_cell`'s Python-level `sys.stdout` swap stays
+  and still orders a plain `print`; the descriptor drain is appended after it.
+  A child's `stderr` used to be discarded (`.stderr = .ignore`) and is now
+  reported.
   [Record](../reports/bugs/2026-08-23-kernel-cell-stdout-corrupts-supervisor-protocol.md).
 
 ## Failure modes
