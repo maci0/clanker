@@ -70,10 +70,6 @@ fn noteToolError() void {
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
 const max_chat_inbox_preview_bytes: usize = 300;
-/// How much of a tool call's arguments a human is shown when judging it:
-/// the shared budget for the confirm prompt, the TUI card body, and the web
-/// stream's per-call row (card_preview_cap in tui/transcript.zig).
-pub const args_preview_cap: usize = 400;
 /// Recent messages kept verbatim when compacting history or pruning stale
 /// tool results. Compaction walks further back from this window so a
 /// tool_call/result pair is never split.
@@ -3744,17 +3740,17 @@ const ToolWorker = struct {
 /// the question. Truncation backs up to a UTF-8 boundary because the preview
 /// is re-encoded as JSON for the stream event, and a split code point there
 /// is not a smaller preview but a malformed one.
-/// The human-facing confirm preview, capped at `args_preview_cap`; distinct
-/// from `loop_guard.argsPreview` (cap 512), which is the model-facing preview
-/// in the loop-guard warning, deliberately shown larger.
+/// The human-facing confirm preview, capped at `tool_out.args_preview_cap`;
+/// distinct from `loop_guard.argsPreview` (cap 512), which is the
+/// model-facing preview in the loop-guard warning, deliberately shown larger.
 fn confirmArgsPreview(args: []const u8) []const u8 {
-    return utf8.cap(args, args_preview_cap);
+    return utf8.cap(args, tool_out.args_preview_cap);
 }
 
 test confirmArgsPreview {
     try std.testing.expectEqualStrings("short", confirmArgsPreview("short"));
     const long = "x" ** 500;
-    try std.testing.expectEqual(args_preview_cap, confirmArgsPreview(long).len);
+    try std.testing.expectEqual(tool_out.args_preview_cap, confirmArgsPreview(long).len);
     // A multi-byte code point straddling the cap is dropped whole.
     const emoji = ("y" ** 399) ++ "\u{1F600}";
     try std.testing.expectEqualStrings("y" ** 399, confirmArgsPreview(emoji));

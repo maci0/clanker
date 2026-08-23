@@ -80,6 +80,25 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-24-ck-http-hands-guests-no-response-headers.md) — Open
+
+- [gh_read lists and diffs are silently cut to GitHub's default page of 30](bugs/2026-08-24-gh-read-lists-silently-cut-at-thirty.md) — Resolved
+
+- [ck_http drops the status and body of every >= 400 response, so two documented gh_read errors could never fire](bugs/2026-08-24-ck-http-drops-error-status-and-body.md) — Resolved
+
+- [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-24-gh-read-diff-hunks-name-no-file.md) — Resolved
+- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-24-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
+
+- [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-24-plugin-refresh-hook-is-unreachable.md) — Open
+
+- [Every plugin's api.status writes the same sr-only live region, and Health rewrites it about once a second](bugs/2026-08-24-plugin-status-line-is-one-shared-live-region.md) — Open
+
+- [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-24-plugin-tab-arrow-keys-follow-registration-order.md) — Open
+
+- [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-24-board-card-member-avatar-nested-in-the-card-button.md) — Open
+
+- [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-24-webui-task-textarea-combobox-role.md) — Open
+
 - [A reply opening with a heading or a list draws its markdown markers literally](bugs/2026-08-23-turn-arrow-defeats-markdown-on-first-reply-line.md) — Resolved
 
 - [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Open

@@ -316,3 +316,60 @@ good; 1 of 89, 4 of 8 and 1 of 1 are warnings; 5 of 500, 10 of 88 and 50 of 100
 are faults; and the counts are shown regardless of state. Against `main` the
 three warning cases fail, all reading `bad`. Gate: `zig build`,
 `zig build tools`, `zig build test --summary all`.
+
+## Three plugins, three controls that were not doing their job (2026-08-24)
+
+**Mesh's visibility guard read an attribute nobody sets.** `mount` is handed the
+inner `<section>`; the host toggles `hidden` on the enclosing `.view` panel
+(`panel.hidden = !on` in `showView`). So `container.hidden` in
+`ui/plugins/mesh/app.js` was `false` for the life of the tab, and all three
+guards that read it — the 4s `/api/mesh/status` + `/api/mesh/pending` poll, the
+1s pending-countdown redraw, and the live-bus handler — were guards over
+nothing. Opening Mesh once left it polling forever from a view nobody could see,
+which is the standing background poll this surface is not allowed to be, and
+each of those requests is a connection another view's poll wanted. The comment
+above the timers claimed this had been fixed; it had not. It asks the panel now,
+via `container.closest(".view")`, the way `health` and `office` already do and
+say why.
+
+**Music's Remove button drew nothing.** `btn("×", …)` on each playlist row.
+`setGlyph` prefers `api.icon`, the loader always supplies it, and
+`icon()` returns an *empty* `<span>` for a name that is not in `ICON_PATHS` —
+and `×` is a character, not a name. The dock's own controls were migrated to the
+host's icon grid; this row was missed, so every Remove was a blank
+`.music-btn` box. The `aria-label` was there, so a screen reader was fine and a
+sighted user had an unmarked square. It asks for `close` now. Worth noting the
+trap: a test harness that omits `api.icon` takes `setGlyph`'s
+`else b.textContent = name` branch and renders a perfectly convincing `×`, so a
+stub would have hidden this rather than caught it.
+
+**Office's mount threw where storage is blocked.** Line one of `mount` read the
+pre-migration alarm key with a bare `localStorage.getItem`. `api.storage`
+swallows a blocked store; a bare read does not, and it is the property access
+itself that raises `SecurityError` when a browser is set to block site data. So
+an optional preference read replaced the entire view with the plugin error panel
+in a browser where nothing about the office needs storage. Music does the same
+migration read inside a `try`, which is the shape; the office read is in one
+now.
+
+### Verified
+
+`ui/plugins/mesh/mesh.test.mjs` gains a case that reads both halves of the
+contract, so they cannot drift apart again: that the loader hands `mount` the
+`section` and hides the `panel`, that `container.hidden` appears nowhere in the
+plugin, and that all three consumers go through `viewHidden()`. It fails against
+`origin/main`.
+
+`ui/plugins/music/music.test.mjs` gains a cross-file case rather than a
+one-glyph assertion: it parses the key set out of `ui/app/core/icons.js` and
+checks every name music hands `btn`/`setGlyph`, ternaries included, against it.
+Against `origin/main` it reports exactly `[ '×' ]`. This catches the next one
+too.
+
+`ui/plugins/office/office.test.mjs` is new — office had no suite at all — and is
+registered in `build.zig` for the `js-suite-coverage` gate. It pins that the one
+remaining store read is inside `legacyAlarm`'s `try`, plus the rules the view has
+to keep anyway: no `innerHTML`, no `eval`, timers gated on
+`container.closest(".view")`, and no colour literal in `app.css`. The storage
+case fails against `origin/main`; the other three pass there, which is what they
+are for.

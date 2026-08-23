@@ -16,6 +16,7 @@ const lib = @import("lib.zig");
 const graph_listing = @import("graph_listing.zig");
 const cas_lock_record = @import("cas_lock_record.zig");
 const spill_logic = @import("spill_logic.zig");
+const session_id = @import("session_id");
 
 const keep_runs: usize = 200;
 const keep_logs: usize = 20;
@@ -79,7 +80,7 @@ fn removable(state_dir: []const u8, path: []const u8) bool {
         // path that nests further cannot reach the delete.
         const rest = path[spills_prefix.len..];
         const slash = std.mem.findScalar(u8, rest, '/') orelse return false;
-        if (!spill_logic.validSessionId(rest[0..slash])) return false;
+        if (!session_id.validSessionId(rest[0..slash])) return false;
         return spill_logic.isSpillFileName(rest[slash + 1 ..]);
     }
     return false;
@@ -212,7 +213,7 @@ fn collectAgedSpills(a: std.mem.Allocator, state_dir: []const u8, out: *std.Arra
         // Only directories: `fsList` marks them with a trailing slash.
         if (session.len == 0 or session[session.len - 1] != '/') continue;
         session = session[0 .. session.len - 1];
-        if (!spill_logic.validSessionId(session)) continue;
+        if (!session_id.validSessionId(session)) continue;
 
         const dir = std.fmt.allocPrint(a, "{s}/{s}", .{ root, session }) catch continue;
         const listing = lib.fsList(dir) catch continue;

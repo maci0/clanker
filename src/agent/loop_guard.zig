@@ -82,9 +82,9 @@ fn matchesPattern(pattern: []const u8, name: []const u8) bool {
 }
 
 /// How much of a tool call's arguments the loop-guard warning shows the
-/// model. Bigger than the confirm prompt's `args_preview_cap` in
-/// `loop.zig`: the model decides what to change, so it gets more of the
-/// offending arguments than the human needs to approve or deny one call.
+/// model. Bigger than the confirm prompt's `tool_out.args_preview_cap`:
+/// the model decides what to change, so it gets more of the offending
+/// arguments than the human needs to approve or deny one call.
 pub const args_preview_cap: usize = 512;
 
 pub fn argsPreview(arguments: []const u8) []const u8 {
