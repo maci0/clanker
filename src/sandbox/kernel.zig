@@ -93,6 +93,12 @@ pub const Response = struct {
     duration_ms: u32 = 0,
     reset: bool = false,
     err: ?[]const u8 = null,
+    /// Whether the cell ran under a sandbox. Always false on this path, and
+    /// stated rather than assumed: ADR 0010 describes a WASI-confined Python
+    /// kernel, and a caller reading these replies would otherwise have no way
+    /// to tell that it is not the path it got. Defaults true so a reply from
+    /// some future confined backend is not mislabelled by omission.
+    sandboxed: bool = true,
 };
 
 pub fn encodeRequest(arena: std.mem.Allocator, req: Request) ![]u8 {
@@ -153,6 +159,10 @@ pub fn parseResponse(arena: std.mem.Allocator, line: []const u8) !Response {
         .string => |s| s,
         else => null,
     };
+    const sandboxed = switch (obj.get("sandboxed") orelse std.json.Value{ .bool = true }) {
+        .bool => |b| b,
+        else => true,
+    };
     return .{
         .ok = ok,
         .stdout = stdout,
@@ -161,6 +171,7 @@ pub fn parseResponse(arena: std.mem.Allocator, line: []const u8) !Response {
         .duration_ms = duration,
         .reset = reset,
         .err = err,
+        .sandboxed = sandboxed,
     };
 }
 
@@ -202,6 +213,48 @@ pub const EvalError = error{
     std.json.ParseFromValueError || std.json.ParseError(std.json.Scanner) ||
     std.Io.Writer.Error;
 
+/// What every reply from this path carries, because the path has no sandbox.
+///
+/// Deliberately does not say "run scripts/setup-python-wasi.sh to sandbox it",
+/// which is what `runPythonCell` in src/sandbox/host.zig tells an operator.
+/// That advice is false here: the WASI interpreter that script fetches drives
+/// a one-shot cell, and this supervisor exists precisely so `__main__` survives
+/// between cells, so no amount of setup routes this path through it. Pointing
+/// an operator at a script that cannot help would be worse than saying nothing.
+pub const unsandboxed_notice =
+    "cells run in an UNSANDBOXED host python3 process with this process's full " ++
+    "filesystem and network access, and exec_allow is not applied to %%bash or " ++
+    "subprocess; see docs/reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md";
+
+/// Adds the posture fields to a supervisor reply.
+///
+/// A reply that cannot be parsed is returned untouched: this annotation exists
+/// to make a reply more honest, and dropping a real result to add a label to it
+/// would be a poor trade.
+fn annotatePosture(arena: std.mem.Allocator, raw: []u8) EvalError![]u8 {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return raw;
+    const obj = switch (parsed) {
+        .object => |o| o,
+        else => return raw,
+    };
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    for (obj.keys(), obj.values()) |k, v| {
+        // Never let a supervisor reply set its own posture: the supervisor is
+        // the unsandboxed process, so its word on the subject is worthless.
+        if (std.mem.eql(u8, k, "sandboxed") or std.mem.eql(u8, k, "sandbox_warning")) continue;
+        try s.objectField(k);
+        try s.write(v);
+    }
+    try s.objectField("sandboxed");
+    try s.write(false);
+    try s.objectField("sandbox_warning");
+    try s.write(unsandboxed_notice);
+    try s.endObject();
+    return out.toOwnedSlice();
+}
+
 pub fn eval(opts: EvalOpts) EvalError![]u8 {
     if (!opts.enabled) return error.KernelDisabled;
     if (opts.reset) opts.reg.terminate(opts.session_id, opts.kind);
@@ -212,7 +265,10 @@ pub fn eval(opts: EvalOpts) EvalError![]u8 {
         .pip = opts.pip,
         .bash = opts.bash,
     });
-    return roundTrip(opts, line);
+    // Every reply says so: this path has no sandbox, and a caller that cannot
+    // see that has no way to know it is not on the confined path ADR 0010
+    // describes.
+    return annotatePosture(opts.arena, try roundTrip(opts, line));
 }
 
 fn ensureSupervisor(opts: EvalOpts) EvalError!void {
@@ -232,6 +288,20 @@ fn ensureSupervisor(opts: EvalOpts) EvalError!void {
         child.kill(opts.io);
         return err;
     };
+    // Once per supervisor, not once per cell: this is a posture an operator
+    // needs told, and a long session would otherwise bury it in repeats.
+    //
+    // It used to be told to nobody. `runPythonCell` (src/sandbox/host.zig)
+    // carries the deprecation warning ADR 0010 promises, but that function has
+    // no production caller -- `ck_kernel` reaches this file instead -- so the
+    // warning never fired and the only account of the kernel's confinement an
+    // operator had was an ADR describing a path the code does not take.
+    log.log(.warn, "kernel: started an UNSANDBOXED host {s} supervisor for session '{s}' ({s}); {s}", .{
+        opts.python,
+        opts.session_id,
+        opts.kind,
+        unsandboxed_notice,
+    });
 }
 
 fn writeSupervisor(opts: EvalOpts) EvalError!void {
@@ -456,6 +526,93 @@ test "disabled gate refuses without spawning" {
         .enabled = false,
     }));
     try std.testing.expectEqual(@as(usize, 0), reg.count());
+}
+
+test "every kernel reply states that this path is unsandboxed, and it really is" {
+    // ADR 0010 says a configured Python kernel is "bounded by the sandbox, not
+    // by config + confirm alone". That is not true of the path production
+    // takes. `ck_kernel` -> `ckKernel` (src/sandbox/host.zig) -> `eval` here is
+    // a plain host `python3` subprocess; `runPythonCell` and
+    // `runPythonCellSandboxed`, the WASI-confined functions the ADR describes,
+    // have no caller outside their own test.
+    //
+    // This test pins both halves of that, so neither can drift silently:
+    //   1. the reply says `sandboxed:false` and carries the reason, and
+    //   2. the cell really does have ambient access, so (1) is not a label on
+    //      something already confined.
+    //
+    // If someone confines this path, (2) fails and forces the docs, the notice
+    // and this test to be updated together. That is the intent: the assertion
+    // is on the posture, not on a bug.
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const base = EvalOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "posture",
+        .cwd = .{ .dir = tmp.dir },
+        .timeout_ms = 15_000,
+    };
+    defer reg.terminateSession("posture");
+
+    // 1. A plain cell's reply is labelled.
+    var cell = base;
+    cell.cell = "1 + 1";
+    const out = eval(cell) catch |err| switch (err) {
+        error.Python3NotFound => return error.SkipZigTest,
+        else => return err,
+    };
+    try std.testing.expect(std.mem.find(u8, out, "\"sandboxed\":false") != null);
+    try std.testing.expect(std.mem.find(u8, out, "exec_allow is not applied") != null);
+    const parsed = try parseResponse(arena, out);
+    try std.testing.expect(parsed.ok);
+    try std.testing.expect(!parsed.sandboxed);
+    // The label did not cost the result.
+    try std.testing.expectEqualStrings("2", parsed.result.?);
+
+    // 2. The posture is real, not pessimistic labelling. `%%bash` reaches a
+    // shell with no exec_allow consulted, and a plain cell can do the same
+    // through `subprocess` without going near the bash route at all -- which is
+    // why enforcing exec_allow on `%%bash` alone would not be a boundary.
+    var shell = base;
+    shell.bash = "echo AMBIENT-SHELL-REACHED";
+    const shell_out = try eval(shell);
+    try std.testing.expect(std.mem.find(u8, shell_out, "AMBIENT-SHELL-REACHED") != null);
+    try std.testing.expect(std.mem.find(u8, shell_out, "\"sandboxed\":false") != null);
+
+    // `capture_output=True` is not incidental. Without it the child inherits
+    // the supervisor's stdout and its bytes land in the middle of the JSON
+    // line, which the host then cannot parse -- see the separate report on the
+    // stdout-corruption bug. Capturing keeps this assertion about exec reach
+    // rather than about that.
+    var via_python = base;
+    via_python.cell = "import subprocess; subprocess.run(['echo','AMBIENT-VIA-SUBPROCESS'],capture_output=True).stdout";
+    const via_out = try eval(via_python);
+    try std.testing.expect(std.mem.find(u8, via_out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, via_out, "AMBIENT-VIA-SUBPROCESS") != null);
+
+    // A supervisor reply cannot claim to be sandboxed: the unsandboxed process
+    // is not a trustworthy source on its own confinement.
+    const forged = try annotatePosture(arena, try arena.dupe(u8, "{\"ok\":true,\"sandboxed\":true}"));
+    try std.testing.expect(std.mem.find(u8, forged, "\"sandboxed\":false") != null);
+    try std.testing.expect(std.mem.find(u8, forged, "\"sandboxed\":true") == null);
+
+    // An unparseable reply is passed through rather than dropped for a label.
+    const junk = try annotatePosture(arena, try arena.dupe(u8, "not json"));
+    try std.testing.expectEqualStrings("not json", junk);
 }
 
 test "python cells persist, reset drops the name, persist works again" {

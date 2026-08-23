@@ -2,14 +2,38 @@
 
 ## Status
 
-Accepted. Revised 2026-08-14: the Python kernel runs under a real WASM/WASI
-sandbox (`src/sandbox/python_wasi.zig`, zwasm's own WASI host) when the
-interpreter `scripts/setup-python-wasi.sh` fetches is present. The original
-"opt-in unsandboxed" framing this ADR shipped with now describes only the
-fallback path, kept for checkouts that have not run that script, and only
-until it is removed (see Consequences). The `bun`/JS kernel is unimplemented
-and this ADR's original posture for it — a real subprocess, no sandbox —
-still stands until it lands.
+Accepted, and **not implemented as written**. Corrected 2026-08-23.
+
+The 2026-08-14 revision below declared the WASI path primary. That was never
+true of the code. `ck_kernel` reaches the persistent supervisor in
+`src/sandbox/kernel.zig`, a plain host `python3` subprocess with the harness's
+full ambient permissions, and it always has. `runPythonCell` and
+`runPythonCellSandboxed` in `src/sandbox/host.zig` — the WASI-confined functions
+this ADR describes — **have no production caller** and are reachable only from
+their own test, which is why the divergence went unnoticed: a green test on a
+path production never takes.
+
+The two cannot simply be joined. `python_wasi.run` executes a one-shot cell, and
+the whole point of the kernel is that `__main__` survives between cells (a
+checked PRD 0016 criterion), so the persist path could not have adopted the
+sandboxed function as it stands.
+
+So the original "opt-in unsandboxed" framing is what actually ships, for the
+Python kernel as well as for JS. Treat every "sandboxed" statement below as
+describing intended, unbuilt behaviour. Tracked as an open defect in
+[docs/reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md](../reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md),
+which lists the candidate fixes. This ADR needs a decision — supersede the
+WASI-primary framing, or commit to a resident confined interpreter — and the
+correction here is not that decision.
+
+Historical text of the 2026-08-14 revision, kept for the record: the Python
+kernel runs under a real WASM/WASI sandbox (`src/sandbox/python_wasi.zig`,
+zwasm's own WASI host) when the interpreter `scripts/setup-python-wasi.sh`
+fetches is present. The original "opt-in unsandboxed" framing this ADR shipped
+with now describes only the fallback path, kept for checkouts that have not run
+that script, and only until it is removed (see Consequences). The `bun`/JS
+kernel is unimplemented and this ADR's original posture for it — a real
+subprocess, no sandbox — still stands until it lands.
 
 ## Context
 
@@ -32,7 +56,9 @@ backend actually has:
 - `kernel.enabled = false` by default. Calling the tool while off returns a
   disabled error and starts no process.
 - The `kernel` manifest sets `"confirm": true`.
-- **Python**: `runPythonCell` (`src/sandbox/host.zig`) prefers
+- **Python**: *(test-only: nothing in production calls `runPythonCell`. What
+  runs is the unsandboxed supervisor in `src/sandbox/kernel.zig`.)*
+  `runPythonCell` (`src/sandbox/host.zig`) prefers
   `agent.kernel.python_wasi_binary` (default
   `vendor/python-wasi/bin/python-3.12.0.wasm`, not committed —
   `scripts/setup-python-wasi.sh` fetches and sha256-verifies it). Under
@@ -60,12 +86,19 @@ to register there.
 
 ## Consequences
 
-- A configured Python kernel is bounded by the sandbox, not by config +
-  confirm alone: fuel/memory/timeout traps replace "the sandbox does not
+- **Not achieved.** A configured Python kernel is bounded by config + confirm
+  alone. Nothing stops a runaway cell: the supervisor has no fuel, memory or
+  timeout trap beyond the per-call `timeout_ms` that kills and restarts it, and
+  it has the harness's whole filesystem and network. The intended consequence
+  was: a configured Python kernel is bounded by the sandbox, not by config +
+  confirm alone, with fuel/memory/timeout traps replacing "the sandbox does not
   bound this" as the actual answer to "what stops a runaway cell."
-- The unsandboxed `python3` fallback is deprecated. It has no removal date
-  yet; when one is set, `agent.kernel.python_wasi_binary` being unreachable
-  becomes a hard error instead of a warned fallback.
+- The unsandboxed `python3` path is deprecated on paper and is nonetheless the
+  only path. Since 2026-08-23 starting a supervisor logs a warning saying so and
+  every kernel reply carries `"sandboxed": false` with a reason, so an operator
+  is no longer told one thing by the docs and nothing by the runtime. That is a
+  correction to the reporting, not confinement: the kernel is not safer than it
+  was, only accurately described.
 - A missing `python3` (fallback path) or `bun` is a soft runtime error, not a
   build dependency. A missing WASI interpreter is not a build dependency
   either — `scripts/setup-python-wasi.sh` is a separate, explicit step.

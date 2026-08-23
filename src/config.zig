@@ -634,16 +634,20 @@ pub const Agent = struct {
 };
 
 /// Persistent eval kernels (PRD 0016). Off by default. Python cells run
-/// WASI-sandboxed when the vendored interpreter is present; the unsandboxed
-/// host `python3` fallback is deprecated (see `python_wasi_binary` below).
+/// NOT sandboxed on the path that ships, whatever the keys below suggest.
+/// `ck_kernel` reaches `src/sandbox/kernel.zig`'s persistent supervisor, a plain
+/// host `python3` subprocess. The WASI-confined `runPythonCell` these keys
+/// configure has no production caller; it is reachable only from its own test.
+/// See docs/reports/bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md.
 pub const Kernel = struct {
     enabled: bool = false,
     max_output_bytes: u32 = 65536,
     cleanup_delay_ms: u32 = 5000,
-    /// WASI-sandboxed CPython, from `scripts/setup-python-wasi.sh`. Absent at
-    /// this path (the default; the script is opt-in), `runPythonCell` falls
-    /// back to an unsandboxed host `python3` subprocess and logs a
-    /// deprecation warning rather than refusing the call outright.
+    /// WASI-sandboxed CPython, from `scripts/setup-python-wasi.sh`. Read only
+    /// by `runPythonCell`, which nothing in production calls, so setting this
+    /// (and every `python_wasi_*` key under it) does not confine a kernel cell
+    /// today. Kept because the confinement work will need them; do not read
+    /// them as describing the running posture.
     python_wasi_binary: []const u8 = "vendor/python-wasi/bin/python-3.12.0.wasm",
     python_wasi_stdlib: []const u8 = "vendor/python-wasi/usr/local/lib",
     /// Instruction budget for the WASI engine, not wall-clock. Engine-specific
