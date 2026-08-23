@@ -25,8 +25,23 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             if (l == .integer and l.integer > 0) last = @intCast(l.integer);
         }
     }
-    // Newest entries only: a full ck_fs_read fails once the log exceeds 1 MiB.
-    const raw = lib.fsReadTail("state/improvements.jsonl", 256 * 1024) catch return lib.fail(out, "no history yet");
+    // Over a host channel, not the sandbox filesystem. In a `clanker
+    // improve-self` worktree -- the only place this tool has anything to say --
+    // `state/improvements.jsonl` is a symlink to the checkout's file, and the
+    // sandbox's no-follow walk refuses a symlinked leaf even though the
+    // manifest granted that exact path. Reading it here used to fail there and
+    // land in the catch below, so every improve run was told it had no history
+    // at all. `ck_improve_history` reads it host-side, where following the link
+    // is allowed, and caps it on a line boundary.
+    //
+    // An empty reply means the ledger is genuinely absent; a failure is a real
+    // read error and is reported as one rather than as an empty history.
+    const raw = lib.improveHistory() catch |err|
+        return lib.fail(out, switch (err) {
+            error.SandboxDenied, error.NoAccess => "the improve history is not readable by this tool",
+            else => "the improve history could not be read",
+        });
+    if (raw.len == 0) return lib.okText(out, "(no improvements recorded yet)");
 
     var recs: std.ArrayList(Rec) = .empty;
     defer recs.deinit(lib.alloc);

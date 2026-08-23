@@ -79,7 +79,7 @@ the path**, not by what the data is:
 
 | `state/` entry | Treatment | Read by | Survives the worktree |
 |---|---|---|---|
-| `improvements.jsonl` | symlink | host, and the `improve_history` guest | yes |
+| `improvements.jsonl` | symlink | host only (the `improve_history` guest reads it over `ck_improve_history`) | yes |
 | `history/` | symlink | host (`History` revert snapshots) | yes |
 | `learnings.md` | copied in, one-way | `learnings` guest | no |
 | `autolearn.jsonl` | copied in, one-way | `autolearn` guest | no |
@@ -416,11 +416,15 @@ next prompt.
    improve iteration's run graph. If someone does, only option C reaches them —
    both are guest-granted, so driver 1 rules out a symlink and B's merge-back
    would have to copy directories rather than append lines.
-5. **Is `improve_history` actually refused inside an improve worktree?** Traced
-   but not reproduced; see
+5. **Is `improve_history` actually refused inside an improve worktree?**
+   Settled: yes, and it reported the refusal as an empty history. Reproduced by
+   a unit test and fixed by moving the guest onto a host channel
+   (`ck_improve_history`), so `improvements.jsonl` is host-read-only again and
+   the row above is true rather than aspirational. See
    [the investigation](../reports/investigations/2026-08-22-improve-history-guest-in-an-improve-worktree.md).
-   It does not change the recommendation, but a "yes" is evidence that the
-   per-file table is harder to keep correct than it looks, which argues for C.
+   It does not change the recommendation, and it is evidence that the per-file
+   table is harder to keep correct than it looks, which argues for C: the table
+   was wrong for four months and nothing failed loudly.
 
 ## Next steps / action items
 

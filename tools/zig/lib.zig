@@ -39,6 +39,7 @@ extern fn ck_llm_many(req_ptr: u32, req_len: u32) u32;
 extern fn ck_chat(op_ptr: u32, op_len: u32) u32;
 extern fn ck_publish(ptr: u32, len: u32) u32;
 extern fn ck_stats() u32;
+extern fn ck_improve_history() u32;
 extern fn ck_config() u32;
 extern fn ck_harness_config() u32;
 extern fn ck_result() u64;
@@ -529,6 +530,25 @@ pub fn publish(payload: []const u8) HostError!void {
 /// over state/token_stats.jsonl). Requires the token_stats module.
 pub fn stats() HostError![]const u8 {
     const rc = ck_stats();
+    return hostResult(rc);
+}
+
+/// The improve ledger (`state/improvements.jsonl`), newest records last, capped
+/// host-side on a line boundary. Name-gated to the `improve_history` tool.
+///
+/// A host channel rather than a filesystem read on purpose: inside a
+/// `clanker improve-self` worktree that path is a symlink to the checkout's
+/// file, and the sandbox's no-follow walk refuses a symlinked leaf even when
+/// the prefix is granted.
+///
+/// An absent ledger comes back as `""`, which is the honest answer for a
+/// checkout that has never run improve-self. Every other failure is returned as
+/// an error and must NOT be rendered as an empty history: reporting a refused
+/// or unreadable ledger as "nothing yet" is the exact defect this channel
+/// exists to remove.
+pub fn improveHistory() HostError![]const u8 {
+    const rc = ck_improve_history();
+    if (rc == 2) return "";
     return hostResult(rc);
 }
 

@@ -82,6 +82,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_chat", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckChat);
     try lk.defineFuncCtx("env", "ck_publish", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckPublish);
     try lk.defineFuncCtx("env", "ck_stats", h, fn (*zwasm.Caller) u32, &host.ckStats);
+    try lk.defineFuncCtx("env", "ck_improve_history", h, fn (*zwasm.Caller) u32, &host.ckImproveHistory);
     try lk.defineFuncCtx("env", "ck_config", h, fn (*zwasm.Caller) u32, &host.ckConfig);
     try lk.defineFuncCtx("env", "ck_harness_config", h, fn (*zwasm.Caller) u32, &host.ckHarnessConfig);
     try lk.defineFuncCtx("env", "ck_result", h, fn (*zwasm.Caller) u64, &host.ckResult);
@@ -1189,6 +1190,103 @@ test "graph wasm tool writes and reads back a run graph (ck_fs_write/ck_fs_read 
     defer std.testing.allocator.free(list_out);
     try std.testing.expect(std.mem.find(u8, list_out, run_id) != null);
     try std.testing.expect(std.mem.find(u8, list_out, large_run_id) != null);
+}
+
+test "improve_history reads the shared log through an improve worktree's symlink" {
+    // The improve-self layout, reproduced exactly: `linkSharedState`
+    // (src/improve/worktree.zig) makes `state/improvements.jsonl` an absolute
+    // symlink in the worktree pointing at the checkout's real file, and the
+    // improve run's cwd and sandbox root are the worktree.
+    //
+    // The tool used to be granted that path by name in its manifest and read it
+    // itself. `safeJoinSecure`'s no-follow walk stats the LEAF as well as the
+    // directories above it, so the symlinked granted leaf was refused with
+    // PathOutsideSandbox -- and the guest turned any read failure into
+    // "no history yet", so the refusal surfaced as an empty history rather than
+    // an error. Every improve-self run was told it had never attempted
+    // anything.
+    //
+    // It now arrives over `ck_improve_history`, read host-side where following
+    // the link is allowed. This test fails if that ever goes back through the
+    // sandbox filesystem: the link below is what refuses it.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // The checkout holds the real log; the worktree only links to it.
+    try tmp.dir.createDirPath(io, "checkout/state");
+    try tmp.dir.createDirPath(io, "worktree/state");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "checkout/state/improvements.jsonl",
+        .data =
+        \\{"id":"imp-1","status":"applied","instruction":"tighten the gate","summary":"gate now fails on a red base"}
+        \\{"id":"imp-2","status":"reverted","instruction":"widen the sandbox","summary":"reverted: weakened the escape check"}
+        \\
+        ,
+    });
+
+    const rel_root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(rel_root);
+    const cwd = try std.process.currentPathAlloc(io, std.testing.allocator);
+    defer std.testing.allocator.free(cwd);
+
+    // Absolute, the way linkSharedState writes it.
+    const target = try std.fmt.allocPrint(std.testing.allocator, "{s}/{s}/checkout/state/improvements.jsonl", .{ cwd, rel_root });
+    defer std.testing.allocator.free(target);
+    try tmp.dir.symLink(io, target, "worktree/state/improvements.jsonl", .{});
+
+    const root = try std.fmt.allocPrint(std.testing.allocator, "{s}/worktree", .{rel_root});
+    defer std.testing.allocator.free(root);
+
+    // The improve run's cwd is the worktree, so the host resolves `state/`
+    // there and meets the same link the guest used to.
+    var wt_dir = try tmp.dir.openDir(io, "worktree", .{});
+    defer wt_dir.close(io);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        // No filesystem grant at all any more: the ledger arrives over
+        // ck_improve_history, so the tool needs no path. If this ever goes back
+        // to a path grant, the symlink above refuses it again.
+        .fs_prefixes = &.{},
+        .state_base_dir = wt_dir,
+        .environ_map = &env_map,
+        .tool_self_name = "improve_history",
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/history.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const out = try mod.executeTool("{}");
+    defer std.testing.allocator.free(out);
+
+    // Both records, not an empty history.
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, out, "no improvements recorded yet") == null);
+    try std.testing.expect(std.mem.find(u8, out, "imp-1") != null);
+    try std.testing.expect(std.mem.find(u8, out, "imp-2") != null);
+    try std.testing.expect(std.mem.find(u8, out, "reverted: weakened the escape check") != null);
+
+    // The name gate is the only control on this channel: it reads a path no
+    // `fs_prefixes` entry grants, so any other tool loading the same module
+    // must be refused rather than handed the ledger.
+    sb.tool_self_name = "not_improve_history";
+    const other = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer other.deinit();
+    const denied = try other.executeTool("{}");
+    defer std.testing.allocator.free(denied);
+    try std.testing.expect(std.mem.find(u8, denied, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, denied, "imp-1") == null);
 }
 
 test "sessions and graph report empty when the state dir does not exist" {
