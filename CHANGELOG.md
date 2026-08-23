@@ -16,6 +16,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A REPL composer `@path` mention of a file over the 32 KiB cap is truncated
+  with a `[truncated]` notice instead of being dropped. The read was
+  `readFileAlloc(.limited(per_file_cap + 1))`, and that limit answers
+  `error.StreamTooLong` when it is reached or exceeded, so every file at or
+  over the cap read as unreadable and the mention was sent to the model as a
+  bare `@path` token with no fenced block and no notice. The truncation also
+  lands on a UTF-8 codepoint boundary now, so a cut inside a multi-byte
+  character no longer puts invalid UTF-8 in the request body and the saved
+  session.
 - `clanker schedule` read stepped day fields (`*/2`) as if they were bare
   stars in the day-of-month/day-of-week rule: `0 0 */2 * 5` fired every
   Friday instead of Fridays on an odd date, and two stepped day fields
