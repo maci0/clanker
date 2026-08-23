@@ -669,7 +669,11 @@ pub fn build(b: *std.Build) void {
             .{ .name = "raw_http", .module = raw_http_mod },
         },
     });
-    const e2e_tests = b.addTest(.{ .root_module = e2e_mod });
+    // `-Dtest-filter` reaches the e2e journeys too. Without it the only way to
+    // re-run one journey is the whole suite, and the two pty journeys alone
+    // take minutes (one of them floods 4000 resizes), which is what makes
+    // investigating a single failing journey impractical.
+    const e2e_tests = b.addTest(.{ .root_module = e2e_mod, .filters = test_filters });
     const run_e2e = b.addRunArtifact(e2e_tests);
     run_e2e.step.dependOn(b.getInstallStep());
     run_e2e.step.dependOn(tools_step);
