@@ -199,7 +199,7 @@ relocating the picker fields must not reach into it.
    both valid and non-discarding. Not fixed: no Anthropic credential was
    available to check the endpoint's actual answer, and a wire-format change
    should not ship on a code read.
-   [Bug](../reports/bugs/2026-08-24-anthropic-wire-gets-openai-reasoning-effort.md).
+   [Bug](../reports/bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md).
 
 2. **`kind = "grok"` never consults the table, and drops per-model
    `temperature`/`top_p` too.** `responses.zig` reads only
@@ -207,7 +207,7 @@ relocating the picker fields must not reach into it.
    the configured per-model value and this table's default are silently
    discarded — against acceptance criteria 1 and 2 for that kind.
    `clampedMaxTokens` does not run there either.
-   [Bug](../reports/bugs/2026-08-24-grok-kind-drops-model-sampling.md).
+   [Bug](../reports/bugs/2026-08-23-grok-kind-drops-model-sampling.md).
 
 3. **`gemini` computes the thinking row and throws it away.** `gemini.zig`
    re-implements the two `orelse` chains inline rather than calling

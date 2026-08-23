@@ -200,7 +200,7 @@ a `totals.thinking_distribution` field in the `/api/stats` response.
    `auto-thinking classifies once per turn and skips a blank submit` in
    `src/agent/loop.zig`, which counts requests off a loopback mock server
    rather than reading the call chain
-   ([bug](../reports/bugs/2026-08-24-auto-thinking-classifies-every-iteration.md)).
+   ([bug](../reports/bugs/2026-08-23-auto-thinking-classifies-every-iteration.md)).
 
 ## Failure modes
 

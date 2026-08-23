@@ -46,7 +46,7 @@ and before anything env- or flag-derived. The edges are not.
    about which layer failed and `main.zig`'s hint table blames the base config —
    pointing at a file that exists and prescribing a remedy that cannot help.
    Contradicts the failure-modes table below.
-   [Bug](../reports/bugs/2026-08-24-profile-overlay-errors-name-the-wrong-file.md).
+   [Bug](../reports/bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md).
 
 2. **`profiles/<name>.local.toml` is never read**, though Goal 1 names it and
    is marked shipped. `Config.load` builds exactly one path. Same bug record.
@@ -61,7 +61,7 @@ and before anything env- or flag-derived. The edges are not.
    (`Name: value`) and prefers `=` unconditionally, so a base64-padded `Basic`
    credential is printed one character short of whole. The existing test uses a
    value with no `=`.
-   [Bug](../reports/bugs/2026-08-24-dump-config-header-redaction-cuts-on-equals.md).
+   [Bug](../reports/bugs/2026-08-23-dump-config-header-redaction-cuts-on-equals.md).
 
 5. **`--profile` is dropped on a `serve` hot-reload re-exec.**
    `buildServeArgvTail` does not repeat it, so `clanker serve --profile web`

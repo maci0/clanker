@@ -188,7 +188,7 @@ principle the plugin manifest validator already applies to a malformed
    slice. Contradicts the failure-modes rule that a typo'd hook must not take
    the agent down. The same literal rejects the whole `hooks.json` for a command
    spelled `nrt`.
-   [Bug](../reports/bugs/2026-08-24-hook-command-trim-set-is-mis-escaped.md).
+   [Bug](../reports/bugs/2026-08-23-hook-command-trim-set-is-mis-escaped.md).
 
 2. **`"timeout": 0` disables the deadline instead of being refused.** It passes
    validation, and the host reads `timeout_ms == 0` as *no* deadline, so such a

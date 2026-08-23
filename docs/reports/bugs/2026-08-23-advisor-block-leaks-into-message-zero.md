@@ -74,7 +74,7 @@ for qwen chat templates.
 ## Verification
 
 - `clanker gate` green, and the advisor happy path is live-verified in
-  [2026-08-24-advisor-model-never-read.md](2026-08-24-advisor-model-never-read.md)
+  [2026-08-23-advisor-model-never-read.md](2026-08-23-advisor-model-never-read.md)
   (two runs, the critique call visible in `state/token_stats.jsonl`, correct
   final answer).
 - **Not unit-covered, and that is a real gap in this record.** Nothing in the

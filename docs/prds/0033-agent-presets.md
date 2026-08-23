@@ -159,7 +159,7 @@ requirement.
    `init` returns. `rebuildToolDefs` and `loadTools` have no preset check
    either, so `load_tools` can re-reveal a denied tool with its full schema. The
    "neither offered nor callable" criterion below holds only on "callable".
-   [Bug](../reports/bugs/2026-08-24-preset-tool-filter-is-inert.md).
+   [Bug](../reports/bugs/2026-08-23-preset-tool-filter-is-inert.md).
 
 2. **`clanker repl --preset <name>` is a silent no-op.** The flag is in the
    table, listed as valid for `repl`, and in `repl --help`, but

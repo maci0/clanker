@@ -14,11 +14,11 @@ resolved provider and reassigns `default_model`, the same shape
 `thinking.resolveClassifier` uses. Before that the key parsed, validated and
 documented cleanly while nothing read it, so every enabled-advisor turn billed
 the provider's `default_model`
-([bug](../reports/bugs/2026-08-24-advisor-model-never-read.md)). The one-turn
+([bug](../reports/bugs/2026-08-23-advisor-model-never-read.md)). The one-turn
 injection is also removed with a `defer` now, so a provider error, a TTSR retry
 or a mid-stream Ctrl-C cannot leave the note sitting where the loop requires the
 system prompt
-([bug](../reports/bugs/2026-08-24-advisor-block-leaks-into-message-zero.md)).
+([bug](../reports/bugs/2026-08-23-advisor-block-leaks-into-message-zero.md)).
 
 ## Problem
 
@@ -216,7 +216,7 @@ The main agent loop never sees an exception from the advisor path.
    loop against a mock provider and a mock advisor would cover this and the TTSR
    arm, which has the same "assert on `messages[0]`" shape and the same absence
    of coverage. See
-   [the bug](../reports/bugs/2026-08-24-advisor-block-leaks-into-message-zero.md).
+   [the bug](../reports/bugs/2026-08-23-advisor-block-leaks-into-message-zero.md).
 
 2. **`scope` and `context_turns` were not audited** when `model` was fixed. The
    `model` defect was "declared, parsed, allowlisted in `warnUnknownKeys`, and
