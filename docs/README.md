@@ -163,10 +163,15 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_llm_many` | One prompt to several provider/model targets at once, each on its own thread, joined before returning: `{"prompt","system","max_tokens","targets":[{"provider","model"}]}` in, a JSON array of `{provider,model,ok,text\|error,ms,tokens}` in target order out. A guest is single-threaded, so a loop of `ck_llm` costs the sum of the models' latencies and this costs the slowest one. One failing target is a failing element, never a failing call. Same `"llm": true` grant and same session token budget as `ck_llm`; capped at 8 targets |
 | `ck_subagent` | Nested bounded agent run; needs a parent agent run to attach to |
 | `ck_swarm` | Fan-out: run multiple sub-agent tasks concurrently (capped at `max_swarm_tasks`); needs a parent agent run to attach to |
+| `ck_job` | Start, list, wait for, or kill a background process; privileged: only the `jobs` and `subagent` guests may call it |
 | `ck_tool` | Invoke another WASM tool from within a tool; denied for recursive calls and depth > 0 |
 | `ck_ask` | Put a multiple-choice question to the human, when one is attached |
 | `ck_chat` | Send to or read a chatroom |
-| `ck_stats` | Token usage recorded so far |
+| `ck_stats` | Token usage recorded so far (host aggregate) |
+| `ck_session` | Read the host session store: list saved sessions, fetch one, or search transcripts; needs `"session": true` in the descriptor |
+| `ck_improve_history` | Hand the improve ledger (`state/improvements.jsonl`) to the `improve_history` guest over a host channel instead of through the sandbox filesystem |
+| `ck_kernel` | Persistent eval kernels; only the `kernel` guest, and only when `kernel.enabled` is set |
+| `ck_debug` | Debug channel; requires `debug.enabled` |
 | `ck_publish` | Post a JSON value onto the serve live bus as a plugin event. Denied unless the descriptor sets `"live_publish": true`. The host stamps `t:"plugin"` and `from` as the tool name; a guest cannot pick chat/run/metrics |
 | `ck_std_api` | Look up a symbol in the Zig standard library source |
 | `ck_config` | Return this tool's `config` object from its descriptor |
@@ -535,10 +540,17 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `workflows/` | `src/agent/workflows.zig` | Reusable prompt workflows (`agent.workflows_dir`) |
 | `chains/` | — | Transform chains (`agent.chains_dir`) |
+| `presets/` | — | Tool-preset bundles (`presets/<name>.toml`, `clanker preset`) |
+| `profiles/` | — | Config overlays (`--profile <name>` applies `profiles/<name>.toml`) |
+| `themes/` | `src/tui/theme.zig` | Color palettes as JSON, shared by the REPL themes and web tokens |
+| `commands/` | — | Drop-in JSON catalogs served to the web UI (`/webui/commands/*`; slash commands today) |
+| `tui-plugins/`, `cli-plugins/` | — | Slash-command / subcommand plugin manifests (PRD 0012) |
+| `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
 | `rules/` | — | Rule files |
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
 | `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
+| `scripts/` | — | Development scripts (`verify.sh`, `apply-patches.sh`) |
 | `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
 
 Under `src/`, subsystem code lives in subsystem directories. The executable
@@ -757,11 +769,16 @@ Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K
 | `/workflows` | in-process | List reusable prompt workflows |
 | `/workflow <name> [args]` | in-process | Run a workflow (expands `{{args}}`, then runs it as a task) |
 | `/sessions`, `/history` | `sessions` | List saved conversations |
+| `/search <query>` | `session_search` | Search saved conversations containing a substring (resume a hit with `--session`) |
 | `/graph [run-id]` | `graph` | List recorded runs, or render one as a timeline (same as `clanker graph`) |
 | `/status` | `status` | Show instance identity and configured peers |
 | `/tools` | `tools` | List registered tools (same as `clanker tools`) |
 | `/plugins [on\|off <name>]`, `/plugin [on\|off <name>]` | `plugins` | List plugins or switch an optional one on or off; the REPL reloads its tool catalog after a change |
 | `/theme [name]` | in-process | List or switch the color theme (`mocha`, `latte`, `tokyonight`, …) |
+| `/plan [on\|off]` | in-process | Toggle plan mode (proposal only; write tools refused) |
+| `/preset <name>` | in-process | Switch preset bundle (allowed tools + persona) for the next task |
+| `/effort [none\|low\|medium\|high\|max\|default]` | in-process | Pin reasoning effort for every turn (picker with previews; default clears) |
+| `/websearch [on\|off]` | in-process | Toggle web-research mode (prefer `web_search`/`web_fetch` for current facts) |
 | `/autoresearch ...` | in-process | Measurement loop (see `/autoresearch --help`) |
 | `/research <sub> [args]` | direct tool | The research note store, same subcommands and rendering as `clanker research` |
 | `/rfc <sub> [args]` | direct tool | The RFC store, same subcommands and rendering as `clanker rfc` |
@@ -771,6 +788,9 @@ Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K
 | `/arena "<question>" --for X --against Y` | in-process | Run a judged debate (runs the agent, which calls the `arena` tool). `--position` x3-8 for a Battle Royale |
 | `/compare "<prompt>" [--with <p[@model]>]...` | in-process | Put one prompt to 2-8 models at once and show the answers unlabeled (runs the agent, which calls the `compare` tool) |
 | `/compare --list`, `/compare --show <id> [--pick <letter>]` | `compare` | Read stored comparisons back, and record a pick. Calls the tool directly, with no model in the loop |
+| `/attach <path>` | in-process | Queue an image for the next task submit |
+| `/compact [hint]` | in-process | Compact history on the next turn; an optional hint tells the summarizer what to keep |
+| `/tui-plugins [on\|off <name>]` | in-process | List TUI slash-command plugins, or enable/disable one (PRD 0012) |
 | `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
 
 ### `!cmd` — the inline shell escape
@@ -822,7 +842,7 @@ iter 2
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `graph answer [run-id]` | Print a recorded run's final answer (64 KiB retained per run) |
 | `tools list` | List registered tools |
-| `plugins [list\|validate [path]\|new <name>]` | List plugins, check a manifest, or scaffold a new tool |
+| `plugins [list\|on <name>\|off <name>\|validate [path]\|new <name>]` | List plugins, switch an optional one on or off, check a manifest, or scaffold a new tool |
 | `eval [name] [--tasks] [--seed N]` | Run evals; `--seed` pins the tool-RNG seed so a run replays byte-identically |
 | `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
@@ -844,6 +864,15 @@ iter 2
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Recurring agent runs from `state/schedule.json`; see [Scheduled runs](#scheduled-runs) |
 | `reports [list\|search <query>\|open <path>\|create\|append\|update]` | Read and record the operational reports and runbooks in `docs/reports/` and `docs/runbooks/`; see [Reports and runbooks](#reports-and-runbooks) |
+| `research [list\|plan\|sweep\|search\|open\|create\|append\|update\|status\|rename]` | Gather sources and keep durable research notes under `docs/research/` |
+| `rfc [list\|search\|open\|checklist\|create\|...\|status\|rename]` | Open decisions under `docs/rfcs/`; see [Open decisions](#open-decisions-rfcs) |
+| `adr [list\|search\|open\|create\|append\|update\|status\|rename]` | Decisions already made under `docs/adrs/`; see [Decisions already made](#decisions-already-made-adrs) |
+| `prd [list\|search\|open\|checklist\|create\|append\|update\|status\|rename]` | Product requirement docs under `docs/prds/`; see [Feature specifications](#feature-specifications-prds) |
+| `preset [list\|show <name>\|new <name>]` | List, inspect, or scaffold tool presets (`presets/<name>.toml`) |
+| `config [get <key>\|set <key> <value>]` | Read or pin one key of the merged config; `set` writes `config.local.toml` |
+| `auth [status\|login\|logout] [codex\|grok\|claude]` | Manage clanker's native provider OAuth credentials (no ACP backend or vendor CLI involved) |
+| `acp` | Serve clanker as an ACP coding agent over stdio |
+| `commit [--all] [--yes] [--dry-run]` | Group the working tree into conventional commits via `smart_commit`; asks before committing, so a script must pass `--yes` |
 | `stats` | Token usage per provider/model |
 | `serve [--host A] [--serve-as N]... [--webui-port N]` | HTTP server + web UI (loopback, port 17921 by default) |
 | `worktree [prepare [<path>]\|add <path> [<base>]]` | Give a hand-made `git worktree add` worktree the gitignored files it does not inherit (`.env`, `config.local.toml`); see [Preparing a hand-made worktree](#preparing-a-hand-made-worktree) |

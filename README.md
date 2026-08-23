@@ -135,7 +135,7 @@ clanker loads **[config.toml](config.toml)** (committed example) and merges **`c
 | `web` | Additional hosts the research tools may reach |
 | `tui` | REPL appearance, including the mascot mode, size, and direction |
 | `advisor`, `ttsr`, `kernel` | Post-turn critique, turn-time repair rules, and persistent eval kernels |
-| `modules` | Feature flags (`mcp`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`). `acp` and `mesh` default off |
+| `modules` | Feature flags (`mcp`, `mcp_client`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `session_events`, `acp`, `mesh`). `mcp_client`, `acp`, and `mesh` default off |
 
 Agent instructions are layered: device-wide `$HOME/.agents/AGENTS.md`, shared repository `AGENTS.md`, then ignored project-local `.agents/AGENTS.md`. Put personal, checkout-specific additions such as a Git workflow in the last file; it supplements the shared conventions rather than replacing them. Instruction files also support Claude-style `@path` imports (missing files soft-skip), so a shared root `AGENTS.md` can contain `@.agents/AGENTS.md` for tools that only read the root file.
 
@@ -287,17 +287,23 @@ command, while `clanker <option> -h` explains that option (for example,
 | `version` / `--version` | Print the version |
 | `init` | Create `config.local.toml` + `state/` |
 | `providers [check\|models\|catalog\|fill\|refresh] [name]` | Verify connectivity, list models, search the local models.dev snapshot, fill in model specs, or refresh that snapshot. Defaults to `check` |
+| `auth [status\|login\|logout] [codex\|grok\|claude]` | Manage clanker's native provider OAuth credentials (separate from `--backend`) |
 | `run "<task>"` | Run the agent on a task |
 | `repl` | Interactive multi-turn chat (streams tokens); the default |
 | `sessions` | List saved sessions |
 | `session export <id> [path]` | Write one saved session as a self-contained HTML transcript (default `state/exports/<id>.html`) |
+| `session search <query>` | Find saved conversations containing a substring |
 | `tools list` | List registered WASM tools |
 | `plugins [list\|on <name>\|off <name>\|validate [path]\|new <name>]` | List, switch, validate, or scaffold plugins |
+| `plugin <name> [args...]` | Run a CLI plugin from `cli-plugins/` or PATH |
+| `preset [list\|show <name>\|new <name>]` | List, inspect, or scaffold tool presets (`presets/<name>.toml`) |
 | `eval [name] [--tasks]` | Run evals |
 | `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
 | `git <args...>` | Git passthrough |
+| `commit [--all] [--yes] [--dry-run]` | Group the working tree into conventional commits; asks before committing (`--yes` skips) |
 | `mcp` | Serve tools over MCP (stdio) |
+| `acp` | Serve clanker as an ACP coding agent (stdio) |
 | `write-goal "<intent>"` | Draft a structured goal without saving or running it |
 | `add-goal "<objective>" "<completion criterion>"` | Save a structured goal without running it |
 | `goal "<condition>"` | Start a goal loop that keeps working until the condition is met |
@@ -317,11 +323,17 @@ command, while `clanker <option> -h` explains that option (for example,
 | `serve [--host <addr>] [--serve-as <name>]... [--webui-port <port>]` | HTTP API + web UI (loopback, port 17921 by default) |
 | `graph [run-id]` | List runs, or render one as an ASCII timeline |
 | `graph answer [run-id]` | Print a recorded run's final answer |
+| `reports [list\|search\|open\|create\|append\|update\|status\|rename]` | Read and record operational reports (`docs/reports/`) and runbooks (`docs/runbooks/`) |
+| `research [list\|plan\|sweep\|search\|open\|create\|append\|update\|status\|rename]` | Gather sources (web/GitHub/papers) and keep durable research notes under `docs/research/` |
+| `rfc [list\|search\|open\|checklist\|create\|append\|update\|recommend\|status\|rename]` | Open decisions under `docs/rfcs/` |
+| `adr [list\|search\|open\|create\|append\|update\|status\|rename]` | Decisions already made, under `docs/adrs/` |
+| `prd [list\|search\|open\|checklist\|create\|append\|update\|status\|rename]` | Product requirement docs under `docs/prds/` |
 | `gate` | Run the full deterministic gate (build/test/tools/fmt/lint/release-contract) |
 | `autolearn` | Aggregate usage into roadmap items |
 | `worktree [prepare [<path>]\|add <path> [<base>]]` | Give a hand-made `git worktree add` worktree the gitignored files it does not inherit (`.env`, `config.local.toml`), which every verb there needs to resolve the provider you configured |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials, build outputs, and a worktree's links |
+| `config [get <key>\|set <key> <value>]` | Read or pin one key of the merged config (`set` writes `config.local.toml`) |
 | `janitor [--yes]` | Sweep up what old runs left behind: staging copies, old run graphs and improve logs, compare-and-swap lock files unused for 12h, and spilled tool results (also `clanker prune`) |
 
 For full documentation, see [docs/README.md](docs/README.md).

@@ -76,6 +76,7 @@ its arguments.
 | `env_allow` | string[] | `[]` | Environment variables this tool may read. Empty means the safe defaults in `host.zig`, never the whole process environment: that is where the API keys are |
 | `fuel` | integer | sandbox default | Instruction budget for one call. See below |
 | `llm` | bool | `false` | May call the model through `ck_llm` / `ck_llm_many`. Costs tokens, so it is opt-in, and it forces the tool onto the sequential execution path |
+| `session` | bool | `false` | May read the host session store through `ck_session` (list saved sessions, fetch one, search transcripts). The store is host-side SQLite; this grant is the only way a guest reaches it. As shipped: the `sessions`, `session_search`, and `session_export` tools |
 | `live_publish` | bool | `false` | May emit onto the serve live bus through `ck_publish`. The import existing is not a grant. Events land on `Topic.plugin` only; the host stamps `t` and `from`. Forces the sequential path: the bus is host-shared state |
 | `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only tools that call others need it — as shipped, `chain` (the tools it wraps), `run_plan` (a bounded step list), `bugreport` (`kanban_add`), and `goal_write` (`ask_user`) |
 | `tool_allow` | string[] | all | With `tool_call`, which tool names it may invoke. Absent or empty means every enabled non-internal tool. Ignored entirely without `tool_call` |
