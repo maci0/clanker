@@ -81,6 +81,7 @@ Project agents receive this workflow through the harness prompt and
 
 <!-- inventory:bug:start -->
 - [The /api/events cap refusal declares a Content-Length four bytes longer than its body](bugs/2026-08-23-events-cap-503-declares-the-wrong-length.md) — Resolved
+- [The kernel supervisor's environment was whatever the Io carried, not a policy](bugs/2026-08-23-kernel-supervisor-environment-is-unspecified.md) — Resolved
 
 - [A clanker-<name> binary on PATH is exec'd unsandboxed with no entry in the enabled-list](bugs/2026-08-23-cli-tier2-plugin-runs-without-consent.md) — Resolved
 

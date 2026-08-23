@@ -105,3 +105,32 @@ to register there.
 - Quota work is still a pre-default-on requirement for the fallback path,
   not a v1 opt-in ship blocker; it is not required for the WASI path, which
   already has its own resource limits.
+## Amendment 2026-08-23 — a kernel cell's environment is the guest's, not the harness's
+
+This ADR says nothing about what a kernel cell may read out of its
+environment, and the code said nothing either: `eval` spawned the supervisor
+with no `environ_map`, which `std.process.spawn` reads as "whatever the `Io`
+implementation carries". A cell therefore got two platform-injected variables
+and no `HOME` or `PATH`, and on an `Io` whose captured environment is populated
+it would have got every key the harness holds -- including the API keys
+`ck_env` denies the guest that started the cell.
+
+Decided, and now enforced: **a kernel supervisor is spawned with
+`host.execEnvironment`, the same `envAllowed` filter `ck_exec` and `ck_job`
+use.** With no `env_allow` on the `kernel` manifest that is the default set
+(`PWD`, `HOME`, `PATH`, `LANG`, `LC_ALL`, `TERM`, `TZ`, `USER`) and never a
+credential; naming variables in `env_allow` replaces that set rather than
+adding to it.
+
+`EvalOpts.environ_map` is required and non-optional so the question cannot be
+left unanswered again: an empty map is a legitimate answer, silence is not.
+
+Consequence, stated rather than discovered: a cell has no `TMPDIR`, since that
+name is not in the default set. `argv[0]` resolution is unaffected -- 
+`std.process.spawn` resolves it from the parent environment either way, so this
+cannot stop `python3` being found.
+
+This narrows the credential surface and changes nothing about confinement: the
+cell still runs in an unsandboxed host `python3` process, which is the open
+defect this ADR's Status section already points at. Record:
+[the supervisor's environment was unspecified](../reports/bugs/2026-08-23-kernel-supervisor-environment-is-unspecified.md).
