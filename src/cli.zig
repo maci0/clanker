@@ -5757,10 +5757,14 @@ fn cmdPlugin(init: std.process.Init, opts: Options) !void {
         return printPluginTool(init, &cfg, m.tool, opts.plugin_argv);
     }
 
-    // Tier 2: an external `clanker-<name>` binary, operator-trusted the same
-    // way anything else on PATH is. Exec'd with the remaining argv verbatim,
-    // stdio inherited, so the plugin behaves exactly like a subcommand.
-    if (cli_plugins.findTier2(io, arena, init.environ_map, name)) |exe_path| {
+    // Tier 2: an external `clanker-<name>` binary, exec'd with the remaining
+    // argv verbatim and stdio inherited, so the plugin behaves exactly like a
+    // subcommand. It runs unsandboxed, so it goes through `resolveTier2`, which
+    // consults the same enabled-list Tier 1 does: being on PATH is how the
+    // operator installs a plugin, not how they consent to running it
+    // (PRD 0012). `findTier2` here would spawn any executable `clanker-<word>`
+    // on PATH from a bare `clanker <word>`.
+    if (cli_plugins.resolveTier2(io, arena, init.environ_map, name, enabled)) |exe_path| {
         var argv: std.ArrayList([]const u8) = .empty;
         try argv.append(arena, exe_path);
         try argv.appendSlice(arena, opts.plugin_argv);
@@ -5827,9 +5831,10 @@ fn printPluginTool(init: std.process.Init, cfg: *const config.Config, tool_name:
 }
 
 /// The `.help` handler's plugin listing: every Tier 1 manifest in
-/// agent.cli_plugins_dir and every Tier 2 `clanker-*` binary on PATH,
-/// marked external with its origin, so an operator can tell "ships with
-/// clanker" from "this machine added it" (PRD 0012 Goal 3).
+/// agent.cli_plugins_dir and every Tier 2 `clanker-*` binary on PATH or under
+/// ~/.clanker/plugins/, marked external with its origin, so an operator can
+/// tell "ships with clanker" from "this machine added it" (PRD 0012 Goal 3).
+/// Every row carries its enabled-list mark: presence is not consent.
 fn printPluginCommandHelp(init: std.process.Init) void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -5854,21 +5859,40 @@ fn printPluginCommandHelp(init: std.process.Init) void {
         }
     }
 
-    // Tier 2: clanker-* executables on PATH.
+    // Tier 2: clanker-* executables, on PATH and under ~/.clanker/plugins/ —
+    // both are places `findTier2` will run one from, so listing only PATH hid
+    // half of what is installed. Each row carries the same on/off mark Tier 1
+    // does, because a Tier 2 binary needs the same consent to run.
     if (init.environ_map.get("PATH")) |path_var| {
         var pit = std.mem.splitScalar(u8, path_var, ':');
         while (pit.next()) |dir_name| {
             if (dir_name.len == 0) continue;
-            var dit = std.Io.Dir.cwd().openDir(io, dir_name, .{ .iterate = true }) catch continue;
-            defer dit.close(io);
-            var nit = dit.iterate();
-            while (nit.next(io) catch null) |entry| {
-                if (entry.kind != .file) continue;
-                if (!std.mem.startsWith(u8, entry.name, "clanker-")) continue;
-                const line = std.fmt.allocPrint(arena, "  {s}  (external plugin, tier 2, PATH: {s})\n", .{ entry.name, dir_name }) catch continue;
-                out.writeStreamingAll(io, line) catch {};
-            }
+            printTier2Dir(init, enabled, dir_name, "PATH");
         }
+    }
+    if (init.environ_map.get("HOME")) |home| {
+        const home_dir = std.fmt.allocPrint(arena, "{s}/.clanker/plugins", .{home}) catch return;
+        printTier2Dir(init, enabled, home_dir, "home");
+    }
+}
+
+/// One directory's worth of the Tier 2 listing. `origin` is what the row calls
+/// the source, so an operator can tell a PATH install from a home-dir one.
+fn printTier2Dir(init: std.process.Init, enabled: []const []const u8, dir_name: []const u8, origin: []const u8) void {
+    const io = init.io;
+    const arena = init.arena.allocator();
+    const out = std.Io.File.stdout();
+    var dit = std.Io.Dir.cwd().openDir(io, dir_name, .{ .iterate = true }) catch return;
+    defer dit.close(io);
+    var nit = dit.iterate();
+    while (nit.next(io) catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.startsWith(u8, entry.name, "clanker-")) continue;
+        const command = entry.name["clanker-".len..];
+        if (command.len == 0) continue;
+        const mark: []const u8 = if (cli_plugins.isEnabled(enabled, command)) "on" else "off";
+        const line = std.fmt.allocPrint(arena, "  {s}  (external plugin, tier 2 [{s}], {s}: {s})\n", .{ entry.name, mark, origin, dir_name }) catch continue;
+        out.writeStreamingAll(io, line) catch {};
     }
 }
 
