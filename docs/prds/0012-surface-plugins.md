@@ -297,6 +297,26 @@ throw → tab error) if not already true in code.
 
 ## Known issues
 
+- **(Fixed) A Tier 2 `clanker-<name>` binary used to run with no entry in
+  the enabled-list.** Design decision "State files for TUI/CLI" says
+  "Presence of a manifest or PATH binary is not consent to run it; the
+  operator enables each name explicitly", and the failure-mode table says
+  Tier 1 wins ties because sandboxed beats unsandboxed. `cmdPlugin`
+  (`src/cli.zig`) dispatched Tier 2 through `cli_plugins.findTier2`, which
+  is bare discovery with no `enabled` parameter, so any executable
+  `clanker-<word>` on `PATH` or under `~/.clanker/plugins/` ran unsandboxed
+  from a plain `clanker <word>`; and because `resolveTier1` returns null for
+  a matching-but-*disabled* manifest, turning a sandboxed Tier 1 plugin off
+  promoted the unsandboxed binary of the same name into its place. Dispatch
+  now goes through `cli_plugins.resolveTier2`, which checks the enabled-list
+  before the PATH walk. `findTier2` stays ungated so `clanker help` can
+  still list an installed-but-off plugin.
+- **(Fixed) `clanker help` listed Tier 2 from `PATH` only, unmarked.**
+  Design says both sources are listed "with the directory of origin so an
+  operator can tell PATH from home-dir installs", and `findTier2` runs
+  binaries from `~/.clanker/plugins/` too. `printTier2Dir` (`src/cli.zig`)
+  now walks both, names the source, and carries the same `[on]`/`[off]` mark
+  the Tier 1 rows do.
 - **State-file shape disagrees between the tool system and surface plugins.**
   `state/webui_plugins.json` is an enabled-list (`{"enabled":[...]}`); the
   tool system's `state/plugins.json` is a disabled-list

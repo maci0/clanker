@@ -141,6 +141,28 @@ pub fn findTier2(
     return null;
 }
 
+/// Tier 2 as the dispatcher may use it: discovery **and** consent.
+///
+/// `findTier2` is the bare PATH/home-dir walk, which `clanker help` wants
+/// ungated so it can list an installed-but-off plugin. Nothing may *run* a
+/// name the operator has not enabled. PRD 0012 Design: "Presence of a manifest
+/// or PATH binary is not consent to run it; the operator enables each name
+/// explicitly." The dispatcher used to call `findTier2` directly, so any
+/// executable `clanker-<word>` anywhere on PATH was spawned unsandboxed by a
+/// bare `clanker <word>` with no opt-in — and *disabling* a Tier 1 manifest
+/// promoted the unsandboxed binary of the same name into its place, inverting
+/// "narrowest trust wins ties".
+pub fn resolveTier2(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ_map: *const std.process.Environ.Map,
+    name: []const u8,
+    enabled: []const []const u8,
+) ?[]const u8 {
+    if (!isEnabled(enabled, name)) return null;
+    return findTier2(io, arena, environ_map, name);
+}
+
 fn executable(io: std.Io, path: []const u8) bool {
     const stat = std.Io.Dir.cwd().statFile(io, path, .{}) catch return false;
     if (stat.kind != .file) return false;
@@ -162,4 +184,38 @@ pub fn saveEnabled(io: std.Io, gpa: std.mem.Allocator, enabled: []const []const 
     std.Io.Dir.cwd().createDirPath(io, "state") catch {};
     const atomic_write = @import("../util/atomic_write.zig");
     try atomic_write.writeFilePerms(io, std.Io.Dir.cwd(), state_path, out.written(), atomic_write.private_file);
+}
+
+test "a PATH binary is discovered but not run until the enabled-list names it" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const atomic_write = @import("../util/atomic_write.zig");
+    const mode_755: std.Io.File.Permissions = @enumFromInt(@as(std.posix.mode_t, 0o755));
+    atomic_write.writeFilePerms(io, tmp.dir, "clanker-myreport", "#!/bin/sh\nexit 0\n", mode_755) catch
+        return error.SkipZigTest;
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", root_buf[0..root_len]);
+
+    // Discovery is unchanged: `clanker help` lists an installed plugin whether
+    // or not it is enabled, which is how an operator finds the name to enable.
+    try std.testing.expect(findTier2(io, arena, &env, "myreport") != null);
+
+    // Consent is separate. The dispatcher goes through resolveTier2, and an
+    // empty enabled-list must not resolve to an unsandboxed exec.
+    try std.testing.expect(resolveTier2(io, arena, &env, "myreport", &.{}) == null);
+    const other = [_][]const u8{"somethingelse"};
+    try std.testing.expect(resolveTier2(io, arena, &env, "myreport", &other) == null);
+
+    const on = [_][]const u8{"myreport"};
+    const path = resolveTier2(io, arena, &env, "myreport", &on) orelse return error.EnabledPluginNotResolved;
+    try std.testing.expect(std.mem.endsWith(u8, path, "/clanker-myreport"));
 }
