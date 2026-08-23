@@ -16,6 +16,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The web UI Arena view follows a running match again. Its poll tick skipped
+  the fetch whenever the `/api/events` stream was up, but nothing publishes a
+  `t:"arena"` event, so stage, combatant chips, HP graph and transcript froze
+  on the first fetch until the page was refreshed by hand and the elimination
+  sequence never played.
+
 - A `clanker-<name>` binary on `PATH` (or under `~/.clanker/plugins/`) is no
   longer exec'd unsandboxed unless `state/cli_plugins.json` names it. The
   Tier 2 dispatcher went through bare discovery with no enabled-list check, so

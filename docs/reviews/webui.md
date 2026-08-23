@@ -1566,6 +1566,35 @@ per run, drained oldest-first between iterations).
   POST, so a repeat press hits the blank check); `maxlength="8000"` matches
   the goals view and the server's 8 KiB cap.
 
+## The arena view follows a running match again (2026-08-23)
+
+Opening the Arena view on a match still in progress showed one frame and then
+nothing: stage, combatant chips, HP graph and transcript all stayed on
+whatever the first fetch returned until the page was refreshed by hand, and
+the trash-compactor elimination sequence never played because `wasRunning`
+never flipped.
+
+`startPolling` started and stopped the 1100 ms timer correctly, but the tick
+opened with `if (liveOk()) return;` - the stream is up, let the event carry
+it. That guard is copied from the Fleet floor, where it is right because
+`t:"mesh"` really is published. Nothing publishes `t:"arena"`: `Topic.arena`
+exists in `src/serve/live.zig` and sits in the default subscriber mask, but
+no `publish(.arena, ...)` call site does, and a guest cannot make one either
+since `ck_publish` stamps every guest event `t:"plugin"`. And `onLive` calls
+`ensureLive`, so importing the module opens the `EventSource` and `liveOk()`
+went true on load.
+
+- `ui/app/features/arena.js`: the tick always fetches. The `onLive` hook is
+  kept with a comment naming why it is a standing no-op, so a real publisher
+  lands as a speed-up rather than a rewrite.
+- `ui/app/features/arena.test.mjs` reads both halves, so the pair cannot
+  drift apart again: gating the poll on the stream is only allowed once
+  something emits the topic.
+- Verified live: a three-round deepseek match went `running rounds 1` ->
+  `running rounds 2` -> `finished rounds 3` on `GET /api/arena/<id>` while
+  `GET /api/events` carried nine `t:"metrics"` events and no `t:"arena"` at
+  all.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
