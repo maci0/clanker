@@ -321,7 +321,9 @@ function boardColumn(col, s) {
   }, shown.length + (col.wip ? " / " + col.wip : ""));
 
   // Trello-style empty lane placeholder — with quick-add affordance
-  var items = shown.map(function (c) { return T.li(cardNode(c)); });
+  var items = shown.map(function (c) {
+    return T.li({ class: "board-card-item" }, cardNode(c), cardQuickActions(c));
+  });
   if (!shown.length) {
     var emptySlot = document.createElement("li");
     emptySlot.className = "board-empty-slot";
@@ -666,55 +668,9 @@ function cardNode(c) {
     b.appendChild(cover2);
   }
 
-  // Quick edit pencil — always present, shown on hover via CSS
-  var pencil = document.createElement("button");
-  pencil.type = "button";
-  pencil.className = "card-quick-edit-btn";
-  pencil.appendChild(icon("pencil", 14));
-  pencil.title = "Quick edit";
-  pencil.setAttribute("aria-label", "Quick edit card");
-  pencil.addEventListener("click", function(e) {
-    e.stopPropagation();
-    openCardId = c.id;
-    renderBoard(board);
-  });
-  b.appendChild(pencil);
-
   // Card body wrapper (inside padding)
   var body = document.createElement("div");
   body.className = "card-body";
-
-  // Quick actions overlay (Trello pencil icon on hover)
-  var qa = document.createElement("span");
-  qa.className = "card-quick-actions";
-  var qaEdit = document.createElement("button");
-  qaEdit.type = "button";
-  qaEdit.appendChild(icon("pencil", 14));
-  qaEdit.title = "Open card";
-  qaEdit.setAttribute("aria-label", "Open card");
-  qaEdit.addEventListener("click", function(e) {
-    e.stopPropagation();
-    openCardId = c.id;
-    renderBoard(board);
-  });
-  qa.appendChild(qaEdit);
-  // Quick move to next column
-  var qaMove = document.createElement("button");
-  qaMove.type = "button";
-  qaMove.appendChild(icon("arrowRight", 14));
-  qaMove.title = "Move to next column";
-  qaMove.setAttribute("aria-label", "Move to next column");
-  qaMove.addEventListener("click", function(e) {
-    e.stopPropagation();
-    if (!board) return;
-    var ids = board.columns.map(function(col){ return col.id; });
-    var at = ids.indexOf(c.column);
-    var next = at + 1;
-    if (next >= ids.length) return;
-    postBoard({ op: "move", id: c.id, column: ids[next] }, "Moved to " + board.columns[next].title + ".");
-  });
-  qa.appendChild(qaMove);
-  b.appendChild(qa);
 
   // The only way to move a card without a pointer, so it says so rather than
   // living in a source comment.
@@ -956,6 +912,50 @@ function cardNode(c) {
     postBoard({ op: "move", id: c.id, column: ids[next] }, "Moved to " + board.columns[next].title + ".");
   });
   return b;
+}
+
+/* The card's hover actions, built as a *sibling* of the card button rather
+   than a child of it.
+
+   They used to be appended into `cardNode`'s button. A button's children are
+   presentational in ARIA, so a screen reader flattened both of these away and
+   there was no way at all to reach them; nesting interactive content inside a
+   button is also invalid HTML, and axe reported it as `nested-interactive`
+   (logged in docs/reviews/webui.md's 2026-08-12 sweep as a handoff item). The
+   card's own `<li>` is the positioning context now, so the overlay still sits
+   on the card's top-right corner and still appears on hover or focus, while
+   both controls are ordinary buttons the accessibility tree can see. */
+function cardQuickActions(c) {
+  var qa = document.createElement("span");
+  qa.className = "card-quick-actions";
+  var qaEdit = document.createElement("button");
+  qaEdit.type = "button";
+  qaEdit.appendChild(icon("pencil", 14));
+  qaEdit.title = "Open card";
+  qaEdit.setAttribute("aria-label", "Open card: " + (c.title || c.id));
+  qaEdit.addEventListener("click", function(e) {
+    e.stopPropagation();
+    openCardId = c.id;
+    renderBoard(board);
+  });
+  qa.appendChild(qaEdit);
+  // Quick move to next column
+  var qaMove = document.createElement("button");
+  qaMove.type = "button";
+  qaMove.appendChild(icon("arrowRight", 14));
+  qaMove.title = "Move to next column";
+  qaMove.setAttribute("aria-label", "Move to next column: " + (c.title || c.id));
+  qaMove.addEventListener("click", function(e) {
+    e.stopPropagation();
+    if (!board) return;
+    var ids = board.columns.map(function(col){ return col.id; });
+    var at = ids.indexOf(c.column);
+    var next = at + 1;
+    if (next >= ids.length) return;
+    postBoard({ op: "move", id: c.id, column: ids[next] }, "Moved to " + board.columns[next].title + ".");
+  });
+  qa.appendChild(qaMove);
+  return qa;
 }
 
 function showDropIndicator(targetCard, e) {

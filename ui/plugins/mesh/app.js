@@ -284,8 +284,19 @@ clanker.registerView({
       });
     });
 
+    /* `container` is the <section> the host hands `mount`; the attribute the
+       host toggles is `hidden` on the enclosing `.view` panel. Reading it off
+       the section was reading a flag nobody sets, so it was `false` forever and
+       the guards below were guards in name only: opening Mesh once left the
+       4s poll running for the life of the tab. Ask the panel, the way the
+       health and office views do. */
+    function viewHidden() {
+      var view = container.closest ? container.closest(".view") : null;
+      return !!(view && view.hidden);
+    }
+
     api.onLive(function (ev) {
-      if (!ev || container.hidden) return;
+      if (!ev || viewHidden()) return;
       if (ev.t === "mesh" || ev.t === "talk") load();
     });
 
@@ -294,11 +305,11 @@ clanker.registerView({
        tab, from a view nobody could see. api.onLive above still refreshes
        instantly on mesh events, and refresh() covers re-entry. */
     poll = setInterval(function () {
-      if (container.hidden || state.busy) return;
+      if (viewHidden() || state.busy) return;
       load();
     }, 4000);
     tick = setInterval(function () {
-      if (container.hidden || !state.pending.length) return;
+      if (viewHidden() || !state.pending.length) return;
       draw();
     }, 1000);
 

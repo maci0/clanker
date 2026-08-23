@@ -3020,8 +3020,10 @@ const http_timeout_ms: u32 = 60_000;
 const HttpOutcome = union(enum) {
     /// Bytes written into the caller's response buffer.
     ok: usize,
-    /// Response arrived with a >= 400 status.
-    status: u16,
+    /// Response arrived with a >= 400 status. `len` is how much of the error
+    /// body landed in the caller's buffer, kept so `httpImpl` can hand it back
+    /// to the guest instead of dropping the only explanation the server gave.
+    status: struct { code: u16, len: usize },
     /// Body outgrew `max_http_bytes`; the fixed writer refused the rest.
     too_large,
     /// Transport failure, carrying `@errorName` of the cause.
@@ -3079,8 +3081,39 @@ fn httpFetchTask(args: HttpFetchArgs, abort: *client.Abort, done: *std.Io.Event)
     };
 
     const status = @intFromEnum(result.status);
-    if (status >= 400) return .{ .status = status };
+    if (status >= 400) return .{ .status = .{ .code = status, .len = w.end } };
     return .{ .ok = w.end };
+}
+
+/// How much of a >= 400 response body is handed back to the guest. An API
+/// error is a short JSON object (`{"message":"Not Found",...}`); the cap is
+/// there so a server that answers an error with a megabyte of HTML cannot eat
+/// the guest's whole result arena on a path the guest may not even read.
+const http_failure_body_cap: usize = 2048;
+
+/// The key that marks the result slot as a status envelope. Present so a guest
+/// reading `ck_result` after `error.NetworkError` can tell this envelope from
+/// whatever an *earlier*, unrelated host call happened to leave behind: a
+/// transport failure or a timeout writes no envelope at all, and the slot is
+/// never cleared.
+const http_failure_marker = "ck_http_status";
+
+/// Writes `{"ck_http_status":<code>,"body":"<truncated body>"}` into the result
+/// slot. Best effort by design: it runs on a path that is already failing, so a
+/// full arena or a stringify error must not turn a reportable 404 into a
+/// different failure. The guest sees no envelope and falls back to the generic
+/// message, which is exactly the behaviour that shipped before.
+fn writeHttpFailure(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, code: u16, body: []const u8) void {
+    const shown = body[0..@min(body.len, http_failure_body_cap)];
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer };
+    s.beginObject() catch return;
+    s.objectField(http_failure_marker) catch return;
+    s.write(code) catch return;
+    s.objectField("body") catch return;
+    s.write(shown) catch return;
+    s.endObject() catch return;
+    _ = h.writeResult(mem_bytes, w.written());
 }
 
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
@@ -3125,8 +3158,16 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
 
     return switch (outcome) {
         .ok => |n| h.writeResult(mem_bytes, resp_buf[0..n]),
-        .status => |code| blk: {
-            log.log(.warn, "[sandbox] http request to '{s}' failed with status {d}", .{ url, code });
+        .status => |s| blk: {
+            log.log(.warn, "[sandbox] http request to '{s}' failed with status {d}", .{ url, s.code });
+            // The return code stays `Err.network` -- changing it would rewrite
+            // the error every existing guest reports for a 4xx. But the status
+            // and the server's explanation are the whole content of a 404 or a
+            // rate-limit refusal, and dropping them left a guest unable to tell
+            // "GitHub says this issue does not exist" from "DNS failed". Park
+            // the envelope in the result slot so a guest that cares can read it
+            // through `ck_result` immediately after the error.
+            writeHttpFailure(h, mem_bytes, arena, s.code, resp_buf[0..s.len]);
             break :blk Err.network;
         },
         .too_large => blk: {
@@ -3221,6 +3262,111 @@ test "httpWithTimeout gives up on a host that accepts and never answers" {
     // the OS connect timeout (~75s) that unbounded callers used to wait out.
     try std.testing.expect(outcome == null);
     try std.testing.expect(elapsed_ms < 30_000);
+}
+
+/// Answers one request with `status` and `body`, then returns. Used by the
+/// status-envelope test below; a one-shot rather than a loop so there is
+/// nothing to stop and nothing to join beyond the future itself.
+fn oneShotStatusServer(
+    io: std.Io,
+    server: *std.Io.net.Server,
+    status: []const u8,
+    body: []const u8,
+) void {
+    const stream = server.accept(io) catch return;
+    defer stream.close(io);
+    var tmp: [4096]u8 = undefined;
+    // Drain the request head so the client is not left writing into a full
+    // socket buffer. A short read is fine: we do not care what it asked for.
+    _ = std.posix.read(stream.socket.handle, &tmp) catch {};
+    var resp_buf: [4096]u8 = undefined;
+    const resp = std.fmt.bufPrint(
+        &resp_buf,
+        "HTTP/1.1 {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
+        .{ status, body.len, body },
+    ) catch return;
+    var off: usize = 0;
+    while (off < resp.len) {
+        const n = std.c.write(stream.socket.handle, resp[off..].ptr, resp.len - off);
+        if (n <= 0) return;
+        off += @intCast(n);
+    }
+}
+
+test "a >= 400 response keeps its status and body for the guest" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // The defect: `httpImpl` collapsed every error status into `Err.network`
+    // and freed the body, so a guest saw the same `error.NetworkError` for
+    // "GitHub says this issue does not exist" and "DNS failed". Two documented
+    // `gh_read` failure modes -- "not found: <url>" and "GitHub rate limit
+    // exhausted" -- were written as scans over a body that had already been
+    // dropped, so neither could ever fire.
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    const error_body =
+        \\{"message":"Not Found","documentation_url":"https://docs.github.com/rest"}
+    ;
+    var future = try io.concurrent(oneShotStatusServer, .{ io, &server, "404 Not Found", error_body });
+
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/x", .{port});
+    var out: [4096]u8 = undefined;
+    const outcome = httpWithTimeout(io, .{
+        .io = io,
+        .gpa = allocator,
+        .url = url,
+        .method = .GET,
+        .payload = null,
+        .extra_headers = &.{},
+        .out = &out,
+    }, 10_000);
+    future.await(io);
+
+    try std.testing.expect(outcome != null);
+    try std.testing.expect(outcome.? == .status);
+    try std.testing.expectEqual(@as(u16, 404), outcome.?.status.code);
+    // The length is the point: before this the body was unreachable, so there
+    // was nothing to classify a 404 with.
+    try std.testing.expectEqualStrings(error_body, out[0..outcome.?.status.len]);
+}
+
+test "writeHttpFailure parks a marked status envelope in the result slot" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var host = Host{
+        .sandbox = undefined,
+        .rng = std.Random.DefaultPrng.init(0),
+    };
+    var mem: [host_arena_cap + 64]u8 = undefined;
+
+    writeHttpFailure(&host, &mem, arena_state.allocator(), 403, "{\"message\":\"API rate limit exceeded\"}");
+    const parked = mem[host.result_ptr .. host.result_ptr + host.result_len];
+    try std.testing.expectEqualStrings(
+        \\{"ck_http_status":403,"body":"{\"message\":\"API rate limit exceeded\"}"}
+    , parked);
+
+    // The marker is what lets a guest tell this envelope from whatever an
+    // earlier, unrelated host call left in the shared result slot.
+    try std.testing.expect(std.mem.find(u8, parked, http_failure_marker) != null);
+
+    // An error body far past the cap is truncated rather than refused: the
+    // status is the load-bearing part and must survive a server that answers
+    // a 500 with a page of HTML.
+    const huge = [_]u8{'z'} ** (http_failure_body_cap * 4);
+    host.reset();
+    writeHttpFailure(&host, &mem, arena_state.allocator(), 500, &huge);
+    try std.testing.expect(host.result_len > 0);
+    const big = mem[host.result_ptr .. host.result_ptr + host.result_len];
+    try std.testing.expect(big.len < huge.len);
+    try std.testing.expect(std.mem.find(u8, big, "\"ck_http_status\":500") != null);
 }
 
 test "parseCustomHeaders parses valid JSON object into headers" {
