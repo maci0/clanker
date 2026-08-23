@@ -4,11 +4,11 @@
 
 - **What failed:** tests/e2e/pty.zig allocates its pty with /dev/ptmx plus TIOCSPTLCK and TIOCGPTN and sizes it with posix.T.IOCSWINSZ. All three are Linux-only: the darwin branch of std.c.T declares IOCGWINSZ and nothing else, so the file fails to compile and takes the whole 38-test e2e suite down with it on macOS. Behind that sit two darwin runtime traps: a fresh master is not a terminal until something opens the slave, and open-then-close of the slave leaves a transient hangup pump reads as a dead child.
 - **Impact:** `zig build e2e` is unavailable on macOS entirely. One file's platform assumptions cost all 38 journeys, including the 36 that have nothing to do with a pty.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-23. Fixed in tests/e2e/pty.zig (PR #354): pty allocation moved to POSIX posix_openpt/grantpt/unlockpt/ptsname, Pty.prime holds a slave fd on non-Linux, the master is NONBLOCK with a bounded POLLOUT wait, and killAndReap drains while reaping instead of blocking. Checked with zig build e2e, not the gate (which compiles no tests/e2e/): the suite went from 1 compilation error and 0 journeys run to 37/38 with both pty journeys passing. aarch64-macos only.
 
 ## Status
 
-Resolved.
+Resolved on 2026-08-23. Fixed in tests/e2e/pty.zig (PR #354): pty allocation moved to POSIX posix_openpt/grantpt/unlockpt/ptsname, Pty.prime holds a slave fd on non-Linux, the master is NONBLOCK with a bounded POLLOUT wait, and killAndReap drains while reaping instead of blocking. Checked with zig build e2e, not the gate (which compiles no tests/e2e/): the suite went from 1 compilation error and 0 journeys run to 37/38 with both pty journeys passing. aarch64-macos only.
 
 ## Symptom and impact
 
