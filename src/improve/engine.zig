@@ -1053,14 +1053,28 @@ pub const Engine = struct {
         // wasm must exist. Runs after toolsGate so zig-out/tools/*.wasm are
         // present; tools/ts/dist/*.wasm are committed. Catches a proposal that
         // shadows a tool or ships a manifest for a wasm that was never built.
-        var desc_check = try gate_checks.toolDescriptorGate(self.ctx.gpa, self.ctx.io, staged_dir, "tools/manifests");
-        defer desc_check.deinit(self.ctx.gpa);
-        if (!desc_check.ok) {
-            log.log(.error_, "tool descriptor check failed: {s}", .{desc_check.detail});
-            try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, desc_check.detail, fingerprints, null);
-            self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the tool manifests are inconsistent:\n{s}\nFix exactly that and re-propose.", .{desc_check.detail});
-            self.removeTree(staging);
-            return .failed;
+        // Every configured in-tree tools_dir entry is gated, not just the
+        // default: an in-tree entry is part of the promoted checkout, so a
+        // descriptor staged there would otherwise load ungated. Out-of-tree
+        // entries (absolute, or escaping with "..") are not part of the
+        // promoted checkout and stay invisible to this staged-worktree gate
+        // by design (PRD 0022 failure modes).
+        const desc_dirs: []const []const u8 = if (self.cfg.agent.tools_dir.len == 0)
+            &.{"tools/manifests"}
+        else
+            self.cfg.agent.tools_dir;
+        for (desc_dirs) |desc_dir| {
+            if (!inTreeToolsDir(desc_dir)) continue;
+            var desc_check = try gate_checks.toolDescriptorGate(self.ctx.gpa, self.ctx.io, staged_dir, desc_dir);
+            defer desc_check.deinit(self.ctx.gpa);
+            if (!desc_check.ok) {
+                const desc_detail = try std.fmt.allocPrint(self.arena, "{s}: {s}", .{ desc_dir, desc_check.detail });
+                log.log(.error_, "tool descriptor check failed: {s}", .{desc_detail});
+                try self.hist.append(id, .failed, opts.instructions, proposal.summary, proposalChangedPathsSlice(self.arena, proposal.changes) catch &.{}, 0, 0, desc_detail, fingerprints, null);
+                self.feedback = try std.fmt.allocPrint(self.arena, "Your previous patch was applied but the tool manifests are inconsistent:\n{s}\nFix exactly that and re-propose.", .{desc_detail});
+                self.removeTree(staging);
+                return .failed;
+            }
         }
 
         var test_gate = try gate_checks.testGate(self.ctx.gpa, self.ctx.io, staged_dir);
@@ -2805,6 +2819,28 @@ const GateTimer = struct {
         self.last = now;
     }
 };
+
+/// True when a configured `tools_dir` entry lives inside the checkout, so
+/// the staged worktree's copy of it is what a promoted run would load and
+/// the descriptor gate must open it. An absolute path or one that walks out
+/// with `..` is out-of-tree: not part of the promoted checkout, and invisible
+/// to the staged-worktree gate by design (PRD 0022 failure modes).
+fn inTreeToolsDir(path: []const u8) bool {
+    if (path.len == 0) return false;
+    if (std.fs.path.isAbsolute(path)) return false;
+    var it = std.mem.tokenizeScalar(u8, path, '/');
+    while (it.next()) |comp| if (std.mem.eql(u8, comp, "..")) return false;
+    return true;
+}
+
+test "inTreeToolsDir gates in-tree entries and skips out-of-tree ones" {
+    try std.testing.expect(inTreeToolsDir("tools/manifests"));
+    try std.testing.expect(inTreeToolsDir("third-party/manifests"));
+    try std.testing.expect(!inTreeToolsDir("/opt/clanker-plugins"));
+    try std.testing.expect(!inTreeToolsDir("../outside"));
+    try std.testing.expect(!inTreeToolsDir("tools/../../outside"));
+    try std.testing.expect(!inTreeToolsDir(""));
+}
 
 fn errorTail(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
     const max = 1500;
