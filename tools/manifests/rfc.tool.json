@@ -49,7 +49,7 @@
       },
       "content": {
         "type": "string",
-        "description": "Markdown to append to an existing RFC. Required for append."
+        "description": "Markdown to append to an existing RFC. Required for append. A block whose first line is a heading the record already carries with an empty body fills that section in place instead of adding a second copy of the heading."
       },
       "old": {
         "type": "string",

@@ -226,6 +226,50 @@ pub fn nextRecord(out: *lib.Out, dir: []const u8, slug: []const u8) !?NextRecord
 /// The `{"ok":true,"action":...,"path":...}` reply every record store returns
 /// from a write. All five stores answered in exactly this shape from their own
 /// copy of this function; one copy keeps the wire contract single-sourced.
+/// The `append` reply. `placement` is the part a caller cannot infer: an author
+/// filling the scaffold's empty `## Root cause` and an author adding a brand
+/// new section both call `append`, and only this says which happened.
+pub fn appendResult(out: *lib.Out, path: []const u8, placement: doc.Placement) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("append");
+    try s.objectField("path");
+    try s.write(path);
+    switch (placement) {
+        .end => {},
+        .filled => |heading| {
+            try s.objectField("filled");
+            try s.write(heading);
+            try s.objectField("note");
+            try s.write("the block filled that section, which was present and empty, instead of being added at the end as a second copy of its heading");
+        },
+    }
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
+/// The `update` reply. `replaced` is 1 for the ordinary unique-match update and
+/// higher only when the caller asked for every copy.
+pub fn updateResult(out: *lib.Out, path: []const u8, replaced: usize) !void {
+    var w = lib.writer(out);
+    var s = lib.json(&w);
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("action");
+    try s.write("update");
+    try s.objectField("path");
+    try s.write(path);
+    try s.objectField("replaced");
+    try s.write(replaced);
+    try s.endObject();
+    lib.commit(out, &w);
+}
+
 pub fn mutationResult(out: *lib.Out, action: []const u8, path: []const u8) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
