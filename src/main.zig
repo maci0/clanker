@@ -212,6 +212,7 @@ comptime {
     _ = @import("util/glob.zig");
     _ = @import("util/tail.zig");
     _ = @import("util/utf8.zig");
+    _ = @import("util/session_id.zig");
     _ = @import("util/alarm_store.zig");
     _ = @import("util/http_client.zig");
     _ = @import("util/deadline.zig");

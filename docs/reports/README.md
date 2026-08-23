@@ -87,6 +87,17 @@ Project agents receive this workflow through the harness prompt and
 - [ck_http drops the status and body of every >= 400 response, so two documented gh_read errors could never fire](bugs/2026-08-24-ck-http-drops-error-status-and-body.md) — Resolved
 
 - [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-24-gh-read-diff-hunks-name-no-file.md) — Resolved
+- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-24-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
+
+- [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-24-plugin-refresh-hook-is-unreachable.md) — Open
+
+- [Every plugin's api.status writes the same sr-only live region, and Health rewrites it about once a second](bugs/2026-08-24-plugin-status-line-is-one-shared-live-region.md) — Open
+
+- [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-24-plugin-tab-arrow-keys-follow-registration-order.md) — Open
+
+- [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-24-board-card-member-avatar-nested-in-the-card-button.md) — Open
+
+- [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-24-webui-task-textarea-combobox-role.md) — Open
 
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 

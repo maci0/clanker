@@ -60,14 +60,10 @@ const schema: [:0]const u8 =
 ;
 
 /// Session ids are path fragments, not arbitrary labels. Enforce the storage
-/// boundary here even when a caller forgets its own input validation.
-pub fn validSessionId(id: []const u8) bool {
-    if (id.len == 0 or id.len > 64) return false;
-    for (id) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
-}
+/// boundary here even when a caller forgets its own input validation. One
+/// definition in `util/session_id.zig`, shared with the guests that also
+/// build paths from ids.
+pub const validSessionId = @import("../util/session_id.zig").validSessionId;
 
 /// Columns added to `messages` after the table's first shipped shape. Applied
 /// on every open, in order, each ignoring the duplicate-column error an

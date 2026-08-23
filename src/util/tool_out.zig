@@ -34,6 +34,13 @@ pub fn warnIfMalformed(allocator: std.mem.Allocator, name: []const u8, out: []co
 /// account for its length without depending on `agent/prune.zig`.
 pub const prune_marker = "\n\n[... tool result middle pruned ...]\n\n";
 
+/// How much of a tool call's arguments a human is shown when judging it:
+/// the shared budget for the confirm prompt, the TUI card body, and the web
+/// stream's per-call row (card_preview_cap in tui/transcript.zig). Lives
+/// here (a leaf) so the transcript does not depend on `agent/loop.zig` to
+/// size its cards.
+pub const args_preview_cap: usize = 400;
+
 test "output that opens like JSON and does not parse is reported" {
     // The exact shapes two tools shipped, both from writing a value with
     // print, which emits raw text and quotes nothing.

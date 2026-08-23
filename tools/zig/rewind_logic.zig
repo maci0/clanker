@@ -22,18 +22,12 @@ pub fn isGitHash(s: []const u8) bool {
     return true;
 }
 
-/// The session-id alphabet the rest of the harness uses (session.zig's
-/// `validSessionId`): alphanumeric plus `-` and `_`, at most 64 bytes. A
-/// rewind log path is built from the id, so an id that could smuggle a
-/// separator would be a path bug; the check is repeated here so the guest
-/// never has to trust its caller.
-pub fn validSessionId(id: []const u8) bool {
-    if (id.len == 0 or id.len > 64) return false;
-    for (id) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
-}
+/// The session-id alphabet the rest of the harness uses: alphanumeric plus
+/// `-` and `_`, at most 64 bytes. A rewind log path is built from the id, so
+/// an id that could smuggle a separator would be a path bug; the check is
+/// repeated here so the guest never has to trust its caller. One shared
+/// definition in `util/session_id.zig`, imported by name.
+pub const validSessionId = @import("session_id").validSessionId;
 
 pub fn writeRecord(w: *std.Io.Writer, r: Record) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{} };

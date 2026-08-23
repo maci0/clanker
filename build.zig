@@ -333,6 +333,15 @@ pub fn build(b: *std.Build) void {
     const music_js_test = b.addSystemCommand(&.{ "node", "--test" });
     music_js_test.addFileArg(b.path("ui/plugins/music/music.test.mjs"));
     test_step.dependOn(&music_js_test.step);
+    const office_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    office_js_test.addFileArg(b.path("ui/plugins/office/office.test.mjs"));
+    test_step.dependOn(&office_js_test.step);
+    const composer_suggest_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    composer_suggest_js_test.addFileArg(b.path("ui/app/composer-suggest.test.mjs"));
+    test_step.dependOn(&composer_suggest_js_test.step);
+    const board_card_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    board_card_js_test.addFileArg(b.path("ui/app/features/board-card.test.mjs"));
+    test_step.dependOn(&board_card_js_test.step);
     const harden_js_test = b.addSystemCommand(&.{ "node", "--test" });
     harden_js_test.addFileArg(b.path("ui/app/core/harden.test.mjs"));
     test_step.dependOn(&harden_js_test.step);
@@ -400,6 +409,11 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    const helper_session_id_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/session_id.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
     for (host_tested_helpers) |stem| {
         const mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
@@ -410,6 +424,9 @@ pub fn build(b: *std.Build) void {
                 // caps text on a codepoint boundary reaches the one shared
                 // helper instead of carrying a second copy of the loop.
                 .{ .name = "utf8", .module = helper_utf8_mod },
+                // Same shape: the shared session-id alphabet, which
+                // `rewind_logic` validates through rather than re-spelling.
+                .{ .name = "session_id", .module = helper_session_id_mod },
             },
         });
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod, .filters = test_filters })).step);
@@ -480,6 +497,13 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The spill, rewind, and janitor guests validate session ids against the
+    // same alphabet the host session store enforces, from this one file.
+    const tool_session_id_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/session_id.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
     // The alarm guest owns state/alarms.json and the system prompt reads it;
     // both parse rows from this one record declaration, not a copy each.
     const tool_alarm_store_mod = b.createModule(.{
@@ -531,6 +555,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "tail", .module = tool_tail_mod },
                     .{ .name = "glob", .module = tool_glob_mod },
                     .{ .name = "fs_skip", .module = tool_fs_skip_mod },
+                    .{ .name = "session_id", .module = tool_session_id_mod },
                     .{ .name = "alarm_store", .module = tool_alarm_store_mod },
                 },
             }),
