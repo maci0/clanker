@@ -3221,9 +3221,31 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         // resolveZigBin needles in gate_invariants). gateReturnsBefore would
         // flag the honest accessAbsolute line's `catch return null`, so that
         // line is allowed explicitly; anything else returning before the
-        // dupe-of-zig_exe is still refused. Last in this table so the
-        // fixtures below fail on the gate they are about, not on this one.
+        // dupe-of-zig_exe is still refused. Last of the zig-gate block so
+        // the fixtures below fail on the gate they are about, not on this
+        // one.
         .{ .sig = "fn resolveZigBin(", .required = "return gpa.dupe(u8, zig_exe) catch null;", .allow = &.{"accessAbsolute"}, .indent = 8 },
+        // The five clanker-gate-only checks run ONLY from cli.zig's
+        // verifyGates (`clanker gate`, and cmdImproveSelf's post-merge
+        // verification). gate_invariants pins their call sites, but a gutted
+        // implementation under a kept call site passes every needle: same
+        // delegation-without-implementation shape the entries above refuse
+        // for build/test/tools, so each outer function must still reach its
+        // scan body and each scan body must still reach its counting logic.
+        // test-root coverage is the high-value one: its absence is invisible
+        // in `zig build test` output by construction (the whole reason the
+        // gate exists), so an early green return there lets a later patch
+        // drop modules from src/main.zig's comptime block and silence their
+        // tests permanently. scanUnrunJsSuites' no-ui-directory early return
+        // is an allowed pre-anchor exit on a minimal checkout.
+        .{ .sig = "fn testRootCoverageGate(", .required = "return scanForUnrootedTests(gpa, io, dir, files, main_src);", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn scanForUnrootedTests(", .required = "misses += 1;", .allow = &.{}, .indent = 8 },
+        .{ .sig = "fn jsSuiteCoverageGate(", .required = "return scanUnrunJsSuites(gpa, io, dir, build_src);", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn scanUnrunJsSuites(", .required = "misses += 1;", .allow = &.{"no ui/ dir"}, .indent = 8 },
+        .{ .sig = "fn sandboxAbiGate(", .required = "return scanUnregisteredHostFns(gpa, host_src, runtime_src);", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn scanUnregisteredHostFns(", .required = "misses += 1;", .allow = &.{}, .indent = 8 },
+        .{ .sig = "fn toolsTsToolchainGate(", .required = "if (std.mem.find(u8, npmrc, \"ignore-scripts=true\") == null) {", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn releaseContractGate(", .required = "if (std.mem.find(u8, changelog, \"## [Unreleased]\") == null) {", .allow = &.{}, .indent = 4 },
     };
     for (gates) |g| {
         const body = fnBody(src, g.sig) orelse return g.sig;
@@ -3847,6 +3869,77 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\}
     ;
 
+    // Honest versions of the clanker-gate-only checks and their scan bodies,
+    // appended next to ok_resolver for the same reason: the table now requires
+    // them, so a fixture without them fails on "fn testRootCoverageGate("
+    // instead of on the shape it is about.
+    const ok_cli_gates =
+        \\pub fn testRootCoverageGate() !GateResult {
+        \\    const main_src = dir.readFileAlloc(io, "src/main.zig", gpa, .limited(1 << 20)) catch {
+        \\        return .{ .ok = false, .label = "test-root-coverage", .detail = "unreadable" };
+        \\    };
+        \\    return scanForUnrootedTests(gpa, io, dir, files, main_src);
+        \\}
+        \\fn scanForUnrootedTests() !GateResult {
+        \\    var misses: usize = 0;
+        \\    for (files) |f| {
+        \\        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch {
+        \\            return .{ .ok = false, .label = "test-root-coverage", .detail = "unreadable" };
+        \\        };
+        \\        if (rootImports(main_src, rel)) continue;
+        \\        misses += 1;
+        \\    }
+        \\}
+        \\pub fn jsSuiteCoverageGate() !GateResult {
+        \\    const build_src = dir.readFileAlloc(io, "build.zig", gpa, .limited(4 << 20)) catch {
+        \\        return .{ .ok = false, .label = "js-suite-coverage", .detail = "unreadable" };
+        \\    };
+        \\    return scanUnrunJsSuites(gpa, io, dir, build_src);
+        \\}
+        \\fn scanUnrunJsSuites() !GateResult {
+        \\    collectJsSuites(io, arena, &suites, dir, "ui") catch |err| switch (err) {
+        \\        error.FileNotFound => return .{ .ok = true, .label = "js-suite-coverage", .detail = "no ui/ dir" },
+        \\        else => return .{ .ok = false, .label = "js-suite-coverage", .detail = "unwalkable" },
+        \\    };
+        \\    for (suites.items) |rel| {
+        \\        if (buildRegistersJsSuite(build_src, rel)) continue;
+        \\        misses += 1;
+        \\    }
+        \\}
+        \\pub fn sandboxAbiGate() !GateResult {
+        \\    const host_src = dir.readFileAlloc(io, "src/sandbox/host.zig", gpa, .limited(8 << 20)) catch {
+        \\        return .{ .ok = false, .label = "sandbox-abi", .detail = "unreadable" };
+        \\    };
+        \\    return scanUnregisteredHostFns(gpa, host_src, runtime_src);
+        \\}
+        \\fn scanUnregisteredHostFns() !GateResult {
+        \\    var misses: usize = 0;
+        \\    while (lines.next()) |line| {
+        \\        if (registeredInRuntime(runtime_src, name)) continue;
+        \\        misses += 1;
+        \\    }
+        \\}
+        \\pub fn toolsTsToolchainGate() !GateResult {
+        \\    const npmrc = dir.readFileAlloc(io, "tools/ts/.npmrc", gpa, .limited(4096)) catch {
+        \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "unreadable" };
+        \\    };
+        \\    if (std.mem.find(u8, npmrc, "ignore-scripts=true") == null) {
+        \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "scripts" };
+        \\    }
+        \\}
+        \\pub fn releaseContractGate() !GateResult {
+        \\    _ = std.SemanticVersion.parse(build_options.version) catch {
+        \\        return .{ .ok = false, .label = "release-contract", .detail = "version" };
+        \\    };
+        \\    const changelog = dir.readFileAlloc(io, "CHANGELOG.md", gpa, .limited(1 << 20)) catch {
+        \\        return .{ .ok = false, .label = "release-contract", .detail = "unreadable" };
+        \\    };
+        \\    if (std.mem.find(u8, changelog, "## [Unreleased]") == null) {
+        \\        return .{ .ok = false, .label = "release-contract", .detail = "changelog" };
+        \\    }
+        \\}
+    ;
+
     const early_build_src =
         \\pub fn buildGate() !GateResult {
         \\    return .{ .ok = true, .label = "zig build" };
@@ -3881,7 +3974,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\    std.process.run(
         \\}
     ;
-    const early_build = early_build_src ++ "\n" ++ ok_resolver;
+    const early_build = early_build_src ++ "\n" ++ ok_resolver ++ "\n" ++ ok_cli_gates;
     try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_build).?);
 
     const commented_build_src =
@@ -3907,7 +4000,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\pub fn configWeakeningGate() GateResult { weakensImprove( }
         \\fn runZigArgs() !GateResult { std.process.run( }
     ;
-    const commented_build = commented_build_src ++ "\n" ++ ok_resolver;
+    const commented_build = commented_build_src ++ "\n" ++ ok_resolver ++ "\n" ++ ok_cli_gates;
     try std.testing.expectEqualStrings("return runZigArgs(gpa, io, dir, argv.items, \"zig build\")", checksZigShapeBroken(commented_build).?);
 
     const early_run_src =
@@ -3943,7 +4036,7 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\    _ = std.process.run(
         \\}
     ;
-    const early_run = early_run_src ++ "\n" ++ ok_resolver;
+    const early_run = early_run_src ++ "\n" ++ ok_resolver ++ "\n" ++ ok_cli_gates;
     try std.testing.expectEqualStrings("gate returns before its load-bearing call", checksZigShapeBroken(early_run).?);
 
     // The wrap-with-trailing-stub shape: the real body is dead inside an
@@ -3987,8 +4080,87 @@ test "the live checks.zig gate functions still reach their load-bearing calls" {
         \\    return .{ .ok = true, .label = label };
         \\}
     ;
-    const wrapped_run = wrapped_run_src ++ "\n" ++ ok_resolver;
+    const wrapped_run = wrapped_run_src ++ "\n" ++ ok_resolver ++ "\n" ++ ok_cli_gates;
     try std.testing.expectEqualStrings("a load-bearing gate call must not be wrapped in dead code", checksZigShapeBroken(wrapped_run).?);
+}
+
+test "a patch that guts a clanker-gate-only check implementation is rejected too" {
+    const gpa = std.testing.allocator;
+    // Honest zig gates as the prefix: the negative fixtures below corrupt
+    // only a clanker-gate-only entry, so everything before it in the table
+    // has to pass or the assertion would fire on the wrong shape.
+    const honest_zig_gates =
+        \\pub fn buildGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build");
+        \\}
+        \\pub fn testGate() !GateResult {
+        \\    return runZig(gpa, io, dir, &.{ "build", "test", "--summary", "all" }, "zig build test");
+        \\}
+        \\pub fn toolsGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig build tools");
+        \\}
+        \\pub fn fmtGate() !GateResult {
+        \\    return runZigArgs(gpa, io, dir, argv.items, "zig fmt --check");
+        \\}
+        \\pub fn lintGate() !GateResult {
+        \\                hits += 1
+        \\}
+        \\pub fn toolDescriptorGate() !GateResult {
+        \\    if (problems.items.len > 0) {}
+        \\}
+        \\pub fn gitDenyGuardGate() GateResult {
+        \\                    hasGitInExecAllow(
+        \\}
+        \\pub fn providerKindLeakGate() GateResult {
+        \\                hits += 1
+        \\}
+        \\pub fn configWeakeningGate() GateResult {
+        \\                    weakensImprove(
+        \\}
+        \\fn runZigArgs() !GateResult {
+        \\    std.process.run(
+        \\}
+    ;
+    const base = honest_zig_gates ++ "\n" ++ ok_resolver ++ "\n" ++ ok_cli_gates;
+    try std.testing.expect(checksZigShapeBroken(base) == null);
+
+    // The call site of testRootCoverageGate is pinned in cli.zig and its
+    // implementation kept, but the implementation now returns green without
+    // ever delegating: exactly the delegation-without-implementation shape
+    // the zig-gate entries refuse. The missing required delegation line is
+    // what names it.
+    {
+        const gutted = try std.mem.replaceOwned(
+            u8,
+            gpa,
+            base,
+            "return scanForUnrootedTests(gpa, io, dir, files, main_src);",
+            "return .{ .ok = true, .label = \"test-root-coverage\" };",
+        );
+        defer gpa.free(gutted);
+        try std.testing.expectEqualStrings(
+            "return scanForUnrootedTests(gpa, io, dir, files, main_src);",
+            checksZigShapeBroken(gutted).?,
+        );
+    }
+
+    // The scan body keeps its shape but answers green before counting: the
+    // early-return scan (not a missing anchor) is what catches this one.
+    {
+        const gutted = try std.mem.replaceOwned(
+            u8,
+            gpa,
+            base,
+            "        if (buildRegistersJsSuite(build_src, rel)) continue;",
+            "        if (buildRegistersJsSuite(build_src, rel)) continue;\n" ++
+                "        if (suites.items.len > 0) return .{ .ok = true, .label = \"js-suite-coverage\" };",
+        );
+        defer gpa.free(gutted);
+        try std.testing.expectEqualStrings(
+            "gate returns before its load-bearing call",
+            checksZigShapeBroken(gutted).?,
+        );
+    }
 }
 
 test "gate shape requirements must occur in executable source" {
