@@ -3211,15 +3211,28 @@ const Model = struct {
     }
 
     fn submit(self: *Model, ctx: *vxfw.EventContext) !void {
-        // One turn at a time: runThreadMain's finishTurn touches self.lines
-        // and self.arena from the background thread. self.arena is a plain
-        // ArenaAllocator (no internal locking) and self.lines is a plain
-        // ArrayList, so a second in-flight turn spawned here would race the
-        // first turn's background thread on both, not just contend for
-        // bridge_mutex-guarded state, but corrupt the arena's free-list and the
-        // transcript's backing storage. Leaving typed input untouched (no
-        // toOwnedSlice yet) is a no-op keystroke while the picker is modal
-        // for the same reason: nothing to submit into.
+        // One turn at a time: the worker mutates self.lines (finishTurn) and
+        // self.messages (through Agent.run) from the background thread, and
+        // both are plain ArrayLists with no locking of their own. A second
+        // in-flight turn spawned here would race the first turn's worker on
+        // the transcript's and the history's backing storage, not merely
+        // contend for bridge_mutex-guarded state.
+        //
+        // self.arena is *not* part of that hazard, though this comment used to
+        // say it was and named a free-list corruption that cannot happen. On
+        // Zig 0.16 std.heap.ArenaAllocator implements alloc/resize/remap/free
+        // with atomics and documents its Allocator threadsafe given a
+        // threadsafe child allocator, and std.process.Init documents both its
+        // `arena` and its `gpa` as threadsafe -- which is exactly what
+        // Model.arena is. Only deinit, reset and queryCapacity are not
+        // threadsafe, and none of them run while a worker is alive:
+        // cmdReplVaxis joins the worker before returning, and the runtime
+        // destroys the arena after main. (Investigation:
+        // docs/reports/investigations/2026-08-22-repl-ui-thread-and-worker-share-one-unlocked-arena.md)
+        //
+        // Leaving typed input untouched (no toOwnedSlice yet) is a no-op
+        // keystroke while the picker is modal for the same reason: nothing to
+        // submit into.
         bridge_mutex.lockUncancelable(bridge_io);
         const already_streaming = bridge_streaming;
         bridge_mutex.unlock(bridge_io);

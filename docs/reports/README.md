@@ -275,7 +275,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [Two pty e2e journeys fail on an untouched base: the REPL's vaxis capability queries never arrive](investigations/2026-08-22-pty-e2e-capability-queries-unanswered.md) — Resolved
 
-- [REPL UI thread and run worker allocate from one unlocked ArenaAllocator](investigations/2026-08-22-repl-ui-thread-and-worker-share-one-unlocked-arena.md) — Investigating
+- [REPL UI thread and run worker allocate from one unlocked ArenaAllocator](investigations/2026-08-22-repl-ui-thread-and-worker-share-one-unlocked-arena.md) — Closed
 
 - [Web UI bug+gap queue disposition](investigations/2026-08-21-webui-bug-gap-queue-disposition.md) — Resolved
 
