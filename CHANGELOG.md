@@ -16,6 +16,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A panic now always terminates the process instead of sometimes turning into
+  a silent, unkillable hang. The panic reporter went through `std.debug.print`,
+  whose stderr flush re-enters `std.Io.Threaded`; when the panic came from that
+  dispatcher (`Syscall.start`'s `.blocked => unreachable`, which a signal
+  landing on a pool thread mid-syscall reaches) the flush raised the same panic
+  again, with no re-entry guard to stop it — nothing printed, no exit status,
+  and nothing for a supervisor to reap, so a crashed `clanker repl` wedged
+  instead of dying. The panic line is now written with a raw `write(2)` that
+  touches no `std.Io`, and `handlePanic` latches per thread and `abort()`s on
+  re-entry the way Zig's own default handler does.
 - `clanker schedule` read stepped day fields (`*/2`) as if they were bare
   stars in the day-of-month/day-of-week rule: `0 0 */2 * 5` fired every
   Friday instead of Fridays on an odd date, and two stepped day fields
