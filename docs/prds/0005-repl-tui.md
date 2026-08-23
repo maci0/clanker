@@ -298,12 +298,19 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       `drawAskModal`). `ask_fn` is always wired; `confirm_fn` is wired when
       `agent.confirm_writes = "always"`. Decline-by-default on Escape/timeout/
       abandon; one question at a time.
-- [ ] **Graceful iteration-limit landing.** Hitting `agent.max_iterations`
-      returns `error.MaxIterationsExceeded` and the turn renders `[error: ...]`,
-      discarding every tool round's work with no partial answer. Default raised
-      24 -> 50, but the REPL should surface partial progress and offer to
-      continue (append "keep going") rather than erroring, the way a coding CLI
-      does. (Config bump: `config.zig`.)
+- [x] **Graceful iteration-limit landing.** Shipped: a turn that returns
+      `error.MaxIterationsExceeded` no longer renders `[error: ...]` and
+      discards the run's work. `runThreadMain` (src/tui/repl.zig) lands it
+      like a finished turn: the last prose the model produced
+      (`agent_loop.lastAssistantProse`, the same walk `clanker run`'s
+      `reportUnfinishedRun` does) renders as the partial answer, followed by
+      a note naming the limit and offering to continue — the transcript
+      persists across turns, so sending "keep going" resumes from exactly
+      where the run stopped. The turn receipt (tokens, cost) still prints;
+      capped runs spent real money. The loop side already lands most runs
+      before the error fires (wrap-up warning + final no-tools iteration,
+      src/agent/loop.zig), so this covers the model that keeps insisting on
+      tools to the end. Default raised 24 -> 50 earlier (`config.zig`).
 - [x] **Real markdown outside fenced code.** Shipped: `mdLineSegments` parses
       each line's inline markdown into styled segments — `**bold**`,
       `*italic*`/`_italic_`, `` `code` ``, `#`..`######` headings, and

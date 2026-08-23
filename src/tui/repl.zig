@@ -725,6 +725,25 @@ fn runThreadMain(args: RunThreadArgs) void {
         return;
     }
     const resp = a.run(messages, args.task, &err_detail) catch |err| {
+        if (err == error.MaxIterationsExceeded) {
+            // An iteration-limit hit is a landing, not a loss: the
+            // conversation is ours, so the last prose the model produced is
+            // still in `messages`, and the whole transcript (tool results
+            // included) persists into the next turn. Surface the partial
+            // work and offer to continue instead of rendering a bare
+            // `error:` line that reads as if the run's work was discarded.
+            const note = std.fmt.allocPrint(
+                self.arena,
+                "[hit the iteration limit after {d} iterations; the work above is partial, not lost. Send \"keep going\" to continue from here, or raise agent.max_iterations in config.toml.]",
+                .{a.max_iterations},
+            ) catch "[hit the iteration limit; send \"keep going\" to continue, or raise agent.max_iterations]";
+            const text = if (agent_loop.lastAssistantProse(messages.items)) |partial|
+                std.fmt.allocPrint(self.arena, "{s}\n\n{s}", .{ partial, note }) catch note
+            else
+                note;
+            self.finishTurn(text, self.turnStats(&a, started, messages.items));
+            return;
+        }
         const hint = errorRecoveryHint(err, err_detail);
         // `err_detail` is the provider's own error string, echoed verbatim
         // into the transcript: untrusted text on the same footing as the

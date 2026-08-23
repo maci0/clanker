@@ -42,6 +42,16 @@ if command -v shellcheck >/dev/null 2>&1; then
     fi
 fi
 
+# JavaScript lint, when the root toolchain is installed (`npm ci`; CI runs it
+# regardless). Same config as CI: correctness errors fail, warn-level
+# anti-slop findings print without failing.
+if [ -x node_modules/.bin/oxlint ]; then
+    if [ -n "$(staged '*.js' '*.mjs' '*.ts' | tr -d '\0')" ]; then
+        staged '*.js' '*.mjs' '*.ts' | xargs -0 ./node_modules/.bin/oxlint ||
+            fail "oxlint failed (fix or scope the finding; npm run lint:fix may help)"
+    fi
+fi
+
 # Tool manifests, when a built clanker is present. The same validation runs
 # as a unit test in CI, so a missing binary is a skip, not a failure.
 if [ -x zig-out/bin/clanker ]; then
