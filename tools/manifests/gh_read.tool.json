@@ -1,7 +1,7 @@
 {
   "name": "gh_read",
-  "description": "Read a GitHub issue, PR, PR diff, or issue list via gh:// or github:// URLs. Does not extend read_file (which stays network-free). Requires GITHUB_TOKEN. Examples: gh://issue/owner/repo/42, gh://pr/owner/repo/7/diff, gh://issue/owner/repo?state=open.",
-  "llm_description": "Read GitHub issues/PRs via gh:// or github:// (not read_file). Needs GITHUB_TOKEN. gh://issue/o/r/n, gh://pr/o/r/n[/diff[/path]], gh://issue/o/r?state=open.",
+  "description": "Read a GitHub issue, PR, PR diff, or issue list via gh:// or github:// URLs. Does not extend read_file (which stays network-free). Requires GITHUB_TOKEN. Examples: gh://issue/owner/repo/42, gh://pr/owner/repo/7/diff, gh://issue/owner/repo?state=open. A PR view reports head, base and merge state; a diff names the file above every hunk. Lists and diffs are one page of 100 items and say so when there is more; per_page= in the URL overrides the page size.",
+  "llm_description": "Read GitHub issues/PRs via gh:// or github:// (not read_file). Needs GITHUB_TOKEN. gh://issue/o/r/n, gh://pr/o/r/n (title, head->base, mergeable, file counts), gh://pr/o/r/n/diff[/path] (unified diff, each hunk under its own --- a/ +++ b/ header), gh://issue/o/r?state=open. Lists and diffs fetch one page of 100; output ending in [truncated: ...] means more exists. Add ?per_page=N (or &per_page=N) to shrink a response that came back too large.",
   "wasm": "zig-out/tools/gh_read.wasm",
   "input_schema": {
     "type": "object",
