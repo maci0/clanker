@@ -159,7 +159,7 @@ For a PR diff file:
 The hunks are the API's `patch` field verbatim; the `--- a/` / `+++ b/` pair is
 added by the guest. GitHub's `patch` starts at the first `@@` and names no file,
 so concatenating patches straight from the response -- what shipped until
-2026-08-24 -- gave a run of hunks that could not be attributed to any file the
+2026-08-23 -- gave a run of hunks that could not be attributed to any file the
 moment a PR touched more than one. A file the API returns with no `patch` at all
 (binary, or over GitHub's per-file diff limit) gets the header pair and a
 `[no patch: <status>]` line rather than being dropped.

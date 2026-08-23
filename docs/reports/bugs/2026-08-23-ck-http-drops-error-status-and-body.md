@@ -4,11 +4,11 @@
 
 - **What failed:** `httpImpl` (`src/sandbox/host.zig`) mapped every response with a status >= 400 to `Err.network` and freed the response body with the rest of `resp_buf`. A guest therefore got `error.NetworkError` -- the same error a DNS failure, a refused connection and a timeout give -- with no status and no body. `gh_read`'s `looksLikeNotFound` and `looksLikeRateLimit` were scans over that body, so both were dead code: the two failure modes PRD 0019 documents, `not found: <url>` and `GitHub rate limit exhausted`, could not fire on any real GitHub answer.
 - **Impact:** A missing issue reported `gh://issue/o/r/999: the request did not complete`. An exhausted rate limit, an expired token and an unreachable host were one indistinguishable error. The two dead scans read as working code and had a green build behind them, so the gap was invisible from the source.
-- **Resolution:** Resolved on 2026-08-24. The host parks `{"ck_http_status":<code>,"body":"<first 2 KiB>"}` in the guest's result slot on the status path only; the return code stays `Err.network`, so no other guest changes behaviour. `lib.httpLastFailure` reads it and `gh_format.statusMessage` classifies 404 / 401 / 403-rate-limit / 403-other / everything else.
+- **Resolution:** Resolved on 2026-08-23. The host parks `{"ck_http_status":<code>,"body":"<first 2 KiB>"}` in the guest's result slot on the status path only; the return code stays `Err.network`, so no other guest changes behaviour. `lib.httpLastFailure` reads it and `gh_format.statusMessage` classifies 404 / 401 / 403-rate-limit / 403-other / everything else.
 
 ## Status
 
-Resolved on 2026-08-24.
+Resolved on 2026-08-23.
 
 ## Symptom and impact
 

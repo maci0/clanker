@@ -80,19 +80,21 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [reports rename prints leftover-reference paths with the store prefix twice](bugs/2026-08-23-reports-rename-doubles-the-store-prefix.md) — Open
+
 - [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md) — Open
 
 - [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Open
 
 - [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Open
 
-- [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-24-ck-http-hands-guests-no-response-headers.md) — Open
+- [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-23-ck-http-hands-guests-no-response-headers.md) — Open
 
-- [gh_read lists and diffs are silently cut to GitHub's default page of 30](bugs/2026-08-24-gh-read-lists-silently-cut-at-thirty.md) — Resolved
+- [gh_read lists and diffs are silently cut to GitHub's default page of 30](bugs/2026-08-23-gh-read-lists-silently-cut-at-thirty.md) — Resolved
 
-- [ck_http drops the status and body of every >= 400 response, so two documented gh_read errors could never fire](bugs/2026-08-24-ck-http-drops-error-status-and-body.md) — Resolved
+- [ck_http drops the status and body of every >= 400 response, so two documented gh_read errors could never fire](bugs/2026-08-23-ck-http-drops-error-status-and-body.md) — Resolved
 
-- [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-24-gh-read-diff-hunks-name-no-file.md) — Resolved
+- [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-23-gh-read-diff-hunks-name-no-file.md) — Resolved
 
 - [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
 

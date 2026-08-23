@@ -4,7 +4,7 @@
 
 - **What failed:** Every `ck_http` variant returns the response body and nothing else. A guest can never read `Link`, `X-RateLimit-Reset`, `ETag`, `Retry-After` or `Content-Type`. Anything GitHub (or any API) states only in a header is therefore unreachable from a guest no matter how the guest is written.
 - **Impact:** Four things are unbuildable rather than unbuilt. PRD 0019 wants a reset time on its rate-limit error (`X-RateLimit-Reset`), pagination past the first page (`Link: rel="next"`), and ETag revalidation for its cache (`ETag` / `If-None-Match`); a polite retry after a secondary rate limit wants `Retry-After`. Each is filed as future work, which reads as "not done yet" and is really "the transport does not carry it".
-- **Resolution:** Open. The 2026-08-24 status-envelope change (`writeHttpFailure`) added a channel for the *status* of a failed response and deliberately did not widen it to headers, because that is an ABI shape decision and not a bug fix.
+- **Resolution:** Open. The 2026-08-23 status-envelope change (`writeHttpFailure`) added a channel for the *status* of a failed response and deliberately did not widen it to headers, because that is an ABI shape decision and not a bug fix.
 
 ## Status
 
@@ -37,7 +37,7 @@ Concretely, from work on `gh_read` the same day:
 
 Read `httpImpl` and `httpFetchTask` in `src/sandbox/host.zig`: the only fields of
 `std.http.Client.FetchResult` that leave the function are the status (as a `u16`,
-and only since 2026-08-24) and the body bytes. There is no header parameter on
+and only since 2026-08-23) and the body bytes. There is no header parameter on
 any `ck_http` signature in `tools/zig/lib.zig`, so no guest can be written that
 reads one.
 
@@ -50,7 +50,7 @@ routinely in the head.
 
 ## Resolution
 
-**Open. Not fixed.** What landed on 2026-08-24 is a status channel only: on a
+**Open. Not fixed.** What landed on 2026-08-23 is a status channel only: on a
 >= 400 response `writeHttpFailure` parks
 `{"ck_http_status":<code>,"body":"<2 KiB>"}` in the result slot. That closes
 "which error was it" and closes nothing else. It is deliberately not a header
@@ -92,6 +92,6 @@ from the two functions named above and from every `ck_http` signature in
 
 - Investigation: none needed; the gap is visible in the ABI signatures.
 - [PRD 0019](../../prds/0019-github-fs.md) — the criteria this blocks.
-- [ck_http drops the status and body of every >= 400 response](2026-08-24-ck-http-drops-error-status-and-body.md)
+- [ck_http drops the status and body of every >= 400 response](2026-08-23-ck-http-drops-error-status-and-body.md)
   — the status half, fixed; this is the header half, not fixed.
 - `src/sandbox/host.zig` (`httpImpl`, `httpFetchTask`), `tools/zig/lib.zig`.

@@ -4,11 +4,11 @@
 
 - **What failed:** `gh_url.apiPath` built `/issues`, `/issues?<query>` and `/pulls/<n>/files` with no `per_page`. GitHub then answers with its default page of 30 items and puts the rest behind a `Link: rel="next"` response header, which `ck_http` does not hand to the guest. So a repository with 200 open issues listed 30 of them, a 40-file PR diff came back ten files short, and neither output carried anything to distinguish it from a complete one.
 - **Impact:** A model that asks for a repository's issues and reasons about "all" of them is reasoning about an arbitrary 30. A diff missing files silently is worse: the change the model was asked to review may be entirely in the part that was dropped, and nothing in the response says a part was dropped.
-- **Resolution:** Resolved on 2026-08-24. Every list endpoint now states `per_page=100`, GitHub's maximum, and a response holding a full page gets `[truncated: only the first page was fetched; more items exist]`. A `per_page` the caller wrote into the URL is kept, so it is also the escape hatch for a response too large to fetch.
+- **Resolution:** Resolved on 2026-08-23. Every list endpoint now states `per_page=100`, GitHub's maximum, and a response holding a full page gets `[truncated: only the first page was fetched; more items exist]`. A `per_page` the caller wrote into the URL is kept, so it is also the escape hatch for a response too large to fetch.
 
 ## Status
 
-Resolved on 2026-08-24.
+Resolved on 2026-08-23.
 
 ## Symptom and impact
 
