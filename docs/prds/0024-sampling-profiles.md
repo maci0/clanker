@@ -187,6 +187,42 @@ relocating the picker fields must not reach into it.
 | Model declares a thinking capability (`"thinking"` or `"always_thinking"`) | Table sends `reasoning_effort` (chat=`medium`, tool_use=`high`), not `temperature` |
 | Per-run override set (`RunRequest.temperature`) | Unchanged: still wins over everything, including the use-case table |
 
+## Known issues
+
+1. **The Anthropic family is sent OpenAI's `reasoning_effort` field.**
+   `Provider.effectiveThinkingSchema` defaults to `.reasoning_effort` for every
+   wire kind, and `anthropic.buildBody` calls the shared
+   `writeSamplingParams` — so a pinned effort or this PRD's own thinking row
+   puts a top-level `reasoning_effort` on `POST /v1/messages`, which Anthropic
+   refuses as an extra input. The `.thinking` alternative writes GLM's shape and
+   omits `budget_tokens`, which Anthropic requires, so no configured value is
+   both valid and non-discarding. Not fixed: no Anthropic credential was
+   available to check the endpoint's actual answer, and a wire-format change
+   should not ship on a code read.
+   [Bug](../reports/bugs/2026-08-24-anthropic-wire-gets-openai-reasoning-effort.md).
+
+2. **`kind = "grok"` never consults the table, and drops per-model
+   `temperature`/`top_p` too.** `responses.zig` reads only
+   `params.temperature`/`params.top_p`, which the agent loop never sets, so both
+   the configured per-model value and this table's default are silently
+   discarded — against acceptance criteria 1 and 2 for that kind.
+   `clampedMaxTokens` does not run there either.
+   [Bug](../reports/bugs/2026-08-24-grok-kind-drops-model-sampling.md).
+
+3. **`gemini` computes the thinking row and throws it away.** `gemini.zig`
+   re-implements the two `orelse` chains inline rather than calling
+   `writeSamplingParams`, honours `temperature`/`top_p`, and writes no
+   `thinkingConfig` — so the table's thinking row is inert for `gemini` and for
+   `vertex`-Gemini, and any field added to `Profile` later is silently absent
+   from Gemini requests.
+
+4. **`clampedMaxTokens`' zero-window guard is dead, and its test passes for an
+   unrelated reason.** `Model.context_window` defaults to 131072, not 0, and the
+   catalog fill only writes when unset, so the `window == 0` early return is
+   unreachable except from a hand-written `context_window = 0`. The unit test's
+   comment claims it covers that case; `Provider.single` copies the default, so
+   the assertion holds through the clamp instead.
+
 ## Acceptance criteria
 
 - [x] A model with no configured `temperature`/`top_p` gets the v1 table

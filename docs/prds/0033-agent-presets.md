@@ -150,6 +150,26 @@ requirement.
 | A denied tool is called anyway (stale client, misbehaving model) | Refused at dispatch by the same gate `plan_mode` uses, independent of whether it was offered in the schema |
 | `clanker preset new <name>` on an existing name | Refused; nothing overwritten |
 
+## Known issues
+
+1. **A denied tool is still offered; only the dispatch gate refuses it.**
+   `Agent.init` rebuilds the tool-definition list from the registry whenever
+   `agent.tool_catalog` is on (the default), discarding the `filterNames` result
+   `cmdRun` computed one line earlier, and `a.preset` is only assigned after
+   `init` returns. `rebuildToolDefs` and `loadTools` have no preset check
+   either, so `load_tools` can re-reveal a denied tool with its full schema. The
+   "neither offered nor callable" criterion below holds only on "callable".
+   [Bug](../reports/bugs/2026-08-24-preset-tool-filter-is-inert.md).
+
+2. **`clanker repl --preset <name>` is a silent no-op.** The flag is in the
+   table, listed as valid for `repl`, and in `repl --help`, but
+   `cmdReplVaxis`' options literal does not pass it and `ReplOptions` has no
+   such field. Same bug record as (1).
+
+3. **No test covers flag threading or the dispatch gate.** Only
+   `src/preset/preset.zig`'s pure unit tests exist, and they pass because the
+   pure part is correct — which is why (1) and (2) survived.
+
 ## Acceptance criteria
 
 - [x] `preset.toml` carries `description`, `system_prompt_append`,

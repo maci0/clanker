@@ -80,6 +80,30 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [dump-config leaks the secret half of any header whose value contains an equals sign](bugs/2026-08-24-dump-config-header-redaction-cuts-on-equals.md) — Open
+
+- [the merge-base pin advances before the branch resync it depends on, and the resync failure is only a warning](bugs/2026-08-24-improve-merge-pin-advances-before-the-resync.md) — Open
+
+- [kind = grok discards per-model temperature and top_p and never consults the PRD 0024 profile table](bugs/2026-08-24-grok-kind-drops-model-sampling.md) — Open
+
+- [a missing profiles/<name>.toml is reported as config.toml not found, and the .local variant is never read](bugs/2026-08-24-profile-overlay-errors-name-the-wrong-file.md) — Open
+
+- [a preset's denied tools are still offered to the model; repl --preset is a silent no-op](bugs/2026-08-24-preset-tool-filter-is-inert.md) — Open
+
+- [an unreadable or oversize improvements.jsonl reads as no history, disabling the improve loop's dedup and revert gates](bugs/2026-08-24-improve-history-read-failure-reads-as-empty.md) — Open
+
+- [a mis-escaped trim set lets a whitespace-only hook command through, and the warn log then indexes an empty argv](bugs/2026-08-24-hook-command-trim-set-is-mis-escaped.md) — Open
+
+- [the Anthropic wire is sent OpenAI's reasoning_effort field, and no thinking_schema value produces a valid Anthropic block](bugs/2026-08-24-anthropic-wire-gets-openai-reasoning-effort.md) — Open
+
+- [auto-thinking runs the classifier once per iteration instead of once per turn, and classifies a blank submit](bugs/2026-08-24-auto-thinking-classifies-every-iteration.md) — Resolved
+
+- [the one-turn advisor block is removed only on the success path, so three exits leave it as message 0](bugs/2026-08-24-advisor-block-leaks-into-message-zero.md) — Resolved
+
+- [the persistent-learnings prompt section keeps the oldest 4 KiB, so every note past the cap is invisible forever](bugs/2026-08-24-learnings-prompt-keeps-the-oldest-notes.md) — Resolved
+
+- [advisor.model is parsed, documented and never read, so every critique bills the main model](bugs/2026-08-24-advisor-model-never-read.md) — Resolved
+
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 
 - [Bug — a run using the debug tool leaks a hash-map allocation when launch times out](bugs/2026-08-23-debug-tool-run-leaks-on-adapter-timeout.md) — Open
