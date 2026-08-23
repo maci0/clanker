@@ -480,6 +480,13 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The alarm guest owns state/alarms.json and the system prompt reads it;
+    // both parse rows from this one record declaration, not a copy each.
+    const tool_alarm_store_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/alarm_store.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
 
     var threaded = std.Io.Threaded.init(b.allocator, .{});
     defer threaded.deinit();
@@ -524,6 +531,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "tail", .module = tool_tail_mod },
                     .{ .name = "glob", .module = tool_glob_mod },
                     .{ .name = "fs_skip", .module = tool_fs_skip_mod },
+                    .{ .name = "alarm_store", .module = tool_alarm_store_mod },
                 },
             }),
         });

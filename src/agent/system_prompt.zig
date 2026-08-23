@@ -13,6 +13,7 @@
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const utf8 = @import("../util/utf8.zig");
+const alarm_store = @import("../util/alarm_store.zig");
 const skills_logic = @import("skills_logic");
 
 /// Per-file read cap for instruction layers and each `@` import hop.
@@ -516,8 +517,9 @@ pub fn build(
     // not set a duplicate.
     reminders: {
         const raw = std.Io.Dir.cwd().readFileAlloc(io, "state/alarms.json", arena, .limited(1 << 20)) catch break :reminders;
-        const AlarmEntry = struct { id: []const u8 = "", ts: i64 = 0, message: []const u8 = "", every: i64 = 0 };
-        const alarms = std.json.parseFromSliceLeaky([]AlarmEntry, arena, raw, .{ .ignore_unknown_fields = true }) catch break :reminders;
+        // Same record declaration the alarm guest writes, so a field cannot
+        // drift between the store owner and this reader.
+        const alarms = alarm_store.parseList(arena, raw) catch break :reminders;
         if (alarms.len == 0) break :reminders;
         const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
         var due_header = false;

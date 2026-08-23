@@ -12,18 +12,13 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const alarm_store = @import("alarm_store");
 
 const path = "state/alarms.json";
 const max_alarms = 50;
 const max_message = 500;
 
-const Alarm = struct {
-    id: []const u8,
-    ts: i64, // next fire time, epoch seconds
-    message: []const u8,
-    set_ts: i64,
-    every: i64 = 0, // recurrence interval in minutes; 0 means one-shot
-};
+const Alarm = alarm_store.Alarm;
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -255,10 +250,7 @@ fn load() !Loaded {
     result.seen_hash = try lib.hash(raw);
     // A truncated or hand-emptied state file must recover as an empty list,
     // not brick every alarm operation with a JSON parse error.
-    if (std.mem.trim(u8, raw, " \t\r\n").len == 0) return result;
-    const parsed = std.json.parseFromSliceLeaky([]Alarm, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch
-        return error.CorruptAlarmFile;
-    for (parsed) |a| try result.alarms.append(lib.alloc, a);
+    for (try alarm_store.parseList(lib.alloc, raw)) |a| try result.alarms.append(lib.alloc, a);
     return result;
 }
 
