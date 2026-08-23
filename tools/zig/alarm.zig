@@ -103,7 +103,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         // numeric suffix and take the next one.
         var next: u64 = 0;
         for (loaded.alarms.items) |a| {
-            const field = std.mem.lastIndexOfScalar(u8, a.id, '-') orelse continue;
+            const field = std.mem.findScalarLast(u8, a.id, '-') orelse continue;
             const num = std.fmt.parseInt(u64, a.id[field + 1 ..], 10) catch continue;
             if (num >= next) next = num + 1;
         }

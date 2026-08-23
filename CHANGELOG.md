@@ -16,6 +16,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A corrupt or unreadable `state/tui_plugins.json` / `state/cli_plugins.json`
+  now logs a warning naming the file and what failed instead of silently
+  treating every TUI/CLI plugin as disabled. The empty enabled-list fallback
+  is unchanged, a missing file stays silent (off-by-default is the normal
+  state), and the next successful toggle rewrites a clean file — the
+  behaviour PRD 0012's failure modes promise, already delivered for
+  `state/webui_plugins.json`.
+
 - `zig build e2e` builds and runs on macOS. `tests/e2e/pty.zig` allocated its
   pty with `/dev/ptmx` plus the Linux-only `TIOCSPTLCK`/`TIOCGPTN` ioctls and
   sized it with `posix.T.IOCSWINSZ`, which the Darwin branch of `std.c.T` does
@@ -30,7 +38,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   rather than blocking, and a repl that stops reading its tty now fails the
   resize journey with a diagnostic instead of hanging it: a wedged child used
   to hang the suite rather than fail it, in two separate unbounded waits.
-
 - An unknown provider `kind` in `config.toml` now fails with a diagnostic
   naming the provider, the offending spelling, and every kind the binary
   accepts. It used to emit only the generic "configuration validation failed

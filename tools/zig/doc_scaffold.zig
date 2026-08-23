@@ -89,7 +89,7 @@ pub fn slugify(title: []const u8, buf: []u8, max: usize) []const u8 {
     // A slug cut mid-word reads as a different word ("one-two-t"), so drop the
     // partial trailing word rather than keeping a misleading fragment.
     if (truncated) {
-        if (std.mem.lastIndexOfScalar(u8, buf[0..n], '-')) |last| n = last;
+        if (std.mem.findScalarLast(u8, buf[0..n], '-')) |last| n = last;
     }
     while (n > 0 and buf[n - 1] == '-') n -= 1;
     return buf[0..n];
@@ -144,7 +144,7 @@ pub fn isDocFile(name: []const u8) bool {
 /// reports paths, and the index is the worst offender: it names every record
 /// it lists, so one real hit arrives with an inventory line stapled to it.
 pub fn isDocPath(path: []const u8) bool {
-    const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse return isDocFile(path);
+    const slash = std.mem.findScalarLast(u8, path, '/') orelse return isDocFile(path);
     return isDocFile(path[slash + 1 ..]);
 }
 

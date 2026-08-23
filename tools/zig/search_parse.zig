@@ -28,7 +28,7 @@ pub const WebResult = struct {
     snippet: []const u8,
 };
 
-fn indexOfPos(haystack: []const u8, start: usize, needle: []const u8) ?usize {
+fn findPos(haystack: []const u8, start: usize, needle: []const u8) ?usize {
     if (start > haystack.len) return null;
     return std.mem.findPos(u8, haystack, start, needle);
 }
@@ -114,8 +114,8 @@ pub fn parseBing(document: []const u8, out: []WebResult, max: usize) usize {
     var count: usize = 0;
     var pos: usize = 0;
     while (count < max) {
-        const item = indexOfPos(document, pos, "<item>") orelse break;
-        const close = indexOfPos(document, item, "</item>") orelse break;
+        const item = findPos(document, pos, "<item>") orelse break;
+        const close = findPos(document, item, "</item>") orelse break;
         const item_body = document[item .. close + "</item>".len];
         pos = item + item_body.len;
 
@@ -131,10 +131,10 @@ pub fn parseBing(document: []const u8, out: []WebResult, max: usize) usize {
     return count;
 }
 
-fn lastIndexOfSlice(haystack: []const u8, before: usize, needle: []const u8) ?usize {
+fn findLastSlice(haystack: []const u8, before: usize, needle: []const u8) ?usize {
     var from: usize = 0;
     var found: ?usize = null;
-    while (indexOfPos(haystack, from, needle)) |i| {
+    while (findPos(haystack, from, needle)) |i| {
         if (i >= before) break;
         found = i;
         from = i + needle.len;
@@ -165,21 +165,21 @@ pub fn parseDdgLite(html: []const u8, out: []WebResult, max: usize) usize {
     var count: usize = 0;
     var pos: usize = 0;
     while (count < max) {
-        const nf = indexOfPos(html, pos, "nofollow") orelse break;
-        const a_open = lastIndexOfSlice(html, nf, "<a") orelse break;
-        const tag_end = indexOfPos(html, a_open, ">") orelse break;
+        const nf = findPos(html, pos, "nofollow") orelse break;
+        const a_open = findLastSlice(html, nf, "<a") orelse break;
+        const tag_end = findPos(html, a_open, ">") orelse break;
         // The nofollow marker must belong to this anchor, not a later tag.
         if (tag_end < nf) break;
 
         const href = extractAttr("href", html[a_open..tag_end]) orelse "";
-        const title = std.mem.trim(u8, html[tag_end + 1 .. indexOfPos(html, tag_end, "</a>") orelse tag_end], " \t\n\r");
+        const title = std.mem.trim(u8, html[tag_end + 1 .. findPos(html, tag_end, "</a>") orelse tag_end], " \t\n\r");
 
         // Snippet: nearest result-snippet cell after the title within the row.
         var snippet: []const u8 = "";
-        if (indexOfPos(html, tag_end, "result-snippet")) |s_start| {
-            if (indexOfPos(html, s_start, ">")) |s_tag_end| {
+        if (findPos(html, tag_end, "result-snippet")) |s_start| {
+            if (findPos(html, s_start, ">")) |s_tag_end| {
                 const text_start = s_tag_end + 1;
-                const text_end = indexOfPos(html, text_start, "<") orelse html.len;
+                const text_end = findPos(html, text_start, "<") orelse html.len;
                 snippet = html[text_start..text_end];
             }
         }
@@ -188,7 +188,7 @@ pub fn parseDdgLite(html: []const u8, out: []WebResult, max: usize) usize {
             out[count] = .{ .title = title, .url = href, .snippet = snippet };
             count += 1;
         }
-        pos = if (indexOfPos(html, tag_end, "</a>")) |te| te + "</a>".len else tag_end + 1;
+        pos = if (findPos(html, tag_end, "</a>")) |te| te + "</a>".len else tag_end + 1;
     }
     return count;
 }

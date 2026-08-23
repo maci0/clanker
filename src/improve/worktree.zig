@@ -1079,7 +1079,7 @@ pub fn mainCheckoutFromGitFile(contents: []const u8) ?[]const u8 {
     if (!std.mem.startsWith(u8, trimmed, "gitdir:")) return null;
     const gitdir = std.mem.trim(u8, trimmed["gitdir:".len..], " \t\r\n");
     const marker = "/.git/worktrees/";
-    const at = std.mem.lastIndexOf(u8, gitdir, marker) orelse return null;
+    const at = std.mem.findLast(u8, gitdir, marker) orelse return null;
     if (at == 0) return null;
     return gitdir[0..at];
 }

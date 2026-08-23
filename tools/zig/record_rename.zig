@@ -94,7 +94,7 @@ pub fn plan(
     slug: []const u8,
     numbered: bool,
 ) (Error || std.mem.Allocator.Error)!Plan {
-    const dir_end = std.mem.lastIndexOfScalar(u8, path, '/') orelse return Error.NoDirectory;
+    const dir_end = std.mem.findScalarLast(u8, path, '/') orelse return Error.NoDirectory;
     const dir = path[0..dir_end];
     const name = path[dir_end + 1 ..];
     if (name.len <= ".md".len or !std.mem.endsWith(u8, name, ".md")) return Error.NotAMarkdownPath;

@@ -143,7 +143,7 @@ fn quoteString(alloc: std.mem.Allocator, raw: []const u8) RenderError![]const u8
 /// section is appended at the end of the file. Everything else — comments,
 /// blank lines, other sections — survives byte-identical.
 pub fn setKey(alloc: std.mem.Allocator, original: []const u8, key: []const u8, rendered: []const u8) ![]const u8 {
-    const last_dot = std.mem.lastIndexOfScalar(u8, key, '.');
+    const last_dot = std.mem.findScalarLast(u8, key, '.');
     const section = if (last_dot) |i| key[0..i] else "";
     const leaf = if (last_dot) |i| key[i + 1 ..] else key;
     const line = try std.fmt.allocPrint(alloc, "{s} = {s}", .{ leaf, rendered });
@@ -186,7 +186,7 @@ fn sectionSpan(text: []const u8, section: []const u8) ?Span {
     var pos: usize = 0;
     var body_start: ?usize = if (section.len == 0) 0 else null;
     while (pos <= text.len) {
-        const nl = std.mem.indexOfScalarPos(u8, text, pos, '\n') orelse text.len;
+        const nl = std.mem.findScalarPos(u8, text, pos, '\n') orelse text.len;
         const trimmed = std.mem.trim(u8, text[pos..nl], " \t\r");
         const is_header = trimmed.len >= 2 and trimmed[0] == '[';
         if (is_header) {
@@ -204,7 +204,7 @@ fn sectionSpan(text: []const u8, section: []const u8) ?Span {
 /// of tables) never matches: those sections are not editable here.
 fn headerNames(trimmed: []const u8, section: []const u8) bool {
     if (trimmed.len < 2 or trimmed[0] != '[' or trimmed[1] == '[') return false;
-    const close = std.mem.indexOfScalar(u8, trimmed, ']') orelse return false;
+    const close = std.mem.findScalar(u8, trimmed, ']') orelse return false;
     // Anything after ] other than a comment makes it not a header.
     const rest = std.mem.trim(u8, trimmed[close + 1 ..], " \t");
     if (rest.len != 0 and rest[0] != '#') return false;
@@ -218,7 +218,7 @@ fn headerNames(trimmed: []const u8, section: []const u8) bool {
 fn assignmentLine(body: []const u8, leaf: []const u8) ?Span {
     var pos: usize = 0;
     while (pos <= body.len) {
-        const nl = std.mem.indexOfScalarPos(u8, body, pos, '\n') orelse body.len;
+        const nl = std.mem.findScalarPos(u8, body, pos, '\n') orelse body.len;
         const l = body[pos..nl];
         const trimmed = std.mem.trimStart(u8, l, " \t");
         if (std.mem.startsWith(u8, trimmed, leaf)) {
@@ -235,7 +235,7 @@ fn lineStartBefore(text: []const u8, at: usize) usize {
     if (at == 0) return 0;
     // `at` sits at a line start; back over that line's own newline first.
     const before = if (at > 0 and text[at - 1] == '\n') at - 1 else at;
-    if (std.mem.lastIndexOfScalar(u8, text[0..before], '\n')) |nl| return nl + 1;
+    if (std.mem.findScalarLast(u8, text[0..before], '\n')) |nl| return nl + 1;
     return 0;
 }
 

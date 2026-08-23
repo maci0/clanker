@@ -296,9 +296,9 @@ test "columns stay aligned and the thinking breakdown renders from the totals" {
     _ = line_it.next(); // skip the header
     while (line_it.next()) |line| {
         if (line.len == 0) continue;
-        const at = std.mem.indexOf(u8, line, "    2 ") orelse
-            std.mem.indexOf(u8, line, "   29 ") orelse
-            std.mem.indexOf(u8, line, "   31 ") orelse continue;
+        const at = std.mem.find(u8, line, "    2 ") orelse
+            std.mem.find(u8, line, "   29 ") orelse
+            std.mem.find(u8, line, "   31 ") orelse continue;
         try std.testing.expectEqual(calls_col, at);
     }
 }

@@ -329,7 +329,7 @@ fn rename(obj: std.json.Value, out: *lib.Out) !void {
     if (!isAllowedPath(path)) return lib.fail(out, "path must be a markdown file below docs/reports/ or docs/runbooks/");
     const slug_raw = lib.str(obj, "slug") catch
         return lib.fail(out, "rename needs the new filename stem in slug");
-    const dir_end = std.mem.lastIndexOfScalar(u8, path, '/') orelse
+    const dir_end = std.mem.findScalarLast(u8, path, '/') orelse
         return lib.fail(out, "path has no directory");
     const dir = path[0..dir_end];
     const old_name = path[dir_end + 1 ..];
