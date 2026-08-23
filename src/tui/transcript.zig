@@ -414,8 +414,16 @@ pub fn cardPreview(gpa: std.mem.Allocator, bytes: []const u8) ![]u8 {
         }
         // Copy whole code points (an invalid lead byte passes through alone,
         // same as writeSanitized) so the cap check above never splits one.
+        //
+        // The claimed length is verified before the copy. Trusting it let a
+        // lead byte carry the bytes after it past every control check above:
+        // "\xE2\x1b[31m" copied `E2 1B 5B` whole and then printed `31m` as
+        // prose, so a complete SGR sequence reached the terminal out of a
+        // tool name or arguments the model chose — the CWE-150 hole this
+        // function exists to close. Anything that is not the codepoint it
+        // claims to be advances one byte and gets re-examined.
         const n: usize = std.unicode.utf8ByteSequenceLength(c) catch 1;
-        const len = @min(n, bytes.len - i);
+        const len: usize = if (n > 1 and i + n <= bytes.len and std.unicode.utf8ValidateSlice(bytes[i .. i + n])) n else 1;
         if (out.items.len + len > card_preview_cap) {
             truncated = true;
             break;
@@ -723,6 +731,25 @@ test "cardPreview strips CSI sequences whole" {
     const out = try cardPreview(gpa, "a\x1b[2Jb");
     defer gpa.free(out);
     try std.testing.expectEqualStrings("ab", out);
+}
+
+test "cardPreview refuses an escape smuggled behind a UTF-8 lead byte" {
+    const gpa = std.testing.allocator;
+    // 0xE2 claims a three-byte codepoint; the two bytes it claims are ESC
+    // and '['. Copying them on the lead byte's word skipped every control
+    // check, so the whole SGR sequence reached the terminal.
+    const out = try cardPreview(gpa, "\xE2\x1b[31mred");
+    defer gpa.free(out);
+    try std.testing.expect(std.mem.findScalar(u8, out, 0x1B) == null);
+    try std.testing.expectEqualStrings("\xE2red", out);
+    // A truncated codepoint at the end still passes through as bytes, and a
+    // valid one is still copied whole.
+    const cut = try cardPreview(gpa, "a\xE2\x82");
+    defer gpa.free(cut);
+    try std.testing.expectEqualStrings("a\xE2\x82", cut);
+    const good = try cardPreview(gpa, "a\xE2\x82\xACb");
+    defer gpa.free(good);
+    try std.testing.expectEqualStrings("a\xE2\x82\xACb", good);
 }
 
 test "cardPreview strips OSC sequences (ST-terminated)" {

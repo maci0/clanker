@@ -1989,7 +1989,9 @@ const shell_escape_help =
 const keys_help =
     \\Keys:
     \\  Shift-Enter       insert a line break; the box grows one row per
-    \\                    line (keypad Enter does the same)
+    \\                    line. Alt-Enter and keypad Enter do the same —
+    \\                    use Alt-Enter where the terminal cannot report
+    \\                    Shift-Enter (it arrives as a plain Enter there)
     \\  Tab               complete a /command (typing / already previews
     \\                    the matches above the box, with their help)
     \\  Ctrl-P            command palette (matches names and descriptions)
@@ -5366,17 +5368,9 @@ const Model = struct {
                 if (key.matches(vaxis.Key.tab, .{}) and try self.completeSlashCommand(ctx)) {
                     return ctx.consumeAndRedraw();
                 }
-                // Shift+Enter inserts a line break instead of submitting.
-                // Terminals speaking the kitty keyboard protocol report the
-                // chord as enter + shift; Konsole's default keytab sends
-                // SS3 M (`\EOM`), which vaxis parses as kp_enter
-                // (patches/vaxis-ss3-keypad-enter.patch), so keypad Enter
-                // lands here too. The break is stored and drawn as ⏎ and
+                // A line-break chord inserts ⏎ instead of submitting; it
                 // becomes a real newline at submit (see newline_marker).
-                if (key.matches(vaxis.Key.enter, .{ .shift = true }) or
-                    key.matches(vaxis.Key.kp_enter, .{}) or
-                    key.matches(vaxis.Key.kp_enter, .{ .shift = true }))
-                {
+                if (isComposerNewlineChord(key)) {
                     try self.text_field.insertSliceAtCursor(newline_marker);
                     return ctx.consumeAndRedraw();
                 }
@@ -6273,7 +6267,7 @@ const Model = struct {
         // reaching for, only wrap-accurately.
         const stream_at_tail = streaming and self.view_end == null;
         const reserved: u16 = if (stream_at_tail)
-            @intCast(@min(streamRows(stream_snapshot, text_width), avail_rows))
+            @intCast(@min(streamRows(stream_snapshot, text_width, active.reset.len > 0), avail_rows))
         else
             0;
         const for_completed: u16 = avail_rows -| reserved;
@@ -6704,8 +6698,8 @@ fn lineRows(text: []const u8, width: u16) usize {
     if (width == 0) return 1;
     var rows: usize = 1;
     var col: usize = 0;
-    var it = std.unicode.Utf8Iterator{ .bytes = text, .i = 0 };
-    while (it.nextCodepointSlice()) |cp| {
+    var ci: usize = 0;
+    while (width_mod.nextCodepoint(text, &ci)) |cp| {
         if (std.mem.eql(u8, cp, "\n")) {
             rows += 1;
             col = 0;
@@ -6721,17 +6715,91 @@ fn lineRows(text: []const u8, width: u16) usize {
     return rows;
 }
 
+/// Rows one *markdown-rendered* prose line occupies at `width`.
+///
+/// `lineRows` measures the source bytes, but the transcript's rich path draws
+/// what `mdLineSegments` produced: `**`/`` ` ``/`_` markers are gone, a `# `
+/// prefix is stripped, `> ` becomes a `▎ ` rule, a nested list's indent is
+/// normalised. So every line carrying markup was measured at one width and
+/// drawn at another — the layout reserved rows the draw never filled, which
+/// left a gap between the newest line and the composer and dropped a line
+/// off the top of the window that would have fitted, and (while a reply
+/// streamed) let the reserved stream block shove the completed transcript
+/// around mid-turn.
+///
+/// Measured by running the same segment builder the draw runs, over a stack
+/// buffer, so measurement and draw cannot drift the way a second hand-rolled
+/// parser would. A line with so many markup runs that the buffer cannot hold
+/// its segments falls back to the source measurement — the old behaviour, on
+/// a line no model writes.
+fn mdLineRows(text: []const u8, width: u16) usize {
+    if (width == 0) return 1;
+    var buf: [32 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    var segs: std.ArrayList(vaxis.Segment) = .empty;
+    // Any theme does: `mdLineSegments` reads styles out of it and never
+    // changes a segment's text, and only text has a width.
+    segs.ensureTotalCapacity(fba.allocator(), 64) catch return lineRows(text, width);
+    mdLineSegments(&theme_mod.Theme.default, fba.allocator(), text, &segs) catch return lineRows(text, width);
+    var rows: usize = 1;
+    var col: usize = 0;
+    for (segs.items) |seg| {
+        var ci: usize = 0;
+        while (width_mod.nextCodepoint(seg.text, &ci)) |cp| {
+            if (std.mem.eql(u8, cp, "\n")) {
+                rows += 1;
+                col = 0;
+                continue;
+            }
+            if (std.mem.eql(u8, cp, "\t")) {
+                // Same tab-stop advance `writeWrappedSegments` makes.
+                const tab_width = 8 - col % 8;
+                if (col + tab_width > width) {
+                    rows += 1;
+                    col = 0;
+                }
+                col += tab_width;
+                continue;
+            }
+            const w = width_mod.displayWidth(cp);
+            if (col + w > width) {
+                rows += 1;
+                col = 0;
+            }
+            col += w;
+        }
+    }
+    return rows;
+}
+
+/// The rows `l` will occupy once drawn. Model prose goes through
+/// `mdLineSegments`, so it is measured rendered; every other kind of line —
+/// the user's echo, dim notices and tool cards, `error:` lines, and fenced
+/// code (which is styled, never reshaped) — is drawn as its literal source
+/// and measured that way. The branches here are exactly the draw loop's.
+fn rowsForLine(l: Line, width: u16) usize {
+    if (l.dim or l.user or l.fence_lang != null or isErrorLine(l.text)) return lineRows(l.text, width);
+    return mdLineRows(l.text, width);
+}
+
 /// Rows the live stream buffer will occupy, mirroring writeStream's line
 /// handling (fence-marker lines are skipped, everything else wraps), so the
 /// bottom-anchor math can reserve exactly the space the stream renders into.
-fn streamRows(text: []const u8, width: u16) usize {
+/// `md` is writeStream's `fence_on`: with colour off it draws every line
+/// plain, and in-fence lines are only ever styled, so markdown measurement
+/// applies to out-of-fence prose alone — the same split the draw makes.
+fn streamRows(text: []const u8, width: u16, md: bool) usize {
     if (text.len == 0) return 0;
     var rows: usize = 0;
+    var in_fence = false;
     var it = std.mem.splitScalar(u8, text, '\n');
     while (it.next()) |line| {
         const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (std.mem.startsWith(u8, trimmed, "```")) continue;
-        rows += lineRows(line, width);
+        if (std.mem.startsWith(u8, trimmed, "```")) {
+            in_fence = !in_fence;
+            continue;
+        }
+        rows += if (md and !in_fence) mdLineRows(line, width) else lineRows(line, width);
     }
     return rows;
 }
@@ -6762,7 +6830,7 @@ fn tailWindow(
     var start = view_end;
     while (start > 0) {
         const i = start - 1;
-        var rows: usize = lineRows(lines[i].text, width);
+        var rows: usize = rowsForLine(lines[i], width);
         var block_start = i;
         // The fold whose region contains `i`, if any. `folds` is sorted by
         // `start` (see `foldIndexAtStart`), so the candidate is the last fold
@@ -6824,7 +6892,7 @@ fn foldForReply(lines: []Line, reply_start: usize, width: u16) ?Fold {
     if (count == 0) return null;
     var rows: usize = 0;
     for (lines[reply_start..]) |l| {
-        rows += lineRows(l.text, width);
+        rows += rowsForLine(l, width);
         if (rows > FOLD_MIN_ROWS) break;
     }
     if (rows <= FOLD_MIN_ROWS) return null;
@@ -7203,7 +7271,7 @@ fn topWindowEnd(lines: []const Line, folds: []const Fold, avail_rows: u16, width
     var rows: usize = 0;
     var i: usize = 0;
     while (i < lines.len) {
-        var line_rows: usize = lineRows(lines[i].text, width);
+        var line_rows: usize = rowsForLine(lines[i], width);
         var next: usize = i + 1;
         if (foldContainingAt(folds, i)) |f| {
             const shown = foldShownLines(f);
@@ -7353,6 +7421,82 @@ test "lineRows counts wrapped rows and honours embedded newlines" {
     try std.testing.expectEqual(@as(usize, 1), lineRows("anything", 0)); // zero width is one row
 }
 
+test "a reply's first line is styled past the turn arrow" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const theme = theme_mod.Theme.mocha;
+
+    // `finishTurn` prepends the arrow to a reply's first line, which used to
+    // put every prefix rule out of reach: a reply opening with a heading drew
+    // its `##`.
+    var head: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, turn_arrow ++ "## Plan", &head);
+    try std.testing.expectEqualStrings(turn_arrow, head.items[0].text);
+    try std.testing.expectEqualStrings("Plan", head.items[1].text);
+    try std.testing.expect(head.items[1].style.bold);
+
+    var bul: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, turn_arrow ++ "- item", &bul);
+    try std.testing.expectEqualStrings(turn_arrow, bul.items[0].text);
+    try std.testing.expectEqualStrings("• ", bul.items[1].text);
+
+    // And the arrow's own two columns still count, so the row math agrees.
+    try std.testing.expectEqual(
+        mdLineRows("## Plan", 6) + 0,
+        mdLineRows(turn_arrow ++ "## Plan", 40),
+    );
+}
+
+test "a markdown line is measured as it draws, not as it was typed" {
+    // `**bold**` reads eight columns and draws four, so at width 6 the
+    // source wraps and the render does not. The layout used to reserve the
+    // source's rows for a line the draw fits in one.
+    try std.testing.expectEqual(@as(usize, 2), lineRows("**bold**", 6));
+    try std.testing.expectEqual(@as(usize, 1), mdLineRows("**bold**", 6));
+    // A heading loses its `# `, a quote swaps `> ` for a same-width rule.
+    try std.testing.expectEqual(@as(usize, 2), lineRows("# Title", 6));
+    try std.testing.expectEqual(@as(usize, 1), mdLineRows("# Title", 6));
+    try std.testing.expectEqual(lineRows("> quoted", 6), mdLineRows("> quoted", 6));
+    // Nothing to strip means the two agree, including at zero width.
+    try std.testing.expectEqual(lineRows("plain prose here", 6), mdLineRows("plain prose here", 6));
+    try std.testing.expectEqual(@as(usize, 1), mdLineRows("anything", 0));
+
+    // Only the lines the draw renders rich are measured rich: the user's own
+    // echo, dim notices/tool cards, `error:` lines and fenced code are all
+    // drawn literally, so they keep the source measurement.
+    try std.testing.expectEqual(@as(usize, 1), rowsForLine(.{ .text = "**bold**" }, 6));
+    try std.testing.expectEqual(@as(usize, 2), rowsForLine(.{ .text = "**bold**", .user = true }, 6));
+    try std.testing.expectEqual(@as(usize, 2), rowsForLine(.{ .text = "**bold**", .dim = true }, 6));
+    try std.testing.expectEqual(@as(usize, 2), rowsForLine(.{ .text = "**bold**", .fence_lang = "zig" }, 6));
+    try std.testing.expectEqual(
+        lineRows("error: **bold**", 6),
+        rowsForLine(.{ .text = "error: **bold**" }, 6),
+    );
+}
+
+test "tailWindow anchors a markdown reply by its drawn height" {
+    // Both lines wrap only because of their markers. The window reserved
+    // four rows for what draws in two, so the newest line sat two rows clear
+    // of the composer instead of against it.
+    const lines = [_]Line{
+        .{ .text = "**bold**" },
+        .{ .text = "# Title" },
+    };
+    const win = tailWindow(&lines, &[_]Fold{}, lines.len, 10, 6);
+    try std.testing.expectEqual(@as(usize, 0), win.start);
+    try std.testing.expectEqual(@as(u16, 2), win.used_rows);
+}
+
+test "streamRows measures out-of-fence prose rendered and a fence body literally" {
+    const text = "**bold**\n```zig\nconst x = 1;\n```\n";
+    const body = lineRows("const x = 1;", 6) + lineRows("", 6);
+    // Fence markers are never drawn; a fence body is styled, not reshaped.
+    try std.testing.expectEqual(mdLineRows("**bold**", 6) + body, streamRows(text, 6, true));
+    // Colour off draws every line plain, so nothing is measured rendered.
+    try std.testing.expectEqual(lineRows("**bold**", 6) + body, streamRows(text, 6, false));
+}
+
 test "inline markdown splits into styled segments and leaves plain text whole" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -7428,6 +7572,28 @@ test "inline markdown splits into styled segments and leaves plain text whole" {
     var nest: std.ArrayList(vaxis.Segment) = .empty;
     try mdLineSegments(&theme, arena, "  - nested", &nest);
     try std.testing.expectEqualStrings("• ", nest.items[1].text);
+
+    // A nested ordered list steps in once per level, the same distance the
+    // nested bullet above steps: the source indent used to be emitted *and*
+    // a level's worth of indent on top of it, so every ordered sub-list
+    // drew twice as far right as the bullet sub-list beside it.
+    const leadWidth = struct {
+        fn f(items: []const vaxis.Segment, marker: []const u8) usize {
+            var n: usize = 0;
+            for (items) |s| {
+                if (std.mem.eql(u8, s.text, marker)) break;
+                n += s.text.len;
+            }
+            return n;
+        }
+    }.f;
+    var onest: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "  1. nested", &onest);
+    try std.testing.expectEqual(@as(usize, 2), leadWidth(onest.items, "1. "));
+    try std.testing.expectEqual(leadWidth(nest.items, "• "), leadWidth(onest.items, "1. "));
+    var odeep: std.ArrayList(vaxis.Segment) = .empty;
+    try mdLineSegments(&theme, arena, "    1. deeper", &odeep);
+    try std.testing.expectEqual(@as(usize, 4), leadWidth(odeep.items, "1. "));
 }
 
 test "snake_case identifiers survive inline markdown, spaced _emphasis_ still works" {
@@ -7822,21 +7988,19 @@ const Cell = struct { bytes: []const u8, width: u16 };
 fn nextCell(text: []const u8, i: *usize) ?Cell {
     if (i.* >= text.len) return null;
     const start = i.*;
-    var it: std.unicode.Utf8Iterator = .{ .bytes = text, .i = i.* };
-    const base = it.nextCodepointSlice() orelse return null;
-    i.* = it.i;
+    const base = width_mod.nextCodepoint(text, i) orelse return null;
     var w: u16 = @intCast(width_mod.displayWidth(base));
     if (w == 0) w = 1;
     while (i.* < text.len) {
-        var peek: std.unicode.Utf8Iterator = .{ .bytes = text, .i = i.* };
-        const next = peek.nextCodepointSlice() orelse break;
+        var peek: usize = i.*;
+        const next = width_mod.nextCodepoint(text, &peek) orelse break;
         if (width_mod.displayWidth(next) != 0) break;
         // Control bytes are zero-width too, but absorbing one hides it inside
         // the previous cell: a '\n' riding along as "4\n" slips past
         // writeWrapped's newline check and reaches the terminal raw, walking
         // the cursor off the row (the multi-line task echo staircase).
         if (next.len == 1 and (next[0] < 0x20 or next[0] == 0x7F)) break;
-        i.* = peek.i;
+        i.* = peek;
     }
     return .{ .bytes = text[start..i.*], .width = w };
 }
@@ -8119,6 +8283,48 @@ fn appendInline(arena: std.mem.Allocator, text: []const u8, st: MdStyles, out: *
     try flush(arena, out, text[seg_start..], st.plain);
 }
 
+/// Whether `key` asks the composer for a line break rather than a submit.
+/// Pure so every spelling is unit-testable without a terminal.
+///
+/// Terminals speaking the kitty keyboard protocol report Shift+Enter as
+/// enter+shift. Konsole's default keytab sends SS3 M (`\EOM`), which vaxis
+/// parses as kp_enter (patches/vaxis-ss3-keypad-enter.patch), so keypad
+/// Enter lands here too. Every other common terminal — Terminal.app, xterm,
+/// gnome-terminal, tmux's defaults — cannot report Shift+Enter at all: the
+/// chord arrives as a bare Enter and submits. There Alt+Enter is the only
+/// line-break chord left, which is why PRD 0040's first goal and ADR 0022
+/// both name it the fallback.
+///
+/// It had never been bound. `Key.matches` compares modifiers for *exact*
+/// equality, so enter+alt matched neither the shift branch nor the bare-Enter
+/// submit, and `vxfw.TextField` drops it too (its own Enter binding is exact,
+/// and a control byte carries no `text`) — the keystroke did nothing at all,
+/// against the PRD's own "no action / fallback to submit" failure-mode row.
+/// Alt+Enter reaches vaxis either as legacy `ESC 0x0D`, which the parser
+/// reports as the codepoint with `alt` set, or as kitty's `CSI 13;3u`.
+fn isComposerNewlineChord(key: vaxis.Key) bool {
+    return key.matches(vaxis.Key.enter, .{ .shift = true }) or
+        key.matches(vaxis.Key.enter, .{ .alt = true }) or
+        key.matches(vaxis.Key.kp_enter, .{}) or
+        key.matches(vaxis.Key.kp_enter, .{ .shift = true }) or
+        key.matches(vaxis.Key.kp_enter, .{ .alt = true });
+}
+
+test "the composer takes Alt+Enter for a line break, the documented fallback" {
+    // Shift+Enter (kitty protocol) and keypad Enter (Konsole's SS3 M).
+    try std.testing.expect(isComposerNewlineChord(.{ .codepoint = vaxis.Key.enter, .mods = .{ .shift = true } }));
+    try std.testing.expect(isComposerNewlineChord(.{ .codepoint = vaxis.Key.kp_enter, .mods = .{} }));
+    try std.testing.expect(isComposerNewlineChord(.{ .codepoint = vaxis.Key.kp_enter, .mods = .{ .shift = true } }));
+    // Alt+Enter: legacy `ESC 0x0D` and kitty `CSI 13;3u` both land here, and
+    // on a terminal that cannot report Shift+Enter it is the only chord
+    // that can compose a second line.
+    try std.testing.expect(isComposerNewlineChord(.{ .codepoint = vaxis.Key.enter, .mods = .{ .alt = true } }));
+    try std.testing.expect(isComposerNewlineChord(.{ .codepoint = vaxis.Key.kp_enter, .mods = .{ .alt = true } }));
+    // A bare Enter still submits, and an unbound chord is still unbound.
+    try std.testing.expect(!isComposerNewlineChord(.{ .codepoint = vaxis.Key.enter, .mods = .{} }));
+    try std.testing.expect(!isComposerNewlineChord(.{ .codepoint = vaxis.Key.enter, .mods = .{ .ctrl = true } }));
+}
+
 fn quoteDepthAndRest(line: []const u8) struct { depth: usize, rest: []const u8 } {
     var i: usize = 0;
     while (i < line.len and line[i] == ' ') i += 1;
@@ -8158,6 +8364,17 @@ fn orderedMarkerLen(s: []const u8) usize {
 /// peeking at neighbours.
 fn mdLineSegments(active: *const theme_mod.Theme, arena: std.mem.Allocator, text: []const u8, out: *std.ArrayList(vaxis.Segment)) !void {
     const st = mdStyles(active);
+    // The first line of a reply is stored with the turn arrow prepended
+    // (`finishTurn`), so every prefix rule below — heading, bullet, ordered
+    // marker, quote, table row — used to miss on it: a reply opening with
+    // `## Plan` drew its `##` literally, and one opening with a list drew the
+    // `-`. The arrow is this renderer's own marker rather than part of the
+    // model's line, so it is emitted and stepped over. Two columns either
+    // way, so row measurement is unaffected.
+    if (std.mem.startsWith(u8, text, turn_arrow)) {
+        try out.append(arena, .{ .text = text[0..turn_arrow.len], .style = st.plain });
+        return mdLineSegments(active, arena, text[turn_arrow.len..], out);
+    }
     // Block quote: `> ` / `>> ` with nesting → left rule per depth
     const q = quoteDepthAndRest(text);
     if (q.depth > 0) {
@@ -8201,9 +8418,20 @@ fn mdLineSegments(active: *const theme_mod.Theme, arena: std.mem.Allocator, text
     // Ordered list: `1. ` / `1) ` with nesting via indent
     const mlen = orderedMarkerLen(text[indent..]);
     if (mlen != 0) {
-        if (indent > 0) try out.append(arena, .{ .text = text[0..indent], .style = st.plain });
+        // Indent is emitted *once*, the same either/or the bullet branch
+        // below makes: the source indent for a depth-0 marker, a normalised
+        // two-columns-per-level indent for a nested one. Emitting both (the
+        // source indent *and* `level` copies of "  ") doubled every nested
+        // ordered list's indent — `  1. x` drew four columns in, `    1. x`
+        // eight — so an ordered sub-list stepped twice as far right as the
+        // bullet sub-list beside it, and the drawn row came out wider than
+        // `lineRows` had measured, clipping the tail of a full-width line.
         const level = indent / 2;
-        for (0..level) |_| try out.append(arena, .{ .text = "  ", .style = st.plain });
+        if (level > 0) {
+            for (0..level) |_| try out.append(arena, .{ .text = "  ", .style = st.plain });
+        } else if (indent > 0) {
+            try out.append(arena, .{ .text = text[0..indent], .style = st.plain });
+        }
         const marker = text[indent .. indent + mlen];
         try out.append(arena, .{ .text = marker, .style = st.bullet });
         try appendInline(arena, text[indent + mlen ..], st, out);

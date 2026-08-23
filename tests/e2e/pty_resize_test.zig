@@ -143,6 +143,13 @@ test "operator journey: repl survives a SIGWINCH flood on a pty" {
         if (pty_mod.reapIfDead(pid)) |status| {
             std.debug.print(
                 "repl died after {d} resizes ({s}); {d} bytes drawn. " ++
+                    "CHECK THIS FIRST: `zig-pkg/` is gitignored and therefore " ++
+                    "per-worktree, so a fresh worktree runs pristine vaxis, which " ++
+                    "still services SIGWINCH inside the signal handler — the exact " ++
+                    "crash this journey exists to catch. Run " ++
+                    "`scripts/apply-patches.sh` (it reports how many it applied) and " ++
+                    "re-run before reading this as a regression; a death within the " ++
+                    "first few dozen resizes is that, not a code change. " ++
                     "Trace tail:\n{s}\n",
                 .{ i, describe(status), seen.items.len, tailOf(seen.items) },
             );
