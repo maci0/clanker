@@ -225,6 +225,13 @@ the feature default-on without quotas is not.
 
 ## Known issues
 
+- **(Fixed) `timeout_ms` used to be a schedule rather than a ceiling.** The
+  watchdog in `roundTrip` (src/sandbox/kernel.zig) slept the whole budget and
+  `roundTrip` joins it, so every cell was held for `timeout_ms` -- 10 s by
+  default -- however fast it ran. It now waits on a `std.Io.Event` the reader
+  sets when the round trip ends, under the same deadline, so the SIGTERM path
+  is unchanged and a finished cell returns at once.
+  [Record](../reports/bugs/2026-08-23-kernel-timeout-watchdog-holds-every-reply.md).
 - **JS/Bun supervisor is not started.** The guest returns a clear error.
 - **No loopback bridge.** Cells cannot call host WASM tools mid-eval.
 - **`%pip` runs in the supervisor's interpreter, not a created venv.**

@@ -379,11 +379,22 @@ fn writeSupervisorFile(dir: std.Io.Dir, io: std.Io) EvalError!void {
 }
 
 fn roundTrip(opts: EvalOpts, line: []const u8) EvalError![]u8 {
+    // The timeout watchdog. It stays a separate thread rather than a bounded
+    // window around the read (`util/deadline.runBounded`) because what
+    // unblocks the read is the SIGTERM: cancelling a task already blocked in
+    // `read(2)` on the supervisor's pipe does not reach it.
     const Killer = struct {
         io: std.Io,
         pid: std.posix.pid_t,
         ms: u32,
-        cancel: *std.atomic.Value(bool),
+        /// Set by the reader the moment the round trip is over -- reply read,
+        /// or read failed. Waiting on this rather than sleeping the whole
+        /// budget is the difference between a cell costing what it costs and
+        /// every cell costing `timeout_ms`: this used to be a plain
+        /// `io.sleep(ms)` guarded by a flag the sleeper only read *after*
+        /// waking, and the `defer` below joins the thread, so a 5 ms cell was
+        /// held for the full 10 s default before its reply was returned.
+        done: *std.Io.Event,
         /// Set once the clock has run out, before the SIGTERM below, so the
         /// reader can tell a timeout-induced exit from a supervisor that
         /// exited on its own: the latter is a plain kernel failure, not a
@@ -391,27 +402,41 @@ fn roundTrip(opts: EvalOpts, line: []const u8) EvalError![]u8 {
         timed_out: *std.atomic.Value(bool),
         fn run(self: @This()) void {
             if (self.ms == 0) return;
-            self.io.sleep(.{ .nanoseconds = @as(i96, self.ms) * std.time.ns_per_ms }, .awake) catch return;
-            self.timed_out.store(true, .monotonic);
-            if (!self.cancel.load(.monotonic)) {
-                // Residual posix: signal delivery has no std.Io equivalent.
-                std.posix.kill(self.pid, std.posix.SIG.TERM) catch {};
+            const deadline: std.Io.Clock.Timestamp = .fromNow(self.io, .{
+                .clock = .awake,
+                .raw = .{ .nanoseconds = @as(i96, self.ms) * std.time.ns_per_ms },
+            });
+            while (!self.done.isSet()) {
+                self.done.waitTimeout(self.io, .{ .deadline = deadline }) catch |err| switch (err) {
+                    // `waitTimeout` reports Timeout on a spurious wakeup too,
+                    // so only the clock decides that the budget is spent.
+                    error.Timeout => {
+                        if (self.done.isSet()) return;
+                        if (deadline.durationFromNow(self.io).raw.nanoseconds > 0) continue;
+                        self.timed_out.store(true, .monotonic);
+                        // Residual posix: signal delivery has no std.Io
+                        // equivalent.
+                        std.posix.kill(self.pid, std.posix.SIG.TERM) catch {};
+                        return;
+                    },
+                    error.Canceled => return,
+                };
             }
         }
     };
 
-    var cancel = std.atomic.Value(bool).init(false);
+    var done: std.Io.Event = .unset;
     var timed_out = std.atomic.Value(bool).init(false);
     const pid = opts.reg.get(opts.session_id, opts.kind) orelse return error.NotRegistered;
     const thread = std.Thread.spawn(.{}, Killer.run, .{Killer{
         .io = opts.io,
         .pid = pid,
         .ms = opts.timeout_ms,
-        .cancel = &cancel,
+        .done = &done,
         .timed_out = &timed_out,
     }}) catch null;
     defer {
-        cancel.store(true, .monotonic);
+        done.set(opts.io);
         if (thread) |t| t.join();
     }
 
@@ -668,6 +693,67 @@ test "every kernel reply states that this path is unsandboxed, and it really is"
     // An unparseable reply is passed through rather than dropped for a label.
     const junk = try annotatePosture(arena, try arena.dupe(u8, "not json"));
     try std.testing.expectEqualStrings("not json", junk);
+}
+
+test "a finished cell returns at once instead of waiting out timeout_ms" {
+    // `timeout_ms` is a ceiling, not a schedule. The watchdog used to
+    // `io.sleep` the whole budget and only then read the flag saying the round
+    // trip was over, and `roundTrip` joins that thread before returning, so
+    // every reply was held until the clock ran out: a 5 ms cell cost the full
+    // 10 s default. Observed live as `tool 'kernel' -> 357 bytes in 10051ms`
+    // beside the supervisor's own `"duration_ms": 5`.
+    //
+    // The assertion is on wall time against the budget, which is the only
+    // thing that distinguishes the two shapes -- both return the same reply.
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const budget_ms: u32 = 8_000;
+    const base = EvalOpts{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena,
+        .reg = &reg,
+        .session_id = "prompt",
+        .cwd = .{ .dir = tmp.dir },
+        .timeout_ms = budget_ms,
+    };
+    defer reg.terminateSession("prompt");
+
+    // The first call pays for writing the script and starting python3, so the
+    // measurement is taken on the second: what is being timed is the round
+    // trip, not interpreter startup.
+    var warm = base;
+    warm.cell = "1 + 1";
+    _ = eval(warm) catch |err| switch (err) {
+        error.Python3NotFound => return error.SkipZigTest,
+        else => return err,
+    };
+
+    var measured = base;
+    measured.cell = "2 + 2";
+    const started = std.Io.Timestamp.now(io, .awake);
+    const parsed = try parseResponse(arena, try eval(measured));
+    const elapsed_ms = @divTrunc(
+        std.Io.Timestamp.now(io, .awake).nanoseconds - started.nanoseconds,
+        std.time.ns_per_ms,
+    );
+    try std.testing.expect(parsed.ok);
+    try std.testing.expectEqualStrings("4", parsed.result.?);
+    // Generous by design: the point is that the budget did not decide the
+    // answer, and any figure near `budget_ms` means the watchdog is back to
+    // sleeping it out.
+    try std.testing.expect(elapsed_ms < @as(i96, budget_ms) / 4);
 }
 
 test "descriptor-level cell output is captured, not spliced into the reply" {
