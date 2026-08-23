@@ -146,3 +146,26 @@ three stores is not, and that is what keeps this record open.
 ## References
 
 - Investigation: none yet
+## Note — `## References` can never be filled, only appended (2026-08-23)
+
+Observed twice while filing two new reports with the post-fix binary, so it is a
+standing hole in `appendOrFill` rather than a one-off.
+
+`appendOrFill` splices a block into a section the record carries **empty**.
+`create` seeds `## References` with `- Investigation: none yet`, so that section
+is never empty, and a `## References` block therefore always lands at the end of
+the document as a second heading:
+
+```
+appended to docs/reports/bugs/2026-08-23-record-slug-date-contradicts-the-stamped-date.md
+```
+
+against `filled ## Verification` and `filled ## Follow-up` on the same record
+moments earlier. Both new records needed a hand `update` to collapse the
+duplicate.
+
+So of the scaffolded sections, `## References` is the one the fix structurally
+cannot reach. Two candidate fixes, neither taken here: scaffold the section
+empty and let the first append fill it, or teach `appendOrFill` to treat a
+section whose entire body is the scaffolded placeholder as empty. The second
+generalises — `- Impact: To be confirmed.` in `## TL;DR` has the same shape.
