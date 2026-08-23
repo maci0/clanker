@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [cli.zig respond() sends a full body on HEAD, against RFC 9110 and its own stated invariant](bugs/2026-08-23-respond-sends-a-body-on-head.md) — Open
+
 - [A reports status note is written verbatim in two places, so the store's own update verb cannot edit it](bugs/2026-08-23-reports-status-note-lands-twice-and-cannot-be-edited.md) — Open
 
 - [The /api/events cap refusal declares a Content-Length four bytes longer than its body](bugs/2026-08-23-events-cap-503-declares-the-wrong-length.md) — Resolved
