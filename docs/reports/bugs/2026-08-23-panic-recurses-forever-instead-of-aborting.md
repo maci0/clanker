@@ -61,6 +61,14 @@ the panic. It hits the same `unreachable`, panics again, and calls
 `handlePanic` again. There is no re-entry guard and no `abort()`, so the cycle
 is unbounded.
 
+Spelled out, because this is the part that makes it urgent rather than merely
+ugly: **any panic reached while `Io.Threaded` is blocked stops being a crash and
+becomes a silent, traceless hang.** Nothing is printed, no exit status is
+produced, and nothing reaps. That is *why* a crashed repl wedges instead of
+dying: the crash itself is ordinary and diagnosable, and this defect is what
+converts it into an invisible one. It applies to every panic reached in that
+state, not only the SIGWINCH one that exposed it.
+
 Two independent faults, either of which alone would be enough:
 
 - The panic reporter is not panic-safe: it depends on the subsystem most
@@ -70,8 +78,10 @@ Two independent faults, either of which alone would be enough:
 
 ## Resolution
 
-Open. Not fixed here -- this was found while fixing the pty harness and is
-outside that change's blast radius. Where a fix belongs, concretely:
+Open, and **not implemented**. Found while fixing the pty harness, and
+`src/util/log.zig` plus `handlePanic` in `src/main.zig` is the process entry
+path -- outside that change's blast radius and outside the territory it was
+found from. What follows is a *proposal*, not a description of the code:
 
 - `src/util/log.zig` `logPanic`: write the already-formatted buffer straight to
   fd 2 with a raw `write(2)`, never `std.debug.print` / `std.Io`. The buffer is
