@@ -79,12 +79,24 @@ Web composer and completion picker are later phases, not blockers.
 
 ## Known issues
 
-Only needed when verification against code turned up real drift between
-what was designed/promised (in this doc, in a manifest, in a code comment)
-and what the code actually does. Omit this section entirely for a PRD with
-no known drift — an empty "Known issues: none" is noise. Each entry: what
-was promised, what actually happens, and where the fix belongs (file, not
-just "somewhere").
+- **(Fixed) A mention of a file over the cap used to be dropped, not
+  truncated.** The Failure modes row promises "file > 32 KiB | truncated with
+  notice" and acceptance criterion 3 was checked against a helper-level test
+  with a synthetic reader. The REPL's own reader was
+  `readFileAlloc(.limited(per_file_cap + 1))`, and that limit answers
+  `error.StreamTooLong` when it is reached or exceeded, so every file at or
+  over the cap read as unreadable and the mention stayed a bare `@path` token
+  with no fenced block and no notice. `readMentionFile` (`src/tui/repl.zig`)
+  now reads a bounded prefix with `readSliceShort` instead. Design also said
+  "truncated on a UTF-8 boundary" while `expandAlloc` cut at a raw byte
+  offset; `capUtf8` in `tools/zig/mention_expand.zig` backs the cut up to a
+  codepoint boundary so the request body and the saved session stay valid
+  UTF-8.
+- **The whole-expansion 256 KiB cap in Design is not implemented.**
+  `expandAlloc` (`tools/zig/mention_expand.zig`) enforces `per_file_cap` per
+  mention and nothing across the message, so N mentions expand to N x 32 KiB
+  with no ceiling and no notice. The fix belongs in `expandAlloc`, beside the
+  per-file cap.
 
 ## Failure modes
 

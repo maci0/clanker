@@ -26,6 +26,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   only its write half (a case `POLLHUP` does not report, since the server's own
   half stays open). A page reload opens two streams, so the leak accumulated
   toward the 32-subscriber cap.
+- A REPL composer `@path` mention of a file over the 32 KiB cap is truncated
+  with a `[truncated]` notice instead of being dropped. The read was
+  `readFileAlloc(.limited(per_file_cap + 1))`, and that limit answers
+  `error.StreamTooLong` when it is reached or exceeded, so every file at or
+  over the cap read as unreadable and the mention was sent to the model as a
+  bare `@path` token with no fenced block and no notice. The truncation also
+  lands on a UTF-8 codepoint boundary now, so a cut inside a multi-byte
+  character no longer puts invalid UTF-8 in the request body and the saved
+  session.
 - A panic now always terminates the process instead of sometimes turning into
   a silent, unkillable hang. The panic reporter went through `std.debug.print`,
   whose stderr flush re-enters `std.Io.Threaded`; when the panic came from that
