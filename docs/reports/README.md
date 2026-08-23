@@ -99,6 +99,8 @@ Project agents receive this workflow through the harness prompt and
 
 - [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-24-webui-task-textarea-combobox-role.md) — Open
 
+- [reports create writes the kind label into the title a second time](bugs/2026-08-23-reports-create-doubles-the-kind-label.md) — Resolved
+
 - [A reply opening with a heading or a list draws its markdown markers literally](bugs/2026-08-23-turn-arrow-defeats-markdown-on-first-reply-line.md) — Resolved
 
 - [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Open
@@ -131,7 +133,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [cli.zig respond() sends a full body on HEAD, against RFC 9110 and its own stated invariant](bugs/2026-08-23-respond-sends-a-body-on-head.md) — Resolved
 
-- [A reports status note is written verbatim in two places, so the store's own update verb cannot edit it](bugs/2026-08-23-reports-status-note-lands-twice-and-cannot-be-edited.md) — Open
+- [A reports status note is written verbatim in two places, so the store's own update verb cannot edit it](bugs/2026-08-23-reports-status-note-lands-twice-and-cannot-be-edited.md) — Resolved
 
 - [The /api/events cap refusal declares a Content-Length four bytes longer than its body](bugs/2026-08-23-events-cap-503-declares-the-wrong-length.md) — Resolved
 - [PRDs 0052 through 0057 each carry a second, unfilled copy of four template sections](bugs/2026-08-23-prd-template-boilerplate-left-in-six-records.md) — Resolved
