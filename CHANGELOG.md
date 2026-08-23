@@ -16,6 +16,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The two `zig build e2e` pty journeys no longer need a locally patched
+  dependency to complete their terminal-capability handshake. `answerQueries`
+  waited for the XTSMGRAPHICS sixel geometry query and gated its DA1 answer
+  behind having answered it; upstream vaxis 0.6.0 declares that query and never
+  sends it (only `patches/vaxis-sixel-graphics.patch` does), so DA1 went
+  unanswered even though it had arrived, and both journeys failed in any tree
+  where `scripts/apply-patches.sh` had not run — every fresh worktree, since
+  `zig-pkg/` is gitignored. The geometry query is now answered when present and
+  skipped when absent, and the handshake's 60-iteration budget is a 5s
+  wall-clock deadline (`pump` returns the moment bytes are available, so an
+  iteration count is not a timeout).
+
 - Hitting `agent.max_iterations` in the REPL now lands the turn on the
   model's partial work instead of rendering `[error: ...]` and discarding
   every tool round: the last prose the model produced renders as the partial
