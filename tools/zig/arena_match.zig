@@ -587,6 +587,19 @@ pub fn defaultTarget(board: *const Board, combatants: []const Combatant, mover: 
     return best;
 }
 
+/// Whether a move must name a target in Battle Royale mode. The prompt marks
+/// `target` REQUIRED for attack, block and counter only; `concede` and
+/// `final_stand` are not aimed at anyone (`score` ignores their target), so
+/// an omitted target on them is the protocol followed, not a weak move —
+/// paying the weak-confidence floor for it misreported a legitimate closing
+/// argument as weak in the verdict.
+pub fn needsTarget(move: Move) bool {
+    return switch (move) {
+        .attack, .block, .counter => true,
+        .concede, .final_stand => false,
+    };
+}
+
 /// Picks the winner. A knockout and a concession are read off the fight's
 /// state; anything that reaches the cap intact is judged on points.
 pub fn decide(combatants: []const Combatant) Verdict {
@@ -1131,6 +1144,14 @@ test "defaultTarget retaliates first, then aims at the strongest left" {
     // An attacker that has since been eliminated is not a target either.
     cs[3].hp = 0;
     try std.testing.expectEqual(@as(?usize, 2), defaultTarget(&board, cs, 0));
+}
+
+test "only offensive moves need a target; concede and final_stand do not" {
+    try std.testing.expect(needsTarget(.attack));
+    try std.testing.expect(needsTarget(.block));
+    try std.testing.expect(needsTarget(.counter));
+    try std.testing.expect(!needsTarget(.concede));
+    try std.testing.expect(!needsTarget(.final_stand));
 }
 
 test "defaultTarget has nobody to aim at once the mover is alone" {
