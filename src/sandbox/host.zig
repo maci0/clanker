@@ -2775,7 +2775,6 @@ pub fn ckStats(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json);
 }
 
-
 /// Most bytes of the improve ledger `ck_improve_history` hands over. The guest
 /// arena is 1 MiB (`host_arena_cap` in tools/zig/lib.zig) and the guest renders
 /// only the newest few records, so a ledger grown past this still answers
