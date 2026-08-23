@@ -29,8 +29,9 @@ else
     echo "shellcheck not installed; skipping (CI will run it)"
 fi
 
-step "AssemblyScript toolchain (CI: Audit AssemblyScript toolchain)"
+step "JavaScript toolchains (CI: Audit JavaScript toolchains)"
 if command -v npm >/dev/null 2>&1; then
+    npm audit --audit-level=high || status=1
     (cd tools/ts && npm audit --audit-level=high) || status=1
     (cd tools/ts && ./verify.sh) || status=1
 else

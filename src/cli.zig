@@ -18863,7 +18863,7 @@ test "renderModelSnippet emits a valid, pasteable TOML models table" {
         \\{"limit":{"context":1e300,"output":4096},"id":"x","name":"X"}
     , .{});
     const hostile_snippet = try renderModelSnippet(arena, "p", "m", hostile);
-    try std.testing.expect(std.mem.indexOf(u8, hostile_snippet, "context_window") == null);
+    try std.testing.expect(std.mem.find(u8, hostile_snippet, "context_window") == null);
     try std.testing.expect(std.mem.find(u8, hostile_snippet, "max_tokens = 4096") != null);
 }
 

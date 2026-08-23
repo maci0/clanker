@@ -692,7 +692,7 @@ pub fn intFromFloatChecked(f: f64) ?i64 {
     const t = @trunc(f);
     // -2^63 is exactly representable; 2^63 is the first value past maxInt.
     if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) return null;
-    return @intFromFloat(t);
+    return @trunc(t);
 }
 
 /// First configured manifest directory, used by `plugins new` and similar

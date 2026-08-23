@@ -239,7 +239,7 @@ pub fn renderPending(arena: std.mem.Allocator, obj: std.json.ObjectMap) ![]const
                 if (!std.math.isFinite(f)) break :blk @as(i64, 0);
                 const t = @trunc(f);
                 if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) break :blk @as(i64, 0);
-                break :blk @as(i64, @intFromFloat(t));
+                break :blk @as(i64, @trunc(t));
             },
             else => 0,
         } else 0;

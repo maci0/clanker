@@ -74,6 +74,11 @@ jobs:
           npm ci
           npm run lint
 
+      # The root lockfile (oxlint and its napi bindings) gets the same audit
+      # the AssemblyScript toolchain gets below; nothing else scanned it.
+      - name: Audit root JavaScript toolchain
+        run: npm audit --audit-level=high
+
       - name: Audit AssemblyScript toolchain
         working-directory: tools/ts
         run: |
