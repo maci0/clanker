@@ -80,13 +80,15 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [improve gate skipped extra in-tree tools_dir entries](bugs/2026-08-23-descriptor-gate-skips-extra-tools-dirs.md) — Resolved
+
 - [Goal-loop work turns ignore --backend and call Agent.run](bugs/2026-08-22-goal-loop-ignores-backend.md) — Resolved
 
 - [ACP hang never unblocks a silent vendor child](bugs/2026-08-22-acp-hang-never-unblocks-a-silent-child.md) — Resolved
 
 - [Two backend runs in the same second wrote one graph file](bugs/2026-08-22-backend-run-id-seconds-collide.md) — Resolved
 
-- [clanker commit --all silently omits every new file](bugs/2026-08-22-commit-all-omits-new-files.md) — Open
+- [clanker commit --all silently omits every new file](bugs/2026-08-22-commit-all-omits-new-files.md) — Resolved
 
 - [rfc create writes a seeded research link that does not resolve](bugs/2026-08-22-rfc-seeded-research-link-misses-the-parent-directory.md) — Resolved
 
@@ -252,7 +254,7 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:investigation:start -->
 - [The two pty e2e tests fail in any git worktree and pass in the main checkout](investigations/2026-08-22-pty-e2e-fails-in-a-worktree.md) — Investigating
 
-- [improve_history is granted a path that is a symlink inside an improve-self worktree](investigations/2026-08-22-improve-history-guest-in-an-improve-worktree.md) — Investigating
+- [improve_history is granted a path that is a symlink inside an improve-self worktree](investigations/2026-08-22-improve-history-guest-in-an-improve-worktree.md) — Resolved
 
 - [Two pty e2e journeys fail on an untouched base: the REPL's vaxis capability queries never arrive](investigations/2026-08-22-pty-e2e-capability-queries-unanswered.md) — Investigating
 

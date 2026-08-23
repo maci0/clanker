@@ -175,6 +175,29 @@ pub const Registry = struct {
         return out;
     }
 
+    /// True when a `readStdout` call cannot block: leftover bytes are
+    /// already queued, or poll(2) reports the pipe readable (data or EOF)
+    /// within `timeout_ms`. 0 answers immediately, so a caller can drain
+    /// exactly what has already arrived without ever blocking on a quiet
+    /// pipe — DAP event attribution depends on that (src/debug/dap.zig).
+    /// Residual posix: raw-fd poll on a child pipe, same family as
+    /// serve/live.zig's idleTickSawHangup.
+    pub fn stdoutReadable(self: *Registry, session_id: []const u8, kind: []const u8, timeout_ms: i32) !bool {
+        {
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
+            const h = self.findLocked(session_id, kind) orelse return error.NotRegistered;
+            if (h.leftover.items.len > 0) return true;
+        }
+        const f = self.stdoutFile(session_id, kind) orelse return error.NoStdout;
+        var pfd = [1]std.posix.pollfd{.{ .fd = f.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+        // poll retries EINTR itself; anything left is unexpected enough to
+        // surface rather than spin on.
+        const ready = std.posix.poll(&pfd, timeout_ms) catch return error.PollFailed;
+        if (ready == 0) return false;
+        return (pfd[0].revents & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR)) != 0;
+    }
+
     fn appendLeftover(self: *Registry, session_id: []const u8, kind: []const u8, bytes: []const u8) !void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);

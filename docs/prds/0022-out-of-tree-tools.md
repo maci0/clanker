@@ -234,9 +234,15 @@ behavior). No per-directory `enabled` toggle (remove the entry from
 
 ## Known issues
 
-- `toolDescriptorGate` still walks one staged-worktree directory and never
-  opens an extra `tools_dir` entry. That is the anti-cheat boundary, not a
-  loader bug: an out-of-tree plugin is not part of a promoted checkout.
+- `toolDescriptorGate` walks one directory per call, and the improve engine
+  used to invoke it only on the hardcoded `tools/manifests`, never an extra
+  `tools_dir` entry. For an out-of-tree entry that is the anti-cheat
+  boundary, not a loader bug: an out-of-tree plugin is not part of a
+  promoted checkout, so the staged-worktree gate cannot see it. An in-tree
+  entry, though, is part of the promoted checkout, and a descriptor staged
+  there loaded ungated. Fixed: the engine now runs the descriptor gate over
+  every configured in-tree entry (relative, no `..`) and still skips
+  out-of-tree entries by design.
 
 ## Failure modes
 

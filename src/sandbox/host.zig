@@ -35,6 +35,7 @@ const jobs_mod = @import("jobs.zig");
 const kernel_mod = @import("kernel.zig");
 const dap = @import("../debug/dap.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
+const tail_util = @import("../util/tail.zig");
 const live_mod = @import("../serve/live.zig");
 const cas_lock_record = @import("cas_lock_record");
 
@@ -2774,6 +2775,65 @@ pub fn ckStats(caller: *zwasm.Caller) u32 {
     return h.writeResult(bytes, json);
 }
 
+
+/// Most bytes of the improve ledger `ck_improve_history` hands over. The guest
+/// arena is 1 MiB (`host_arena_cap` in tools/zig/lib.zig) and the guest renders
+/// only the newest few records, so a ledger grown past this still answers
+/// instead of failing on size. Cut on a line boundary, or the oldest record in
+/// the window arrives torn and is dropped by the guest's parse.
+const improve_history_cap = 256 * 1024;
+
+/// ck_improve_history() hands the improve ledger (`state/improvements.jsonl`)
+/// to the `improve_history` guest over a host channel instead of through the
+/// sandbox filesystem.
+///
+/// The guest used to read the path itself, granted by name in
+/// `fs_prefixes`. That grant could not work in a `clanker improve-self`
+/// worktree, which is the only place the tool has anything to say:
+/// `linkSharedState` (src/improve/worktree.zig) makes that exact path a symlink
+/// to the checkout's real file, and `safeJoinSecure`'s no-follow walk stats the
+/// granted LEAF as well as the directories above it, so it was refused with
+/// PathOutsideSandbox. The guest turns any read failure into "no history yet",
+/// so the refusal surfaced as an empty history rather than an error: every
+/// improve-self run was told it had never attempted anything, which is the one
+/// answer that makes the loop repeat its own failures.
+///
+/// Reading here honours the existing rule rather than working around it. That
+/// rule is already written down in `casLockPath` above -- a symlink under
+/// `state/` is safe only where the HOST reads the path -- and this is the host,
+/// whose native I/O follows the link exactly as the engine's own History does.
+/// Widening the guest's reach instead would have meant either
+/// `sandbox_follow_symlinks`, which ADR 0017 says nothing may set implicitly,
+/// or routing improve-self through `shared_root`, which would also send
+/// `state/learnings.md` to the checkout and break the one-way promotion the
+/// improve worktree is built around.
+pub fn ckImproveHistory(caller: *zwasm.Caller) u32 {
+    const h = getHost(caller);
+    if (!std.mem.eql(u8, h.sandbox.tool_self_name, "improve_history")) return Err.denied;
+    const bytes = memBytes(caller) orelse return Err.invalid;
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const base = h.sandbox.state_base_dir orelse std.Io.Dir.cwd();
+    const state_dir = std.mem.trimEnd(u8, if (h.sandbox.state_dir.len > 0) h.sandbox.state_dir else "state", "/");
+    const path = std.fmt.allocPrint(arena, "{s}/improvements.jsonl", .{state_dir}) catch return Err.too_large;
+
+    // A ledger that is not there yet is not an error: a checkout that has
+    // never run improve-self has no file, and "no history yet" is the right
+    // answer for it. Only a path that exists and cannot be read is a failure,
+    // and that one must not be reported as an empty history.
+    const raw = base.readFileAlloc(h.sandbox.io, path, arena, .limited(1 << 24)) catch |err| switch (err) {
+        error.FileNotFound => return Err.not_found,
+        else => {
+            log.log(.warn, "[improve_history] could not read {s}: {s}", .{ path, @errorName(err) });
+            return Err.invalid;
+        },
+    };
+    return h.writeResult(bytes, tail_util.onLineBoundary(raw, improve_history_cap));
+}
+
 /// Maximum number of custom headers a tool may send per request.
 const max_custom_headers = 16;
 
@@ -4769,6 +4829,7 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     linker.defineFuncCtx("env", "ck_chat", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckChat) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_publish", child_host, fn (*zwasm_mod.Caller, u32, u32) u32, &ckPublish) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_stats", child_host, fn (*zwasm_mod.Caller) u32, &ckStats) catch return Err.invalid;
+    linker.defineFuncCtx("env", "ck_improve_history", child_host, fn (*zwasm_mod.Caller) u32, &ckImproveHistory) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_config", child_host, fn (*zwasm_mod.Caller) u32, &ckConfig) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_harness_config", child_host, fn (*zwasm_mod.Caller) u32, &ckHarnessConfig) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_result", child_host, fn (*zwasm_mod.Caller) u64, &ckResult) catch return Err.invalid;

@@ -428,16 +428,15 @@
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.slack-room-badge {
+/* Unread dot and message-count pill render identically; app.js emits one or
+   the other per row, never both. */
+.slack-room-badge,
+.slack-room-item-count {
   background: var(--danger); color: var(--on-danger);
   font-size: var(--step--2); font-weight: 700; min-width: 18px;
   height: 18px; border-radius: var(--radius-pill);
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 var(--space-1); flex-shrink: 0;
-}
-
-.slack-room-item.is-active .slack-room-badge {
-  background: var(--danger); color: var(--on-danger);
 }
 
 .slack-presence-dot {
@@ -449,23 +448,7 @@
 
 .slack-presence-dot.is-away { background: transparent; border-color: var(--warn); }
 
-.slack-room-item-name {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: var(--step-0);
-}
-
-.slack-room-item.has-unread .slack-room-item-name { font-weight: 700; color: var(--fg); }
-
-.slack-room-item-count {
-  background: var(--danger); color: var(--on-danger);
-  font-size: var(--step--2); font-weight: 700; min-width: 18px; height: 18px;
-  border-radius: var(--radius-pill); display: inline-flex; align-items: center;
-  justify-content: center; padding: 0 var(--space-1); flex-shrink: 0;
-}
-
-.slack-room-item.is-active .slack-room-item-count {
-  background: var(--danger); color: var(--on-danger);
-}
+.slack-room-item.has-unread .slack-room-name { font-weight: 700; color: var(--fg); }
 
 .slack-room-presence {
   width: 8px; height: 8px; border-radius: 50%;

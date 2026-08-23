@@ -147,7 +147,7 @@ RFC is in Discussion and is the mechanism question; this note is the policy one.
 
 | `state/` entry | Improve worktree gets | Read by | Symlinkable today | Survives the worktree |
 |---|---|---|---|---|
-| `improvements.jsonl` | symlink | host, and `improve_history` guest | yes for the host; the guest grant is the open question | yes |
+| `improvements.jsonl` | symlink | host only (the `improve_history` guest now reads it over `ck_improve_history`) | yes for the host; the guest grant was the open question and is gone | yes |
 | `history/` | symlink | host (`History` revert snapshots) | yes | yes |
 | `learnings.md` | copy in | `learnings` guest | no | no |
 | `autolearn.jsonl` | copy in | `autolearn` guest | no | no |
@@ -179,15 +179,15 @@ Every claim above traces to a row here. Sources are files in this tree at
 | `trimLog` writes through a leaf symlink rather than replacing it | `src/stats/tokens.zig:188` → `src/util/atomic_write.zig:35-59` (`readLink` on `sub_path`) | 2026-08-22 | high |
 | `clanker stats` in the main checkout totals 18814 calls / $42.24 | `clanker stats`, run 2026-08-22 | high | high |
 | Correlating improve ledger timestamps against `token_stats.jsonl` does **not** settle whether improve calls are missing | 828 of 1485 improvement records have some `token_stats` line within ±60s, but other sessions write the same log concurrently, so the window proves nothing either way | 2026-08-22 | high (that it is inconclusive) |
-| `improve_history` is refused inside an improve worktree | traced through the three rows above; **not reproduced** | 2026-08-22 | medium |
+| `improve_history` is refused inside an improve worktree, and reports the refusal as an empty history | traced through the three rows above, then **reproduced** by a unit test and fixed by moving the guest onto `ck_improve_history` | 2026-08-23 | high |
 
 ## Open questions
 
 1. **Does `improve_history` actually fail inside an improve-self worktree?**
-   Settle it by starting `clanker improve-self` with an instruction that calls
-   the tool and reading the refusal, or by a unit test that points a sandbox at
-   a leaf symlink under a granted prefix. Filed as an investigation, not a bug
-   report, because it is traced and not reproduced.
+   Settled 2026-08-23: yes. The unit test route was the one taken -- a sandbox
+   rooted at a worktree whose granted leaf is a symlink to a sibling checkout's
+   file. It did not error; it answered "no history yet". Fixed by giving the
+   guest a host channel (`ck_improve_history`) and dropping its fs grant.
 2. **Would a shared `token_stats.jsonl` be attributable?** The record has no
    run, session or source field, so merged-back lines would raise the totals
    without answering "what did improve cost". Settling this means deciding

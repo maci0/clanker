@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **Question:** `improve_history` declares `fs_prefixes: ["state/improvements.jsonl"]`, and `linkSharedState` makes that exact path a leaf symlink in every improve-self worktree. `safeJoinSecure` stats the leaf as well as the directories above it and refuses a symlink, and `cmdImproveSelf` never sets `cfg.agent.shared_root`, so the guest's path resolves inside the worktree and meets the link. Traced from source at 03a79fef on 2026-08-22; not reproduced live.
-- **Finding:** Investigating.
-- **Resolution:** Pending.
+- **Finding:** Confirmed, and worse than traced: the refusal is not reported as an error. The guest maps every read failure to "no history yet", so an improve-self run is told it has never attempted anything.
+- **Resolution:** Resolved on 2026-08-23. Reproduced by a unit test, then fixed: improve_history takes the ledger over the new ck_improve_history host channel and its fs_prefixes grant is gone. Checked by sandbox.runtime test (fails with a dangling link, and would fail again if the read went back through the sandbox fs) plus a live before/after in an improve-worktree-shaped dir: pre-fix 37 bytes and the model said NO-HISTORY, post-fix 163 bytes and both records.
 
 ## Status
 
-Investigating.
+Resolved on 2026-08-23. Reproduced by a unit test, then fixed: improve_history takes the ledger over the new ck_improve_history host channel and its fs_prefixes grant is gone. Checked by sandbox.runtime test (fails with a dangling link, and would fail again if the read went back through the sandbox fs) plus a live before/after in an improve-worktree-shaped dir: pre-fix 37 bytes and the model said NO-HISTORY, post-fix 163 bytes and both records.
 
 ## Trigger and scope
 
@@ -74,17 +74,46 @@ with no `internal` flag.
 
 ## Finding
 
+Test 2 was the route taken, and it confirmed the trace. A sandbox rooted at a
+worktree whose granted leaf `state/improvements.jsonl` is an absolute symlink to
+a sibling checkout's real file does not return the history.
+
+The part the trace did not predict is the shape of the failure. It is not an
+error the model can see. `tools/zig/history.zig` wrapped the read in
+`catch return lib.fail(out, "no history yet")`, so `PathOutsideSandbox` came back
+as a 37-byte `{"ok":false,"error":"no history yet"}`. An improve-self run asking
+what it had already tried was told it had never tried anything, which is the one
+answer that makes the loop repeat its own failures. The counter-hypothesis in
+"Hypotheses and tests" is settled too: the tool IS in the improve run's
+registry, so `linkSharedState`'s comment was simply wrong.
+
+Live, in an improve-worktree-shaped directory with the same prompt and provider:
+the pre-fix binary returned 37 bytes and the model answered `NO-HISTORY`; the
+fixed binary returned 163 bytes and the model read back both records.
+
 ## Resolution or handoff
 
-Handed to whoever picks up the sandbox surface. Nothing here was changed: this
-investigation was opened from a docs-only branch whose scope was the decision
-record, so the code was read and not touched.
+Fixed by the second of the two candidates: the manifest grant is gone and the
+guest takes the ledger over a host channel.
 
-If test 2 above confirms the refusal, the two candidate fixes are the same two
-the research note lists for `token_stats.jsonl`: set `cfg.agent.shared_root` on
-the improve-self path so `rootForPath` routes `state/` to the checkout the way
-`Sharing.run` does, or drop the manifest grant and give the guest the data
-through a host channel.
+The first candidate (`cfg.agent.shared_root` on the improve-self path) was
+considered and rejected. `rootForPath` routes every entry in `shared_prefixes`,
+not just this one, so it would also send `state/learnings.md` to the checkout and
+break the one-way promotion an improve worktree is built around. Setting
+`agent.sandbox_follow_symlinks` was rejected outright: ADR 0017 says nothing may
+set it implicitly.
+
+The channel is `ck_improve_history` (`ckImproveHistory` in
+`src/sandbox/host.zig`), name-gated to `improve_history` the way `ck_stats` is
+gated to `model_stats`, capped at 256 KiB on a line boundary via
+`src/util/tail.zig`. `fs_prefixes` on the manifest is now empty, so the tool has
+no filesystem reach at all. An absent ledger is returned as an empty reply and
+rendered as "(no improvements recorded yet)"; every other failure is reported as
+a read error, so a refusal can never again be rendered as an empty history.
+
+This also makes `linkSharedState`'s stated rule true rather than aspirational:
+a symlink under `state/` is now genuinely only read by the host. A comment there
+says so and says not to add a guest grant for anything in that list.
 
 ## References
 
