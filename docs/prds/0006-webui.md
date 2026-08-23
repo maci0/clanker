@@ -276,6 +276,22 @@ The listing is ledger-derived like the tool's own (`state/compare/log.jsonl`),
 so it cannot mark which comparisons you have already picked without reading
 every document; "judged" is what a single ledger row can honestly say.
 
+## Known issues
+
+- **(Fixed) `respond` sent a body on HEAD and paid for it with keep-alive.**
+  `AGENTS.md` states the invariant — every body-writing responder guards HEAD
+  with `if (!request_head)` — and the asset, JSON and plugin responders do.
+  `respond` (`src/cli.zig`) did not: it wrote the body unconditionally and set
+  `request_keep_alive = false` on HEAD so the stray bytes died with the
+  connection. Measured live, `HEAD /api/does-not-exist` returned a 404 plus all
+  32 body bytes, and `HEAD /webui/plugins/<unknown>/app.js` — a webui path, so
+  keep-alive eligible — answered `Connection: close` and dropped the socket.
+  RFC 9110 9.3.2 forbids content on a HEAD response, and closing on every HEAD
+  gave up the reuse the asset routes were made keep-alive for. The body write
+  is now behind the same guard as the others and the keep-alive kill is gone;
+  `Content-Length` still states what the GET would send. Filed as
+  [respond sends a body on HEAD](../reports/bugs/2026-08-23-respond-sends-a-body-on-head.md).
+
 ## Failure modes
 
 | Condition | Behaviour |
@@ -295,6 +311,7 @@ every document; "judged" is what a single ledger row can honestly say.
 | A comparison id that could climb out of `state/compare/` | Carried to the tool as JSON data, never joined into a path, and refused there by the same `isSafeId` the CLI path uses |
 | Mermaid fence fails to render / renderer fails to load | Fence box gets `md-mermaid-error` and an alert role; text names the failure (`Diagram failed to render: …` or `Could not load the diagram renderer.`) instead of a blank card |
 | `POST /api/steer` when no run is working that goal/session | `404` with `"no run is currently working that goal or session"`; nothing is queued |
+| `HEAD` on any route | The status and headers the `GET` would send, `Content-Length` included, and no body; a keep-alive eligible HEAD keeps the connection |
 
 ## Acceptance criteria
 

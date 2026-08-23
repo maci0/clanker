@@ -16493,9 +16493,6 @@ fn requiredField(comptime name: []const u8, value: anytype, stream: std.Io.net.S
 }
 
 fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []const u8) void {
-    // A HEAD answer still writes the body below; on a kept-alive connection
-    // those bytes would be read as the next response, so HEAD closes.
-    if (request_head) request_keep_alive = false;
     request_status = status;
     var hbuf: [4096]u8 = undefined;
     // nosniff on every response, not just the HTML one: these bodies carry peer
@@ -16510,7 +16507,12 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
     else
         std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ status, reason, body.len, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
-    raw_http.writeAllFd(stream.socket.handle, body);
+    // RFC 9110 9.3.2: a HEAD response carries the headers the GET would carry,
+    // Content-Length included, and none of the content. This used to write the
+    // body anyway and force the connection closed so the stray bytes died with
+    // it — which cost keep-alive on every HEAD, the case keep-alive was added
+    // for. Same guard the asset, JSON and plugin responders already use.
+    if (!request_head) raw_http.writeAllFd(stream.socket.handle, body);
 }
 
 /// The web UI ships its CSS and JS inline in one embedded file, so the policy
@@ -19444,6 +19446,69 @@ test "isWebuiIndexPath accepts the slash variants browsers send" {
     try std.testing.expect(isWebuiIndexPath("/webui/"));
     try std.testing.expect(!isWebuiIndexPath("/webui/app.js"));
     try std.testing.expect(!isWebuiIndexPath("/webui//"));
+}
+
+/// A connected stream socket pair standing in for one HTTP connection: index
+/// 0 is the responder's end, index 1 is the client reading the bytes back.
+fn testRespondSocketPair() ![2]std.posix.fd_t {
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) return error.NoSocketPair;
+    return pair;
+}
+
+/// Runs `respond` over a socket pair and hands back everything it wrote.
+/// `buf` is the caller's, so the returned slice outlives this frame.
+fn respondCapture(buf: []u8, head: bool, keep_alive: bool, body: []const u8) ![]const u8 {
+    const pair = try testRespondSocketPair();
+    defer _ = std.c.close(pair[1]);
+
+    const saved_head = request_head;
+    const saved_keep_alive = request_keep_alive;
+    const saved_status = request_status;
+    defer {
+        request_head = saved_head;
+        request_keep_alive = saved_keep_alive;
+        request_status = saved_status;
+    }
+    request_head = head;
+    request_keep_alive = keep_alive;
+
+    respond(.{ .socket = .{ .handle = pair[0], .address = undefined } }, 404, "Not Found", body);
+    // Close the writing half so the read below sees EOF instead of blocking:
+    // the point of the test is "what came out", not how long the peer waits.
+    _ = std.c.close(pair[0]);
+
+    var used: usize = 0;
+    while (used < buf.len) {
+        const n = std.c.read(pair[1], buf[used..].ptr, buf.len - used);
+        if (n <= 0) break;
+        used += @intCast(n);
+    }
+    return buf[0..used];
+}
+
+test "a HEAD answer carries the headers and none of the body, and keeps the connection" {
+    // RFC 9110 9.3.2. `respond` used to write the body on HEAD too and force
+    // `Connection: close` so the stray bytes died with the connection --
+    // measured as 32 body bytes on `HEAD /api/does-not-exist`, and keep-alive
+    // lost on every HEAD including web UI assets.
+    const body = "{\"ok\":false,\"error\":\"not found\"}";
+
+    var head_buf: [1024]u8 = undefined;
+    const head_out = try respondCapture(&head_buf, true, true, body);
+    const head_sep = std.mem.find(u8, head_out, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    try std.testing.expectEqual(@as(usize, 0), head_out.len - (head_sep + 4));
+    // The declared length is still the length the GET would send: a HEAD that
+    // lies about Content-Length is no more useful than one that sends a body.
+    try std.testing.expect(std.mem.find(u8, head_out, "Content-Length: 32\r\n") != null);
+    try std.testing.expect(std.mem.find(u8, head_out, "Connection: keep-alive\r\n") != null);
+
+    // Control: the same call on a GET still writes the body, unchanged.
+    var get_buf: [1024]u8 = undefined;
+    const get_out = try respondCapture(&get_buf, false, true, body);
+    const get_sep = std.mem.find(u8, get_out, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    try std.testing.expectEqualStrings(body, get_out[get_sep + 4 ..]);
+    try std.testing.expect(std.mem.find(u8, get_out, "Connection: keep-alive\r\n") != null);
 }
 
 test "isWebuiRead treats HEAD like GET" {
