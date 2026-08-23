@@ -350,6 +350,59 @@ throw → tab error) if not already true in code.
   plugin's own panel — named plugin, exception message, Retry that re-runs
   the loader — and the rest of the page stays alive. Pinned by
   `ui/app/webui-load.test.mjs`.
+- **(Fixed) Mesh's "idle while hidden" guard read an attribute nobody sets.**
+  `mount` is handed the inner `<section>`; the host toggles `hidden` on the
+  enclosing `.view` panel. `container.hidden` in `ui/plugins/mesh/app.js` was
+  therefore `false` for the life of the tab, so the 4s `/api/mesh/*` poll, the
+  1s pending redraw and the live-bus handler were all guarded by nothing and
+  opening Mesh once left it polling a view nobody could see, taking a connection
+  from every other poll each time. It reads `container.closest(".view")` now, the
+  way `health` and `office` do. The comment above the timers claimed this had
+  already been fixed; the test that replaces it reads both halves of the
+  contract, so the claim cannot go stale again.
+- **(Fixed) Music's playlist Remove button drew nothing.** `btn("×", …)` asked
+  `api.icon` for a character rather than a name, and `icon()` returns an empty
+  `<span>` for anything not in `ICON_PATHS`, so every Remove was a blank button.
+  The name is `close` now, and a cross-file test parses the host's icon grid and
+  checks every glyph name the plugin asks for. Note for future harnesses: a stub
+  that omits `api.icon` takes `setGlyph`'s `else b.textContent = name` branch and
+  renders a convincing `×`, so stubbing it would hide this class of defect rather
+  than catch it.
+- **(Fixed) Office's `mount` threw where site data is blocked.** The
+  pre-migration alarm key was read with a bare `localStorage.getItem` on the
+  first line of `mount`. `api.storage` swallows a blocked store; a bare read does
+  not, and it is the property access that raises `SecurityError`, so an optional
+  preference read replaced the whole view with the plugin error panel. It is
+  inside a `try` now, matching how music does the same migration read.
+- **A plugin's `refresh` hook is unreachable.** The loader calls `spec.mount`
+  once and `spec.refresh` on every later call, but `showView` only invokes a
+  view loader under `if (!viewLoaded[name])` and never resets that flag, so
+  `refresh` runs only from `runPluginHook`'s Retry path. This PRD documents
+  `refresh?` as part of the registration API without saying so, `mesh`'s own
+  comment claims it covers re-entry, and `health` and `office` each bolt on a
+  `MutationObserver` on the panel's `hidden` attribute instead. Filed as
+  [plugin refresh hook is unreachable](../reports/bugs/2026-08-24-plugin-refresh-hook-is-unreachable.md).
+- **A plugin tab's arrow-key neighbours are its registration neighbours.** The
+  loader inserts the tab inside its group heading and then indexes it at the end
+  of `VIEWS`; `wireTab` moves focus purely by that index. For the eleven
+  built-ins `VIEWS` is exactly the rail's DOM order, so a plugin is the first
+  thing to break the invariant, against this PRD's "indistinguishable from a
+  built-in view". Filed as
+  [plugin tab arrow keys follow registration order](../reports/bugs/2026-08-24-plugin-tab-arrow-keys-follow-registration-order.md).
+- **`api.status` is one shared live region.** Every plugin and the loader's own
+  five messages write `#webui-plugins-status`; Health writes it about once a
+  second from its 1 Hz sample, so an enable confirmation is overwritten inside a
+  second and a screen reader hears the same metrics line forever. Same shape as
+  the `#models-status` defect already fixed in `docs/reviews/webui.md`, with N
+  producers instead of three. Filed as
+  [plugin status line is one shared live region](../reports/bugs/2026-08-24-plugin-status-line-is-one-shared-live-region.md).
+- **`actionList` drops a slightly-wrong manifest with no diagnostic.** It goes
+  out of its way to list an unparseable `plugin.json` with a diagnostic
+  description, then silently `continue`s past `capabilitiesRejected`; and
+  `validGroup` is enforced in `create`/`put` but never in `list`, so a manifest
+  with a group that is not `Work`/`Watch`/`Set up` is listed verbatim and its tab
+  lands outside the rail's nav list. Filed as
+  [webui addon list drops a bad manifest with no diagnostic](../reports/bugs/2026-08-24-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md).
 
 ## Failure modes
 

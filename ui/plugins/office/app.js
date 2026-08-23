@@ -39,8 +39,16 @@ clanker.registerView({
        against, which is exactly how his bubble became permanent. */
     var QUIP_MS = 4500;
     var QUIP_GAP_MS = 9000;
+    /* The pre-migration key is read through a guard of its own. `api.storage`
+       swallows a blocked store; a bare `localStorage` does not — the property
+       access itself throws SecurityError when a browser is set to block site
+       data, and this is line one of `mount`, so an optional preference read
+       took the whole view down to the plugin error panel. */
+    function legacyAlarm() {
+      try { return window.localStorage.getItem("clanker-office-alarm") === "on"; } catch (e) { return false; }
+    }
     var alarmOn = van.state(api.storage.get("alarm") === "on" ||
-      (api.storage.get("alarm") == null && localStorage.getItem("clanker-office-alarm") === "on"));
+      (api.storage.get("alarm") == null && legacyAlarm()));
 
     function nowSec() { return Math.floor(Date.now() / 1000); }
     function asleep(a) { return !a.walk && nowSec() - (a.lastSeen || 0) > SLEEP_AFTER; }
