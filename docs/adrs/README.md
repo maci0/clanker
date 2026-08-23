@@ -51,7 +51,8 @@ specification (a [PRD](../prds/)), or an operational failure and its recovery
 - Files are numbered `NNNN-<short-title>.md`, allocated by the tool.
 - The title is phrased as the **choice made**, not as the question: "Providers
   are a native vtable", not "How should providers be implemented?".
-- Status is one of `Proposed`, `Accepted`, `Superseded`, `Deprecated`. Set it
+- Status is one of `Accepted`, `Superseded`, `Deprecated` — a decision still
+  being made is an RFC, not a proposed ADR. Set it
   with `clanker adr status` so the inventory below stays true.
 - One decision per ADR. A later decision that reverses this one **supersedes**
   it: mark this file Superseded, link forward, and leave the reasoning in

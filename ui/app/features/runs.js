@@ -397,7 +397,7 @@ var graphModule = null;
 var graphModulePromise = null;
 function loadGraphModule() {
   if (!graphModulePromise) {
-    graphModulePromise = import("./lib/graph.js").then(function (m) {
+    graphModulePromise = import("../lib/graph.js").then(function (m) {
       graphModule = m;
       return m;
     }, function (err) {

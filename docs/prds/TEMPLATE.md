@@ -4,7 +4,7 @@
 
 {{status}}
 
-Shipped / In progress / Draft. Name the source files that are the single
+Draft / In progress / Partial / Implemented / Shipped. Name the source files that are the single
 source of truth, and the surface(s) that expose it (tools, HTTP, CLI, web
 UI). If a claim below is known to be stale or contradicted by the code,
 say so here up front rather than burying it in Design — a reader who only
