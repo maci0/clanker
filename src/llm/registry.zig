@@ -141,7 +141,7 @@ pub fn loopbackEndpoint(base_url: []const u8) ?LoopbackEndpoint {
     if (!std.mem.eql(u8, host, "127.0.0.1") and !std.mem.eql(u8, host, "localhost")) return null;
     if (host_end >= rest.len or rest[host_end] != ':') return null;
     const after = rest[host_end + 1 ..];
-    const port_end = std.mem.indexOfScalar(u8, after, '/') orelse after.len;
+    const port_end = std.mem.findScalar(u8, after, '/') orelse after.len;
     const port = std.fmt.parseInt(u16, after[0..port_end], 10) catch return null;
     return .{ .port = port };
 }

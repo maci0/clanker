@@ -246,6 +246,8 @@ pub const sixel_interval_ms_min: i64 = 100;
 ///
 /// Monotonic rather than wall time: a clock step (ntp, a suspend) must not be
 /// able to hold the mascot still for hours or fire a burst of frames.
+///
+/// Residual std.c clock: vaxis draw callbacks carry no `std.Io` handle.
 fn nowMs() i64 {
     var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
     _ = std.c.clock_gettime(.MONOTONIC, &ts);

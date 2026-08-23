@@ -101,6 +101,7 @@ pub fn getContext() []const u8 {
 }
 
 pub fn unixMilliseconds() i128 {
+    // Residual std.c clock: std.log's logFn carries no `std.Io` handle.
     var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
     _ = std.c.clock_gettime(.REALTIME, &ts);
     return @as(i128, ts.sec) * std.time.ms_per_s + @divTrunc(@as(i128, ts.nsec), std.time.ns_per_ms);

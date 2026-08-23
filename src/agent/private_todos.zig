@@ -362,5 +362,5 @@ test "todo_add rejects titles over the max length" {
     const long_title = try arena.alloc(u8, max_title_len + 1);
     @memset(long_title, 'x');
     const result = try applyTodoOp(&list, arena, "todo_add", long_title, null);
-    try std.testing.expect(std.mem.indexOf(u8, result, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.find(u8, result, "\"ok\":false") != null);
 }

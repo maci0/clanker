@@ -500,7 +500,7 @@ fn hasMessageId(arena: std.mem.Allocator, raw: []const u8, id: []const u8, max: 
         const needle = "\"id\":\"";
         var search_from: usize = 0;
         var plausibly_ours = false;
-        while (std.mem.indexOf(u8, line[search_from..], needle)) |rel| {
+        while (std.mem.find(u8, line[search_from..], needle)) |rel| {
             const k = search_from + rel;
             const after = line[k + needle.len ..];
             // `after.len > id.len` is the bounds guard for the `after[id.len]`

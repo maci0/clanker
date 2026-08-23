@@ -697,10 +697,10 @@ test "renderMatchRows caps one file and says how many it refused" {
         match_lines_per_file_max,
         std.mem.count(u8, rendered, "  hit\n"),
     );
-    try testing.expect(std.mem.indexOf(u8, rendered, "… 3 more matching line(s) in docs/a.md") != null);
+    try testing.expect(std.mem.find(u8, rendered, "… 3 more matching line(s) in docs/a.md") != null);
     // The rows past the cap are the ones dropped, not the rows before it.
-    try testing.expect(std.mem.indexOf(u8, rendered, "   50  hit") != null);
-    try testing.expect(std.mem.indexOf(u8, rendered, "   51  hit") == null);
+    try testing.expect(std.mem.find(u8, rendered, "   50  hit") != null);
+    try testing.expect(std.mem.find(u8, rendered, "   51  hit") == null);
 }
 
 test "sortedMatches orders by file then line so a record's hits stay one group" {

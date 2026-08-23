@@ -617,7 +617,7 @@ pub const Agent = struct {
 
     /// Whether `git_worktree_on` names `mode`.
     pub fn worktreeOn(self: Agent, mode: WorktreeMode) bool {
-        return std.mem.indexOfScalar(WorktreeMode, self.git_worktree_on, mode) != null;
+        return std.mem.findScalar(WorktreeMode, self.git_worktree_on, mode) != null;
     }
 };
 

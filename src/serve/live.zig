@@ -187,7 +187,7 @@ pub fn writeSse(out: []u8, json: []const u8) ?[]const u8 {
     // bytes, so one here is an injection attempt: drop the event, do not ship
     // a broken or spoofable frame. (An escaped `\\n` inside a JSON string is
     // two characters and passes through untouched.)
-    if (std.mem.indexOfAny(u8, json, "\n\r") != null) return null;
+    if (std.mem.findAny(u8, json, "\n\r") != null) return null;
     @memcpy(out[0..prefix.len], prefix);
     @memcpy(out[prefix.len .. prefix.len + json.len], json);
     @memcpy(out[prefix.len + json.len .. prefix.len + json.len + suffix.len], suffix);

@@ -7757,7 +7757,7 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
         if (std.mem.eql(u8, entry.name, cas_lock_sweep_marker)) continue;
         lock_count += 1;
         try std.testing.expect(casLockName(entry.name));
-        try std.testing.expect(std.mem.indexOf(u8, entry.name, "note") == null);
+        try std.testing.expect(std.mem.find(u8, entry.name, "note") == null);
     }
     try std.testing.expectEqual(@as(usize, 1), lock_count);
 
@@ -7773,9 +7773,9 @@ test "fsWriteIfImpl leaves no lock sidecar beside the target and no dirs on mism
     try std.testing.expectEqual(@as(usize, cas_lock_record.record_len), rec.len);
     try std.testing.expectEqual(@as(u8, '\n'), rec[rec.len - 1]);
     try std.testing.expect(std.mem.startsWith(u8, rec, "pid="));
-    try std.testing.expect(std.mem.indexOf(u8, rec, " acquired_ms=") != null);
-    try std.testing.expect(std.mem.indexOf(u8, rec, "target=") != null);
-    try std.testing.expect(std.mem.indexOf(u8, rec, "docs/note.md") != null);
+    try std.testing.expect(std.mem.find(u8, rec, " acquired_ms=") != null);
+    try std.testing.expect(std.mem.find(u8, rec, "target=") != null);
+    try std.testing.expect(std.mem.find(u8, rec, "docs/note.md") != null);
 
     // A mismatch is the ordinary contention outcome. It used to run
     // createDirPath before the compare, so a refused write still materialised
