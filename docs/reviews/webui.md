@@ -1716,6 +1716,80 @@ leaves `aria-expanded="false"` with no `aria-activedescendant`. 5 of 7 fail
 against `origin/main`, 7 of 7 after. Both suites are registered in `build.zig`
 as the `js-suite-coverage` gate requires.
 
+## Four promises the HTTP layer was not keeping (2026-08-24)
+
+All four measured against a live `clanker serve` on loopback before and after,
+which is the only way any of them is visible: none shows up in the browser.
+
+**The keep-alive budget was never in the header.** `handleConnectionGuarded`
+loops while `requests < max_keep_alive_requests` (100), and nothing consulted
+`requests` when the `Connection` header was decided. So the response that spent
+the budget said `keep-alive` and the server closed straight after it. Over one
+socket, before: responses 99 and 100 both `keep-alive`, then EOF, so request 101
+gets an empty reply. `curl` reconnects at exactly 1, 101 and 201 out of 250,
+which is the budget being spent and the client papering over it; a client that
+does not retry an idempotent GET does not paper over it. The budget is part of
+keep-alive eligibility now: after, response 99 is `keep-alive`, response 100 is
+`close`, and the close is the one the client was told about.
+
+**`POST /api/compare` with no id was a 400 the PRD documents as a 405.** The row
+exists to be distinguishable from the 400 for a pick with no letter;
+`compareRouteToToolInput` returns null for both and the caller's one `orelse`
+made them the same answer. There is a `compareCollectionPost` predicate in front
+of the mapping now. After: the collection POST is `405 {"error":"method not
+allowed"}`, a blank pick against a real id is still 400, and `GET /api/compare`
+is still 200.
+
+**Every proxy response wrote a body on HEAD.** `respond`'s version of this was
+fixed two days ago; the proxy was the other half and nobody looked. `handle`
+accepts HEAD on the models routes (`is_get` is GET *or* HEAD) and every response
+leaves through `writeFixed` or `writeAllow`, which wrote the body
+unconditionally. Measured: `HEAD /proxy/v1/models` answered 200,
+`Content-Length: 658`, and 658 body bytes. Both writers take the `Ctx` now and
+skip the body on HEAD with the declared length unchanged; `writeAuthError`
+carries the real method instead of a hardcoded `"GET"`, so a HEAD that fails auth
+is bodyless too; and the 405 on those routes lists `GET, HEAD`, since HEAD is
+served.
+
+**And the proxy's 404 was not JSON.** `writeEnvelope` builds into a fixed
+1536-byte buffer and swallowed every writer's error. `Writer.fixed` fills the
+buffer and *then* fails, so the result was 1536 bytes of valid-looking, invalid
+JSON under a `Content-Length` that agreed with it. The input is
+caller-controlled: `modelNotFoundMessage` echoes the requested model name, which
+is bounded only by the 24 MiB body cap. Measured, with a 2000-character `model`:
+404, `Content-Length: 1536`, body ends `aaaaaaaa`, and Python's decoder says
+`Unterminated string starting at column 21`. An SDK error parser gets that decode
+error instead of the 404 the envelope exists to deliver. Three changes, in the
+order they matter: the envelope records any failed write and swaps in a
+generic-but-valid body rather than shipping half of one; the echoed name is
+clamped, on a codepoint boundary, because invalid UTF-8 would make the JSON
+encoder fail and cost the whole message to save a byte of it; and `aliasList`
+checks its cap *before* the append rather than after, since a check on the way
+out bounds the list at the cap plus one whole key, which is how a 1000-byte cap
+could overrun a 1536-byte buffer.
+
+### Verified
+
+Unit: `keepAliveBudgetLeft` at 0, at the bound minus two, at the bound minus one
+and past the bound; `compareCollectionPost` across the collection, the trailing
+slash, a real id, a GET and a neighbouring route; and four new `proxy.zig` tests
+that run `writeEnvelope` over a `socketpair`, the shape `cli.zig` uses for
+`respond` — a HEAD writes zero body bytes under the same `Content-Length` a GET
+declares, a 4000-byte message still parses as JSON, a 40-alias table stays inside
+its cap and says it was cut, and `clampUtf8` never splits a two- or three-byte
+codepoint.
+
+Gate: **all eleven checks PASS**, on this branch merged with `origin/main`.
+
+Three more findings from the same sweep are filed rather than fixed, because none
+is a line change: `HEAD` on an `/api` route answers 404 and closes (`GET /api/events`
+is an SSE stream, so the fix is in the route predicates, not a method rewrite at
+the top of dispatch), `RenderCache`'s `.failed` state is a publish latch, and the
+saturation 503 is answered outside `handleConnection` so it is never counted or
+logged. Also recorded, unfixed: this PRD describes the Compare view as
+`features/compare.js` with its own cache pair in three places, and Compare has
+been a disk plugin under `ui/plugins/compare/` for some time.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from

@@ -718,6 +718,34 @@ Exposed on the existing `GET /api/metrics` of the web UI port, not on the proxy 
 
 **Latency target.** Proxy overhead (parse `model`/`stream`, resolve auth, splice alias) should stay well under 5 ms on loopback before the upstream connect. End-to-end TTFB is the provider's. Streaming first byte is a function of `std.http.Client` read size on the `request` / `receiveHead` path (not `fetch`, not an accumulator). Connect gives up at 10s. First body byte may take up to 300s (thinking / long prefill). After that, 60s of silence is a stall.
 
+## Known issues
+
+- **(Fixed) Every proxy response wrote a body on HEAD.** `handle` accepts HEAD
+  on the models routes (`is_get` is GET *or* HEAD), and every proxy response
+  goes out through `writeFixed` or `writeAllow`, both of which wrote the body
+  unconditionally. `AGENTS.md` states the invariant that every body-writing
+  responder guards HEAD, and RFC 9110 9.3.2 forbids content there; the proxy was
+  the last holdout after `respond` was fixed. Measured live,
+  `HEAD /proxy/v1/models` answered 200 with all 658 body bytes. Both writers take
+  the `Ctx` now and skip the body when the method is HEAD, `Content-Length` still
+  states what the GET would send, `writeAuthError` carries the real method rather
+  than a hardcoded `"GET"`, and the 405 on those routes lists `GET, HEAD`.
+- **(Fixed) `writeEnvelope` truncated the 404 body mid-JSON.** The envelope is
+  built into a fixed 1536-byte buffer and every writer's error was swallowed;
+  `Writer.fixed` fills the buffer and *then* fails, so `w.buffered()` was a full
+  1536 bytes of valid-looking, invalid JSON under a `Content-Length` that agreed
+  with it. The message is caller-controlled: `modelNotFoundMessage` splices the
+  requested model name, bounded only by `raw_http.max_body_bytes`. Measured live,
+  a 2000-character `"model"` produced
+  `{"error":{"message":"Unknown model \"aaaa…` with no closing braces, and an
+  SDK error parser gets a JSON decode error instead of the 404. Three changes:
+  the envelope records any write failure and swaps in a generic-but-valid body
+  rather than shipping a half-written one; the echoed model name is clamped, on a
+  codepoint boundary so the JSON encoder cannot fail on it; and `aliasList`
+  checks its cap *before* the append, since checking after bounded the list at
+  the cap plus one whole key, which is how a 1000-byte cap could overrun a
+  1536-byte buffer.
+
 ## Failure modes
 
 | Condition | Behavior |
