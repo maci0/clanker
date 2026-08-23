@@ -4,11 +4,11 @@
 
 - **What failed:** A kernel cell that writes to fd 1 directly (subprocess.run without capture_output, or os.write(1,...)) has its bytes interleaved into the supervisor's JSON reply line, so the host's parseResponse fails with SyntaxError and a valid cell reports a protocol error. The supervisor prints one JSON line per request on the stdout its children inherit, and nothing separates the two. Found while writing the posture test for the unsandboxed-kernel record.
 - **Impact:** A correct cell reports a protocol error. `run_cell` redirects `sys.stdout` at the Python level, so pure-Python `print` is safe; anything writing to the file descriptor underneath it is not, which is every subprocess the cell starts without `capture_output`.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-23. Candidate fix (1): the supervisor dups fd 1 to a private non-inheritable descriptor (PEP 446) for its replies and repoints fd 1 and fd 2 at capture files for the process's life, draining them into the cell's stdout/stderr. No spawn-contract change. Pinned by 'descriptor-level cell output is captured, not spliced into the reply' in src/sandbox/kernel.zig; with the protocol put back on fd 1 that test fails with the reported error.SyntaxError out of parseResponse.
 
 ## Status
 
-Open.
+Resolved on 2026-08-23. Candidate fix (1): the supervisor dups fd 1 to a private non-inheritable descriptor (PEP 446) for its replies and repoints fd 1 and fd 2 at capture files for the process's life, draining them into the cell's stdout/stderr. No spawn-contract change. Pinned by 'descriptor-level cell output is captured, not spliced into the reply' in src/sandbox/kernel.zig; with the protocol put back on fd 1 that test fails with the reported error.SyntaxError out of parseResponse.
 
 ## Symptom and impact
 
@@ -56,12 +56,14 @@ with nothing else in between.
 
 ## Resolution
 
-Open. Not fixed here; found while writing the posture test for
+Fixed by candidate (1) below, in `supervisor_src` (`src/sandbox/kernel.zig`).
+Found while writing the posture test for
 [the unsandboxed-kernel record](2026-08-23-kernel-persist-path-is-unsandboxed.md)
 and filed rather than folded into it, because it is a protocol bug and not a
-confinement one.
+confinement one. That is still true: the kernel is no easier to confine now,
+only no longer corrupted by its own output.
 
-Two candidate fixes:
+The two candidates that were open were:
 
 1. **Move the protocol off fd 1.** Have the supervisor write replies to a
    dedicated descriptor (fd 3, or a pipe passed at spawn) and leave fd 1 to the
@@ -74,24 +76,74 @@ Two candidate fixes:
    and stays inside `supervisor_src`; needs care on the exception path so the
    descriptor is always restored.
 
-(2) is the smaller change and also fixes `os.write(1, ...)`. (1) is the one that
-cannot be defeated by a cell that reopens the descriptor.
+(1) landed, in the shape that needs no change to the spawn contract: rather
+than asking the host for a fourth descriptor, the supervisor calls `os.dup(1)`
+at startup, keeps that copy for its replies, and `os.dup2` a capture file over
+fd 1 (and fd 2) for the life of the process. The host still reads the same
+pipe, so `ensureSupervisor` and `parseResponse` are unchanged. `os.dup`
+returns a non-inheritable descriptor (PEP 446), so no child of a cell holds
+the protocol fd, and a cell that reopens `/dev/stdout` reaches the capture --
+which is the property (2) does not have.
 
-Whichever lands, the assertion in the posture test that relies on
-`capture_output=True` should keep working, and a new test should cover the
-uncaptured form.
+Repointing once at startup rather than around each cell also removes the
+exception-path worry (2) carried: there is no restore to get wrong.
+
+Each reply drains the two capture files and appends fd-1 bytes to `stdout` and
+fd-2 bytes to `stderr`, after the Python-level `StringIO` capture. The order
+between the two streams is not recoverable, so it is documented rather than
+claimed. The drain is capped at 1 MiB per stream with a `[N more byte(s)
+dropped]` note, so a runaway cell cannot make the supervisor read its whole
+output into memory.
+
+fd 2 was folded in with fd 1 because the supervisor spawns with
+`.stderr = .ignore`: a child's diagnostics went to `/dev/null`, so a failing
+uncaptured command explained nothing. It was not corrupting anything, so it is
+an improvement rather than part of the defect.
+
+The posture test's `capture_output=True` still holds and is kept, now so that
+assertion stays about exec reach only; the uncaptured form has its own test.
 
 ## Verification
 
-Nothing to verify: not fixed. The symptom itself is verified by having hit it
-as a test failure with the stack above, rather than by reading the supervisor
-source and inferring it. The `capture_output=True` workaround is verified by the
-posture test passing with it.
+`test "descriptor-level cell output is captured, not spliced into the reply"`
+in `src/sandbox/kernel.zig` runs three cells through the shipped `eval` and
+asserts on the returned *content*, not only on `ok`: discarding the bytes would
+also stop the parse error and would lose the output instead.
+
+- `os.write(1, b"STRAY-FD1\n")` then `1 + 1` -> `ok`, `result` `"2"`, and
+  `STRAY-FD1` in `stdout`.
+- `subprocess.run(["echo","UNCAPTURED-CHILD"])` with no `capture_output` ->
+  `UNCAPTURED-CHILD` in `stdout`.
+- `os.write(2, b"STRAY-FD2\n")` -> `STRAY-FD2` in `stderr`.
+- `print("py-level")` still lands in `stdout` and carries no leftover `STRAY`
+  from the earlier cells, so the drain does not bleed between replies.
+
+That the test fails for the reported reason, not merely that it passes now:
+putting the protocol back on fd 1 (`_proto = os.fdopen(1, ...)`) and moving the
+capture off it fails the same test with
+
+```
+error: ... failed:
+                           else => return error.SyntaxError,
+```
+
+which is the stack at the top of this record.
+
+Not verified with a live model. `ck_kernel` refuses unless `kernel.enabled` is
+true, which is off by default and is a posture change to the machine rather
+than to the run, so the reproduction is the deterministic test above.
 
 ## Follow-up
 
-- The same reasoning applies to stderr if the supervisor ever moves diagnostics
-  there; it currently spawns with `.stderr = .ignore`.
+- fd 2 is captured the same way now, so a child's diagnostics reach the caller
+  instead of `/dev/null`. The spawn still passes `.stderr = .ignore`, which is
+  now only about the supervisor's own interpreter-level errors (a crash before
+  the capture is installed). Those are still lost.
+- A cell can still corrupt the protocol by writing to the descriptor `os.dup`
+  happened to hand out (fd 3 in practice). That is not defended and is not
+  worth defending on this path: the cell already has arbitrary code execution
+  in the supervisor's own process, which is the separate
+  [confinement defect](2026-08-23-kernel-persist-path-is-unsandboxed.md).
 
 ## References
 

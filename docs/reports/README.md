@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Every kernel cell was held for the full timeout_ms before its reply was returned](bugs/2026-08-23-kernel-timeout-watchdog-holds-every-reply.md) — Resolved
+
 - [corrupt TUI/CLI plugin state silently disabled every plugin](bugs/2026-08-23-corrupt-plugin-state-silently-disables.md) — Resolved
 
 - [A hung-up /api/events subscriber does not release its in-flight slot on macOS](bugs/2026-08-23-events-slot-not-released-on-hangup.md) — Open
@@ -93,7 +95,7 @@ Project agents receive this workflow through the harness prompt and
 - [Arena floored untargeted concede and final_stand moves](bugs/2026-08-23-arena-untargeted-concede-floored.md) — Resolved
 
 - [DAP stop events were attached to the next tool call](bugs/2026-08-23-dap-stopped-event-misattributed.md) — Resolved
-- [A kernel cell writing to fd 1 corrupts the supervisor's JSON line protocol](bugs/2026-08-23-kernel-cell-stdout-corrupts-supervisor-protocol.md) — Open
+- [A kernel cell writing to fd 1 corrupts the supervisor's JSON line protocol](bugs/2026-08-23-kernel-cell-stdout-corrupts-supervisor-protocol.md) — Resolved
 
 - [Production kernel cells run unsandboxed while ADR 0010 specifies a WASI sandbox](bugs/2026-08-23-kernel-persist-path-is-unsandboxed.md) — Open
 

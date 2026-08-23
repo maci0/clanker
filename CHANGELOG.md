@@ -26,6 +26,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   instead of dying. The panic line is now written with a raw `write(2)` that
   touches no `std.Io`, and `handlePanic` latches per thread and `abort()`s on
   re-entry the way Zig's own default handler does.
+- A `kernel` cell now returns as soon as it finishes instead of being held for
+  the whole of `timeout_ms`. The timeout watchdog slept the entire budget and
+  only then checked whether it was still needed, and the round trip joins that
+  thread before returning, so a cell the supervisor reported at 5 ms took the
+  full 10 second default. The watchdog now waits on an event the reader sets
+  when the round trip ends; the timeout itself and its SIGTERM are unchanged.
+- A `kernel` cell that writes to file descriptor 1 no longer breaks the reply.
+  `subprocess.run(...)` without `capture_output`, or a bare `os.write(1, ...)`,
+  put its bytes in front of the supervisor's JSON line and the host returned a
+  parse error for a correct cell; `run_cell`'s `sys.stdout` swap is
+  Python-level and never covered the descriptor. The supervisor now keeps the
+  line protocol on a descriptor of its own and repoints fd 1 and fd 2 at
+  capture files, so descriptor-level writes are returned as the cell's
+  `stdout`/`stderr` instead. A child's `stderr` used to go to `/dev/null` and
+  is now reported too.
 - `clanker schedule` read stepped day fields (`*/2`) as if they were bare
   stars in the day-of-month/day-of-week rule: `0 0 */2 * 5` fired every
   Friday instead of Fridays on an odd date, and two stepped day fields
