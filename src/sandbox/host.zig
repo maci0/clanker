@@ -1676,6 +1676,15 @@ fn writeModelJson(s: *std.json.Stringify, m: *const config_mod.Model, provider: 
         try s.objectField("provider");
         try s.write(p);
     }
+    // Emitted only when disabled: the guests' mirror default for a missing
+    // key is `true`, which is also the config default. Without this a model
+    // turned off in config stayed offered by every picker that reads the
+    // bridge (the web Models view's own toggle wrote `enabled = false` and
+    // the field never came back).
+    if (!m.enabled) {
+        try s.objectField("enabled");
+        try s.write(false);
+    }
     if (m.id.len > 0) {
         try s.objectField("id");
         try s.write(m.id);
@@ -7360,6 +7369,17 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(models == .object);
     const entry = models.object.get("v/m") orelse return error.TestExpectedEqual;
     try std.testing.expectEqualStrings("v", entry.object.get("provider").?.string);
+    // A model disabled in config must cross the bridge as disabled, or every
+    // picker reading the bridge keeps offering it after `enabled = false`.
+    var hidden = p;
+    hidden.models = .empty;
+    try hidden.models.put(arena, "off", .{ .enabled = false });
+    try cfg.providers.put(arena, "v", hidden);
+    const with_disabled = try harnessConfigJSON(arena, &cfg, .providers);
+    const dparsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, with_disabled, .{});
+    const drow = dparsed.object.get("providers").?.object.get("v").?.object.get("models").?.object.get("off").?;
+    try std.testing.expect(drow.object.get("enabled") != null);
+    try std.testing.expectEqual(false, drow.object.get("enabled").?.bool);
     // No access level, not even .full, should expose credential fields.
     try std.testing.expect(std.mem.find(u8, full, "api_key_env") == null);
     try std.testing.expect(std.mem.find(u8, full, "service_account_file") == null);

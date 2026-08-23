@@ -296,7 +296,7 @@ request_timeout_ms = 900000
 stream_idle_timeout_ms = 120000
 git_remote_ops = false
 # Session kinds that isolate in a git worktree by default, as if that mode's
-# worktree/goal_worktree were "yes": any of "run", "goal", "tui", "schedule".
+# worktree/goal_worktree were "yes": any of "run", "goal", "tui", "webui".
 # Empty leaves every mode on its historical default. An explicit --worktree or
 # --no-worktree still wins.
 git_worktree_on = []

@@ -353,6 +353,10 @@ pub fn main(init: std.process.Init) !void {
             log.log(.warn, "CLANKER_LOG_LEVEL '{s}' is not one of debug|info|warn|error; ignoring", .{lvl});
     }
     if (opts.profile) |p| log.log(.info, "profile '{s}' requested via --profile (overlay between local and env)", .{p});
+    // Arm the overlay before any command runs so every Config.load below it
+    // (--dump-config's explicit one included, which passes the same name)
+    // sees the profile; without this only --dump-config honored the flag.
+    if (opts.profile) |p| config.setProfileOverlay(p);
     if (opts.dump_config) {
         const merged: ?config.Config = if (opts.profile) |p| blk: {
             break :blk config.Config.loadWithProfile(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml", p) catch null;

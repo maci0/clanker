@@ -35,6 +35,22 @@ const DiagnosticSource = struct {
     raw: []const u8,
 };
 
+/// The named profile overlay requested on the command line (`--profile
+/// <name>`), set once at startup before any command runs. Every later
+/// `Config.load`/`loadQuiet` in this process applies it; without this only
+/// the caller that passed the name explicitly saw the overlay and the rest
+/// of the run silently read base+local only, so `clanker --dump-config
+/// --profile p` and `clanker run --profile p` described two different
+/// configs on one invocation. Threadlocal like the diagnostic state above.
+threadlocal var overlay_profile: ?[]const u8 = null;
+
+/// Names the profile every subsequent load overlays between the local file
+/// and the struct defaults. An explicit `loadWithProfile` argument still
+/// wins over this.
+pub fn setProfileOverlay(name: ?[]const u8) void {
+    overlay_profile = name;
+}
+
 /// The wire format a provider speaks. One tag per entry in the
 /// `src/llm/registry.zig` registry; the tag *is* the `kind = "..."` spelling,
 /// so adding a provider means adding a tag here and a row there, and nothing
@@ -1366,7 +1382,10 @@ pub const Config = struct {
             if (local.cfg.default_provider_present) cfg.default_provider_from = local.path;
         }
         // Named profile overlay: `profiles/<name>.toml` between local and env/flags.
-        if (profile) |prof| if (prof.len > 0) {
+        // The startup-set overlay (setProfileOverlay, from --profile) applies to
+        // every load; an explicit `profile` argument wins over it.
+        const named_profile = if (profile) |p| p else overlay_profile;
+        if (named_profile) |prof| if (prof.len > 0) {
             const prof_path = try std.fmt.allocPrint(arena, "profiles/{s}.toml", .{prof});
             if (try loadFile(io, arena, dir, prof_path, .overlay)) |loaded| {
                 try merge(&cfg, loaded.cfg, arena);
@@ -3598,6 +3617,41 @@ test "a --profile overlay can add a model without repeating providers" {
     try std.testing.expectEqual(@as(u32, 4096), ds.models.get("deepseek-v4-flash").?.max_tokens);
     // The base file still names the default, so the provenance stays on it.
     try std.testing.expectEqualStrings("config.toml", cfg.default_provider_from.?);
+}
+
+test "the startup --profile overlay reaches plain Config.load" {
+    // setProfileOverlay is how the CLI arms `--profile <name>` once at
+    // startup; every load in the process must apply it, not only the caller
+    // that passes the name as an argument. Without this, `clanker run
+    // --profile fast` logged the request and then ran base+local anyway.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\
+        ,
+    });
+    try env.tmp.dir.createDirPath(io, "profiles");
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "profiles/pinned.toml",
+        .data =
+        \\default_provider = "b"
+        \\
+        ,
+    });
+
+    setProfileOverlay("pinned");
+    defer setProfileOverlay(null);
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqualStrings("b", cfg.default_provider);
+    try std.testing.expectEqualStrings("profiles/pinned.toml", cfg.default_provider_from.?);
 }
 
 test "a --profile overlay that names a default_provider owns the provenance" {

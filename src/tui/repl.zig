@@ -1023,6 +1023,11 @@ fn buildModelCandidates(arena: std.mem.Allocator, cfg: *const config.Config, env
         const provider_start = out.items.len;
         var mit = pentry.value_ptr.models.iterator();
         while (mit.next()) |mentry| {
+            // `enabled = false` keeps the entry configured (its sampling,
+            // pricing, and capability metadata survive) but out of every
+            // picker, matching the web chat picker's `enabled !== false`
+            // filter over the same bridge data.
+            if (!mentry.value_ptr.enabled) continue;
             const display = mentry.value_ptr.display orelse mentry.key_ptr.*;
             // The row label carries the whole spec inline (the picker has no
             // separate detail line for models); category joins it when set.
@@ -1168,6 +1173,26 @@ test "buildModelCandidates excludes providers with no usable credentials" {
     try std.testing.expectEqual(@as(usize, 2), cands.len);
     try std.testing.expectEqualStrings("keyed", cands[0].provider);
     try std.testing.expectEqualStrings("local", cands[1].provider);
+}
+
+test "buildModelCandidates skips models disabled with enabled = false" {
+    // The entry stays configured so its sampling and pricing metadata
+    // survive, but no picker may offer it; the web chat picker applies the
+    // same filter over the bridge JSON.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    var cfg = config.Config{};
+    try cfg.providers.put(arena, "p", try config.Provider.single(arena, "p", "https://p.test/v1", .openai_compat, "visible", .{}));
+    const p = cfg.providers.getPtr("p").?;
+    try p.models.put(arena, "hidden", .{ .enabled = false });
+
+    const cands = try buildModelCandidates(arena, &cfg, &env, null);
+    try std.testing.expectEqual(@as(usize, 1), cands.len);
+    try std.testing.expectEqualStrings("visible", cands[0].model);
 }
 
 // ---------------------------------------------------------------------
