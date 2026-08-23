@@ -82,6 +82,8 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 
+- [Bug — a run using the debug tool leaks a hash-map allocation when launch times out](bugs/2026-08-23-debug-tool-run-leaks-on-adapter-timeout.md) — Open
+
 - [cli.zig respond() sends a full body on HEAD, against RFC 9110 and its own stated invariant](bugs/2026-08-23-respond-sends-a-body-on-head.md) — Resolved
 
 - [A reports status note is written verbatim in two places, so the store's own update verb cannot edit it](bugs/2026-08-23-reports-status-note-lands-twice-and-cannot-be-edited.md) — Open
@@ -95,11 +97,11 @@ Project agents receive this workflow through the harness prompt and
 
 - [A clipboard paste request the terminal never answers leaves the REPL composer unable to submit](bugs/2026-08-23-repl-composer-latches-into-paste-mode.md) — Open
 
-- [A round-1 arena forfeit resolves damage the combatant never had a chance to see](bugs/2026-08-23-arena-round-one-forfeit-eats-unseen-damage.md) — Open
+- [A round-1 arena forfeit resolves damage the combatant never had a chance to see](bugs/2026-08-23-arena-round-one-forfeit-eats-unseen-damage.md) — Resolved
 
-- [DAP waitEvent appends every frame to the event queue, so attach can lose its own response](bugs/2026-08-23-dap-waitevent-files-responses-as-events.md) — Open
+- [DAP waitEvent appends every frame to the event queue, so attach can lose its own response](bugs/2026-08-23-dap-waitevent-files-responses-as-events.md) — Resolved
 
-- [DAP launch waits for an initialized event that initialize already queued, so a correct adapter times out](bugs/2026-08-23-dap-launch-misses-a-queued-initialized-event.md) — Open
+- [DAP launch waits for an initialized event that initialize already queued, so a correct adapter times out](bugs/2026-08-23-dap-launch-misses-a-queued-initialized-event.md) — Resolved
 
 - [The Arena view freezes on a running match: its poll skips every tick while the live stream is up](bugs/2026-08-23-arena-view-never-refreshes-a-running-match.md) — Resolved
 

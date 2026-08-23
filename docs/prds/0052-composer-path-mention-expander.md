@@ -42,6 +42,7 @@ TUI completion UI (phase 3). Image mentions (PRD 0041). Directory expansion. For
 | @.env | refused, token stays, notice |
 | missing file | token stays |
 | file > 32 KiB | truncated with notice |
+| message expansion > 256 KiB | the straddling mention is truncated; later mentions stay bare tokens with a notice |
 | no @ tokens | text unchanged |
 
 ## Acceptance criteria
@@ -51,6 +52,8 @@ TUI completion UI (phase 3). Image mentions (PRD 0041). Directory expansion. For
 3. [x] a 40 KiB file is truncated (Goal 3)
 4. [x] Tests call expandAlloc (Goal 5)
 5. [x] Email a@b.com is unchanged (Goal 1)
+6. [x] Nine 32 KiB mentions in one message inline eight and leave the
+   ninth a bare token with a notice (Goal 3)
 
 ## Open questions / future work
 
@@ -71,8 +74,13 @@ Web composer and completion picker are later phases, not blockers.
   offset; `capUtf8` in `tools/zig/mention_expand.zig` backs the cut up to a
   codepoint boundary so the request body and the saved session stay valid
   UTF-8.
-- **The whole-expansion 256 KiB cap in Design is not implemented.**
-  `expandAlloc` (`tools/zig/mention_expand.zig`) enforces `per_file_cap` per
-  mention and nothing across the message, so N mentions expand to N x 32 KiB
-  with no ceiling and no notice. The fix belongs in `expandAlloc`, beside the
-  per-file cap.
+- **(Fixed) The whole-expansion 256 KiB cap in Design was not implemented.**
+  `expandAlloc` (`tools/zig/mention_expand.zig`) enforced `per_file_cap` per
+  mention and nothing across the message, so N mentions expanded to N x 32 KiB
+  with no ceiling and no notice. It now carries a `spent` running total
+  against `total_cap`: each mention gets `@min(per_file_cap, total_cap -
+  spent)`, so the mention that straddles the ceiling is truncated with the
+  usual `[truncated]` notice and everything after it stays a bare token with
+  `[mention not expanded: <path>: message expansion cap reached]`. The budget
+  counts inlined file bytes only; the fences, the notices and the user's own
+  prose are bounded by the message itself.
