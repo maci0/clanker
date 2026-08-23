@@ -114,6 +114,76 @@ fn clean(gpa: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
     return sanitize.sanitizeAlloc(gpa, bytes) catch null;
 }
 
+/// Read at most `per_file_cap + 1` bytes of an `@path` mention for
+/// `mention_expand.expandAlloc`. The one byte past the cap is what tells the
+/// expander the file was longer than the cap, so it can truncate and say so.
+///
+/// This cannot be `readFileAlloc(.limited(cap + 1))`: that limit returns
+/// `error.StreamTooLong` when it is *reached or exceeded*, so every file over
+/// the cap read as an unreadable file and the mention was left as a bare
+/// `@path` token with no fenced block and no notice — the opposite of the
+/// "truncated with notice" row in PRD 0052's Failure modes. A bounded read of
+/// the prefix keeps the ceiling (a huge file is never fully allocated) while
+/// still producing bytes to truncate.
+fn readMentionFile(io: std.Io, arena: std.mem.Allocator, path: []const u8) ?[]const u8 {
+    const want = mention_expand.per_file_cap + 1;
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+    defer file.close(io);
+    const buf = arena.alloc(u8, want) catch return null;
+    var reader = file.reader(io, &.{});
+    // readSliceShort returns fewer bytes than asked for if and only if the
+    // stream ended, so a short answer is the whole file.
+    const n = reader.interface.readSliceShort(buf) catch return null;
+    return buf[0..n];
+}
+
+test "a mention of a file over the cap is truncated, not dropped" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Two bytes per "e-acute", so the cap lands mid-codepoint unless the
+    // truncation backs up to a boundary.
+    const big = try arena.alloc(u8, mention_expand.per_file_cap * 2);
+    var i: usize = 0;
+    while (i + 1 < big.len) : (i += 2) {
+        big[i] = 0xC3;
+        big[i + 1] = 0xA9;
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = "big.txt", .data = big });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const abs = try std.fmt.allocPrint(arena, "{s}/big.txt", .{root_buf[0..root_len]});
+
+    // The defect: `.limited(cap + 1)` answered error.StreamTooLong for any
+    // file at or over the cap, so this was null and the mention stayed a bare
+    // token with no fenced block and no notice.
+    const bytes = readMentionFile(io, arena, abs) orelse return error.MentionFileWasDropped;
+    try std.testing.expectEqual(mention_expand.per_file_cap + 1, bytes.len);
+
+    const Ctx = struct {
+        bytes: []const u8,
+        pub fn refuse(_: @This(), _: []const u8) bool {
+            return false;
+        }
+        pub fn readFile(c: @This(), _: []const u8) ?[]const u8 {
+            return c.bytes;
+        }
+    };
+    const out = try mention_expand.expandAlloc(arena, "read @big.txt", Ctx{ .bytes = bytes });
+    try std.testing.expect(std.mem.find(u8, out, "```big.txt") != null);
+    try std.testing.expect(std.mem.find(u8, out, "[truncated]") != null);
+    // The cut is on a codepoint boundary: what goes to the provider and into
+    // the saved session has to be valid UTF-8.
+    try std.testing.expect(std.unicode.utf8ValidateSlice(out));
+}
+
 fn errorRecoveryHint(err: anyerror, detail: ?[]const u8) []const u8 {
     if (err == error.MaxIterationsExceeded) return " (hit iteration limit; try a simpler task or raise agent.max_iterations)";
     if (err == error.SessionTokenBudgetExceeded) return " (ran out of token budget)";
@@ -4350,7 +4420,7 @@ const Model = struct {
                     return secret_dotenv.isSecretDotenvPath(path);
                 }
                 pub fn readFile(c: @This(), path: []const u8) ?[]const u8 {
-                    return std.Io.Dir.cwd().readFileAlloc(c.io, path, c.arena, .limited(mention_expand.per_file_cap + 1)) catch null;
+                    return readMentionFile(c.io, c.arena, path);
                 }
             };
             break :blk mention_expand.expandAlloc(self.arena, copied, Ctx{ .io = self.io, .arena = self.arena }) catch copied;
