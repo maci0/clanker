@@ -80,6 +80,14 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-24-ck-http-hands-guests-no-response-headers.md) — Open
+
+- [gh_read lists and diffs are silently cut to GitHub's default page of 30](bugs/2026-08-24-gh-read-lists-silently-cut-at-thirty.md) — Resolved
+
+- [ck_http drops the status and body of every >= 400 response, so two documented gh_read errors could never fire](bugs/2026-08-24-ck-http-drops-error-status-and-body.md) — Resolved
+
+- [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-24-gh-read-diff-hunks-name-no-file.md) — Resolved
+
 - [Template boilerplate and duplicated sections are in the RFC and report stores too, not just the six PRDs](bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md) — Open
 
 - [Bug — a run using the debug tool leaks a hash-map allocation when launch times out](bugs/2026-08-23-debug-tool-run-leaks-on-adapter-timeout.md) — Open

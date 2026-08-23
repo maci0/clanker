@@ -6,7 +6,8 @@ Shipped. `gh_read` parses `gh://` / `github://`, calls `api.github.com`
 with an allowlisted `GITHUB_TOKEN`, and caches responses under
 `state/gh_cache/` for 300s. `read_file` is unchanged. sqlite/ETag
 refresh is still open. Sources of truth: `tools/zig/gh_read.zig`,
-`tools/zig/gh_url.zig`, `tools/manifests/gh_read.tool.json`.
+`tools/zig/gh_url.zig`, `tools/zig/gh_format.zig`,
+`tools/manifests/gh_read.tool.json`.
 
 ## Problem
 
@@ -148,14 +149,20 @@ PR #7: Fix the widget (open)
 
 For an issue list, one line per item: `#<number> <state> <title>`.
 
-For a PR diff file (the concatenated `patch` fields):
+For a PR diff file:
 ```
 --- a/src/widget.zig
 +++ b/src/widget.zig
 @@ -85,7 +85,9 @@
 ...
 ```
-(Raw unified diff, unchanged from the API response.)
+The hunks are the API's `patch` field verbatim; the `--- a/` / `+++ b/` pair is
+added by the guest. GitHub's `patch` starts at the first `@@` and names no file,
+so concatenating patches straight from the response -- what shipped until
+2026-08-24 -- gave a run of hunks that could not be attributed to any file the
+moment a PR touched more than one. A file the API returns with no `patch` at all
+(binary, or over GitHub's per-file diff limit) gets the header pair and a
+`[no patch: <status>]` line rather than being dropped.
 
 **Cache (shipped).** On a cache miss, `gh_read` fetches via `ck_http` and writes
 the raw response body to `state/gh_cache/<hex>.json`, where `<hex>` is the
@@ -172,10 +179,35 @@ empty, return:
 `{"ok": false, "error": "GITHUB_TOKEN not set; export it or set gh.token in config"}`.
 No new general-purpose env-read host function is added.
 
-**Rate limit handling.** On a response body containing `API rate limit exceeded`
-or `"message":"You have exceeded a secondary rate limit`, return
+**Rate limit handling.** A 429, or a body containing `API rate limit exceeded`
+or `secondary rate limit`, returns
 `{"ok": false, "error": "GitHub rate limit exhausted"}`. No `X-RateLimit-*`
-header parsing and no reset-time text; no automatic retry.
+header parsing and no reset-time text; no automatic retry. A 403 that is *not*
+rate-limit-shaped is reported as a permission answer instead, because a private
+repository and an exhausted quota need different fixes.
+
+**Reading a >= 400 answer at all.** `ck_http` reports every error status as
+`error.NetworkError` -- the same error a DNS failure gives -- and used to free
+the response body, so the two messages above were scans over bytes that had
+already been dropped and neither could ever fire. `httpImpl`
+(`src/sandbox/host.zig`) now parks `{"ck_http_status":<code>,"body":"..."}` (body
+capped at 2 KiB) in the guest's result slot on the status path only; the return
+code is unchanged, so no other guest sees a difference. `lib.httpLastFailure`
+reads it and `gh_format.statusMessage` turns it into the message. Anything
+without an envelope -- a timeout, a refused connection -- still falls back to the
+generic transport error.
+
+**Page size.** Every list endpoint is requested with `per_page=100`, GitHub's
+maximum. Sending no `per_page` gets 30 items with the rest behind a
+`Link: rel="next"` header the guest never sees, so a 40-file PR diff came back
+ten files short and a busy repository listed 30 issues, both with nothing to
+distinguish the result from a complete one. A response holding a full page is
+the only truncation signal `ck_http` leaves, and it now appends
+`[truncated: only the first page was fetched; more items exist]`. A `per_page`
+the caller wrote into the URL themselves is kept, which is also the way out of
+the trade-off this makes: 100 long issue bodies can exceed `max_http_bytes`
+(1 MiB) where 30 fit, and the tool then says so and names `?per_page=` rather
+than silently returning less than was asked for.
 
 **Manifest.** `gh_read.tool.json` carries `"network_allow": ["api.github.com"]`,
 `"env_allow": ["GITHUB_TOKEN"]`, and `"fs_prefixes": ["state/gh_cache/"]`.
@@ -205,12 +237,52 @@ header parsing and no reset-time text; no automatic retry.
    (`cacheGet` / `cachePut` writing `state/gh_cache/<hex>.json`).
 5. **Manifest**: `network_allow: ["api.github.com"]`, `env_allow:
    ["GITHUB_TOKEN"]`, `fs_prefixes: ["state/gh_cache/"]` on `gh_read` only.
-6. **Tests**: URL parsing (valid and malformed forms) in `gh_url.zig`. Token
-   missing, rate-limit detection, endpoint mapping, and TTL logic have no
-   dedicated unit tests yet.
+6. **Tests**: URL parsing and endpoint mapping in `gh_url.zig`; rendering and
+   status classification in `gh_format.zig` (a host-tested helper, so the
+   response shapes the API really returns are pinned without a network); the
+   status envelope in `src/sandbox/host.zig`, against a loopback server that
+   answers 404 with a body. Token-missing and TTL logic still have no dedicated
+   unit tests.
 7. **Deferred:** GraphQL endpoint; GitHub writes (separate future PRD, not
    0021); Enterprise `api_base_url`; sqlite/ETag/soft-hard-TTL cache (see Open
    questions).
+
+## Known issues
+
+- **(Fixed) A diff was a run of hunks with no file attached.** GitHub's `patch`
+  field starts at the first `@@`, so concatenating patches produced output no
+  reader could map back to a file once a PR touched more than one. The guest now
+  writes the `--- a/` / `+++ b/` pair itself.
+  Live-checked against `gh://pr/maci0/clanker/379/diff` (19 files).
+- **(Fixed) Two documented failure modes could never fire.** `ck_http` collapsed
+  every >= 400 answer into `error.NetworkError` and freed the body, so
+  `looksLikeNotFound` and `looksLikeRateLimit` were scanning bytes that had
+  already been dropped: a missing issue reported "the request did not complete",
+  and a rate-limit refusal was indistinguishable from a DNS failure. The host
+  now parks the status and a 2 KiB slice of the body in the guest's result slot
+  on the status path, and the guest classifies from it.
+  Live-checked: `gh://issue/maci0/clanker/999999` returns
+  `not found: gh://issue/maci0/clanker/999999`.
+- **(Fixed) Lists and diffs were silently cut at 30 items.** No `per_page` was
+  sent, so GitHub answered with its default page and hid the rest behind a
+  `Link` header `ck_http` does not expose. Requests now state `per_page=100` and
+  a full page carries a truncation note.
+- **(Fixed) The cache never checked which URL a record was for.** The record
+  wrote a `url` field that nothing read, so a Wyhash filename collision served
+  one URL's response for another.
+- **A response over `max_http_bytes` (1 MiB) is a hard failure, not a partial
+  answer.** Asking for 100 items instead of 30 makes this reachable for a
+  repository with long issue bodies where it was not before. The failure is loud
+  and names `?per_page=`, which is the deliberate trade: a stated page size that
+  can be too big beats an unstated one that is quietly too small. A guest-side
+  fallback that retried at a smaller page would remove the trade-off entirely
+  and is not built.
+- **Still not shipped, unchanged by the above:** issue comments (the tool
+  fetches only the issue object), `gh.max_list` / `gh.max_comments` /
+  `gh.max_diff_files` config keys, a reset time on the rate-limit error
+  (`ck_http` hands the guest no response headers, so `X-RateLimit-Reset` is out
+  of reach), pagination past page one, GraphQL, writes, and Enterprise
+  `api_base_url`.
 
 ## Failure modes
 
@@ -218,10 +290,17 @@ header parsing and no reset-time text; no automatic retry.
 |---|---|
 | `GITHUB_TOKEN` not set | `{"ok": false, "error": "GITHUB_TOKEN not set; export it or set gh.token in config"}` |
 | Non-existent issue or PR (404) | `{"ok": false, "error": "not found: gh://issue/<owner>/<repo>/999"}` |
-| Rate limit exceeded (body match) | `{"ok": false, "error": "GitHub rate limit exhausted"}` (no reset-time text) |
+| Rate limit exceeded (429, or a rate-limit body on a 403) | `{"ok": false, "error": "GitHub rate limit exhausted"}` (no reset-time text) |
+| 401 (token invalid or expired) | `{"ok": false, "error": "GITHUB_TOKEN rejected by GitHub (401); the token is invalid or expired"}` |
+| 403 that is not rate-limit-shaped | `forbidden: <url> (token lacks access, or SSO is not authorized)` |
+| Any other >= 400 | `<url>: HTTP <code>[: <the API's own message>]` |
 | Cache directory not writable | The call still returns the fetched result; caching is best-effort and the `fsMkdir`/`fsWrite` error is swallowed |
 | Network failure on a stale (>300s) entry | `{"ok": false, "error": "<url>: <http error>"}` — the stale entry is not served |
-| Diff for a PR with many files | The tool formats every `patch` the API returns, with no cap or truncation note (`gh.max_diff_files` is not shipped) |
+| Diff for a PR with more than 100 files | The first 100 files are formatted and the output ends in `[truncated: only the first page was fetched; more items exist]`. There is still no `gh.max_diff_files` config key |
+| A list or diff larger than `max_http_bytes` (1 MiB) | `<url>: the response is larger than one call allows; retry with a smaller page, e.g. <url>?per_page=20` |
+| `gh://pr/o/r/n/diff/<path>` naming a file not in the PR | `no file named '<path>' in this pull request` -- not an empty success, which read as "this file has no changes" |
+| A file in the diff the API returns with no `patch` | Header pair plus `[no patch: <status>]`; binary and over-limit files are named rather than dropped |
+| Two URLs whose Wyhash cache filenames collide | The record's `url` field is compared before its `body` is served, so the second URL misses instead of being served the first one's response |
 
 ## Acceptance criteria
 
@@ -231,12 +310,16 @@ header parsing and no reset-time text; no automatic retry.
       shipped: the tool fetches only the issue object.
 - [x] `gh_read` with `gh://pr/<owner>/<repo>/<number>/diff` returns the unified
       diff for the PR.
-- [ ] `gh_read` with `gh://pr/<owner>/<repo>/<number>` includes a review summary
-      (head/base, mergeable status) — not shipped.
+- [x] `gh_read` with `gh://pr/<owner>/<repo>/<number>` includes a review summary:
+      `head -> base`, `Mergeable: yes|no|unknown (<mergeable_state>)`, draft and
+      merged flags, and `Files: N (+a -d)`. `mergeable` is null while GitHub
+      computes it, and that reads `unknown` rather than `no`.
 - [x] `gh_read` with `gh://issue/<owner>/<repo>?state=open&label=bug` returns
       a list of matching issues (one per line).
 - [ ] Issue lists and comments are capped by `gh.max_list` / `gh.max_comments` —
-      not shipped: no such caps exist.
+      not shipped: no such config keys exist. What *is* shipped is a stated page
+      size (`per_page=100`) and a truncation note when a full page comes back,
+      so a short list is no longer indistinguishable from a complete one.
 - [x] A second call to the same URL within 300s returns the cached `body` from
       `state/gh_cache/`.
 - [x] A call after the 300s TTL makes a fresh network request.
@@ -245,12 +328,19 @@ header parsing and no reset-time text; no automatic retry.
 - [x] `GITHUB_TOKEN` absent produces a clear error, not a panic; token is read
       via `env_allow: ["GITHUB_TOKEN"]`.
 - [x] A rate-limit-shaped body returns a rate-limit error, not a retry loop.
+- [x] A >= 400 response is classified by its status, not guessed at: 404, 401,
+      403-with-rate-limit, 403-without, and everything else each get their own
+      message. Pinned in `gh_format.zig`, and in `src/sandbox/host.zig` by a
+      loopback server that answers 404 with a body.
+- [x] Every hunk in a multi-file PR diff names its file.
+- [x] A list or diff that comes back holding a full page says so.
 - [ ] The rate-limit error includes a reset time ("resets at <ISO8601>") — not
       shipped: the error is just "GitHub rate limit exhausted".
 - [x] `read_file` remains network-free: no `network_allow`, no `gh://` dispatch.
 - [x] Unit tests cover URL parsing (valid and malformed forms).
-- [ ] Unit tests cover API endpoint mapping — not shipped: no `apiPath` test
-      exists.
+- [x] Unit tests cover API endpoint mapping: `apiPath` is pinned for all five
+      ref kinds in `tools/zig/gh_url.zig`, including that a page size is always
+      stated and never stated twice.
 
 ## Open questions / future work
 
