@@ -865,7 +865,17 @@ fn linkSharedState(gpa: std.mem.Allocator, io: std.Io, worktree_path: []const u8
     //
     // Symlinks work only for paths read by the HOST (native I/O follows
     // links): improvements.jsonl and history/ are read/written by the
-    // engine's History, never by a sandboxed tool. Every path a sandboxed
+    // engine's History, never by a sandboxed tool.
+    //
+    // That last clause is a requirement, not an observation, and it was once
+    // false: `improve_history` was granted `fs_prefixes:
+    // ["state/improvements.jsonl"]` and read the link itself, which
+    // safeJoinSecure refused as a symlinked leaf. Because the guest reported
+    // any read failure as an empty history, every improve run was told it had
+    // never attempted anything. The tool now takes the ledger over
+    // `ck_improve_history` (src/sandbox/host.zig) and has no fs grant at all.
+    // Do not add a guest grant for anything in the list below; give it a host
+    // channel instead. Every path a sandboxed
     // tool traverses is off-limits as a link, because safeJoinSecure's
     // no-follow walk (correctly) refuses symlinked components: linked
     // state/runs broke graph's write test in every worktree (baseline
