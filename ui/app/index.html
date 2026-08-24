@@ -274,9 +274,18 @@ lamps carry further). The seven named palettes ride the same tokens.
       <label for="task">Task</label>
       <div class="attachments" id="attachments" hidden></div>
       <div class="attachments" id="file-chips" hidden></div>
-      <textarea id="task" name="task" placeholder="Describe the task, / for prompts, @ for files" required rows="3"
-                role="combobox" aria-controls="prompt-list" aria-autocomplete="list" aria-expanded="false"></textarea>
-      <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
+      <!-- ARIA allows `combobox` on an input, never on a textarea: a textarea's
+           implicit role is textbox with aria-multiline, and overriding it hid
+           the fact that this field takes more than one line. So the composer is
+           the ARIA 1.1 shape instead -- the role, the popup state and the popup
+           itself belong to this wrapper, and #task stays the textbox inside it,
+           keeping aria-autocomplete and aria-activedescendant. -->
+      <div class="composer-combobox" id="task-combobox" role="combobox"
+           aria-expanded="false" aria-haspopup="listbox" aria-owns="prompt-list">
+        <textarea id="task" name="task" placeholder="Describe the task, / for prompts, @ for files" required rows="3"
+                  aria-controls="prompt-list" aria-autocomplete="list"></textarea>
+        <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
+      </div>
       <div class="run-options">
         <select id="model-select" class="sr-only" aria-hidden="true" tabindex="-1"
                 title="Active model (driven by the model picker)"></select>

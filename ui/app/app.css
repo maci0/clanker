@@ -2894,13 +2894,29 @@ h2#session-title {
 .card-members { display: flex; align-items: center; margin-left: auto; }
 .card-member {
   width: 28px; height: 28px; border-radius: var(--radius-pill); display: grid; place-items: center;
-  font-size: var(--step--1); font-weight: 700; color: var(--on-accent); background: var(--accent);
-  border: 2px solid var(--surface); margin-left: -0.35rem;
+  font-family: var(--sans); font-size: var(--step--1); font-weight: 700; line-height: 1;
+  color: var(--on-accent); background: var(--accent);
+  border: 2px solid var(--surface); margin-left: -0.35rem; padding: 0;
   transition: transform 120ms ease, box-shadow 120ms ease;
   cursor: pointer; position: relative;
 }
 .card-member:first-child { margin-left: 0; }
 .card-member:hover { transform: translateY(-2px); z-index: 2; box-shadow: var(--lift); }
+.card-member:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The reassign button is a sibling of the card button (see cardMemberControl),
+   so it is positioned against the card's list item and the avatar left inside
+   the card only holds the row open. `.card-body`'s own padding is the offset,
+   plus the card's 1px border, so the button lands exactly where the in-flow
+   avatar sits. */
+.card-member-slot { visibility: hidden; }
+.card-members-overlay {
+  position: absolute; z-index: 3;
+  bottom: calc(0.5rem + 1px); right: calc(0.65rem + 1px);
+  display: flex; align-items: center;
+}
+/* The control sits at the card's bottom-right, so its picker opens upward and
+   right-aligned: down and to the left it would leave the column. */
+.card-members-overlay .menu-popup { right: 0; bottom: 100%; margin-bottom: 4px; }
 /* Starred card indicator */
 .card[data-starred="true"]::after {
   content: ""; position: absolute; bottom: 5px; right: 6px;

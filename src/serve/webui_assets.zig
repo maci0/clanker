@@ -270,8 +270,39 @@ pub const RenderCache = struct {
     /// Only read after `state` reads `.ready`.
     body: []const u8 = &.{},
 
-    const State = enum(u8) { idle, rendering, ready, failed };
+    /// No `failed`: see `renderAbandon`.
+    const State = enum(u8) { idle, rendering, ready };
 };
+
+/// Claims the right to publish into `cache`. True for at most one caller at a
+/// time; every other thread renders its own copy for that one request instead
+/// of blocking, which is wasteful and never wrong.
+pub fn renderClaim(cache: *RenderCache) bool {
+    return cache.state.cmpxchgStrong(.idle, .rendering, .acq_rel, .acquire) == null;
+}
+
+/// Publishes bytes the caller has handed over for the life of the process.
+pub fn renderPublish(cache: *RenderCache, owned: []const u8) void {
+    // Written before the state so a thread that reads `.ready` is guaranteed
+    // to see the finished slice.
+    cache.body = owned;
+    cache.state.store(.ready, .release);
+}
+
+/// A claim that could not be completed. The only way that happens is the
+/// allocation of the copy to keep, and the slot goes back to `.idle`: never to
+/// a terminal `failed`, because `RenderCache` re-renders on a miss, so such a
+/// state would not stop the retry, only stop it from ever publishing. One
+/// transient OOM would then pin that asset to the uncached path (348ms and
+/// 187 KB per request for app.js) for the rest of the process's life, with
+/// nothing in the log to say why.
+///
+/// `GzipCache` is the deliberate contrast: it does remember a failure, because
+/// there the identity encoding is always a correct answer and re-compressing
+/// on every hit would be pure waste.
+pub fn renderAbandon(cache: *RenderCache) void {
+    cache.state.store(.idle, .release);
+}
 
 const kind_count = std.meta.tags(Kind).len;
 
@@ -348,6 +379,36 @@ test "every cache kind gets its own slot" {
             try std.testing.expect(gzipCache(a) != gzipCache(b));
         }
     }
+}
+
+test "a render slot an abandoned publish left behind can still be published" {
+    var cache: RenderCache = .{};
+
+    // One request claims the slot and then cannot keep the bytes: the `gpa.dupe`
+    // on the publish path is the only failure there is.
+    try std.testing.expect(renderClaim(&cache));
+    renderAbandon(&cache);
+
+    // The next request re-renders, because a miss always re-renders here, and
+    // it must be able to publish what it rendered. It could not: the abandoned
+    // slot read `.failed` while the claim accepted only `.idle`, so one
+    // transient allocation failure served that asset the slow way forever.
+    try std.testing.expect(renderClaim(&cache));
+    renderPublish(&cache, "rendered");
+    try std.testing.expect(cache.state.load(.acquire) == .ready);
+    try std.testing.expectEqualStrings("rendered", cache.body);
+}
+
+test "one claim at a time, and a published slot is claimed no more" {
+    // The other side of the same transition: recovering from an abandoned claim
+    // must not make the slot publishable twice over.
+    var cache: RenderCache = .{};
+    try std.testing.expect(renderClaim(&cache));
+    try std.testing.expect(!renderClaim(&cache));
+
+    renderPublish(&cache, "rendered");
+    try std.testing.expect(!renderClaim(&cache));
+    try std.testing.expectEqualStrings("rendered", cache.body);
 }
 
 test "cache-bust prefix is stripped only when well-formed" {
