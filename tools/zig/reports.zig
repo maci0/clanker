@@ -567,7 +567,12 @@ fn renderScaffold(w: *std.Io.Writer, kind: []const u8, title: []const u8, summar
     }
     if (std.mem.eql(u8, kind, "bug")) {
         try w.print("- **What failed:** {s}\n- **Impact:** To be confirmed.\n- **Resolution:** Open.\n", .{summary});
-        try w.writeAll("\n## Status\n\nOpen.\n\n## Symptom and impact\n\n## Reproduction\n\n## Root cause\n\n## Resolution\n\n## Verification\n\n## Follow-up\n\n## References\n\n- Investigation: none yet\n");
+        // `## Blocked on` is carried empty: a non-empty body means the fix
+        // needs a credential or external reference this machine does not
+        // have, and the improve backlog (src/improve/backlog.zig) refuses to
+        // seed the report while one is stated. Clear the body when the
+        // blocker lifts; an empty section means "not blocked".
+        try w.writeAll("\n## Status\n\nOpen.\n\n## Blocked on\n\n## Symptom and impact\n\n## Reproduction\n\n## Root cause\n\n## Resolution\n\n## Verification\n\n## Follow-up\n\n## References\n\n- Investigation: none yet\n");
     } else if (std.mem.eql(u8, kind, "investigation")) {
         try w.print("- **Question:** {s}\n- **Finding:** Investigating.\n- **Resolution:** Pending.\n", .{summary});
         try w.writeAll("\n## Status\n\nInvestigating.\n\n## Trigger and scope\n\n## Evidence\n\n## Hypotheses and tests\n\n## Finding\n\n## Resolution or handoff\n\n## References\n\n- Related bug: none yet\n");

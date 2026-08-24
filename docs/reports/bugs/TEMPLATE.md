@@ -11,6 +11,17 @@
 Open / Resolved / Reopened. Link the investigation that established the cause,
 if one exists.
 
+## Blocked on
+
+Leave empty unless the fix needs something this machine does not have — a
+credential, a live endpoint, an external reference that could not be
+established. Name the concrete missing thing. While this body is non-empty the
+improve backlog (`src/improve/backlog.zig`) will not seed the report to an
+autonomous run: a loop that cannot obtain the missing thing can only guess,
+and a test asserting the guess passes for the same reason the guess is wrong.
+**Clear the body when the blocker lifts** — the empty section means "not
+blocked" and puts the report back in the backlog.
+
 ## Symptom and impact
 
 Describe the externally observable failure, its scope, and when it first

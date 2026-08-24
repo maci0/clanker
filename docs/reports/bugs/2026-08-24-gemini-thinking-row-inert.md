@@ -10,6 +10,14 @@
 
 Open.
 
+## Blocked on
+
+The exact `generationConfig` thinking field names from the Gemini API
+reference plus a live 200 against a real key. `GEMINI_API_KEY` is not in
+this checkout's `.env`, and the shape was deliberately not guessed (see
+"Why the shape was not guessed" below). Clear this body when a key and
+the reference shape are available.
+
 ## Symptom and impact
 
 `gemini.zig`'s `buildRequest` writes `generationConfig` with `temperature`,

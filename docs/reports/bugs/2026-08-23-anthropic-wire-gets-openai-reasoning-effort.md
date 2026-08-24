@@ -10,6 +10,14 @@
 
 Open.
 
+## Blocked on
+
+A live 200 from the Anthropic Messages API for the corrected
+`thinking`/`output_config` body. `ANTHROPIC_API_KEY` is not in this
+checkout's `.env`; the original `budget_tokens` resolution was plausible,
+tested, and 400s on current models (see the Correction below). Clear this
+body when a key is available.
+
 ## Symptom and impact
 
 `Provider.effectiveThinkingSchema` (`src/config.zig`) ends in
