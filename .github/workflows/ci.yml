@@ -57,6 +57,16 @@ jobs:
             tools/ts/package-lock.json
             package-lock.json
 
+      # Extract the pinned dependency trees and re-apply patches/*.patch
+      # (patches/README.md). build.zig refuses to configure against pristine
+      # upstream vaxis/zwasm, and apply-patches.sh cannot patch trees that
+      # were not extracted yet — `--fetch=all` extracts without compiling, so
+      # this ordering closes that trap. Idempotent; safe to repeat.
+      - name: Apply dependency patches
+        run: |
+          zig build --fetch=all
+          ./scripts/apply-patches.sh
+
       # Glob from the index instead of a hand-kept list: a new script is
       # checked from its first commit, not from when someone remembers to
       # add it here. `.githooks/pre-commit` is a tracked shell script with no
@@ -141,6 +151,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # Same reason as the verify job: build.zig refuses pristine upstream
+      # dependencies, and the patches must land after extraction.
+      - name: Apply dependency patches
+        run: |
+          zig build --fetch=all
+          ./scripts/apply-patches.sh
+
       - name: Build and run unit tests
         run: |
           zig build
@@ -181,6 +198,13 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           use-cache: true
+
+      # Same reason as the verify job: build.zig refuses pristine upstream
+      # dependencies, and the patches must land after extraction.
+      - name: Apply dependency patches
+        run: |
+          zig build --fetch=all
+          ./scripts/apply-patches.sh
 
       - name: Build release binary
         run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }} --prefix "out/${{ matrix.target }}"

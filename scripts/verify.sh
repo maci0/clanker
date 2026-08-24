@@ -53,15 +53,18 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 
 step "dependency patches (patches/*.patch)"
-# Before the gate, not after: `zig build` extracts pristine upstream tarballs
-# into the gitignored (so per-worktree) zig-pkg/, and the gate's twelfth check
-# `dep-patches` fails while they are unpatched. Ordered the other way round,
-# a fresh worktree failed the gate on the line immediately before the one that
-# would have fixed it, and the gate's own message says to run this first.
-zig build || status=1
+# Before any compile: --fetch=all extracts the pinned trees without
+# configuring, and both build.zig (configure-time patch gate) and the gate's
+# own dep-patches check refuse a pristine dependency tree. Ordered the other
+# way round, a fresh worktree dies on the line immediately before the one
+# that would have fixed it. Idempotent; no-op when already applied.
+if command -v zig >/dev/null 2>&1; then
+    zig build --fetch=all || status=1
+fi
 ./scripts/apply-patches.sh || status=1
 
-step "clanker gate (CI: Run deterministic gate)"
+step "zig build + clanker gate (CI: Run deterministic gate)"
+zig build || status=1
 ./zig-out/bin/clanker gate || status=1
 
 step "end-to-end tests (CI: Run end-to-end tests)"

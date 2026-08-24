@@ -279,11 +279,15 @@ fn awaitJobDone(job: anytype) void {
     while (!job.done.load(.acquire)) std.Thread.yield() catch {};
 }
 
-fn findExec(id: []const u8) ?*ExecJob {
-    for (execs.items) |j| {
-        if (std.mem.eql(u8, j.id, id)) return j;
-    }
-    return null;
+/// Same-session rule for every per-job verb. `list` filters rows by the
+/// caller's session (listJson), and the registry half of `kill` matches the
+/// session key too; kill/wait used to look ids up globally instead, so one
+/// session's guest could terminate or read another session's job by naming
+/// its id. A job id is 16 hex chars mixed from a nanosecond timestamp -- a
+/// label, not a capability. Empty caller scope owns nothing: absence of a
+/// session is not authority over every row.
+fn sessionOwned(job_session: []const u8, caller_session: []const u8) bool {
+    return caller_session.len > 0 and std.mem.eql(u8, job_session, caller_session);
 }
 
 pub fn startExec(
@@ -401,13 +405,18 @@ fn termFields(term: std.process.Child.Term) struct { exit: ?u8, signaled: bool }
     };
 }
 
-pub fn waitExec(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
+pub fn waitExec(arena: std.mem.Allocator, session_id: []const u8, id: []const u8) ![]const u8 {
     var found: ?*ExecJob = null;
     var thread: ?std.Thread = null;
     {
         mu.lock();
         defer mu.unlock();
-        found = findExec(id);
+        for (execs.items) |j| {
+            if (std.mem.eql(u8, j.id, id) and sessionOwned(j.session_id, session_id)) {
+                found = j;
+                break;
+            }
+        }
         // Claim the job before releasing the lock: a concurrent `startExec`
         // reaps completed jobs, and without the claim it could free this one
         // out from under the read below.
@@ -588,14 +597,14 @@ pub fn finishSub(id: []const u8, result: ?[]const u8, err_name: ?[]const u8) boo
     return false;
 }
 
-pub fn waitSub(arena: std.mem.Allocator, id: []const u8) ![]const u8 {
+pub fn waitSub(arena: std.mem.Allocator, session_id: []const u8, id: []const u8) ![]const u8 {
     var found: ?*SubJob = null;
     var thread: ?std.Thread = null;
     {
         mu.lock();
         defer mu.unlock();
         for (subs.items) |j| {
-            if (std.mem.eql(u8, j.id, id)) {
+            if (std.mem.eql(u8, j.id, id) and sessionOwned(j.session_id, session_id)) {
                 found = j;
                 break;
             }
@@ -666,7 +675,12 @@ pub fn kill(reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) 
     {
         mu.lock();
         defer mu.unlock();
-        found = findExec(id);
+        for (execs.items) |j| {
+            if (std.mem.eql(u8, j.id, id) and sessionOwned(j.session_id, session_id)) {
+                found = j;
+                break;
+            }
+        }
         if (found) |j| {
             j.waiting += 1;
             thread = takeThreadLocked(j);
@@ -754,10 +768,56 @@ test "startExec reaps true and wait returns exit 0" {
     defer testingClear(std.testing.allocator);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
-    const got = try waitExec(arena_state.allocator(), id);
+    const got = try waitExec(arena_state.allocator(), "sess-job", id);
     try std.testing.expect(std.mem.find(u8, got, "\"done\":true") != null);
     try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
     try std.testing.expect(reg.get("sess-job", id) == null);
+}
+
+test "wait and kill answer only the session that owns the job" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    defer testingClear(gpa);
+
+    // Fabricated done rows: neither wait nor kill touches `child` or spawns
+    // anything on these paths (done jobs are never signaled), so no process
+    // is needed to pin the session rule.
+    const exec_job = try gpa.create(ExecJob);
+    exec_job.* = .{
+        .id = try gpa.dupe(u8, "job-aaaa"),
+        .session_id = try gpa.dupe(u8, "alpha"),
+        .child = undefined,
+        .pid = 0,
+        .term = .{ .exited = 0 },
+        .done = std.atomic.Value(bool).init(true),
+    };
+    try execs.append(gpa, exec_job);
+    const sub_job = try gpa.create(SubJob);
+    sub_job.* = .{
+        .id = try gpa.dupe(u8, "sub-bbbb"),
+        .session_id = try gpa.dupe(u8, "alpha"),
+        .task = try gpa.dupe(u8, "task text"),
+        .result = try gpa.dupe(u8, "parent-only answer"),
+        .done = std.atomic.Value(bool).init(true),
+    };
+    try subs.append(gpa, sub_job);
+
+    // Another session's guest gets the same answer as for a job that does
+    // not exist: no exit status, no result text, no kill -- and an empty
+    // caller scope owns nothing either.
+    try std.testing.expectError(error.NotFound, waitExec(arena, "beta", "job-aaaa"));
+    try std.testing.expectError(error.NotFound, waitSub(arena, "beta", "sub-bbbb"));
+    try std.testing.expect(!kill(null, "beta", "job-aaaa"));
+    try std.testing.expect(!kill(null, "", "job-aaaa"));
+
+    // The owning session still waits and kills its own job.
+    const got = try waitExec(arena, "alpha", "job-aaaa");
+    try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
+    const sub_text = try waitSub(arena, "alpha", "sub-bbbb");
+    try std.testing.expect(std.mem.find(u8, sub_text, "parent-only answer") != null);
+    try std.testing.expect(kill(null, "alpha", "job-aaaa"));
 }
 
 test "completed background jobs are reaped past the retention cap" {

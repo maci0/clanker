@@ -6,11 +6,12 @@ a change that cannot pass them does not land.
 
 ## Getting started
 
-Follow the quick start in [README.md](README.md): `zig build`, `scripts/apply-patches.sh`
-(re-applies `patches/*.patch` to the fetched dependencies — the SIGWINCH patch
-is load-bearing for the pty e2e journeys), `zig build`, `zig build tools`,
-`zig build test`, `clanker init`, `clanker gate`, and enable the repository
-hooks with:
+Follow the quick start in [README.md](README.md): `zig build --fetch=all`,
+`scripts/apply-patches.sh` (re-applies `patches/*.patch` to the fetched
+dependencies — the SIGWINCH patch is load-bearing for `clanker repl` and the
+pty e2e journeys, and `build.zig` refuses to compile against an unpatched
+tree), `zig build`, `zig build tools`, `zig build test`, `clanker init`,
+`clanker gate`, and enable the repository hooks with:
 
 ```sh
 git config core.hooksPath .githooks

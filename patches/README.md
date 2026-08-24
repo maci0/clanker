@@ -2,12 +2,16 @@
 
 Patches applied to packages under `zig-pkg/` (which is gitignored and
 hash-pinned in `build.zig.zon`). A fresh checkout fetches the pristine
-upstream tarball, so **none of these are active on a fresh clone or in CI**
-until re-applied or upstreamed. `scripts/apply-patches.sh` is that
-re-application: run it after the first `zig build` (and after any later
-`zig build` that re-fetched pristine trees) — it is idempotent and skips
-what is already applied; `scripts/verify.sh` runs it before the e2e step.
-Each entry says what breaks without it.
+upstream tarball, so **none of these are active until re-applied or
+upstreamed**. `scripts/apply-patches.sh` is that re-application: run it
+after the trees are extracted (a bare `zig build --fetch=all` extracts
+without compiling) and after any later fetch of pristine trees — it is
+idempotent and skips what is already applied. `build.zig` refuses to
+configure against an unpatched tree (it checks one marker line per patch
+in the extracted sources, so a missing patch is a loud build failure
+naming this script, not a green build with the fixes compiled out);
+`scripts/verify.sh` and CI run extraction + this script before any
+compile for the same reason. Each entry says what breaks without it.
 
 **The `.patch` file in this directory is the canonical record of each
 change.** It must always apply with `patch -p1` to the pristine upstream

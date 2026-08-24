@@ -1531,6 +1531,19 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/logs` | GET | Tail the instance's log output |
 | `/api/webui/plugins` | GET, POST | List web UI plugin assets, or toggle one |
 | `/webui/plugins/<name>` | GET | Serve a web UI plugin's static asset |
+| `/api/events?topics=..` | GET | Server-sent events bus: comma-separated topics `chat`, `mesh`, `arena`, `run`, `metrics`, `plugin`; an empty or missing `topics=` subscribes to all. Cross-origin requests are refused 403; when every subscriber slot is taken the answer is 503 |
+| `/api/live` | POST | Publish `{from,data}` on the `plugin` topic (`from` is a plugin slug, `data` any JSON value); the same channel the `ck_publish` host function hands guests |
+| `/api/config/model` | POST | `{provider,model}` — look the model up in the local models.dev snapshot and splice its `[models."<provider>/<model>"]` block into `config.local.toml`. 404 on no catalog match, 502 when the snapshot cannot be read or fetched |
+| `/api/config/model/set` | POST | Table-replace one model's complete field set into `config.local.toml` (hand-add or edit). Send the model's full desired config with only the edited fields changed, not a diff: an omitted field falls back to its default on load |
+| `/api/config/model/remove` | POST | `{provider,model}` — delete that model's `[models.*]` table from `config.local.toml` if present there. A model only declared in the shared `config.toml` is untouched (the server never writes that file) and the reply's note says so |
+| `/api/config/default` | POST | `{provider,model}` — set the top-level `default_provider`/`default_model` keys in `config.local.toml`; hot reload restarts into it |
+| `/api/config/raw?file=` | GET | Read `config.toml` or `config.local.toml` as raw bytes for the editor. A missing file is an empty editor, not an error; any other name is 400 |
+| `/api/config/raw` | POST | `{file,content}` — validate-then-write. The candidate pair is loaded from a scratch directory first; only a pair that parses and validates reaches the real file, so a save cannot take the running config from good to broken. 400 with the load error name when validation refuses |
+| `/api/config/table/set` | POST | `{block}` — splice one complete TOML table (header line included) into `config.local.toml`, then validate exactly like a raw save. A block that would break the config is refused and nothing is written |
+| `/api/config/table/remove` | POST | `{header}` — delete one `[table]` from `config.local.toml` through the same validate-refuse-or-write pipeline. A header not present is a no-op success (`"removed":false`) |
+| `/api/config/status` | GET | Outcome of the last config validation (`ok`, `error`, `checked_ts_ms`) |
+| `/api/mcp/servers` | GET | The configured `[mcp_servers.*]` stanzas for the System view. Env/header values are withheld; only variable names are listed |
+| `/api/feedback` | GET, POST | List submitted feedback items, or submit one by relaying the body to the `feedback` tool |
 
 Error bodies are `{"ok":false,"error":"<message>"}`. Tool-backed routes map a refusal that names a missing resource (`no such …`, `not found`) to 404 and every other refusal to 400. A query string is not part of a resource id: `GET /api/sessions/<id>?t=1` still loads `<id>`. Wrong method on a known resource is 405; a malformed body on an allowed method is 400, not 405. On the five record endpoints the action set is split by method, so a write action named on `GET` is 400 before the guest runs rather than 405. Chat edit/delete/react answer 404 for a missing message and 403 when the caller is not the sender.
 

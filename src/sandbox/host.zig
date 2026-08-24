@@ -5908,10 +5908,10 @@ pub fn ckJob(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             else => return Err.invalid,
         };
         if (std.mem.startsWith(u8, id, "job-")) {
-            const json_out = jobs_mod.waitExec(arena, id) catch return Err.not_found;
+            const json_out = jobs_mod.waitExec(arena, sid, id) catch return Err.not_found;
             return h.writeResult(bytes, json_out);
         }
-        const json_out = jobs_mod.waitSub(arena, id) catch return Err.not_found;
+        const json_out = jobs_mod.waitSub(arena, sid, id) catch return Err.not_found;
         return h.writeResult(bytes, json_out);
     }
     return Err.invalid;

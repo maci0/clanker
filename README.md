@@ -71,7 +71,9 @@ git config core.hooksPath .githooks
 
 `patches/*.patch` are local fixes to pinned upstream dependencies (see
 [patches/README.md](patches/README.md)); the first `zig build` fetches the
-pristine upstream trees, and `scripts/apply-patches.sh` re-applies the
+pristine upstream trees and refuses to configure until they are patched
+(the failure names `scripts/apply-patches.sh`), and `scripts/apply-patches.sh`
+re-applies the
 patches to them (idempotent, skips what is already applied). The SIGWINCH
 patch is load-bearing: without it, resizing the terminal in `clanker repl`
 aborts the process, and the e2e pty journeys fail. Run it again whenever a

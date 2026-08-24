@@ -38,6 +38,95 @@ fn lessThanUtf8(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
 
+/// Refuse to configure against pristine upstream dependencies.
+///
+/// patches/*.patch are load-bearing local fixes to the pinned vaxis and
+/// zwasm sources (patches/README.md): without `vaxis-winch-self-pipe` the
+/// REPL aborts on terminal resize, and the others are behavior the tests
+/// and TUI silently lose. They live outside git (applied to the extracted
+/// dependency cache by scripts/apply-patches.sh), so nothing else notices
+/// when they are missing: every target would still build green, just with
+/// the fixes compiled out. This check runs at configure time — before any
+/// compilation — and names the fix, so the patch-then-build ordering trap
+/// (`apply-patches.sh` cannot patch trees that were never extracted)
+/// surfaces as a visible failure instead of an unpatched build.
+fn requireDependencyPatches(
+    b: *std.Build,
+    zwasm_dep: *std.Build.Dependency,
+    vaxis_dep: *std.Build.Dependency,
+) void {
+    const PatchCheck = struct {
+        dep_name: []const u8,
+        /// File inside the extracted package the patch edits.
+        sub_path: []const u8,
+        /// A line only the patched tree contains. Safe against upstream
+        /// drift because both packages are hash-pinned in build.zig.zon;
+        /// re-derive these alongside the patch when a pin moves.
+        marker: []const u8,
+        patch_file: []const u8,
+    };
+    const checks = [_]PatchCheck{
+        .{
+            .dep_name = "vaxis",
+            .sub_path = "src/tty.zig",
+            .marker = "var winch_pipe: [2]posix.fd_t",
+            .patch_file = "vaxis-winch-self-pipe",
+        },
+        .{
+            .dep_name = "vaxis",
+            .sub_path = "src/Vaxis.zig",
+            .marker = "sixel_graphics: bool = false,",
+            .patch_file = "vaxis-sixel-graphics",
+        },
+        .{
+            .dep_name = "vaxis",
+            .sub_path = "src/Parser.zig",
+            .marker = "'M' => .{ .codepoint = Key.kp_enter },",
+            .patch_file = "vaxis-ss3-keypad-enter",
+        },
+        .{
+            .dep_name = "zwasm",
+            .sub_path = "src/interp/mvp.zig",
+            .marker = "if (dbg.on(\"mem.cksum\"))",
+            .patch_file = "zwasm-lazy-mem-cksum",
+        },
+    };
+
+    var threaded = std.Io.Threaded.init(b.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var failed = false;
+    for (checks) |c| {
+        const dep = if (std.mem.eql(u8, c.dep_name, "vaxis")) vaxis_dep else zwasm_dep;
+        const file_path = dep.path(c.sub_path).getPath(b);
+        const contents = std.Io.Dir.cwd().readFileAlloc(io, file_path, b.allocator, .limited(4 << 20)) catch |err| {
+            std.debug.print(
+                "clanker: cannot read {s} from dependency '{s}' ({s}); the extraction looks broken, clear the zig cache and retry\n",
+                .{ c.sub_path, c.dep_name, @errorName(err) },
+            );
+            std.process.exit(1);
+        };
+        if (std.mem.indexOf(u8, contents, c.marker) == null) {
+            std.debug.print(
+                \\clanker: dependency '{s}' is missing local patch '{s}'
+                \\  (no `{s}` in {s})
+                \\
+                \\No target here builds correctly against the pristine upstream
+                \\package; patches/README.md documents what each patch carries.
+                \\
+                \\Run:   scripts/apply-patches.sh
+                \\Then:  zig build
+                \\
+            ,
+                .{ c.dep_name, c.patch_file, c.marker, c.sub_path },
+            );
+            failed = true;
+        }
+    }
+    if (failed) std.process.exit(1);
+}
+
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
@@ -91,11 +180,17 @@ pub fn build(b: *std.Build) void {
     // an arm64 mac. `-Dtarget=` still cross-compiles for release builds.
     const exe_target = b.standardTargetOptions(.{ .default_target = native_query });
 
+    // Both fetched dependencies, up front: the patch check below reads their
+    // extracted sources, and everything further down reuses these instances
+    // rather than resolving the same package twice.
+    const zwasm_dep = b.dependency("zwasm", .{ .target = exe_target, .optimize = optimize });
+    const vaxis_dep = b.dependency("vaxis", .{ .target = exe_target, .optimize = optimize });
+    requireDependencyPatches(b, zwasm_dep, vaxis_dep);
+
     // zwasm: pure-Zig WebAssembly runtime used for the tool sandbox.
     // target/optimize passed through: without them the module compiled at
     // zwasm's own default (Debug), so even a ReleaseSafe clanker ran every
     // tool on a Debug interpreter.
-    const zwasm_dep = b.dependency("zwasm", .{ .target = exe_target, .optimize = optimize });
     const zwasm_mod = zwasm_dep.module("zwasm");
 
     // vaxis: native-tty TUI library (Phase 1 of the libvaxis migration,
@@ -103,7 +198,6 @@ pub fn build(b: *std.Build) void {
     // target/optimize must be passed explicitly or its module resolves
     // against its own defaults instead of ours. Native-only — irrelevant
     // to the wasm32-freestanding tool build below.
-    const vaxis_dep = b.dependency("vaxis", .{ .target = exe_target, .optimize = optimize });
     const vaxis_mod = vaxis_dep.module("vaxis");
 
     // toml: parses config.toml/config.local.toml. Vendored
