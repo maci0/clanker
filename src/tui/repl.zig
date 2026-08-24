@@ -693,7 +693,20 @@ fn runThreadMain(args: RunThreadArgs) void {
     const messages = &self.messages;
     var err_detail: ?[]const u8 = null;
 
-    var a = Agent.init(&self.ctx, self.arena, &self.provider, &self.cfg, &self.reg, self.tool_defs) catch |err| {
+    // Resolve the session preset before the Agent exists: `Agent.init` builds
+    // the offered tool list and the prompt's tool catalog from it, so a preset
+    // assigned afterwards masked neither.
+    const preset_obj: ?*const preset_mod.Preset = blk: {
+        const pn = self.preset_name orelse break :blk null;
+        var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch break :blk null;
+        defer dir.close(self.io);
+        const loaded = preset_mod.loadFromFile(self.io, self.arena, dir, pn) catch break :blk null;
+        const stored = self.arena.create(preset_mod.Preset) catch break :blk null;
+        // Names leak via parseString dupes; keep stored for gate predicate.
+        stored.* = loaded;
+        break :blk stored;
+    };
+    var a = Agent.init(&self.ctx, self.arena, &self.provider, &self.cfg, &self.reg, self.tool_defs, preset_obj) catch |err| {
         // No agent, so no usage to report: the turn line is skipped rather
         // than printed as a row of zeroes.
         self.finishTurn(std.fmt.allocPrint(self.arena, "error: {s}", .{@errorName(err)}) catch "error: out of memory", null);
@@ -721,23 +734,6 @@ fn runThreadMain(args: RunThreadArgs) void {
     a.force_compact = self.force_compact;
     self.compact_hint = "";
     self.force_compact = false;
-    if (self.preset_name) |pn| {
-        var dir = std.Io.Dir.cwd().openDir(self.io, "presets", .{}) catch null;
-        if (dir) |*d| {
-            defer d.close(self.io);
-            if (preset_mod.loadFromFile(self.io, self.arena, d.*, pn) catch null) |preset| {
-                const stored = self.arena.create(preset_mod.Preset) catch null;
-                if (stored) |s| {
-                    // Names leak via parseString dupes; keep stored for gate predicate.
-                    s.* = preset;
-                    a.preset = s;
-                    if (preset.system_prompt_append.len > 0) {
-                        a.system_prompt_text = std.fmt.allocPrint(self.arena, "{s}\n\n{s}", .{ a.system_prompt_text, preset.system_prompt_append }) catch a.system_prompt_text;
-                    }
-                }
-            }
-        }
-    }
     a.research_mode = self.research_mode;
     if (args.pending_images) |imgs| a.pending_images = imgs;
     // Capture what the model will see so persistSession can record it: the
@@ -8932,6 +8928,11 @@ pub const ReplOptions = struct {
     mascot_speed: ?[]const u8 = null,
     /// Initial palette for this invocation, overriding `CLANKER_THEME`.
     theme: ?[]const u8 = null,
+    /// `--preset <name>`: the session opens with that `presets/<name>.toml`
+    /// active, exactly as if `/preset <name>` had been typed first. Null means
+    /// the whole registry. A missing or unparseable preset refuses to open the
+    /// session rather than starting one with an inert preset.
+    preset: ?[]const u8 = null,
 };
 
 /// One resolved setting plus the spelling that failed to parse, if any.
@@ -9344,6 +9345,20 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
     var reg = try registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir);
     if (harness_root) |root| try reg.rebaseWasmPaths(arena, root);
     const tool_defs = try reg.toToolDefs(arena);
+    // `--preset <name>` seeds the same session field `/preset <name>` sets, so
+    // one code path applies it. Validated here rather than at first turn: an
+    // unopenable preset should refuse the session, not silently run unfiltered.
+    if (opts.preset) |name| {
+        var dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch {
+            log.log(.error_, "preset '{s}' not found (no presets/ directory)", .{name});
+            return error.PresetNotFound;
+        };
+        defer dir.close(io);
+        _ = preset_mod.loadFromFile(io, arena, dir, name) catch |err| {
+            log.log(.error_, "preset '{s}' failed to load: {s}", .{ name, @errorName(err) });
+            return err;
+        };
+    }
     // `--provider`/`--model` pick the starting provider/model; `--model
     // <provider>/<model>` picks both at once, resolved by the same
     // Config.resolveProvider rule `clanker run` uses.
@@ -9412,6 +9427,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         .session_title = session_title,
         .session_system_prompt = loaded_system_prompt,
         .theme_override = opts.theme,
+        .preset_name = opts.preset,
     };
     // The easter egg. `--mascot` beats `tui.mascot`; both off is the default
     // and costs nothing beyond one `.off` branch per frame.

@@ -216,12 +216,12 @@ a `totals.thinking_distribution` field in the `/api/stats` response.
 
 ## Known issues
 
-1. **The "no classifier provider" path logs at debug, per turn, not as a
-   startup warning.** The failure-modes row above asks for a startup warning;
-   `thinking.classify` logs `auto-thinking skipped: no classifier provider` at
-   `.debug` and does it on every turn instead. A typo'd
-   `thinking_classifier_model` therefore disables the feature invisibly at the
-   default log level. Not fixed.
+1. ~~**The "no classifier provider" path logs at debug, per turn, not as a
+   startup warning.**~~ Fixed. `thinking.classify` now logs at `.warn`, names
+   the `thinking_classifier_model` spelling that resolved to nothing, and says
+   the turn falls back to the default `reasoning_effort`. A process-wide latch
+   (`no_provider_warned`) makes it fire once rather than once per turn, which
+   is what `.warn` needs to stay affordable on a per-turn path.
 
 2. **`xhigh` never selects a distinct row.** `effortFor` collapses
    `.high, .xhigh => "high"`, so `config.ReasoningEffort`'s `max` row is

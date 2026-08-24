@@ -304,8 +304,14 @@ pub const Agent = struct {
     /// predicate confirm-before-write gates on), so a plan run can research
     /// freely but cannot change anything, whatever the model decides.
     plan_mode: bool = false,
-    /// Active preset for this Agent (filtered Registry). Null means full.
-    preset: ?*const @import("../preset/preset.zig").Preset = null,
+    /// Active preset for this Agent. Null means the whole registry.
+    ///
+    /// Set by `init`, not after it: the preset decides what the *first*
+    /// request offers and what the system prompt's catalog enumerates, and
+    /// both are built inside `init`. Assigning it afterwards left every
+    /// denied tool offered and only the dispatch gate refusing, which is the
+    /// half of PRD 0033 that was never enforced.
+    preset: ?*const preset_mod.Preset = null,
     /// Research mode (the composer's Research toggle): [[research_mode_suffix]]
     /// is threaded into the system prompt, directing the run to consult
     /// web_search/web_fetch for current, sourced facts. A directive, not a
@@ -431,6 +437,35 @@ pub const Agent = struct {
         self.wasm_cache.deinit(self.ctx.gpa);
     }
 
+    /// The subset of `defs` the preset permits, `load_tools` always kept.
+    ///
+    /// This is the mask PRD 0033's "neither offered nor callable" needs on the
+    /// offered side. It is applied at every point that writes
+    /// `Agent.tool_defs` -- `init` and `rebuildToolDefs` -- so no path can
+    /// install an unmasked list; the dispatch gate in `executeCalls` is the
+    /// callable side and stays where it is.
+    fn presetMaskDefs(
+        arena: std.mem.Allocator,
+        preset: ?*const preset_mod.Preset,
+        defs: []const types.ToolDef,
+    ) ![]const types.ToolDef {
+        if (preset == null) return defs;
+        var out: std.ArrayList(types.ToolDef) = .empty;
+        for (defs) |d| {
+            if (registry.Registry.presetHides(preset, d.name)) continue;
+            try out.append(arena, d);
+        }
+        return out.toOwnedSlice(arena);
+    }
+
+    /// The preset's `system_prompt_append`, blank-line separated, ready to
+    /// concatenate. Empty for no preset or a preset that does not set it.
+    fn presetPromptSuffix(alloc: std.mem.Allocator, preset: ?*const preset_mod.Preset) []const u8 {
+        const p = preset orelse return "";
+        if (p.system_prompt_append.len == 0) return "";
+        return std.fmt.allocPrint(alloc, "\n\n{s}", .{p.system_prompt_append}) catch "";
+    }
+
     pub fn init(
         ctx: *client.Ctx,
         arena: std.mem.Allocator,
@@ -438,13 +473,21 @@ pub const Agent = struct {
         cfg: *const config.Config,
         reg: *const registry.Registry,
         tool_defs: []const types.ToolDef,
+        /// The active preset, or null for the whole registry. A parameter
+        /// rather than a field the caller sets afterwards because everything
+        /// the preset masks -- the offered tool list, the prompt's catalog
+        /// and its per-tool guidance -- is built right here.
+        preset: ?*const preset_mod.Preset,
     ) !Agent {
         var peer_names: std.ArrayList([]const u8) = .empty;
         for (cfg.peers) |p| peer_names.append(arena, p.name) catch {};
 
         var usage = tool_usage.Usage.load(ctx.io, arena, std.Io.Dir.cwd());
         var revealed: std.array_hash_map.String(void) = .empty;
-        var defs = tool_defs;
+        // Mask the caller's list too: with the catalog off this *is* the
+        // offered list, and most callers hand over an unfiltered
+        // `reg.toToolDefs`.
+        var defs = try presetMaskDefs(arena, preset, tool_defs);
         var catalog: []const u8 = "";
         if (cfg.agent.tool_catalog) {
             // The hot set is measured rather than configured: whatever this
@@ -453,8 +496,8 @@ pub const Agent = struct {
             const hot = usage.top(arena, cfg.agent.hot_tools) catch &.{};
             var core: std.ArrayList([]const u8) = .empty;
             for (hot) |e| core.append(arena, e.name) catch {};
-            defs = reg.lazyToolDefs(arena, core.items, &revealed) catch tool_defs;
-            catalog = reg.catalogText(arena, &revealed) catch "";
+            defs = reg.lazyToolDefs(arena, core.items, &revealed, preset) catch defs;
+            catalog = reg.catalogText(arena, &revealed, preset) catch "";
         }
 
         log.log(.info, "tools: {d} schema(s) sent, {d} in the catalog", .{ defs.len, reg.tools.count() });
@@ -475,12 +518,15 @@ pub const Agent = struct {
             .peers = peer_names.items,
             .catalog = catalog,
             .workflows_catalog = wf_catalog,
-            .tool_guidance = reg.guidanceText(arena) catch "",
+            .tool_guidance = reg.guidanceText(arena, preset) catch "",
             .global_instructions_file = global_path,
             .home = home,
             .git_remote_ops = cfg.agent.git_remote_ops,
         }, defs);
-        var prompt_text = try std.fmt.allocPrint(arena, "{s}{s}", .{ base_prompt, exact_format_suffix });
+        // PRD 0033 non-goal: the preset persona is appended after clanker's
+        // own prompt, never a replacement. `refreshSystemPrompt` re-appends
+        // it every turn from `self.preset`, so it survives a rebuild.
+        var prompt_text = try std.fmt.allocPrint(arena, "{s}{s}{s}", .{ base_prompt, exact_format_suffix, presetPromptSuffix(arena, preset) });
         const lifecycle_hooks = if (cfg.hooks.enabled)
             hooks_config.load(ctx.io, arena, std.Io.Dir.cwd(), cfg.hooks.config_path, cfg.hooks.default_timeout_ms) catch |err| blk: {
                 log.log(.warn, "hooks: disabling '{s}' for this agent: {s}", .{ cfg.hooks.config_path, @errorName(err) });
@@ -505,6 +551,7 @@ pub const Agent = struct {
             .peer_names = peer_names.items,
             .stats = .{},
             .lifecycle_hooks = lifecycle_hooks,
+            .preset = preset,
         };
         if (lifecycle_hooks.hooks.len > 0) {
             const payload = try result.hookPayload(.SessionStart, "", "", "");
@@ -617,9 +664,9 @@ pub const Agent = struct {
             .instance_name = self.instance_name,
             .instance_id = self.instance_id,
             .peers = self.peer_names,
-            .catalog = if (self.catalog_mode) (self.reg.catalogText(scratch, &self.revealed) catch "") else "",
+            .catalog = if (self.catalog_mode) (self.reg.catalogText(scratch, &self.revealed, self.preset) catch "") else "",
             .workflows_catalog = wf_catalog,
-            .tool_guidance = self.reg.guidanceText(self.arena) catch "",
+            .tool_guidance = self.reg.guidanceText(self.arena, self.preset) catch "",
             .global_instructions_file = global_path,
             .home = home,
             .git_remote_ops = self.cfg.agent.git_remote_ops,
@@ -628,7 +675,7 @@ pub const Agent = struct {
             return;
         };
         const session_hook_suffix = if (self.session_start_context.len > 0) std.fmt.allocPrint(scratch, "\n\n[SessionStart hook context]\n{s}", .{self.session_start_context}) catch "" else "";
-        const draft = std.fmt.allocPrint(scratch, "{s}{s}{s}{s}{s}", .{ base_prompt, exact_format_suffix, if (self.plan_mode) plan_mode_suffix else "", if (self.research_mode) research_mode_suffix else "", session_hook_suffix }) catch |err| {
+        const draft = std.fmt.allocPrint(scratch, "{s}{s}{s}{s}{s}{s}", .{ base_prompt, exact_format_suffix, presetPromptSuffix(scratch, self.preset), if (self.plan_mode) plan_mode_suffix else "", if (self.research_mode) research_mode_suffix else "", session_hook_suffix }) catch |err| {
             log.log(.warn, "refreshSystemPrompt: allocPrint failed: {s}", .{@errorName(err)});
             return;
         };
@@ -2561,6 +2608,11 @@ pub const Agent = struct {
             if (n != .string) continue;
             const t = self.reg.get(n.string) orelse continue;
             if (t.internal or !t.enabled) continue;
+            // A preset-denied tool is not revealable. Without this, the model
+            // under `--preset research` could name `edit_file` here, get its
+            // full schema back, and have it offered on every later turn --
+            // the catalog door reopening what the preset closed.
+            if (registry.Registry.presetHides(self.preset, t.name)) continue;
             self.revealed.put(self.arena, t.name, {}) catch continue;
             found += 1;
             try s.beginObject();
@@ -2591,6 +2643,17 @@ pub const Agent = struct {
             if (t == null or t.?.internal or !t.?.enabled) try s.write(n.string);
         }
         try s.endArray();
+        // A tool the preset denies is reported as denied, not as unknown: the
+        // model should stop asking for it rather than assume a typo.
+        try s.objectField("denied");
+        try s.beginArray();
+        for (names.items) |n| {
+            if (n != .string) continue;
+            const t = self.reg.get(n.string) orelse continue;
+            if (t.internal or !t.enabled) continue;
+            if (registry.Registry.presetHides(self.preset, t.name)) try s.write(t.name);
+        }
+        try s.endArray();
         try s.endObject();
 
         if (found > 0) self.rebuildToolDefs();
@@ -2603,7 +2666,7 @@ pub const Agent = struct {
         const hot = self.usage.top(self.arena, self.cfg.agent.hot_tools) catch return;
         var core: std.ArrayList([]const u8) = .empty;
         for (hot) |e| core.append(self.arena, e.name) catch {};
-        self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed) catch return;
+        self.tool_defs = self.reg.lazyToolDefs(self.arena, core.items, &self.revealed, self.preset) catch return;
     }
 
     fn reviewTurn(self: *Agent, messages: []const types.Message, calls: []const types.ToolCall, abort_out: *?[]const u8) ?advisor.Note {
@@ -5179,4 +5242,60 @@ test "auto-thinking classifies once per turn and skips a blank submit" {
     try std.testing.expect(agent.classifyEffort(&blank) == null);
     try std.testing.expectEqual(@as(usize, 2), mock.captured.items.len);
     try std.testing.expect(ctx.thinking_level == null);
+}
+
+test "a preset masks the offered tool list and cannot be reopened by load_tools" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const research = preset_mod.Preset{
+        .tools_deny = &.{ "edit_file", "kanban_*" },
+        .system_prompt_append = "Research only.",
+    };
+
+    // The catalog-off path: `init` is handed the caller's list, which most
+    // callers build with an unfiltered `reg.toToolDefs`. Masking it here is
+    // what makes the offered list match the dispatch gate.
+    const unfiltered = [_]types.ToolDef{
+        .{ .name = "read_file", .description = "read", .input_schema = .{ .object = .{} } },
+        .{ .name = "edit_file", .description = "edit", .input_schema = .{ .object = .{} } },
+        .{ .name = "kanban_add", .description = "card", .input_schema = .{ .object = .{} } },
+        .{ .name = registry.Registry.load_tool_name, .description = "load", .input_schema = .{ .object = .{} } },
+    };
+    const masked = try Agent.presetMaskDefs(arena, &research, &unfiltered);
+    try std.testing.expectEqual(@as(usize, 2), masked.len);
+    try std.testing.expectEqualStrings("read_file", masked[0].name);
+    try std.testing.expectEqualStrings(registry.Registry.load_tool_name, masked[1].name);
+
+    // No preset hands the list straight back, allocation and all.
+    const passthrough = try Agent.presetMaskDefs(arena, null, &unfiltered);
+    try std.testing.expectEqual(@as(usize, 4), passthrough.len);
+
+    // The persona is appended, blank-line separated, and survives a prompt
+    // rebuild because `refreshSystemPrompt` reads it from the same place.
+    try std.testing.expectEqualStrings("\n\nResearch only.", Agent.presetPromptSuffix(arena, &research));
+    try std.testing.expectEqualStrings("", Agent.presetPromptSuffix(arena, null));
+
+    // load_tools: a denied name is reported as denied rather than revealed,
+    // so the catalog cannot hand back a schema the preset closed.
+    var reg = registry.Registry{};
+    try reg.tools.put(arena, "read_file", .{ .name = "read_file", .description = "read", .llm_description = "read a file", .wasm = "x.wasm", .input_schema = .{ .object = .{} } });
+    try reg.tools.put(arena, "edit_file", .{ .name = "edit_file", .description = "edit", .llm_description = "edit a file", .wasm = "x.wasm", .input_schema = .{ .object = .{} } });
+
+    var agent: Agent = undefined;
+    agent.arena = arena;
+    agent.reg = &reg;
+    agent.revealed = .empty;
+    agent.preset = &research;
+    // Off, so loadTools' rebuild is a no-op and nothing else on the Agent is
+    // read: this test is about which names get revealed.
+    agent.catalog_mode = false;
+
+    const out = try agent.loadTools(.{ .id = "1", .name = registry.Registry.load_tool_name, .arguments =
+        \\{"names":["edit_file","read_file"]}
+    });
+    try std.testing.expect(std.mem.find(u8, out, "\"denied\":[\"edit_file\"]") != null);
+    try std.testing.expect(agent.revealed.contains("read_file"));
+    try std.testing.expect(!agent.revealed.contains("edit_file"));
 }

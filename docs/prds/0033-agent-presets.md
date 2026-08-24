@@ -4,6 +4,12 @@
 
 Shipped — 2026-08-17. presets/*.toml + src/preset/preset.zig + src/cli.zig (preset list|show|new, --preset filter + persona), src/agent/loop.zig (dispatch refusal), src/tui/repl.zig (/preset guard, status pill)
 
+The offered side landed 2026-08-24: the mask is `Registry.presetHides` in
+`src/toolhost/registry.zig`, consulted by `lazyToolDefs`, `catalogText` and
+`guidanceText`, with `Agent.presetMaskDefs` covering the catalog-off path and a
+`preset` parameter on `Agent.init` replacing the field callers used to assign
+after construction. `repl --preset` reaches `ReplOptions` and is applied.
+
 A configured set of directories (mirroring `agent.tools_dir`'s list-of-roots
 precedent from PRD 0022), a `clanker preset list|show|new` subcommand
 (mirroring `clanker plugins list|validate|new`'s shape), a `--preset <name>`
@@ -132,7 +138,10 @@ requirement.
 2. `clanker preset list|show|new`.
 3. `--preset` flag threading into `Agent` construction: tool-definition
    filter at `rebuildToolDefs`, plus the defense-in-depth dispatch-time
-   refusal alongside `plan_mode`'s existing check.
+   refusal alongside `plan_mode`'s existing check. In the shipped shape the
+   filter lives one level lower, in the registry's list and catalog builders,
+   so `init`, `rebuildToolDefs` and a `load_tools` reveal all consult it
+   rather than each needing its own check.
 4. `system_prompt_append` wiring into `system_prompt.zig`'s assembly.
 5. `/preset` REPL command (blank-session-only guard), added to
    `command_registry` in `src/tui/repl.zig` following its existing
@@ -148,27 +157,37 @@ requirement.
 | `/preset` called after the session has produced a tool call or assistant message | Refused; current preset unchanged |
 | `tools_allow`/`tools_deny` names a tool absent from the loaded registry | Not an error — a pattern matching nothing stays valid, so a preset authored against a superset of installed tools is not broken by a leaner install |
 | A denied tool is called anyway (stale client, misbehaving model) | Refused at dispatch by the same gate `plan_mode` uses, independent of whether it was offered in the schema |
+| `load_tools` names a denied tool | Not revealed; reported back in a `denied` array so the model stops asking rather than reading it as a typo |
+| A preset's `tools_allow` does not name `load_tools` | `load_tools` is offered anyway. It is the catalog's only door, and hiding it would leave the model with the measured hot set and no way to reach anything else the preset does allow |
 | `clanker preset new <name>` on an existing name | Refused; nothing overwritten |
 
 ## Known issues
 
-1. **A denied tool is still offered; only the dispatch gate refuses it.**
-   `Agent.init` rebuilds the tool-definition list from the registry whenever
-   `agent.tool_catalog` is on (the default), discarding the `filterNames` result
-   `cmdRun` computed one line earlier, and `a.preset` is only assigned after
-   `init` returns. `rebuildToolDefs` and `loadTools` have no preset check
-   either, so `load_tools` can re-reveal a denied tool with its full schema. The
-   "neither offered nor callable" criterion below holds only on "callable".
+None open. The three below were fixed together; kept here so a reader does not
+re-diagnose them from an older report.
+
+1. ~~**A denied tool is still offered; only the dispatch gate refuses it.**~~
+   Fixed. The preset is now a parameter of `Agent.init` rather than a field a
+   caller assigns after it returns, and the mask lives in
+   `Registry.presetHides`, consulted by `lazyToolDefs`, `catalogText` and
+   `guidanceText`, plus `Agent.presetMaskDefs` over the caller's list for the
+   catalog-off path. `rebuildToolDefs` passes `self.preset`, and `loadTools`
+   refuses to reveal a denied tool, reporting it in a `denied` array rather
+   than as `unknown`. `load_tools` itself is exempt from the mask, so a preset
+   with a non-empty `tools_allow` keeps the catalog's only door.
    [Bug](../reports/bugs/2026-08-23-preset-tool-filter-is-inert.md).
 
-2. **`clanker repl --preset <name>` is a silent no-op.** The flag is in the
-   table, listed as valid for `repl`, and in `repl --help`, but
-   `cmdReplVaxis`' options literal does not pass it and `ReplOptions` has no
-   such field. Same bug record as (1).
+2. ~~**`clanker repl --preset <name>` is a silent no-op.**~~ Fixed.
+   `ReplOptions.preset` exists, `cli.zig` passes `opts.preset`, and
+   `cmdReplVaxis` validates the preset loads before opening the session and
+   seeds `Model.preset_name` — the same field `/preset <name>` sets, so the
+   status pill and the per-turn agent construction need no second path.
 
-3. **No test covers flag threading or the dispatch gate.** Only
-   `src/preset/preset.zig`'s pure unit tests exist, and they pass because the
-   pure part is correct — which is why (1) and (2) survived.
+3. ~~**No test covers flag threading or the dispatch gate.**~~ Partly fixed:
+   `src/toolhost/registry.zig` and `src/agent/loop.zig` now pin the *offered*
+   list, the catalog text, the guidance text, the `load_tools` refusal and the
+   `load_tools` exemption. Flag threading itself is still only covered by the
+   "accepted implies documented" test.
 
 ## Acceptance criteria
 
@@ -188,7 +207,9 @@ requirement.
 - [x] A denied tool named directly in a tool call (bypassing the offered
       schema) is still refused at dispatch.
 - [x] `system_prompt_append` text appears in the assembled system prompt for
-      a session using that preset, after clanker's own sections.
+      a session using that preset, after clanker's own sections. Re-appended by
+      `refreshSystemPrompt` from `Agent.preset`, so the first turn's prompt
+      rebuild no longer drops it.
 - [x] An empty `tools_allow` with a non-empty `tools_deny` allows everything
       except the denied patterns.
 

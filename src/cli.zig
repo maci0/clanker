@@ -2369,6 +2369,7 @@ pub fn run(init: std.process.Init, opts: Options) !void {
                 .mascot_facing = opts.mascot_facing,
                 .mascot_speed = opts.mascot_speed,
                 .theme = opts.theme,
+                .preset = opts.preset,
             });
         },
         .graph => try cmdGraph(init, opts),
@@ -4205,45 +4206,31 @@ fn cmdRun(init: std.process.Init, opts: Options) anyerror!void {
     // The manifests came from the worktree (they are tracked, so it has them),
     // but the wasm they name did not: keep pointing at the harness's own build.
     if (harness_root) |root| try reg.rebaseWasmPaths(arena, root);
-    var tool_defs = try reg.toToolDefs(arena);
-    var preset_obj: ?preset_mod.Preset = null;
-    if (opts.preset) |name| {
+    const tool_defs = try reg.toToolDefs(arena);
+    // The preset is loaded before the Agent exists and handed to `init`, not
+    // assigned onto the Agent afterwards: `init` builds the offered tool list
+    // and the prompt's tool catalog, so a preset that arrives later masks
+    // neither. Arena-owned, so the Agent's borrowed pointer outlives this.
+    const preset_obj: ?*const preset_mod.Preset = if (opts.preset) |name| blk: {
         const preset_dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch {
             log.log(.error_, "preset '{s}' not found (no presets/ directory)", .{name});
             return error.PresetNotFound;
         };
         var dir = preset_dir;
         defer dir.close(io);
-        preset_obj = preset_mod.loadFromFile(io, arena, dir, name) catch |err| {
+        const stored = try arena.create(preset_mod.Preset);
+        stored.* = preset_mod.loadFromFile(io, arena, dir, name) catch |err| {
             log.log(.error_, "preset '{s}' failed to load: {s}", .{ name, @errorName(err) });
             return err;
         };
-        // Filter tool defs by preset allow/deny via helper.
         var names: std.ArrayList([]const u8) = .empty;
         for (tool_defs) |d| try names.append(arena, d.name);
-        const allowed_names = try preset_mod.filterNames(arena, preset_obj.?, names.items);
-        var filtered: std.ArrayList(types.ToolDef) = .empty;
-        for (tool_defs) |d| {
-            for (allowed_names) |n| if (std.mem.eql(u8, d.name, n)) {
-                try filtered.append(arena, d);
-                break;
-            };
-        }
-        tool_defs = try filtered.toOwnedSlice(arena);
-        log.log(.info, "preset '{s}' active: {d} tools allowed", .{ name, tool_defs.len });
-    }
+        const allowed_names = try preset_mod.filterNames(arena, stored.*, names.items);
+        log.log(.info, "preset '{s}' active: {d} of {d} tools allowed", .{ name, allowed_names.len, tool_defs.len });
+        break :blk stored;
+    } else null;
 
-    var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs);
-    // Keep preset object alive on the run arena so the Agent's borrowed pointer stays valid.
-    if (preset_obj) |p| {
-        const stored = try arena.create(preset_mod.Preset);
-        stored.* = p;
-        a.preset = stored;
-        if (p.system_prompt_append.len > 0) {
-            // Append preset persona after clanker's own prompt, per PRD 0033 non-goal (append, not replace).
-            a.system_prompt_text = try std.fmt.allocPrint(arena, "{s}\n\n{s}", .{ a.system_prompt_text, p.system_prompt_append });
-        }
-    }
+    var a = try agent.Agent.init(&ctx, arena, provider, &cfg, &reg, tool_defs, preset_obj);
     defer a.deinit();
     a.subagent_runner = if (cfg.modules.subagents) &subagent.runNested else null;
     var messages: std.ArrayList(types.Message) = .empty;
@@ -9281,7 +9268,7 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"tool defs failed\"}");
         return;
     };
-    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs) catch |err| {
+    var a = agent.Agent.init(&ctx, arena, provider, cfg, &reg, tool_defs, null) catch |err| {
         log.log(.error_, "POST /api/a2a/message: agent init failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;
@@ -10145,7 +10132,7 @@ fn resumeGoal(
         log.log(.error_, "resume goal '{s}': tool defs failed: {s}", .{ g.id, @errorName(err) });
         return;
     };
-    var a = agent.Agent.init(&ctx, arena, provider, &run_cfg, &reg, tool_defs) catch |err| {
+    var a = agent.Agent.init(&ctx, arena, provider, &run_cfg, &reg, tool_defs, null) catch |err| {
         log.log(.error_, "resume goal '{s}': agent init failed: {s}", .{ g.id, @errorName(err) });
         return;
     };
@@ -16112,7 +16099,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
 
-    var a = agent.Agent.init(&ctx, arena, provider, &run_cfg, &reg, tool_defs) catch |err| {
+    var a = agent.Agent.init(&ctx, arena, provider, &run_cfg, &reg, tool_defs, null) catch |err| {
         log.log(.error_, "POST /api/run: agent init failed: {s}", .{@errorName(err)});
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"agent init failed\"}");
         return;

@@ -30,11 +30,16 @@ pub fn run(
             log.log(.warn, "hook {s}: invalid command: {s}", .{ @tagName(event), @errorName(err) });
             continue;
         };
+        // The config validator rejects a blank command, but the logs below must
+        // not depend on it: an empty argv used to be indexed as `argv[0]`, which
+        // panics in Debug and reads a garbage pointer in ReleaseFast. Name the
+        // command instead of indexing.
+        const argv0 = if (argv.len > 0) argv[0] else "";
         const attempt = host.execUnderPolicyInput(sb, argv, payload, 64 * 1024, 64 * 1024, hook.timeout_ms, sb.root_dir);
         switch (attempt) {
-            .not_allowed => log.log(.warn, "hook {s}: command '{s}' is outside exec_allow", .{ @tagName(event), argv[0] }),
-            .denied => log.log(.warn, "hook {s}: command '{s}' was denied by exec policy", .{ @tagName(event), argv[0] }),
-            .failed => |err| log.log(.warn, "hook {s}: command '{s}' failed: {s}", .{ @tagName(event), argv[0], @errorName(err) }),
+            .not_allowed => log.log(.warn, "hook {s}: command '{s}' is outside exec_allow", .{ @tagName(event), argv0 }),
+            .denied => log.log(.warn, "hook {s}: command '{s}' was denied by exec policy", .{ @tagName(event), argv0 }),
+            .failed => |err| log.log(.warn, "hook {s}: command '{s}' failed: {s}", .{ @tagName(event), argv0, @errorName(err) }),
             .ran => |outcome| {
                 defer outcome.deinit(sb.gpa);
                 var decoded = decode(arena, outcome.stdout);
@@ -202,4 +207,32 @@ test "nested deny hardens a top-level allow and takes the nested reason" {
     );
     try std.testing.expectEqual(Decision.deny, result.decision);
     try std.testing.expectEqualStrings("policy", result.reason);
+}
+
+test "a blank command warns instead of indexing an empty argv" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = &env,
+        .exec_allow = &.{"printf"},
+    };
+    // The loader refuses this shape now, but the runner must survive it on its
+    // own: `splitCommand` returns a zero-length argv and the `.not_allowed`
+    // branch used to format `argv[0]`.
+    const cfg = hook_config.Config{ .hooks = &.{
+        .{ .event = .PreToolUse, .matcher = "Write", .command = "\t", .timeout_ms = 1000 },
+    } };
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const result = try run(arena_state.allocator(), cfg, &sb, .PreToolUse, "Write", "{}");
+    try std.testing.expectEqual(Decision.allow, result.decision);
+    try std.testing.expectEqualStrings("", result.context);
 }

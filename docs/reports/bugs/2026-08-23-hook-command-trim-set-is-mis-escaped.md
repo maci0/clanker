@@ -4,11 +4,11 @@
 
 - **What failed:** src/hooks/config.zig trims with the plain literal " \\t\\r\\n", whose set is the five bytes space backslash t r n, not the four whitespace bytes. A command of a bare tab passes validation, splitCommand returns a zero-length argv, host refuses it as not_allowed, and src/hooks/runner.zig logs argv[0] on that empty slice. Contradicts PRD 0028's rule that a typo'd hook must not take the agent down. Same function rejects the whole hooks file for a command spelled nrt.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed in 1e8f01b8: the trim set is std.ascii.whitespace, so a bare-tab command is refused and a command spelled 'nrt' no longer fails the whole file; the runner's three warn lines name an argv0 local that is empty rather than indexing argv[0]; and a non-positive hook timeout is refused so timeout_ms can never reach the host's no-deadline reading. Verified by clanker gate (11/11 PASS) with three new unit tests.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed in 1e8f01b8: the trim set is std.ascii.whitespace, so a bare-tab command is refused and a command spelled 'nrt' no longer fails the whole file; the runner's three warn lines name an argv0 local that is empty rather than indexing argv[0]; and a non-positive hook timeout is refused so timeout_ms can never reach the host's no-deadline reading. Verified by clanker gate (11/11 PASS) with three new unit tests.
 
 ## Symptom and impact
 

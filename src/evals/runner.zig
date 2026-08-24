@@ -48,7 +48,7 @@ pub const Runner = struct {
 
     fn runTask(self: *Runner, e: *const scorers.Eval) !Result {
         const tool_defs = try self.reg.toToolDefs(self.arena);
-        var a = try agent.Agent.init(self.ctx, self.arena, self.provider, self.cfg, self.reg, tool_defs);
+        var a = try agent.Agent.init(self.ctx, self.arena, self.provider, self.cfg, self.reg, tool_defs, null);
         defer a.deinit();
         // Criteria assert on a bare value ("391", "clanker online"), so this is
         // the one caller that wants the lossy answer cleanup. Every other
