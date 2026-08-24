@@ -322,7 +322,7 @@ function boardColumn(col, s) {
 
   // Trello-style empty lane placeholder — with quick-add affordance
   var items = shown.map(function (c) {
-    return T.li({ class: "board-card-item" }, cardNode(c), cardQuickActions(c));
+    return T.li({ class: "board-card-item" }, cardNode(c), cardMemberControl(c), cardQuickActions(c));
   });
   if (!shown.length) {
     var emptySlot = document.createElement("li");
@@ -827,37 +827,18 @@ function cardNode(c) {
     hasBottom = true;
   }
 
-  // Trello-style member avatar (initials) when assigned
+  /* Trello-style member avatar (initials) when assigned. This one is scenery:
+     it reserves the row the real control is painted over, and says nothing to
+     the accessibility tree, which reads the sibling button `cardMemberControl`
+     builds instead. See the note there for why it cannot live in here. */
   if (c.assignee) {
     var membersWrap = document.createElement("span");
     membersWrap.className = "card-members";
-    var av = document.createElement("span");
-    av.className = "card-member";
-    av.textContent = (c.assignee.trim().substring(0, 2) || "?").toUpperCase();
-    av.title = c.assignee + " — click to reassign";
-    // A span with a click is invisible to a keyboard; the reassign popup
-    // must be openable without a pointer, so this is an actual button.
-    av.setAttribute("role", "button");
-    av.tabIndex = 0;
-    av.setAttribute("aria-label", "Reassign " + c.assignee);
-    function openMemberPopup() {
-      var existing = document.querySelector(".member-picker-popup");
-      if (existing) existing.remove();
-      var popup = memberPicker(c, false);
-      dismissOnOutside(popup);
-      av.style.position = "relative";
-      av.appendChild(popup);
-    }
-    av.addEventListener("click", function(e){
-      e.stopPropagation();
-      openMemberPopup();
-    });
-    av.addEventListener("keydown", function (e) {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      e.preventDefault();
-      openMemberPopup();
-    });
-    membersWrap.appendChild(av);
+    var slot = document.createElement("span");
+    slot.className = "card-member card-member-slot";
+    slot.setAttribute("aria-hidden", "true");
+    slot.textContent = memberInitials(c.assignee);
+    membersWrap.appendChild(slot);
     bottom.appendChild(membersWrap);
     hasBottom = true;
   }
@@ -912,6 +893,70 @@ function cardNode(c) {
     postBoard({ op: "move", id: c.id, column: ids[next] }, "Moved to " + board.columns[next].title + ".");
   });
   return b;
+}
+
+function memberInitials(name) {
+  return ((name || "").trim().substring(0, 2) || "?").toUpperCase();
+}
+
+/* The reassign control, a *sibling* of the card button for the same reasons the
+   hover actions below are, plus one of its own.
+
+   It used to be a `<span role="button" tabindex="0">` inside `cardNode`'s
+   button, with the whole member picker appended into that span. Three things
+   were wrong with that:
+
+     * A button's children are presentational in ARIA, so neither the avatar nor
+       any member in the picker it opened was in the accessibility tree at all:
+       reassigning from the board was mouse-only, and nesting interactive
+       content inside a button is invalid HTML besides (axe `nested-interactive`,
+       the same finding the hover actions were moved out for).
+     * A picker item's click bubbled up to the avatar's own click listener,
+       which called `stopPropagation` and re-opened the picker -- so choosing a
+       member left the popup on screen instead of closing it. The detail
+       sidebar's copy of this picker is a sibling of its button, not a child,
+       which is why only the card avatar had that.
+     * `.card` is `overflow: hidden` and is the popup's containing-block
+       ancestor, so a 160px-wide popup opened from the avatar was clipped to the
+       card's own box. `.board-card-item` clips nothing, so out here it is not.
+
+   Returns null when nobody is assigned; `appendInto` drops that. */
+function cardMemberControl(c) {
+  if (!c.assignee) return null;
+  var wrap = document.createElement("span");
+  wrap.className = "card-members-overlay";
+  var btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "card-member";
+  btn.textContent = memberInitials(c.assignee);
+  btn.title = c.assignee + ", click to reassign";
+  btn.setAttribute("aria-label", "Reassign " + c.assignee + ": " + (c.title || c.id));
+  btn.setAttribute("aria-haspopup", "menu");
+  btn.setAttribute("aria-expanded", "false");
+  btn.addEventListener("click", function (e) {
+    // The card behind this is a button too, and clicking the avatar must not
+    // also open the card.
+    e.stopPropagation();
+    var mine = wrap.querySelector(".member-picker-popup");
+    var open = document.querySelector(".member-picker-popup");
+    if (open) open.remove();
+    if (mine) return;
+    var popup = memberPicker(c, false);
+    /* Every way this popup closes -- a member picked, a click outside, the
+       button again -- goes through `remove`, so that is the one seam where the
+       button's state is put back. Without it `aria-expanded` would latch on
+       "true" the first time a card was reassigned. */
+    var removeSelf = popup.remove.bind(popup);
+    popup.remove = function () {
+      removeSelf();
+      btn.setAttribute("aria-expanded", "false");
+    };
+    dismissOnOutside(popup, btn);
+    wrap.appendChild(popup);
+    btn.setAttribute("aria-expanded", "true");
+  });
+  wrap.appendChild(btn);
+  return wrap;
 }
 
 /* The card's hover actions, built as a *sibling* of the card button rather

@@ -4,11 +4,11 @@
 
 - **What failed:** RenderCache in src/cli.zig falls through from .failed to rendering again, but the publish cmpxchg only accepts .idle, so a slot that ever reads .failed can never become .ready. .failed is set by the gpa.dupe OOM on the publish path, so one transient allocation failure pins that asset to the uncached path, measured in webui_assets.zig at 348ms and 187KB per request. GzipCache remembers a failure so as not to retry; RenderCache retries, so .failed only blocks the publish. Read from the source.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed: .failed is gone from RenderCache.State. The claim/publish/abandon transitions moved beside the cache in src/serve/webui_assets.zig (renderClaim/renderPublish/renderAbandon) where the rest of the asset layer lives, and abandoning a claim returns the slot to .idle so the next request can publish. src/cli.zig calls them. GzipCache keeps its .failed and the comment says why. Two tests, one per side of the transition; the first was red on the exact line the report named. Gate: all twelve PASS.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed: .failed is gone from RenderCache.State. The claim/publish/abandon transitions moved beside the cache in src/serve/webui_assets.zig (renderClaim/renderPublish/renderAbandon) where the rest of the asset layer lives, and abandoning a claim returns the slot to .idle so the next request can publish. src/cli.zig calls them. GzipCache keeps its .failed and the comment says why. Two tests, one per side of the transition; the first was red on the exact line the report named. Gate: all twelve PASS.
 
 ## Symptom and impact
 
