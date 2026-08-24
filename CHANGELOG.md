@@ -3118,6 +3118,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   Not fixed, and filed: a saturation refusal is delivered over a reset
   connection, because that path never reads the request. The body can be lost.
 
+- Sandboxed tools can read an HTTP response header. `ck_http` returned the body
+  and nothing else, so no guest could see `Link`, `ETag`, `X-RateLimit-Reset` or
+  `Retry-After` however it was written — pagination past the first page, ETag
+  revalidation and a rate-limit reset time were unbuildable rather than unbuilt.
+  The new `ck_http_ex` takes the same arguments and answers
+  `{"status":N,"headers":{...},"body":"..."}`, so the status arrives with the
+  body instead of through a second call that can be forgotten, and an
+  allowlisted set of response headers comes with it (`link`, `etag`,
+  `last-modified`, `retry-after`, `content-type`, `x-ratelimit-*`). The set is
+  fixed host-side and each value is capped, because a response header is
+  attacker-controlled text: `Set-Cookie` and the rest do not reach a guest.
+  `ck_http` is unchanged, so no existing tool's behaviour moves.
+
+  First use: `gh_read`'s rate-limit error now says when the limit resets
+  (`GitHub rate limit exhausted; resets at 2026-08-24T11:43:36Z`), which was
+  the one PRD 0019 criterion that could not be met at all. `Link`-based
+  pagination and an ETag cache are now buildable and still unbuilt.
+
 ## [0.1.0] - 2026-08-14
 
 ### Added

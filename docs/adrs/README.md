@@ -82,6 +82,7 @@ its current text.
 ## Inventory
 
 <!-- inventory:adr:start -->
+- [ADR 0049 — A guest reads response headers through an allowlisted envelope on a second HTTP entry point](0049-a-guest-reads-response-headers-through-an-allowlisted.md) — Accepted
 - [ADR 0048 — Preparing a hand-made worktree is an explicit verb, not a config-load fallback](0048-preparing-a-hand-made-worktree-is-an-explicit-verb-not-a.md) — Accepted
 - [ADR 0047 — REPL mid-stream inject is the existing steer queue](0047-repl-mid-stream-inject-is-the-existing-steer-queue.md) — Accepted
 - [ADR 0046 — Nested explore/plan/coder types are shipped presets named by subagent_type](0046-nested-explore-plan-coder-types-are-shipped-presets-named.md) — Accepted

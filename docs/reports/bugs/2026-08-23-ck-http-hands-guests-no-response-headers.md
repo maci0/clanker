@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **What failed:** Every `ck_http` variant returns the response body and nothing else. A guest can never read `Link`, `X-RateLimit-Reset`, `ETag`, `Retry-After` or `Content-Type`. Anything GitHub (or any API) states only in a header is therefore unreachable from a guest no matter how the guest is written.
-- **Impact:** Four things are unbuildable rather than unbuilt. PRD 0019 wants a reset time on its rate-limit error (`X-RateLimit-Reset`), pagination past the first page (`Link: rel="next"`), and ETag revalidation for its cache (`ETag` / `If-None-Match`); a polite retry after a secondary rate limit wants `Retry-After`. Each is filed as future work, which reads as "not done yet" and is really "the transport does not carry it".
-- **Resolution:** Open. The 2026-08-23 status-envelope change (`writeHttpFailure`) added a channel for the *status* of a failed response and deliberately did not widen it to headers, because that is an ABI shape decision and not a bug fix.
+- **Impact:** Was: four things unbuildable rather than unbuilt. Now: the transport carries the headers, one of the four (the rate-limit reset time) ships, and the other three are ordinary unbuilt work. PRD 0019 wants a reset time on its rate-limit error (`X-RateLimit-Reset`), pagination past the first page (`Link: rel="next"`), and ETag revalidation for its cache (`ETag` / `If-None-Match`); a polite retry after a secondary rate limit wants `Retry-After`. Each is filed as future work, which reads as "not done yet" and is really "the transport does not carry it".
+- **Resolution:** Resolved on 2026-08-24. Option 1 chosen and built: ck_http_ex parks {status,headers,body} with a fixed host-side header allowlist (RFC 0037, ADR 0049). gh_read moved onto it and now names the rate-limit reset time, closing PRD 0019's criterion. Two corrections to this report: std.http.Client.fetch does NOT have the head in hand (FetchResult carries only status), and ck_http was deliberately left on fetch, so two transports now exist. Link-based pagination and ETag revalidation are now buildable but still unbuilt.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Option 1 chosen and built: ck_http_ex parks {status,headers,body} with a fixed host-side header allowlist (RFC 0037, ADR 0049). gh_read moved onto it and now names the rate-limit reset time, closing PRD 0019's criterion. Two corrections to this report: std.http.Client.fetch does NOT have the head in hand (FetchResult carries only status), and ck_http was deliberately left on fetch, so two transports now exist. Link-based pagination and ETag revalidation are now buildable but still unbuilt.
 
 ## Symptom and impact
 
@@ -50,13 +50,43 @@ routinely in the head.
 
 ## Resolution
 
-**Open. Not fixed.** What landed on 2026-08-23 is a status channel only: on a
->= 400 response `writeHttpFailure` parks
-`{"ck_http_status":<code>,"body":"<2 KiB>"}` in the result slot. That closes
-"which error was it" and closes nothing else. It is deliberately not a header
-channel, and it should not be grown into one by accretion.
+**Fixed.** Option 1 below was chosen, argued in
+[RFC 0037](../../rfcs/0037-how-a-sandboxed-guest-reads-an-http-response-header.md)
+and recorded in
+[ADR 0049](../../adrs/0049-a-guest-reads-response-headers-through-an-allowlisted.md).
+`ck_http_ex` takes the same arguments as `ck_http` and always parks
+`{"status":N,"headers":{...},"body":"..."}` in the result slot; the exposed
+header names are the fixed host-side `exposed_response_headers` allowlist,
+lowercased, each value capped at 1 KiB. Any status the server produced is a
+success there, so the return code answers only whether the exchange happened --
+the report's own warning about the status envelope ("the contract is a comment
+rather than a type") is the reason one call carries all three parts.
+`ck_http` is untouched. `gh_read` is the first caller and now names the
+rate-limit reset time, which was PRD 0019's unmeetable criterion.
 
-Options, none chosen:
+Option 2 was rejected for exactly the reason this report gives against it.
+Option 3 was rejected because `gh_read` had already shipped one inference and a
+second consumer was foreseeable. A fourth and a fifth option that this report
+did not raise are in the RFC: a reserved key inside the existing request-header
+parameter, and granting `gh_read` `exec_allow: ["gh"]` so it could read headers
+from `gh api --include` without any ABI change at all. The second of those is
+genuinely cheaper and was rejected on privilege grounds, not cost.
+
+### One correction to this report
+
+> `std.http.Client` has the response head in hand at that point --
+> `result.status` is read for the >= 400 check -- and everything except the
+> status is dropped when `httpFetchTask` returns.
+
+Not so, and it changed the cost of every option. `std.http.Client.fetch`
+returns `FetchResult { status: http.Status }` and consumes `response.head`
+internally; the head is gone before `httpFetchTask` sees anything. Reading a
+header meant abandoning `fetch` for `request` + `sendBodiless`/`sendBodyUnflushed`
++ `receiveHead` and calling `Head.iterateHeaders()` -- reproducing `fetch`'s
+body, four-way content-encoding branch included. That reimplementation, not the
+ABI shape, was the risk in this change.
+
+Options as originally framed:
 
 1. **An allowlisted header map in the result envelope.** Return
    `{"status":N,"headers":{...},"body":"..."}` from a new `ck_http2`, with the
@@ -76,17 +106,76 @@ part that is not optional.
 
 ## Verification
 
-Nothing to verify: no fix is claimed. What is verified is the absence -- read
-from the two functions named above and from every `ck_http` signature in
-`tools/zig/lib.zig`, not inferred from a failing call.
+The absence was verified by reading the ABI, and that still stands. The fix is
+verified as follows.
+
+**Host-side, against a loopback server** (`src/sandbox/host.zig`), because a
+mock is the only way to control the framing:
+
+- Allowlisted names arrive (`etag`, `link`, `x-ratelimit-reset`,
+  `x-ratelimit-remaining`, `content-type`), lowercased. `Set-Cookie` in the same
+  response does **not** arrive -- the allowlist is asserted by a negative, not
+  assumed from the list's existence.
+- A chunked body reads back whole, and a 429 arrives as a *response* carrying
+  `Retry-After` rather than as an error.
+- A genuinely gzip-compressed body is decompressed. This one matters: it is the
+  branch RFC 0037 named as the main risk, and the live check below did **not**
+  cover it.
+- An over-long header value is capped rather than refusing the whole response.
+- `writeHttpEnvelope`'s exact bytes, because splicing pre-rendered JSON needs
+  `beginWriteRaw` and getting that wrong yields an envelope the guest cannot
+  parse.
+
+**Live, against `https://api.github.com/rate_limit`**, real TLS: status 200 and
+the envelope
+`{"content-type":"application/json; charset=utf-8","x-ratelimit-limit":"60","x-ratelimit-remaining":"54","x-ratelimit-reset":"1787571816"}`.
+That reset value is the one the ISO-8601 test pins as `2026-08-24T11:43:36Z`, so
+the number in the unit test came from the wire rather than from imagination.
+
+**End to end through the wasm boundary**, which neither of the above crosses: a
+sandbox runtime test loads the real `gh_read.wasm` with a deliberately invalid
+`GITHUB_TOKEN` and gets
+`{"ok":false,"error":"GITHUB_TOKEN rejected by GitHub (401); the token is
+invalid or expired"}` -- guest calls `ck_http_ex`, host fetches and envelopes,
+guest parses the status and renders the message. A 401 is a *response* on this
+channel, where `ck_http` would have produced a bare `error.NetworkError`.
+
+`clanker gate`: all twelve checks PASS, `sandbox-abi` included -- which is what
+pins the new `pub fn ckHttpEx` as actually registered with the zwasm linker
+rather than being a dead channel.
+
+### What is not covered
+
+- **`zstd` is untested.** The branch exists and is `fetch`'s own, but nothing
+  here serves a zstd body.
+- **The live check did not exercise compression.** `Accept-Encoding: gzip` was
+  sent and GitHub answered `content_encoding=identity` -- measured, not assumed
+  -- so TLS and real headers are proven live and gzip only against the mock.
+- **`ck_http` was not re-routed** through the head-retaining fetch, so no
+  existing guest's transport changed and nothing about them needed re-verifying.
+  The flip side is two transports in `host.zig`; ADR 0049's Consequences names
+  it and RFC 0037 leaves consolidation as follow-up.
+- **The reset time was not observed live on a real rate-limit response.**
+  Exhausting the quota to see it was not worth doing; the header is proven to
+  arrive live, and that it becomes "resets at <ISO8601>" is proven by unit test.
+- **`Link`-based pagination and `ETag` revalidation are not built.** They are
+  now buildable, which is the whole point of this change, and they are PRD 0019
+  work.
 
 ## Follow-up
 
-- Decide between options 1 and 2 before a second guest starts inferring
-  header facts from bodies; `gh_read` is one, and a paginating `web_fetch` would
-  be the second.
-- If it stays closed, PRD 0019's reset-time criterion should be marked
-  unshippable-as-designed rather than left as future work.
+- Consolidate the two transports: point `ck_http` at the head-retaining fetch
+  once a measurement shows no existing guest's behaviour changes. RFC 0037's
+  open question, unanswered rather than settled.
+- `gh_read`'s truncation inference should move to `Link: rel="next"`. It is now
+  buildable, and the inference is wrong on a final page of exactly `page_size`
+  items. PRD 0019 work: it changes a shipped output the tool's own
+  `llm_description` describes.
+- `ETag` revalidation for the `gh_cache`, likewise now buildable.
+- `zstd` has a branch and no test. Serve one, or narrow the branch.
+- PRD 0019's reset-time criterion is now met rather than unshippable, and its
+  Open-questions section is updated to say which of its parked items were
+  transport-blocked and which were merely unbuilt.
 
 ## References
 

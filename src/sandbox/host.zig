@@ -1808,6 +1808,29 @@ pub fn ckHttp(
     return httpImpl(h, bytes, method, url, body, hdr_json);
 }
 
+/// Same arguments as `ck_http`, different reply shape: the result slot carries
+/// `{"status":N,"headers":{...},"body":"..."}` for every response, so a guest
+/// can read `Link`, `ETag`, `Retry-After` and the rate-limit headers that
+/// `ck_http` has no channel for. Header names exposed are the fixed
+/// `exposed_response_headers` allowlist. See ADR 0049.
+pub fn ckHttpEx(
+    caller: *zwasm.Caller,
+    method: u32,
+    url_ptr: u32,
+    url_len: u32,
+    body_ptr: u32,
+    body_len: u32,
+    hdr_ptr: u32,
+    hdr_len: u32,
+) u32 {
+    const h = getHost(caller);
+    const bytes = memBytes(caller) orelse return Err.invalid;
+    const url = sliceOf(bytes, url_ptr, url_len) orelse return Err.invalid;
+    const body = sliceOf(bytes, body_ptr, body_len) orelse &.{};
+    const hdr_json = if (hdr_len > 0) sliceOf(bytes, hdr_ptr, hdr_len) else null;
+    return httpExImpl(h, bytes, method, url, body, hdr_json);
+}
+
 // Host-side implementation for the docker tool; registered in runtime.zig linkHostFns.
 
 /// Where Docker's Unix socket lives, most specific first. The Linux package
@@ -3085,6 +3108,78 @@ fn httpFetchTask(args: HttpFetchArgs, abort: *client.Abort, done: *std.Io.Event)
     return .{ .ok = w.end };
 }
 
+/// The response header names a guest may read, lowercase.
+///
+/// An allowlist, never a passthrough: a response header is attacker-controlled
+/// text arriving on the exact path the sandbox exists to confine, so the set is
+/// fixed here rather than chosen by the caller (ADR 0049, driver 1). Widening is
+/// the safe direction -- omitting a name only blocks a feature, adding one
+/// exposes text -- so add to this list rather than reaching for a wildcard.
+///
+/// Every entry earns its place from a criterion in PRD 0019: `link` is
+/// pagination (`rel="next"`), `x-ratelimit-reset`/`-remaining` are the quota and
+/// the reset time, `etag`/`last-modified` are revalidation, `retry-after` is a
+/// polite backoff after a secondary rate limit, and `content-type` is how a
+/// guest tells JSON from an HTML error page.
+const exposed_response_headers = [_][]const u8{
+    "content-type",
+    "etag",
+    "last-modified",
+    "link",
+    "retry-after",
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+    "x-ratelimit-reset",
+};
+
+/// Longest header value handed to a guest. `Link` on a paginated GitHub listing
+/// carries four absolute URLs and runs past 200 bytes, so the cap is generous;
+/// it exists because a server can answer with an arbitrarily long header and
+/// this text lands in the guest's result arena. Same reasoning as
+/// `http_failure_body_cap`, one field narrower.
+const max_exposed_header_value: usize = 1024;
+
+/// Room for the rendered `{"name":"value",...}` object. Bounded by the
+/// allowlist above times the value cap, and a caller-owned buffer rather than an
+/// arena allocation because it is filled inside the concurrent fetch task and
+/// read after it returns.
+const exposed_headers_buf_len: usize = exposed_response_headers.len * (max_exposed_header_value + 64) + 64;
+
+/// Whether `name` (in any case) is a header the guest is allowed to see.
+fn responseHeaderExposed(name: []const u8) bool {
+    for (exposed_response_headers) |allowed| {
+        if (std.ascii.eqlIgnoreCase(name, allowed)) return true;
+    }
+    return false;
+}
+
+/// Renders the allowlisted headers of `head` into `out` as a JSON object,
+/// returning how many bytes were written, or null if they did not fit.
+///
+/// Names are emitted lowercase so a guest can look one up without repeating the
+/// case-insensitive comparison; HTTP header names are case-insensitive on the
+/// wire and servers disagree in practice (`ETag` and `etag` both occur). A
+/// duplicate name keeps the first occurrence, since a second one would silently
+/// overwrite it in the guest's parsed object.
+fn writeExposedHeaders(out: []u8, head: std.http.Client.Response.Head) ?usize {
+    var w: std.Io.Writer = .fixed(out);
+    var s = std.json.Stringify{ .writer = &w };
+    s.beginObject() catch return null;
+    var seen: [exposed_response_headers.len]bool = @splat(false);
+    var it = head.iterateHeaders();
+    while (it.next()) |hdr| {
+        const idx = for (exposed_response_headers, 0..) |allowed, i| {
+            if (std.ascii.eqlIgnoreCase(hdr.name, allowed)) break i;
+        } else continue;
+        if (seen[idx]) continue;
+        seen[idx] = true;
+        s.objectField(exposed_response_headers[idx]) catch return null;
+        s.write(hdr.value[0..@min(hdr.value.len, max_exposed_header_value)]) catch return null;
+    }
+    s.endObject() catch return null;
+    return w.end;
+}
+
 /// How much of a >= 400 response body is handed back to the guest. An API
 /// error is a short JSON object (`{"message":"Not Found",...}`); the cap is
 /// there so a server that answers an error with a megabyte of HTML cannot eat
@@ -3114,6 +3209,98 @@ fn writeHttpFailure(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, code: u
     s.write(shown) catch return;
     s.endObject() catch return;
     _ = h.writeResult(mem_bytes, w.written());
+}
+
+/// `ck_http_ex`: one request, one self-describing reply.
+///
+/// The result slot always holds `{"status":N,"headers":{...},"body":"..."}`, and
+/// the return code answers only "did the exchange happen" -- `Err.ok` for any
+/// response the server produced, an error only for a denial, a timeout, a
+/// transport failure or a body that did not fit. That is deliberately unlike
+/// `ck_http`, where a `>= 400` is `Err.network` and the status is an optional
+/// afterthought a guest may forget to read (ADR 0049, driver 2: the contract is
+/// a type, not a comment). A guest here cannot get a reply without also getting
+/// the status and the allowlisted headers.
+fn httpExImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
+    const uri = std.Uri.parse(url) catch return Err.invalid;
+    const hostname = switch (uri.host orelse return Err.invalid) {
+        .raw => |hh| hh,
+        .percent_encoded => |hh| hh,
+    };
+
+    if (!networkAllowed(h.sandbox.network_allow, hostname)) {
+        log.log(.warn, "[sandbox] tool denied network access to '{s}'", .{hostname});
+        return Err.denied;
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var custom_hdrs: [max_custom_headers]std.http.Header = undefined;
+    const n_custom = parseCustomHeaders(arena, hdr_json, &custom_hdrs);
+
+    const resp_buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_http_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(resp_buf);
+    const hdr_buf = h.sandbox.gpa.alloc(u8, exposed_headers_buf_len) catch return Err.too_large;
+    defer h.sandbox.gpa.free(hdr_buf);
+
+    const req_method = httpMethodFromCode(method) orelse return Err.invalid;
+    const has_body = req_method == .POST or req_method == .PUT or req_method == .PATCH;
+    const args: HttpFetchArgs = .{
+        .io = h.sandbox.io,
+        .gpa = h.sandbox.gpa,
+        .url = url,
+        .method = req_method,
+        .payload = if (has_body) body else null,
+        .extra_headers = if (n_custom > 0) custom_hdrs[0..n_custom] else &.{},
+        .out = resp_buf,
+    };
+
+    const outcome = httpHeadWithTimeout(h.sandbox.io, args, hdr_buf, http_timeout_ms) orelse {
+        log.log(.warn, "[sandbox] http request to '{s}' timed out after {d}ms", .{ url, http_timeout_ms });
+        return Err.network;
+    };
+
+    return switch (outcome) {
+        .ok => |r| blk: {
+            if (r.status >= 400)
+                log.log(.warn, "[sandbox] http request to '{s}' answered status {d}", .{ url, r.status });
+            break :blk writeHttpEnvelope(h, mem_bytes, arena, r.status, hdr_buf[0..r.hdr_len], resp_buf[0..r.body_len]);
+        },
+        .too_large => blk: {
+            log.log(.warn, "[sandbox] http response from '{s}' exceeded max_http_bytes ({d})", .{ url, h.sandbox.max_http_bytes });
+            break :blk Err.too_large;
+        },
+        .transport => |name| blk: {
+            log.log(.warn, "[sandbox] http request to '{s}' failed: {s}", .{ url, name });
+            break :blk Err.network;
+        },
+    };
+}
+
+/// Writes `{"status":N,"headers":{...},"body":"..."}` into the result slot.
+///
+/// `headers_json` is already-rendered JSON, so it goes in through
+/// `beginWriteRaw` rather than `write` -- `objectField` emits only the key and
+/// the colon lives in the raw writer, which is the trap AGENTS.md names.
+/// Unlike `writeHttpFailure` this is not best-effort: it is the whole reply on
+/// the success path, so a failure to render it has to reach the guest as an
+/// error rather than as a silently empty slot.
+fn writeHttpEnvelope(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, status: u16, headers_json: []const u8, body: []const u8) u32 {
+    var w: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &w.writer };
+    s.beginObject() catch return Err.too_large;
+    s.objectField("status") catch return Err.too_large;
+    s.write(status) catch return Err.too_large;
+    s.objectField("headers") catch return Err.too_large;
+    s.beginWriteRaw() catch return Err.too_large;
+    w.writer.writeAll(headers_json) catch return Err.too_large;
+    s.endWriteRaw();
+    s.objectField("body") catch return Err.too_large;
+    s.write(body) catch return Err.too_large;
+    s.endObject() catch return Err.too_large;
+    return h.writeResult(mem_bytes, w.written());
 }
 
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
@@ -3179,6 +3366,119 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
             break :blk Err.network;
         },
     };
+}
+
+/// What one enveloped request did. Separate from `HttpOutcome` because the two
+/// entry points answer different questions: `ck_http` asks "did I get a body",
+/// so a `>= 400` is a failure there, while `ck_http_ex` asks "what did the
+/// server say", so any completed exchange is a success and the status rides in
+/// the envelope.
+const HttpHeadOutcome = union(enum) {
+    /// A response arrived, whatever its status. `hdr_len` is how much of the
+    /// caller's header buffer holds the rendered JSON object.
+    ok: struct { status: u16, body_len: usize, hdr_len: usize },
+    too_large,
+    transport: []const u8,
+};
+
+/// The head-retaining fetch, for `ck_http_ex`.
+///
+/// `std.http.Client.fetch` cannot serve this: it returns
+/// `FetchResult{ status }` and consumes `response.head` internally, so the
+/// headers are gone by the time it returns (RFC 0037 corrects the bug report on
+/// this point). The sequence below is `fetch`'s own body with two changes --
+/// the head is kept long enough to render the allowlisted headers, and the
+/// status is reported for every response rather than only for `>= 400`.
+///
+/// `ck_http` deliberately still goes through `std.http.Client.fetch`. Routing it
+/// here as well would put every existing guest's transport behind new code on
+/// the strength of a loopback test, and the measurement that would justify that
+/// is the open question RFC 0037 leaves for the follow-up. Two transports is a
+/// real cost, recorded rather than hidden: ADR 0049's Consequences names it.
+fn httpFetchHeadTask(args: HttpFetchArgs, hdr_out: []u8, abort: *client.Abort, done: *std.Io.Event) HttpHeadOutcome {
+    defer done.set(args.io);
+
+    var http: std.http.Client = .{ .allocator = args.gpa, .io = args.io };
+    defer http.deinit();
+    abort.arm(args.io, &http);
+    defer abort.disarm(args.io);
+
+    const uri = std.Uri.parse(args.url) catch return .{ .transport = "InvalidUrl" };
+    var req = http.request(args.method, uri, .{
+        .headers = .{ .user_agent = .{ .override = "clanker-tool/" ++ build_options.version } },
+        .extra_headers = args.extra_headers,
+        // Same reasoning as the `fetch` call in `httpFetchTask`: network_allow
+        // checks the requested hostname once, and a redirect target is never
+        // re-checked, so an allowed host could 302 the guest to an internal
+        // address. Refusing redirects keeps every request on the host that was
+        // actually checked. `.unhandled` is what makes `receiveHead` hand back
+        // the 3xx instead of following it, so the guest sees the redirect as a
+        // response (with its `Location` unexposed) rather than a transport
+        // error.
+        .redirect_behavior = .unhandled,
+    }) catch |err| return .{ .transport = @errorName(err) };
+    defer req.deinit();
+
+    if (args.payload) |payload| {
+        req.transfer_encoding = .{ .content_length = payload.len };
+        var body = req.sendBodyUnflushed(&.{}) catch |err| return .{ .transport = @errorName(err) };
+        body.writer.writeAll(payload) catch |err| return .{ .transport = @errorName(err) };
+        body.end() catch |err| return .{ .transport = @errorName(err) };
+        (req.connection orelse return .{ .transport = "NoConnection" }).flush() catch |err|
+            return .{ .transport = @errorName(err) };
+    } else {
+        req.sendBodiless() catch |err| return .{ .transport = @errorName(err) };
+    }
+
+    // Redirects are refused, so no redirect buffer is needed or wanted.
+    var response = req.receiveHead(&.{}) catch |err| return .{ .transport = @errorName(err) };
+    const status = @intFromEnum(response.head.status);
+    // Render the headers before reading the body: `head.bytes` is borrowed from
+    // the connection's read buffer, and streaming the body is what overwrites
+    // it. Rendering after the read returned an object of empty strings.
+    const hdr_len = writeExposedHeaders(hdr_out, response.head) orelse return .too_large;
+
+    // The four-way content_encoding branch is `fetch`'s, kept verbatim rather
+    // than simplified: a server may answer gzip whether or not it was asked,
+    // and treating a compressed body as identity hands the guest bytes it
+    // cannot parse.
+    const decompress_buffer: []u8 = switch (response.head.content_encoding) {
+        .identity => &.{},
+        .zstd => args.gpa.alloc(u8, std.compress.zstd.default_window_len) catch return .too_large,
+        .deflate, .gzip => args.gpa.alloc(u8, std.compress.flate.max_window_len) catch return .too_large,
+        .compress => return .{ .transport = "UnsupportedCompressionMethod" },
+    };
+    defer if (decompress_buffer.len > 0) args.gpa.free(decompress_buffer);
+
+    var w: std.Io.Writer = .fixed(args.out);
+    var transfer_buffer: [64]u8 = undefined;
+    var decompress: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompress, decompress_buffer);
+    _ = reader.streamRemaining(&w) catch |err| switch (err) {
+        // The only writer is the fixed buffer above, so a write failure is
+        // always "the body did not fit", never a socket problem -- the same
+        // reading `httpFetchTask` takes of `error.WriteFailed`.
+        error.WriteFailed => return .too_large,
+        else => return .{ .transport = @errorName(err) },
+    };
+
+    return .{ .ok = .{ .status = status, .body_len = w.end, .hdr_len = hdr_len } };
+}
+
+/// `httpWithTimeout` for the head-retaining task. Same abort-before-cancel
+/// ordering; kept separate only because the outcome type differs.
+fn httpHeadWithTimeout(io: std.Io, args: HttpFetchArgs, hdr_out: []u8, timeout_ms: u32) ?HttpHeadOutcome {
+    var abort: client.Abort = .{};
+    var done: std.Io.Event = .unset;
+
+    if (timeout_ms == 0) return httpFetchHeadTask(args, hdr_out, &abort, &done);
+
+    var future = io.concurrent(httpFetchHeadTask, .{ args, hdr_out, &abort, &done }) catch |err| {
+        log.log(.warn, "[sandbox] http request to '{s}' could not start: {s}", .{ args.url, @errorName(err) });
+        return .{ .transport = @errorName(err) };
+    };
+    if (!client.awaitTaskWithTimeout(io, &done, &future, &abort, timeout_ms)) return null;
+    return future.await(io);
 }
 
 /// Runs `httpFetchTask` under a wall-clock ceiling, returning null when the
@@ -3341,6 +3641,238 @@ test "writeHttpFailure parks a marked status envelope in the result slot" {
     const big = mem[host.result_ptr .. host.result_ptr + host.result_len];
     try std.testing.expect(big.len < huge.len);
     try std.testing.expect(std.mem.find(u8, big, "\"ck_http_status\":500") != null);
+}
+
+/// Answers one request with a caller-supplied *raw* response, headers and all,
+/// so a test can specify chunked framing, a content-encoding, or a header the
+/// allowlist must drop. `oneShotStatusServer` above always frames with
+/// Content-Length, which is the one case that cannot exercise any of those.
+fn oneShotRawServer(io: std.Io, server: *std.Io.net.Server, response: []const u8) void {
+    const stream = server.accept(io) catch return;
+    defer stream.close(io);
+    var tmp: [4096]u8 = undefined;
+    _ = std.posix.read(stream.socket.handle, &tmp) catch {};
+    var off: usize = 0;
+    while (off < response.len) {
+        const n = std.c.write(stream.socket.handle, response[off..].ptr, response.len - off);
+        if (n <= 0) return;
+        off += @intCast(n);
+    }
+}
+
+/// Runs one `httpFetchHeadTask` against a loopback server that answers
+/// `response` verbatim, and hands back the outcome plus the buffers it filled.
+const HeadProbe = struct {
+    outcome: ?HttpHeadOutcome,
+    body: []const u8,
+    headers: []const u8,
+};
+
+fn probeHeadFetch(io: std.Io, allocator: std.mem.Allocator, response: []const u8, body_buf: []u8, hdr_buf: []u8) !HeadProbe {
+    var addr = try std.Io.net.IpAddress.parseIp4("127.0.0.1", 0);
+    var server = try std.Io.net.IpAddress.listen(&addr, io, .{});
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    var future = try io.concurrent(oneShotRawServer, .{ io, &server, response });
+    var url_buf: [64]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/x", .{port});
+    const outcome = httpHeadWithTimeout(io, .{
+        .io = io,
+        .gpa = allocator,
+        .url = url,
+        .method = .GET,
+        .payload = null,
+        .extra_headers = &.{},
+        .out = body_buf,
+    }, hdr_buf, 10_000);
+    future.await(io);
+
+    if (outcome == null or outcome.? != .ok) return .{ .outcome = outcome, .body = "", .headers = "" };
+    const ok = outcome.?.ok;
+    return .{ .outcome = outcome, .body = body_buf[0..ok.body_len], .headers = hdr_buf[0..ok.hdr_len] };
+}
+
+test "the enveloped fetch hands the guest allowlisted headers and drops the rest" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Every `ck_http` variant returned the body and nothing else, so a guest
+    // could never read Link, ETag, X-RateLimit-Reset or Retry-After --
+    // pagination past page 1, an ETag cache and a rate-limit reset time were
+    // unbuildable rather than unbuilt (PRD 0019 lists all three as future
+    // work). `std.http.Client.fetch` cannot supply them: it returns
+    // `FetchResult{status}` and consumes the head.
+    var body_buf: [4096]u8 = undefined;
+    var hdr_buf: [exposed_headers_buf_len]u8 = undefined;
+    const probe = try probeHeadFetch(io, allocator, "HTTP/1.1 200 OK\r\n" ++
+        "Content-Type: application/json\r\n" ++
+        "ETag: \"abc123\"\r\n" ++
+        "Link: <https://api.github.com/x?page=2>; rel=\"next\"\r\n" ++
+        "X-RateLimit-Remaining: 57\r\n" ++
+        "X-RateLimit-Reset: 1787570000\r\n" ++
+        "Set-Cookie: session=secret\r\n" ++
+        "Content-Length: 2\r\n" ++
+        "Connection: close\r\n\r\n{}", &body_buf, &hdr_buf);
+
+    try std.testing.expect(probe.outcome != null);
+    try std.testing.expect(probe.outcome.? == .ok);
+    try std.testing.expectEqual(@as(u16, 200), probe.outcome.?.ok.status);
+    try std.testing.expectEqualStrings("{}", probe.body);
+
+    // The four facts PRD 0019 could not reach.
+    try std.testing.expect(std.mem.find(u8, probe.headers, "\"etag\":\"\\\"abc123\\\"\"") != null);
+    try std.testing.expect(std.mem.find(u8, probe.headers, "rel=\\\"next\\\"") != null);
+    try std.testing.expect(std.mem.find(u8, probe.headers, "\"x-ratelimit-reset\":\"1787570000\"") != null);
+    try std.testing.expect(std.mem.find(u8, probe.headers, "\"x-ratelimit-remaining\":\"57\"") != null);
+    try std.testing.expect(std.mem.find(u8, probe.headers, "\"content-type\":\"application/json\"") != null);
+
+    // An allowlist, not a passthrough: a header nobody asked to expose does not
+    // reach the guest. Set-Cookie is the one that matters -- it is the shape of
+    // thing the sandbox exists to keep out of guest memory.
+    try std.testing.expect(std.mem.find(u8, probe.headers, "Set-Cookie") == null);
+    try std.testing.expect(std.mem.find(u8, probe.headers, "session=secret") == null);
+    // And the names are lowercased, so a guest never case-folds.
+    try std.testing.expect(std.mem.find(u8, probe.headers, "\"ETag\"") == null);
+}
+
+test "the enveloped fetch reads a chunked body and reports a >= 400 as a response" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Chunked framing is where a hand-rolled body read goes wrong, and
+    // `oneShotStatusServer` cannot produce it (it always sends
+    // Content-Length). This is the case RFC 0037's confidence score was
+    // resting on.
+    var body_buf: [4096]u8 = undefined;
+    var hdr_buf: [exposed_headers_buf_len]u8 = undefined;
+    const chunked = try probeHeadFetch(io, allocator, "HTTP/1.1 429 Too Many Requests\r\n" ++
+        "Transfer-Encoding: chunked\r\n" ++
+        "Retry-After: 60\r\n" ++
+        "Connection: close\r\n\r\n" ++
+        "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n", &body_buf, &hdr_buf);
+
+    try std.testing.expect(chunked.outcome != null);
+    // A >= 400 is a *response* here, not an error: that is the whole difference
+    // from `ck_http`, where the status is an optional second read a guest can
+    // forget. The status arrives with the body or not at all.
+    try std.testing.expect(chunked.outcome.? == .ok);
+    try std.testing.expectEqual(@as(u16, 429), chunked.outcome.?.ok.status);
+    try std.testing.expectEqualStrings("hello world", chunked.body);
+    try std.testing.expect(std.mem.find(u8, chunked.headers, "\"retry-after\":\"60\"") != null);
+}
+
+test "the enveloped fetch decompresses a gzip body" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // The four-way `content_encoding` branch is the part of a hand-rolled body
+    // read most likely to be wrong, and neither the loopback tests above nor a
+    // live call to api.github.com exercise it -- GitHub answered
+    // `content_encoding=identity`, measured, so the live check proved TLS and
+    // real headers and *not* this. Serve a genuinely gzip-compressed body so
+    // the branch is covered by something rather than assumed.
+    const plain = "{\"items\":[1,2,3],\"note\":\"gzip round trip\"}" ** 8;
+    const window = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(window);
+    var gz_buf: [4096]u8 = undefined;
+    var gz_w: std.Io.Writer = .fixed(&gz_buf);
+    var compress = try std.compress.flate.Compress.init(&gz_w, window, .gzip, .default);
+    try compress.writer.writeAll(plain);
+    try compress.finish();
+    const gz = gz_w.buffered();
+
+    var resp_buf: [8192]u8 = undefined;
+    const head = try std.fmt.bufPrint(&resp_buf, "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nETag: \"gz1\"\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{gz.len});
+    @memcpy(resp_buf[head.len..][0..gz.len], gz);
+    const response = resp_buf[0 .. head.len + gz.len];
+
+    var body_buf: [4096]u8 = undefined;
+    var hdr_buf: [exposed_headers_buf_len]u8 = undefined;
+    const probe = try probeHeadFetch(io, allocator, response, &body_buf, &hdr_buf);
+    try std.testing.expect(probe.outcome != null);
+    try std.testing.expect(probe.outcome.? == .ok);
+    // Decompressed, not handed over as the compressed bytes a guest could not
+    // parse. The compressed form is shorter, so a pass-through would also fail
+    // this length check.
+    try std.testing.expectEqualStrings(plain, probe.body);
+    try std.testing.expect(gz.len < plain.len);
+    try std.testing.expect(std.mem.find(u8, probe.headers, "\"etag\":") != null);
+}
+
+test "an over-long header value is capped rather than refused" {
+    const allocator = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // A server can answer with an arbitrarily long header and this text lands
+    // in the guest's result arena. Truncating keeps the useful prefix of a long
+    // `Link`; refusing would lose the whole response over a header the guest
+    // may not even read.
+    const long = [_]u8{'u'} ** (max_exposed_header_value * 2);
+    var resp_buf: [max_exposed_header_value * 2 + 256]u8 = undefined;
+    const resp = try std.fmt.bufPrint(&resp_buf, "HTTP/1.1 200 OK\r\nETag: {s}\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx", .{&long});
+
+    var body_buf: [4096]u8 = undefined;
+    var hdr_buf: [exposed_headers_buf_len]u8 = undefined;
+    const probe = try probeHeadFetch(io, allocator, resp, &body_buf, &hdr_buf);
+    try std.testing.expect(probe.outcome != null);
+    try std.testing.expect(probe.outcome.? == .ok);
+    try std.testing.expectEqualStrings("x", probe.body);
+    // Present, and shorter than what the server sent.
+    try std.testing.expect(std.mem.find(u8, probe.headers, "\"etag\":") != null);
+    try std.testing.expect(probe.headers.len < long.len);
+}
+
+test "responseHeaderExposed is case-insensitive and closed" {
+    // Servers disagree on spelling: `ETag` and `etag` both occur in the wild.
+    try std.testing.expect(responseHeaderExposed("ETag"));
+    try std.testing.expect(responseHeaderExposed("etag"));
+    try std.testing.expect(responseHeaderExposed("X-RateLimit-Reset"));
+    try std.testing.expect(responseHeaderExposed("Link"));
+    // Closed by default. Authorization and Set-Cookie are the two whose
+    // accidental exposure would matter most, so they are named here rather
+    // than left to the general case.
+    try std.testing.expect(!responseHeaderExposed("Set-Cookie"));
+    try std.testing.expect(!responseHeaderExposed("Authorization"));
+    try std.testing.expect(!responseHeaderExposed("Location"));
+    try std.testing.expect(!responseHeaderExposed(""));
+}
+
+test "writeHttpEnvelope splices the rendered headers in as raw JSON" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var host = Host{
+        .sandbox = undefined,
+        .rng = std.Random.DefaultPrng.init(0),
+    };
+    var mem: [host_arena_cap + 64]u8 = undefined;
+
+    // `objectField` writes only the key -- the colon lives in the raw writer --
+    // so splicing pre-rendered JSON needs `beginWriteRaw`. Getting that wrong
+    // produces an envelope the guest's parser rejects, which is why the exact
+    // bytes are asserted rather than a substring.
+    const rc = writeHttpEnvelope(&host, &mem, arena_state.allocator(), 200, "{\"etag\":\"w1\"}", "hi");
+    try std.testing.expectEqual(Err.ok, rc);
+    try std.testing.expectEqualStrings(
+        \\{"status":200,"headers":{"etag":"w1"},"body":"hi"}
+    , mem[host.result_ptr .. host.result_ptr + host.result_len]);
+
+    // A response with no allowlisted header still carries an object, so a guest
+    // can look one up without checking for null first.
+    host.reset();
+    _ = writeHttpEnvelope(&host, &mem, arena_state.allocator(), 204, "{}", "");
+    try std.testing.expectEqualStrings(
+        \\{"status":204,"headers":{},"body":""}
+    , mem[host.result_ptr .. host.result_ptr + host.result_len]);
 }
 
 test "parseCustomHeaders parses valid JSON object into headers" {

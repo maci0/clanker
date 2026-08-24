@@ -38,15 +38,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         "{{\"Authorization\":\"Bearer {s}\",\"Accept\":\"application/vnd.github+json\",\"User-Agent\":\"clanker\"}}",
         .{token},
     );
-    const body = lib.httpGetHdr(full, headers) catch |err| {
-        // Every >= 400 response arrives as `error.NetworkError`, so the status
-        // has to be read out of the failure envelope before anything else is
-        // called -- the result slot it lives in is shared and never cleared.
-        if (err == error.NetworkError) {
-            if (lib.httpLastFailure(lib.alloc)) |fail| {
-                return lib.fail(out, try gh_format.statusMessage(lib.alloc, url, fail.status, fail.body));
-            }
-        }
+    // `httpGetFull` (ck_http_ex), not `httpGetHdr`: the reset time PRD 0019 asks
+    // for lives in `X-RateLimit-Reset` and nowhere else, so the older channel
+    // could not carry it however the guest was written. The status arrives with
+    // the response here rather than through a second read of a shared slot, so
+    // there is no ordering to get wrong either.
+    const resp = lib.httpGetFull(lib.alloc, full, headers) catch |err| {
         if (err == error.TooLarge) {
             // A list is fetched at the maximum page size, so the way to make it
             // fit is a smaller one. Naming the knob matters: the generic
@@ -61,16 +58,35 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
         return lib.failErr(out, err, url);
     };
+    const body = resp.body;
+    // The reset time GitHub sends as a Unix timestamp. Absent on a response
+    // that is not rate-limited, and `statusMessage` treats null as "say nothing
+    // about when", so a server that omits the header degrades to the message
+    // that shipped rather than to a wrong one.
+    const reset = resetEpoch(resp);
+
+    if (resp.status >= 400) {
+        return lib.fail(out, try gh_format.statusMessage(lib.alloc, url, resp.status, body, reset));
+    }
     // Kept as a second line of defence: a rate-limit answer that arrives with a
     // 200 (GitHub has done this behind proxies) is still a rate-limit answer,
-    // and caching it would pin the error for the whole TTL.
+    // and caching it would pin the error for the whole TTL. It now names the
+    // reset time too, since the header is on this response like any other.
     if (gh_format.looksLikeRateLimit(body)) {
-        return lib.fail(out, "GitHub rate limit exhausted");
+        return lib.fail(out, try gh_format.statusMessage(lib.alloc, url, 429, body, reset));
     }
 
     cachePut(url, body);
     const text = formatBody(ref, body) catch body;
     try lib.okText(out, text);
+}
+
+/// `X-RateLimit-Reset` as a Unix timestamp, or null when the header is absent or
+/// not an integer. Parsed here rather than host-side because the host's job is
+/// to decide *which* headers a guest may see, not to interpret them.
+fn resetEpoch(resp: lib.HttpResponse) ?i64 {
+    const raw = resp.header("x-ratelimit-reset") orelse return null;
+    return std.fmt.parseInt(i64, std.mem.trim(u8, raw, " \t"), 10) catch null;
 }
 
 fn cacheKey(url: []const u8) u64 {

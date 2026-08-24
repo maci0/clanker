@@ -147,7 +147,8 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_log` | Log a message |
 | `ck_now` | Get current timestamp |
 | `ck_random` | Generate random bytes |
-| `ck_http` | Make an HTTP request |
+| `ck_http` | Make an HTTP request. The result is the response body; a >= 400 collapses to `error.NetworkError` with an optional status envelope |
+| `ck_http_ex` | Same request, self-describing reply: the result is always `{"status":N,"headers":{...},"body":"..."}`, so the status arrives with the body and an allowlisted set of response headers (`link`, `etag`, `last-modified`, `retry-after`, `content-type`, `x-ratelimit-*`) comes with it. Any status is a success here; only a denial, timeout or transport failure is an error. See [ADR 0049](adrs/0049-a-guest-reads-response-headers-through-an-allowlisted.md) |
 | `ck_fs_read`, `ck_fs_read_range` | Read a file, or a byte range of one |
 | `ck_fs_write`, `ck_fs_write_range` | Write a file, or patch a range of one |
 | `ck_fs_write_if` | Compare-and-swap write: replace a file's contents only if its current SHA-256 matches the expected hex digest |

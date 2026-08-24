@@ -129,7 +129,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Resolved
 
-- [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-23-ck-http-hands-guests-no-response-headers.md) — Open
+- [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-23-ck-http-hands-guests-no-response-headers.md) — Resolved
 
 - [gh_read lists and diffs are silently cut to GitHub's default page of 30](bugs/2026-08-23-gh-read-lists-silently-cut-at-thirty.md) — Resolved
 

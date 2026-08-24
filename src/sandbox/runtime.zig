@@ -45,6 +45,7 @@ fn linkHostFns(lk: *zwasm.Linker, h: *host.Host) !void {
     try lk.defineFuncCtx("env", "ck_now", h, fn (*zwasm.Caller) u64, &host.ckNow);
     try lk.defineFuncCtx("env", "ck_random", h, fn (*zwasm.Caller) u64, &host.ckRandom);
     try lk.defineFuncCtx("env", "ck_http", h, fn (*zwasm.Caller, u32, u32, u32, u32, u32, u32, u32) u32, &host.ckHttp);
+    try lk.defineFuncCtx("env", "ck_http_ex", h, fn (*zwasm.Caller, u32, u32, u32, u32, u32, u32, u32) u32, &host.ckHttpEx);
     try lk.defineFuncCtx("env", "ck_fs_read", h, fn (*zwasm.Caller, u32, u32) u32, &host.ckFsRead);
     try lk.defineFuncCtx("env", "ck_fs_read_range", h, fn (*zwasm.Caller, u32, u32, u32, u32) u32, &host.ckFsReadRange);
     // Implemented in host.zig and never reachable: no registration meant no
@@ -511,6 +512,63 @@ test "chat wasm tool executes (send + history via ck_chat)" {
     try std.testing.expectEqual(@as(usize, 1), hist.len);
     try std.testing.expectEqualStrings("hello from wasm", hist[0].text);
     try std.testing.expectEqualStrings("test-clanker", hist[0].from);
+}
+
+test "gh_read reads a response status through ck_http_ex (skips when offline)" {
+    // The end-to-end shape of the new channel, through the real wasm boundary:
+    // guest calls `ck_http_ex`, host does the head-retaining fetch, renders the
+    // allowlisted headers, and parks the `{status, headers, body}` envelope; the
+    // guest parses it and turns the status into a message. The host-side tests
+    // in host.zig cover the transport against a loopback server, and
+    // `sandbox-abi` covers the registration, but neither of those crosses the
+    // ABI, and a channel no guest can actually reach is the failure mode
+    // `sandbox-abi` exists for.
+    //
+    // A deliberately invalid token is what makes this assertable without a
+    // credential: GitHub answers 401, which is a *response* on this channel
+    // rather than the bare `error.NetworkError` `ck_http` would have produced,
+    // so the assertion is on `statusMessage`'s 401 wording. Network-dependent,
+    // so an unreachable api.github.com skips instead of failing the gate.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("GITHUB_TOKEN", "not-a-real-token");
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = "/tmp/ck-sandbox-test",
+        .network_allow = &.{"api.github.com"},
+        .env_allow = &.{"GITHUB_TOKEN"},
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .state_dir = "",
+        .state_base_dir = tmp.dir,
+        .config_json = "{}",
+    };
+
+    const wasm = std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/gh_read.wasm", std.testing.allocator, .limited(1 << 20)) catch return error.SkipZigTest;
+    defer std.testing.allocator.free(wasm);
+
+    const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch return error.SkipZigTest;
+    defer mod.deinit();
+
+    const out = mod.executeTool("{\"url\":\"gh://issue/ziglang/zig/1\"}") catch return error.SkipZigTest;
+    defer std.testing.allocator.free(out);
+
+    // Offline, or GitHub answered something else: say nothing rather than fail
+    // the tool gate on a transient outage. The 401 is the only assertable case.
+    if (std.mem.find(u8, out, "401") == null) return;
+    try std.testing.expect(std.mem.find(u8, out, "rejected by GitHub") != null);
 }
 
 test "web_search wasm tool returns results from a live backend (skips when offline)" {
