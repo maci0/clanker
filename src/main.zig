@@ -405,22 +405,33 @@ pub fn main(init: std.process.Init) !void {
     // sees the profile; without this only --dump-config honored the flag.
     if (opts.profile) |p| config.setProfileOverlay(p);
     if (opts.dump_config) {
-        const merged: ?config.Config = if (opts.profile) |p| blk: {
-            break :blk config.Config.loadWithProfile(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml", p) catch null;
-        } else config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml") catch null;
-        if (merged) |c| {
-            // Allocating, not a fixed buffer: the merged config of a machine
-            // with a dozen providers is well past any stack-sized dump, and a
-            // config dump that silently stops halfway is worse than none.
-            var out: std.Io.Writer.Allocating = .init(arena);
-            if (c.writeJson(&out.writer)) {
-                cli.writeStdOut(init.io, out.written()) catch {};
-            } else |err| {
-                cli.printUsageError(init.io, "could not render the config as JSON ({s})", .{@errorName(err)});
-                std.process.exit(1);
+        // The load error is reported, never discarded. This used to
+        // `catch null` and print one "check config.toml syntax" line for every
+        // failure, so a missing profile, an unknown default_provider and a
+        // non-integer field were indistinguishable -- and the two that have
+        // nothing to do with config.toml still blamed it. Same hint table the
+        // normal path uses, so both surfaces name the same cause.
+        const merged: config.Config = (if (opts.profile) |p|
+            config.Config.loadWithProfile(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml", p)
+        else
+            config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml")) catch |err| {
+            if (config.Config.takeLoadDiagnostic()) {
+                cli.printUsageError(init.io, "could not load configuration ({s}); correct the setting reported above", .{@errorName(err)});
+            } else if (recoveryHint(err)) |h| {
+                cli.printUsageError(init.io, "could not load configuration ({s}): {s}", .{ @errorName(err), h });
+            } else {
+                cli.printUsageError(init.io, "could not load configuration ({s}); check config.toml syntax or run `clanker setup` to create one", .{@errorName(err)});
             }
-        } else {
-            cli.printUsageError(init.io, "could not load configuration; check config.toml syntax or run `clanker setup` to create one", .{});
+            std.process.exit(1);
+        };
+        // Allocating, not a fixed buffer: the merged config of a machine
+        // with a dozen providers is well past any stack-sized dump, and a
+        // config dump that silently stops halfway is worse than none.
+        var out: std.Io.Writer.Allocating = .init(arena);
+        if (merged.writeJson(&out.writer)) {
+            cli.writeStdOut(init.io, out.written()) catch {};
+        } else |err| {
+            cli.printUsageError(init.io, "could not render the config as JSON ({s})", .{@errorName(err)});
             std.process.exit(1);
         }
         std.process.exit(0);
@@ -454,30 +465,8 @@ pub fn main(init: std.process.Init) !void {
         // collector ingest path.
         const hint: ?[]const u8 = if (config.Config.takeLoadDiagnostic())
             "configuration is invalid; correct the setting reported above"
-        else switch (err) {
-            error.MissingConfig => "config.toml not found; run `clanker setup` to create one",
-            error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
-            error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
-            error.ModuleDisabled => "this module is disabled in config.toml",
-            error.UnknownProvider => "no provider by that name in the merged config (config.toml + config.local.toml); run `clanker providers check` for the list",
-            error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
-            error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",
-            error.TerminalSizeUnavailable => "terminal size is unavailable; resize the terminal and try again",
-            error.SessionNotFound => "no saved conversation by that id; run `clanker sessions` for the list",
-            error.GoalNotFound => "the requested saved goal does not exist; add it with `clanker add-goal` or choose an id from the goal board",
-            error.ImprovementNotFound => "no improvement by that id; they look like imp-... in state/improvements.jsonl",
-            error.ToolFailed => "the internal tool returned an error; run `clanker doctor` to check the build",
-            error.ToolBadOutput => "the internal tool returned unreadable output; run `clanker doctor` to check the build",
-            error.GateFailed => "one or more gates failed (see output above)",
-            error.EvalsFailed => "one or more evals failed (see output above)",
-            error.UnknownEval => "no eval by that name; run `clanker eval` with no argument to list them",
-            error.PresetsDirUnusable => "presets/ could not be created or opened; check permissions in the working directory",
-            error.HttpError => "the HTTP request failed; check the provider's status and your network",
-            error.HttpStatus => "the remote server answered with an HTTP error; check the URL and your network",
-            error.ArenaRefused => "the arena match was refused (see output above)",
-            error.CompareRefused => "the comparison was refused (see output above)",
-            else => null,
-        };
+        else
+            recoveryHint(err);
         if (hint) |h| {
             cli.printUsageError(init.io, "{s}", .{h});
         } else {
@@ -485,4 +474,53 @@ pub fn main(init: std.process.Init) !void {
         }
         std.process.exit(1);
     };
+}
+
+/// The operator-facing recovery line for a failure, or null when the bare
+/// error name is all there is to say. A function rather than an inline switch
+/// because `--dump-config` needs the same table: it used to `catch null` the
+/// load and report "check config.toml syntax" for every error, so a typo'd
+/// `--profile`, an unknown `default_provider` and a bad integer all blamed a
+/// file that was fine, while the normal path a few lines above named each one.
+fn recoveryHint(err: anyerror) ?[]const u8 {
+    return switch (err) {
+        error.MissingConfig => "config.toml not found; run `clanker setup` to create one",
+        error.MissingProfile => "the --profile name has no profiles/<name>.toml; see the path named above, or drop --profile",
+        error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
+        error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
+        error.ModuleDisabled => "this module is disabled in config.toml",
+        error.UnknownProvider => "no provider by that name in the merged config (config.toml + config.local.toml); run `clanker providers check` for the list",
+        error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
+        error.InvalidSessionId => "invalid session id; use 1-64 letters, numbers, dashes, or underscores",
+        error.TerminalSizeUnavailable => "terminal size is unavailable; resize the terminal and try again",
+        error.SessionNotFound => "no saved conversation by that id; run `clanker sessions` for the list",
+        error.GoalNotFound => "the requested saved goal does not exist; add it with `clanker add-goal` or choose an id from the goal board",
+        error.ImprovementNotFound => "no improvement by that id; they look like imp-... in state/improvements.jsonl",
+        error.ToolFailed => "the internal tool returned an error; run `clanker doctor` to check the build",
+        error.ToolBadOutput => "the internal tool returned unreadable output; run `clanker doctor` to check the build",
+        error.GateFailed => "one or more gates failed (see output above)",
+        error.EvalsFailed => "one or more evals failed (see output above)",
+        error.UnknownEval => "no eval by that name; run `clanker eval` with no argument to list them",
+        error.PresetsDirUnusable => "presets/ could not be created or opened; check permissions in the working directory",
+        error.HttpError => "the HTTP request failed; check the provider's status and your network",
+        error.HttpStatus => "the remote server answered with an HTTP error; check the URL and your network",
+        error.ArenaRefused => "the arena match was refused (see output above)",
+        error.CompareRefused => "the comparison was refused (see output above)",
+        else => null,
+    };
+}
+
+test "a missing profile and a missing config.toml do not share one hint" {
+    // The two used to be the same error value (`.overlay` reused
+    // `.required`'s error.MissingConfig), so `--profile typo` printed
+    // "config.toml not found; run `clanker setup` to create one" -- a file
+    // that exists, and a remedy that cannot help. Distinct errors are only
+    // half the fix; the table has to distinguish them too.
+    const missing_profile = recoveryHint(error.MissingProfile).?;
+    const missing_config = recoveryHint(error.MissingConfig).?;
+    try std.testing.expect(!std.mem.eql(u8, missing_profile, missing_config));
+    // And it has to name the layer that actually failed.
+    try std.testing.expect(std.mem.find(u8, missing_profile, "profiles/") != null);
+    try std.testing.expect(std.mem.find(u8, missing_profile, "--profile") != null);
+    try std.testing.expect(std.mem.find(u8, missing_profile, "clanker setup") == null);
 }

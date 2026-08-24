@@ -37,44 +37,46 @@ Constraints: keep `config.toml < config.local.toml < profiles/<name>.toml < env 
 
 ## Known issues
 
-The layering slot is correct: the overlay does merge after `config.local.toml`
-and before anything env- or flag-derived. The edges are not.
+None open. The layering slot was always correct -- the overlay merges after
+`config.local.toml` and before anything env- or flag-derived -- and the six
+edge defects below were fixed on 2026-08-24.
 
-1. **A missing `profiles/<name>.toml` is reported as
-   "config.toml not found; run `clanker setup`".** The `.overlay` FileNotFound
-   arm reuses `.required`'s `error.MissingConfig`, so the error carries nothing
-   about which layer failed and `main.zig`'s hint table blames the base config —
-   pointing at a file that exists and prescribing a remedy that cannot help.
-   Contradicts the failure-modes table below.
+1. ~~**A missing `profiles/<name>.toml` is reported as "config.toml not
+   found; run `clanker setup`".**~~ Fixed: `.overlay` returns
+   `error.MissingProfile`, not `.required`'s `error.MissingConfig`, and logs
+   the path it looked for. `main.zig`'s hint table has its own row.
    [Bug](../reports/bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md).
 
-2. **`profiles/<name>.local.toml` is never read**, though Goal 1 names it and
-   is marked shipped. `Config.load` builds exactly one path. Same bug record.
+2. ~~**`profiles/<name>.local.toml` is never read.**~~ Fixed: `loadInner`
+   loads it `.optional` after `profiles/<name>.toml`, so it merges last, the
+   way `config.local.toml` does over the base file. Same bug record.
 
-3. **`--dump-config` erases the real load error.** It does
-   `loadWithProfile(...) catch null` and then reports a `config.toml` syntax
-   problem regardless of which error occurred, while the normal path a few
-   lines below has a per-error hint table. Same bug record.
+3. ~~**`--dump-config` swallows the real error.**~~ Fixed: the `catch null` is
+   gone and the load error is reported through `recoveryHint`, the same table
+   the normal command path uses. Same bug record.
 
-4. **`--dump-config` leaks the secret half of a header whose value contains
-   `=`.** The redaction helper serves both `env` (`NAME=value`) and `headers`
-   (`Name: value`) and prefers `=` unconditionally, so a base64-padded `Basic`
-   credential is printed one character short of whole. The existing test uses a
-   value with no `=`.
+4. ~~**`--dump-config` leaks the secret half of a header whose value contains
+   `=`.**~~ Fixed: `writeKvNames` takes the separator from the caller -- `'='`
+   for `env`, `':'` for `headers` -- and the test carries a base64-padded
+   `Basic` credential on both sides.
    [Bug](../reports/bugs/2026-08-23-dump-config-header-redaction-cuts-on-equals.md).
 
-5. **`--profile` is dropped on a `serve` hot-reload re-exec.**
-   `buildServeArgvTail` does not repeat it, so `clanker serve --profile web`
-   reverts to base+local after the first rebuild or config-edit restart, with no
-   log line saying so — the exact failure its own docstring warns about.
+5. ~~**`--profile` is dropped on a `serve` hot-reload re-exec.**~~ Fixed:
+   `buildServeArgvTail` repeats it, and the round trip through `parse` is
+   pinned by a test.
 
-6. **The overlay name is `threadlocal`**, armed on the main thread, so
-   `ConfigWatch`'s spawned thread validates base+local only. A profile that is
-   what makes the stack valid makes every config edit log "config changed but
-   does not load … keeping the last known good config" against a process that is
-   running fine; the reverse case green-lights a restart into a config that
-   cannot boot.
+6. ~~**The overlay name is `threadlocal`.**~~ Fixed: it is a process-global
+   written once on the main thread, so `ConfigWatch`'s spawned thread
+   validates the stack the process is actually running. The watcher also stats
+   both halves of the named profile, so an edit to a profile is a config
+   change like any other.
 
+Verified end to end, not only by unit test: with a `config.local.toml` whose
+`default_provider` only the profile defines, `clanker serve --profile fix`
+re-exec'd on a config edit as
+`serve --profile fix --host 127.0.0.1 --webui-port 17944 --no-proxy` and the
+child booted. The same edit would have logged "config changed but does not
+load" and then died on `DefaultProviderUnknown` before the fix.
 ## Failure modes
 
 | Condition | Behaviour |
