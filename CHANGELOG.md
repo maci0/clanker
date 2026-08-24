@@ -68,6 +68,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `scripts/verify.sh` applies the dependency patches before running
+  `clanker gate`, not after. The gate's twelfth check `dep-patches` fails
+  while `zig-pkg/` holds pristine upstream trees, so on a fresh clone or any
+  hand-made worktree the documented pre-push check failed on the line
+  immediately before the one that would have fixed it — and the gate's own
+  remedy message named that next line.
+
 - A fenced line longer than 4 KiB is no longer silently cut in `clanker run`.
   The streaming markdown renderer buffers each fenced line before handing it
   to the highlighter, and every byte past the buffer was discarded with no
