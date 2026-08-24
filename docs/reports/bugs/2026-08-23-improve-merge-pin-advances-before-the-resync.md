@@ -90,17 +90,3 @@ pin to advance past it.
 - Code: `src/improve/worktree.zig` (`mergeBack`, `advanceCreatedFrom`,
   `resyncLocalBranch`, `resyncBaseCheckout`, `mergeTree`)
 - Related: `docs/reports/bugs/2026-08-19-improve-self-merge-leaves-worktree-reverted.md`
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

@@ -65,17 +65,3 @@ it, but the redaction of `env`/`headers` right beside it shows the intent.
 - PRD: [0042-config-profiles-profile-and-dump-config-file-overlay.md](../../prds/0042-config-profiles-profile-and-dump-config-file-overlay.md)
 - Code: `src/config.zig` (`writeKvNames` and its caller's `env`/`headers`
   dispatch)
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

@@ -118,17 +118,3 @@ no-op rather than a 400.
   `src/llm/providers/vertex.zig` (`buildRequest`, the Gemini branch),
   `src/llm/providers/common.zig` (`resolveSampling`),
   `src/llm/sampling_profiles.zig`
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

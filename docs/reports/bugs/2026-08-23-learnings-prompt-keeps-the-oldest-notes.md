@@ -106,17 +106,3 @@ rather than read-then-cap.
   `tools/zig/write_note.zig` (the append-only writer)
 - Same shape, done right: `src/agent/auto_learn.zig`,
   `src/improve/history.zig` (`tailLines`)
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

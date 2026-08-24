@@ -89,17 +89,3 @@ Two adjacent problems found in the same sweep, both worth their own fix:
 - Code: `src/config.zig` (`load`/`loadWithProfile`, the `.overlay` FileNotFound
   arm, `overlay_profile`), `src/main.zig` (the hint table, `--dump-config`),
   `src/cli.zig` (`buildServeArgvTail`, `ConfigWatch`/`configLoads`)
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet
