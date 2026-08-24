@@ -66,6 +66,52 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   next merge read the branch side as a deletion of everything the previous
   merge folded in.
 
+- An agent preset's denied tools are no longer offered to the model. The mask
+  was applied at one call site in `clanker run`, and `Agent.init` then rebuilt
+  the tool list from the registry whenever the tool catalog was on (the
+  default), throwing that filtered list away; the preset itself was assigned
+  onto the agent only after `init` returned, so the system prompt's tool
+  catalog enumerated every denied tool too. `load_tools` could re-reveal a
+  denied tool with its full schema, and a mid-run `rebuildToolDefs` un-masked
+  the list again. Only the dispatch gate refused, so a `--preset research` run
+  degraded into the model repeatedly reaching for `edit_file` and being told
+  no. The preset is now a parameter of `Agent.init`, the registry's tool-list
+  and catalog-text builders take it, `load_tools` reports a denied name as
+  `denied` rather than revealing it, and `load_tools` itself stays offered so a
+  preset with a `tools_allow` list keeps the catalog's only door.
+
+- `clanker repl --preset <name>` does something. The flag was accepted,
+  documented in `repl --help`, and listed as valid for `repl`, but nothing
+  passed it through: the session opened with no preset, no status pill and no
+  `system_prompt_append`. It now seeds the same session preset `/preset <name>`
+  sets, and a preset that does not exist or does not parse refuses to open the
+  session instead of starting one silently unfiltered.
+
+- A preset's `system_prompt_append` survives the first turn. It was appended to
+  the agent's prompt once, after construction, and the per-turn prompt refresh
+  then rebuilt the prompt from scratch without it, so the preset persona was
+  present for exactly as long as it took to send the first request.
+
+- A whitespace-only hook command in `hooks.json` no longer panics the agent.
+  The command validator's trim set was written as a plain string literal with
+  unescaped backslashes, so it trimmed the bytes `\`, `t`, `r` and `n` instead
+  of whitespace: a command that was a bare tab passed validation, split to a
+  zero-length argv, and the runner's warning then indexed `argv[0]` on the
+  empty slice. The same literal rejected a whole hooks file for a command
+  spelled `nrt`, which disabled every hook for the run. The trim set is
+  `std.ascii.whitespace` and the runner's three warning lines no longer index
+  an argv they did not check.
+
+- A hook with `"timeout": 0` is refused instead of running without a deadline.
+  It passed validation and the host reads a zero timeout as *no* timeout, so
+  such a hook could block the turn forever.
+
+- `auto_thinking` with an unresolvable classifier says so. A typo'd
+  `agent.thinking_classifier_model` disabled the feature invisibly: the "no
+  classifier provider" path logged at debug level, on every turn. It now warns
+  once per process, names the spelling that resolved to nothing, and says the
+  turn falls back to the configured `reasoning_effort`.
+
 - `kind = "grok"` no longer discards a configured per-model `temperature` and
   `top_p`. The Responses codec read only `RequestParams.temperature`/`top_p`,
   which the agent loop never sets and the web UI's per-run override writes

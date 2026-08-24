@@ -22,6 +22,15 @@ pub const Classification = struct {
     duration_ms: u64,
 };
 
+/// One "no classifier provider" warning per process, not one per turn.
+///
+/// PRD 0020's failure-modes table asks for a startup warning here. It used to
+/// log at `.debug`, on every turn, so a typo'd `thinking_classifier_model`
+/// disabled auto-thinking with nothing visible at the default log level. The
+/// latch is what makes `.warn` affordable: `classify` runs once per turn, and a
+/// warning repeated every turn is noise an operator learns to skip.
+var no_provider_warned = std.atomic.Value(bool).init(false);
+
 /// Cheapest configured provider by `cost_per_1m_input`, then first name.
 pub fn cheapestProvider(cfg: *const config.Config) ?*const config.Provider {
     var best: ?*const config.Provider = null;
@@ -85,7 +94,21 @@ pub fn classify(
 ) ?Classification {
     if (!cfg.agent.auto_thinking) return null;
     const provider = resolveClassifier(cfg) orelse {
-        log.log(.debug, "auto-thinking skipped: no classifier provider", .{});
+        if (!no_provider_warned.swap(true, .monotonic)) {
+            if (cfg.agent.thinking_classifier_model.len > 0) {
+                log.log(
+                    .warn,
+                    "auto_thinking is on but thinking_classifier_model '{s}' names no configured provider; every turn falls back to the default reasoning_effort",
+                    .{cfg.agent.thinking_classifier_model},
+                );
+            } else {
+                log.log(
+                    .warn,
+                    "auto_thinking is on but no provider is configured to classify with; every turn falls back to the default reasoning_effort",
+                    .{},
+                );
+            }
+        }
         return null;
     };
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -202,4 +225,25 @@ test "resolveClassifier: provider/model only splits when the head is a real prov
     // is the whole spec) fails open rather than guessing.
     cfg.agent.thinking_classifier_model = "moonshotai/kimi-k3";
     try std.testing.expect(resolveClassifier(&cfg) == null);
+}
+
+test "a missing classifier provider warns once, not once per turn" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    // No providers at all, so resolveClassifier fails before any network use.
+    var cfg = config.Config{};
+    cfg.agent.auto_thinking = true;
+    cfg.agent.thinking_classifier_model = "typo_provider";
+
+    no_provider_warned.store(false, .monotonic);
+    try std.testing.expect(classify(io, std.testing.allocator, &env, &cfg, "hello") == null);
+    // The latch is the assertion: the second turn takes the same branch and
+    // must not log again.
+    try std.testing.expect(no_provider_warned.load(.monotonic));
+    try std.testing.expect(classify(io, std.testing.allocator, &env, &cfg, "hello") == null);
+    try std.testing.expect(no_provider_warned.load(.monotonic));
 }
