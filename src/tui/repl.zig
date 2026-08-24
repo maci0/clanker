@@ -9026,7 +9026,7 @@ fn readAttachments(
 /// `image/png`, as this used to) buys nothing but an opaque provider 400 a
 /// whole turn later.
 fn imageMimeForPath(path: []const u8) ?[]const u8 {
-    const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse return null;
+    const dot = std.mem.findScalarLast(u8, path, '.') orelse return null;
     const ext = path[dot + 1 ..];
     if (std.ascii.eqlIgnoreCase(ext, "png")) return "image/png";
     if (std.ascii.eqlIgnoreCase(ext, "jpg") or std.ascii.eqlIgnoreCase(ext, "jpeg")) return "image/jpeg";
