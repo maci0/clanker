@@ -7968,6 +7968,26 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             });
             return;
         }
+        // RFC 9110 9.3.2: a HEAD answers the headers its GET would answer,
+        // Content-Length included, and none of the body. Every route predicate
+        // below compares `method` literally, and only the `/webui` ones went
+        // through `isWebuiRead`, so `HEAD /api/status` matched nothing and fell
+        // all the way to the terminal 404 -- which also carried
+        // `Connection: close`, because `keep_alive_eligible` had the same
+        // asymmetry: `isWebuiRead` on its webui half, a bare GET compare on its
+        // `/api/` half.
+        //
+        // Routing the HEAD as the GET it mirrors, once and here, is what keeps
+        // the two in step: thirty-odd predicates cannot drift from each other
+        // if none of them knows about HEAD. Nothing writes a body it should
+        // not, because `respond` and every asset responder already suppress it
+        // from `request_head`. `request_method` was captured above, before this
+        // point, so the completion log line still says HEAD.
+        //
+        // Deliberately after the proxy dispatch: `/proxy/v1` is a different
+        // surface with its own method handling, and the cross-origin check
+        // above has already read the real method.
+        if (request_head and !streamingReadRoute(path)) method = "GET";
         if (surface == .proxy) {
             if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/live")) {
                 respond(stream, 200, "OK", "{\"ok\":true,\"status\":\"live\"}");
@@ -8057,6 +8077,11 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // GET /api/events opts back out below before it streams. The flag is
         // only ever set here, after the request was fully read, so a reused
         // connection never starts mid-body.
+        //
+        // A HEAD reaches both halves because `method` was already rewritten to
+        // GET above. The two halves used to disagree -- `isWebuiRead` here, a
+        // bare GET compare there -- and a HEAD on an /api route lost keep-alive
+        // on top of 404ing.
         const keep_alive_eligible = (is_webui and isWebuiRead(method) and cfg.modules.webui) or
             (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/"));
         // The budget is part of eligibility, not an afterthought: the last
@@ -10552,6 +10577,19 @@ fn isWebuiIndexPath(path: []const u8) bool {
 
 fn isWebuiRead(method: []const u8) bool {
     return std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD");
+}
+
+/// The one read route a HEAD must not be routed to as its GET.
+///
+/// `handleConnection` rewrites a HEAD to a GET before the route chain so every
+/// read route answers it, and that works because each of those routes has a
+/// fixed body a `Content-Length` can describe. `GET /api/events` does not: it
+/// is an unbounded SSE stream, and routing a HEAD there would hand the client
+/// an open stream where it is waiting for a header block and nothing else.
+/// Kept as a path check rather than folded into the chain so the exception is
+/// one line, in one place, and greppable.
+fn streamingReadRoute(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/api/events");
 }
 
 /// Process-wide 8-hex tag derived from the webui wasm + key vendor embeds.
@@ -19660,6 +19698,121 @@ test "a HEAD answer carries the headers and none of the body, and keeps the conn
     const get_sep = std.mem.find(u8, get_out, "\r\n\r\n") orelse return error.NoHeaderTerminator;
     try std.testing.expectEqualStrings(body, get_out[get_sep + 4 ..]);
     try std.testing.expect(std.mem.find(u8, get_out, "Connection: keep-alive\r\n") != null);
+}
+
+/// The port the route tests below claim in their `Host` header. Nothing is
+/// bound: `handleConnection` reads the request off a socket pair, so the number
+/// only has to match what `unexpectedHost` is told to expect.
+const test_route_port: u16 = 17921;
+
+/// Drives one whole request through `handleConnection` over a socket pair and
+/// hands back every byte it answered.
+///
+/// `respondCapture` above tests one responder with the threadlocals set by
+/// hand; this tests the route chain, which is a different thing and the only
+/// place a "which method reaches which route" claim can be checked. No
+/// listener is involved, so it runs anywhere the rest of the suite does.
+fn routeCapture(buf: []u8, request: []const u8) ![]const u8 {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    const cfg = config.Config{};
+
+    const pair = try testRespondSocketPair();
+    defer _ = std.c.close(pair[1]);
+
+    const wrote = std.c.write(pair[1], request.ptr, request.len);
+    if (wrote != @as(isize, @intCast(request.len))) return error.ShortWrite;
+    // Half-close so the read loop sees the request and then EOF rather than
+    // waiting on a client that has nothing more to say.
+    _ = std.c.shutdown(pair[1], std.posix.SHUT.WR);
+
+    const saved_head = request_head;
+    const saved_keep_alive = request_keep_alive;
+    const saved_status = request_status;
+    const saved_budget = request_spends_keep_alive_budget;
+    defer {
+        request_head = saved_head;
+        request_keep_alive = saved_keep_alive;
+        request_status = saved_status;
+        request_spends_keep_alive_budget = saved_budget;
+    }
+    request_keep_alive = false;
+    request_spends_keep_alive_budget = false;
+
+    handleConnection(io, std.testing.allocator, &cfg, &env, test_route_port, &.{}, .{ .socket = .{ .handle = pair[0], .address = undefined } }, .webui);
+    _ = std.c.close(pair[0]);
+
+    var used: usize = 0;
+    while (used < buf.len) {
+        const n = std.c.read(pair[1], buf[used..].ptr, buf.len - used);
+        if (n <= 0) break;
+        used += @intCast(n);
+    }
+    return buf[0..used];
+}
+
+fn testRequest(buf: []u8, method: []const u8, target: []const u8) ![]const u8 {
+    return std.fmt.bufPrint(buf, "{s} {s} HTTP/1.1\r\nHost: 127.0.0.1:{d}\r\n\r\n", .{ method, target, test_route_port });
+}
+
+test "HEAD reaches an /api route and answers what the GET would, minus the body" {
+    // Every /api predicate in the route chain compared the method to GET
+    // literally, so a HEAD matched none of them and fell to the terminal 404 --
+    // measured live as `HTTP/1.1 404 Not Found` with `Connection: close` on
+    // `HEAD /api/status`, where the GET is a 200. RFC 9110 9.3.2 wants the
+    // GET's status and headers with no content.
+    var req_buf: [128]u8 = undefined;
+    var out_buf: [1 << 16]u8 = undefined;
+
+    const head_out = try routeCapture(&out_buf, try testRequest(&req_buf, "HEAD", "/api/status"));
+    try std.testing.expect(std.mem.startsWith(u8, head_out, "HTTP/1.1 200 OK\r\n"));
+    // Keep-alive is the second half of the same asymmetry: the eligibility
+    // expression used isWebuiRead for /webui and a bare GET compare for /api,
+    // so a client sweeping routes with HEAD paid a handshake per probe.
+    try std.testing.expect(std.mem.find(u8, head_out, "Connection: keep-alive\r\n") != null);
+    const head_sep = std.mem.find(u8, head_out, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    try std.testing.expectEqual(@as(usize, 0), head_out.len - (head_sep + 4));
+
+    // Control, same route: the GET still carries its body, and the declared
+    // length the HEAD advertised is the length the GET actually sends.
+    var get_out_buf: [1 << 16]u8 = undefined;
+    const get_out = try routeCapture(&get_out_buf, try testRequest(&req_buf, "GET", "/api/status"));
+    try std.testing.expect(std.mem.startsWith(u8, get_out, "HTTP/1.1 200 OK\r\n"));
+    const get_sep = std.mem.find(u8, get_out, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    const get_body = get_out[get_sep + 4 ..];
+    try std.testing.expect(get_body.len > 0);
+    var len_buf: [48]u8 = undefined;
+    const declared = try std.fmt.bufPrint(&len_buf, "Content-Length: {d}\r\n", .{get_body.len});
+    try std.testing.expect(std.mem.find(u8, head_out, declared) != null);
+
+    // Not one route special-cased: the rewrite sits ahead of the whole chain,
+    // so a second read route with a different handler answers too.
+    var ready_buf: [4096]u8 = undefined;
+    const ready = try routeCapture(&ready_buf, try testRequest(&req_buf, "HEAD", "/health/ready"));
+    try std.testing.expect(std.mem.startsWith(u8, ready, "HTTP/1.1 200 OK\r\n"));
+    const ready_sep = std.mem.find(u8, ready, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    try std.testing.expectEqual(@as(usize, 0), ready.len - (ready_sep + 4));
+}
+
+test "a HEAD is not routed into the SSE stream, and a POST-only route still refuses it" {
+    var req_buf: [128]u8 = undefined;
+    var out_buf: [4096]u8 = undefined;
+
+    // /api/events is the one read route with no fixed body: rewriting the HEAD
+    // to a GET here would open an unbounded event stream for a client that
+    // asked for a header block. It stays unmatched, so it 404s.
+    const events = try routeCapture(&out_buf, try testRequest(&req_buf, "HEAD", "/api/events"));
+    try std.testing.expect(std.mem.startsWith(u8, events, "HTTP/1.1 404 Not Found\r\n"));
+    try std.testing.expect(std.mem.find(u8, events, "text/event-stream") == null);
+
+    // The rewrite makes a HEAD read-shaped, never write-shaped: /api/run is
+    // POST-only and a HEAD must not reach it.
+    var run_buf: [4096]u8 = undefined;
+    const post_only = try routeCapture(&run_buf, try testRequest(&req_buf, "HEAD", "/api/run"));
+    try std.testing.expect(std.mem.startsWith(u8, post_only, "HTTP/1.1 404 Not Found\r\n"));
 }
 
 test "isWebuiRead treats HEAD like GET" {

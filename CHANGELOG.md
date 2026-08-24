@@ -68,6 +68,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `HEAD` on an `/api` route answers what the `GET` answers, minus the body,
+  instead of 404ing and closing the connection. Every `/api` predicate in the
+  route chain compared the method to `GET` literally — only the `/webui`
+  routes went through the GET-or-HEAD predicate — so `HEAD /api/status` fell
+  past the whole chain to the terminal 404, and the keep-alive expression had
+  the same asymmetry on its two halves, so a client sweeping routes with
+  `HEAD` also paid a TCP handshake per probe. A `HEAD` is now routed as the
+  `GET` it mirrors, once, before the chain; the responders already suppressed
+  the body, and the completion log line still records the real method. Routes
+  that dispatch on the method inside their handler (`/api/board`,
+  `/api/sessions`, `/api/records/*`) answer a `HEAD` from their read branch for
+  the same reason. `GET /api/events` is the one exception and still 404s a
+  `HEAD`: an SSE stream has no fixed body to describe, and routing a `HEAD`
+  there would open a stream the client is waiting for headers from. Write
+  routes are unaffected — the rewrite makes a `HEAD` read-shaped, never
+  write-shaped, so `HEAD /api/run` is still a 404.
+
 - `scripts/apply-patches.sh` now exits 1 when a dependency tree is missing,
   instead of printing a skip note and exiting 0 with "0 applied, 0 already
   up to date" — by exit code and summary line, a run that applied nothing
