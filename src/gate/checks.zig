@@ -8,6 +8,8 @@ const std = @import("std");
 const build_options = @import("build_options");
 const log = @import("../util/log.zig");
 const toml_bridge = @import("../util/toml_bridge.zig");
+/// For depPatchesGate's tests, which build a synthetic dependency tree.
+const ensure_dir = @import("../util/ensure_dir.zig");
 const llm_budget = @import("llm_budget");
 
 /// A cold `zig build test` can print more than one MiB while rebuilding its
@@ -1707,4 +1709,349 @@ test "sandboxAbiGate passes on the live checkout" {
     var result = try sandboxAbiGate(gpa, io, std.Io.Dir.cwd());
     defer result.deinit(gpa);
     try std.testing.expect(result.ok);
+}
+
+/// `patches/` holds four local fixes to the pinned upstream dependencies,
+/// applied by hand into `zig-pkg/` -- the per-project package directory
+/// `zig` 0.16 extracts dependencies into, and one `.gitignore` lists. So a
+/// `git worktree add` starts with no dependency cache at all, `zig build`
+/// extracts pristine upstream tarballs, and `scripts/apply-patches.sh` is
+/// called by nothing: not by `build.zig`, not by any other gate. The whole
+/// suite then went green on pristine vaxis and zwasm without a word, which is
+/// strictly less code than the same commit covers in a patched checkout --
+/// `sixel_supported` in `src/tui/mascot.zig` compiles the sixel path out, and
+/// the REPL services SIGWINCH inside the signal handler, the exact thing
+/// `patches/vaxis-winch-self-pipe.patch` and `pty_resize_test` exist to
+/// prevent. The repository rules put every agent session in a hand-made
+/// worktree, so unpatched is the DEFAULT state for agent work.
+///
+/// Nothing here applies a patch. Mutating a dependency cache as a side effect
+/// of a check trades a visible failure for an invisible one; this only reports.
+///
+/// The ordering trap is why the failure names the script: on a tree that has
+/// never been built there is nothing to patch yet, so the intuitive
+/// patch-then-build order reports "0 applied" and leaves the tree pristine.
+/// A `zig build` has to extract the dependencies first, and only then does
+/// `scripts/apply-patches.sh` do any work.
+pub fn depPatchesGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const zon = dir.readFileAlloc(io, "build.zig.zon", arena, .limited(1 << 20)) catch {
+        return .{ .ok = false, .label = "dep-patches", .detail = "build.zig.zon could not be read" };
+    };
+
+    var names: std.ArrayList([]const u8) = .empty;
+    {
+        const patches_dir = dir.openDir(io, dep_patches_dir, .{ .iterate = true }) catch {
+            return .{ .ok = false, .label = "dep-patches", .detail = "patches/ could not be opened" };
+        };
+        defer patches_dir.close(io);
+        var it = patches_dir.iterate();
+        while (try it.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".patch")) continue;
+            try names.append(arena, try arena.dupe(u8, entry.name));
+        }
+    }
+    // Zero is a failure, not a vacuous pass: this check's whole job is to
+    // speak about patches, and it cannot do that from an empty directory.
+    if (names.items.len == 0) {
+        return .{ .ok = false, .label = "dep-patches", .detail = "patches/ holds no .patch files, so this check would verify nothing" };
+    }
+    // Deterministic order, so the failure message reads the same twice.
+    std.mem.sort([]const u8, names.items, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+    var misses: usize = 0;
+
+    for (names.items) |name| {
+        const pkg = depPackageOf(name);
+        // The extracted tree is named by the `.hash` field verbatim, so
+        // reading the pin is what keeps this check right across a version
+        // bump -- and what keeps a stale `zwasm-2.4.1-*` tree left behind by
+        // an older pin from being mistaken for the current one.
+        const hash = depHashFor(zon, pkg) orelse {
+            misses += 1;
+            miss_w.print("{s} names no dependency in build.zig.zon; ", .{name}) catch {};
+            continue;
+        };
+        const patch_src = dir.readFileAlloc(io, try std.fmt.allocPrint(arena, "{s}/{s}", .{ dep_patches_dir, name }), arena, .limited(8 << 20)) catch {
+            misses += 1;
+            miss_w.print("{s} could not be read; ", .{name}) catch {};
+            continue;
+        };
+        const markers = try patchMarkers(arena, patch_src);
+        if (markers.len == 0) {
+            misses += 1;
+            miss_w.print("{s} yields no marker long enough to look for, so it cannot be verified; ", .{name}) catch {};
+            continue;
+        }
+        for (markers) |m| {
+            const target = try std.fmt.allocPrint(arena, "{s}/{s}/{s}", .{ dep_pkg_dir, hash, m.file });
+            const body = dir.readFileAlloc(io, target, arena, .limited(16 << 20)) catch {
+                misses += 1;
+                miss_w.print("{s} -> {s} is not there to patch; ", .{ name, target }) catch {};
+                continue;
+            };
+            if (std.mem.find(u8, body, m.text) == null) {
+                misses += 1;
+                miss_w.print("{s} is not applied to {s}; ", .{ name, target }) catch {};
+            }
+        }
+    }
+
+    if (misses == 0) return .{ .ok = true, .label = "dep-patches" };
+    // Same aliasing convention as lintGate and sandboxAbiGate: detail and
+    // stderr share one owned copy, freed exactly once by deinit.
+    const owned = try std.fmt.allocPrint(
+        gpa,
+        "the dependency trees under {s}/ are missing local patches, so this tree builds and tests against pristine upstream code. Run `zig build` (to extract the dependencies) and then `scripts/apply-patches.sh`: {s}",
+        .{ dep_pkg_dir, miss_w.buffered() },
+    );
+    return .{ .ok = false, .label = "dep-patches", .detail = owned, .stderr = owned };
+}
+
+const dep_patches_dir = "patches";
+
+/// Where `zig` 0.16 extracts dependencies for this project. Gitignored, hence
+/// per-worktree, hence the whole problem.
+const dep_pkg_dir = "zig-pkg";
+
+/// The package a patch belongs to: everything before the first `-` in its
+/// file name, so `vaxis-winch-self-pipe.patch` is a vaxis patch. Matches the
+/// naming `scripts/apply-patches.sh` and `patches/README.md` already use.
+fn depPackageOf(patch_name: []const u8) []const u8 {
+    const stem = patch_name[0 .. patch_name.len - ".patch".len];
+    const dash = std.mem.find(u8, stem, "-") orelse return stem;
+    return stem[0..dash];
+}
+
+/// The `.hash` pin whose value names `pkg`, which is verbatim the directory
+/// name the package is extracted into.
+fn depHashFor(zon: []const u8, pkg: []const u8) ?[]const u8 {
+    const key = ".hash = \"";
+    var from: usize = 0;
+    while (std.mem.find(u8, zon[from..], key)) |rel| {
+        const start = from + rel + key.len;
+        const end = std.mem.find(u8, zon[start..], "\"") orelse return null;
+        const value = zon[start .. start + end];
+        from = start + end;
+        if (!std.mem.startsWith(u8, value, pkg)) continue;
+        if (value.len <= pkg.len or value[pkg.len] != '-') continue;
+        return value;
+    }
+    return null;
+}
+
+const PatchMarker = struct { file: []const u8, text: []const u8 };
+
+/// A marker has to be long enough that finding it in a pristine file is not
+/// plausible. Short additions (`}`, a blank line, `};`) occur all over every
+/// file a patch touches.
+const min_patch_marker_len = 24;
+
+/// One marker per file a patch touches: the longest RUN of consecutive lines
+/// that patch adds to it, rejoined exactly as they will appear in the patched
+/// file (indentation and interior blank lines included), so the check is a
+/// plain substring search.
+///
+/// `apply-patches.sh` decides "already applied" with a reverse dry-run of the
+/// whole patch. A gate check cannot shell out to `patch` for that -- it would
+/// then be reporting on a tool that need not be installed -- and an added
+/// block is the cheapest thing that is present in a patched tree and absent
+/// from a pristine one.
+///
+/// A run rather than the single longest added LINE, which was the first
+/// version and was wrong: `patches/vaxis-ss3-keypad-enter.patch`'s longest
+/// added line is `const expected_event: Event = .{ .key_press = expected_key
+/// };`, a line every other parser test in that file already has, so the check
+/// reported that patch applied on a pristine tree. A whole added block can be
+/// duplicated in principle too, but a 13-line one is not an accident.
+///
+/// Files whose longest run is under `min_patch_marker_len` are skipped rather
+/// than guessed at; a patch where that leaves NO markers at all is reported by
+/// the caller, since a check that silently verifies nothing is the shape of
+/// problem this one exists for.
+fn patchMarkers(arena: std.mem.Allocator, patch_src: []const u8) ![]PatchMarker {
+    var out: std.ArrayList(PatchMarker) = .empty;
+    var file: []const u8 = "";
+    var best: []const u8 = "";
+    var run: std.ArrayList(u8) = .empty;
+    defer run.deinit(arena);
+
+    var lines = std.mem.splitScalar(u8, patch_src, '\n');
+    while (lines.next()) |line| {
+        // `+++ ` opens the next file; `+++` with no path, and any other
+        // non-addition, just ends the current run.
+        const added: ?[]const u8 = if (line.len >= 1 and line[0] == '+' and !std.mem.startsWith(u8, line, "+++"))
+            // Only the trailing CR the '\n' split leaves behind: the leading
+            // whitespace IS the indentation the patched file will carry.
+            std.mem.trimEnd(u8, line[1..], "\r")
+        else
+            null;
+        if (added) |text| {
+            if (run.items.len > 0) try run.append(arena, '\n');
+            try run.appendSlice(arena, text);
+            continue;
+        }
+        if (run.items.len > best.len) best = try arena.dupe(u8, run.items);
+        run.clearRetainingCapacity();
+        if (!std.mem.startsWith(u8, line, "+++ ")) continue;
+        if (file.len > 0 and best.len >= min_patch_marker_len) try out.append(arena, .{ .file = file, .text = best });
+        file = patchTargetPath(line["+++ ".len..]);
+        best = "";
+    }
+    // Duped, not aliased: `run`'s buffer is freed back to the arena on the
+    // way out, and an arena's free of its most recent allocation really does
+    // hand those bytes to whatever the CALLER allocates next.
+    if (run.items.len > best.len) best = try arena.dupe(u8, run.items);
+    if (file.len > 0 and best.len >= min_patch_marker_len) try out.append(arena, .{ .file = file, .text = best });
+    return out.toOwnedSlice(arena);
+}
+
+/// The path a `+++` header names, relative to the dependency tree root, which
+/// is what `patch -p1` strips to. Empty for `/dev/null` (a deletion) and for a
+/// header with nothing after the marker, both of which have no file to check.
+fn patchTargetPath(rest: []const u8) []const u8 {
+    // Trailing tab-separated timestamp, when the diff carries one.
+    var path = rest;
+    if (std.mem.find(u8, path, "\t")) |tab| path = path[0..tab];
+    path = std.mem.trim(u8, path, " \r");
+    if (std.mem.eql(u8, path, "/dev/null")) return "";
+    const slash = std.mem.find(u8, path, "/") orelse return path;
+    return path[slash + 1 ..];
+}
+
+test "patchTargetPath strips the -p1 prefix and rejects a deletion" {
+    try std.testing.expectEqualStrings("src/tty.zig", patchTargetPath("b/src/tty.zig"));
+    try std.testing.expectEqualStrings("src/tty.zig", patchTargetPath("a/src/tty.zig"));
+    try std.testing.expectEqualStrings("src/tty.zig", patchTargetPath("b/src/tty.zig\t2026-08-23 12:00:00"));
+    try std.testing.expectEqualStrings("", patchTargetPath("/dev/null"));
+}
+
+test "depHashFor reads the pin that names a package, not a prefix of one" {
+    const zon =
+        \\.{
+        \\    .dependencies = .{
+        \\        .zwasm = .{ .hash = "zwasm-2.5.0-FT1Fv4KPkgCa" },
+        \\        .vaxis = .{ .hash = "vaxis-0.6.0-BWNV_KwYCgB" },
+        \\    },
+        \\}
+    ;
+    try std.testing.expectEqualStrings("vaxis-0.6.0-BWNV_KwYCgB", depHashFor(zon, "vaxis").?);
+    try std.testing.expectEqualStrings("zwasm-2.5.0-FT1Fv4KPkgCa", depHashFor(zon, "zwasm").?);
+    // A package name that is only a prefix of a pinned one must not match:
+    // `zwas` is not `zwasm`, and answering the zwasm tree for it would check
+    // the wrong files.
+    try std.testing.expect(depHashFor(zon, "zwas") == null);
+    try std.testing.expect(depHashFor(zon, "zigimg") == null);
+}
+
+test "depPackageOf takes the package name off a patch file name" {
+    try std.testing.expectEqualStrings("vaxis", depPackageOf("vaxis-winch-self-pipe.patch"));
+    try std.testing.expectEqualStrings("zwasm", depPackageOf("zwasm-lazy-mem-cksum.patch"));
+    try std.testing.expectEqualStrings("solo", depPackageOf("solo.patch"));
+}
+
+test "patchMarkers takes the longest added run per file and skips short ones" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const patch =
+        \\diff --git a/src/tty.zig b/src/tty.zig
+        \\--- a/src/tty.zig
+        \\+++ b/src/tty.zig
+        \\@@ -1,3 +1,6 @@
+        \\ const std = @import("std");
+        \\+    a lonely addition that is long on its own
+        \\ context breaks the run
+        \\+    self.winch_pipe = try std.posix.pipe();
+        \\+
+        \\+    self.winch_read = self.winch_pipe[0];
+        \\-    a removed line that is longer than either added run here is
+        \\ trailing context
+        \\--- a/src/short.zig
+        \\+++ b/src/short.zig
+        \\@@ -1,1 +1,2 @@
+        \\+}
+        \\
+    ;
+    const markers = try patchMarkers(arena, patch);
+    // src/short.zig adds only "}", which is under the minimum, so it is
+    // skipped rather than turned into a marker that matches anywhere.
+    try std.testing.expectEqual(@as(usize, 1), markers.len);
+    try std.testing.expectEqualStrings("src/tty.zig", markers[0].file);
+    // The three-line run beats the longer single line, indentation and the
+    // interior blank line are kept verbatim (that is what makes the check a
+    // substring search), and the removed line -- longer than both -- is no
+    // evidence of anything being applied.
+    try std.testing.expectEqualStrings(
+        "    self.winch_pipe = try std.posix.pipe();\n\n    self.winch_read = self.winch_pipe[0];",
+        markers[0].text,
+    );
+}
+
+test "depPatchesGate fails on a pristine dependency tree and passes on a patched one" {
+    // Both directions, because a check that fails on either state is
+    // indistinguishable from one that fails on neither until you look.
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const hash = "vaxis-0.6.0-BWNV_KwYCgB";
+    const marker = "self.winch_pipe = try std.posix.pipe();";
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "build.zig.zon",
+        .data = ".{ .dependencies = .{ .vaxis = .{ .hash = \"" ++ hash ++ "\" } } }\n",
+    });
+    try ensure_dir.ensureDir(tmp.dir, io, "patches");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "patches/vaxis-winch-self-pipe.patch",
+        .data = "--- a/src/tty.zig\n+++ b/src/tty.zig\n@@ -1,1 +1,2 @@\n const std = @import(\"std\");\n+    " ++ marker ++ "\n",
+    });
+    try ensure_dir.ensureDir(tmp.dir, io, dep_pkg_dir ++ "/" ++ hash ++ "/src");
+
+    // Pristine: the extracted tree has the file but not the addition.
+    try tmp.dir.writeFile(io, .{ .sub_path = dep_pkg_dir ++ "/" ++ hash ++ "/src/tty.zig", .data = "const std = @import(\"std\");\n" });
+    {
+        var result = try depPatchesGate(gpa, io, tmp.dir);
+        defer result.deinit(gpa);
+        try std.testing.expect(!result.ok);
+        try std.testing.expectEqualStrings("dep-patches", result.label);
+        // The message must name the script: the same missing patch was read
+        // as a REPL regression by two sessions because the failure it caused
+        // did not say what to run.
+        try std.testing.expect(std.mem.find(u8, result.detail, "scripts/apply-patches.sh") != null);
+        try std.testing.expect(std.mem.find(u8, result.detail, "vaxis-winch-self-pipe.patch") != null);
+    }
+
+    // Patched: same commit, same check, green.
+    try tmp.dir.writeFile(io, .{ .sub_path = dep_pkg_dir ++ "/" ++ hash ++ "/src/tty.zig", .data = "const std = @import(\"std\");\n    " ++ marker ++ "\n" });
+    {
+        var result = try depPatchesGate(gpa, io, tmp.dir);
+        defer result.deinit(gpa);
+        try std.testing.expect(result.ok);
+    }
+
+    // A dependency tree that was never extracted is its own failure, and must
+    // say so rather than reading as patched.
+    try tmp.dir.deleteFile(io, dep_pkg_dir ++ "/" ++ hash ++ "/src/tty.zig");
+    {
+        var result = try depPatchesGate(gpa, io, tmp.dir);
+        defer result.deinit(gpa);
+        try std.testing.expect(!result.ok);
+        try std.testing.expect(std.mem.find(u8, result.detail, "not there to patch") != null);
+    }
 }

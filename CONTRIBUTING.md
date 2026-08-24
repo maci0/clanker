@@ -46,8 +46,10 @@ test suites (pinned in `.nvmrc`).
 - `clanker gate` — build, test, tools, fmt, lint, and the self-integrity
   gates (provider-kind, test-root-coverage, js-suite-coverage, sandbox-abi,
   tools-ts-toolchain,
-  release-contract). This is what the self-improvement loop demands of its
-  own proposals, so a human change must clear the same bar.
+  release-contract, dep-patches). This is what the self-improvement loop
+  demands of its own proposals, so a human change must clear the same bar.
+  `dep-patches` is about your checkout rather than your diff: run `zig build`
+  and then `scripts/apply-patches.sh` once per worktree.
 - CI — the workflow in `.github/workflows/ci.yml` additionally checks shell
   scripts with shellcheck, every tracked `.py` with a syntax parse, the SBOM
   generation, and that `tools/ts/dist/*.wasm` matches a clean rebuild

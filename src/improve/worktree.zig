@@ -175,9 +175,7 @@ pub const Worktree = struct {
                 // Fast-forward: base hasn't moved since the branch was cut.
                 if (updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha) catch false) {
                     log.log(.info, "improve-self: fast-forwarded {s} to {s}", .{ self.base_branch, branch_sha });
-                    self.advanceCreatedFrom(gpa, branch_sha);
-                    self.resyncLocalBranch(gpa, io, branch_sha);
-                    self.resyncBaseCheckout(gpa, io, base_sha);
+                    self.afterLanded(gpa, io, branch_sha, base_sha);
                     self.merged = true;
                     return;
                 }
@@ -196,9 +194,7 @@ pub const Worktree = struct {
             defer gpa.free(commit);
             if (updateRefCas(gpa, io, self.base_branch, commit, base_sha) catch false) {
                 log.log(.info, "improve-self: merge commit {s} landed on {s} (merged {s})", .{ commit, self.base_branch, self.branch });
-                self.advanceCreatedFrom(gpa, commit);
-                self.resyncLocalBranch(gpa, io, commit);
-                self.resyncBaseCheckout(gpa, io, base_sha);
+                self.afterLanded(gpa, io, commit, base_sha);
                 self.merged = true;
                 return;
             }
@@ -208,11 +204,43 @@ pub const Worktree = struct {
         log.log(.warn, "improve-self: {s} kept losing the race to merge into {s}; leaving it on the branch", .{ self.branch, self.base_branch });
     }
 
+    /// The bookkeeping every landed merge owes, in the one order that is safe.
+    /// Both merge paths above (fast-forward and merge commit) go through here
+    /// so the order cannot be right in one of them and wrong in the other.
+    ///
+    /// `resyncLocalBranch` FIRST, and `advanceCreatedFrom` only if it
+    /// succeeded. `created_from` is an assertion about where the branch ref
+    /// is, not a wish: it is the merge base the *next* promotion pins
+    /// `mergeTree` to. Advancing it before the reset that moves the ref (the
+    /// original order) meant a failed reset -- a locked index, a read-only
+    /// worktree, a concurrent git operation, all of which `resyncLocalBranch`
+    /// only warns about -- left the pin claiming the branch was at `landed`
+    /// while the ref still sat at its pre-merge tip. The next `merge-tree`
+    /// then computes the branch side as a diff *from* `landed`, which reads
+    /// as a deletion of everything this merge folded in from the other side,
+    /// and CASes that onto the base branch.
+    ///
+    /// Leaving the pin where it was is the safe direction: the next
+    /// `merge-tree` recomputes from the older base, which over-reports the
+    /// branch's delta (at worst a conflict a human resolves) rather than
+    /// under-reporting it (silently deleting promoted work).
+    fn afterLanded(self: *Worktree, gpa: std.mem.Allocator, io: std.Io, landed: []const u8, old_base_sha: []const u8) void {
+        if (self.resyncLocalBranch(gpa, io, landed)) {
+            self.advanceCreatedFrom(gpa, landed);
+        } else {
+            log.log(.warn, "improve-self: {s} could not be resynced to {s}, so its pinned merge base stays at {s}; the next merge-back re-computes the branch delta from there. Land it by hand with: git -C {s} reset --hard {s}", .{ self.branch, landed, self.created_from, self.path, landed });
+        }
+        self.resyncBaseCheckout(gpa, io, old_base_sha);
+    }
+
     /// After a successful merge-back the branch ref is fast-forwarded to the
     /// landed commit (resyncLocalBranch below), so the branch's next delta
     /// starts there too: advance the pinned merge base with it, or the next
     /// merge would re-count (and re-land) work that is already on the base
     /// branch, including work a human removed from it in the meantime.
+    ///
+    /// Called only from `afterLanded`, and only once the resync it asserts
+    /// has reported success. Never call it on its own.
     fn advanceCreatedFrom(self: *Worktree, gpa: std.mem.Allocator, landed: []const u8) void {
         const next = gpa.dupe(u8, landed) catch return; // keep the old pin on OOM
         gpa.free(self.created_from);
@@ -242,11 +270,16 @@ pub const Worktree = struct {
     /// missing everything the merge just folded in, re-introducing on the
     /// next merge exactly what someone else had fixed. Both halves matter:
     /// ref moved AND files synced.
-    fn resyncLocalBranch(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) void {
+    ///
+    /// Returns whether the reset landed. It used to return `void`, with both
+    /// the spawn failure and a non-zero git exit demoted to a warning, while
+    /// its caller had already advanced `created_from` on the assumption it
+    /// worked -- see `afterLanded` for what that cost.
+    fn resyncLocalBranch(self: *const Worktree, gpa: std.mem.Allocator, io: std.Io, new_sha: []const u8) bool {
         const argv = [_][]const u8{ "git", "-C", self.path, "reset", "--hard", new_sha };
         const res = std.process.run(gpa, io, .{ .argv = &argv }) catch |err| {
             log.log(.warn, "improve-self: could not resync the isolated branch after merge-back: {s}", .{@errorName(err)});
-            return;
+            return false;
         };
         defer gpa.free(res.stdout);
         defer gpa.free(res.stderr);
@@ -255,6 +288,7 @@ pub const Worktree = struct {
             else => false,
         };
         if (!ok) log.log(.warn, "improve-self: git reset --hard after merge-back failed: {s}", .{res.stderr});
+        return ok;
     }
 
     /// After the base branch's ref moves, the checkout that has it checked
@@ -659,6 +693,79 @@ test "mergeBack's resync reaches the invoking checkout only when it is clean" {
     const kept = try tmp.dir.readFileAlloc(io, "code.txt", gpa, .limited(1 << 10));
     defer gpa.free(kept);
     try std.testing.expectEqualStrings("operator work\n", kept);
+}
+
+test "a failed branch resync leaves the pinned merge base where it was" {
+    // `created_from` is the merge base the NEXT promotion pins `merge-tree`
+    // to, so it must never claim a branch position the ref did not reach.
+    // The reset that moves the ref can fail (a locked index, a read-only
+    // worktree, a concurrent git operation) and only warns, so the fault is
+    // injected here by pointing the worktree at a path git cannot reset.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = root_buf[0..try tmp.dir.realPath(io, &root_buf)];
+
+    try gitOk(gpa, io, root, &.{ "init", "-q", "-b", "main" });
+    try gitOk(gpa, io, root, &.{ "config", "user.email", "t@example.invalid" });
+    try gitOk(gpa, io, root, &.{ "config", "user.name", "test" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "code.txt", .data = "before\n" });
+    try gitOk(gpa, io, root, &.{ "add", "code.txt" });
+    try gitOk(gpa, io, root, &.{ "commit", "-qm", "seed" });
+    const old_sha = try run1(gpa, io, &.{ "git", "-C", root, "rev-parse", "HEAD" });
+    defer gpa.free(old_sha);
+
+    const wt_path = try std.fmt.allocPrint(gpa, "{s}/improve-wt", .{root});
+    defer gpa.free(wt_path);
+    try gitOk(gpa, io, root, &.{ "worktree", "add", "-q", "-b", "improve", wt_path });
+    var wt_dir = try std.Io.Dir.cwd().openDir(io, wt_path, .{});
+    defer wt_dir.close(io);
+    try wt_dir.writeFile(io, .{ .sub_path = "code.txt", .data = "after\n" });
+    try gitOk(gpa, io, wt_path, &.{ "commit", "-aqm", "promoted" });
+    const new_sha = try run1(gpa, io, &.{ "git", "-C", wt_path, "rev-parse", "HEAD" });
+    defer gpa.free(new_sha);
+
+    // The fault: a path git cannot chdir into, so `git -C <path> reset
+    // --hard` exits non-zero however the index and the refs look. It has to
+    // be a path that does not exist rather than a plain directory -- a
+    // directory INSIDE the repository still resets it, since git discovers
+    // the repo from the parent.
+    const nowhere = try std.fmt.allocPrint(gpa, "{s}/absent-worktree", .{root});
+    defer gpa.free(nowhere);
+
+    {
+        var wt: Worktree = .{
+            .path = nowhere,
+            .branch = "improve",
+            .base_branch = "main",
+            .created_from = try gpa.dupe(u8, old_sha),
+        };
+        defer gpa.free(wt.created_from);
+        try std.testing.expect(!wt.resyncLocalBranch(gpa, io, new_sha));
+        wt.afterLanded(gpa, io, new_sha, old_sha);
+        // The pin must still name the pre-merge base. Advancing it here is
+        // what made the next merge-tree read the branch side as a deletion
+        // of everything this merge folded in.
+        try std.testing.expectEqualStrings(old_sha, wt.created_from);
+    }
+
+    // Control, or the assertion above passes on a pin that never moves: with
+    // a worktree git CAN reset, the resync succeeds and the pin advances.
+    {
+        var wt: Worktree = .{
+            .path = wt_path,
+            .branch = "improve",
+            .base_branch = "main",
+            .created_from = try gpa.dupe(u8, old_sha),
+        };
+        defer gpa.free(wt.created_from);
+        try gitOk(gpa, io, root, &.{ "update-ref", "refs/heads/main", new_sha });
+        wt.afterLanded(gpa, io, new_sha, old_sha);
+        try std.testing.expectEqualStrings(new_sha, wt.created_from);
+    }
 }
 
 test "refExists tells a present ref from a missing one" {

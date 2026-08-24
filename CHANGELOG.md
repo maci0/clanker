@@ -17,6 +17,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   named files no longer exist are skipped, and the planning call remains the
   fallback once the backlog runs dry. Off via `improve.backlog = false`.
 
+- `clanker gate` has a twelfth check, `dep-patches`: every `patches/*.patch`
+  must be applied to the dependency tree its `build.zig.zon` `.hash` pin
+  names, under `zig-pkg/`. That directory is gitignored and therefore
+  per-worktree, `zig build` extracts pristine upstream tarballs into it, and
+  `scripts/apply-patches.sh` was called by nothing, so a fresh worktree built,
+  tested and gated green against pristine vaxis and zwasm. It only reports:
+  `zig build` first (nothing exists to patch before the trees are extracted),
+  then `scripts/apply-patches.sh`, which is the ordering the failure names.
+
 ### Changed
 
 - `thinking_schema` gained an `anthropic_thinking` value, and its unset
@@ -48,6 +57,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Removed the deprecated `serve --port` alias; use `--webui-port`.
 
 ### Fixed
+
+- An unreadable or oversize `state/improvements.jsonl` no longer reads as no
+  history. Both read paths ended in `catch return &.{}`, which is
+  indistinguishable from a first run, so the improve loop's dedup and revert
+  gates silently answered "not accepted, not reverted" and it re-promoted work
+  already merged and re-proposed work a human had reverted. Only a MISSING log
+  is empty now; anything else is reported, and `improve-self` refuses to start
+  rather than run with those gates off. The log is also bounded for the first
+  time, trimmed to its newest records well before it can reach the size at
+  which a reader gives up.
+
+- `improve-self` no longer advances a merge-back's pinned merge base past a
+  branch resync that did not happen. `created_from` is what the next promotion
+  hands `git merge-tree`, and it was advanced before the `git reset --hard`
+  that moves the branch ref, whose failure was only a warning. A failed reset
+  therefore left the pin claiming a position the ref never reached, and the
+  next merge read the branch side as a deletion of everything the previous
+  merge folded in.
 
 - An agent preset's denied tools are no longer offered to the model. The mask
   was applied at one call site in `clanker run`, and `Agent.init` then rebuilt
