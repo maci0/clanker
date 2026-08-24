@@ -169,3 +169,37 @@ cannot reach. Two candidate fixes, neither taken here: scaffold the section
 empty and let the first append fill it, or teach `appendOrFill` to treat a
 section whose entire body is the scaffolded placeholder as empty. The second
 generalises — `- Impact: To be confirmed.` in `## TL;DR` has the same shape.
+
+## Note — the `## References` hole is closed (2026-08-24)
+
+Fixed, in `doc_scaffold.appendOrFill`: the second of the two candidates the note
+above floated was taken. A section whose entire body is the scaffold's own
+placeholder now counts as empty, so `## References` fills like every other
+scaffolded section instead of landing at the end as a second heading.
+
+`isPlaceholderBody` is the test, and it is narrow on purpose: every non-blank
+line in the body has to be a list item ending in "none yet". That covers all
+four wordings `create` writes (`- Investigation:`, `- Related bug:`,
+`- Related record:`, `- Report:`) and nothing else. One authored reference in
+the section and it has a real body again, so the block goes to the end and no
+author's line is displaced — which is the same bar the original fill set.
+
+The generalisation the note suggested was deliberately *not* taken: `- Impact:
+To be confirmed.` in `## TL;DR` has the same shape, but `## TL;DR` also carries
+the caller's summary, so its body is never only placeholder and treating a
+mixed body as fillable would be the "move someone else's paragraph" failure the
+original fix refused. The rule as written declines that case by construction.
+
+Verified both ways on the built binary, not only in unit tests: an append of a
+`## References` block to a freshly created record answered `filled ##
+References in <path>`, the record carries one `## References` heading, and the
+`none yet` line is gone. Two new tests pin it — the fill against the scaffold
+body, and eleven cases on `isPlaceholderBody` including the two that must *not*
+match (a real reference beside a placeholder, and prose rather than a list
+item).
+
+What still keeps this record open is unchanged: the 33 records already carrying
+a duplicated heading, the RFC template prose in 27 records, the `## Appendix`
+decision, and the eight PRDs with instruction paragraphs under real content.
+None of those is a cause, and the sweep is still the wide edit this record
+declined.
