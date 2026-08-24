@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The saturation 503 closes a socket with the request still unread, so the RST can discard the response body](bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md) — Open
+
 - [verify.sh runs clanker gate before apply-patches.sh, so a fresh worktree always fails dep-patches](bugs/2026-08-24-verify-sh-gates-before-applying-patches.md) — Resolved
 
 - [scripts/apply-patches.sh exits 0 after applying nothing, so a caller checking the exit status proceeds on an unpatched tree](bugs/2026-08-24-apply-patches-exits-0-having-applied-nothing.md) — Resolved
@@ -119,7 +121,7 @@ Project agents receive this workflow through the harness prompt and
 - [the persistent-learnings prompt section keeps the oldest 4 KiB, so every note past the cap is invisible forever](bugs/2026-08-23-learnings-prompt-keeps-the-oldest-notes.md) — Resolved
 
 - [advisor.model is parsed, documented and never read, so every critique bills the main model](bugs/2026-08-23-advisor-model-never-read.md) — Resolved
-- [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md) — Open
+- [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md) — Resolved
 
 - [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Resolved
 

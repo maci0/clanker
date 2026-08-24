@@ -3070,6 +3070,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   routes are unaffected — the rewrite makes a `HEAD` read-shaped, never
   write-shaped, so `HEAD /api/run` is still a 404.
 
+- `clanker serve` records the connection-limit 503. A saturation refusal is
+  answered on the accept thread, outside the request handler where the metric
+  and log work lives, so it incremented no counter and wrote no line: the one
+  load condition an operator greps `/api/metrics` for was the one the server did
+  not record. It now counts as a request and a server error (503 is a 5xx),
+  logs a warning naming the limit, and carries its own `X-Request-ID` instead of
+  the accept thread's last one. It also no longer inherits the previous
+  request's HEAD or keep-alive state, which could make it declare a
+  `Content-Length` it did not send or promise to reuse a socket closed on the
+  next line. Separately, when the server falls back to serving a connection on
+  the accept thread (it cannot spawn a thread), that connection now gets one
+  request rather than up to a hundred — it had been holding the listener for the
+  whole keep-alive budget, during the overload that caused the fallback.
+
+  Not fixed, and filed: a saturation refusal is delivered over a reset
+  connection, because that path never reads the request. The body can be lost.
+
 ## [0.1.0] - 2026-08-14
 
 ### Added

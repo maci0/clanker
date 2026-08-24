@@ -370,12 +370,32 @@ every document; "judged" is what a single ledger row can honestly say.
   ever reads `.failed` can never become `.ready`; one transient `gpa.dupe`
   failure pins that asset to the uncached path for the life of the process. Filed
   as [RenderCache failed is a permanent latch](../reports/bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md).
-- **The saturation 503 is neither counted nor logged.** It is answered with
-  `respond` on the accept thread, outside `handleConnection`, where the metric
-  and completion-log defers live, so the one load condition an operator would
-  grep `/api/metrics` for is the one the server does not record; and `respond`
-  there reads two threadlocals only `handleConnection` resets. Filed as
+- **(Fixed) The saturation 503 was neither counted nor logged.** It was answered
+  with `respond` on the accept thread, outside `handleConnection`, where the
+  metric and completion-log defers live, so the one load condition an operator
+  would grep `/api/metrics` for was the one the server did not record; and
+  `respond` there read two threadlocals only `handleConnection` resets. Fixed by
+  moving the refusal into `respondSaturated`, which resets those two flags,
+  takes a fresh request id (so `X-Request-ID` is not the accept thread's last
+  inline request), records the request and logs a warn line. It books under
+  `errors_total`, not `client_errors_total` -- 503 is a 5xx, and the report's
+  TL;DR named the wrong counter. The same change bounds the two spawn-failure
+  fallbacks to one inline request (`inline_keep_alive_requests`) rather than the
+  hundred `handleConnectionGuarded`'s keep-alive loop had silently given them.
+  Reproduced live with 70 idle sockets: before, zero counters and zero log
+  lines; after, `requests_total` and `errors_total` each +7. The stale-flag half
+  is pinned by unit test, since a thread-spawn failure could not be forced.
   [connection limit 503 runs on the accept thread](../reports/bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md).
+
+- **A saturation 503 is delivered over a reset connection.** Found while
+  verifying the above, and untouched by it: the over-limit path never reads the
+  request, so `stream.close` on a socket holding unread received data sends RST
+  rather than FIN, and the RST can discard the response body. Measured live on a
+  virgin server, pre-fix: the header block arrives, `Content-Length: 54`, zero
+  body bytes, `ConnectionResetError`. Post-fix the body wins the race because
+  the metric and log work sit between the write and the close -- a timing
+  artifact, not a guarantee. Filed as
+  [saturation 503 is reset before the client reads it](../reports/bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md).
 
 ## Failure modes
 

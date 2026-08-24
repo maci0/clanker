@@ -7761,20 +7761,20 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     const in_flight = connection_threads.fetchAdd(1, .acq_rel);
     if (in_flight >= max_connection_threads) {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
+        respondSaturated(io, stream);
         stream.close(io);
         return;
     }
     if (surface == .proxy and in_flight >= max_connection_threads - proxy.webui_reserved_slots) {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
+        respondSaturated(io, stream);
         stream.close(io);
         return;
     }
 
     const conn = gpa.create(Connection) catch {
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream, surface);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream, surface, inline_keep_alive_requests);
         return;
     };
     conn.* = .{ .io = io, .gpa = gpa, .cfg = cfg, .environ_map = environ_map, .port = port, .serve_as_hosts = serve_as_hosts, .stream = stream, .surface = surface };
@@ -7784,10 +7784,49 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
         // dedicated thread but still correct, and beats dropping the client.
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
-        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream, surface);
+        handleConnectionGuarded(io, gpa, cfg, environ_map, port, serve_as_hosts, stream, surface, inline_keep_alive_requests);
         return;
     };
     thread.detach();
+}
+
+/// The saturation refusal: over `max_connection_threads`, or over the web UI's
+/// reserve on the proxy surface.
+///
+/// This runs on the accept thread, *outside* `handleConnection`, and that is the
+/// whole reason it needs its own function rather than a bare `respond`:
+///
+///   - `respond` reads `request_head` and `request_keep_alive`, which are
+///     per-request threadlocals that only `handleConnection` resets. The accept
+///     thread does enter `handleConnection`, on the two spawn-failure fallbacks
+///     above, so those flags can be left set from a request served inline
+///     earlier. A 503 inheriting them declares a `Content-Length` it then does
+///     not write (stale HEAD), or promises keep-alive on a socket closed on the
+///     next line. Thread-spawn failure and connection saturation are one
+///     overload event, which is what makes the combination reachable rather
+///     than theoretical. Reset them here, explicitly.
+///   - The metric and the completion log line live in `handleConnection`'s
+///     `defer`, which this path never enters. So saturation refusals incremented
+///     nothing and wrote no line: the one load condition an operator goes to
+///     `/api/metrics` and the log for was the one the server did not record.
+///   - `respond` stamps `X-Request-ID` from the log context, which is likewise
+///     only set per request inside `handleConnection`. Without a fresh id here
+///     the refusal is labelled with whatever request the accept thread last
+///     served inline. It takes one from the same sequence.
+///
+/// The duration is 0 rather than measured, and honestly so: nothing was read
+/// and nothing was dispatched. 503 is a 5xx, so `recordHttpRequest` books it
+/// under `errors_total`, not `client_errors_total`.
+fn respondSaturated(io: std.Io, stream: std.Io.net.Stream) void {
+    var request_id_buf: [24]u8 = undefined;
+    const request_id = std.fmt.bufPrint(&request_id_buf, "http-{d}", .{request_sequence.fetchAdd(1, .monotonic)}) catch "http-unknown";
+    log.setContext(request_id);
+    defer log.clearContext();
+    request_head = false;
+    request_keep_alive = false;
+    respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
+    recordHttpRequest(io, 503, 0);
+    log.log(.warn, "serve: connection refused at the {d}-connection limit", .{max_connection_threads});
 }
 
 fn connectionThread(conn: *Connection) void {
@@ -7796,22 +7835,42 @@ fn connectionThread(conn: *Connection) void {
         gpa.destroy(conn);
         _ = connection_threads.fetchSub(1, .acq_rel);
     }
-    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.serve_as_hosts, conn.stream, conn.surface);
+    handleConnectionGuarded(conn.io, conn.gpa, conn.cfg, conn.environ_map, conn.port, conn.serve_as_hosts, conn.stream, conn.surface, max_keep_alive_requests);
 }
 
 /// Whether a connection that has already served `requests_served` responses may
-/// promise another one. `max_keep_alive_requests` bounds the loop below, so the
-/// response that takes the count to the bound is the connection's last: telling
-/// that client `Connection: keep-alive` and then closing is a promise broken in
-/// the same breath it is made. Browsers hide it by retrying an idempotent GET;
-/// a client that does not retry sees an empty reply on its next request. Split
-/// out so the arithmetic is testable without a listener, since `clanker serve`
-/// cannot accept a connection under this sandbox.
-fn keepAliveBudgetLeft(requests_served: u8) bool {
-    return requests_served + 1 < max_keep_alive_requests;
+/// promise another one, given the `max_requests` this connection is allowed.
+/// The loop below is bounded by that number, so the response that takes the
+/// count to it is the connection's last: telling that client
+/// `Connection: keep-alive` and then closing is a promise broken in the same
+/// breath it is made. Browsers hide it by retrying an idempotent GET; a client
+/// that does not retry sees an empty reply on its next request. Split out so the
+/// arithmetic is testable without a listener, since `clanker serve` cannot
+/// accept a connection under this sandbox.
+///
+/// The bound is a parameter rather than the `max_keep_alive_requests` constant
+/// because it is not the same for every connection: see
+/// `inline_keep_alive_requests`.
+fn keepAliveBudgetLeft(requests_served: u8, max_requests: u8) bool {
+    return requests_served + 1 < max_requests;
 }
 
-fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface) void {
+/// How many requests a connection served on the *accept* thread may have.
+///
+/// One. `serveConnection` falls back to serving inline when it cannot allocate
+/// a `Connection` or cannot spawn a thread, and while the listener is inside
+/// that call it is not accepting anything. `handleConnectionGuarded` became the
+/// keep-alive loop after those fallbacks were written, so they silently went
+/// from holding the listener for one request to holding it for up to
+/// `max_keep_alive_requests` -- a hundred, at the discretion of the client that
+/// arrived during an overload. The fallback's own comment still says the cost is
+/// one slower request.
+///
+/// The connection is not broken by this, only not reused: the single response
+/// says `Connection: close`, because `keepAliveBudgetLeft(0, 1)` is false.
+const inline_keep_alive_requests: u8 = 1;
+
+fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface, max_requests: u8) void {
     defer stream.close(io);
     // Residual posix: raw socket recv-timeout option for the hand-rolled HTTP
     // server loops below.
@@ -7823,9 +7882,9 @@ fn handleConnectionGuarded(io: std.Io, gpa: std.mem.Allocator, cfg: *const confi
     std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch |err|
         log.log(.warn, "serve: read timeout not set on connection, reads are unbounded: {s}", .{@errorName(err)});
     var requests: u8 = 0;
-    while (requests < max_keep_alive_requests) : (requests += 1) {
+    while (requests < max_requests) : (requests += 1) {
         request_keep_alive = false;
-        request_spends_keep_alive_budget = !keepAliveBudgetLeft(requests);
+        request_spends_keep_alive_budget = !keepAliveBudgetLeft(requests, max_requests);
         // A hot-reload must never fire mid-request (would drop the client
         // mid-response); see HotReload's doc comment.
         if (hot_reload_active) |hr| hr.begin();
@@ -15202,16 +15261,23 @@ test "a pick aimed at the collection is a refused method, not a bad pick" {
 }
 
 test "the last response a connection may send does not promise another" {
-    // `handleConnectionGuarded` loops while `requests < max_keep_alive_requests`,
-    // so the response taken at count max-1 is the connection's last. It used to
-    // say `Connection: keep-alive` and then close: measured live, response 100
-    // was keep-alive and request 101 got an empty reply.
-    try std.testing.expect(keepAliveBudgetLeft(0));
-    try std.testing.expect(keepAliveBudgetLeft(max_keep_alive_requests - 2));
-    try std.testing.expect(!keepAliveBudgetLeft(max_keep_alive_requests - 1));
+    // `handleConnectionGuarded` loops while `requests < max_requests`, so the
+    // response taken at count max-1 is the connection's last. It used to say
+    // `Connection: keep-alive` and then close: measured live, response 100 was
+    // keep-alive and request 101 got an empty reply.
+    try std.testing.expect(keepAliveBudgetLeft(0, max_keep_alive_requests));
+    try std.testing.expect(keepAliveBudgetLeft(max_keep_alive_requests - 2, max_keep_alive_requests));
+    try std.testing.expect(!keepAliveBudgetLeft(max_keep_alive_requests - 1, max_keep_alive_requests));
     // Past the bound the loop has already exited; answering "no budget" there
     // is the only safe reading, and it must not wrap around to true.
-    try std.testing.expect(!keepAliveBudgetLeft(max_keep_alive_requests));
+    try std.testing.expect(!keepAliveBudgetLeft(max_keep_alive_requests, max_keep_alive_requests));
+
+    // A connection served on the accept thread gets exactly one request, so its
+    // first response is also its last and must say close. The two spawn-failure
+    // fallbacks in `serveConnection` used to inherit the full hundred-request
+    // loop, holding the listener for as long as the client cared to keep the
+    // connection -- during an overload, which is the only time that path runs.
+    try std.testing.expect(!keepAliveBudgetLeft(0, inline_keep_alive_requests));
 }
 
 fn promptsRouteToToolInput(arena: std.mem.Allocator, method: []const u8, body: []const u8) ?[]const u8 {
@@ -19807,6 +19873,90 @@ test "a HEAD is not routed into the SSE stream, and a POST-only route still refu
     var run_buf: [4096]u8 = undefined;
     const post_only = try routeCapture(&run_buf, try testRequest(&req_buf, "HEAD", "/api/run"));
     try std.testing.expect(std.mem.startsWith(u8, post_only, "HTTP/1.1 404 Not Found\r\n"));
+}
+
+/// Runs `respondSaturated` over a socket pair with the two per-request
+/// threadlocals deliberately left set, the way the accept thread can leave them
+/// after serving a request inline, and hands back what it wrote.
+fn saturatedCapture(buf: []u8, stale_head: bool, stale_keep_alive: bool) ![]const u8 {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const pair = try testRespondSocketPair();
+    defer _ = std.c.close(pair[1]);
+
+    const saved_head = request_head;
+    const saved_keep_alive = request_keep_alive;
+    const saved_status = request_status;
+    defer {
+        request_head = saved_head;
+        request_keep_alive = saved_keep_alive;
+        request_status = saved_status;
+    }
+    request_head = stale_head;
+    request_keep_alive = stale_keep_alive;
+
+    respondSaturated(io, .{ .socket = .{ .handle = pair[0], .address = undefined } });
+    _ = std.c.close(pair[0]);
+
+    var used: usize = 0;
+    while (used < buf.len) {
+        const n = std.c.read(pair[1], buf[used..].ptr, buf.len - used);
+        if (n <= 0) break;
+        used += @intCast(n);
+    }
+    return buf[0..used];
+}
+
+test "the saturation 503 is counted, logged, and does not inherit the last request's flags" {
+    // The refusal was answered with a bare `respond` on the accept thread,
+    // outside `handleConnection` -- outside the metric and completion-log
+    // defers, and outside the reset of the two threadlocals `respond` reads. So
+    // saturation incremented nothing and wrote no line, and after one request
+    // served inline on that same thread (which happens on the two
+    // spawn-failure fallbacks, during the same overload) the 503 could declare
+    // a Content-Length it never wrote, or promise keep-alive on a socket closed
+    // on the next line.
+    const before_requests = http_requests_total.load(.monotonic);
+    const before_errors = http_errors_total.load(.monotonic);
+    const before_client_errors = http_client_errors_total.load(.monotonic);
+
+    var buf: [1024]u8 = undefined;
+    // Both flags set, as a previous inline HEAD on a kept-alive connection
+    // would leave them. Neither may survive into this response.
+    const out = try saturatedCapture(&buf, true, true);
+
+    try std.testing.expect(std.mem.startsWith(u8, out, "HTTP/1.1 503 Service Unavailable\r\n"));
+    // The stale HEAD flag must not suppress the body: a 503 that states a
+    // length and sends nothing desynchronizes a client that reads by length.
+    const sep = std.mem.find(u8, out, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    const body = out[sep + 4 ..];
+    try std.testing.expectEqualStrings("{\"ok\":false,\"error\":\"too many concurrent connections\"}", body);
+    var len_buf: [48]u8 = undefined;
+    const declared = try std.fmt.bufPrint(&len_buf, "Content-Length: {d}\r\n", .{body.len});
+    try std.testing.expect(std.mem.find(u8, out, declared) != null);
+    // And the stale keep-alive flag must not promise reuse of a socket
+    // `serveConnection` closes on the very next line.
+    try std.testing.expect(std.mem.find(u8, out, "Connection: close\r\n") != null);
+    try std.testing.expect(std.mem.find(u8, out, "keep-alive") == null);
+    // A fresh correlation id, not the one belonging to whatever this thread
+    // last served inline.
+    try std.testing.expect(std.mem.find(u8, out, "X-Request-ID: http-") != null);
+
+    // Counted. 503 is a 5xx, so it books under errors_total; client_errors_total
+    // is for 4xx and must not move.
+    try std.testing.expectEqual(before_requests + 1, http_requests_total.load(.monotonic));
+    try std.testing.expectEqual(before_errors + 1, http_errors_total.load(.monotonic));
+    try std.testing.expectEqual(before_client_errors, http_client_errors_total.load(.monotonic));
+
+    // Control: with the flags clear, the same response comes out, so the reset
+    // is what makes the two cases agree rather than a coincidence of framing.
+    var clean_buf: [1024]u8 = undefined;
+    const clean = try saturatedCapture(&clean_buf, false, false);
+    const clean_sep = std.mem.find(u8, clean, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    try std.testing.expectEqualStrings(body, clean[clean_sep + 4 ..]);
+    try std.testing.expect(std.mem.find(u8, clean, "Connection: close\r\n") != null);
 }
 
 test "isWebuiRead treats HEAD like GET" {
