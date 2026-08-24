@@ -173,9 +173,9 @@ pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
 pub fn backfill(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config_mod.Config) void {
     const peers = peersOf(cfg, arena);
     if (peers.len == 0) return;
-    var owner_url = std.StringHashMap([]const u8).init(gpa);
-    defer owner_url.deinit();
-    for (peers) |p| owner_url.put(p.name, p.url) catch {};
+    var owner_url: std.StringHashMapUnmanaged([]const u8) = .empty;
+    defer owner_url.deinit(gpa);
+    for (peers) |p| owner_url.put(gpa, p.name, p.url) catch {};
     var dir = std.Io.Dir.cwd().openDir(io, "state/mesh", .{ .iterate = true }) catch return;
     defer dir.close(io);
     var owners = dir.iterate();
