@@ -285,6 +285,27 @@ pub const Model = struct {
     pub fn wireName(self: Model, key: []const u8) []const u8 {
         return if (self.id.len > 0) self.id else key;
     }
+
+    /// Whether this model can be handed `image_url` content blocks. A model
+    /// that declares its capabilities (non-empty) but omits `image_in` is
+    /// telling us it is not vision-capable: DeepSeek v4-flash's endpoint, for
+    /// example, only accepts `content` as a plain string and rejects the typed
+    /// block array with an opaque JSON-deserialize 400 ("unknown variant
+    /// `image_url`, expected `text`"). A model with no capabilities declared
+    /// leaves it unknown, so the attachment is attempted as before and a
+    /// failure still surfaces the vision hint.
+    ///
+    /// Lives here rather than beside either caller because both the HTTP run
+    /// gate (`imageAttachmentsSupported` in cli.zig) and the REPL's `/attach`
+    /// gate need it, and cli.zig imports tui/repl.zig, so the TUI cannot
+    /// reach into it.
+    pub fn supportsImageInput(self: Model) bool {
+        if (self.capabilities.len == 0) return true;
+        for (self.capabilities) |cap| {
+            if (std.mem.eql(u8, cap, "image_in")) return true;
+        }
+        return false;
+    }
 };
 
 pub const Provider = struct {
