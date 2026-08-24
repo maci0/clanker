@@ -5,6 +5,7 @@
 //! update breaks ACP.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const log = @import("../util/log.zig");
 const vendor = @import("vendor.zig");
 
@@ -153,4 +154,57 @@ test "spawnArgv captures stdout from a helper process, not a vendor CLI" {
 test "unknown vendor is not a Name and cannot build argv" {
     try std.testing.expect(vendor.Name.parse("unknown") == null);
     try std.testing.expect(vendor.Name.parse("anthropic") == null);
+}
+
+test "spawnArgv reaps the child when copying its output fails" {
+    // The no-survivors assertion reads /proc, which is Linux-only.
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    // Fails the first allocation it sees. In spawnArgv that is the first
+    // output-chunk copy, exactly the path that used to return before the
+    // child was waited: the helper stayed alive (blocked writing into a full
+    // pipe this process still held open) or unreaped until process exit.
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    const argv = [_][]const u8{ "sh", "-c", "printf 'x%.0s' $(seq 1 40000)" };
+
+    const result = spawnArgv(io, failing.allocator(), arena_state.allocator(), &argv, "");
+    try std.testing.expectError(error.OutOfMemory, result);
+
+    // No child of this process survives the failed copy, alive or zombied.
+    const self_pid = std.os.linux.getpid();
+    var survivors: usize = 0;
+    var proc = std.Io.Dir.cwd().openDir(io, "/proc", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer proc.close(io);
+    var it = proc.iterate();
+    while (it.next(io) catch null) |entry| {
+        // No kind filter: /proc entries come back DT_UNKNOWN, not .directory.
+        _ = std.fmt.parseInt(i32, entry.name, 10) catch continue;
+        var sb: [64]u8 = undefined;
+        const sp = std.fmt.bufPrint(&sb, "{s}/stat", .{entry.name}) catch continue;
+        var f = proc.openFile(io, sp, .{}) catch continue;
+        defer f.close(io);
+        // readFileAlloc is wrong here: /proc files report st_size 0 and it
+        // comes back empty. Read to EOF into a fixed buffer instead.
+        var raw: [512]u8 = undefined;
+        var end: usize = 0;
+        while (end < raw.len) {
+            const got = f.readStreaming(io, &.{raw[end..]}) catch break;
+            if (got == 0) break;
+            end += got;
+        }
+        const stat = raw[0..end];
+        // comm can carry spaces and parens; fields resume after the last ')'.
+        const close = std.mem.lastIndexOfScalar(u8, stat, ')') orelse continue;
+        var fields = std.mem.tokenizeScalar(u8, stat[close + 1 ..], ' ');
+        _ = fields.next() orelse continue; // state
+        const ppid_text = fields.next() orelse continue;
+        const ppid = std.fmt.parseInt(i32, ppid_text, 10) catch continue;
+        if (ppid == self_pid) survivors += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), survivors);
 }
