@@ -1572,16 +1572,11 @@ clanker.registerView({
       poll().then(function () { dirty = true; });
     }
 
-    /* The refresh hook is the plugin API's resume path, but the host marks a
-       view loaded after the first successful mount and never calls the loader
-       again, so watch the panel's hidden attribute too: it flips on every
-       view switch. */
+    /* The refresh hook is the plugin API's resume path, and the host reaches it
+       on every switch back to an already-loaded view. It did not once: a view
+       was marked loaded after its first mount and its loader was never called
+       again, so this watched the panel's hidden attribute instead. */
     this.refresh = resume;
-    var panel = container.closest(".view");
-    if (panel) {
-      new MutationObserver(function () { if (!panel.hidden) resume(); })
-        .observe(panel, { attributes: true, attributeFilter: ["hidden"] });
-    }
 
     window.addEventListener("resize", function () { dirty = true; });
 

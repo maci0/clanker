@@ -373,3 +373,97 @@ to keep anyway: no `innerHTML`, no `eval`, timers gated on
 `container.closest(".view")`, and no colour literal in `app.css`. The storage
 case fails against `origin/main`; the other three pass there, which is what they
 are for.
+
+## The plugin host assumed a view is opened once and the rail never changes
+
+Three reported bugs, one assumption. `ui/app/core/plugins.js` builds a plugin's
+chrome correctly and then registers it in a way that only worked while the rail
+was static, and it hands every plugin the same live region.
+
+### `refresh` was documented but unreachable
+
+`viewLoaded[name]` in `app.js` is set on the first successful load and never
+cleared, so a view loader is never called twice and `spec.refresh` was reachable
+only from the error panel's Retry. PRD 0012 lists `refresh` in the registration
+API; `mesh` says in a comment that "refresh() covers re-entry"; it did not.
+`health` and `office` had each grown a `MutationObserver` on their panel's
+`hidden` attribute to work around it, both with a comment naming the host as the
+reason.
+
+`showView` now calls the host's `pluginViewShown(name)` on every switch to a
+view it had already loaded. The host keeps per-view mount state in one place
+(`trackMount`), shared by the eager and the deferred loader, and the hook is
+read at call time rather than captured because `health` and `office` both assign
+`this.refresh` from inside `mount`. It is deliberately a no-op until `mount` has
+run: `wasLoaded` is read in `showView` before the load branch can flip the flag,
+so a loader that mounts synchronously cannot get `refresh` in the same switch.
+Both observers are gone, since with a working hook they only bought a second
+`/api/metrics` read and a second poll per re-entry.
+
+Consolidating both loaders onto one guarded mount/refresh pair dropped the
+`runPluginHook(section,` call sites from four to two, and an assertion in
+`ui/app/webui-load.test.mjs` pinned that by number. It now names the two hooks
+behind the shared guard instead of counting, which is what it was there to say.
+
+### One live region for every plugin, rewritten about once a second
+
+`api.status` wrote `#webui-plugins-status`, and so did the loader's own five
+enable/disable/failure lines. `health` calls it from `applySample`, which runs on
+every live `metrics` event, throttled to 1 Hz server-side. That id is also one of
+the sixteen the page's status-to-toast mirror watches, so the cost was not only a
+polite announcement every second but a fresh toast every second, and an enable
+confirmation asked for at the same moment was overwritten inside it.
+
+Each plugin view now gets its own `sr-only` `role="status"` node,
+`#plugin-status-<id>`, built with its chrome and handed to the mirror through a
+new `observeStatus` context entry: the mirror had a hard-coded id list, and a
+plugin's region does not exist when that list is read. The shared line is the
+loader's alone, behind one guarded `hostStatus` helper, which is also where a
+spec with no view chrome behind it still lands. Writing the same line twice
+running is one announcement.
+
+The frequency was Health's own defect and is fixed there too: `applySample`
+takes an `announce` flag, false for a sample that arrived on the live bus, true
+for a read somebody asked for. The tiles are the live surface.
+
+### Arrow keys followed registration order, not the rail
+
+`makeViewShell` puts a plugin's tab inside its group heading, which is the right
+place, then does `_VIEWS.push(id)` and wires the tab with that index. `wireTab`
+moved focus purely by index, so for the eleven built-ins — where `VIEWS` happens
+to be exactly the shipped rail order — the index had always been a stand-in for
+DOM position. A plugin is the first thing to separate them: ArrowUp from a
+Work-group plugin landed on System.
+
+`wireTab` reads `railOrder()` instead, per press rather than captured, since a
+plugin's tab can join the rail long after a built-in was wired. The index it was
+wired with survives as the fallback for a tab that is not in the rail.
+
+`aria-owns` on `.rail-places` had the same fault and is the half that is easy to
+miss: the Set up group's tabs sit outside the tablist element and are members of
+it only through that attribute, so the order it is written in is the order a
+screen reader reads. Appending each new id put a Work-group plugin after System.
+`syncTablistOwns` rebuilds it from the rail's order.
+
+### Verified
+
+`ui/app/core/plugins.test.mjs` is new — the host had no suite of its own — and
+is registered in `build.zig` for `js-suite-coverage`. The host is an ES module
+that imports six siblings and expects a browser, so it runs in a `vm` with the
+imports stripped and stubbed, over a DOM stub built to the shape of the shipped
+rail rather than a flat list of tabs: a `.rail-places` tablist holding Work (an
+`<h2>` in a `<section>`) and Watch (a `<summary>` in a `<details>`), plus a
+separate `.rail-settings` nav whose tabs are members only through `aria-owns`.
+That structure is the point — a flat stub would have let the rail-order fix pass
+without proving anything.
+
+Fourteen cases, run as a control against an untouched `origin/main` worktree:
+twelve fail there and two pass. The two that pass on both sides are the controls
+— a key the tablist does not own is left alone, and a status call with no panel
+behind it still lands somewhere. The before-state failures name the reported
+symptoms rather than an incidental break: ArrowUp reports `'system' !== 'kanban'`,
+which is exactly what the report claimed.
+
+Live: `clanker serve` returns the new host and app bytes, and enabling `health`
+over `/api/webui/plugins` serves a `health/app.js` with the `announce` gate and
+no `MutationObserver`. Full `clanker gate`: twelve of twelve PASS.

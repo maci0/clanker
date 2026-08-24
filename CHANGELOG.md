@@ -68,6 +68,30 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A web UI plugin's `refresh` hook is reached again. The page marks a view
+  loaded after its first successful mount and never calls its loader a second
+  time, so the re-entry hook the registration API documents fired only from the
+  error panel's Retry: a plugin that stopped its own polling while hidden
+  stayed stopped when you came back to it. Switching to an already-loaded
+  plugin view now calls it, never in the same switch that ran `mount`. Mesh
+  picks up its 4s poll again on return, and Health and Office no longer need
+  the `MutationObserver` on their panel each had grown to work around it.
+
+- Each web UI plugin announces into its own live region instead of one shared
+  with every other plugin and with the System panel's own messages. Health
+  writes a status line from the 1 Hz metrics feed, which meant a screen reader
+  got a fresh announcement every second while that tab was open, a fresh toast
+  with it, and an enable or disable confirmation asked for at the same moment
+  was overwritten inside the second. Health now announces a read you asked for
+  (open, Refresh, coming back to the view) rather than every live sample.
+
+- Arrow keys on the web UI's navigation rail follow the rail again when a
+  plugin is enabled. A plugin's tab is placed in its own group but registered
+  last, and both the roving-tabindex moves and the tablist's `aria-owns` read
+  registration order, so ArrowUp from a Work-group plugin tab jumped to System,
+  `End` selected the last-registered plugin rather than the bottom tab, and a
+  screen reader read the rail out of order. Both now read the rail itself.
+
 - The REPL's `/attach` now refuses at the command what it used to fail on a
   turn later. A path that is not a png, jpg, jpeg or webp is rejected by name
   (it used to queue, and the submit path then labelled anything unrecognised
