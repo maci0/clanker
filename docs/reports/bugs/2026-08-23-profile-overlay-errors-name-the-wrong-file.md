@@ -4,11 +4,11 @@
 
 - **What failed:** Config.load maps FileNotFound on the profile overlay to error.MissingConfig, the same error the base config uses, so clanker run --profile typo prints config.toml not found; run clanker setup to create one and never names profiles/typo.toml. PRD 0042's failure table requires naming it. --dump-config additionally catch nulls the real error and blames config.toml syntax. And profiles/<name>.local.toml, which Goal 1 marks shipped, is never loaded.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed in ac242be4, all three defects plus both follow-ups: error.MissingProfile with the path logged and its own hint row; profiles/<name>.local.toml loads .optional after the profile; --dump-config reports the real error via the shared hint table. Verified by clanker gate (11/11 PASS) and live -- serve --profile fix re-exec'd carrying --profile and booted on a config whose default_provider only the profile defines.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed in ac242be4, all three defects plus both follow-ups: error.MissingProfile with the path logged and its own hint row; profiles/<name>.local.toml loads .optional after the profile; --dump-config reports the real error via the shared hint table. Verified by clanker gate (11/11 PASS) and live -- serve --profile fix re-exec'd carrying --profile and booted on a config whose default_provider only the profile defines.
 
 ## Symptom and impact
 

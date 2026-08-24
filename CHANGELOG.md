@@ -25,6 +25,43 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `--dump-config` no longer prints the secret half of an `mcp_servers` header
+  whose value contains `=`. The redaction helper served both `env`
+  (`NAME=value`) and `headers` (`Name: value`) and preferred `=`
+  unconditionally, so a base64-padded credential such as
+  `Authorization: Basic dXNlcjpwYXNzd29yZA==` was cut at the padding and
+  dumped one character short of whole, onto stdout. The separator now comes
+  from the caller, which knows which field it is dumping.
+
+- A `--profile` name with no `profiles/<name>.toml` is now reported as itself.
+  The overlay reused the base config's `error.MissingConfig`, so
+  `clanker run --profile typo` printed "config.toml not found; run
+  `clanker setup` to create one" — naming a file that exists and prescribing a
+  remedy that cannot help. The error is now `MissingProfile`, with a log line
+  naming the path it looked for.
+
+- `profiles/<name>.local.toml` is now loaded. It is the checkout-private half
+  of a named profile, exactly as `config.local.toml` is of the base file, and
+  merges last; only `profiles/<name>.toml` was ever built as a path, so the
+  file beside it had no effect at all.
+
+- `--dump-config` reports the load error it hit instead of erasing it. It did
+  `catch null` and printed one "check config.toml syntax" line for every
+  failure, so a missing profile, an unknown `default_provider` and a
+  non-integer field were indistinguishable — and the two that have nothing to
+  do with `config.toml` still blamed it. It now uses the same per-error hint
+  table the normal command path uses.
+
+- `clanker serve --profile <name>` keeps its profile across a hot-reload
+  re-exec. `buildServeArgvTail` did not repeat `--profile`, so the rebuilt or
+  config-edit-restarted process reverted to base+local with no log line saying
+  so. The watcher also validates the profile stack now: the overlay name was
+  `threadlocal` and armed on the main thread, so `ConfigWatch`'s spawned
+  thread read null and judged a config the process was not running — logging
+  "config changed but does not load … keeping the last known good config"
+  against a process that was fine, or green-lighting a restart into a config
+  that cannot boot. An edit to either half of the named profile is watched too.
+
 - `reports rename` now prints leftover-reference paths that open. The store
   root was joined onto every `ck_fs_grep` hit, but the host already reports
   each hit rooted at the repository, so the one output the verb exists to
