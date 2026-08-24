@@ -68,6 +68,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A `## Blocked on` body consisting only of the store's `- … none yet`
+  placeholder lines no longer suppresses the report from the improve
+  backlog: `blockedOn` now reads such lines as empty, the same way
+  `isPlaceholderBody` does in the scaffold tooling. Before this, a filer
+  writing "- none yet" under the heading would silently keep an otherwise
+  workable report out of every autonomous run.
+
 - An unreadable or oversize `state/improvements.jsonl` no longer reads as no
   history. Both read paths ended in `catch return &.{}`, which is
   indistinguishable from a first run, so the improve loop's dedup and revert
