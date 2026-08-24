@@ -19,8 +19,22 @@ var _fmtInt = null;
 var _fmtCost = null;
 var _formatChatTime = null;
 var _openSession = null;
+var _observeStatus = null;
 
 function fmt() { return { bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime }; }
+
+/* The System panel's own line, for the loader's messages only. Guarded because
+   the panel is not on the page in every embedding of the app. */
+function hostStatus(message) {
+  if (_el && _el.webuiPluginsStatus) _el.webuiPluginsStatus.textContent = message;
+}
+
+/* One live region per plugin view, keyed by view id and built with the view's
+   chrome. A single shared region meant every plugin, plus the loader's own
+   enable/disable/failure lines, wrote the same node: Health announces off the
+   1 Hz metrics bus, so an enable confirmation was overwritten inside a second
+   and a screen reader heard Health's counters instead. */
+var pluginStatusNodes = {};
 
 function readJsonResponse(r) {
   return r.json().then(function (d) {
@@ -90,7 +104,13 @@ export function pluginApi(spec) {
       if (text != null) node.textContent = text;
       return node;
     },
-    status: function (message) { _el.webuiPluginsStatus.textContent = message; },
+    status: function (message) {
+      var node = (spec && spec.id) ? pluginStatusNodes[spec.id] : null;
+      if (!node) { hostStatus(message); return; }
+      // The same line written twice running is one announcement, not two.
+      if (node.textContent === message) return;
+      node.textContent = message;
+    },
     fmt: fmt(),
     // Kept under the old name so plugins written against the VanJS-era API
     // keep working: same tags/state/add semantics, now signals-backed.
@@ -124,6 +144,19 @@ export function pluginApi(spec) {
   };
 }
 
+/* `aria-owns` is the order a screen reader reads the tablist in, and the Set up
+   group's tabs sit outside the tablist element and are members of it only
+   through this attribute. Appending each new id put a Work group plugin after
+   System, so rebuild the whole list from the rail's own order instead. */
+function syncTablistOwns(tablist) {
+  var tabs = document.querySelectorAll("#rail [role='tab'][data-view]");
+  var ids = [];
+  for (var i = 0; i < tabs.length; i++) {
+    if (tabs[i].id) ids.push(tabs[i].id);
+  }
+  if (ids.length) tablist.setAttribute("aria-owns", ids.join(" "));
+}
+
 /* Every addon view's chrome: the panel, the rail tab, and the tablist wiring.
    Built from name/title/group alone, which is all `/api/webui/plugins` answers
    with, so a deferred addon gets a working tab before its script exists.
@@ -138,6 +171,16 @@ function makeViewShell(id, title, group) {
   panel.hidden = true;
   var section = document.createElement("section");
   panel.appendChild(section);
+  var live = document.createElement("p");
+  live.className = "sr-only";
+  live.id = "plugin-status-" + id;
+  live.setAttribute("role", "status");
+  live.setAttribute("aria-live", "polite");
+  panel.appendChild(live);
+  pluginStatusNodes[id] = live;
+  // Joins the page's status-to-toast mirror, so a plugin's message is still
+  // seen and not only announced.
+  if (_observeStatus) _observeStatus(live);
   document.getElementById("main").appendChild(panel);
   var tab = document.createElement("button");
   tab.type = "button";
@@ -172,13 +215,7 @@ function makeViewShell(id, title, group) {
     if (fallback) fallback.appendChild(tab);
   }
   var tablist = document.querySelector(".rail-places[role='tablist']");
-  if (tablist && tab.id) {
-    var owns = (tablist.getAttribute("aria-owns") || "").split(/\s+/).filter(Boolean);
-    if (owns.indexOf(tab.id) === -1) {
-      owns.push(tab.id);
-      tablist.setAttribute("aria-owns", owns.join(" "));
-    }
-  }
+  if (tablist && tab.id) syncTablistOwns(tablist);
   _VIEWS.push(id);
   _wireTab(tab, _VIEWS.length - 1);
   return section;
@@ -204,6 +241,57 @@ function runPluginHook(section, label, retryFn, fn) {
    view id. `spec` is filled in when that script runs `clanker.registerView`. */
 var pluginShells = {};
 
+/* Per-view mount state, keyed by view id: whether `mount` has run, and the
+   `refresh` call that a later visit should reach. Held out here rather than in
+   a closure so `pluginViewShown` can find it. */
+var pluginMounts = {};
+
+/* One view's mount bookkeeping. `getSpec` is a function rather than the spec
+   because a deferred addon's spec does not exist yet when its shell is built,
+   and because a mount may replace its own `refresh` (health and office both
+   assign `this.refresh` from inside `mount`) — so it has to be read at call
+   time, not captured. */
+function trackMount(id, label, section, getSpec) {
+  var st = pluginMounts[id];
+  if (st && st.section === section) return st;
+  st = { mounted: false, section: section };
+  st.retry = function () {
+    st.mounted = false;
+    return _viewLoaders[id]();
+  };
+  st.refresh = function () {
+    var spec = getSpec();
+    if (!spec || typeof spec.refresh !== "function") return null;
+    return runPluginHook(section, label, st.retry, function () {
+      return spec.refresh.call(spec, section, pluginApi(spec));
+    });
+  };
+  st.mount = function () {
+    var spec = getSpec();
+    st.mounted = true;
+    section.textContent = "";
+    return runPluginHook(section, label, st.retry, function () {
+      return spec.mount.call(spec, section, pluginApi(spec));
+    });
+  };
+  pluginMounts[id] = st;
+  return st;
+}
+
+/* The host loads a view once: `viewLoaded[name]` in app.js is set on the first
+   successful load and never cleared, so a view loader is not called again and
+   `refresh` — documented in PRD 0012 as part of the registration API, and the
+   hook mesh relies on for re-entry — was reachable only from the error panel's
+   Retry. `showView` calls this whenever it switches to a view it has already
+   loaded. It is deliberately a no-op until `mount` has run, so the first open
+   still belongs to the loader and a plugin never sees `refresh` before
+   `mount`. */
+export function pluginViewShown(id) {
+  var st = pluginMounts[id];
+  if (!st || !st.mounted) return null;
+  return st.refresh();
+}
+
 /* An enabled, non-eager addon: build its chrome now, fetch its code on first
    open. A script that fails to arrive leaves the tab in place showing the
    failure with a Retry, rather than an empty panel that looks like the addon
@@ -213,13 +301,12 @@ function registerDeferredView(meta) {
   var section = makeViewShell(meta.name, meta.title || meta.name, meta.group || "Watch");
   var shell = { section: section, spec: null };
   pluginShells[meta.name] = shell;
-  var mounted = false;
+  var st = trackMount(meta.name, meta.title || meta.name, section, function () { return shell.spec; });
   _viewLoaders[meta.name] = function () {
     if (meta.has_css) loadPluginCss(meta.name);
     return loadPluginScript(meta.name).then(function (ok) {
-      var spec = shell.spec;
-      if (!ok || !spec) {
-        mounted = false;
+      if (!ok || !shell.spec) {
+        st.mounted = false;
         section.textContent = "";
         showLoadError(section, "Could not load the " + (meta.title || meta.name) + " plugin.", function () {
           pluginScripts[meta.name] = null;
@@ -227,23 +314,8 @@ function registerDeferredView(meta) {
         });
         return null;
       }
-      var retry = function () {
-        mounted = false;
-        return _viewLoaders[meta.name]();
-      };
-      if (!mounted) {
-        mounted = true;
-        section.textContent = "";
-        return runPluginHook(section, meta.title || meta.name, retry, function () {
-          return spec.mount.call(spec, section, pluginApi(spec));
-        });
-      }
-      if (typeof spec.refresh === "function") {
-        return runPluginHook(section, meta.title || meta.name, retry, function () {
-          return spec.refresh.call(spec, section, pluginApi(spec));
-        });
-      }
-      return null;
+      if (!st.mounted) return st.mount();
+      return st.refresh();
     });
   };
 }
@@ -263,7 +335,7 @@ function loadPluginScript(name) {
     s.setAttribute("data-plugin", name);
     s.onload = function () { resolve(true); };
     s.onerror = function () {
-      if (_el.webuiPluginsStatus) _el.webuiPluginsStatus.textContent = "Plugin " + name + " failed to load.";
+      hostStatus("Plugin " + name + " failed to load.");
       resolve(false);
     };
     document.head.appendChild(s);
@@ -322,7 +394,7 @@ export function loadWebuiPlugins() {
     })
     .catch(function (err) {
       var msg = "Could not load plugins: " + err.message;
-      _el.webuiPluginsStatus.textContent = msg;
+      hostStatus(msg);
       showLoadError(_el.webuiPlugins, msg, loadWebuiPlugins);
     });
 }
@@ -356,10 +428,10 @@ export function renderWebuiPlugins(list) {
           renderWebuiPlugins(d.addons || []);
           if (nowOn) {
             return loadPluginAssets(d.addons || []).then(function () {
-              _el.webuiPluginsStatus.textContent = (p.title || p.name) + " enabled.";
+              hostStatus((p.title || p.name) + " enabled.");
             });
           }
-          _el.webuiPluginsStatus.textContent = (p.title || p.name) + " disabled. Reload the page to remove it.";
+          hostStatus((p.title || p.name) + " disabled. Reload the page to remove it.");
           var note = document.createElement("p");
           note.className = "run-empty";
           note.appendChild(document.createTextNode((p.title || p.name) + " is off. Reload the page to take it off this screen. "));
@@ -374,7 +446,7 @@ export function renderWebuiPlugins(list) {
         })
         .catch(function (err) {
           box.checked = !box.checked;
-          _el.webuiPluginsStatus.textContent = "Plugin: " + err.message;
+          hostStatus("Plugin: " + err.message);
         })
         .then(function () { box.disabled = false; });
     });
@@ -408,6 +480,7 @@ export function bindPlugins(ctx) {
   _fmtCost = ctx.fmtCost;
   _formatChatTime = ctx.formatChatTime;
   _openSession = ctx.openSession;
+  _observeStatus = ctx.observeStatus || null;
   window.clanker = {
     registerView: function (spec) {
       if (!spec || !spec.id || typeof spec.mount !== "function") return;
@@ -426,24 +499,10 @@ export function bindPlugins(ctx) {
       if (_VIEWS.indexOf(spec.id) !== -1) return;
       var section = makeViewShell(spec.id, spec.title || spec.id, spec.group || "Watch");
       pluginViews[spec.id] = { spec: spec, section: section };
-      var mounted = false;
+      var st = trackMount(spec.id, spec.title || spec.id, section, function () { return spec; });
       _viewLoaders[spec.id] = function () {
-        var retry = function () {
-          mounted = false;
-          return _viewLoaders[spec.id]();
-        };
-        if (!mounted) {
-          mounted = true;
-          return runPluginHook(section, spec.title || spec.id, retry, function () {
-            return spec.mount.call(spec, section, pluginApi(spec));
-          });
-        }
-        if (typeof spec.refresh === "function") {
-          return runPluginHook(section, spec.title || spec.id, retry, function () {
-            return spec.refresh.call(spec, section, pluginApi(spec));
-          });
-        }
-        return null;
+        if (!st.mounted) return st.mount();
+        return st.refresh();
       };
       if (typeof spec.boot === "function") {
         try { spec.boot(pluginApi(spec)); } catch (e) {}
