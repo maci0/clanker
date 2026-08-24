@@ -307,12 +307,23 @@ recorder splits (native writer at the choke point, guest reader:
   `GET /api/catalog` and `clanker providers catalog`. Fetch/refresh stays
   native: the snapshot is ~3.7 MiB and will not fit the guest arena next
   to a JSON parse. Config-load's snapshot read path stays native.
-- `src/doctor.zig` — read-only checks overlapping the `status` guest;
-  every needed privilege is expressible in a descriptor.
-- `chatrooms.fanOut` makes native HTTP posts to peers while
-  `phonebook.zig` documents routing the same traffic class through the
-  `peers` guest precisely so the tool's `network_from_config` allowlist
-  gates it. Route fan-out the same way.
+- `chatrooms.fanOut`: done. Delivery runs through the sandboxed `peers`
+  guest (`chat_fanout`), with `cli.zig` injecting the runner at startup
+  (`chatrooms.peers_runner`; no file under `src/peers/` may import
+  `sandbox/`). The host keeps the per-peer backoff table and passes the
+  names it is cooling down as `skip`.
+- `src/peers/session_sync.zig` still makes native peer HTTP posts
+  (RFC 0019 stage 1: `pushTail`/`backfill` over the same configured-peer
+  set the `peers` guest allowlists). Migrating means a new `peers` op
+  carrying the event batch plus the gap/retry protocol, or a second
+  runner-injection site beside `chatrooms.peers_runner`; decide by RFC
+  before moving it, because the three tested journeys (burst convergence,
+  backfill after downtime, hostile wire input) pin the current shape.
+- `src/doctor.zig`: stays native, pinned twice. Its checks are
+  credential handling (`vertex_token`, `oauth_store`, key env vars), and
+  it validates config as policy source. The `status` guest keeps the
+  instance+peers summary; doctor keeps everything that reads secrets or
+  build artifacts.
 - `src/research/engine.zig` — deleted (placeholder only referenced from
   the comptime test block; autoresearch never imported it).
 

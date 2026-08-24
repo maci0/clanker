@@ -505,6 +505,62 @@ fn logSinkWrite(ctx: *const anyopaque, line: []const u8) void {
     bridge_log_lines.append(bridge_gpa, owned) catch bridge_gpa.free(owned);
 }
 
+/// Rewrites one structured log record (`[ERROR] ts_ms=... request_id=... msg`,
+/// the shape `util/log.zig` writes) into the human line the transcript shows:
+/// `error: msg`. The timestamp and request id are collector fields; in a
+/// conversation they are machinery voice at exactly the moment the user is
+/// reading what went wrong. Records not in that shape (vendored `std.log`
+/// output) return null and are shown verbatim. `record` is already
+/// control-stripped by `logSinkWrite`; only its trusted prefix is parsed.
+fn humanLogRecord(arena: std.mem.Allocator, record: []const u8) ?[]const u8 {
+    if (record.len == 0 or record[0] != '[') return null;
+    const close = std.mem.indexOfScalar(u8, record, ']') orelse return null;
+    const level = record[1..close];
+    const voice: []const u8 = if (std.mem.eql(u8, level, "ERROR"))
+        "error"
+    else if (std.mem.eql(u8, level, "WARN"))
+        "warn"
+    else
+        return null;
+    var rest = record[close + 1 ..];
+    const stamp = " ts_ms=";
+    if (!std.mem.startsWith(u8, rest, stamp)) return null;
+    rest = rest[stamp.len..];
+    const digits = std.mem.indexOfNone(u8, rest, "0123456789") orelse return null;
+    rest = rest[digits..];
+    const req_id = " request_id=";
+    if (std.mem.startsWith(u8, rest, req_id)) {
+        rest = rest[req_id.len..];
+        const token_end = std.mem.indexOfAny(u8, rest, " \t") orelse return null;
+        rest = rest[token_end..];
+    }
+    if (rest.len == 0 or rest[0] != ' ') return null;
+    return std.fmt.allocPrint(arena, "{s}:{s}", .{ voice, rest }) catch null;
+}
+
+test "humanLogRecord strips collector fields from error records" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const with_id = humanLogRecord(
+        arena,
+        "[ERROR] ts_ms=1787606623384 request_id=run-123 request to 'vllm-local' failed: ReadFailed (attempt 3/3)",
+    );
+    try std.testing.expectEqualStrings(
+        "error: request to 'vllm-local' failed: ReadFailed (attempt 3/3)",
+        with_id.?,
+    );
+    const without_id = humanLogRecord(arena, "[WARN] ts_ms=42 fallback: 'deepseek' served after 'vllm-local' failed");
+    try std.testing.expectEqualStrings("warn: fallback: 'deepseek' served after 'vllm-local' failed", without_id.?);
+    // Not collector-shaped: vendored std.log output passes through untouched.
+    try std.testing.expectEqual(@as(?[]const u8, null), humanLogRecord(arena, "vaxis: unknown capability"));
+    try std.testing.expectEqual(@as(?[]const u8, null), humanLogRecord(arena, "[INFO] ts_ms=1 hello"));
+    // Malformed stamps never masquerade as human lines.
+    try std.testing.expectEqual(@as(?[]const u8, null), humanLogRecord(arena, "[ERROR] ts_ms=abc x"));
+    try std.testing.expectEqual(@as(?[]const u8, null), humanLogRecord(arena, "[ERROR]ts_ms=1 x"));
+    try std.testing.expectEqual(@as(?[]const u8, null), humanLogRecord(arena, "[ERROR] ts_ms=42request_id=x y"));
+}
+
 /// Moves buffered log records into the transcript as dim lines. Caller
 /// holds `bridge_mutex`: the render-thread draw loop drains every frame and
 /// the run thread's finishTurn drains at turn end, so a record emitted
@@ -515,9 +571,12 @@ fn drainLogLines(self: *Model) void {
     defer _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
     if (bridge_log_lines.items.len == 0) return;
     for (bridge_log_lines.items) |l| {
-        const copy = self.arena.dupe(u8, l) catch l;
-        self.lines.append(self.arena, .{ .text = copy, .dim = true }) catch {};
-        if (copy.ptr != l.ptr) bridge_gpa.free(l);
+        const shown = if (humanLogRecord(self.arena, l)) |h|
+            h
+        else
+            self.arena.dupe(u8, l) catch l;
+        self.lines.append(self.arena, .{ .text = shown, .dim = true }) catch {};
+        if (shown.ptr != l.ptr) bridge_gpa.free(l);
     }
     bridge_log_lines.clearRetainingCapacity();
 }
@@ -867,6 +926,10 @@ fn runThreadMain(args: RunThreadArgs) void {
         self.finishTurn(result.answer, self.turnStats(&a, started, messages.items));
         return;
     }
+    // Who the user picked, before the run can repoint the agent at a
+    // fallback provider (`chatWithFallbackChain` rewrites the agent's
+    // provider on success): if someone else answered, say so.
+    const requested_name = self.provider.name;
     const resp = a.run(messages, args.task, &err_detail) catch |err| {
         if (err == error.MaxIterationsExceeded) {
             // An iteration-limit hit is a landing, not a loss: the
@@ -903,6 +966,14 @@ fn runThreadMain(args: RunThreadArgs) void {
         self.finishTurn(text, self.turnStats(&a, started, messages.items));
         return;
     };
+    if (!std.mem.eql(u8, a.provider.*.name, requested_name)) {
+        const served = a.provider.*;
+        self.turn_fallback_notice = std.fmt.allocPrint(
+            self.arena,
+            "notice: {s} failed; answered by {s}/{s} (/model to switch)",
+            .{ requested_name, served.name, served.activeModelName() },
+        ) catch null;
+    }
     self.finishTurn(resp.message.content orelse "", self.turnStats(&a, started, messages.items));
 }
 
@@ -2980,6 +3051,11 @@ const Model = struct {
     /// /compact [hint]: applied to the next Agent.run then cleared.
     compact_hint: []const u8 = "",
     force_compact: bool = false,
+    /// Set by the run thread when a fallback provider served the turn the
+    /// user did not pick; finishTurn appends it as a dim notice right after
+    /// the drained log records, ahead of the answer. Both ends run on the
+    /// run thread back to back, so no cross-thread handoff is needed.
+    turn_fallback_notice: ?[]const u8 = null,
     /// Between a bracketed-paste start/end pair. `vxfw.TextField` is a
     /// single-line widget (Enter either submits or is a no-op, there is no
     /// way to insert a literal newline into one), so a multi-line paste's
@@ -3161,6 +3237,13 @@ const Model = struct {
         // Log records emitted while the turn was in flight land before the
         // tool lines, in arrival order.
         drainLogLines(self);
+        // The fallback notice lands between those records and the answer:
+        // the raw failure is what happened first, who actually served is
+        // what the reader needs to know before trusting the reply below.
+        if (self.turn_fallback_notice) |n| {
+            self.lines.append(self.arena, .{ .text = n, .dim = true }) catch {};
+            self.turn_fallback_notice = null;
+        }
         // Tool lines are allocated from bridge_gpa by the worker callbacks;
         // the transcript owns arena copies so the originals can be freed
         // here instead of living (and leaking) for the process lifetime.
