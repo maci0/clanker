@@ -156,6 +156,20 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
 
     const target = targetFor(kind, slug) orelse
         return lib.fail(out, "kind must be bug, investigation, missing-tool, or runbook; report slugs start YYYY-MM-DD-, runbook slugs use lowercase letters, digits, and hyphens");
+
+    // Two clocks decide one record: the store stamps UTC (`doc.isoDate`, and
+    // `status` will stamp the same way) while the caller types the slug from
+    // whatever its own shell said. Every report slug carries a date, so this is
+    // the store with the exposure — the class recurred in four independent
+    // sessions in one day, which is where "the caller should know better" stops
+    // being a workable contract. Warn and create: backdating a record about an
+    // older event is a real need, so a refusal would only be worked around.
+    var date_buf: [16]u8 = undefined;
+    const today = doc.isoDate(@trunc(lib.nowSeconds()), &date_buf);
+    const date_warning: ?[]const u8 = if (doc.slugDateConflict(slug, today)) |dated|
+        try doc.slugDateWarning(lib.alloc, dated, today)
+    else
+        null;
     var rendered: std.Io.Writer.Allocating = .init(lib.alloc);
     defer rendered.deinit();
     try renderScaffold(&rendered.writer, kind, title_text, summary);
@@ -189,6 +203,10 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     if (!indexed) {
         try s.objectField("note");
         try s.write("the record was created, but the inventory changed concurrently or could not be updated; read the index and add the link without replacing another edit");
+    }
+    if (date_warning) |warning| {
+        try s.objectField("date_warning");
+        try s.write(warning);
     }
     try s.endObject();
     lib.commit(out, &w);
@@ -395,10 +413,15 @@ fn rename(obj: std.json.Value, out: *lib.Out) !void {
     // read as "no references" — the reply says which it was.
     var refs: std.ArrayList([]const u8) = .empty;
     var refs_ok = true;
-    collectReferences(&refs, reports_dir, old_stem) catch {
+    // The shared walk, not a second copy: this store's own copy joined the
+    // store root onto hits `ck_fs_grep` already reports repo-rooted, so every
+    // path on this list read `docs/reports/docs/reports/…` and opened nothing.
+    // Skipping each store's index by path also does what the old literal
+    // `README.md` comparison only looked like it did.
+    records_grep.collectRenameReferences(&refs, reports_dir, reports_dir ++ "/README.md", old_stem) catch {
         refs_ok = false;
     };
-    collectReferences(&refs, runbooks_dir, old_stem) catch {
+    records_grep.collectRenameReferences(&refs, runbooks_dir, runbooks_dir ++ "/README.md", old_stem) catch {
         refs_ok = false;
     };
 
@@ -444,33 +467,6 @@ fn renameInventoryLink(index_path: []const u8, old_link: []const u8, new_link: [
     const updated = try lib.alloc.alloc(u8, size);
     _ = std.mem.replace(u8, idx.text, old_link, new_link, updated);
     return records_grep.writeIndex(index_path, idx, updated);
-}
-
-/// Append to `refs` each file under `root` whose text still contains
-/// `needle`, as store-rooted paths, skipping the inventory README (already
-/// rewritten) and duplicates.
-fn collectReferences(refs: *std.ArrayList([]const u8), root: []const u8, needle: []const u8) !void {
-    const raw = lib.fsGrep(root, needle) catch |err| switch (err) {
-        error.NotFound => return,
-        else => return err,
-    };
-    const hits = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return error.UnparsableGrepResult;
-    if (hits != .array) return error.UnparsableGrepResult;
-    for (hits.array.items) |hit| {
-        if (hit != .object) continue;
-        const file = hit.object.get("file") orelse continue;
-        if (file != .string) continue;
-        if (std.mem.eql(u8, file.string, "README.md")) continue;
-        const full = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ root, file.string });
-        var seen = false;
-        for (refs.items) |r| {
-            if (std.mem.eql(u8, r, full)) {
-                seen = true;
-                break;
-            }
-        }
-        if (!seen) try refs.append(lib.alloc, full);
-    }
 }
 
 /// The inventory kind a path belongs to, or null when the path is not a
@@ -623,12 +619,12 @@ fn isSlug(slug: []const u8) bool {
     return slug[0] != '-' and slug[slug.len - 1] != '-';
 }
 
+/// A dated slug is a `YYYY-MM-DD-` prefix with a name after it. The prefix is
+/// read by `doc.slugDatePrefix`, the same parser `create` compares against the
+/// stamped date, so what counts as dated cannot drift between the two.
 fn isDatedSlug(slug: []const u8) bool {
-    if (slug.len < 13 or slug[4] != '-' or slug[7] != '-' or slug[10] != '-') return false;
-    for (slug[0..10], 0..) |c, i| {
-        if (i == 4 or i == 7) continue;
-        if (!std.ascii.isDigit(c)) return false;
-    }
+    if (slug.len < 13) return false;
+    if (doc.slugDatePrefix(slug) == null) return false;
     return isSlug(slug);
 }
 
