@@ -121,7 +121,7 @@ Project agents receive this workflow through the harness prompt and
 - [advisor.model is parsed, documented and never read, so every critique bills the main model](bugs/2026-08-23-advisor-model-never-read.md) — Resolved
 - [The saturation 503 is never counted or logged, and can inherit stale HEAD and keep-alive flags](bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md) — Open
 
-- [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Open
+- [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Resolved
 
 - [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Resolved
 
@@ -141,9 +141,9 @@ Project agents receive this workflow through the harness prompt and
 
 - [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-23-plugin-tab-arrow-keys-follow-registration-order.md) — Open
 
-- [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-23-board-card-member-avatar-nested-in-the-card-button.md) — Open
+- [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-23-board-card-member-avatar-nested-in-the-card-button.md) — Resolved
 
-- [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-23-webui-task-textarea-combobox-role.md) — Open
+- [The composer textarea carries role=combobox, which ARIA does not allow on a textarea](bugs/2026-08-23-webui-task-textarea-combobox-role.md) — Resolved
 
 - [reports create writes the kind label into the title a second time](bugs/2026-08-23-reports-create-doubles-the-kind-label.md) — Resolved
 

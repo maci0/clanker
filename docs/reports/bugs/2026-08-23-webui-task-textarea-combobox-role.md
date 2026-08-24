@@ -4,11 +4,11 @@
 
 - **What failed:** ui/app/index.html declares #task as a <textarea> with role=combobox. ARIA allows combobox on an input, not on a textarea, whose implicit role is textbox with aria-multiline; axe-core reported it as aria-allowed-role in the 2026-08-12 sweep and it is still there. Not a line change: the role has to move to a wrapper while #task stays the textbox, and all four list renderers plus hidePromptList set aria-expanded and aria-activedescendant on el.task, so every one moves in the same change.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed: the role moved to a new #task-combobox wrapper in ui/app/index.html which DOM-contains both the textarea and the listbox; #task is a plain textarea again and keeps aria-autocomplete/aria-controls/aria-activedescendant (ARIA 1.1 shape). All four renderers plus hidePromptList in ui/app/app.js go through one setPromptListOpen(). New structural + guard tests in ui/app/composer-suggest.test.mjs, both red on the unmodified source. Gate: all twelve checks PASS.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed: the role moved to a new #task-combobox wrapper in ui/app/index.html which DOM-contains both the textarea and the listbox; #task is a plain textarea again and keeps aria-autocomplete/aria-controls/aria-activedescendant (ARIA 1.1 shape). All four renderers plus hidePromptList in ui/app/app.js go through one setPromptListOpen(). New structural + guard tests in ui/app/composer-suggest.test.mjs, both red on the unmodified source. Gate: all twelve checks PASS.
 
 ## Symptom and impact
 
