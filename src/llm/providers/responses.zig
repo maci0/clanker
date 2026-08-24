@@ -250,8 +250,39 @@ test "Responses codec maps text tools and usage into neutral types" {
     const arena = arena_state.allocator();
     const response = try parseResponse(arena, "{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]},{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"exec\",\"arguments\":\"{}\"}],\"usage\":{\"input_tokens\":10,\"output_tokens\":2,\"total_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":4}}}", null);
     try std.testing.expectEqualStrings("hi", response.message.content.?);
+    try std.testing.expectEqual(@as(usize, 1), response.message.tool_calls.?.len);
+    // The agent loop matches a tool result to its call by id and executes
+    // the arguments verbatim, so both have to survive the codec.
+    try std.testing.expectEqualStrings("c1", response.message.tool_calls.?[0].id);
     try std.testing.expectEqualStrings("exec", response.message.tool_calls.?[0].name);
+    try std.testing.expectEqualStrings("{}", response.message.tool_calls.?[0].arguments);
+    try std.testing.expectEqualStrings("completed", response.finish_reason.?);
     try std.testing.expectEqual(@as(u32, 4), response.usage.?.prompt_cache_hit_tokens);
+}
+
+test "Responses stream deltas decode text and function-call fragments" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const text = (try parseStreamEvent(arena, "{\"type\":\"response.output_text.delta\",\"delta\":\"he\"}")).?;
+    try std.testing.expectEqualStrings("he", text.text.?);
+
+    // The opening frame names the call; argument frames carry only the index,
+    // so the client folds fragments by that index (same contract as the
+    // chat-completions codecs).
+    const added = (try parseStreamEvent(arena, "{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"c9\",\"name\":\"exec\"}}")).?;
+    try std.testing.expectEqual(@as(usize, 1), added.tool_calls.len);
+    try std.testing.expectEqual(@as(usize, 0), added.tool_calls[0].index);
+    try std.testing.expectEqualStrings("c9", added.tool_calls[0].id.?);
+    try std.testing.expectEqualStrings("exec", added.tool_calls[0].name.?);
+
+    const args = (try parseStreamEvent(arena, "{\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{}\"}")).?;
+    try std.testing.expectEqual(@as(usize, 0), args.tool_calls[0].index);
+    try std.testing.expectEqualStrings("{}", args.tool_calls[0].arguments.?);
+
+    // [DONE] still terminates the stream.
+    try std.testing.expect((try parseStreamEvent(arena, "[DONE]")).?.done);
 }
 
 test "Responses completed stream frame preserves final usage" {

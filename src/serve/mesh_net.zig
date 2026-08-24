@@ -760,6 +760,12 @@ test "parseHostPort v4 and bracketed v6" {
     try std.testing.expectEqualStrings("::1", b.host);
     try std.testing.expectEqual(@as(u16, 9), b.port);
     try std.testing.expectError(error.BadAddress, parseHostPort("no-port"));
+    // Boundaries an operator typo reaches first: empty input, a bracketed
+    // address with no port, a port above u16, and a non-numeric port.
+    try std.testing.expectError(error.BadAddress, parseHostPort(""));
+    try std.testing.expectError(error.BadAddress, parseHostPort("[::1]"));
+    try std.testing.expectError(error.BadAddress, parseHostPort("127.0.0.1:99999"));
+    try std.testing.expectError(error.BadAddress, parseHostPort("[::1]:abc"));
 }
 
 test "pendingTimedOut honors the prompt window" {
