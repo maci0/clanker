@@ -541,7 +541,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `workflows/` | `src/agent/workflows.zig` | Reusable prompt workflows (`agent.workflows_dir`) |
 | `chains/` | — | Transform chains (`agent.chains_dir`) |
 | `presets/` | — | Tool-preset bundles (`presets/<name>.toml`, `clanker preset`) |
-| `profiles/` | — | Config overlays (`--profile <name>` applies `profiles/<name>.toml`) |
+| `profiles/` | — | Config overlays (`--profile <name>` applies `profiles/<name>.toml`, then `profiles/<name>.local.toml` when present) |
 | `themes/` | `src/tui/theme.zig` | Color palettes as JSON, shared by the REPL themes and web tokens |
 | `commands/` | — | Drop-in JSON catalogs served to the web UI (`/webui/commands/*`; slash commands today) |
 | `tui-plugins/`, `cli-plugins/` | — | Slash-command / subcommand plugin manifests (PRD 0012) |
