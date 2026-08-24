@@ -271,8 +271,15 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/improve/worktree.zig", .needle = "commitTree(gpa, io, tree, base_sha, branch_sha, message)" },
     .{ .file = "src/improve/worktree.zig", .needle = "updateRefCas(gpa, io, self.base_branch, commit, base_sha)" },
     .{ .file = "src/improve/worktree.zig", .needle = "updateRefCas(gpa, io, self.base_branch, branch_sha, base_sha)" },
-    .{ .file = "src/improve/worktree.zig", .needle = "self.resyncLocalBranch(gpa, io, commit);" },
-    .{ .file = "src/improve/worktree.zig", .needle = "self.resyncLocalBranch(gpa, io, branch_sha);" },
+    .{ .file = "src/improve/worktree.zig", .needle = "self.afterLanded(gpa, io, commit, base_sha);" },
+    .{ .file = "src/improve/worktree.zig", .needle = "self.afterLanded(gpa, io, branch_sha, base_sha);" },
+    // And the resync must stay the CONDITION for advancing the pinned merge
+    // base, not a statement beside it. `created_from` is what the next
+    // promotion passes to merge-tree, so a pin advanced past a reset that did
+    // not land makes the branch's next delta read as a deletion of everything
+    // the merge folded in -- with every other needle here still matching.
+    .{ .file = "src/improve/worktree.zig", .needle = "if (self.resyncLocalBranch(gpa, io, landed)) {" },
+    .{ .file = "src/improve/worktree.zig", .needle = "self.advanceCreatedFrom(gpa, landed);" },
     .{ .file = "src/improve/worktree.zig", .needle = "\"git\", \"update-ref\", full_ref, new_sha, old_sha" },
     // runZigArgs substitutes argv[0] through resolveZigBin. Rewriting that
     // substitution to hand back a benign executable ("/bin/true") keeps every
@@ -494,6 +501,16 @@ pub const Engine = struct {
         self.hist = history_mod.History.init(self.ctx.gpa, self.ctx.io, std.Io.Dir.cwd(), "state");
         self.instructions = opts.instructions;
         defer self.hist.deinit();
+        // Before anything spends a token: every gate that reads history fails
+        // open, so an unreadable log is not a degraded run, it is a run with
+        // both dedup gates and the revert gate silently off -- re-promoting
+        // work already merged and re-proposing work a human reverted. Refuse
+        // here instead, where nothing has been promoted yet and the operator
+        // can still fix the file.
+        self.hist.checkReadable() catch |err| {
+            log.log(.error_, "improve-self refusing to run: {s} exists but cannot be read ({s}), so the dedup and revert gates would all pass by default. Fix or move the file.", .{ self.hist.logPath(), @errorName(err) });
+            return err;
+        };
         // Before anything reads history: the prompts, the planner dedup and
         // the fingerprint guards must all see reverted work as reverted, not
         // as the accepted work git says it no longer is.
@@ -946,7 +963,17 @@ pub const Engine = struct {
         {
             var dup_arena = std.heap.ArenaAllocator.init(self.ctx.gpa);
             defer dup_arena.deinit();
-            const hit = self.hist.fingerprintHit(dup_arena.allocator(), fingerprints) catch history_mod.History.FingerprintHit{};
+            // Not `catch FingerprintHit{}`: an all-false hit is exactly what a
+            // clean history looks like, so swallowing the error here promoted
+            // whatever the model proposed with both gates below inert. The
+            // startup probe in `run` already refused an unreadable log, so
+            // reaching this means the log became unreadable mid-run (it
+            // crossed the read cap, or storage failed under us). Stop the run;
+            // there is nothing the next attempt could do better.
+            const hit = self.hist.fingerprintHit(dup_arena.allocator(), fingerprints) catch |err| {
+                log.log(.error_, "improve-self stopping: {s} became unreadable mid-run ({s}); refusing to promote with the dedup and revert gates blind", .{ self.hist.logPath(), @errorName(err) });
+                return err;
+            };
             if (hit.accepted) {
                 log.log(.warn, "proposal repeats an improvement already accepted; skipping", .{});
                 // Not a failure: nothing went wrong and nothing changed, so
@@ -1702,7 +1729,13 @@ pub const Engine = struct {
     fn contentReverts(self: *Engine, arena: std.mem.Allocator, raw_log: []const u8, ids: *std.ArrayList(history_mod.History.Revert)) void {
         const imps = reverts_mod.improvementCommits(arena, raw_log) catch return;
         if (imps.len == 0) return;
-        const accepted = self.hist.acceptedIds(arena) catch return;
+        const accepted = self.hist.acceptedIds(arena) catch |err| {
+            // Convicting nothing is the safe verdict, but it is also
+            // indistinguishable from "no accepted work is missing from the
+            // tree", so say which one it was.
+            log.log(.warn, "revert sync: the content pass convicted nothing because history could not be read: {s}", .{@errorName(err)});
+            return;
+        };
         var checks: usize = max_content_checks;
         for (accepted) |id| {
             if (containsId(ids.items, id)) continue;

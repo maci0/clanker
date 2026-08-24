@@ -406,6 +406,13 @@ clanker gate
 ```
 
 It runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,
-js-suite-coverage, sandbox-abi, tools-ts-toolchain and release-contract. `zig build e2e` is separate and is not part of it.
+js-suite-coverage, sandbox-abi, tools-ts-toolchain, release-contract and
+dep-patches. `zig build e2e` is separate and is not part of it.
+
+`dep-patches` is the one that fails on a fresh worktree rather than on your
+change: `zig-pkg/` is gitignored, so `git worktree add` starts with no
+dependency cache and `zig build` extracts pristine upstream trees. Run `zig
+build` first (nothing exists to patch before that), then
+`scripts/apply-patches.sh`.
 
 Every command takes `--help`; read it before guessing at flags.

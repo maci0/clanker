@@ -397,6 +397,19 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   not a capability waiting to be granted, it is unreachable: no guest can
   import it and nothing compiles it, so it rots against zwasm API changes in
   silence while reading like a live part of the ABI.
+- `dep-patches`: every `patches/*.patch` is applied to the dependency tree
+  its `build.zig.zon` `.hash` pin names, under `zig-pkg/`. That directory is
+  gitignored and therefore per-worktree, `zig build` extracts pristine
+  upstream tarballs into it, and `scripts/apply-patches.sh` was called by
+  nothing — not `build.zig`, not any gate — so a fresh worktree built, tested
+  and gated green against pristine vaxis and zwasm. That covers strictly less
+  code than the same commit does patched (`sixel_supported` in
+  `src/tui/mascot.zig` compiles the sixel path out) and runs a different
+  SIGWINCH path in the REPL than `pty_resize_test` exists to pin. The check
+  only reports; applying a patch as a side effect of a check would trade a
+  visible failure for an invisible one. It runs after the build because
+  nothing exists to patch before the dependencies are extracted, which is the
+  ordering trap the failure message names.
 - plus `zig fmt`, a lint check, a release-contract check (CHANGELOG,
   RELEASES.md, and README links stay aligned with `build.zig.zon`), and — in
   the improve loop — the capability
