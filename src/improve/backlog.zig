@@ -295,9 +295,26 @@ fn blockedOn(data: []const u8) ?[]const u8 {
             in_blocked = std.ascii.startsWithIgnoreCase(line[3..], "blocked on");
             continue;
         }
-        if (in_blocked and line.len > 0) return line;
+        if (!in_blocked or line.len == 0) continue;
+        if (isNoneYetLine(line)) continue;
+        return line;
     }
     return null;
+}
+
+/// A `- … none yet` list item, the store's placeholder for "nothing here".
+/// The scaffold and fill tooling treat a body of only such lines as empty
+/// (`isPlaceholderBody`, tools/zig/doc_scaffold.zig — guest code, so the
+/// predicate is mirrored rather than imported, the same recorded reason
+/// thinking_logic carries its own capUtf8). Without this, a filer writing
+/// "- none yet" under `## Blocked on` would silently keep the report out of
+/// the backlog forever.
+fn isNoneYetLine(line: []const u8) bool {
+    if (!std.mem.startsWith(u8, line, "- ")) return false;
+    const item = std.mem.trim(u8, line[2..], " \t.");
+    const tail = "none yet";
+    if (item.len < tail.len) return false;
+    return std.ascii.eqlIgnoreCase(item[item.len - tail.len ..], tail);
 }
 
 /// The record's `# ` title line, trimmed, or null for a file with none.
@@ -621,6 +638,15 @@ test "blockedOn reads the section body, not the heading" {
     // Case-insensitive heading match; absent section is null.
     try std.testing.expect(blockedOn("## blocked ON\n\na live key\n") != null);
     try std.testing.expect(blockedOn("# Bug — x\n\n## Status\n\nOpen.\n") == null);
+    // The store's "- … none yet" placeholder is an empty body, not a blocker
+    // (mirrors isPlaceholderBody in tools/zig/doc_scaffold.zig).
+    try std.testing.expect(blockedOn("## Blocked on\n\n- Investigation: none yet\n\n## Symptom\n\nx\n") == null);
+    try std.testing.expect(blockedOn("## Blocked on\n\n- none yet.\n- Related record: None Yet\n") == null);
+    // A real line after a placeholder still blocks, and is what is returned.
+    try std.testing.expectEqualStrings(
+        "a live key",
+        blockedOn("## Blocked on\n\n- Investigation: none yet\n\na live key\n").?,
+    );
 }
 
 test "path hints are validated, deduped, stripped of line refs" {

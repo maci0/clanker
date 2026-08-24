@@ -65,6 +65,15 @@
 
 ## Planned
 
+- [ ] Report-state consistency check: a report whose `## Blocked on` section
+  has a non-empty body must not also read `Resolved` — the body is a fourth
+  machine-read state signal beside the TL;DR bullet, the `## Status` section
+  and the README inventory line, and nothing keeps them in step. Add the
+  check beside the others in `src/gate/checks.zig` (or the scaffold tooling
+  in `tools/zig/doc_scaffold.zig`), counting a body of only `- … none yet`
+  placeholder lines as empty, the same reading `isPlaceholderBody` and
+  `src/improve/backlog.zig` already share. Neither session that filed this
+  claimed the implementation.
 - **jcode feature audit (2026-08-21)** — inventory and decisions:
   [docs/research/jcode-features.md](research/jcode-features.md),
   [docs/digests/jcode.md](digests/jcode.md). **Implement-now (phase 1
