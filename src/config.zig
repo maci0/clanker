@@ -30,6 +30,16 @@ threadlocal var diagnostic_emitted: bool = false;
 threadlocal var diagnostics_suppressed: bool = false;
 threadlocal var last_load_diagnostic: bool = false;
 
+/// The one sink for every operator-facing diagnostic this module prints, so
+/// `loadQuiet`'s suppression flag means what its name says: the speculative
+/// startup dotenv probe prints nothing and the command's own load prints each
+/// error once. A direct `log.log` here bypasses the flag, and an invalid
+/// config reports twice.
+fn cfgLog(level: log.Level, comptime fmt: []const u8, args: anytype) void {
+    if (diagnostics_suppressed) return;
+    log.log(level, fmt, args);
+}
+
 const DiagnosticSource = struct {
     file_name: []const u8,
     raw: []const u8,
@@ -1541,11 +1551,11 @@ pub const Config = struct {
         if (cfg.providers.count() > 0) try validateProviderModels(&cfg);
         if (apply_catalog) applyCatalogSpecs(io, arena, dir, &cfg);
         if (cfg.providers.count() == 0) {
-            log.log(.warn, "config {s}: no providers defined", .{base.path});
+            cfgLog(.warn, "config {s}: no providers defined", .{base.path});
         } else if (cfg.providers.get(cfg.default_provider) == null) {
             // Otherwise a typo'd default_provider loads clean and only fails
             // on the first chat request, far from the config that caused it.
-            log.log(.error_, "default_provider '{s}' is not in \"providers\"", .{cfg.default_provider});
+            cfgLog(.error_, "default_provider '{s}' is not in \"providers\"", .{cfg.default_provider});
             return error.DefaultProviderUnknown;
         }
         try validateToolResultPrune(cfg.agent);
@@ -1583,7 +1593,7 @@ pub const Config = struct {
             name,
         }) catch return;
         atomic_write.writeFile(io, dir, local_file_name, content) catch |err| {
-            log.log(.warn, "config: could not persist instance name to {s}: {s}", .{ local_file_name, @errorName(err) });
+            cfgLog(.warn, "config: could not persist instance name to {s}: {s}", .{ local_file_name, @errorName(err) });
         };
     }
 
@@ -1615,22 +1625,22 @@ pub const Config = struct {
         if (agent.tool_result_prune_bytes == 0) return;
         const kept = agent.tool_result_prune_head_bytes + @import("util/tool_out.zig").prune_marker.len + agent.tool_result_prune_tail_bytes;
         if (kept < agent.tool_result_prune_bytes) return;
-        log.log(.error_, "agent tool-result pruning keeps {d} bytes but threshold is {d}", .{ kept, agent.tool_result_prune_bytes });
+        cfgLog(.error_, "agent tool-result pruning keeps {d} bytes but threshold is {d}", .{ kept, agent.tool_result_prune_bytes });
         return error.InvalidToolResultPruneConfig;
     }
 
     fn validateRepeatToolThresholds(thresholds: []const u32) !void {
         if (thresholds.len == 0) {
-            log.log(.error_, "agent.repeat_tool_thresholds must not be empty", .{});
+            cfgLog(.error_, "agent.repeat_tool_thresholds must not be empty", .{});
             return error.InvalidRepeatToolThresholds;
         }
         for (thresholds, 0..) |threshold, i| {
             if (threshold < 2) {
-                log.log(.error_, "agent.repeat_tool_thresholds value {d} must be at least 2", .{threshold});
+                cfgLog(.error_, "agent.repeat_tool_thresholds value {d} must be at least 2", .{threshold});
                 return error.InvalidRepeatToolThresholds;
             }
             for (thresholds[0..i]) |previous| if (previous == threshold) {
-                log.log(.error_, "agent.repeat_tool_thresholds contains duplicate value {d}", .{threshold});
+                cfgLog(.error_, "agent.repeat_tool_thresholds contains duplicate value {d}", .{threshold});
                 return error.InvalidRepeatToolThresholds;
             };
         }
@@ -1673,17 +1683,11 @@ pub const Config = struct {
                 // run `clanker setup` to create one" -- a file that exists,
                 // and a remedy that cannot help.
                 .overlay => {
-                    // Gated like every other diagnostic: the startup dotenv
-                    // probe (`loadQuiet`) loads the same stack a moment
-                    // before the command does, so an ungated line printed
-                    // the refusal twice. `last_load_diagnostic` stays unset
-                    // on purpose -- setting it would replace main.zig's
-                    // MissingProfile hint with the generic "correct the
-                    // setting reported above", and there is no setting to
-                    // correct.
-                    if (!diagnostics_suppressed) {
-                        log.log(.error_, "config: --profile names {s}, which does not exist", .{file_name});
-                    }
+                    // `last_load_diagnostic` stays unset on purpose --
+                    // setting it would replace main.zig's MissingProfile
+                    // hint with the generic "correct the setting reported
+                    // above", and there is no setting to correct.
+                    cfgLog(.error_, "config: --profile names {s}, which does not exist", .{file_name});
                     return error.MissingProfile;
                 },
                 .optional => return null,
@@ -1894,16 +1898,16 @@ pub const Config = struct {
         // differ per model on the same endpoint, and silently accepting them
         // here is how a config ends up meaning something other than it reads.
         if (obj.get("model") != null) {
-            log.log(.error_, "provider '{s}': \"model\" was replaced by the top-level \"models\" table. Add [models.\"{s}/<name>\"] with \"provider\": \"{s}\", and set \"default_model\": \"<name>\" if there is more than one", .{ name, name, name });
+            cfgLog(.error_, "provider '{s}': \"model\" was replaced by the top-level \"models\" table. Add [models.\"{s}/<name>\"] with \"provider\": \"{s}\", and set \"default_model\": \"<name>\" if there is more than one", .{ name, name, name });
             return error.ProviderLegacyModelFields;
         }
         if (obj.get("models") != null) {
-            log.log(.error_, "provider '{s}': \"models\" moved out of the provider. Use the top-level [models.\"{s}/<name>\"] table with \"provider\": \"{s}\"", .{ name, name, name });
+            cfgLog(.error_, "provider '{s}': \"models\" moved out of the provider. Use the top-level [models.\"{s}/<name>\"] table with \"provider\": \"{s}\"", .{ name, name, name });
             return error.ProviderLegacyModelFields;
         }
         for ([_][]const u8{ "max_tokens", "context_window", "temperature", "top_p", "reasoning_effort" }) |legacy| {
             if (obj.get(legacy) != null) {
-                log.log(.error_, "provider '{s}': \"{s}\" belongs to a model, not the provider. Move it into the top-level [models.\"{s}/<name>\"] table", .{ name, legacy, name });
+                cfgLog(.error_, "provider '{s}': \"{s}\" belongs to a model, not the provider. Move it into the top-level [models.\"{s}/<name>\"] table", .{ name, legacy, name });
                 return error.ProviderLegacyModelFields;
             }
         }
@@ -1915,7 +1919,7 @@ pub const Config = struct {
                 // which spelling, and what this binary accepts. The classic
                 // way to hit this is a stale binary reading a config.toml
                 // written for a newer one.
-                log.log(.error_, "provider '{s}': unknown kind \"{s}\" (this binary accepts: {s})", .{ name, kind_str, ProviderKind.known_names });
+                cfgLog(.error_, "provider '{s}': unknown kind \"{s}\" (this binary accepts: {s})", .{ name, kind_str, ProviderKind.known_names });
                 return error.UnknownProviderKind;
             };
         }
@@ -1931,7 +1935,7 @@ pub const Config = struct {
         if (obj.get("api_key_env")) |k| {
             const env_name = try jsonStr(k, "api_key_env");
             if (env_name.len == 0) {
-                log.log(.error_, "provider '{s}': \"api_key_env\" must name a non-empty environment variable", .{name});
+                cfgLog(.error_, "provider '{s}': \"api_key_env\" must name a non-empty environment variable", .{name});
                 return error.ApiKeyEnvEmpty;
             }
             p.api_key_env = env_name;
@@ -1939,7 +1943,7 @@ pub const Config = struct {
         if (obj.get("auth")) |k| {
             const s = try jsonStr(k, "auth");
             p.auth = AuthStrategy.fromStr(s) orelse {
-                log.log(.error_, "provider '{s}': unknown auth \"{s}\" (expected \"api_key\", \"oauth_static\" or \"oauth_refresh\")", .{ name, s });
+                cfgLog(.error_, "provider '{s}': unknown auth \"{s}\" (expected \"api_key\", \"oauth_static\" or \"oauth_refresh\")", .{ name, s });
                 return error.UnknownAuthStrategy;
             };
         }
@@ -1963,21 +1967,21 @@ pub const Config = struct {
         if (obj.get("tool_schema")) |k| {
             const s = try jsonStr(k, "tool_schema");
             p.tool_schema = ToolSchema.fromStr(s) orelse {
-                log.log(.error_, "provider '{s}': tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
+                cfgLog(.error_, "provider '{s}': tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
                 return error.UnknownToolSchema;
             };
         }
         if (obj.get("thinking_schema")) |k| {
             const s = try jsonStr(k, "thinking_schema");
             p.thinking_schema = ThinkingSchema.fromStr(s) orelse {
-                log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
+                cfgLog(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
                 return error.UnknownThinkingSchema;
             };
         }
         if (obj.get("reasoning_format")) |k| {
             const s = try jsonStr(k, "reasoning_format");
             p.reasoning_format = ReasoningFormat.fromStr(s) orelse {
-                log.log(.error_, "provider '{s}': reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
+                cfgLog(.error_, "provider '{s}': reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
                 return error.UnknownReasoningFormat;
             };
         }
@@ -1997,7 +2001,7 @@ pub const Config = struct {
         // here (config cannot name the kinds; the registry owns them).
         if (llm_registry.forKind(p.kind).auth.needs_project_location) {
             if (p.project.len == 0 or p.location.len == 0) {
-                log.log(.error_, "provider '{s}': kind \"{s}\" requires \"project\" and \"location\"", .{ name, @tagName(p.kind) });
+                cfgLog(.error_, "provider '{s}': kind \"{s}\" requires \"project\" and \"location\"", .{ name, @tagName(p.kind) });
                 return error.VertexProjectMissing;
             }
         }
@@ -2040,24 +2044,24 @@ pub const Config = struct {
                 var w: std.Io.Writer.Allocating = .init(arena);
                 var s = std.json.Stringify{ .writer = &w.writer, .options = .{} };
                 writeJsonValueRaw(&s, eb) catch {
-                    log.log(.error_, "provider '{s}': extra_body could not be serialized", .{name});
+                    cfgLog(.error_, "provider '{s}': extra_body could not be serialized", .{name});
                     return error.ExtraBodyNotObject;
                 };
                 return w.toOwnedSlice();
             },
             .string => |str| {
                 const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, str, .{}) catch {
-                    log.log(.error_, "provider '{s}': extra_body string is not JSON", .{name});
+                    cfgLog(.error_, "provider '{s}': extra_body string is not JSON", .{name});
                     return error.ExtraBodyNotObject;
                 };
                 if (parsed != .object) {
-                    log.log(.error_, "provider '{s}': extra_body must be a JSON object", .{name});
+                    cfgLog(.error_, "provider '{s}': extra_body must be a JSON object", .{name});
                     return error.ExtraBodyNotObject;
                 }
                 return str;
             },
             else => {
-                log.log(.error_, "provider '{s}': extra_body must be a JSON object", .{name});
+                cfgLog(.error_, "provider '{s}': extra_body must be a JSON object", .{name});
                 return error.ExtraBodyNotObject;
             },
         }
@@ -2082,12 +2086,12 @@ pub const Config = struct {
             };
             const provider_name = try jsonStr(try required(entry_obj, "provider", "models.<name>.provider", "provider = \"provider-name\""), "models.<name>.provider");
             const p = cfg.providers.getPtr(provider_name) orelse {
-                log.log(.error_, "models[\"{s}\"]: provider '{s}' is not declared under \"providers\"", .{ key, provider_name });
+                cfgLog(.error_, "models[\"{s}\"]: provider '{s}' is not declared under \"providers\"", .{ key, provider_name });
                 return error.ModelUnknownProvider;
             };
             const prefix_len = provider_name.len + 1; // "<provider>/"
             if (key.len <= prefix_len or !std.mem.startsWith(u8, key, provider_name) or key[provider_name.len] != '/') {
-                log.log(.error_, "models[\"{s}\"]: key must be \"{s}/<model-name>\" to match \"provider\": \"{s}\"", .{ key, provider_name, provider_name });
+                cfgLog(.error_, "models[\"{s}\"]: key must be \"{s}/<model-name>\" to match \"provider\": \"{s}\"", .{ key, provider_name, provider_name });
                 return error.ModelKeyProviderMismatch;
             }
             const model_name = key[prefix_len..];
@@ -2105,7 +2109,7 @@ pub const Config = struct {
             const name = kv.key_ptr.*;
             const p = kv.value_ptr;
             if (p.models.count() == 0) {
-                log.log(.error_, "provider '{s}': no models declared (add a [models.\"{s}/<name>\"] entry)", .{ name, name });
+                cfgLog(.error_, "provider '{s}': no models declared (add a [models.\"{s}/<name>\"] entry)", .{ name, name });
                 return error.ProviderMissingModel;
             }
             if (p.default_model.len == 0) {
@@ -2118,12 +2122,12 @@ pub const Config = struct {
                 if (p.models.count() == 1) {
                     p.default_model = p.models.keys()[0];
                 } else {
-                    log.log(.error_, "provider '{s}': several models declared but no \"default_model\" set; set \"default_model\" on [providers.{s}] to pick the active one", .{ name, name });
+                    cfgLog(.error_, "provider '{s}': several models declared but no \"default_model\" set; set \"default_model\" on [providers.{s}] to pick the active one", .{ name, name });
                     return error.ProviderDefaultModelMissing;
                 }
             }
             if (p.models.get(p.default_model) == null) {
-                log.log(.error_, "provider '{s}': default_model '{s}' is not in its models", .{ name, p.default_model });
+                cfgLog(.error_, "provider '{s}': default_model '{s}' is not in its models", .{ name, p.default_model });
                 return error.ProviderDefaultModelUnknown;
             }
             var model_it = p.models.iterator();
@@ -2185,25 +2189,25 @@ pub const Config = struct {
     fn validateModelParams(provider_name: []const u8, model_name: []const u8, m: Model) !void {
         if (m.temperature) |t| {
             if (t < 0 or t > 2) {
-                log.log(.error_, "models[\"{s}/{s}\"]: temperature {d} is outside 0..2", .{ provider_name, model_name, t });
+                cfgLog(.error_, "models[\"{s}/{s}\"]: temperature {d} is outside 0..2", .{ provider_name, model_name, t });
                 return error.ModelTemperatureOutOfRange;
             }
         }
         if (m.top_p) |p| {
             if (p < 0 or p > 1) {
-                log.log(.error_, "models[\"{s}/{s}\"]: top_p {d} is outside 0..1", .{ provider_name, model_name, p });
+                cfgLog(.error_, "models[\"{s}/{s}\"]: top_p {d} is outside 0..1", .{ provider_name, model_name, p });
                 return error.ModelTopPOutOfRange;
             }
         }
         if (m.cost_per_1m_input) |c| {
             if (c < 0) {
-                log.log(.error_, "models[\"{s}/{s}\"]: cost_per_1m_input must be >= 0", .{ provider_name, model_name });
+                cfgLog(.error_, "models[\"{s}/{s}\"]: cost_per_1m_input must be >= 0", .{ provider_name, model_name });
                 return error.ModelCostOutOfRange;
             }
         }
         if (m.cost_per_1m_output) |c| {
             if (c < 0) {
-                log.log(.error_, "models[\"{s}/{s}\"]: cost_per_1m_output must be >= 0", .{ provider_name, model_name });
+                cfgLog(.error_, "models[\"{s}/{s}\"]: cost_per_1m_output must be >= 0", .{ provider_name, model_name });
                 return error.ModelCostOutOfRange;
             }
         }
@@ -2257,28 +2261,28 @@ pub const Config = struct {
         if (obj.get("reasoning_effort")) |k| {
             const s = try jsonStr(k, "reasoning_effort");
             m.reasoning_effort = ReasoningEffort.fromStr(s) orelse {
-                log.log(.error_, "models[\"{s}\"]: reasoning_effort \"{s}\" is not one of \"none\", \"low\", \"medium\", \"high\", \"max\"", .{ name, s });
+                cfgLog(.error_, "models[\"{s}\"]: reasoning_effort \"{s}\" is not one of \"none\", \"low\", \"medium\", \"high\", \"max\"", .{ name, s });
                 return error.UnknownReasoningEffort;
             };
         }
         if (obj.get("tool_schema")) |k| {
             const s = try jsonStr(k, "tool_schema");
             m.tool_schema = ToolSchema.fromStr(s) orelse {
-                log.log(.error_, "models[\"{s}\"]: tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
+                cfgLog(.error_, "models[\"{s}\"]: tool_schema \"{s}\" is not one of \"openai\", \"none\"", .{ name, s });
                 return error.UnknownToolSchema;
             };
         }
         if (obj.get("thinking_schema")) |k| {
             const s = try jsonStr(k, "thinking_schema");
             m.thinking_schema = ThinkingSchema.fromStr(s) orelse {
-                log.log(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
+                cfgLog(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
                 return error.UnknownThinkingSchema;
             };
         }
         if (obj.get("reasoning_format")) |k| {
             const s = try jsonStr(k, "reasoning_format");
             m.reasoning_format = ReasoningFormat.fromStr(s) orelse {
-                log.log(.error_, "models[\"{s}\"]: reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
+                cfgLog(.error_, "models[\"{s}\"]: reasoning_format \"{s}\" is not one of \"auto\", \"think_tag\", \"none\"", .{ name, s });
                 return error.UnknownReasoningFormat;
             };
         }
@@ -2461,7 +2465,7 @@ pub const Config = struct {
             for (arr.items) |item| {
                 const host = try jsonStr(item, "web.allow[]");
                 if (!isBareHost(host)) {
-                    log.log(.error_, "web.allow entry \"{s}\" must be a bare hostname or glob (no scheme, path, port, or spaces)", .{host});
+                    cfgLog(.error_, "web.allow entry \"{s}\" must be a bare hostname or glob (no scheme, path, port, or spaces)", .{host});
                     return error.WebAllowHostInvalid;
                 }
                 try allow.append(arena, host);
@@ -2735,7 +2739,7 @@ pub const Config = struct {
                 if (std.mem.startsWith(u8, pat, "git") and
                     (pat.len == 3 or (pat.len > 3 and (pat[3] == ' ' or pat[3] == '\t'))))
                 {
-                    log.log(.error_, "agent: exec_pattern_allow must not name git commands (use git_remote_ops instead)", .{});
+                    cfgLog(.error_, "agent: exec_pattern_allow must not name git commands (use git_remote_ops instead)", .{});
                     return error.ExecPatternAllowGitForbidden;
                 }
                 try patterns.append(arena, pat);
@@ -2790,7 +2794,7 @@ pub const Config = struct {
         if (obj.get("reasoning_effort")) |k| {
             const s = try jsonStr(k, "reasoning_effort");
             a.reasoning_effort = ReasoningEffort.fromStr(s) orelse {
-                log.log(.error_, "agent: reasoning_effort \"{s}\" is not one of \"none\", \"low\", \"medium\", \"high\", \"max\"", .{s});
+                cfgLog(.error_, "agent: reasoning_effort \"{s}\" is not one of \"none\", \"low\", \"medium\", \"high\", \"max\"", .{s});
                 return error.UnknownReasoningEffort;
             };
             f.reasoning_effort = true;
@@ -2798,7 +2802,7 @@ pub const Config = struct {
         if (obj.get("backend")) |k| {
             const s = try jsonStr(k, "backend");
             if (s.len > 0 and std.meta.stringToEnum(enum { grok, claude, codex }, s) == null) {
-                log.log(.error_, "agent: backend \"{s}\" is not one of \"grok\", \"claude\", \"codex\"", .{s});
+                cfgLog(.error_, "agent: backend \"{s}\" is not one of \"grok\", \"claude\", \"codex\"", .{s});
                 return error.UnknownBackend;
             }
             a.backend = s;
@@ -3033,16 +3037,16 @@ pub const Config = struct {
         // first tool call after the client bridge lands.
         if (std.mem.eql(u8, s.transport, "stdio")) {
             if (s.command.len == 0) {
-                log.log(.error_, "mcp_servers '{s}': transport \"stdio\" requires \"command\"", .{name});
+                cfgLog(.error_, "mcp_servers '{s}': transport \"stdio\" requires \"command\"", .{name});
                 return error.McpServerCommandMissing;
             }
         } else if (std.mem.eql(u8, s.transport, "http")) {
             if (s.url.len == 0 or (!std.mem.startsWith(u8, s.url, "http://") and !std.mem.startsWith(u8, s.url, "https://"))) {
-                log.log(.error_, "mcp_servers '{s}': transport \"http\" requires an http(s) \"url\"", .{name});
+                cfgLog(.error_, "mcp_servers '{s}': transport \"http\" requires an http(s) \"url\"", .{name});
                 return error.McpServerUrlMissing;
             }
         } else {
-            log.log(.error_, "mcp_servers '{s}': transport \"{s}\" is not one of \"stdio\", \"http\"", .{ name, s.transport });
+            cfgLog(.error_, "mcp_servers '{s}': transport \"{s}\" is not one of \"stdio\", \"http\"", .{ name, s.transport });
             return error.UnknownMcpTransport;
         }
         return s;
@@ -3337,9 +3341,9 @@ pub const Config = struct {
         if (diagnostics_suppressed) return;
         last_load_diagnostic = true;
         if (line) |n| {
-            log.log(.error_, "{s}:{d}: invalid TOML syntax ({s}); correct the statement on this line", .{ file_name, n, @errorName(err) });
+            cfgLog(.error_, "{s}:{d}: invalid TOML syntax ({s}); correct the statement on this line", .{ file_name, n, @errorName(err) });
         } else {
-            log.log(.error_, "{s}: invalid TOML syntax ({s}); correct the TOML statement", .{ file_name, @errorName(err) });
+            cfgLog(.error_, "{s}: invalid TOML syntax ({s}); correct the TOML statement", .{ file_name, @errorName(err) });
         }
     }
 
@@ -3380,18 +3384,18 @@ pub const Config = struct {
             .string => |text| {
                 const sensitive = std.mem.find(u8, full_path, "key") != null or std.mem.find(u8, full_path, "token") != null or std.mem.find(u8, full_path, "secret") != null;
                 if (sensitive) {
-                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string (value redacted); correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example });
+                    cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string (value redacted); correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example });
                 } else {
-                    log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example });
+                    cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example });
                 }
             },
-            .integer => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got integer {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
-            .float => |n| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got float {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
-            .bool => |b| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got boolean {}; correct it with {s}", .{ source.file_name, line, full_path, expected, b, corrected_example }),
-            .array => |items| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got array with {d} items; correct it with {s}", .{ source.file_name, line, full_path, expected, items.items.len, corrected_example }),
-            .object => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got table; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
-            .number_string => |text| log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got number string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example }),
-            .null => log.log(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got null; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
+            .integer => |n| cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got integer {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
+            .float => |n| cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got float {d}; correct it with {s}", .{ source.file_name, line, full_path, expected, n, corrected_example }),
+            .bool => |b| cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got boolean {}; correct it with {s}", .{ source.file_name, line, full_path, expected, b, corrected_example }),
+            .array => |items| cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got array with {d} items; correct it with {s}", .{ source.file_name, line, full_path, expected, items.items.len, corrected_example }),
+            .object => cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got table; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
+            .number_string => |text| cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got number string \"{s}\"; correct it with {s}", .{ source.file_name, line, full_path, expected, text, corrected_example }),
+            .null => cfgLog(.error_, "{s}:{d}: configuration setting {s}: expected {s}; got null; correct it with {s}", .{ source.file_name, line, full_path, expected, corrected_example }),
         };
     }
 
@@ -3407,7 +3411,7 @@ pub const Config = struct {
         // errors such as FieldNotString.
         if (diagnostic_source) |source| {
             last_load_diagnostic = true;
-            log.log(.error_, "{s}: configuration validation failed ({s}); inspect the setting named by the preceding diagnostic", .{ source.file_name, @errorName(err) });
+            cfgLog(.error_, "{s}: configuration validation failed ({s}); inspect the setting named by the preceding diagnostic", .{ source.file_name, @errorName(err) });
         }
     }
 
@@ -3426,7 +3430,7 @@ pub const Config = struct {
             for (known) |name| {
                 if (std.mem.eql(u8, key, name)) break;
             } else {
-                log.log(.warn, "config: unknown key '{s}' in {s} (ignored, check spelling)", .{ key, context });
+                cfgLog(.warn, "config: unknown key '{s}' in {s} (ignored, check spelling)", .{ key, context });
             }
         }
     }
@@ -4738,6 +4742,45 @@ test "loadQuiet answers the modules flag without applying catalog specs" {
     // The command behind the probe still gets the filled spec.
     const full = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml");
     try std.testing.expectEqual(@as(u32, 500000), full.providers.getPtr("xai").?.models.get("grok-4.6").?.context_window);
+}
+
+test "loadQuiet prints no diagnostics while load prints each once" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    // A provider-less default_provider is the report's repro: validation
+    // fails through the direct cfgLog call in loadInner, not one of the
+    // helpers that always consulted the flag themselves.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "nope"
+        \\[providers.a]
+        \\base_url = "https://a.test"
+        \\[models."a/m"]
+        \\provider = "a"
+        ,
+    });
+
+    var captured: usize = 0;
+    log.setSink(.{ .ctx = &captured, .write = &countCapturedLines });
+    defer log.setSink(null);
+
+    // The speculative dotenv probe stays silent.
+    try std.testing.expectError(error.DefaultProviderUnknown, Config.loadQuiet(io, arena, env.tmp.dir, "config.toml", "missing.toml"));
+    try std.testing.expectEqual(@as(usize, 0), captured);
+
+    // The command's own load prints exactly one copy.
+    try std.testing.expectError(error.DefaultProviderUnknown, Config.load(io, arena, env.tmp.dir, "config.toml", "missing.toml"));
+    try std.testing.expectEqual(@as(usize, 1), captured);
+}
+
+fn countCapturedLines(ctx: *const anyopaque, line: []const u8) void {
+    _ = line;
+    const count: *usize = @ptrCast(@alignCast(@constCast(ctx)));
+    count.* += 1;
 }
 
 test "rpm is accepted on a provider and on a model" {

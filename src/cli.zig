@@ -10660,7 +10660,7 @@ fn streamingReadRoute(path: []const u8) bool {
 /// vendor bytes) produces different content, so HTML can point browsers at a
 /// fresh `/webui/~tag/...` module graph.
 var webui_asset_tag_buf: [8]u8 = undefined;
-var webui_asset_tag_state: std.atomic.Value(enum(u8) { idle, ready, failed }) = .init(.idle);
+var webui_asset_tag_state: std.atomic.Value(enum(u8) { idle, computing, ready, failed }) = .init(.idle);
 
 /// Every vendored file the page can fetch, paired with its embedded bytes.
 ///
@@ -10701,21 +10701,32 @@ fn webuiAssetTag(
     switch (webui_asset_tag_state.load(.acquire)) {
         .ready => return webui_asset_tag_buf[0..],
         .failed => return null,
+        // Another connection thread holds the compute. Serving this page
+        // untagged is a correct answer (untagged asset URLs resolve the same
+        // bytes), so the loser does not block behind the winner's registry
+        // load and 8 MiB crc32 -- the same trade `GzipCache` makes.
+        .computing => return null,
         .idle => {},
     }
+    // Claim the compute before touching `webui_asset_tag_buf`: every first
+    // page load races here on connection threads, and two threads writing
+    // their tags into the one buffer interleaved (a rebuild landing between
+    // their wasm reads makes the tags differ) could leave later readers an
+    // 8-byte slice mixed from both.
+    if (webui_asset_tag_state.cmpxchgStrong(.idle, .computing, .acq_rel, .acquire) != null) return null;
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const reg = registry.Registry.load(io, arena, std.Io.Dir.cwd(), cfg.agent.tools_dir) catch {
-        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        webui_asset_tag_state.store(.failed, .release);
         return null;
     };
     const tool = reg.get("webui") orelse {
-        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        webui_asset_tag_state.store(.failed, .release);
         return null;
     };
     const wasm_bytes = std.Io.Dir.cwd().readFileAlloc(io, tool.wasm, gpa, .limited(8 << 20)) catch {
-        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        webui_asset_tag_state.store(.failed, .release);
         return null;
     };
     defer gpa.free(wasm_bytes);
@@ -10727,7 +10738,7 @@ fn webuiAssetTag(
         mixed ^= std.hash.Crc32.hash(entry[1]);
     }
     _ = std.fmt.bufPrint(&webui_asset_tag_buf, "{x:0>8}", .{mixed}) catch {
-        _ = webui_asset_tag_state.cmpxchgStrong(.idle, .failed, .acq_rel, .acquire);
+        webui_asset_tag_state.store(.failed, .release);
         return null;
     };
     webui_asset_tag_state.store(.ready, .release);
@@ -19244,6 +19255,66 @@ test "webui wasm-miss error still points at zig build tools" {
     const body = webuiMissingWasmError();
     try std.testing.expect(std.mem.find(u8, body, "wasm") != null);
     try std.testing.expect(std.mem.find(u8, body, "zig build tools") != null);
+}
+
+test "webuiAssetTag publishes one tag under concurrent first requests" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // A registry fixture naming one `webui` tool whose wasm is any readable
+    // file: the tag is a crc32 over the bytes, so it need not be real wasm.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "tools/manifests");
+    try tmp.dir.writeFile(io, .{ .sub_path = "tools/manifests/webui.tool.json", .data =
+        \\{ "name": "webui", "description": "tag fixture", "wasm": "fixture.wasm" }
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "tools/manifests/fixture.wasm", .data = "\x00asm fixture bytes for the tag" });
+    const dir_path = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}/tools/manifests", .{tmp.sub_path});
+    defer std.testing.allocator.free(dir_path);
+
+    var cfg = config.Config{};
+    cfg.agent.tools_dir = &.{dir_path};
+
+    // The tag state is process-global; reset so this test drives the cold
+    // path, and leave it terminal afterwards so no later test recomputes.
+    webui_asset_tag_state.store(.idle, .release);
+    defer webui_asset_tag_state.store(.failed, .release);
+
+    const Caller = struct {
+        fn run(c: *const config.Config, i: std.Io, out: *?[8]u8) void {
+            if (webuiAssetTag(i, std.testing.allocator, c)) |tag| {
+                var copy: [8]u8 = undefined;
+                @memcpy(&copy, tag);
+                out.* = copy;
+            }
+        }
+    };
+    const n = 8;
+    var results: [n]?[8]u8 = @splat(null);
+    var threads: [n]std.Thread = undefined;
+    for (&threads, &results) |*t, *out| {
+        t.* = try std.Thread.spawn(.{}, Caller.run, .{ &cfg, io, out });
+    }
+    for (&threads) |*t| t.join();
+
+    var published: usize = 0;
+    var first_tag: ?[8]u8 = null;
+    for (&results) |*r| {
+        const tag = r.* orelse continue;
+        if (first_tag == null) first_tag = tag;
+        published += 1;
+        // Every caller that got a tag got the same 8 hex chars, never a
+        // value torn between two concurrent computations.
+        for (tag) |c| {
+            try std.testing.expect((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'));
+        }
+        try std.testing.expectEqualSlices(u8, &first_tag.?, tag[0..]);
+    }
+    try std.testing.expect(published >= 1);
+    // A second read takes the fast path and answers the same tag.
+    try std.testing.expectEqualSlices(u8, webui_asset_tag_buf[0..], webuiAssetTag(io, std.testing.allocator, &cfg).?);
 }
 
 const ArenaArtifact = struct { text: []const u8, path: ?[]const u8 };

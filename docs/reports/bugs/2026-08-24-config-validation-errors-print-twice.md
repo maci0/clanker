@@ -4,11 +4,11 @@
 
 - **What failed:** loadQuiet suppresses only logTomlSyntaxError/logDiagnostic/logUndiagnosedError; the dozens of direct log.log(.error_) calls in the provider/model validators and in loadInner bypass diagnostics_suppressed, so the speculative dotenv-probe load prints each one and the real load prints it again. In clanker doctor the second copy lands inside the report body, between the [ok] config.toml line and the [FAIL] config parses line.
 - **Impact:** Noise, not a wrong answer -- the command still fails with the correct error and hint. `clanker doctor` is the exception worth naming: the second copy lands inside its report, between the `[ok  ] config.local.toml` line and the `[FAIL] config parses` line, so the section reads as two separate failures.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Gate-at-the-sink as the Resolution suggested: every operator-facing diagnostic in src/config.zig now routes through one cfgLog sink that returns early on diagnostics_suppressed, so loadQuiet's flag means what its name says. New test 'loadQuiet prints no diagnostics while load prints each once' drives both loads over the repro and asserts 0 lines then 1; it fails with the gate disabled and full zig build test is green.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Gate-at-the-sink as the Resolution suggested: every operator-facing diagnostic in src/config.zig now routes through one cfgLog sink that returns early on diagnostics_suppressed, so loadQuiet's flag means what its name says. New test 'loadQuiet prints no diagnostics while load prints each once' drives both loads over the repro and asserts 0 lines then 1; it fails with the gate disabled and full zig build test is green.
 
 ## Symptom and impact
 
