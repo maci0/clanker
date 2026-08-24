@@ -145,10 +145,15 @@ pub fn replaceSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocat
         const content = m.content orelse continue;
         if (content.len == 0) continue;
         ins.reset();
-        ins.bindText(1, session_id) catch continue;
-        ins.bindText(2, m.role.asStr()) catch continue;
-        ins.bindText(3, content) catch continue;
-        _ = ins.step() catch continue;
+        // A failed bind or insert aborts the whole swap: stamping the
+        // progress record past a row that never landed would mark text the
+        // index does not hold as indexed forever. The defer rolls back the
+        // partial inserts and any rebuild's deletes, leaving the previous
+        // committed state; the next save re-derives and retries.
+        ins.bindText(1, session_id) catch return;
+        ins.bindText(2, m.role.asStr()) catch return;
+        ins.bindText(3, content) catch return;
+        _ = ins.step() catch return;
     }
     writeIndexState(&conn, key, .{ .count = messages.len, .hash = hashContents(messages) });
     tx.commit() catch return;

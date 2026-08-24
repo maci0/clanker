@@ -53,6 +53,13 @@ pub const Connection = struct {
         // Busy handling: another connection (another thread, another process)
         // may hold the file briefly. Wait rather than fail an append.
         _ = c.sqlite3_busy_timeout(self.db.?, 5000);
+        // WAL: readers (listing, search, event tails) proceed while a writer
+        // (a streaming turn's save, the FTS swap) holds its transaction,
+        // instead of queueing on the busy timeout. The mode persists in the
+        // database file, so this is a one-time conversion per database; a
+        // failure (read-only path, filesystem without shared memory) keeps
+        // the default rollback journal and nothing else changes.
+        _ = c.sqlite3_exec(self.db.?, "PRAGMA journal_mode=WAL;", null, null, null);
     }
 
     pub fn close(self: *Connection) void {

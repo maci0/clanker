@@ -54,12 +54,18 @@ pub fn receive(
     defer store.close();
     const cursor = try store.lastSeq();
     var next: i64 = cursor;
+    // The batch is one transaction: a crash or store error mid-batch leaves
+    // the replica at its old cursor, and the sender's retry re-offers the
+    // whole tail (duplicates are skipped by the cursor check).
+    var tx = try sqlite.Transaction.begin(&store.conn);
+    defer tx.rollback();
     for (events) |e| {
         if (e.seq <= cursor) continue; // duplicate
         if (e.seq != next + 1) return .{ .gap = next }; // hole
         _ = try store.append(e.ts_ms, e.kind, e.payload);
         next = e.seq;
     }
+    try tx.commit();
     return .{ .accepted = next };
 }
 
@@ -249,8 +255,39 @@ test "receive accepts appends at cursor+1, drops duplicates, and reports gaps" {
     try std.testing.expectEqual(@as(i64, 2), try store.lastSeq());
 }
 
-/// Ensures the replica database also has the messages table, so a replica can
-/// hold the transcript projection and resume a session, not only audit it.
+test "the replica messages table matches the owner schema" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/replica.db", .{&env.tmp.sub_path});
+    var store = try session_events.Store.open(arena, try arena.dupeZ(u8, path));
+    defer store.close();
+    ensureMessages(&store);
+
+    // The owner read path selects every transcript column by name; a
+    // drifted replica shape fails it, and with it any resume from the
+    // replica's copy of the conversation.
+    var rd = try store.conn.prepare(
+        \\SELECT role, content, images, tool_calls, tool_call_id, steered FROM messages ORDER BY seq;
+    );
+    defer rd.finalize();
+    try std.testing.expectEqual(sqlite.Step.done, try rd.step());
+
+    // A pulled row (role + content only) reads back with column defaults
+    // intact, so the projection needs no knowledge of newer columns.
+    var ins = try store.conn.prepare("INSERT INTO messages (role, content) VALUES ('user', 'pulled');");
+    defer ins.finalize();
+    _ = try ins.step();
+    var chk = try store.conn.prepare("SELECT steered FROM messages WHERE role = 'user';");
+    defer chk.finalize();
+    try std.testing.expectEqual(sqlite.Step.row, try chk.step());
+    try std.testing.expectEqual(@as(i64, 0), chk.columnInt(0));
+}
+
+/// Ensures the replica database also has the messages table, in the owner's
+/// shape, so a replica can hold the transcript projection and resume a
+/// session (or serve it through the same read path), not only audit it.
 fn ensureMessages(store: *session_events.Store) void {
     store.conn.exec(
         \\CREATE TABLE IF NOT EXISTS messages (
@@ -259,8 +296,9 @@ fn ensureMessages(store: *session_events.Store) void {
         \\  content TEXT,
         \\  images TEXT,
         \\  tool_calls TEXT,
-        \\  tool_call_id TEXT
-        \\);\n;
+        \\  tool_call_id TEXT,
+        \\  steered INTEGER NOT NULL DEFAULT 0
+        \\);
     ) catch {};
 }
 
@@ -280,8 +318,9 @@ const TranscriptResponse = struct {
 
 /// Pulls the owner's transcript projection (GET /api/sessions/<id>) into the
 /// replica's meta + messages tables, so a peer can resume the conversation.
-/// Fail-open: a stale transcript only means resume happens from an older
-/// snapshot.
+/// The whole snapshot is one transaction: a pull that dies halfway leaves the
+/// previous snapshot intact, never half a transcript. Fail-open: any failure
+/// only means resume happens from an older snapshot.
 pub fn pullTranscript(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -296,27 +335,30 @@ pub fn pullTranscript(
     const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}", .{ owner_url, id }) catch return;
     const body = httpFetch(io, gpa, arena, .GET, url, null) catch return;
     const parsed = std.json.parseFromSliceLeaky(TranscriptResponse, arena, body, .{ .ignore_unknown_fields = true }) catch return;
-    store.setMeta("id", parsed.id) catch {};
-    store.setMeta("title", parsed.title) catch {};
+    var tx = sqlite.Transaction.begin(&store.conn) catch return;
+    defer tx.rollback();
+    store.setMeta("id", parsed.id) catch return;
+    store.setMeta("title", parsed.title) catch return;
     var buf: [24]u8 = undefined;
-    store.setMeta("created", std.fmt.bufPrint(&buf, "{d}", .{parsed.created}) catch "0") catch {};
-    store.setMeta("updated", std.fmt.bufPrint(&buf, "{d}", .{parsed.updated}) catch "0") catch {};
+    store.setMeta("created", std.fmt.bufPrint(&buf, "{d}", .{parsed.created}) catch "0") catch return;
+    store.setMeta("updated", std.fmt.bufPrint(&buf, "{d}", .{parsed.updated}) catch "0") catch return;
     store.conn.exec("DELETE FROM messages;") catch return;
     var ins = store.conn.prepare("INSERT INTO messages (role, content) VALUES (?1, ?2);") catch return;
     defer ins.finalize();
     var stored_bytes: usize = 0;
     for (parsed.messages) |m| {
         ins.reset();
-        ins.bindText(1, m.role) catch continue;
-        ins.bindText(2, m.content) catch continue;
-        _ = ins.step() catch continue;
+        ins.bindText(1, m.role) catch return;
+        ins.bindText(2, m.content) catch return;
+        _ = ins.step() catch return;
         stored_bytes += m.content.len;
     }
     // Keep the listing's cached counts beside the rows they describe, the
     // same invariant saveSession maintains; a stale figure here would make
     // every later listing scan this transcript instead of trusting meta.
     var nbuf: [24]u8 = undefined;
-    store.setMeta("message_count", std.fmt.bufPrint(&nbuf, "{d}", .{parsed.messages.len}) catch return) catch {};
+    store.setMeta("message_count", std.fmt.bufPrint(&nbuf, "{d}", .{parsed.messages.len}) catch return) catch return;
     var bbuf: [24]u8 = undefined;
-    store.setMeta("message_bytes", std.fmt.bufPrint(&bbuf, "{d}", .{stored_bytes}) catch return) catch {};
+    store.setMeta("message_bytes", std.fmt.bufPrint(&bbuf, "{d}", .{stored_bytes}) catch return) catch return;
+    tx.commit() catch return;
 }

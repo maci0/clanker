@@ -90,8 +90,16 @@ fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !s
     // `CREATE TABLE IF NOT EXISTS` leaves a database created before a column
     // existed untouched, so every added column needs its own ALTER here.
     // SQLite refuses a duplicate column, which is exactly the "already
-    // migrated" case: the error is the idempotence, not a failure.
-    for (added_message_columns) |ddl| conn.exec(ddl) catch {};
+    // migrated" case: that error is the idempotence. Any other failure
+    // (read-only path, disk full, a `messages` that is not a table) surfaces
+    // here, not later as a confusing missing-column bind error on first write.
+    for (added_message_columns) |ddl| conn.exec(ddl) catch |err| {
+        const known = std.mem.indexOf(u8, conn.last_error, "duplicate column name") != null;
+        if (!known) {
+            conn.close();
+            return err;
+        }
+    };
     return conn;
 }
 
@@ -358,6 +366,12 @@ pub fn deleteSession(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const
     if (!validSessionId(id)) return error.InvalidSessionId;
     const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
     try std.Io.Dir.cwd().deleteFile(io, path);
+    // The journal/WAL sidecars of the deleted database are garbage once the
+    // main file is gone; a fresh session reusing the id must not inherit them.
+    for ([_][]const u8{ "-journal", "-wal", "-shm" }) |side_suffix| {
+        const side = try std.fmt.allocPrint(arena, "{s}{s}", .{ path, side_suffix });
+        std.Io.Dir.cwd().deleteFile(io, side) catch {};
+    }
     session_fts.removeSession(arena, id);
 }
 
@@ -1306,4 +1320,77 @@ test "meta edits on an unknown id fail and mint no database" {
     try std.testing.expectError(error.FileNotFound, setWorkspace(io, std.testing.allocator, arena, dir, "never-saved", "ws"));
     const path = try std.fmt.allocPrint(arena, "{s}/never-saved{s}", .{ dir, db_suffix });
     try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, path, .{}));
+}
+
+test "a session database opens in WAL journal mode" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "walmode",
+        .title = "wal",
+        .messages = &.{},
+        .created = 1,
+        .updated = 2,
+    });
+
+    // The mode persists in the database file: a fresh connection reads wal
+    // without re-converting.
+    var conn = try openDb(arena, dir, "walmode");
+    defer conn.close();
+    var stmt = try conn.prepare("PRAGMA journal_mode;");
+    defer stmt.finalize();
+    try std.testing.expectEqual(sqlite.Step.row, try stmt.step());
+    try std.testing.expectEqualStrings("wal", stmt.columnText(0) orelse "");
+}
+
+test "a migration failure that is not duplicate-column fails the open" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    // A `messages` that is a view is corruption the ALTER loop must report,
+    // not swallow as if it were an already-migrated database.
+    {
+        const path = try std.fmt.allocPrint(arena, "{s}/broken{s}", .{ dir, db_suffix });
+        const pathz = try arena.dupeZ(u8, path);
+        var conn: sqlite.Connection = .{};
+        try conn.open(pathz);
+        defer conn.close();
+        try conn.exec("CREATE VIEW messages AS SELECT 'user' AS role, '' AS content;");
+    }
+
+    try std.testing.expectError(sqlite.Error.ExecFailed, openDb(arena, dir, "broken"));
+}
+
+test "deleting a session removes its journal sidecars too" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "sidecar",
+        .title = "sidecar",
+        .messages = &.{},
+        .created = 1,
+        .updated = 2,
+    });
+    // Stale sidecars (a crash mid-write, or files left by another writer).
+    for ([_][]const u8{ "-journal", "-wal", "-shm" }) |suffix| {
+        const name = try std.fmt.allocPrint(arena, "sidecar.db{s}", .{suffix});
+        try env.tmp.dir.writeFile(io, .{ .sub_path = name, .data = "junk" });
+    }
+
+    try deleteSession(io, arena, dir, "sidecar");
+
+    for ([_][]const u8{ "sidecar.db", "sidecar.db-journal", "sidecar.db-wal", "sidecar.db-shm" }) |name| {
+        const path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir, name });
+        try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, path, .{}));
+    }
 }
