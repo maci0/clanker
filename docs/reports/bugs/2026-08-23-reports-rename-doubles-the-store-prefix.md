@@ -4,11 +4,11 @@
 
 - **What failed:** `collectReferences` (`tools/zig/reports.zig:464`) joins the store root onto every grep hit unconditionally, but `ck_fs_grep` already returns paths rooted at the repository. So a record that still names the renamed one is reported as `docs/reports/docs/reports/bugs/<name>.md` -- a path that does not exist and cannot be opened or pasted into a `read_file` call.
 - **Impact:** The one output `rename` exists to produce is the list of inbound references a caller must fix by hand, and every entry on it is wrong. Anyone trusting it either edits nothing (the path 404s) or hunts for the real file. `reports` is the only record store whose records sit a level below the store root (`docs/reports/bugs/`, `docs/reports/investigations/`), which is why the four flat stores never showed this.
-- **Resolution:** Open. Observed on `origin/main` at `1d8a2ae9` while renaming four records; not fixed, because the change that hit it is docs-only.
+- **Resolution:** Resolved on 2026-08-24. Fixed in cb7020b6; one shared walk (records_grep.collectRenameReferences) behind the nesting-tolerant doc_scaffold.isUnder, so reports rename prints repo-rooted paths that open. Verified by clanker gate (eleven checks), a new sandbox-runtime test that stats every path the reply lists, and a live rename.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed in cb7020b6; one shared walk (records_grep.collectRenameReferences) behind the nesting-tolerant doc_scaffold.isUnder, so reports rename prints repo-rooted paths that open. Verified by clanker gate (eleven checks), a new sandbox-runtime test that stats every path the reply lists, and a live rename.
 
 ## Symptom and impact
 
@@ -80,7 +80,7 @@ wrong condition.
 
 ## Resolution
 
-**Open. Not fixed.** The change that surfaced it renames four records and edits
+**Fixed 2026-08-24 in cb7020b6, by route (2).** The change that surfaced it renames four records and edits
 prose only, and quietly folding a guest fix into a docs-only PR is how a code
 change ships unreviewed.
 
@@ -122,3 +122,41 @@ Nothing to verify: no fix is claimed. What is verified, and how:
   `tools/zig/doc_scaffold.zig` (`isPathIn`).
 - [Record stores have no rename or move action](../investigations/2026-08-17-missing-clanker-tool-record-stores-cannot-rename-a-record.md)
   — the investigation the rename verb came from.
+
+## Note — how it was fixed, and the test the comment became (2026-08-24)
+
+Route (2), as this record recommended: one walk, one predicate.
+
+`reports.collectReferences` is gone. Both stores now go through
+`records_grep.collectRenameReferences`, and its containment test is a new
+`doc_scaffold.isUnder` -- `isPathIn` without the single-directory-level rule.
+The two are kept separate rather than merged: `isPathIn` gates *writes*, where
+refusing a nested path is the store's conventions being enforced, while
+`isUnder` only answers "is this path already rooted at the store", which a hit
+under `docs/reports/bugs/` has to answer yes to.
+
+Each store's index is now skipped by comparing its path, which is what the old
+`std.mem.eql(u8, file.string, "README.md")` line only looked like it did: the
+host reports repo-rooted paths, so that comparison never matched anything.
+
+The assumption became a test, as this record asked. Two of them:
+
+- `isUnder accepts a nested path where isPathIn does not` in
+  `tools/zig/doc_scaffold.zig`, which asserts both predicates on the same
+  nested path so the difference between them is pinned rather than described.
+- `reports wasm tool rename lists leftover references at paths that exist` in
+  `src/sandbox/runtime.zig`, which drives the real guest through a rename in a
+  tmp sandbox and `statFile`s every path the reply lists. It also carries a
+  prose mention of the old stem in the index, outside the inventory markers, so
+  the index survives the link rewrite as a grep hit and the skip is exercised
+  rather than assumed.
+
+Live, on the built binary: renaming a scratch record that a sibling still cited
+printed `docs/reports/bugs/2026-08-24-live-check-alpha.md`, with
+`docs/reports/` once, and that file existed. Both scratch records were deleted
+afterwards.
+
+The Follow-up asked for the other `lib.fsGrep` callers in `tools/zig/` to be
+checked for the same join. They were: `records_grep.grepAll` and the search
+paths take the host's path as given and never join, so `collectReferences` was
+the only instance.

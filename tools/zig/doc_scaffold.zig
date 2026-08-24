@@ -55,6 +55,55 @@ pub fn isSlug(slug: []const u8) bool {
     return true;
 }
 
+/// The `YYYY-MM-DD` a slug leads with, or null when it carries no date prefix.
+///
+/// Shape only, and deliberately: the digits are not checked against a calendar,
+/// because the one thing done with the answer is comparing it to a date the
+/// store stamped, and a wrong month reads the same as a wrong day there.
+pub fn slugDatePrefix(slug: []const u8) ?[]const u8 {
+    if (slug.len < 11) return null;
+    if (slug[4] != '-' or slug[7] != '-' or slug[10] != '-') return null;
+    for (slug[0..10], 0..) |c, i| {
+        if (i == 4 or i == 7) continue;
+        if (!std.ascii.isDigit(c)) return null;
+    }
+    return slug[0..10];
+}
+
+/// The slug's own date when it contradicts `stamped`, else null.
+///
+/// Two clocks decide one record: `civilFromUnix` stamps UTC on purpose, and the
+/// caller types the slug from whatever its shell says, so for every hour local
+/// time sits on a different date a hand-typed slug is off by one and nothing
+/// looked. `create` holds both values, which is why the check belongs there.
+///
+/// Pure in both arguments, and that is the point rather than tidiness: a check
+/// that read the clock itself would pass vacuously wherever local time *is*
+/// UTC, which is exactly where the tests run.
+pub fn slugDateConflict(slug: []const u8, stamped: []const u8) ?[]const u8 {
+    const dated = slugDatePrefix(slug) orelse return null;
+    if (std.mem.eql(u8, dated, stamped)) return null;
+    return dated;
+}
+
+/// The one spelling of the warning a store emits for `slugDateConflict`, so
+/// five stores cannot word the same finding five ways. Creating the record
+/// anyway is deliberate: backdating a record about an older event is a real
+/// need, and refusing it would just be worked around.
+pub fn slugDateWarning(
+    alloc: std.mem.Allocator,
+    slug_date: []const u8,
+    stamped: []const u8,
+) ![]const u8 {
+    return std.fmt.allocPrint(
+        alloc,
+        "the slug is dated {s} but the store's UTC date is {s}: records are dated in UTC " ++
+            "and the slug is not, so this record contradicts itself. It was created anyway; " ++
+            "rename it if the slug is the wrong half.",
+        .{ slug_date, stamped },
+    );
+}
+
 /// Drops a leading `<label> — ` from a title, so a caller who spelled the
 /// record's kind out does not get it twice.
 ///
@@ -185,6 +234,25 @@ pub fn isPathIn(dir: []const u8, path: []const u8) bool {
     const rest = path[dir.len + 1 ..];
     if (rest.len == 0) return false;
     if (std.mem.find(u8, rest, "/") != null) return false;
+    if (std.mem.find(u8, rest, "..") != null) return false;
+    return true;
+}
+
+/// `isPathIn` without the single-level requirement: true when `path` sits
+/// anywhere below `dir`.
+///
+/// The two are not interchangeable. `isPathIn` gates *writes*, so refusing a
+/// nested path is the conventions being enforced. This one only answers "is
+/// this path already rooted at the store", which a grep hit under
+/// `docs/reports/bugs/` has to answer yes to — `docs/reports` is the one store
+/// that nests, so the strict predicate said no for the only caller that needed
+/// a yes and the caller then joined the store root on a second time.
+pub fn isUnder(dir: []const u8, path: []const u8) bool {
+    if (dir.len == 0) return false;
+    if (!std.mem.startsWith(u8, path, dir)) return false;
+    if (path.len <= dir.len or path[dir.len] != '/') return false;
+    const rest = path[dir.len + 1 ..];
+    if (rest.len == 0) return false;
     if (std.mem.find(u8, rest, "..") != null) return false;
     return true;
 }
@@ -603,11 +671,17 @@ pub const Placement = union(enum) {
 /// silently moving an author's paragraph under someone else's text would be a
 /// worse failure than the duplicate heading. A block that does not open with a
 /// heading is an ordinary append.
+///
+/// "Empty" includes a body that is nothing but the scaffold's own placeholder —
+/// see `isPlaceholderBody`. Without that, `## References` was the one
+/// scaffolded section the fill could never reach, because `create` seeds it
+/// with `- Investigation: none yet` and a section with a body is left alone.
 pub fn appendOrFill(w: *std.Io.Writer, text: []const u8, content: []const u8) !Placement {
     const block = std.mem.trim(u8, content, " \t\r\n");
     if (leadingHeading(block)) |heading| {
         if (findSection(text, heading)) |sec| {
-            if (std.mem.trim(u8, text[sec.body_start..sec.body_end], " \t\r\n").len == 0) {
+            const body = std.mem.trim(u8, text[sec.body_start..sec.body_end], " \t\r\n");
+            if (body.len == 0 or isPlaceholderBody(body)) {
                 try w.writeAll(text[0..sec.heading]);
                 try w.writeAll(block);
                 try w.writeByte('\n');
@@ -634,6 +708,36 @@ fn leadingHeading(block: []const u8) ?[]const u8 {
     const line_end = std.mem.find(u8, block, "\n") orelse block.len;
     const line = std.mem.trim(u8, block[0..line_end], " \t\r");
     return if (line.len > hashes + 1) line else null;
+}
+
+/// A section body that says only "nothing here yet" counts as empty for
+/// `appendOrFill`.
+///
+/// The report scaffolds end `## References` with `- Investigation: none yet`
+/// (`- Related bug:`, `- Related record:` and `- Report:` in the other kinds),
+/// so that section always had a body and an appended `## References` block
+/// always landed at the end of the document as a second copy of the heading —
+/// the one scaffolded section the fill structurally could not reach, observed
+/// twice in one afternoon and fixed by hand both times.
+///
+/// Narrow on purpose, the same way the rest of the fill is: *every* non-blank
+/// line has to be a list item ending in "none yet". One authored reference in
+/// the section and it has a real body again, so the block goes to the end and
+/// nobody's line is displaced.
+fn isPlaceholderBody(body: []const u8) bool {
+    const tail = "none yet";
+    var any = false;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        if (!std.mem.startsWith(u8, line, "- ")) return false;
+        const item = std.mem.trim(u8, line[2..], " \t.");
+        if (item.len < tail.len) return false;
+        if (!std.ascii.eqlIgnoreCase(item[item.len - tail.len ..], tail)) return false;
+        any = true;
+    }
+    return any;
 }
 
 /// Replaces every occurrence of `old`, returning how many there were. The
@@ -981,6 +1085,75 @@ fn arrayItems(v: std.json.Value) []const std.json.Value {
 }
 
 // ------------------------------------------------------------------ tests
+
+test "slugDatePrefix reads a date prefix and nothing else" {
+    try std.testing.expectEqualStrings("2026-08-23", slugDatePrefix("2026-08-23-a-record").?);
+    // Exactly the prefix plus its hyphen is still a prefix; the store's own
+    // length rule is what rejects a slug with no words after the date.
+    try std.testing.expectEqualStrings("2026-08-23", slugDatePrefix("2026-08-23-").?);
+    try std.testing.expectEqual(@as(?[]const u8, null), slugDatePrefix("2026-08-23"));
+    try std.testing.expectEqual(@as(?[]const u8, null), slugDatePrefix("a-record-with-no-date"));
+    try std.testing.expectEqual(@as(?[]const u8, null), slugDatePrefix("2026-8-23-a-record"));
+    try std.testing.expectEqual(@as(?[]const u8, null), slugDatePrefix("202x-08-23-a-record"));
+    try std.testing.expectEqual(@as(?[]const u8, null), slugDatePrefix(""));
+}
+
+test "slugDateConflict fires on a mismatch and stays silent on a match" {
+    // The matching case is the control: a check that fired on both would look
+    // identical to a working one until someone filed a correctly dated record.
+    try std.testing.expectEqual(
+        @as(?[]const u8, null),
+        slugDateConflict("2026-08-23-a-record", "2026-08-23"),
+    );
+    // Off by one day, which is what a local clock at +08 produces all evening.
+    try std.testing.expectEqualStrings(
+        "2026-08-24",
+        slugDateConflict("2026-08-24-a-record", "2026-08-23").?,
+    );
+    // Off by a month and by a year, both the same finding.
+    try std.testing.expectEqualStrings(
+        "2026-09-23",
+        slugDateConflict("2026-09-23-a-record", "2026-08-23").?,
+    );
+    try std.testing.expectEqualStrings(
+        "2025-08-23",
+        slugDateConflict("2025-08-23-a-record", "2026-08-23").?,
+    );
+    // An undated slug has nothing to contradict: the numbered stores name most
+    // of their records that way and must not start warning.
+    try std.testing.expectEqual(
+        @as(?[]const u8, null),
+        slugDateConflict("a-record-with-no-date", "2026-08-23"),
+    );
+}
+
+test "slugDateWarning names both dates" {
+    const msg = try slugDateWarning(std.testing.allocator, "2026-08-24", "2026-08-23");
+    defer std.testing.allocator.free(msg);
+    try std.testing.expect(std.mem.find(u8, msg, "2026-08-24") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "2026-08-23") != null);
+    try std.testing.expect(std.mem.find(u8, msg, "UTC") != null);
+}
+
+test "isUnder accepts a nested path where isPathIn does not" {
+    // The reports store is the one that nests, and the whole reason the guard
+    // in the shared walk did not fire for it.
+    try std.testing.expect(isUnder("docs/reports", "docs/reports/bugs/x.md"));
+    try std.testing.expect(!isPathIn("docs/reports", "docs/reports/bugs/x.md"));
+    // The flat stores keep working through the same predicate.
+    try std.testing.expect(isUnder("docs/research", "docs/research/x.md"));
+    try std.testing.expect(isPathIn("docs/research", "docs/research/x.md"));
+    // A store-relative path — what the join was written for — is not under it.
+    try std.testing.expect(!isUnder("docs/reports", "bugs/x.md"));
+    try std.testing.expect(!isUnder("docs/reports", "docs/reports"));
+    // A prefix that is not a path boundary, and traversal.
+    try std.testing.expect(!isUnder("docs/report", "docs/reports/bugs/x.md"));
+    try std.testing.expect(!isUnder("docs/reports", "docs/reports/../rfcs/x.md"));
+    try std.testing.expect(!isUnder("", "docs/reports/bugs/x.md"));
+    // Unlike isPathIn this says nothing about the suffix: a grep hit can be any
+    // file, and dropping non-Markdown ones is not this predicate's job.
+    try std.testing.expect(isUnder("docs/reports", "docs/reports/bugs/notes.txt"));
+}
 
 test "isoDate renders the epoch, a leap day, and a late date" {
     var buf: [16]u8 = undefined;
@@ -1348,6 +1521,43 @@ test "appendOrFill fills a trailing empty section without growing a blank line" 
     const placement = try appendOrFill(&out.writer, "# Doc\n\n## Notes\n\n", "## Notes\n\nfilled\n");
     try std.testing.expectEqualStrings("## Notes", placement.filled);
     try std.testing.expectEqualStrings("# Doc\n\n## Notes\n\nfilled\n", out.written());
+}
+
+test "appendOrFill fills a section whose only body is the scaffold placeholder" {
+    var out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer out.deinit();
+    const placement = try appendOrFill(
+        &out.writer,
+        scaffold_body,
+        "## References\n\n- Investigation: [x](x.md)\n",
+    );
+    try std.testing.expectEqualStrings("## References", placement.filled);
+    const text = out.written();
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "## References"));
+    try std.testing.expect(std.mem.find(u8, text, "none yet") == null);
+    try std.testing.expect(std.mem.endsWith(u8, text, "## References\n\n- Investigation: [x](x.md)\n"));
+}
+
+test "isPlaceholderBody matches every store's none-yet line and nothing authored" {
+    // The four wordings `create` writes, one per report kind.
+    try std.testing.expect(isPlaceholderBody("- Investigation: none yet"));
+    try std.testing.expect(isPlaceholderBody("- Related bug: none yet"));
+    try std.testing.expect(isPlaceholderBody("- Related record: none yet"));
+    try std.testing.expect(isPlaceholderBody("- Report: none yet"));
+    try std.testing.expect(isPlaceholderBody("- Report: none yet.\n"));
+
+    // A real reference is a body, and so is a placeholder standing next to one:
+    // filling would drop the authored line, which is the failure this whole
+    // rule exists to avoid.
+    try std.testing.expect(!isPlaceholderBody("- Investigation: [x](x.md)"));
+    try std.testing.expect(!isPlaceholderBody("- Investigation: none yet\n- Related: [x](x.md)"));
+    // Prose, not a list item.
+    try std.testing.expect(!isPlaceholderBody("None yet."));
+    // Nothing at all is the caller's other branch, not this one.
+    try std.testing.expect(!isPlaceholderBody(""));
+    try std.testing.expect(!isPlaceholderBody("\n  \n"));
+    // "none yet" has to end the item, not merely appear in it.
+    try std.testing.expect(!isPlaceholderBody("- none yet is what it said before"));
 }
 
 test "appendOrFill appends when the section has a body, is absent, or the block has no heading" {

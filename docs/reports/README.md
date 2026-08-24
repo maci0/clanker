@@ -80,11 +80,11 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [the record stores accept a date-prefixed slug that contradicts the UTC date they stamp, with no warning](bugs/2026-08-23-record-slug-date-contradicts-the-stamped-date.md) — Open
+- [the record stores accept a date-prefixed slug that contradicts the UTC date they stamp, with no warning](bugs/2026-08-23-record-slug-date-contradicts-the-stamped-date.md) — Resolved
 
 - [clanker gate passes on unpatched dependencies, so a fresh worktree gates against pristine upstream deps](bugs/2026-08-23-gate-passes-on-unpatched-dependencies.md) — Open
 
-- [reports rename prints leftover-reference paths with the store prefix twice](bugs/2026-08-23-reports-rename-doubles-the-store-prefix.md) — Open
+- [reports rename prints leftover-reference paths with the store prefix twice](bugs/2026-08-23-reports-rename-doubles-the-store-prefix.md) — Resolved
 
 - [dump-config leaks the secret half of any header whose value contains an equals sign](bugs/2026-08-23-dump-config-header-redaction-cuts-on-equals.md) — Open
 
