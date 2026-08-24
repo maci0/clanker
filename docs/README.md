@@ -804,7 +804,8 @@ Composer editing follows readline conventions: Ctrl-U kills to the start, Ctrl-K
 | `/arena "<question>" --for X --against Y` | in-process | Run a judged debate (runs the agent, which calls the `arena` tool). `--position` x3-8 for a Battle Royale |
 | `/compare "<prompt>" [--with <p[@model]>]...` | in-process | Put one prompt to 2-8 models at once and show the answers unlabeled (runs the agent, which calls the `compare` tool) |
 | `/compare --list`, `/compare --show <id> [--pick <letter>]` | `compare` | Read stored comparisons back, and record a pick. Calls the tool directly, with no model in the loop |
-| `/attach <path>` | in-process | Queue an image for the next task submit |
+| `/attach <path>` | in-process | Queue a png/jpg/jpeg/webp image (max 4, 4 MiB each) for the next task submit. Refused at the command when the path is not one of those types, when `modules.multimodal` is off, or when the active model does not declare the `image_in` capability |
+| `/attach clear` | in-process | Empty the pending attachment queue |
 | `/compact [hint]` | in-process | Compact history on the next turn; an optional hint tells the summarizer what to keep |
 | `/tui-plugins [on\|off <name>]` | in-process | List TUI slash-command plugins, or enable/disable one (PRD 0012) |
 | `/quit`, `/exit`, `/q`, `exit`, `quit` | in-process | Leave the REPL |
