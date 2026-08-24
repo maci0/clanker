@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-- **What failed:** A non-empty '## Blocked on' body now steers the improve loop's seeder, but nothing pins it against '## Status', the TL;DR '**Resolution:**' bullet or the inventory row, so a record can read Resolved and blocked at once; and 'non-empty' is not measured against isPlaceholderBody.
+- **What failed:** A non-empty '## Blocked on' body now steers the improve loop's seeder, but nothing pins it against '## Status', the TL;DR '**Resolution:**' bullet or the inventory row, so a record can read Resolved and blocked at once. The related ambiguity — 'non-empty' not being measured against isPlaceholderBody — was fixed by PR #396; this half is not.
 - **Impact:** A record can read Resolved and blocked at once with no check objecting, so it is either hidden from the improve loop forever while actually done, or advertised as done while still blocked. Report only; the check is unclaimed.
 - **Resolution:** Open.
 
@@ -37,20 +37,21 @@ The consequence is not cosmetic, and it goes wrong in both directions:
   TL;DR — which the store tells every reader to trust first — is told the
   wrong thing.
 
-**2. "Non-empty body" is ambiguous against `isPlaceholderBody`.** For the skip
-predicate to be correct, "non-empty" has to mean non-empty *after*
-`isPlaceholderBody` (`tools/zig/doc_scaffold.zig:727`), which since PR #388
+**2. "Non-empty body" was ambiguous against `isPlaceholderBody`.** Fixed by
+PR #396 — see `## Follow-up`; described here as it stood when this record was
+filed. For the skip predicate to be correct, "non-empty" has to mean non-empty
+*after* `isPlaceholderBody` (`tools/zig/doc_scaffold.zig`), which since PR #388
 counts a body made only of `- … none yet` list items as empty. `blockedOn` in
-`src/improve/backlog.zig` does not: it returns the first non-blank line of the
-section, whatever that line says.
+`src/improve/backlog.zig` did not: it returned the first non-blank line of the
+section, whatever that line said.
 
-This is latent rather than live, because `reports create` writes the section
-truly empty. It becomes real the moment anyone tightens the scaffold to seed a
-placeholder line there — and that is not hypothetical, it is precedent: the
+That was latent rather than live, because `reports create` writes the section
+truly empty. It would have become real the moment anyone tightened the scaffold
+to seed a placeholder line there — and that is not hypothetical, it is precedent: the
 same scaffold seeds `## References` with `- Investigation: none yet`, and that
 exact pattern made `## References` structurally unfillable until PR #388 taught
-`isPlaceholderBody` about it. Repeat it under `## Blocked on` and every new
-report reads as blocked from birth, permanently hidden from the improve loop
+`isPlaceholderBody` about it. Repeated under `## Blocked on`, every new report
+would have read as blocked from birth, permanently hidden from the improve loop
 with no operator ever having stated a blocker.
 
 ## Reproduction
@@ -69,13 +70,13 @@ zig build && zig build tools && ./zig-out/bin/clanker gate
 All twelve checks pass. `src/gate/checks.zig` has no check that reads
 `## Blocked on` at all, so there is nothing for the contradiction to trip.
 
-**Finding 2 — the predicates disagree.** `blockedOn`
-(`src/improve/backlog.zig:282`) is a line scan: it tracks whether the current
-`## ` heading is `blocked on` and returns the first line with `line.len > 0`.
-Give it a body of `- Investigation: none yet` and it returns that line, so the
-caller at `src/improve/backlog.zig:110` skips the record. Hand the same body to
-`isPlaceholderBody` (`tools/zig/doc_scaffold.zig:727`) and it returns true —
-the body is empty. Two predicates, one question, opposite answers.
+**Finding 2 — the predicates disagreed.** As of `58e65e22`, `blockedOn` in
+`src/improve/backlog.zig` was a plain line scan: it tracked whether the current
+`## ` heading was `blocked on` and returned the first line with `line.len > 0`.
+Given a body of `- Investigation: none yet` it returned that line, so its
+caller skipped the record. Handed the same body, `isPlaceholderBody` in
+`tools/zig/doc_scaffold.zig` returned true — the body is empty. Two predicates,
+one question, opposite answers. PR #396 closed that gap.
 
 Current state of the store, for the record: the convention is back-filled on
 exactly two records, one `## Blocked on` heading each and no duplicates —
@@ -122,9 +123,10 @@ would have caught.
 
 ## Resolution
 
-None. This is a report, not a fix — see `## Follow-up` for the fix shape of
-finding 1 and the in-flight peer PR for finding 2. The record stays `Open.`
-until the consistency check exists.
+Partial, and none of it from this record. Finding 2 was fixed by PR #396; this
+change filed no code for it. Finding 1 — the consistency check — is still
+unbuilt and unclaimed, so the record stays `Open.` until it exists. See
+`## Follow-up` for the shape.
 
 ## Verification
 
@@ -132,17 +134,18 @@ Everything above was read off the tree at `58e65e22`, not inferred:
 
 - `tools/zig/reports.zig` — `create` writes the `## Blocked on` heading from a
   hardcoded literal; `docs/reports/bugs/TEMPLATE.md` is not read by `create`.
-- `src/improve/backlog.zig` — `blockedOn` is a first-non-blank-line scan; its
-  caller skips the record when it returns non-null. No `isPlaceholderBody` call
-  anywhere in the file.
+- `src/improve/backlog.zig` — at `58e65e22`, `blockedOn` was a
+  first-non-blank-line scan with no placeholder handling; its caller skips the
+  record whenever it returns non-null. PR #396 added the placeholder skip; the
+  caller behaviour is unchanged, so finding 1 is untouched by it.
 - `tools/zig/doc_scaffold.zig` — `isPlaceholderBody` accepts a body of only
   `- … none yet` items as empty; it is private to that module.
 - `src/gate/checks.zig` — no check mentions `Blocked on`. The twelve gate
   checks were run green on the branch carrying this record, which is itself the
   demonstration that nothing catches the contradiction.
 
-Not verified: no live model run, and the in-flight peer fix for finding 2 was
-not observed merging.
+Not verified here: no live model run, and PR #396 — the fix for finding 2 — was
+read as a merged diff, not exercised by this session.
 
 ## Follow-up
 
@@ -165,24 +168,25 @@ inventory row. The detail string should name the offending path and which of
 the four signals disagreed, the way the existing gates do, rather than a bare
 count.
 
-A planned item for this exists in `docs/ROADMAP.md`, added by the peer session,
-naming `src/gate/checks.zig` and `tools/zig/doc_scaffold.zig`, so the improve
-backlog can seed it. That is a queued intention, not an implementation.
+The `## Planned` item in `docs/ROADMAP.md` is where the loop can find it; it
+names both candidate homes and records that neither session claimed the
+implementation. Read the requirement off that item rather than this paragraph
+if the two ever drift. It is a queued intention, not an implementation.
 
-**Finding 2 — the placeholder ambiguity. Fix in flight, not merged.** A peer
-Claude session is shipping a change to `src/improve/backlog.zig` that makes
-`blockedOn` treat a body whose every line is a `- … none yet` item as empty,
-mirroring `isPlaceholderBody`, with a cross-reference comment and tests. That
-PR was open and unmerged when this record was written and its number was not
-yet known, so it is deliberately left unnumbered here rather than guessed;
-append the reference once it lands. Do not read this paragraph as the defect
-being fixed — it was not observed merging.
+**Finding 2 — the placeholder ambiguity. Fixed by PR #396.** A peer session
+landed `isNoneYetLine` in `src/improve/backlog.zig`, so `blockedOn` now skips
+`- … none yet` items and a body of nothing but those reads as empty, mirroring
+`isPlaceholderBody`. It carries a cross-reference comment recording that the
+predicate is mirrored rather than imported because `tools/zig/doc_scaffold.zig`
+is guest code, plus tests on both sides of the boundary — including that a real
+line after a placeholder still blocks. Attributed, not independently verified
+here: the change is that peer PR's, not this session's.
 
-Once it does land, the remaining exposure is only the `tools/zig` side: the
-scaffold in `tools/zig/reports.zig` is still free to seed a placeholder line
-under `## Blocked on`, and the two definitions of "empty" are still two
-definitions in two modules that agree by hand rather than by construction. The
-durable fix is one shared predicate; the in-flight one is a faithful copy.
+What remains is the `tools/zig` side. The scaffold in `tools/zig/reports.zig`
+is still free to seed a placeholder line under `## Blocked on`, and the two
+definitions of "empty" are two definitions in two modules that agree by hand
+rather than by construction. The durable fix is one shared predicate; the
+landed one is a deliberate faithful copy.
 
 Whoever picks up finding 1 should consider folding the shared-predicate cleanup
 into it, since a check that reads all four signals needs exactly that
@@ -203,6 +207,7 @@ predicate anyway.
 - Back-filled records carrying the convention:
   `docs/reports/bugs/2026-08-24-gemini-thinking-row-inert.md`,
   `docs/reports/bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md`.
-- Finding 1 as a planned item: `docs/ROADMAP.md`.
-- Finding 2 fix: peer PR against `src/improve/backlog.zig`, see `## Follow-up`;
-  number not yet known, append when it lands.
+- Finding 1 as a planned item: the `## Planned` entry in `docs/ROADMAP.md`,
+  added by PR #396.
+- Finding 2 fix: PR #396 — `isNoneYetLine` in `src/improve/backlog.zig` makes
+  `blockedOn` read a placeholder-only body as empty.
