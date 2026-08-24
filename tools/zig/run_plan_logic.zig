@@ -39,6 +39,18 @@ test "validate refuses empty, overflow, and nested plans" {
     try std.testing.expectError(error.EmptyTool, validate(&.{.{ .tool = "" }}, 12));
     try std.testing.expectError(error.NestedPlan, validate(&.{.{ .tool = "run_plan" }}, 12));
     try std.testing.expectError(error.NestedPlan, validate(&.{.{ .tool = "chain" }}, 12));
+
+    // The length ceiling is the clamped max, checked at both edges: exactly
+    // max_steps steps pass, one more is TooManySteps, and a plan past the
+    // ceiling is refused even when the caller asked for more.
+    const twelve = [_]Step{.{ .tool = "read_file" }} ** 12;
+    try validate(&twelve, 12);
+    try std.testing.expectError(error.TooManySteps, validate(&(twelve ++ [_]Step{.{ .tool = "read_file" }}), 12));
+    const sixteen = [_]Step{.{ .tool = "read_file" }} ** 16;
+    try validate(&sixteen, 99);
+    try std.testing.expectError(error.TooManySteps, validate(&(sixteen ++ [_]Step{.{ .tool = "read_file" }}), 99));
     try std.testing.expectEqual(@as(usize, 16), clampMax(99));
+    try std.testing.expectEqual(@as(usize, 16), clampMax(std.math.maxInt(usize)));
     try std.testing.expectEqual(@as(usize, 12), clampMax(0));
+    try std.testing.expectEqual(@as(usize, 12), clampMax(12));
 }

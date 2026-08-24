@@ -68,6 +68,17 @@ test "match handles basic patterns" {
     try std.testing.expect(!match("?.zig", "ab.zig"));
     try std.testing.expect(!match("?.zig", ".zig"));
 
+    // `?` refuses to cross a directory separator while `*` may: a find/allow
+    // pattern must not jump between path components through a `?`.
+    try std.testing.expect(!match("?", "/"));
+    try std.testing.expect(!match("a?c", "a/c"));
+    try std.testing.expect(!match("??", "a/b"));
+    try std.testing.expect(match("a*c", "a/c"));
+
+    // Matching is case-sensitive.
+    try std.testing.expect(!match("FOO.zig", "foo.zig"));
+    try std.testing.expect(!match("*.ZIG", "foo.zig"));
+
     try std.testing.expect(match("test_*.zig", "test_foo.zig"));
     try std.testing.expect(!match("test_*.zig", "best_foo.zig"));
 
