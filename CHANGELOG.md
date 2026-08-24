@@ -3053,6 +3053,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   the reports inventory listed resolved bugs as `Open` indefinitely. All three
   now share one helper, and each reports whether the index write landed.
 
+- `HEAD` on an `/api` route answers what the `GET` answers, minus the body,
+  instead of 404ing and closing the connection. Every `/api` predicate in the
+  route chain compared the method to `GET` literally — only the `/webui`
+  routes went through the GET-or-HEAD predicate — so `HEAD /api/status` fell
+  past the whole chain to the terminal 404, and the keep-alive expression had
+  the same asymmetry on its two halves, so a client sweeping routes with
+  `HEAD` also paid a TCP handshake per probe. A `HEAD` is now routed as the
+  `GET` it mirrors, once, before the chain; the responders already suppressed
+  the body, and the completion log line still records the real method. Routes
+  that dispatch on the method inside their handler (`/api/board`,
+  `/api/sessions`, `/api/records/*`) answer a `HEAD` from their read branch for
+  the same reason. `GET /api/events` is the one exception and still 404s a
+  `HEAD`: an SSE stream has no fixed body to describe, and routing a `HEAD`
+  there would open a stream the client is waiting for headers from. Write
+  routes are unaffected — the rewrite makes a `HEAD` read-shaped, never
+  write-shaped, so `HEAD /api/run` is still a 404.
+
 ## [0.1.0] - 2026-08-14
 
 ### Added

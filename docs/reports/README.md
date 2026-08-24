@@ -123,7 +123,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Resolved
 
-- [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Open
+- [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Resolved
 
 - [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-23-ck-http-hands-guests-no-response-headers.md) — Open
 
