@@ -11,11 +11,17 @@ pub const max_desc_len: usize = 240;
 pub const groups = [_][]const u8{ "Work", "Watch", "Set up" };
 
 /// Surfaces a plugin.json may declare. Matches `pluginApi()` in
-/// `ui/app/core/plugins.js`. An unknown name is a typo, not a grant.
+/// `ui/app/core/plugins.js`: every member the page hands a plugin has exactly
+/// one name here (`getJSON`/`postJSON`/`onLive`/`openSession` declare as
+/// `get`/`post`/`live`/`session`). An unknown name is a typo, not a grant;
+/// `ui/plugins/capabilities.test.mjs` fails when this list and the page's
+/// surface drift apart.
 pub const capabilities = [_][]const u8{
-    "get",   "post",      "live", "emit",    "confirm", "prompt",
-    "toast", "workspace", "icon", "storage", "render",  "session",
-    "del",
+    "get",     "post",   "del",     "live",      "emit",
+    "confirm", "prompt", "toast",   "workspace", "icon",
+    "storage", "render", "session", "foldFind",  "boardTimeline",
+    "el",      "status", "fmt",     "showView",  "van",
+    "preact",  "html",   "signals",
 };
 
 /// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
@@ -71,7 +77,8 @@ pub fn validCapability(cap: []const u8) bool {
 /// Why this capabilities list must not ship. Null means every name is known.
 pub fn capabilitiesRejected(caps: []const []const u8) ?[]const u8 {
     for (caps) |c| {
-        if (!validCapability(c)) return "unknown capability (get, post, del, live, emit, confirm, prompt, toast, workspace, icon, storage, render, session)";
+        if (!validCapability(c))
+            return "unknown capability (get, post, del, live, emit, confirm, prompt, toast, workspace, icon, storage, render, session, foldFind, boardTimeline, el, status, fmt, showView, van, preact, html, signals)";
     }
     return null;
 }
@@ -149,6 +156,12 @@ test "capabilitiesRejected names the pluginApi surface" {
     // optional JSON body), so a plugin that deletes must be able to declare it.
     try std.testing.expect(capabilitiesRejected(&.{"del"}) == null);
     try std.testing.expect(validCapability("del"));
+    // The presentation and navigation helpers are part of the surface too:
+    // `capabilities` names the api members a view actually uses, so a view
+    // that formats bytes or switches views declares them like anything else.
+    try std.testing.expect(capabilitiesRejected(
+        &.{ "foldFind", "boardTimeline", "el", "status", "fmt", "showView", "van", "preact", "html", "signals" },
+    ) == null);
 }
 
 test "jsRejected requires registerView and refuses CSP-breaking APIs" {

@@ -5,7 +5,8 @@
   "group": "Work",
   "capabilities": [
     "storage",
-    "icon"
+    "icon",
+    "showView"
   ],
   "eager": true
 }

@@ -374,6 +374,11 @@ pub fn build(b: *std.Build) void {
     const mesh_js_test = b.addSystemCommand(&.{ "node", "--test" });
     mesh_js_test.addFileArg(b.path("ui/plugins/mesh/mesh.test.mjs"));
     test_step.dependOn(&mesh_js_test.step);
+    // A plugin.json capability declaration must name what that addon's app.js
+    // actually calls, and every pluginApi member needs a declarable name.
+    const plugin_caps_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    plugin_caps_js_test.addFileArg(b.path("ui/plugins/capabilities.test.mjs"));
+    test_step.dependOn(&plugin_caps_js_test.step);
     const arena_js_test = b.addSystemCommand(&.{ "node", "--test" });
     arena_js_test.addFileArg(b.path("ui/app/features/arena.test.mjs"));
     test_step.dependOn(&arena_js_test.step);

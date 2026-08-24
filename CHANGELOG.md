@@ -7,6 +7,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `plugin.json` capabilities can name the whole `pluginApi()` surface. The
+  known-name list stopped at 13 names while the page's API kept growing, so a
+  view that formats bytes, switches views, or opens another conversation could
+  not declare what it used; nine of the ten shipped plugins shipped with
+  declarations that understated their own calls. The new names are
+  `foldFind`, `boardTimeline`, `el`, `status`, `fmt`, `showView`, `van`,
+  `preact`, `html`, and `signals`. The field is still a declaration, not a
+  grant.
+
 - `-Dtest-filter` now reaches `zig build e2e` as well as `zig build test`.
   The e2e step set no filters, so the flag was accepted and silently ignored
   and the only way to re-run one journey was the whole suite; the pty resize

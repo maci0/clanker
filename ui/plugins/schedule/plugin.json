@@ -3,5 +3,10 @@
   "title": "Schedule",
   "description": "What clanker schedule has been asked to run, when each entry fires next, and a pause/resume switch. Firing stays with cron and the terminal.",
   "group": "Set up",
-  "capabilities": ["get", "post"]
+  "capabilities": [
+    "get",
+    "post",
+    "el",
+    "status"
+  ]
 }

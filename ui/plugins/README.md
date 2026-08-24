@@ -16,7 +16,7 @@ one is a directory here:
   "title": "Activity",
   "description": "One timeline of everything the board has recorded.",
   "group": "Watch",
-  "capabilities": ["get"]
+  "capabilities": ["get", "boardTimeline", "el", "fmt", "status", "showView"]
 }
 ```
 
@@ -38,7 +38,10 @@ script; the System → Web UI plugins checkbox still gates its assets.
 
 `capabilities` names the `api` members the view actually uses. Known names:
 `get`, `post`, `del`, `live`, `emit`, `confirm`, `prompt`, `toast`, `workspace`, `icon`,
-`storage`, `render`, `session`. An unknown name is refused on write. The field is a
+`storage`, `render`, `session` (`openSession`), `foldFind`, `boardTimeline`, `el`,
+`status`, `fmt`, `showView`, `van`, `preact`, `html`, `signals`. An unknown name is
+refused on write, and `ui/plugins/capabilities.test.mjs` fails when a shipped
+plugin uses a member it does not declare. The field is a
 declaration, not a grant: the page still hands every plugin the whole
 `pluginApi()`.
 

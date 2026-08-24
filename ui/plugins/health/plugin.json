@@ -3,5 +3,10 @@
   "title": "Health",
   "description": "What the HTTP server is doing right now: request and error rates, how close it is to its connection limit, and the shape of its response times.",
   "group": "Watch",
-  "capabilities": ["get", "live"]
+  "capabilities": [
+    "get",
+    "live",
+    "el",
+    "status"
+  ]
 }
