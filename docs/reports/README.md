@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [The '## Blocked on' body became a fourth machine-read state signal with none of the invariants the other three have](bugs/2026-08-24-blocked-on-body-is-an-ungated-fourth-state-signal.md) — Open
+
 - [Every config validation error is printed twice, once by the startup dotenv probe](bugs/2026-08-24-config-validation-errors-print-twice.md) — Open
 
 - [gemini and vertex-Gemini write no thinkingConfig, so the PRD 0024 thinking row is inert there](bugs/2026-08-24-gemini-thinking-row-inert.md) — Open
