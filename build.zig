@@ -327,6 +327,12 @@ pub fn build(b: *std.Build) void {
     const refresh_js_test = b.addSystemCommand(&.{ "node", "--test" });
     refresh_js_test.addFileArg(b.path("ui/app/core/refresh.test.mjs"));
     test_step.dependOn(&refresh_js_test.step);
+    // The plugin host's three contracts with the page: `refresh` is reachable
+    // on re-entry, each plugin announces into its own live region, and the rail
+    // is navigated in rail order rather than registration order.
+    const plugin_host_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    plugin_host_js_test.addFileArg(b.path("ui/app/core/plugins.test.mjs"));
+    test_step.dependOn(&plugin_host_js_test.step);
     const files_js_test = b.addSystemCommand(&.{ "node", "--test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);

@@ -68,22 +68,29 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
-- `HEAD` on an `/api` route answers what the `GET` answers, minus the body,
-  instead of 404ing and closing the connection. Every `/api` predicate in the
-  route chain compared the method to `GET` literally — only the `/webui`
-  routes went through the GET-or-HEAD predicate — so `HEAD /api/status` fell
-  past the whole chain to the terminal 404, and the keep-alive expression had
-  the same asymmetry on its two halves, so a client sweeping routes with
-  `HEAD` also paid a TCP handshake per probe. A `HEAD` is now routed as the
-  `GET` it mirrors, once, before the chain; the responders already suppressed
-  the body, and the completion log line still records the real method. Routes
-  that dispatch on the method inside their handler (`/api/board`,
-  `/api/sessions`, `/api/records/*`) answer a `HEAD` from their read branch for
-  the same reason. `GET /api/events` is the one exception and still 404s a
-  `HEAD`: an SSE stream has no fixed body to describe, and routing a `HEAD`
-  there would open a stream the client is waiting for headers from. Write
-  routes are unaffected — the rewrite makes a `HEAD` read-shaped, never
-  write-shaped, so `HEAD /api/run` is still a 404.
+- A web UI plugin's `refresh` hook is reached again. The page marks a view
+  loaded after its first successful mount and never calls its loader a second
+  time, so the re-entry hook the registration API documents fired only from the
+  error panel's Retry: a plugin that stopped its own polling while hidden
+  stayed stopped when you came back to it. Switching to an already-loaded
+  plugin view now calls it, never in the same switch that ran `mount`. Mesh
+  picks up its 4s poll again on return, and Health and Office no longer need
+  the `MutationObserver` on their panel each had grown to work around it.
+
+- Each web UI plugin announces into its own live region instead of one shared
+  with every other plugin and with the System panel's own messages. Health
+  writes a status line from the 1 Hz metrics feed, which meant a screen reader
+  got a fresh announcement every second while that tab was open, a fresh toast
+  with it, and an enable or disable confirmation asked for at the same moment
+  was overwritten inside the second. Health now announces a read you asked for
+  (open, Refresh, coming back to the view) rather than every live sample.
+
+- Arrow keys on the web UI's navigation rail follow the rail again when a
+  plugin is enabled. A plugin's tab is placed in its own group but registered
+  last, and both the roving-tabindex moves and the tablist's `aria-owns` read
+  registration order, so ArrowUp from a Work-group plugin tab jumped to System,
+  `End` selected the last-registered plugin rather than the bottom tab, and a
+  screen reader read the rail out of order. Both now read the rail itself.
 
 - The REPL's `/attach` now refuses at the command what it used to fail on a
   turn later. A path that is not a png, jpg, jpeg or webp is rejected by name
@@ -3045,6 +3052,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `Draft` and every RFC stayed `Draft` however often its own status moved, and
   the reports inventory listed resolved bugs as `Open` indefinitely. All three
   now share one helper, and each reports whether the index write landed.
+
+- `HEAD` on an `/api` route answers what the `GET` answers, minus the body,
+  instead of 404ing and closing the connection. Every `/api` predicate in the
+  route chain compared the method to `GET` literally — only the `/webui`
+  routes went through the GET-or-HEAD predicate — so `HEAD /api/status` fell
+  past the whole chain to the terminal 404, and the keep-alive expression had
+  the same asymmetry on its two halves, so a client sweeping routes with
+  `HEAD` also paid a TCP handshake per probe. A `HEAD` is now routed as the
+  `GET` it mirrors, once, before the chain; the responders already suppressed
+  the body, and the completion log line still records the real method. Routes
+  that dispatch on the method inside their handler (`/api/board`,
+  `/api/sessions`, `/api/records/*`) answer a `HEAD` from their read branch for
+  the same reason. `GET /api/events` is the one exception and still 404s a
+  `HEAD`: an SSE stream has no fixed body to describe, and routing a `HEAD`
+  there would open a stream the client is waiting for headers from. Write
+  routes are unaffected — the rewrite makes a `HEAD` read-shaped, never
+  write-shaped, so `HEAD /api/run` is still a 404.
 
 ## [0.1.0] - 2026-08-14
 

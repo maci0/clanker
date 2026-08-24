@@ -63,7 +63,10 @@ clanker.registerView({
     // Called once, the first time the view is opened.
   },
   refresh: function (container, api) {
-    // Optional. Called every later time the view is opened.
+    // Optional. Called every later time the view is opened, and never in the
+    // same switch that ran mount. This is where a view that stopped its own
+    // polling while hidden starts it again. Reassigning `this.refresh` from
+    // inside mount works: the hook is read at call time.
   }
 });
 ```
@@ -88,7 +91,7 @@ tool rather than edit `ui/app/`. `music` is the shipped demo; `schedule`,
 | `api.icon(name, size)` | the page's SVG icons |
 | `api.storage` | `get` / `set` / `remove` against `localStorage`, namespaced `clanker.plugin.<id>.` |
 | `api.el(tag, className, text)` | create an element, the way the rest of the page does |
-| `api.status(message)` | announce through the live region, which also shows a toast |
+| `api.status(message)` | announce through this view's own live region, which also shows a toast |
 | `api.fmt` | `bytes`, `int`, `cost`, `time` — the page's own formatters, so a plugin's numbers match |
 | `api.openSession(id, jump)` | switch to a saved conversation and open Chat (`jump` is `{index, query}`) |
 | `api.foldFind(text, needle, from)` | accent-insensitive substring, same indices as conversation search |

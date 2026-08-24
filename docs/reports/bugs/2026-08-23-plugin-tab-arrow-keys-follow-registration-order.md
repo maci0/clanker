@@ -3,12 +3,12 @@
 ## TL;DR
 
 - **What failed:** ui/app/core/plugins.js inserts a plugin's rail tab inside its group heading, then does _VIEWS.push(id) and _wireTab(tab, _VIEWS.length - 1). wireTab (ui/app/app.js) moves focus purely by that index, and Home/End take VIEWS[0]/VIEWS[last]. For the eleven built-ins VIEWS is exactly the rail's DOM order; a plugin breaks that, so ArrowUp from a Work-group plugin tab lands on System. Registration order is unstable too: eager plugins register on script load.
-- **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Impact:** Confirmed. With a Work-group plugin enabled, ArrowUp from its tab lands on System, and `End` selects the last-registered plugin rather than the bottom tab. `aria-owns` had the same fault, so a screen reader read the rail out of order too.
+- **Resolution:** Resolved on 2026-08-24. wireTab reads the rail's own DOM order via railOrder() instead of the index it was wired with, and the tablist's aria-owns is rebuilt in rail order rather than appended to. ui/app/app.js, ui/app/core/plugins.js, ui/app/core/plugins.test.mjs.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. wireTab reads the rail's own DOM order via railOrder() instead of the index it was wired with, and the tablist's aria-owns is rebuilt in rail order rather than appended to. ui/app/app.js, ui/app/core/plugins.js, ui/app/core/plugins.test.mjs.
 
 ## Symptom and impact
 
@@ -36,7 +36,32 @@ script load and deferred shells are built synchronously in `loadPluginAssets`.
 
 ## Resolution
 
+`wireTab` computes its neighbours from the rail's own DOM order, read per
+press by a new `railOrder()` over `#rail [role='tab'][data-view]` and filtered
+to `VIEWS`. Per press rather than captured, because a plugin's tab can join the
+rail long after a built-in tab was wired. The index a tab was wired with is kept
+as the fallback for a tab that is not in the rail at all.
+
+`aria-owns` on `.rail-places` is the second half: the Set up group's tabs live
+outside the tablist element and are members of it only through that attribute,
+so the order it is written in is the order a screen reader reads. Appending each
+new id put a Work-group plugin after System. `syncTablistOwns` rebuilds the
+whole attribute from the rail's order instead.
+
 ## Verification
+
+`ui/app/core/plugins.test.mjs`. `railOrder` and `wireTab` are lifted out of
+app.js and run in a `vm` against a DOM stub of the shipped rail, with a `files`
+plugin registered into the Work group exactly as `makeViewShell` places it.
+ArrowUp lands on Kanban, ArrowDown on Runs, `End` on System, `Home` on Chat; the
+tabs either side of the plugin agree with it, and both ends still wrap. A key
+the tablist does not own is left alone, which is the control: it passes on both
+sides. `aria-owns` is asserted as the full thirteen-id rail order with two
+plugins enabled.
+
+Control run against untouched `origin/main`: ArrowUp fails there with
+`'system' !== 'kanban'`, which is exactly the symptom this report claimed. Full
+`clanker gate` green, twelve of twelve.
 
 ## Follow-up
 
