@@ -66,7 +66,12 @@ test suites (pinned in `.nvmrc`).
 - Consumer-visible changes get an entry under `[Unreleased]` in
   [CHANGELOG.md](CHANGELOG.md) (Keep a Changelog style). Release notes are
   extracted from the changelog, so a shipped change without an entry never
-  reaches the release notes.
+  reaches the release notes. This obligation is convention, not mechanism:
+  the `release-contract` gate checks release-file structure only and never
+  reads the diff, so a missing entry ships green — authors and reviewers are
+  what enforce it. Records-only and internal-docs-only changes are not
+  consumer-visible and need no entry. See
+  [the investigation](docs/reports/investigations/2026-08-24-release-contract-never-reads-the-diff.md).
 
 ## Generated files
 

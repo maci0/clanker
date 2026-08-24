@@ -385,7 +385,12 @@ A consumer-visible change is not done when the code passes. Land it in the
 documents too, or the next reader learns the feature from source:
 
 - `CHANGELOG.md` — every consumer-visible change, Keep a Changelog format,
-  under `## [Unreleased]`. This is the one most often forgotten.
+  under `## [Unreleased]`. This is the one most often forgotten — and no gate
+  will remind you: `release-contract` checks release-file structure only,
+  never the diff, so a missing entry ships green (see
+  docs/reports/investigations/2026-08-24-release-contract-never-reads-the-diff.md).
+  Records-only and internal-docs-only changes are exempt: not consumer-visible,
+  no entry.
 - `RELEASES.md` — release and version policy. `build.zig.zon` is the single
   source of truth for the version; a release needs an immutable
   `vMAJOR.MINOR.PATCH` tag and a matching dated CHANGELOG section.
