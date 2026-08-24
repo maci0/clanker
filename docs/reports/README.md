@@ -145,9 +145,9 @@ Project agents receive this workflow through the harness prompt and
 
 - [A reply opening with a heading or a list draws its markdown markers literally](bugs/2026-08-23-turn-arrow-defeats-markdown-on-first-reply-line.md) — Resolved
 
-- [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Open
+- [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Resolved
 
-- [/attach queues any file and fabricates an image MIME type for it](bugs/2026-08-23-repl-attach-has-no-type-or-vision-gate.md) — Open
+- [/attach queues any file and fabricates an image MIME type for it](bugs/2026-08-23-repl-attach-has-no-type-or-vision-gate.md) — Resolved
 
 - [A steer typed while the final iteration streams is echoed as queued and then discarded](bugs/2026-08-23-repl-steer-after-last-poll-silently-dropped.md) — Open
 
