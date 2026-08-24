@@ -5,6 +5,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- `improve-self` seeds its plan phase from the repository's own records
+  before spending a model call on ideas: open or reopened bug reports under
+  `docs/reports/`, PRD known issues and unchecked requirements, and planned
+  `docs/ROADMAP.md` items, scored in that order (a reopened report — a fix
+  that did not hold — outranks an open one). Seeded ideas pass the same
+  already-tried and writable-target dedup as model-proposed ones, records
+  marked `Investigating` are left to whoever is on them, ROADMAP items whose
+  named files no longer exist are skipped, and the planning call remains the
+  fallback once the backlog runs dry. Off via `improve.backlog = false`.
+
 ### Changed
 
 - `thinking_schema` gained an `anthropic_thinking` value, and its unset

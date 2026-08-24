@@ -21,6 +21,7 @@ const runner_mod = @import("../evals/runner.zig");
 const builder = @import("../toolhost/builder.zig");
 const proposal_mod = @import("proposal.zig");
 const plan_mod = @import("plan.zig");
+const backlog_mod = @import("backlog.zig");
 const history_mod = @import("history.zig");
 const reverts_mod = @import("reverts.zig");
 const inert = @import("inert_check.zig");
@@ -464,6 +465,11 @@ pub const Engine = struct {
     /// says were already tried are skipped without costing an iteration.
     plan_ideas: []const plan_mod.Idea = &.{},
     plan_next: usize = 0,
+    /// Whether this run already read the repo's record backlog. Once per
+    /// run: the backlog is seeded ahead of the first planning call and
+    /// consumed through the same dedup as model ideas; re-reading it every
+    /// iteration would only re-offer what `tried` just skipped.
+    backlog_seeded: bool = false,
     /// The idea the current iteration implements, rendered as a prompt block
     /// (header included, like mixHint). Empty when planning is off, failed,
     /// or ran dry, which leaves the iteration exactly as it was before the
@@ -1347,6 +1353,26 @@ pub const Engine = struct {
         self.plan_current = "";
         if (!self.cfg.improve.plan_phase) return;
         const summaries = self.hist.recentSummaries(self.arena, 40) catch &.{};
+        if (!self.backlog_seeded) {
+            self.backlog_seeded = true;
+            if (self.cfg.improve.backlog and self.plan_ideas.len == 0) {
+                const seeded = backlog_mod.collect(
+                    self.arena,
+                    self.ctx.io,
+                    std.Io.Dir.cwd(),
+                    backlog_mod.default_cap,
+                    opts.max_request_files,
+                ) catch |err| blk: {
+                    log.log(.warn, "backlog: scan failed ({s}); planning without it", .{@errorName(err)});
+                    break :blk &.{};
+                };
+                if (seeded.len > 0) {
+                    log.log(.info, "backlog: seeded {d} idea(s) from the repo's own records", .{seeded.len});
+                    self.plan_ideas = seeded;
+                    self.plan_next = 0;
+                }
+            }
+        }
         var planned_fresh = false;
         while (true) {
             while (self.plan_next < self.plan_ideas.len) {
@@ -1393,7 +1419,20 @@ pub const Engine = struct {
             var too_large: std.ArrayList([]const u8) = .empty;
             _ = try self.grant(idea.files, &missing, &too_large);
         }
-        self.plan_current = try std.fmt.allocPrint(
+        self.plan_current = if (idea.origin) |origin| try std.fmt.allocPrint(
+            self.arena,
+            \\
+            \\# The task chosen for this iteration
+            \\It comes from the repository's own backlog record {s}, not from a
+            \\planning call. Implement exactly this, nothing else:
+            \\{s}
+            \\The files it names are in the context above. If the record turns
+            \\out to be already addressed once you see the code, say no changes
+            \\are needed rather than substituting a different task.
+            \\
+        ,
+            .{ origin, idea.text },
+        ) else try std.fmt.allocPrint(
             self.arena,
             \\
             \\# The idea chosen for this iteration

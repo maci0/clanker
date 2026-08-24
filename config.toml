@@ -485,6 +485,11 @@ max_history = 500
 # plan_phase = true              # list and dedup candidates before patching,
 #                                # instead of letting the patch call pick its
 #                                # own idea and write it blind in one breath
+# backlog = true                 # seed the plan phase from the repo's own
+#                                # records first: open/reopened bug reports,
+#                                # PRD known issues and unchecked items, then
+#                                # planned ROADMAP entries. The planning call
+#                                # is the fallback once they run dry
 # max_consecutive_test_only = 3  # test-only promotions in a row before the next
 #                                # is refused. 0 disables
 # max_context_requests = 3       # times the model may ask for unseen files

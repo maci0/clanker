@@ -664,9 +664,11 @@ A second process on the same host uses another `id`, `listen_port`,
   `[[ttsr.rules]]` tables of `name` / `pattern` / `inject` / `max_fires`. No
   rules by default, which leaves the whole thing inert.
 - **`[improve]`** — self-improvement loop gates: `capability_gate`,
-  `inert_gate`, `plan_phase`, `max_consecutive_test_only`, `eval_provider`,
-  `max_cache_bytes`, `arena_advisory`, and more. See `src/config.zig` `Improve`
-  and `AGENTS.md`.
+  `inert_gate`, `plan_phase`, `backlog` (seed the plan phase from open bug
+  reports, PRD known issues/unchecked items and planned ROADMAP entries,
+  scored in that order, before asking the model for ideas),
+  `max_consecutive_test_only`, `eval_provider`, `max_cache_bytes`,
+  `arena_advisory`, and more. See `src/config.zig` `Improve` and `AGENTS.md`.
 - **`[tui]`** — REPL appearance. Only the mascot lives here so far; the colour
   theme is still `CLANKER_THEME` plus the session-scoped `/theme`, because
   moving it would change behaviour rather than just add a key.

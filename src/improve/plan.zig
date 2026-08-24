@@ -18,6 +18,11 @@ const proposal = @import("proposal.zig");
 pub const Idea = struct {
     text: []const u8,
     files: []const []const u8,
+    /// Repo-relative path of the record this idea was read from, when it came
+    /// from the backlog rather than a planning call. The prompt framing tells
+    /// the model where the task came from, and it must not claim a backlog
+    /// record was "your own planning call".
+    origin: ?[]const u8 = null,
 };
 
 /// The idea list a planning call returns:

@@ -145,7 +145,7 @@ pub const readable_roots = [_][]const u8{
 /// Extensions that are text a model can act on. The prefix list alone would
 /// admit `tools/manifests/x.wasm` and every other build artifact under an
 /// allowed directory.
-const readable_extensions = [_][]const u8{ ".zig", ".zon", ".json", ".toml", ".md", ".html", ".js", ".mjs", ".css", ".sh", ".yml" };
+pub const readable_extensions = [_][]const u8{ ".zig", ".zon", ".json", ".toml", ".md", ".html", ".js", ".mjs", ".css", ".sh", ".yml" };
 
 /// True when `path` may be read into the improve prompt. Reading is not
 /// writing: `validatePath` governs what a patch may change, this governs what

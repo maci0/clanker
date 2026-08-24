@@ -868,6 +868,14 @@ pub const Improve = struct {
     /// that promotes nothing else has stopped improving the program and is
     /// only improving its own acceptance rate. 0 disables the check.
     max_consecutive_test_only: u32 = 3,
+    /// Seed the plan phase from the repository's own records before asking
+    /// the model for ideas: open or reopened bug reports, PRD known issues
+    /// and unchecked requirements, planned ROADMAP items — scored in that
+    /// order and read fresh from the tree each run. The seeded ideas pass
+    /// the same tried/writable-target dedup as model-proposed ones, and the
+    /// planning call remains the fallback once the backlog runs dry. Only
+    /// consulted when `plan_phase` is on.
+    backlog: bool = true,
     /// Plan before patching: one model call per batch lists candidate
     /// improvements, the engine dedups them against history, picks the first
     /// novel one, pins its files into the context and asks the patch call to
