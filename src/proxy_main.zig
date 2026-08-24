@@ -122,7 +122,7 @@ pub fn main(init: std.process.Init) !void {
     dotenv.load(io, gpa, init.environ_map);
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
 
-    if (!isLoopback(host) and cfg.serve.proxy_token_env == null) {
+    if (!proxy.isLoopbackHost(host) and cfg.serve.proxy_token_env == null) {
         log.log(.warn, "proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{host});
     }
 
@@ -304,7 +304,7 @@ fn handleRequest(conn: *Conn) !void {
             switch (proxy.authorize(headers_raw, expected)) {
                 .ok => {},
                 .missing, .mismatch => {
-                    request_status = proxy.writeAuthError(conn.stream, path, headers_raw);
+                    request_status = proxy.writeAuthError(conn.stream, method, path, headers_raw);
                     return;
                 },
             }
@@ -335,8 +335,4 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
         std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, reason, body.len }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     raw_http.writeAllFd(stream.socket.handle, body);
-}
-
-fn isLoopback(host: []const u8) bool {
-    return std.mem.eql(u8, host, "127.0.0.1") or std.mem.eql(u8, host, "::1") or std.mem.eql(u8, host, "localhost");
 }

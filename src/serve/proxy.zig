@@ -133,6 +133,14 @@ pub fn handle(ctx: Ctx) u16 {
     return forward(ctx, family);
 }
 
+/// One loopback test for every serve-side binding decision (`clanker serve`
+/// and the standalone proxy): a host is loopback when it is 127.0.0.1, ::1,
+/// or any spelling of "localhost". Case-insensitive so "Localhost" cannot
+/// turn off the protections loopback earns.
+pub fn isLoopbackHost(addr: []const u8) bool {
+    return std.mem.eql(u8, addr, "127.0.0.1") or std.mem.eql(u8, addr, "::1") or std.ascii.eqlIgnoreCase(addr, "localhost");
+}
+
 pub fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
     const rest = v1Rest(v1_path);
     if (anthropicOnly(rest)) return .anthropic;

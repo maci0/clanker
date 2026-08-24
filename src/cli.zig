@@ -7459,7 +7459,7 @@ fn printServeBanner(io: std.Io, environ_map: *std.process.Environ.Map, disp: []c
 
     var buf: [2048]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
-    const loopback = isLoopbackHost(listen.host);
+    const loopback = proxy.isLoopbackHost(listen.host);
     // The favicon's robot, three rows tall: framed head, lamp eye, mouth bar.
     w.print("\n  {s}▛▀▀▀▜{s}   {s}clanker serve ready{s}  {s}{s}{s}\n", .{ dim, off, bold, off, dim, version, off }) catch return;
     if (loopback)
@@ -7605,7 +7605,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // (best-effort; an unreachable owner leaves its tail for the next start).
     if (cfg.modules.session_events) session_sync.backfill(io, gpa, arena, &cfg);
     const dedicated = listen.proxy_enabled and listen.proxy_port != listen.port;
-    if (listen.proxy_enabled and !isLoopbackHost(listen.host) and cfg.serve.proxy_token_env == null) {
+    if (listen.proxy_enabled and !proxy.isLoopbackHost(listen.host) and cfg.serve.proxy_token_env == null) {
         log.log(.warn, "serve proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{listen.host});
     }
     if (listen.proxy_enabled and !dedicated) {
@@ -7679,10 +7679,6 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         };
         serveConnection(io, gpa, &cfg, init.environ_map, port, listen.serve_as_hosts, stream, surface);
     }
-}
-
-fn isLoopbackHost(addr: []const u8) bool {
-    return std.mem.eql(u8, addr, "127.0.0.1") or std.mem.eql(u8, addr, "::1") or std.ascii.eqlIgnoreCase(addr, "localhost");
 }
 
 const ProxyListener = struct {
