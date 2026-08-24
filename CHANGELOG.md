@@ -81,6 +81,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   not stored as transcript lines, so the block boundary is now marked on the
   line itself.
 
+- `clanker reports status` no longer writes its own "<Label> on <date>."
+  sentence twice when the note opens by repeating it — the natural thing to
+  write, since it is what the finished record reads like. The echo is
+  absorbed, narrowly: an authored note that merely starts with the label
+  ("Resolved by reverting the merge") survives whole, and a note that is
+  nothing but the echo is refused as carrying no evidence rather than
+  silently accepted.
+
 - A web UI plugin's `refresh` hook is reached again. The page marks a view
   loaded after its first successful mount and never calls its loader a second
   time, so the re-entry hook the registration API documents fired only from the
@@ -3065,6 +3073,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `Draft` and every RFC stayed `Draft` however often its own status moved, and
   the reports inventory listed resolved bugs as `Open` indefinitely. All three
   now share one helper, and each reports whether the index write landed.
+
+- `HEAD` on an `/api` route answers what the `GET` answers, minus the body,
+  instead of 404ing and closing the connection. Every `/api` predicate in the
+  route chain compared the method to `GET` literally — only the `/webui`
+  routes went through the GET-or-HEAD predicate — so `HEAD /api/status` fell
+  past the whole chain to the terminal 404, and the keep-alive expression had
+  the same asymmetry on its two halves, so a client sweeping routes with
+  `HEAD` also paid a TCP handshake per probe. A `HEAD` is now routed as the
+  `GET` it mirrors, once, before the chain; the responders already suppressed
+  the body, and the completion log line still records the real method. Routes
+  that dispatch on the method inside their handler (`/api/board`,
+  `/api/sessions`, `/api/records/*`) answer a `HEAD` from their read branch for
+  the same reason. `GET /api/events` is the one exception and still 404s a
+  `HEAD`: an SSE stream has no fixed body to describe, and routing a `HEAD`
+  there would open a stream the client is waiting for headers from. Write
+  routes are unaffected — the rewrite makes a `HEAD` read-shaped, never
+  write-shaped, so `HEAD /api/run` is still a 404.
 
 ## [0.1.0] - 2026-08-14
 

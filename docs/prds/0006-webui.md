@@ -350,15 +350,21 @@ every document; "judged" is what a single ledger row can honestly say.
   `docs/prds/0026-llm-proxy.md`'s Known issues rather than here: every proxy
   response wrote a body on HEAD, and `writeEnvelope` truncated the 404 body
   mid-JSON on a client-supplied model name.
-- **`HEAD` on an `/api` route answers 404 and closes.** The Failure modes row
-  below says HEAD on *any* route answers the status and headers the GET would.
-  Every `/api` route predicate compares the method to `GET` literally, and the
-  keep-alive eligibility line uses `isWebuiRead` (GET or HEAD) for `/webui` and a
-  bare `GET` compare for `/api` on the very next line. Measured live,
-  `HEAD /api/status` is a 404 with `Connection: close` where `GET /api/status` is
-  200. Not fixed here: `GET /api/events` is an SSE stream, so the fix belongs in
-  the route predicates rather than in a method rewrite at the top of dispatch.
-  Filed as [HEAD on api routes 404s and closes](../reports/bugs/2026-08-23-head-on-api-routes-404s-and-closes.md).
+- **(Fixed) `HEAD` on an `/api` route answered 404 and closed.** The Failure
+  modes row below says HEAD on *any* route answers the status and headers the GET
+  would. Every `/api` route predicate compared the method to `GET` literally, and
+  the keep-alive eligibility line used `isWebuiRead` (GET or HEAD) for `/webui`
+  and a bare `GET` compare for `/api` on the very next line. Measured live,
+  `HEAD /api/status` was a 404 with `Connection: close` where `GET /api/status`
+  is 200. Fixed by rewriting a HEAD to the GET it mirrors once, ahead of the
+  route chain, rather than teaching thirty predicates about it separately — the
+  bug was two spellings of one idea drifting apart, and the responders already
+  suppress the body from `request_head`. `GET /api/events` is excluded by
+  `streamingReadRoute`, since an SSE stream has no fixed body to describe; the
+  rewrite maps HEAD to GET and never to a write method, so `POST /api/run` needs
+  no exclusion. Verified live: `HEAD /api/status` is 200 with the GET's
+  `Content-Length` and keep-alive.
+  [HEAD on api routes 404s and closes](../reports/bugs/2026-08-23-head-on-api-routes-404s-and-closes.md).
 - **`RenderCache`'s `.failed` state is a permanent latch.** It falls through to
   rendering again, but the publish `cmpxchg` only accepts `.idle`, so a slot that
   ever reads `.failed` can never become `.ready`; one transient `gpa.dupe`

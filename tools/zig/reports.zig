@@ -306,7 +306,11 @@ fn status(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "status needs one of open, investigating, resolved, reopened, or closed");
     const label = labelFor(wanted) orelse
         return lib.fail(out, "status must be open, investigating, resolved, reopened, or closed");
-    const note = lib.optStr(obj, "note") orelse "";
+    // Absorb a note that opens by echoing the "<Label> on <date>." sentence
+    // composed below, rather than writing it twice. Stripped before the
+    // empty-note guard, so a note that is nothing but the echo still counts
+    // as no evidence and is refused with the message that says what to write.
+    const note = doc.stripStatusEcho(label, lib.optStr(obj, "note") orelse "");
     if (note.len > 500) return lib.fail(out, "note is too long (maximum 500 bytes)");
     if (std.mem.eql(u8, label, "Resolved") and note.len == 0)
         return lib.fail(out, "a resolved record needs a note naming the fix and what verified it; put the evidence in the Resolution and Verification sections with append or update first");

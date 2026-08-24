@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [reports status doubles its own 'Resolved on <date>.' sentence when the note repeats it](bugs/2026-08-24-reports-status-doubles-its-own-sentence.md) — Resolved
+
 - [verify.sh runs clanker gate before apply-patches.sh, so a fresh worktree always fails dep-patches](bugs/2026-08-24-verify-sh-gates-before-applying-patches.md) — Resolved
 
 - [scripts/apply-patches.sh exits 0 after applying nothing, so a caller checking the exit status proceeds on an unpatched tree](bugs/2026-08-24-apply-patches-exits-0-having-applied-nothing.md) — Resolved
@@ -123,7 +125,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [One transient allocation failure pins a web UI asset to the uncached render path for the process's life](bugs/2026-08-23-rendercache-failed-is-a-permanent-latch.md) — Resolved
 
-- [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Open
+- [HEAD on any /api route answers 404 and closes, while the same path answers 200 to GET](bugs/2026-08-23-head-on-api-routes-404s-and-closes.md) — Resolved
 
 - [ck_http hands guests no response headers, so header-only facts are unreachable](bugs/2026-08-23-ck-http-hands-guests-no-response-headers.md) — Open
 
