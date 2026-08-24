@@ -86,13 +86,13 @@ Project agents receive this workflow through the harness prompt and
 
 - [reports rename prints leftover-reference paths with the store prefix twice](bugs/2026-08-23-reports-rename-doubles-the-store-prefix.md) — Open
 
-- [dump-config leaks the secret half of any header whose value contains an equals sign](bugs/2026-08-23-dump-config-header-redaction-cuts-on-equals.md) — Open
+- [dump-config leaks the secret half of any header whose value contains an equals sign](bugs/2026-08-23-dump-config-header-redaction-cuts-on-equals.md) — Resolved
 
 - [the merge-base pin advances before the branch resync it depends on, and the resync failure is only a warning](bugs/2026-08-23-improve-merge-pin-advances-before-the-resync.md) — Open
 
 - [kind = grok discards per-model temperature and top_p and never consults the PRD 0024 profile table](bugs/2026-08-23-grok-kind-drops-model-sampling.md) — Open
 
-- [a missing profiles/<name>.toml is reported as config.toml not found, and the .local variant is never read](bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md) — Open
+- [a missing profiles/<name>.toml is reported as config.toml not found, and the .local variant is never read](bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md) — Resolved
 
 - [a preset's denied tools are still offered to the model; repl --preset is a silent no-op](bugs/2026-08-23-preset-tool-filter-is-inert.md) — Open
 
