@@ -94,11 +94,11 @@ Project agents receive this workflow through the harness prompt and
 
 - [a missing profiles/<name>.toml is reported as config.toml not found, and the .local variant is never read](bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md) — Open
 
-- [a preset's denied tools are still offered to the model; repl --preset is a silent no-op](bugs/2026-08-23-preset-tool-filter-is-inert.md) — Open
+- [a preset's denied tools are still offered to the model; repl --preset is a silent no-op](bugs/2026-08-23-preset-tool-filter-is-inert.md) — Resolved
 
 - [an unreadable or oversize improvements.jsonl reads as no history, disabling the improve loop's dedup and revert gates](bugs/2026-08-23-improve-history-read-failure-reads-as-empty.md) — Open
 
-- [a mis-escaped trim set lets a whitespace-only hook command through, and the warn log then indexes an empty argv](bugs/2026-08-23-hook-command-trim-set-is-mis-escaped.md) — Open
+- [a mis-escaped trim set lets a whitespace-only hook command through, and the warn log then indexes an empty argv](bugs/2026-08-23-hook-command-trim-set-is-mis-escaped.md) — Resolved
 
 - [the Anthropic wire is sent OpenAI's reasoning_effort field, and no thinking_schema value produces a valid Anthropic block](bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md) — Open
 

@@ -4,11 +4,11 @@
 
 - **What failed:** Agent.init rebuilds the tool list from the registry via lazyToolDefs whenever agent.tool_catalog is on (the default), discarding the filterNames result cmdRun computed one line earlier; a.preset is only assigned after init returns. rebuildToolDefs and loadTools have no preset check either, so load_tools can re-reveal a denied tool. Only the dispatch gate refuses, so PRD 0033's neither-offered-nor-callable fails on offered. repl --preset never reaches ReplOptions.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed in 1e8f01b8: mask moved to Registry.presetHides (lazyToolDefs, catalogText, guidanceText), preset is a parameter of Agent.init, load_tools refuses a denied name and reports it as denied, repl --preset reaches ReplOptions. Verified by clanker gate (11/11 PASS) plus live DeepSeek: --preset minimal reproduced a 7-tool catalog not 98, load_tools returned denied:[edit_file], repl --preset research showed 'ready . research'.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed in 1e8f01b8: mask moved to Registry.presetHides (lazyToolDefs, catalogText, guidanceText), preset is a parameter of Agent.init, load_tools refuses a denied name and reports it as denied, repl --preset reaches ReplOptions. Verified by clanker gate (11/11 PASS) plus live DeepSeek: --preset minimal reproduced a 7-tool catalog not 98, load_tools returned denied:[edit_file], repl --preset research showed 'ready . research'.
 
 ## Symptom and impact
 
