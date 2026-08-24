@@ -461,6 +461,12 @@ pub fn replaceSection(w: *std.Io.Writer, text: []const u8, heading: []const u8, 
 /// is the line every reader is told to trust first, which makes it the worst
 /// of the three to leave stale.
 ///
+/// A non-empty `## Blocked on` body is a fourth machine-read state signal
+/// since the improve loop's seeder started honouring it, and it is the one no
+/// writer or check keeps in step with these three — so a record can read
+/// `Resolved` and blocked at once. See
+/// docs/reports/bugs/2026-08-24-blocked-on-body-is-an-ungated-fourth-state-signal.md.
+///
 /// Scoped to the TL;DR section on purpose: a long record quotes its own
 /// bullets while explaining them, and only the summary at the top is the
 /// record's state. Returns false when there is no TL;DR or no such bullet, so
