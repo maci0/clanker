@@ -4,11 +4,11 @@
 
 - **What failed:** MdStream.feed holds a trailing 0xC2 so a C1 control split across deltas still resolves, and holds split markdown markers, but gives an escape sequence no such treatment: a trailing lone ESC fails the i + 1 < total guard and is consumed, and a CSI or OSC running to the end of the window sets i = j with nothing held. feed("a\x1b[3") then feed("1mB") renders a1mB. The comment claims a sequence truncated at the end of the window is dropped too, but only the machinery is dropped.
 - **Impact:** Escape-sequence text in model output shows visible junk like `31m` mid-sentence when it lands on a delta boundary.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. src/tui/transcript.zig: MdStream.feed carries an EscState (none/esc/csi/osc/osc_esc) across deltas, so a lone trailing ESC or a CSI/OSC running past the window resumes on the next chunk instead of being consumed with nothing held. feed("a\x1b[3") + feed("1mB") now renders aB. Unit test covers the CSI, lone-ESC and OSC splits plus the non-introducer control; live pty run against a loopback SSE provider printed A1mB before, AB after.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. src/tui/transcript.zig: MdStream.feed carries an EscState (none/esc/csi/osc/osc_esc) across deltas, so a lone trailing ESC or a CSI/OSC running past the window resumes on the next chunk instead of being consumed with nothing held. feed("a\x1b[3") + feed("1mB") now renders aB. Unit test covers the CSI, lone-ESC and OSC splits plus the non-introducer control; live pty run against a loopback SSE provider printed A1mB before, AB after.
 
 ## Symptom and impact
 
