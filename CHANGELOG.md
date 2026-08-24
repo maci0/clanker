@@ -7,6 +7,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- Bug reports gained a `## Blocked on` convention: a non-empty body names the
+  concrete thing this machine lacks (a credential, a live endpoint, an
+  external reference), and the improve backlog refuses to seed such a report
+  to an autonomous run — a loop that cannot obtain the missing thing can only
+  guess, and a test asserting the guess passes for the same reason the guess
+  is wrong. The `reports create` scaffold now carries the section empty
+  (empty means "not blocked"); clearing the body when the blocker lifts puts
+  the report back in the backlog. The two currently key-blocked reports
+  (gemini thinking row, Anthropic reasoning wire) carry it filled.
+
 - `improve-self` seeds its plan phase from the repository's own records
   before spending a model call on ideas: open or reopened bug reports under
   `docs/reports/`, PRD known issues and unchecked requirements, and planned

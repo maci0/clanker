@@ -44,9 +44,10 @@
 #
 # The one lookup it has is to ask: a response of {"need": [...paths]} with no
 # "changes" gets the run asked again with those files pinned in, up to
-# improve.max_context_requests (config, default 3) times per run. That is how it
-# reaches docs/ROADMAP.md, which is otherwise never in context and is why the
-# planned items below are pasted into the instruction by hand.
+# improve.max_context_requests (config, default 3) times per run. Since the
+# improve.backlog seeding landed, the engine also reads docs/ROADMAP.md (and
+# the report/PRD stores) itself at the start of each run, so the hint below is
+# belt-and-braces for unplanned runs, no longer the only path to the roadmap.
 #
 # API keys are resolved automatically when the provider is known:
 #   deepseek    -> DEEPSEEK_API_KEY  <- env | ~/.secrets/deepseek.txt
@@ -142,8 +143,10 @@ while [ $# -gt 0 ]; do
 done
 
 # --------------------------------------------------- resolve instruction --
-# The engine never puts docs/ROADMAP.md in the model's context, so the planned
-# items are passed in here as direction instead.
+# The engine's backlog seeding (improve.backlog) reads docs/ROADMAP.md itself
+# now; this hint remains for runs with backlog or plan_phase off, and --roadmap
+# below still forces one specific item and flips its checkbox afterwards,
+# which the engine never does.
 ROADMAP_HINT=""
 if [ -f docs/ROADMAP.md ]; then
   PLANNED="$(sed -n 's/^[[:space:]]*- \[ \] //p' docs/ROADMAP.md | head -8)"

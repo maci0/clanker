@@ -105,6 +105,16 @@ fn scanReports(
         const rel = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir_rel, entry.name });
         const data = base.readFileAlloc(io, rel, arena, record_read_cap) catch continue;
         const status = statusOf(data);
+        // A record can be open and still not workable: the fix needs a
+        // credential or an external reference this machine does not have,
+        // stated in the body of a `## Blocked on` section. Seeding one
+        // invites the exact failure such reports exist to prevent — a
+        // plausible guessed fix whose test asserts the guess, green on every
+        // gate and wrong on the wire. Writability is not tractability. The
+        // *body* is the signal, not the heading: the scaffold carries the
+        // section empty, and clearing the body is how a lifted blocker
+        // re-enters the backlog.
+        if (blockedOn(data) != null) continue;
         const bonus: u32 = switch (status) {
             // A reopened report is evidence an earlier fix did not hold,
             // which is exactly the signal to weight up.
@@ -269,6 +279,27 @@ fn statusOf(data: []const u8) Status {
     return .other;
 }
 
+/// The first non-blank line of the record's `## Blocked on` section
+/// (case-insensitive heading), or null when the section is absent or carries
+/// an empty body. The status vocabulary has no `blocked` state, so a
+/// non-empty body here is the store's convention for "open, but not workable
+/// on this machine"; the scaffold writes the section empty, and clearing the
+/// body when the blocker lifts is what puts the record back in the backlog.
+/// See docs/reports/bugs/TEMPLATE.md.
+fn blockedOn(data: []const u8) ?[]const u8 {
+    var in_blocked = false;
+    var lines = std.mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (std.mem.startsWith(u8, line, "## ")) {
+            in_blocked = std.ascii.startsWithIgnoreCase(line[3..], "blocked on");
+            continue;
+        }
+        if (in_blocked and line.len > 0) return line;
+    }
+    return null;
+}
+
 /// The record's `# ` title line, trimmed, or null for a file with none.
 fn recordTitle(data: []const u8) ?[]const u8 {
     var lines = std.mem.splitScalar(u8, data, '\n');
@@ -404,6 +435,36 @@ test "collect orders reports over PRD items over ROADMAP, reopened first" {
         \\
     );
     try tree.put(io, "docs/reports/bugs/README.md", "# index, not a record\n");
+    // Open, but declares a hard external blocker: not workable here, so it
+    // must never be seeded to an autonomous loop.
+    try tree.put(io, "docs/reports/bugs/2026-08-22-needs-a-key.md",
+        \\# Bug — the wire shape needs a live key to establish
+        \\
+        \\## Status
+        \\
+        \\Open.
+        \\
+        \\## Blocked on
+        \\
+        \\A live 200 from a real key; no such credential on this machine.
+        \\
+    );
+    // The scaffold carries `## Blocked on` empty on every new report; an
+    // empty body means "not blocked" and the record must still seed.
+    try tree.put(io, "docs/reports/bugs/2026-08-19-empty-blocked-section.md",
+        \\# Bug — scaffolded with the empty section
+        \\
+        \\## Status
+        \\
+        \\Open.
+        \\
+        \\## Blocked on
+        \\
+        \\## Symptom and impact
+        \\
+        \\Something concrete.
+        \\
+    );
     try tree.put(io, "docs/reports/bugs/TEMPLATE.md",
         \\# Bug — <short, user-visible failure>
         \\
@@ -447,16 +508,18 @@ test "collect orders reports over PRD items over ROADMAP, reopened first" {
     try tree.put(io, "src/main.zig", "pub fn main() void {}\n");
 
     const ideas = try collect(arena, io, tree.tmp.dir, default_cap, 4);
-    try std.testing.expectEqual(@as(usize, 6), ideas.len);
-    // Reopened outranks open; among equal scores the newer slug wins.
+    try std.testing.expectEqual(@as(usize, 7), ideas.len);
+    // Reopened outranks open; among equal scores the newer slug wins. The
+    // empty `## Blocked on` section does not suppress a record.
     try std.testing.expect(std.mem.find(u8, ideas[0].text, "reopened report") != null);
     try std.testing.expect(std.mem.find(u8, ideas[0].text, "came-back") != null);
     try std.testing.expect(std.mem.find(u8, ideas[1].text, "newer-open") != null);
-    try std.testing.expect(std.mem.find(u8, ideas[2].text, "older-open") != null);
+    try std.testing.expect(std.mem.find(u8, ideas[2].text, "empty-blocked-section") != null);
+    try std.testing.expect(std.mem.find(u8, ideas[3].text, "older-open") != null);
     // Then the PRD known issue, the unchecked box, and the roadmap wish.
-    try std.testing.expect(std.mem.find(u8, ideas[3].text, "known issue") != null);
-    try std.testing.expect(std.mem.find(u8, ideas[4].text, "first open requirement") != null);
-    try std.testing.expect(std.mem.find(u8, ideas[5].text, "ROADMAP item") != null);
+    try std.testing.expect(std.mem.find(u8, ideas[4].text, "known issue") != null);
+    try std.testing.expect(std.mem.find(u8, ideas[5].text, "first open requirement") != null);
+    try std.testing.expect(std.mem.find(u8, ideas[6].text, "ROADMAP item") != null);
     // The resolved, investigating, README, checked and guardrail entries
     // seeded nothing.
     for (ideas) |idea| {
@@ -465,6 +528,7 @@ test "collect orders reports over PRD items over ROADMAP, reopened first" {
         try std.testing.expect(std.mem.find(u8, idea.text, "guardrail") == null);
         try std.testing.expect(std.mem.find(u8, idea.text, "shipped already") == null);
         try std.testing.expect(std.mem.find(u8, idea.text, "done item") == null);
+        try std.testing.expect(std.mem.find(u8, idea.text, "needs a live key") == null);
     }
     // Every idea carries its record as origin.
     for (ideas) |idea| try std.testing.expect(idea.origin != null);
@@ -544,6 +608,19 @@ test "statusOf reads the section verdict, not the TL;DR" {
     try std.testing.expectEqual(Status.reopened, statusOf("## Status\nReopened. Twice now.\n"));
     try std.testing.expectEqual(Status.investigating, statusOf("## Status\n\ninvestigating\n"));
     try std.testing.expectEqual(Status.other, statusOf("# Bug — no status section at all\n"));
+}
+
+test "blockedOn reads the section body, not the heading" {
+    // The heading alone (the scaffold's empty section) is not a blocker.
+    try std.testing.expect(blockedOn("## Status\n\nOpen.\n\n## Blocked on\n\n## Symptom\n\nx\n") == null);
+    // A non-empty body is, whatever section follows it.
+    try std.testing.expectEqualStrings(
+        "ANTHROPIC_API_KEY in .env",
+        blockedOn("## Blocked on\n\nANTHROPIC_API_KEY in .env\n\n## Symptom\n\nx\n").?,
+    );
+    // Case-insensitive heading match; absent section is null.
+    try std.testing.expect(blockedOn("## blocked ON\n\na live key\n") != null);
+    try std.testing.expect(blockedOn("# Bug — x\n\n## Status\n\nOpen.\n") == null);
 }
 
 test "path hints are validated, deduped, stripped of line refs" {
