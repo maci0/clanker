@@ -68,6 +68,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker reports status` no longer writes its own "<Label> on <date>."
+  sentence twice when the note opens by repeating it — the natural thing to
+  write, since it is what the finished record reads like. The echo is
+  absorbed, narrowly: an authored note that merely starts with the label
+  ("Resolved by reverting the merge") survives whole, and a note that is
+  nothing but the echo is refused as carrying no evidence rather than
+  silently accepted.
+
 - `scripts/verify.sh` applies the dependency patches before running
   `clanker gate`, not after. The gate's twelfth check `dep-patches` fails
   while `zig-pkg/` holds pristine upstream trees, so on a fresh clone or any
