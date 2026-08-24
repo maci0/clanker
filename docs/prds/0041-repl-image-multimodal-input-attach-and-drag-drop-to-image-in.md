@@ -43,6 +43,14 @@ Constraints: vaxis-native, image_in parity with web UI, size/type gating mirrore
 | `/attach` path missing/unreadable | Error line in transcript; queue unchanged |
 | Image exceeds size cap | Rejected with size reason; no partial attach |
 | Drag-drop of directory | Ignored with hint |
+| `/attach` of a non-image | Refused at the command, naming the four accepted extensions; nothing queued |
+| `modules.multimodal` off | `/attach` refused, naming the knob |
+| Active model does not declare `image_in` | `/attach` refused, naming the model and the capability |
+| Attachment unreadable *at submit* (moved, emptied, grown past the cap) | One error line per attachment naming the path and the reason. Some readable: the turn is sent with those. None readable: the turn is **not** sent and the queue is kept, so a re-save can be retried; `/attach clear` drops it |
+
+The last row is the one the PRD originally covered only at `/attach` time. The
+submit-time read is a second chance to fail, and an editor that writes and
+renames hits it every time.
 
 ## Acceptance criteria
 

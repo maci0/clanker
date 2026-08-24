@@ -76,6 +76,55 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   nothing but the echo is refused as carrying no evidence rather than
   silently accepted.
 
+- The REPL's `/attach` now refuses at the command what it used to fail on a
+  turn later. A path that is not a png, jpg, jpeg or webp is rejected by name
+  (it used to queue, and the submit path then labelled anything unrecognised
+  `image/png`, so `/attach report.pdf` died as an opaque provider 400), as is
+  an attach made with `modules.multimodal` off or against a model that does
+  not declare the `image_in` capability — the same two gates the HTTP run path
+  already applied and named. Extensions match case-insensitively, so
+  `SHOT.PNG` attaches.
+
+- An attachment that changed between `/attach` and submit is no longer dropped
+  in silence. Every failure in the submit-time read (moved or unreadable file,
+  emptied file, one grown past the 4 MiB cap, out of memory) now puts one line
+  in the transcript naming the path and the reason. When some attachments
+  survive, the turn is sent with those; when none do, the turn is **not** sent
+  and the queue is kept so a re-save can be retried, where before the task
+  went out with no images at all and the model answered as if none had ever
+  been queued. `/attach clear` empties the queue.
+
+- The pending attachment queue is cleared only once the worker thread owns the
+  images. Clearing it before `Thread.spawn` meant a spawn failure lost the
+  queue outright, since that path's `errdefer` restores only the streaming
+  flag.
+
+- Web UI: a board card's member avatar is reachable without a mouse, and
+  picking a member closes the picker. The avatar was a `span` with
+  `role="button"` built inside the card's own `<button>`, which hosted the
+  member picker too: a button's children are presentational, so neither the
+  avatar nor any name in the picker was in the accessibility tree, a picker
+  item's click bubbled into the avatar's listener and reopened the picker
+  instead of closing it, and the card's `overflow: hidden` clipped the popup
+  to the card. The reassign control is now a real button beside the card, with
+  the picker beside it, in the card's own list item. The avatar keeps its place
+  and the card its height.
+
+- Web UI: the composer's task field is announced as the multi-line text box it
+  is. It carried `role="combobox"`, which ARIA does not allow on a
+  `textarea` — whose implicit role already is a text box with
+  `aria-multiline` — so an assistive technology was told the field took one
+  line. The role, the popup state and the popup reference moved to a wrapper
+  around the field and its suggestion list; the field keeps
+  `aria-autocomplete` and `aria-activedescendant`.
+
+- `clanker serve`: one failed allocation no longer pins a web UI asset to the
+  slow path for the rest of the process's life. The render cache retried the
+  render but could never publish the result again, because the state meaning
+  "an attempt failed" was not the state the publish accepted, so a single
+  transient failure cost every later request the full render (348ms and 187 KB
+  for `app.js`) with nothing in the log to say why.
+
 - `scripts/verify.sh` applies the dependency patches before running
   `clanker gate`, not after. The gate's twelfth check `dep-patches` fails
   while `zig-pkg/` holds pristine upstream trees, so on a fresh clone or any

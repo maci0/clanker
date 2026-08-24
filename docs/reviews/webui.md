@@ -1790,6 +1790,85 @@ logged. Also recorded, unfixed: this PRD describes the Compare view as
 `features/compare.js` with its own cache pair in three places, and Compare has
 been a disk plugin under `ui/plugins/compare/` for some time.
 
+## 2026-08-24 — the last two axe handoff items from the 2026-08-12 sweep, and the render-cache latch
+
+Three filed reports, all read from the source rather than observed live (there is
+still no headless browser here), all three confirmed present on `origin/main`
+before anything was written.
+
+**The composer is a combobox again, and `#task` is a textbox.** ARIA allows
+`combobox` on an `input`, never on a `textarea`, whose implicit role is already a
+textbox with `aria-multiline`; overriding it told an AT the field took one line.
+`#task` sits inside a `#task-combobox` wrapper now, in the ARIA 1.1 shape: the
+role, `aria-haspopup`, `aria-owns` and `aria-expanded` are the wrapper's, while
+`aria-autocomplete`, `aria-controls` and `aria-activedescendant` stay on the
+textarea. The wrapper contains the listbox as well as the textbox, so a browser
+that ignores `aria-owns` reads the same tree. The reason this was not a line
+change is that four renderers and `hidePromptList` all wrote `aria-expanded` to
+`el.task`; they go through one `setPromptListOpen(open, activeId)` instead, which
+is the only place either half of that state is written. Layout is untouched: the
+wrapper is a block in a block-flow form, and every composer rule matched by
+descendant selector still matches.
+
+**The card's member avatar is a control again, and picking a member closes the
+picker.** `cardNode` built it as a `<span role="button" tabindex="0">` inside the
+card `<button>` and appended the whole picker into that span. Three consequences,
+the third not in the report: a button's children are presentational, so neither
+the avatar nor any member in the picker was in the accessibility tree, making
+reassignment mouse-only; a picker item's click bubbled to the avatar's own
+listener, which `stopPropagation`'d and reopened the picker, so a pick never
+closed it; and `.card` is `overflow: hidden` and is the popup's containing-block
+ancestor, so a 160px-wide picker opened from the avatar was clipped to the card's
+own box. The fix is the one `cardQuickActions` already set the precedent for:
+`cardMemberControl(c)` is a real `<button>` in the card's `<li>`, a sibling of the
+card button, with the picker as its sibling the way the detail sidebar's copy
+always was. The avatar left inside the card is `aria-hidden` scenery that holds
+the row open, and the overlay is positioned at `.card-body`'s own padding plus the
+card's 1px border, so the control lands exactly where the avatar was and the card
+keeps its height. The picker opens upward and right-aligned, since a control at
+the card's bottom-right corner has nowhere else to go inside the column. Its
+`aria-expanded` is reset through one seam -- the popup's own `remove` -- because
+that is what every close path already calls.
+
+**A failed render publish no longer burns the slot.** `RenderCache` fell through
+from `.failed` to rendering again, which is right, but the publish was
+`cmpxchgStrong(.idle, .rendering, ...)` and `.failed` is not `.idle` -- so the
+state meaning "one attempt failed" also meant "no attempt may ever publish", and
+a single `gpa.dupe` failure pinned that asset to the uncached path (348ms and
+187 KB per request for `app.js`) for the process's life. `RenderCache` has no
+`.failed` state now: `renderClaim` / `renderPublish` / `renderAbandon` live beside
+the cache in `serve/webui_assets.zig` where the rest of the asset layer is, and
+abandoning a claim returns the slot to `.idle`. `GzipCache` keeps its `.failed`
+deliberately and the comment now says why: there the identity encoding is always
+a correct answer, so remembering the failure saves work, whereas here it only
+ever blocked the publish.
+
+### Verified
+
+Node: `composer-suggest.test.mjs` gains a structural check over `index.html` --
+no `<textarea>` anywhere carries `role="combobox"`, `#task` has no `role` and no
+`aria-expanded` but keeps `aria-autocomplete`/`aria-controls` and its `<label>`,
+and the `role="combobox"` wrapper DOM-contains both the textarea and the
+`role="listbox"` list -- plus a guard that `aria-expanded` is never set on
+`el.task`. Its existing six behavioural tests now assert on the wrapper.
+`board-card.test.mjs` gains five, four of them driving the real `memberPicker`
+and `dismissOnOutside` in a vm so the bubbling is real: the control is a
+`<button>` with no `role`, the popup's parent is the overlay span and not the
+button, picking `grace` posts the update and leaves no popup, a second click
+toggles, and opening another card's picker clears the first's `aria-expanded`.
+Zig: two tests in `webui_assets.zig` over the claim/publish/abandon transition,
+one per side.
+
+Before-state confirmed red, not assumed: the two new composer tests fail on the
+unmodified `index.html`/`app.js` (`aria-allowed-role` still there, no helper),
+six of the ten board-card tests fail on the unmodified `board.js`/`app.css`, and
+the render-cache test failed on the exact line the report named -- the second
+`renderClaim` after an abandon -- with `.failed` still in the enum.
+
+Not verified live: none of this was seen in a browser. The composer and board
+changes are DOM/ARIA structure and CSS position, and the render-cache path needs
+an allocation failure to reach at all.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
@@ -1803,12 +1882,10 @@ been a disk plugin under `ui/plugins/compare/` for some time.
 - The pre-existing axe items logged in the 2026-08-12 sweep entry, re-checked
   against the source on 2026-08-24 (source read, not a fresh axe run — the
   sweep itself still needs redoing to close them out):
-  - board `nested-interactive`: the two hover actions are fixed (entry above).
-    Still open on the same view is the card's member avatar, a
-    `<span role="button" tabindex="0">` built inside the card `<button>` by
-    `cardNode`, which also hosts the member picker popup and its buttons. It
-    needs the card to stop being the button, or the avatar to stop being a
-    control, so it is a bigger slice than the overlay was.
+  - board `nested-interactive`: the two hover actions are fixed (entry above),
+    and so is the card's member avatar as of 2026-08-24 — the avatar stopped
+    being a control and `cardMemberControl` builds a real button in the card's
+    `<li>` instead. Source read, not a fresh axe run.
   - `#rail-list` workspace headers: the group head is a
     `T.li({ class: "rail-group-row", role: "presentation" })` now, so the
     `list` violation is gone.
@@ -1816,11 +1893,10 @@ been a disk plugin under `ui/plugins/compare/` for some time.
     `<label>` in `index.html`.
   - goals `label-title-only`: no form control in `features/goals.js` is
     labelled by `title` alone any more.
-  - composer `#task` `aria-allowed-role`: still open. The element is a
-    `<textarea>` carrying `role="combobox"`, which ARIA does not allow on a
-    textarea; closing it means moving the role onto a wrapper and keeping the
-    three list renderers' `aria-expanded` target in step, so it is its own
-    slice rather than a line change.
+  - composer `#task` `aria-allowed-role`: fixed 2026-08-24 (entry above). The
+    role moved to a `#task-combobox` wrapper and all four renderers plus
+    `hidePromptList` go through one `setPromptListOpen`. Source read, not a
+    fresh axe run.
   - board `aria-hidden-focus` and the board/goals/system contrast counts were
     not re-measured; they need the axe harness back, not a source read.
 - If Kimi parity is to extend beyond the documented Phase 6: decompose remaining `app.js` view logic (`features/board.js`, `features/goals.js`), promote `axe-core` into `clanker gate`, and resolve the pre-existing axe handoff items (composer `#task` combobox role, `#rail-list` workspace header structure, board/goals/runs contrast + labels, run-compare B select name) — all already logged in the sweep entry. The composer Research toggle from this slice closes the last named parity candidate.

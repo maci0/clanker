@@ -10529,18 +10529,18 @@ fn renderWebuiCached(
 ) ?[]const u8 {
     switch (cache.state.load(.acquire)) {
         .ready => return cache.body,
-        .failed => {},
         .idle, .rendering => {},
     }
     const body = renderWebui(io, gpa, arena, cfg, environ_map, path, stream) orelse return null;
     // Only one thread publishes; the rest just used their own copy, which is
-    // identical because the source is compiled in.
-    if (cache.state.cmpxchgStrong(.idle, .rendering, .acq_rel, .acquire) == null) {
+    // identical because the source is compiled in. A claim that cannot keep its
+    // copy hands the slot back rather than burning it, so the next request can
+    // still publish.
+    if (webui_assets.renderClaim(cache)) {
         if (gpa.dupe(u8, body)) |owned| {
-            cache.body = owned;
-            cache.state.store(.ready, .release);
+            webui_assets.renderPublish(cache, owned);
         } else |_| {
-            cache.state.store(.failed, .release);
+            webui_assets.renderAbandon(cache);
         }
     }
     return body;
@@ -15596,20 +15596,14 @@ test shouldWebuiIsolate {
     try std.testing.expect(shouldWebuiIsolate(.{ .worktree = true }, &plain));
 }
 
-/// Whether a model can be handed image_url content blocks. A model that
-/// declares its capabilities (non-empty) but omits `image_in` is telling us
-/// it is not vision-capable, DeepSeek v4-flash's endpoint, for example, only
-/// accepts `content` as a plain string and rejects the typed block array with
-/// an opaque JSON-deserialize 400 ("unknown variant `image_url`, expected
-/// `text`"). A model with no capabilities declared leaves it unknown, so the
-/// attachment is attempted as before and a failure still surfaces the vision
-/// hint (enrichRunError).
+/// Whether a model can be handed image_url content blocks. See
+/// `config.Model.supportsImageInput` for why a model with no declared
+/// capabilities is treated as vision-capable; a failure there still surfaces
+/// the vision hint (enrichRunError). Kept as a named wrapper because the run
+/// gate reads better spelled out, and because the REPL's `/attach` gate needs
+/// the same rule from a module cli.zig imports.
 fn imageAttachmentsSupported(model: config.Model) bool {
-    if (model.capabilities.len == 0) return true;
-    for (model.capabilities) |cap| {
-        if (std.mem.eql(u8, cap, "image_in")) return true;
-    }
-    return false;
+    return model.supportsImageInput();
 }
 
 /// The name of a vision-capable model on `p`, or null if the provider has
