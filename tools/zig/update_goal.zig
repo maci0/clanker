@@ -22,8 +22,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
+    // The descriptor's schema documents exactly one action value, "list".
+    // Anything else used to fall through to the mutation path below, so a
+    // typo'd action ("update", "remove") silently patched the goal instead
+    // of being refused.
     const action = lib.optStr(req, "action");
-    if (action != null and std.mem.eql(u8, action.?, "list")) return actionList(out);
+    if (action) |a| {
+        if (std.mem.eql(u8, a, "list")) return actionList(out);
+        return lib.fail(out, "unknown action; use \"list\" to read the store, or omit action and pass id plus the fields to change");
+    }
     const id = lib.optStr(req, "id") orelse return lib.fail(out, "goal_update needs an id (get it from goal_add or the kanban)");
     if (id.len == 0) return lib.fail(out, "goal_update needs an id (get it from goal_add or the kanban)");
 
