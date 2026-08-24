@@ -46,6 +46,7 @@ declare -A targets=(
 status=0
 applied=0
 up_to_date=0
+skipped=0
 for name in "${order[@]}"; do
     patch_file="$(pwd)/patches/$name.patch"
     [ -f "$patch_file" ] || continue
@@ -59,9 +60,16 @@ for name in "${order[@]}"; do
         fi
     done
 
+    # A missing tree is fatal, not a skip: the documented order is
+    # 'zig build' first, so getting here early is an error worth failing
+    # loudly, and a tree that never appears means the patch went stale
+    # against build.zig.zon. Exiting 0 here made a run that applied nothing
+    # indistinguishable from one where everything was already up to date,
+    # so `apply-patches.sh && zig build test` proceeded unpatched (the bug
+    # report in docs/reports/).
     if [ -z "$dir" ]; then
-        echo "apply-patches: $name: no ${targets[$name]}* tree under ${roots[*]}; " \
-            "skipping (a 'zig build' must extract dependencies first)"
+        echo "apply-patches: $name: no ${targets[$name]}* tree under ${roots[*]}" >&2
+        skipped=$((skipped + 1))
         continue
     fi
     printf '== %s -> %s ==\n' "$name" "${dir#"$PWD"/}"
@@ -79,6 +87,11 @@ for name in "${order[@]}"; do
     fi
 done
 
+if [ "$skipped" -ne 0 ]; then
+    echo "apply-patches: $skipped patch(es) found no dependency tree to apply to;" \
+        "run 'zig build' first to extract dependencies" >&2
+    status=1
+fi
 if [ "$status" -ne 0 ]; then
     echo "apply-patches: one or more patches could not be applied" >&2
     exit 1

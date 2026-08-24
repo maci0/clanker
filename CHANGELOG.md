@@ -68,6 +68,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `scripts/apply-patches.sh` now exits 1 when a dependency tree is missing,
+  instead of printing a skip note and exiting 0 with "0 applied, 0 already
+  up to date" — by exit code and summary line, a run that applied nothing
+  was indistinguishable from one where everything was already patched, so
+  `apply-patches.sh && zig build test` (and `scripts/verify.sh`, which
+  trusts the exit code) proceeded against pristine vaxis/zwasm. A missing
+  tree is always fatal: the documented order is `zig build` first, and a
+  tree that never appears means the patch went stale against
+  `build.zig.zon`.
+
 - A `## Blocked on` body consisting only of the store's `- … none yet`
   placeholder lines no longer suppresses the report from the improve
   backlog: `blockedOn` now reads such lines as empty, the same way
