@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [scripts/apply-patches.sh exits 0 after applying nothing, so a caller checking the exit status proceeds on an unpatched tree](bugs/2026-08-24-apply-patches-exits-0-having-applied-nothing.md) — Resolved
+
 - [The '## Blocked on' body became a fourth machine-read state signal with none of the invariants the other three have](bugs/2026-08-24-blocked-on-body-is-an-ungated-fourth-state-signal.md) — Open
 
 - [Every config validation error is printed twice, once by the startup dotenv probe](bugs/2026-08-24-config-validation-errors-print-twice.md) — Open
