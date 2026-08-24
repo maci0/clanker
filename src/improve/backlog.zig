@@ -23,11 +23,13 @@ const std = @import("std");
 const plan = @import("plan.zig");
 const proposal = @import("proposal.zig");
 
-/// How many backlog ideas one run may seed. More than this and the plan
-/// phase would spend whole runs draining a stale queue no model ever looks
-/// at; the tail of the backlog is still reachable on later runs once the
-/// head is tried (and thereby recorded in history).
-pub const default_cap: usize = 12;
+/// Ceiling on how many backlog ideas one run may seed. A safety bound
+/// against a pathological store, not a working set: skipping an
+/// already-tried idea costs no model call, so the engine's own dedup — not
+/// this cap — is what keeps the head fresh. Measured the day this landed
+/// the store held 25 open reports; a tight cap here applied *before* that
+/// dedup would have hidden everything below the cut line forever.
+pub const default_cap: usize = 64;
 
 /// Per-record read ceiling. Records are prose; the largest report in the
 /// tree is well under 100 KiB, and anything bigger is not a record.
