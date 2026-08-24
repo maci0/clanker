@@ -29,7 +29,15 @@ const writeSanitized = sanitize.writeSanitized;
 /// could still be the start of a longer marker, and resolved once the next
 /// chunk arrives.
 pub const MdStream = struct {
+    /// How far into an escape sequence the stream is. An ESC, or a CSI/OSC
+    /// whose terminator has not arrived, leaves the machine mid-sequence so
+    /// the next chunk's bytes are consumed as machinery rather than printed.
+    /// A 2-byte hold would not do: a CSI colour sequence is 19 bytes and an
+    /// OSC title has no fixed length.
+    const EscState = enum { none, esc, csi, osc, osc_esc };
+
     theme: Theme = Theme.default,
+    esc: EscState = .none,
     in_fence: bool = false,
     /// True for the language tag right after an opening fence (e.g. the
     /// "python" in "```python\n"), which is consumed and never printed.
@@ -58,8 +66,15 @@ pub const MdStream = struct {
     syn_ready: bool = false,
     /// The current fenced line accumulates here and is emitted (highlighted)
     /// on its newline, so tokens spanning write calls still color correctly.
+    /// A line that outgrows the buffer is flushed in buffer-sized pieces
+    /// rather than truncated (see `flushFencePiece`).
     fence_line: [4096]u8 = undefined,
     fence_line_len: usize = 0,
+    /// Set once the current fenced line has overflowed `fence_line` and a
+    /// first piece has gone out unhighlighted. The rest of that line follows
+    /// unhighlighted too, so one line is never half coloured; cleared by the
+    /// newline that ends it.
+    fence_line_split: bool = false,
 
     fn at(self: *const MdStream, chunk: []const u8, idx: usize) u8 {
         return if (idx < self.hold_len) self.hold[idx] else chunk[idx - self.hold_len];
@@ -72,13 +87,34 @@ pub const MdStream = struct {
         return n;
     }
 
+    /// The buffer filled before this line's newline arrived, so the piece in
+    /// hand goes out unhighlighted (still control-stripped) and accumulation
+    /// continues. A 4 KiB source line is a paste artifact, not something to
+    /// colour — but it is still the model's output, and every byte past the
+    /// buffer used to be dropped with no flag and no marker, cutting a
+    /// minified bundle or a one-line base64 payload off mid-line.
+    ///
+    /// Called only from the append below, immediately *before* a byte is
+    /// written, so `fence_line_len` is never 0 part-way through a line: the
+    /// closing-fence check keys off an empty accumulator to mean "line start"
+    /// and a flush after the fill would break that.
+    fn flushFencePiece(self: *MdStream, w: *std.Io.Writer) void {
+        writeSanitized(w, self.fence_line[0..self.fence_line_len]);
+        self.fence_line_len = 0;
+        self.fence_line_split = true;
+    }
+
     /// Emits the accumulated fence line through the syntax highlighter,
-    /// initialized on first use from fence_lang. Lines longer than the
-    /// buffer are emitted unhighlighted (still control-stripped), a
-    /// 4 KiB source line is a paste artifact, not something to color.
+    /// initialized on first use from fence_lang. A line already split by
+    /// `flushFencePiece` finishes unhighlighted, matching its earlier pieces.
     fn emitFenceLine(self: *MdStream, w: *std.Io.Writer) void {
         const line = self.fence_line[0..self.fence_line_len];
         self.fence_line_len = 0;
+        if (self.fence_line_split) {
+            self.fence_line_split = false;
+            writeSanitized(w, line);
+            return;
+        }
         if (!self.syn_ready) {
             self.syn_ready = true;
             self.syn_state = syntax.State.init(self.fence_lang[0..self.fence_lang_len]);
@@ -120,36 +156,67 @@ pub const MdStream = struct {
                 continue;
             }
 
+            // A sequence already under way: its introducer arrived in an
+            // earlier window, so these bytes are machinery and are consumed
+            // here rather than printed as prose. `esc` is what makes a
+            // sequence split across two deltas resolve — it used to be
+            // scanned only within one window, so "a\x1b[3" + "1mB" rendered
+            // the parameter bytes as the text "a1mB".
+            if (self.esc != .none) {
+                switch (self.esc) {
+                    .esc => {
+                        // Only OSC and CSI have payloads to swallow. Anything
+                        // else after ESC leaves the ESC dropped on its own and
+                        // the byte re-read below as text.
+                        if (c == 0x5D or c == 0x5B) {
+                            self.esc = if (c == 0x5D) .osc else .csi;
+                            i += 1;
+                            continue;
+                        }
+                        self.esc = .none;
+                    },
+                    .csi => {
+                        // 0x40..0x7E is the final byte, 0x20..0x3F a
+                        // parameter or intermediate one. Anything else is not
+                        // part of a CSI: the sequence is abandoned and the
+                        // byte re-read below as text, as the in-window scan
+                        // did before.
+                        if (c >= 0x40 and c <= 0x7E) {
+                            self.esc = .none;
+                            i += 1;
+                            continue;
+                        }
+                        if (c >= 0x20 and c <= 0x3F) {
+                            i += 1;
+                            continue;
+                        }
+                        self.esc = .none;
+                    },
+                    .osc => {
+                        // Terminated by BEL, or by ST (ESC \).
+                        if (c == 0x07) self.esc = .none;
+                        if (c == 0x1B) self.esc = .osc_esc;
+                        i += 1;
+                        continue;
+                    },
+                    .osc_esc => {
+                        self.esc = if (c == 0x5C) .none else .osc;
+                        i += 1;
+                        continue;
+                    },
+                    .none => unreachable,
+                }
+            }
+
             // Untrusted control bytes never reach the terminal, in or out of
             // a fence. A control sequence (OSC ESC ] or CSI ESC [) is consumed
             // whole so its payload does not leak as visible text; a lone ESC is
-            // a C0 control and drops. A sequence truncated at the end of this
-            // chunk window is dropped too — it is escape machinery, not text.
+            // a C0 control and drops. Either way nothing of it is printed, and
+            // a sequence still open when the window ends resumes above on the
+            // next feed.
             if (c == 0x1B) {
-                if (i + 1 < total) {
-                    const nxt = self.at(chunk, i + 1);
-                    if (nxt == 0x5D or nxt == 0x5B) {
-                        var j = i + 2;
-                        while (j < total) {
-                            const b = self.at(chunk, j);
-                            if (nxt == 0x5D and (b == 0x07 or (b == 0x1B and j + 1 < total and self.at(chunk, j + 1) == 0x5C))) {
-                                j += if (b == 0x07) 1 else 2;
-                                break;
-                            }
-                            if (nxt == 0x5B) {
-                                if (b >= 0x40 and b <= 0x7E) { // final byte
-                                    j += 1;
-                                    break;
-                                }
-                                if (b < 0x20 or b > 0x3F) break; // not a CSI byte
-                            }
-                            j += 1;
-                        }
-                        i = j;
-                        continue;
-                    }
-                }
-                i += 1; // lone ESC
+                self.esc = .esc;
+                i += 1;
                 continue;
             }
             if (strippedControl(c)) {
@@ -185,10 +252,9 @@ pub const MdStream = struct {
                     i += 1;
                     continue;
                 }
-                if (self.fence_line_len < self.fence_line.len) {
-                    self.fence_line[self.fence_line_len] = c;
-                    self.fence_line_len += 1;
-                }
+                if (self.fence_line_len == self.fence_line.len) self.flushFencePiece(w);
+                self.fence_line[self.fence_line_len] = c;
+                self.fence_line_len += 1;
                 self.at_line_start = false;
                 i += 1;
                 continue;
@@ -272,6 +338,7 @@ pub const MdStream = struct {
                 self.in_fence_lang = true;
                 self.fence_lang_len = 0;
                 self.fence_line_len = 0;
+                self.fence_line_split = false;
                 self.syn_ready = false;
                 w.writeAll(t.fence) catch {};
                 i += 3;
@@ -643,6 +710,96 @@ test "MdStream strips a C1 control split across two feeds" {
     const out = try mdStreamRender(allocator, &.{ "a\xc2", "\x9bb" });
     defer allocator.free(out);
     try std.testing.expectEqualStrings("ab", out);
+}
+
+test "MdStream drops an escape sequence split across two feeds" {
+    const allocator = std.testing.allocator;
+    // The CSI runs off the end of the first window, so the introducer has to
+    // be remembered: it used to be consumed with nothing held, and the next
+    // chunk's "1m" was printed as prose.
+    const csi = try mdStreamRender(allocator, &.{ "a\x1b[3", "1mB" });
+    defer allocator.free(csi);
+    try std.testing.expectEqualStrings("aB", csi);
+
+    // A trailing lone ESC: the whole sequence lands in the next chunk.
+    const lone = try mdStreamRender(allocator, &.{ "a\x1b", "[31mB" });
+    defer allocator.free(lone);
+    try std.testing.expectEqualStrings("aB", lone);
+
+    // An OSC split mid-payload, terminated by BEL in the second chunk.
+    const osc = try mdStreamRender(allocator, &.{ "a\x1b]0;ti", "tle\x07B" });
+    defer allocator.free(osc);
+    try std.testing.expectEqualStrings("aB", osc);
+
+    // The other side of the boundary: ESC followed by something that is not
+    // an introducer still drops the ESC alone and prints the byte, whether or
+    // not the two arrive together.
+    const together = try mdStreamRender(allocator, &.{"a\x1bA"});
+    defer allocator.free(together);
+    try std.testing.expectEqualStrings("aA", together);
+    const apart = try mdStreamRender(allocator, &.{ "a\x1b", "A" });
+    defer allocator.free(apart);
+    try std.testing.expectEqualStrings("aA", apart);
+}
+
+const fence_head = "```zig\n";
+const fence_kw = "const ";
+
+/// A fenced Zig block holding one line of `len` bytes: the keyword `const`
+/// then a run of 'x'. The keyword tells a highlighted render from a raw one,
+/// and the run is a single token either way, so it reaches the output as one
+/// contiguous slice whichever path emitted it.
+fn longFenceSrc(allocator: std.mem.Allocator, len: usize) ![]u8 {
+    const line = try allocator.alloc(u8, len);
+    defer allocator.free(line);
+    @memset(line, 'x');
+    @memcpy(line[0..fence_kw.len], fence_kw);
+    return std.fmt.allocPrint(allocator, fence_head ++ "{s}\nafter\n```\n", .{line});
+}
+
+fn xRun(src: []const u8, len: usize) []const u8 {
+    return src[fence_head.len + fence_kw.len ..][0 .. len - fence_kw.len];
+}
+
+test "MdStream emits a fenced line past its buffer instead of cutting it" {
+    const allocator = std.testing.allocator;
+    const cap = 4096;
+
+    // Exactly the buffer's worth still goes through the highlighter.
+    const at_cap = try longFenceSrc(allocator, cap);
+    defer allocator.free(at_cap);
+    const fits = try mdStreamRender(allocator, &.{at_cap});
+    defer allocator.free(fits);
+    try std.testing.expect(std.mem.find(u8, fits, "\x1b[35mconst\x1b[0m") != null);
+    try std.testing.expect(std.mem.find(u8, fits, xRun(at_cap, cap)) != null);
+
+    // One byte more used to be silently dropped along with every byte after
+    // it: a minified bundle or base64 payload stopped mid-line with nothing
+    // marking the cut. Now the whole line reaches the terminal, unhighlighted.
+    const over = try longFenceSrc(allocator, cap + 1);
+    defer allocator.free(over);
+    const out = try mdStreamRender(allocator, &.{over});
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.find(u8, out, xRun(over, cap + 1)) != null);
+    try std.testing.expect(std.mem.find(u8, out, "\x1b[35mconst") == null);
+    // The line after it highlights normally, and the fence still closed.
+    try std.testing.expect(std.mem.find(u8, out, "after") != null);
+}
+
+test "MdStream does not read a mid-line backtick run as a closing fence" {
+    const allocator = std.testing.allocator;
+    // The buffer flush that keeps an over-long line whole resets the
+    // accumulator mid-line, and the closing-fence check keys off an empty
+    // accumulator, so "```" arriving right after a flush must not close.
+    const line = try allocator.alloc(u8, 4096);
+    defer allocator.free(line);
+    @memset(line, 'x');
+    const src = try std.fmt.allocPrint(allocator, "```\n{s}```y\nafter\n```\n", .{line});
+    defer allocator.free(src);
+    const out = try mdStreamRender(allocator, &.{src});
+    defer allocator.free(out);
+    try std.testing.expect(std.mem.find(u8, out, "```y") != null);
+    try std.testing.expect(std.mem.find(u8, out, "after") != null);
 }
 
 test "MdStream strips a control held back behind an unresolved marker" {
