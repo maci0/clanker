@@ -126,6 +126,17 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     var date_buf: [16]u8 = undefined;
     const date = try lib.alloc.dupe(u8, doc.isoDate(@trunc(lib.nowSeconds()), &date_buf));
 
+    // The store stamps `date` in UTC on purpose; the slug is typed by the
+    // caller from whatever its own clock says. These four number their records,
+    // so a date-prefixed slug here is unusual rather than the norm — but when
+    // there is one and it disagrees with the stamp, the record contradicts
+    // itself and `create` is holding both halves. Warn and create: backdating a
+    // record about an older event is legitimate.
+    const date_warning: ?[]const u8 = if (doc.slugDateConflict(slug, date)) |dated|
+        try doc.slugDateWarning(lib.alloc, dated, date)
+    else
+        null;
+
     const status_line = if (rfc_path.len > 0)
         try std.fmt.allocPrint(
             lib.alloc,
@@ -192,6 +203,10 @@ fn create(obj: std.json.Value, out: *lib.Out) !void {
     if (!indexed) {
         try s.objectField("note");
         try s.write("the ADR was created but the inventory changed concurrently or lacks its markers; add the link to docs/adrs/README.md by hand");
+    }
+    if (date_warning) |warning| {
+        try s.objectField("date_warning");
+        try s.write(warning);
     }
     try s.objectField("next");
     try s.beginArray();

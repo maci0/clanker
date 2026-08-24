@@ -25,6 +25,36 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `reports rename` now prints leftover-reference paths that open. The store
+  root was joined onto every `ck_fs_grep` hit, but the host already reports
+  each hit rooted at the repository, so the one output the verb exists to
+  produce named `docs/reports/docs/reports/bugs/<name>.md` for every entry --
+  a path that cannot be read or pasted anywhere. The walk existed twice; the
+  copy the four numbered stores use had a guard against exactly this, aimed at
+  `isPathIn`, which requires a single directory level and so said no for
+  `docs/reports/bugs/` -- the only store that nests was the only one the guard
+  could not recognise. There is now one walk (`records_grep.collectRenameReferences`)
+  behind a nesting-tolerant predicate (`doc_scaffold.isUnder`), and a
+  sandbox-runtime test asserts every path the verb prints can be opened.
+
+- `create` on all five record stores now warns when a caller's
+  `YYYY-MM-DD-` slug disagrees with the UTC date the store stamps. The stores
+  date records in UTC deliberately and the caller types the slug, so east of
+  Greenwich a hand-typed slug is off by one for a third of every day; `create`
+  held both values and compared neither. The record is still created -- a
+  record about an older event is legitimately backdated -- and the reply
+  carries `date_warning`, printed by the CLI. The comparison is a pure
+  function of (slug, stamped date), so it is tested on both sides rather than
+  passing vacuously wherever local time is already UTC.
+
+- `reports append` can now fill `## References`. `appendOrFill` fills a
+  section the record carries empty, and `create` seeds that one section with
+  `- Investigation: none yet`, so it was the single scaffolded section the
+  fill structurally could never reach: a `## References` block always landed
+  at the end as a second copy of the heading. A body that is nothing but the
+  scaffold's own "none yet" line now counts as empty; one authored reference
+  in the section and it is left alone as before.
+
 - `GET /api/events` at the 32-subscriber cap now sends a `503` a strict client
   can actually read. The refusal was one hand-written literal whose
   `Content-Length` said 52 for a 48-byte body, so a client honoring the header
