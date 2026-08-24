@@ -4,11 +4,11 @@
 
 - **What failed:** zig-pkg/ is gitignored and per-worktree, and no gate check verifies patches/ is applied, so a fresh worktree builds and gates green against pristine upstream vaxis and zwasm. Verified at b1bd7a6a: apply-patches.sh reports '0 applied' before the first build because the dep trees are not extracted, so patch-then-build leaves the tree unpatched; zig build then exits 0 on it, and only a second apply-patches.sh run reports '4 applied'.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed in 17115abb; verified by clanker gate. New twelfth check dep-patches asserts each patches/*.patch is applied in the zig-pkg/ tree its build.zig.zon .hash pin names, naming scripts/apply-patches.sh on failure. Both directions confirmed with the real binary on one commit: unpatched fails listing all four patches, patched passes with all twelve green.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed in 17115abb; verified by clanker gate. New twelfth check dep-patches asserts each patches/*.patch is applied in the zig-pkg/ tree its build.zig.zon .hash pin names, naming scripts/apply-patches.sh on failure. Both directions confirmed with the real binary on one commit: unpatched fails listing all four patches, patched passes with all twelve green.
 
 ## Symptom and impact
 
@@ -84,41 +84,68 @@ the process".
 
 ## Resolution
 
-Open. Not fixed here: this record is the finding, and the fix is a gate check,
-which is a code change that belongs with its own tests rather than folded into
-a docs pass.
+Fixed in 17115abb as the twelfth check, `dep-patches`, in
+`src/gate/checks.zig` beside `sandbox-abi` and `test-root-coverage`. It runs
+last in `verifyGates`, after the build, because on a tree that has never been
+built there is nothing extracted to patch and a check that ran first could
+only ever report the ordering trap. The failure names
+`scripts/apply-patches.sh`.
 
-The shape that fits the existing design is a twelfth check in
-`src/gate/checks.zig` beside `sandbox-abi` and `test-root-coverage` — both of
-which exist for exactly this class of problem, an invariant a green suite
-cannot speak to. It would assert each `patches/*.patch` is applied in the
-resolved dependency tree, by the same marker `apply-patches.sh` already greps
-for when it decides "already up to date". Failure should name
-`scripts/apply-patches.sh` in the message, the way the `ReplStoppedReadingTty`
-e2e branch already does.
+Which tree to look in is read from `build.zig.zon`: the `.hash` pin is
+verbatim the directory name under `zig-pkg/` the package is extracted into, so
+the check follows a version bump on its own and cannot mistake a stale
+`zwasm-2.4.1-*` tree left behind by an older pin for the current one. The
+patch's package comes from its file name (`vaxis-winch-self-pipe.patch` is a
+vaxis patch), the same convention `apply-patches.sh` and `patches/README.md`
+already use.
 
-A cheaper variant worth considering instead: have `build.zig` fail the build
-outright on an unpatched dependency, since no target in this repo is meant to
-be built against pristine vaxis. That closes the ordering trap too, which a
-gate check alone does not — the gate runs a build, so a build-time refusal is
-strictly earlier.
+Not by the marker `apply-patches.sh` greps for, as this record suggested: that
+is a reverse dry-run of `patch`, which would make the gate report on a tool
+that need not be installed. Instead each patch yields, per file it touches,
+its longest contiguous run of added lines, rejoined exactly as the patched
+file will carry them (indentation and interior blank lines included), and the
+check is a plain substring search.
 
-Not proposed: making `zig build` apply the patches itself. Silently mutating a
-dependency cache as a build side effect trades a visible failure for an
-invisible one.
+A single longest added LINE was the first version and was wrong.
+`vaxis-ss3-keypad-enter.patch`'s longest addition is
+`const expected_event: Event = .{ .key_press = expected_key };`, a line every
+other parser test in that file already has, so the check reported that patch
+applied on a pristine tree — this record's own false-clean failure, reproduced
+inside its fix. The run-based marker (13 lines for that patch) reports it
+correctly. A whole added block can be duplicated in principle too, but not by
+accident.
+
+Not taken: the `build.zig` refusal. It is strictly earlier, but it would make
+the FIRST build of every fresh clone fail, and that first build is what
+extracts the dependencies there is nothing to patch without. The trap would
+move rather than close.
+
+Not taken either: making `zig build` apply the patches itself. Nothing in the
+check applies a patch; it only reports.
 
 ## Verification
 
-A fix is verified when `clanker gate` fails on a freshly built worktree whose
-`patches/` have not been applied, and names `scripts/apply-patches.sh` in the
-failure. Both halves matter: the existing e2e failure was read as a REPL
-regression by two separate sessions precisely because its message did not name
-the check.
+Both directions, with the real binary, on one commit in one fresh worktree.
 
-Control needed on the other side, or the check can pass without running: gate
-the same commit with the patches applied and confirm it stays green. A check
-that fails on both states is indistinguishable from one that fails on neither
-until you look.
+Unpatched (`git worktree add` then `zig build`, nothing else): eleven checks
+PASS and `dep-patches` FAILs, listing all four patches and every file each one
+is missing from, and naming `scripts/apply-patches.sh` and the `zig build`
+that has to come first.
+
+Then `scripts/apply-patches.sh` (4 applied) and `zig build`, same commit, no
+source change: all twelve PASS. A check that fails on both states is
+indistinguishable from one that fails on neither until you look, and the
+line-marker version of this check did in fact pass on a pristine tree for one
+of the four patches until the control run showed it.
+
+Unit level, in `src/gate/checks.zig`: `depPatchesGate` is driven over a
+synthetic dependency tree in a tmpdir through all three states — pristine
+(fails, names the script), patched (passes), and never extracted (fails,
+distinctly) — plus pure tests for the marker extraction, the `.hash` lookup
+(a package name that is only a prefix of a pinned one must not match) and the
+`-p1` path strip. There is deliberately NO "passes on the live checkout" test
+of the kind `sandboxAbiGate` has: the suite itself runs in worktrees whose
+patched state is exactly what is in question.
 
 ## Follow-up
 
@@ -128,10 +155,15 @@ without npm run build:all ships stale tools/ts/dist/*.wasm silently", with
 `tools/ts/verify.sh` as the manual check. Two untracked build preconditions,
 one gate that speaks to neither.
 
+Still open as of 17115abb: `dep-patches` speaks only about `patches/`. The
+`tools/ts/dist/` half needs a rebuild-and-compare, not a substring search, so
+it is a different check rather than another entry in this one.
+
 ## References
 
 - Investigation: [2026-08-23-pty-resize-journey-fails-in-an-unpatched-worktree.md](../investigations/2026-08-23-pty-resize-journey-fails-in-an-unpatched-worktree.md)
 - Earlier record of the same root cause, scoped to one journey: [2026-08-22-pty-e2e-fails-in-a-worktree.md](../investigations/2026-08-22-pty-e2e-fails-in-a-worktree.md)
-- Code: `src/gate/checks.zig` (the eleven checks), `build.zig`,
+- Code: `src/gate/checks.zig` (`depPatchesGate`), `src/cli.zig`
+  (`verifyGates`), `build.zig`,
   `scripts/apply-patches.sh`, `patches/README.md`
 - Affected by the compiled-out path: `src/tui/mascot.zig` (`sixel_supported`)
