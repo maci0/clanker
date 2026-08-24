@@ -154,7 +154,7 @@ fn callWithTimeout(
     timeout_ms: i64,
 ) ![]const u8 {
     const url = try controlUrl(arena, host, port, path);
-    const res = http_client.fetchStatus(io, gpa, arena, method, url, payload, timeout_ms) catch |err| {
+    const res = http_client.fetchStatus(io, gpa, arena, method, url, payload, null, timeout_ms) catch |err| {
         if (err == error.Timeout or err == error.Canceled) {
             diag.errorLine("clanker serve at {s} accepted the connection and did not answer within {d}ms", .{ url, timeout_ms });
             return Error.ServeNotRunning;

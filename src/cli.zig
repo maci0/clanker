@@ -67,7 +67,7 @@ const atomic_write = @import("util/atomic_write.zig");
 const disk_cap = @import("util/disk_cap.zig");
 const ensure_dir = @import("util/ensure_dir.zig");
 const run_lock = @import("util/run_lock.zig");
-const deadline_mod = @import("util/deadline.zig");
+const http_client = @import("util/http_client.zig");
 const file_lock = @import("util/file_lock.zig");
 const utf8 = @import("util/utf8.zig");
 const secret_dotenv = @import("util/secret_dotenv.zig");
@@ -3143,18 +3143,8 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
                         var out_rate: f64 = 0;
                         if (item.object.get("pricing")) |p| {
                             if (p == .object) {
-                                if (p.object.get("prompt")) |v| {
-                                    switch (v) {
-                                        .integer, .float, .number_string, .string => in_rate = numToF64(v),
-                                        else => {},
-                                    }
-                                }
-                                if (p.object.get("completion")) |v| {
-                                    switch (v) {
-                                        .integer, .float, .number_string, .string => out_rate = numToF64(v),
-                                        else => {},
-                                    }
-                                }
+                                if (models_dev.jsonNum(p.object, "prompt")) |v| in_rate = v;
+                                if (models_dev.jsonNum(p.object, "completion")) |v| out_rate = v;
                             }
                         }
                         const line = try std.fmt.allocPrint(arena, "{s}\t{d}\t{d:.2}\t{d:.2}\n", .{ id, ctx, in_rate * 1_000_000, out_rate * 1_000_000 });
@@ -3369,16 +3359,16 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
     if (m.object.get("limit")) |l| if (l == .object) {
         // Catalog data is network input: a limit whose integer part does not
         // fit an i64 drops that field from the snippet instead of trapping.
-        if (jsonNum(l.object, "context")) |c| if (config.intFromFloatChecked(c)) |n| {
+        if (models_dev.jsonNum(l.object, "context")) |c| if (config.intFromFloatChecked(c)) |n| {
             try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{n}));
         };
-        if (jsonNum(l.object, "output")) |o| if (config.intFromFloatChecked(o)) |n| {
+        if (models_dev.jsonNum(l.object, "output")) |o| if (config.intFromFloatChecked(o)) |n| {
             try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{n}));
         };
     };
     if (m.object.get("cost")) |c| if (c == .object) {
-        if (jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
-        if (jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
+        if (models_dev.jsonNum(c.object, "input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
+        if (models_dev.jsonNum(c.object, "output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
     };
     // The catalog's `id` is the wire SKU; `name` is a display string. A local
     // alias (table key != SKU) must keep its `id` in the snippet, or a pasted
@@ -3416,50 +3406,7 @@ fn renderModelSnippet(arena: std.mem.Allocator, provider_name: []const u8, name:
     return w.toOwnedSlice();
 }
 
-/// A JSON number field, accepting the string-encoded numbers some catalog
-/// entries use. Absent or non-numeric reads as `null`, distinct from a
-/// legitimate `0` (which no context window or price ever is in practice).
-fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
-    const v = obj.get(key) orelse return null;
-    return switch (v) {
-        .integer, .float, .number_string, .string => numToF64(v),
-        else => null,
-    };
-}
-
-fn numToF64(v: std.json.Value) f64 {
-    return switch (v) {
-        .integer => |i| @floatFromInt(i),
-        .float => |f| f,
-        .number_string => |s| std.fmt.parseFloat(f64, s) catch 0,
-        .string => |s| std.fmt.parseFloat(f64, s) catch 0,
-        else => 0,
-    };
-}
-
-fn httpGet(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, url: []const u8, bearer: ?[]const u8) ![]const u8 {
-    var http: std.http.Client = .{ .allocator = gpa, .io = io };
-    defer http.deinit();
-    // Growable: a fixed buffer here used to cap every response at 1 MiB,
-    // which silently truncated (or outright failed) anything past it, the
-    // models.dev catalog alone runs to several MiB.
-    var body: std.Io.Writer.Allocating = .init(gpa);
-    defer body.deinit();
-    var headers: std.http.Client.Request.Headers = .{
-        .user_agent = .{ .override = "clanker/" ++ version },
-    };
-    if (bearer) |b| headers.authorization = .{ .override = b };
-    const res = try http.fetch(.{
-        .location = .{ .url = url },
-        .method = .GET,
-        .headers = headers,
-        .response_writer = &body.writer,
-    });
-    if (@intFromEnum(res.status) >= 400) return error.HttpError;
-    return arena.dupe(u8, body.written());
-}
-
-/// `httpGet` under a wall-clock ceiling, the shape `pingWithTimeout` uses and
+/// GET under a wall-clock ceiling, the shape `pingWithTimeout` uses and
 /// for the same reason: a host that is reachable but never answers costs the OS
 /// connect timeout (~75s on macOS). Callers on the webui's page-load path
 /// cannot afford that, so a spent budget is reported as no answer.
@@ -3478,7 +3425,7 @@ fn httpGetWithTimeout(
     return httpGetDeadline(io, gpa, arena, url, bearer, budget_ms) catch null;
 }
 
-/// `httpGet` under a wall-clock ceiling, reporting *why* it ended: the fetch's
+/// GET under a wall-clock ceiling, reporting *why* it ended: the fetch's
 /// own error, or `error.Timeout` when the budget went first. An operator
 /// reading "could not reach models.dev: Timeout" knows to look at the network,
 /// where a collapsed "it did not answer" tells them nothing.
@@ -3486,6 +3433,10 @@ fn httpGetWithTimeout(
 /// Unlike the provider sweep this does not fall back to an unbounded call when
 /// there is no spare concurrency: waiting without a ceiling is the thing being
 /// avoided, so a missing worker is `error.ConcurrencyUnavailable`, not a hang.
+///
+/// The one host-side fetch implementation is `util/http_client.zig`; this only
+/// pins the budget (a `timeout_ms <= 0` there runs inline unbounded, which is
+/// what the old local `std.http.Client` copy did).
 fn httpGetDeadline(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -3494,10 +3445,7 @@ fn httpGetDeadline(
     bearer: ?[]const u8,
     budget_ms: i64,
 ) ![]const u8 {
-    // Unlike the provider sweep this does not fall back to an unbounded call
-    // when there is no spare concurrency: waiting without a ceiling is the
-    // thing being avoided, so a missing worker is an error, not a hang.
-    return deadline_mod.runBounded(io, budget_ms, httpGet, .{ io, gpa, arena, url, bearer });
+    return http_client.fetch(io, gpa, arena, .GET, url, null, bearer, budget_ms);
 }
 
 /// `clanker autolearn`, review usage observations, refresh the roadmap
@@ -11637,21 +11585,21 @@ fn renderModelConfigBlock(arena: std.mem.Allocator, provider_name: []const u8, n
     if (json_util.strFieldOrNull(obj, "id")) |sku| try fields.append(arena, try std.fmt.allocPrint(arena, "id = {s}", .{try tomlQuoted(arena, sku)}));
     // Numeric fields arrive from the browser's edit form; a value whose
     // integer part does not fit an i64 drops the field rather than trapping.
-    if (jsonNum(obj, "rpm")) |v| if (config.intFromFloatChecked(v)) |n| {
+    if (models_dev.jsonNum(obj, "rpm")) |v| if (config.intFromFloatChecked(v)) |n| {
         try fields.append(arena, try std.fmt.allocPrint(arena, "rpm = {d}", .{n}));
     };
-    if (jsonNum(obj, "context_window")) |v| if (config.intFromFloatChecked(v)) |n| {
+    if (models_dev.jsonNum(obj, "context_window")) |v| if (config.intFromFloatChecked(v)) |n| {
         try fields.append(arena, try std.fmt.allocPrint(arena, "context_window = {d}", .{n}));
     };
-    if (jsonNum(obj, "max_tokens")) |v| if (config.intFromFloatChecked(v)) |n| {
+    if (models_dev.jsonNum(obj, "max_tokens")) |v| if (config.intFromFloatChecked(v)) |n| {
         try fields.append(arena, try std.fmt.allocPrint(arena, "max_tokens = {d}", .{n}));
     };
-    if (jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
-    if (jsonNum(obj, "top_p")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "top_p = {d}", .{v}));
+    if (models_dev.jsonNum(obj, "temperature")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "temperature = {d}", .{v}));
+    if (models_dev.jsonNum(obj, "top_p")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "top_p = {d}", .{v}));
     if (json_util.strFieldOrNull(obj, "reasoning_effort")) |re| try fields.append(arena, try std.fmt.allocPrint(arena, "reasoning_effort = {s}", .{try tomlQuoted(arena, re)}));
     if (json_util.strFieldOrNull(obj, "display")) |disp| try fields.append(arena, try std.fmt.allocPrint(arena, "display = {s}", .{try tomlQuoted(arena, disp)}));
-    if (jsonNum(obj, "cost_per_1m_input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
-    if (jsonNum(obj, "cost_per_1m_output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
+    if (models_dev.jsonNum(obj, "cost_per_1m_input")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_input = {d}", .{v}));
+    if (models_dev.jsonNum(obj, "cost_per_1m_output")) |v| try fields.append(arena, try std.fmt.allocPrint(arena, "cost_per_1m_output = {d}", .{v}));
     if (json_util.strFieldOrNull(obj, "category")) |cat| try fields.append(arena, try std.fmt.allocPrint(arena, "category = {s}", .{try tomlQuoted(arena, cat)}));
     if (obj.get("capabilities")) |caps_v| if (caps_v == .array) {
         var quoted: std.ArrayList([]const u8) = .empty;

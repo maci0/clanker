@@ -67,7 +67,7 @@ const config_mod = @import("../config.zig");
 const http_client = @import("../util/http_client.zig");
 
 fn httpFetch(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, method: std.http.Method, url: []const u8, body: ?[]const u8) ![]const u8 {
-    return http_client.fetch(io, gpa, arena, method, url, body, http_client.default_timeout_ms) catch |err| switch (err) {
+    return http_client.fetch(io, gpa, arena, method, url, body, null, http_client.default_timeout_ms) catch |err| switch (err) {
         error.HttpStatus => return error.HttpStatus,
         else => return error.HttpStatus,
     };

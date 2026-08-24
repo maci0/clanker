@@ -54,6 +54,14 @@ pub fn spawnArgv(
     };
     var stdout: std.ArrayList(u8) = .empty;
     defer stdout.deinit(gpa);
+    // Every exit from here reaps the child, not only the happy one: an early
+    // return on a copy or read error used to skip `wait`, leaving the helper
+    // alive (blocked writing into a full pipe this process still holds open)
+    // or zombied until process exit. `kill` signals and reaps in one call,
+    // and a child that already exited takes a harmless SIGKILL on the way to
+    // its wait.
+    var waited = false;
+    defer if (!waited) child.kill(io);
     if (child.stdout) |f| {
         var buf: [4096]u8 = undefined;
         while (true) {
@@ -66,6 +74,7 @@ pub fn spawnArgv(
         }
     }
     const term = child.wait(io) catch return error.SpawnFailed;
+    waited = true;
     const ok = switch (term) {
         .exited => |c| c == 0,
         else => false,

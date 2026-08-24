@@ -472,6 +472,7 @@ pub fn main(init: std.process.Init) !void {
             error.UnknownEval => "no eval by that name; run `clanker eval` with no argument to list them",
             error.PresetsDirUnusable => "presets/ could not be created or opened; check permissions in the working directory",
             error.HttpError => "the HTTP request failed; check the provider's status and your network",
+            error.HttpStatus => "the remote server answered with an HTTP error; check the URL and your network",
             error.ArenaRefused => "the arena match was refused (see output above)",
             error.CompareRefused => "the comparison was refused (see output above)",
             else => null,
