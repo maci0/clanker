@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [Every config validation error is printed twice, once by the startup dotenv probe](bugs/2026-08-24-config-validation-errors-print-twice.md) — Open
+
 - [the record stores accept a date-prefixed slug that contradicts the UTC date they stamp, with no warning](bugs/2026-08-23-record-slug-date-contradicts-the-stamped-date.md) — Resolved
 
 - [clanker gate passes on unpatched dependencies, so a fresh worktree gates against pristine upstream deps](bugs/2026-08-23-gate-passes-on-unpatched-dependencies.md) — Open
