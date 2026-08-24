@@ -80,6 +80,10 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [verify.sh runs clanker gate before apply-patches.sh, so a fresh worktree always fails dep-patches](bugs/2026-08-24-verify-sh-gates-before-applying-patches.md) — Resolved
+
+- [scripts/apply-patches.sh exits 0 after applying nothing, so a caller checking the exit status proceeds on an unpatched tree](bugs/2026-08-24-apply-patches-exits-0-having-applied-nothing.md) — Resolved
+
 - [The '## Blocked on' body became a fourth machine-read state signal with none of the invariants the other three have](bugs/2026-08-24-blocked-on-body-is-an-ungated-fourth-state-signal.md) — Open
 
 - [Every config validation error is printed twice, once by the startup dotenv probe](bugs/2026-08-24-config-validation-errors-print-twice.md) — Open
@@ -155,9 +159,9 @@ Project agents receive this workflow through the harness prompt and
 
 - [The same @path line inlines a file when idle and reaches the model literally mid-run](bugs/2026-08-23-repl-mentions-not-expanded-when-steering.md) — Open
 
-- [An escape sequence split across two deltas has its introducer dropped and its tail printed as prose](bugs/2026-08-23-mdstream-split-escape-tail-printed.md) — Open
+- [An escape sequence split across two deltas has its introducer dropped and its tail printed as prose](bugs/2026-08-23-mdstream-split-escape-tail-printed.md) — Resolved
 
-- [A fenced line longer than 4 KiB is silently cut, not emitted unhighlighted](bugs/2026-08-23-mdstream-fence-line-truncated-past-4kib.md) — Open
+- [A fenced line longer than 4 KiB is silently cut, not emitted unhighlighted](bugs/2026-08-23-mdstream-fence-line-truncated-past-4kib.md) — Resolved
 
 - [Alt+Enter, the documented multi-line fallback, was bound nowhere and did nothing](bugs/2026-08-23-repl-alt-enter-newline-never-bound.md) — Resolved
 
