@@ -10529,18 +10529,18 @@ fn renderWebuiCached(
 ) ?[]const u8 {
     switch (cache.state.load(.acquire)) {
         .ready => return cache.body,
-        .failed => {},
         .idle, .rendering => {},
     }
     const body = renderWebui(io, gpa, arena, cfg, environ_map, path, stream) orelse return null;
     // Only one thread publishes; the rest just used their own copy, which is
-    // identical because the source is compiled in.
-    if (cache.state.cmpxchgStrong(.idle, .rendering, .acq_rel, .acquire) == null) {
+    // identical because the source is compiled in. A claim that cannot keep its
+    // copy hands the slot back rather than burning it, so the next request can
+    // still publish.
+    if (webui_assets.renderClaim(cache)) {
         if (gpa.dupe(u8, body)) |owned| {
-            cache.body = owned;
-            cache.state.store(.ready, .release);
+            webui_assets.renderPublish(cache, owned);
         } else |_| {
-            cache.state.store(.failed, .release);
+            webui_assets.renderAbandon(cache);
         }
     }
     return body;
