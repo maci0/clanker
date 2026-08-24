@@ -11,7 +11,6 @@ const common = @import("common.zig");
 const auth = @import("../auth.zig");
 const types = @import("../types.zig");
 const config = @import("../../config.zig");
-const sampling = @import("../sampling_profiles.zig");
 const log = @import("../../util/log.zig");
 const redact = @import("../../util/redact.zig");
 
@@ -115,15 +114,21 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
 
     try s.objectField("generationConfig");
     try s.beginObject();
-    const rec = sampling.forParams(params);
-    const model = params.provider.activeModel();
-    const temp = params.temperature orelse model.temperature orelse rec.temperature;
-    if (temp) |t| {
+    // One resolver, not a second copy of the precedence chain. Gemini spells
+    // the fields itself (`topP`, inside `generationConfig`) but the three
+    // tiers are the same everywhere; this file used to re-implement them,
+    // which is how `reasoning_effort` came to be computed and dropped.
+    // NOTE: the resolved effort is still unwritten here — `generationConfig`
+    // has no `reasoning_effort` field and the correct Gemini `thinkingConfig`
+    // shape is not established in-tree, so PRD 0024's thinking row remains
+    // inert for `gemini` and `vertex`-Gemini. Tracked as a report; do not
+    // guess a shape.
+    const rec = common.resolveSampling(params);
+    if (rec.temperature) |t| {
         try s.objectField("temperature");
         try s.print("{d}", .{t});
     }
-    const nucleus = params.top_p orelse model.top_p orelse rec.top_p;
-    if (nucleus) |tp| {
+    if (rec.top_p) |tp| {
         try s.objectField("topP");
         try s.print("{d}", .{tp});
     }

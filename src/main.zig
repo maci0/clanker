@@ -155,6 +155,7 @@ comptime {
     _ = @import("llm/providers/azure.zig");
     _ = @import("llm/providers/gemini.zig");
     _ = @import("llm/providers/codex.zig");
+    _ = @import("llm/providers/grok.zig");
     _ = @import("llm/providers/responses.zig");
     _ = @import("llm/auth.zig");
     _ = @import("llm/oauth_store.zig");

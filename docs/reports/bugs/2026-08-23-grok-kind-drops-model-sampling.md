@@ -4,11 +4,11 @@
 
 - **What failed:** grok routes buildRequest to responses.zig, which writes temperature and top_p only from params, never from provider.activeModel() and never from sampling.forParams. params.temperature is set in only three places in the tree, none of them the agent loop, and the webui per-run override writes into the models map, the tier responses.zig does not read. So a configured per-model temperature is silently dropped on every turn, against PRD 0024 acceptance criteria 1 and 2.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. responses.zig resolves the three-tier chain via common.resolveSampling and clamps max_output_tokens. Verified by wire capture: a real run on a grok-kind provider now sends temperature 0.2, top_p 0.9 and max_output_tokens 8192 (half the 16384 window), where it previously sent none of the three. Codex's opt-out is byte-identical.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. responses.zig resolves the three-tier chain via common.resolveSampling and clamps max_output_tokens. Verified by wire capture: a real run on a grok-kind provider now sends temperature 0.2, top_p 0.9 and max_output_tokens 8192 (half the 16384 window), where it previously sent none of the three. Codex's opt-out is byte-identical.
 
 ## Symptom and impact
 
@@ -87,3 +87,40 @@ writing no `thinkingConfig`. The profile table's thinking row is inert for
 ## References
 
 - Investigation: none yet
+## Resolution — fixed 2026-08-24
+
+`responses.zig` now resolves the sampling knobs through
+`common.resolveSampling` (the three-tier chain: per-run override, then model
+config, then the PRD 0024 use-case table) instead of reading `params` alone,
+and its `max_output_tokens` goes through `common.clampedMaxTokens`. The
+effort stays in the Responses API's own nested `reasoning` block rather than
+going through `writeSamplingParams`, which would write the flat OpenAI field
+for these kinds.
+
+`codex` keeps its deliberate opt-out: `BuildOptions.sampling = false` now
+also suppresses the table fill for the effort, so the Codex body is
+byte-identical to before and its own test still holds.
+
+## Verification — wire capture, not a code read
+
+Body-shape unit tests in `src/llm/providers/grok.zig` (the configured
+`temperature`/`top_p` and the clamp; the table's chat and thinking rows), plus
+a capture of what a real run actually sends. A loopback HTTP recorder stood in
+for `api.x.ai`, with a `kind = "grok"` provider configured
+`temperature = 0.2`, `top_p = 0.9`, `context_window = 16384`,
+`max_tokens = 16384`, driven by `clanker run --provider groklocal "say OK"`.
+The captured request body:
+
+```json
+{"model":"grok-4.6-fake","store":false,"stream":true,
+ "max_output_tokens":8192,"temperature":0.2,"top_p":0.9, ...}
+```
+
+All three are what the bug said were missing: before the fix the body carried
+none of `temperature`, `top_p`, and carried `max_output_tokens` only when the
+caller passed one, unclamped. 8192 is half the 16384 window, so the clamp is
+running, not just the field.
+
+The capture went through the real agent loop, which is the part a unit test on
+`buildRequest` cannot show: the loop is exactly what never sets
+`params.temperature`, and that was the defect.
