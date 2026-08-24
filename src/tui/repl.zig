@@ -3652,7 +3652,16 @@ const Model = struct {
             .attach => {
                 const path = std.mem.trim(u8, pc.args, " \t");
                 if (path.len == 0) {
-                    self.lines.append(self.arena, .{ .text = "usage: /attach <path>  (image queued for next submit)", .dim = true }) catch {};
+                    self.lines.append(self.arena, .{ .text = "usage: /attach <path>  (image queued for next submit; /attach clear empties the queue)", .dim = true }) catch {};
+                    return;
+                }
+                // The escape hatch for a queue the submit drain cannot read:
+                // rather than wedge every later turn on a file that has since
+                // moved, submit keeps the queue and points here.
+                if (std.mem.eql(u8, path, "clear")) {
+                    const had = self.pending_attach_paths.items.len;
+                    self.pending_attach_paths.clearRetainingCapacity();
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: queue cleared ({d} dropped)", .{had}) catch "attach: queue cleared", .dim = true }) catch {};
                     return;
                 }
                 const max_images: usize = 4;
@@ -3660,6 +3669,22 @@ const Model = struct {
                 if (self.pending_attach_paths.items.len >= max_images) {
                     self.lines.append(self.arena, .{ .text = "attach: at most 4 images per message", .dim = true }) catch {};
                     return;
+                }
+                // Refuse at the command, not with a provider 400 a turn later.
+                switch (attachGate(path, self.cfg.modules.multimodal, self.provider.activeModel())) {
+                    .ok => {},
+                    .not_an_image => {
+                        self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: only png, jpg, jpeg and webp images can be attached; '{s}' was ignored", .{path}) catch "attach: only png, jpg, jpeg and webp images can be attached", .dim = true }) catch {};
+                        return;
+                    },
+                    .multimodal_off => {
+                        self.lines.append(self.arena, .{ .text = "attach: image attachments are disabled; enable modules.multimodal in your config", .dim = true }) catch {};
+                        return;
+                    },
+                    .no_vision => {
+                        self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: {s}/{s} does not declare vision support (the image_in capability); pick a vision-capable model with /model, or add image_in to that model's capabilities in config", .{ self.provider.name, self.provider.activeModelName() }) catch "attach: this model does not declare vision support (image_in)", .dim = true }) catch {};
+                        return;
+                    },
                 }
                 // Validate by opening and sizing — mirrors web limits.
                 var file = std.Io.Dir.cwd().openFile(self.io, path, .{ .mode = .read_only }) catch {
@@ -4388,10 +4413,36 @@ const Model = struct {
         return self.submitTaskWithGoal(ctx, task, null);
     }
 
+    /// Reads the `/attach` queue for the turn about to be submitted and puts
+    /// every failure in the transcript. Does not touch the queue: submit
+    /// clears it only once the worker thread owns the parts.
+    fn readPendingAttachments(self: *Model) AttachDrain {
+        var notices: std.ArrayList([]const u8) = .empty;
+        const drained = readAttachments(self.io, self.gpa, self.arena, self.pending_attach_paths.items, &notices);
+        for (notices.items) |msg| {
+            self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
+        }
+        return drained;
+    }
+
     /// Shared task-submission plumbing. A non-null `goal_condition` turns
     /// the spawned worker into a continuing goal loop; ordinary chat tasks
     /// remain one agent turn.
     fn submitTaskWithGoal(self: *Model, ctx: *vxfw.EventContext, task: []const u8, goal_condition: ?[]const u8) !void {
+        // Read the queued attachments before anything is echoed or any bridge
+        // state is set, so a queue that reads as nothing can abandon the
+        // submit with no half-started turn to unwind. The queue itself is
+        // cleared further down, once the worker thread is spawned.
+        const drained = self.readPendingAttachments();
+        if (drained.queued > 0 and drained.images == null) {
+            // Every queued attachment failed. Sending the task anyway is what
+            // made the model answer as if no image existed; the queue is kept
+            // so a re-save can be retried, per PRD 0041's "queue unchanged".
+            self.lines.append(self.arena, .{ .text = "attach: nothing readable was left to send, so the task was not submitted; re-save the file and press Enter again, or /attach clear to drop it", .dim = true }) catch {};
+            ctx.redraw = true;
+            return;
+        }
+        const pending_images = drained.images;
         // Submitting snaps a scrolled-up view back to the tail: the echoed
         // task and the streamed reply land there, and hiding them behind a
         // frozen window would make Enter look like it did nothing.
@@ -4451,30 +4502,6 @@ const Model = struct {
             };
             break :blk mention_expand.expandAlloc(self.arena, copied, Ctx{ .io = self.io, .arena = self.arena }) catch copied;
         };
-        // Drain pending image attachments for this run; submit clears them so
-        // a later turn never re-sends an old attachment. Mirrors the web path
-        // where the composer clears after submit.
-        const attach_len = self.pending_attach_paths.items.len;
-        var pending_images: ?[]types.ImagePart = null;
-        if (attach_len > 0) {
-            var parts: std.ArrayList(types.ImagePart) = .empty;
-            for (self.pending_attach_paths.items) |apath| {
-                // Raw bytes are gpa-owned and freed here: only the base64 is
-                // sent, so keeping the original in the session arena held a
-                // second full copy of every attachment for the rest of the
-                // session (up to 4 MiB apiece, on top of the ~1.33x encoding).
-                const buf = std.Io.Dir.cwd().readFileAlloc(self.io, apath, self.gpa, .limited(4 * 1024 * 1024 + 1)) catch continue;
-                defer self.gpa.free(buf);
-                if (buf.len == 0 or buf.len > 4 * 1024 * 1024) continue;
-                const mime = if (std.mem.endsWith(u8, apath, ".png")) "image/png" else if (std.mem.endsWith(u8, apath, ".jpg") or std.mem.endsWith(u8, apath, ".jpeg")) "image/jpeg" else if (std.mem.endsWith(u8, apath, ".webp")) "image/webp" else "image/png";
-                const enc = std.base64.standard.Encoder;
-                const b64_buf = self.arena.alloc(u8, enc.calcSize(buf.len)) catch continue;
-                const b64 = enc.encode(b64_buf, buf);
-                parts.append(self.arena, .{ .mime = mime, .b64 = b64 }) catch continue;
-            }
-            if (parts.items.len > 0) pending_images = parts.items;
-            self.pending_attach_paths.clearRetainingCapacity();
-        }
         if (self.session_title.len == 0) {
             var title_buf: [session_mod.title_max]u8 = undefined;
             const t = session_mod.titleFromTask(&title_buf, owned_task);
@@ -4486,6 +4513,12 @@ const Model = struct {
             .pending_images = pending_images,
             .goal_condition = if (goal_condition) |condition| try self.arena.dupe(u8, condition) else null,
         }});
+        // Only now that the worker owns the images: clearing before the spawn
+        // meant a spawn failure lost the queue for good, since the errdefer
+        // above restores `bridge_streaming` and nothing else. Clearing all of
+        // it, including any path that failed above, keeps an already-reported
+        // failure from riding along into an unrelated later turn.
+        self.pending_attach_paths.clearRetainingCapacity();
 
         // Kick off the tick heartbeat that picks up streamed deltas -- unless
         // the mascot's own heartbeat is already running, in which case the
@@ -8822,6 +8855,267 @@ test "composerEnterAction submits once an unanswered paste window expires" {
     try std.testing.expectEqual(ComposerEnterAction.submit, composerEnterAction(false, now, now));
     // Idle composer, no paste of any kind.
     try std.testing.expectEqual(ComposerEnterAction.submit, composerEnterAction(false, 0, now));
+}
+
+/// The largest attachment `/attach` queues and the submit drain will read.
+/// Mirrors the web composer's limit (PRD 0041).
+const attach_max_bytes: usize = 4 * 1024 * 1024;
+
+/// What `readAttachments` made of the queue.
+const AttachDrain = struct {
+    /// The parts to send, or null when there is nothing to send. Never an
+    /// empty slice: the caller distinguishes "none queued" from "all failed"
+    /// with `queued`.
+    images: ?[]types.ImagePart = null,
+    /// How many paths were in the queue.
+    queued: usize = 0,
+    /// How many of them could not be turned into a part. Each one has a line
+    /// in `notices`.
+    failed: usize = 0,
+};
+
+/// Reads the queued attachment paths into base64 image parts, appending one
+/// human-readable line to `notices` for every path that cannot be sent.
+///
+/// Every failure here used to be a bare `catch continue`, so an attachment
+/// that changed between `/attach` and submit (any editor that writes and
+/// renames) vanished with nothing in the transcript, and the turn went out as
+/// if no image had ever been queued. PRD 0041 promises an error line, so
+/// every arm produces one.
+///
+/// A free function rather than a method so it can be driven against a real
+/// tmpDir without standing up a whole `Model`.
+fn readAttachments(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    paths: []const []const u8,
+    notices: *std.ArrayList([]const u8),
+) AttachDrain {
+    var out: AttachDrain = .{ .queued = paths.len };
+    if (paths.len == 0) return out;
+    var parts: std.ArrayList(types.ImagePart) = .empty;
+    for (paths) |apath| {
+        // Raw bytes are gpa-owned and freed here: only the base64 is sent, so
+        // keeping the original in the session arena held a second full copy of
+        // every attachment for the rest of the session (up to 4 MiB apiece, on
+        // top of the ~1.33x encoding).
+        //
+        // `.limited(cap + 1)` reports StreamTooLong only past the cap, never
+        // at it (verified against std: a file of exactly `cap` bytes reads
+        // fine), so the error means "too large" and nothing else.
+        const buf = std.Io.Dir.cwd().readFileAlloc(io, apath, gpa, .limited(attach_max_bytes + 1)) catch |err| {
+            out.failed += 1;
+            const msg = switch (err) {
+                error.StreamTooLong => std.fmt.allocPrint(arena, "attach: '{s}' is larger than the {d} byte limit now, not sent", .{ apath, attach_max_bytes }),
+                else => std.fmt.allocPrint(arena, "attach: cannot read '{s}' ({s}), not sent", .{ apath, @errorName(err) }),
+            } catch "attach: an attachment could not be read and was not sent";
+            notices.append(arena, msg) catch {};
+            continue;
+        };
+        defer gpa.free(buf);
+        if (buf.len == 0) {
+            out.failed += 1;
+            notices.append(arena, std.fmt.allocPrint(arena, "attach: '{s}' is empty now, not sent", .{apath}) catch "attach: an empty attachment was not sent") catch {};
+            continue;
+        }
+        // The attach gate refuses these at the command; a queue can still
+        // outlive a rename, and labelling whatever is left `image/png` is what
+        // turned a wrong file into an opaque provider 400.
+        const mime = imageMimeForPath(apath) orelse {
+            out.failed += 1;
+            notices.append(arena, std.fmt.allocPrint(arena, "attach: '{s}' is not a png, jpg, jpeg or webp image, not sent", .{apath}) catch "attach: a non-image attachment was not sent") catch {};
+            continue;
+        };
+        const enc = std.base64.standard.Encoder;
+        const b64_buf = arena.alloc(u8, enc.calcSize(buf.len)) catch {
+            out.failed += 1;
+            notices.append(arena, std.fmt.allocPrint(arena, "attach: out of memory encoding '{s}', not sent", .{apath}) catch "attach: out of memory encoding an attachment") catch {};
+            continue;
+        };
+        const b64 = enc.encode(b64_buf, buf);
+        parts.append(arena, .{ .mime = mime, .b64 = b64 }) catch {
+            out.failed += 1;
+            notices.append(arena, std.fmt.allocPrint(arena, "attach: out of memory queueing '{s}', not sent", .{apath}) catch "attach: out of memory queueing an attachment") catch {};
+            continue;
+        };
+    }
+    if (parts.items.len > 0) out.images = parts.items;
+    return out;
+}
+
+/// The image MIME type `path`'s extension names, or null when it names
+/// something the provider image path cannot carry. Deliberately the same four
+/// the wire encoder already knew how to label, extension-matched
+/// case-insensitively so `SHOT.PNG` attaches: guessing wider (labelling a PDF
+/// `image/png`, as this used to) buys nothing but an opaque provider 400 a
+/// whole turn later.
+fn imageMimeForPath(path: []const u8) ?[]const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse return null;
+    const ext = path[dot + 1 ..];
+    if (std.ascii.eqlIgnoreCase(ext, "png")) return "image/png";
+    if (std.ascii.eqlIgnoreCase(ext, "jpg") or std.ascii.eqlIgnoreCase(ext, "jpeg")) return "image/jpeg";
+    if (std.ascii.eqlIgnoreCase(ext, "webp")) return "image/webp";
+    return null;
+}
+
+test "readAttachments reports every dropped attachment instead of sending nothing" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "good.png", .data = "\x89PNGfake" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "empty.png", .data = "" });
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+    const good = try std.fmt.allocPrint(arena, "{s}/good.png", .{root});
+    const empty = try std.fmt.allocPrint(arena, "{s}/empty.png", .{root});
+    const gone = try std.fmt.allocPrint(arena, "{s}/gone.png", .{root});
+
+    // Nothing queued stays silent and sends nothing.
+    {
+        var notices: std.ArrayList([]const u8) = .empty;
+        const d = readAttachments(io, gpa, arena, &.{}, &notices);
+        try std.testing.expect(d.images == null);
+        try std.testing.expectEqual(@as(usize, 0), d.queued);
+        try std.testing.expectEqual(@as(usize, 0), notices.items.len);
+    }
+
+    // A readable attachment survives and is labelled from its extension.
+    {
+        var notices: std.ArrayList([]const u8) = .empty;
+        const d = readAttachments(io, gpa, arena, &.{good}, &notices);
+        try std.testing.expectEqual(@as(usize, 1), d.images.?.len);
+        try std.testing.expectEqualStrings("image/png", d.images.?[0].mime);
+        try std.testing.expectEqual(@as(usize, 0), d.failed);
+        try std.testing.expectEqual(@as(usize, 0), notices.items.len);
+    }
+
+    // The regression: the queue is unreadable, so `images` must stay null for
+    // the caller to refuse the submit on, and each failure owes a line. Before
+    // the fix all three arms were `catch continue` and the turn went out with
+    // no image and nothing in the transcript.
+    {
+        var notices: std.ArrayList([]const u8) = .empty;
+        const d = readAttachments(io, gpa, arena, &.{ gone, empty }, &notices);
+        try std.testing.expect(d.images == null);
+        try std.testing.expectEqual(@as(usize, 2), d.queued);
+        try std.testing.expectEqual(@as(usize, 2), d.failed);
+        try std.testing.expectEqual(@as(usize, 2), notices.items.len);
+        try std.testing.expect(std.mem.find(u8, notices.items[0], "gone.png") != null);
+        try std.testing.expect(std.mem.find(u8, notices.items[0], "cannot read") != null);
+        try std.testing.expect(std.mem.find(u8, notices.items[1], "empty.png") != null);
+        try std.testing.expect(std.mem.find(u8, notices.items[1], "is empty") != null);
+    }
+
+    // A partial failure still sends what survived, and still says what did
+    // not, rather than one silently standing in for the other.
+    {
+        var notices: std.ArrayList([]const u8) = .empty;
+        const d = readAttachments(io, gpa, arena, &.{ gone, good }, &notices);
+        try std.testing.expectEqual(@as(usize, 1), d.images.?.len);
+        try std.testing.expectEqual(@as(usize, 1), d.failed);
+        try std.testing.expectEqual(@as(usize, 1), notices.items.len);
+    }
+
+    // Over the cap is reported as too large, not as unreadable: `.limited(cap
+    // + 1)` only answers StreamTooLong past the cap.
+    {
+        const big = try arena.alloc(u8, attach_max_bytes + 1);
+        @memset(big, 'x');
+        try tmp.dir.writeFile(io, .{ .sub_path = "big.png", .data = big });
+        const big_path = try std.fmt.allocPrint(arena, "{s}/big.png", .{root});
+        var notices: std.ArrayList([]const u8) = .empty;
+        const d = readAttachments(io, gpa, arena, &.{big_path}, &notices);
+        try std.testing.expect(d.images == null);
+        try std.testing.expectEqual(@as(usize, 1), notices.items.len);
+        try std.testing.expect(std.mem.find(u8, notices.items[0], "larger than") != null);
+    }
+
+    // A file at exactly the cap is legal and must not read as too large.
+    {
+        const at_cap = try arena.alloc(u8, attach_max_bytes);
+        @memset(at_cap, 'x');
+        try tmp.dir.writeFile(io, .{ .sub_path = "cap.png", .data = at_cap });
+        const cap_path = try std.fmt.allocPrint(arena, "{s}/cap.png", .{root});
+        var notices: std.ArrayList([]const u8) = .empty;
+        const d = readAttachments(io, gpa, arena, &.{cap_path}, &notices);
+        try std.testing.expectEqual(@as(usize, 1), d.images.?.len);
+        try std.testing.expectEqual(@as(usize, 0), notices.items.len);
+    }
+
+    // A queued path that is no longer an image is refused rather than
+    // labelled image/png and shipped.
+    {
+        try tmp.dir.writeFile(io, .{ .sub_path = "report.pdf", .data = "%PDF-1.7" });
+        const pdf = try std.fmt.allocPrint(arena, "{s}/report.pdf", .{root});
+        var notices: std.ArrayList([]const u8) = .empty;
+        const d = readAttachments(io, gpa, arena, &.{pdf}, &notices);
+        try std.testing.expect(d.images == null);
+        try std.testing.expectEqual(@as(usize, 1), notices.items.len);
+        try std.testing.expect(std.mem.find(u8, notices.items[0], "not a png") != null);
+    }
+}
+
+/// Why `/attach` refused a path, or `.ok`.
+const AttachGate = enum { ok, not_an_image, multimodal_off, no_vision };
+
+/// The three refusals `/attach` owes the user at the command, rather than as
+/// an opaque provider error a turn later: a file that is not an image (which
+/// `ui/app/core/attachments.js` gates on `file.type`), `modules.multimodal`
+/// off, and a model that does not declare `image_in` (both of which
+/// `src/cli.zig` names in its 400). Pure so all three are decidable without a
+/// filesystem or a live provider.
+///
+/// Type first: a PDF is the wrong thing to attach whatever the model is, and
+/// saying so is more useful than complaining about vision support.
+fn attachGate(path: []const u8, multimodal: bool, model: config.Model) AttachGate {
+    if (imageMimeForPath(path) == null) return .not_an_image;
+    if (!multimodal) return .multimodal_off;
+    if (!model.supportsImageInput()) return .no_vision;
+    return .ok;
+}
+
+test "attachGate refuses non-images, multimodal off, and text-only models" {
+    const vision = config.Model{ .capabilities = &.{ "tool_use", "image_in" } };
+    // DeepSeek v4-flash's shape: capabilities declared, no image_in.
+    const text_only = config.Model{ .capabilities = &.{ "thinking", "tool_use" } };
+    // Nothing declared stays unknown and is attempted, as the run gate does.
+    const undeclared = config.Model{};
+
+    try std.testing.expectEqual(AttachGate.ok, attachGate("shot.png", true, vision));
+    try std.testing.expectEqual(AttachGate.ok, attachGate("shot.JPEG", true, vision));
+    try std.testing.expectEqual(AttachGate.ok, attachGate("a/b/shot.webp", true, undeclared));
+
+    // The regression: /attach report.pdf used to queue, and the submit path
+    // then labelled it image/png.
+    try std.testing.expectEqual(AttachGate.not_an_image, attachGate("report.pdf", true, vision));
+    try std.testing.expectEqual(AttachGate.not_an_image, attachGate("notes.txt", true, vision));
+    try std.testing.expectEqual(AttachGate.not_an_image, attachGate("Makefile", true, vision));
+    // A dot in a directory name is not an extension of the file.
+    try std.testing.expectEqual(AttachGate.not_an_image, attachGate("shot.d/capture", true, vision));
+
+    try std.testing.expectEqual(AttachGate.multimodal_off, attachGate("shot.png", false, vision));
+    try std.testing.expectEqual(AttachGate.no_vision, attachGate("shot.png", true, text_only));
+    // Type is reported ahead of either capability problem.
+    try std.testing.expectEqual(AttachGate.not_an_image, attachGate("report.pdf", false, text_only));
+}
+
+test "imageMimeForPath never fabricates a type" {
+    try std.testing.expectEqualStrings("image/png", imageMimeForPath("a.png").?);
+    try std.testing.expectEqualStrings("image/jpeg", imageMimeForPath("a.jpg").?);
+    try std.testing.expectEqualStrings("image/jpeg", imageMimeForPath("a.jpeg").?);
+    try std.testing.expectEqualStrings("image/webp", imageMimeForPath("a.webp").?);
+    try std.testing.expect(imageMimeForPath("a.gif") == null);
+    try std.testing.expect(imageMimeForPath("a.pdf") == null);
+    try std.testing.expect(imageMimeForPath("a") == null);
+    try std.testing.expect(imageMimeForPath("") == null);
 }
 
 /// Rewrites "\r\n", '\r' and '\n' each to one `newline_marker` so multi-line

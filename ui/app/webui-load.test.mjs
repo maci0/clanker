@@ -115,10 +115,17 @@ test("a plugin's mount or refresh throw is contained to its own panel", function
       "unguarded plugin hook call: " + line.trim()
     );
   }
-  assert.ok(
-    (plugins.match(/runPluginHook\(section,/g) || []).length >= 4,
-    "both loaders guard both mount and refresh"
-  );
+  // Both loaders reach both hooks through the one guarded pair in `trackMount`
+  // — two shared call sites rather than four copied ones. The scan above is
+  // what pins "no unguarded path"; this pins that both hooks are still there to
+  // be guarded, so neither can be quietly dropped from the shared pair.
+  for (const hook of ["mount", "refresh"]) {
+    assert.match(
+      plugins,
+      new RegExp("runPluginHook\\(section, label, st\\.retry, function \\(\\) \\{\\s*\\n\\s*return spec\\." + hook + "\\.call\\("),
+      hook + " is not behind the guard both loaders share"
+    );
+  }
 });
 
 test("every named static import resolves to an export of its module", function () {

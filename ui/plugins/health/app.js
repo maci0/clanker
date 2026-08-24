@@ -363,7 +363,14 @@ clanker.registerView({
       return !!(view && view.hidden);
     }
 
-    function applySample(d) {
+    /* `announce` is false for a sample that arrived on its own. The live bus
+       carries metrics at 1 Hz, and every one of them used to be written to the
+       status line: a screen reader got a fresh polite announcement every
+       second for as long as the tab was open, and the page's status-to-toast
+       mirror put a toast on screen at the same rate. The numbers on the tiles
+       are the live surface; the status line is for a read somebody asked for
+       (mount, Refresh, coming back to the view). */
+    function applySample(d, announce) {
       var http = (d && d.http) || null;
       if (!http) throw new Error("no http metrics in the response");
       var llm = (d && d.llm) || {};
@@ -374,13 +381,15 @@ clanker.registerView({
       drawTiles(http, llm, tools, schedule, jobs, at);
       drawBands(http);
       prev = { at: at, http: http, llm: llm, tools: tools, schedule: schedule, jobs: jobs };
-      api.status("Health: " + num(http.requests_total) + " requests served, " +
-        num(http.errors_total) + " errors, " +
-        num(llm.requests_total) + " LLM calls, " +
-        num(llm.errors_total) + " LLM errors, " +
-        num(tools.requests_total) + " tool calls, " +
-        num(schedule.fires_total) + " scheduled runs, " +
-        num(jobs.active) + " background jobs running.");
+      if (announce) {
+        api.status("Health: " + num(http.requests_total) + " requests served, " +
+          num(http.errors_total) + " errors, " +
+          num(llm.requests_total) + " LLM calls, " +
+          num(llm.errors_total) + " LLM errors, " +
+          num(tools.requests_total) + " tool calls, " +
+          num(schedule.fires_total) + " scheduled runs, " +
+          num(jobs.active) + " background jobs running.");
+      }
       return http;
     }
 
@@ -390,7 +399,7 @@ clanker.registerView({
       inFlightLoad = true;
       refresh.disabled = true;
       return api.getJSON("/api/metrics")
-        .then(applySample)
+        .then(function (d) { return applySample(d, true); })
         .catch(function (err) {
           // The previous sample is dropped: differencing across a gap of
           // unknown length would report a rate for a window that never
@@ -415,7 +424,7 @@ clanker.registerView({
     api.onLive(function (ev) {
       if (!ev || ev.t !== "metrics" || !ev.http) return;
       if (viewHidden()) return;
-      try { applySample(ev); } catch (e) {}
+      try { applySample(ev, false); } catch (e) {}
     });
 
     // Coming back to the view: the numbers on screen are as old as the moment
@@ -425,12 +434,10 @@ clanker.registerView({
       prev = null;
       load();
     }
+    // The host calls this on every switch back to an already-loaded view, so
+    // watching the panel's hidden attribute for the same event is no longer
+    // needed: it only bought a second /api/metrics read per re-entry.
     this.refresh = resume;
-    var panel = container.closest(".view");
-    if (panel) {
-      new MutationObserver(function () { if (!panel.hidden) resume(); })
-        .observe(panel, { attributes: true, attributeFilter: ["hidden"] });
-    }
 
     return load();
   },

@@ -135,11 +135,11 @@ Project agents receive this workflow through the harness prompt and
 
 - [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
 
-- [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-23-plugin-refresh-hook-is-unreachable.md) — Open
+- [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-23-plugin-refresh-hook-is-unreachable.md) — Resolved
 
-- [Every plugin's api.status writes the same sr-only live region, and Health rewrites it about once a second](bugs/2026-08-23-plugin-status-line-is-one-shared-live-region.md) — Open
+- [Every plugin's api.status writes the same sr-only live region, and Health rewrites it about once a second](bugs/2026-08-23-plugin-status-line-is-one-shared-live-region.md) — Resolved
 
-- [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-23-plugin-tab-arrow-keys-follow-registration-order.md) — Open
+- [A web UI plugin's tab is wired at the end of VIEWS but inserted mid-rail, so arrow-key order scrambles](bugs/2026-08-23-plugin-tab-arrow-keys-follow-registration-order.md) — Resolved
 
 - [A board card's member avatar is a control inside the card button, and picking a member reopens the picker](bugs/2026-08-23-board-card-member-avatar-nested-in-the-card-button.md) — Resolved
 
@@ -149,9 +149,9 @@ Project agents receive this workflow through the harness prompt and
 
 - [A reply opening with a heading or a list draws its markdown markers literally](bugs/2026-08-23-turn-arrow-defeats-markdown-on-first-reply-line.md) — Resolved
 
-- [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Open
+- [An attachment that changed between /attach and submit is dropped with no line in the transcript](bugs/2026-08-23-repl-attachments-dropped-at-submit-silently.md) — Resolved
 
-- [/attach queues any file and fabricates an image MIME type for it](bugs/2026-08-23-repl-attach-has-no-type-or-vision-gate.md) — Open
+- [/attach queues any file and fabricates an image MIME type for it](bugs/2026-08-23-repl-attach-has-no-type-or-vision-gate.md) — Resolved
 
 - [A steer typed while the final iteration streams is echoed as queued and then discarded](bugs/2026-08-23-repl-steer-after-last-poll-silently-dropped.md) — Open
 

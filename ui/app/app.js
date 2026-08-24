@@ -19,7 +19,7 @@ import { renderUsageTable as usageRenderTable } from "./core/usage.js";
 import { renderStatusInto as statusRenderInto } from "./core/status.js";
 import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, renderAttachments as attachRender, addMediaFile as attachAddMedia } from "./core/attachments.js";
 import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/logs.js";
-import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins } from "./core/plugins.js";
+import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins, pluginViewShown as pluginsViewShown } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, applyChatPrefs as mpApplyChatPrefs, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
 import { goalStatusLabel } from "./core/goals.js";
@@ -4456,6 +4456,10 @@ function showView(name, focusPanel) {
     var panel = document.getElementById("view-" + name);
     if (panel && panel.focus) panel.focus({ preventScroll: true });
   }
+  // Read before the load below can set it: a loader that mounts synchronously
+  // flips `viewLoaded[name]` inside this call, and a plugin must never be
+  // handed `refresh` in the same switch that ran its `mount`.
+  var wasLoaded = !!viewLoaded[name];
   if (!viewLoaded[name] && viewLoaders[name]) {
     // Marked loaded only once it has loaded: a view whose first fetch failed
     // used to stay broken for the life of the page, however many times you
@@ -4494,6 +4498,12 @@ function showView(name, focusPanel) {
     // start them again, or the view stays frozen until a manual Refresh.
     arenaModulePromise.then(function (arena) { arena.loadArenaView(); });
   }
+  // A plugin view is loaded once and then never handed to its loader again, so
+  // this is the only path its `refresh` hook has — the re-entry point the
+  // registration API documents, and what mesh, health and office all need to
+  // restart the polling they stopped while hidden. A no-op for a view with no
+  // plugin behind it, or one whose `mount` has not run.
+  if (wasLoaded) pluginsViewShown(name);
   if (pendingSessionId) switchSession(pendingSessionId);
   if (deepRun) {
     window._pendingRunNode = deepNode || null;
@@ -4516,6 +4526,23 @@ function showView(name, focusPanel) {
   }
 }
 
+/* The rail's own order, read off the rail. For the eleven built-ins `VIEWS` is
+   exactly the shipped rail order, so the index a tab was wired with stood in
+   for its position for as long as the rail was static. A plugin separates the
+   two: `makeViewShell` puts its tab inside its group, which is the right place,
+   then registers it last, so an ArrowUp from a Work group plugin moved to
+   whatever `VIEWS` happened to hold before it and `End` selected the
+   last-registered plugin rather than the bottom tab. */
+function railOrder() {
+  var tabs = document.querySelectorAll("#rail [role='tab'][data-view]");
+  var out = [];
+  for (var i = 0; i < tabs.length; i++) {
+    var v = tabs[i].getAttribute("data-view");
+    if (v && VIEWS.indexOf(v) !== -1 && out.indexOf(v) === -1) out.push(v);
+  }
+  return out.length ? out : VIEWS.slice();
+}
+
 function wireTab(tab, i) {
   var v = tab.getAttribute("data-view");
   tab.addEventListener("click", function () { showView(v, false); });
@@ -4525,19 +4552,24 @@ function wireTab(tab, i) {
     // for anyone who learned them here.
     var step = (e.key === "ArrowDown" || e.key === "ArrowRight") ? 1 :
       (e.key === "ArrowUp" || e.key === "ArrowLeft") ? -1 : 0;
+    if (!step && e.key !== "Home" && e.key !== "End") return;
+    // Recomputed per press rather than captured: a plugin's tab can join the
+    // rail long after this one was wired.
+    var order = railOrder();
+    var at = order.indexOf(v);
+    // A tab that is not in the rail keeps the index it was wired with.
+    if (at === -1) at = i;
     if (step) {
       e.preventDefault();
-      var next = VIEWS[(i + step + VIEWS.length) % VIEWS.length];
+      var next = order[(at + step + order.length) % order.length];
       showView(next, false);
       document.getElementById("tab-" + next).focus();
       return;
     }
-    if (e.key === "Home" || e.key === "End") {
-      e.preventDefault();
-      var edge = e.key === "Home" ? VIEWS[0] : VIEWS[VIEWS.length - 1];
-      showView(edge, false);
-      document.getElementById("tab-" + edge).focus();
-    }
+    e.preventDefault();
+    var edge = e.key === "Home" ? order[0] : order[order.length - 1];
+    showView(edge, false);
+    document.getElementById("tab-" + edge).focus();
   });
 }
 
@@ -4684,6 +4716,10 @@ SUGGESTIONS.forEach(function (text) {
    the two able to drift, the regions are observed and mirrored here. */
 function showToast(text) { return uiToast(text); }
 
+/* Plugin views build their own live region with their chrome, well after this
+   runs, so the mirror has to be joinable rather than a fixed list of ids. */
+var observeStatusNode = function () {};
+
 if (window.MutationObserver) {
   var statusToasts = new WeakMap();
   var statusObserver = new MutationObserver(function (records) {
@@ -4713,6 +4749,9 @@ if (window.MutationObserver) {
     var node = document.getElementById(id);
     if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
+  observeStatusNode = function (node) {
+    if (node) statusObserver.observe(node, { childList: true, characterData: true, subtree: true });
+  };
 }
 
 /* ---------- saved prompts ---------- */
@@ -5156,7 +5195,7 @@ var pluginViews = pluginsViews;
 var loadPluginAssets = pluginsLoadPluginAssets;
 var loadWebuiPlugins = pluginsLoadWebuiPlugins;
 var renderWebuiPlugins = pluginsRenderWebuiPlugins;
-pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView: showView, el: el, readJson: readJson, fmtBytes: fmtBytes, fmtInt: fmtInt, fmtCost: fmtCost, formatChatTime: formatChatTime, openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); } });
+pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView: showView, el: el, readJson: readJson, fmtBytes: fmtBytes, fmtInt: fmtInt, fmtCost: fmtCost, formatChatTime: formatChatTime, openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); }, observeStatus: function (node) { observeStatusNode(node); } });
 
 function loadLogList() { return logsLoadLogList(el, readJson, fmtBytes); }
 function loadLog(name) { return logsLoadLog(name, el, readJson, fmtBytes); }
