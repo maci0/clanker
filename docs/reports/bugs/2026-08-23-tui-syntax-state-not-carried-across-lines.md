@@ -4,11 +4,11 @@
 
 - **What failed:** syntax.zig states that highlighter state (unterminated strings, block comments) is carried across lines by the caller, and highlightLine reads and sets it. Both vaxis render paths construct State.init(lang) inside the per-line loop, so every fenced line starts fresh: a block comment's second line highlights as code. MdStream, the clanker run path, does carry the state, so the two renderers disagree on the same bytes.
 - **Impact:** Any fenced C/JS/Zig block with a multi-line comment or string is coloured wrongly in the REPL.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. src/tui/repl.zig: writeStream re-inits syntax.State per opening fence instead of per line, and the transcript draw takes fenceLineSegments, which inherits the state from the line above or rebuilds it with fenceEntryState (rescan from Line.fence_first) when the window opens mid-block. syntax.advanceLine is the no-output rescan step. Two unit tests plus a live pty REPL run against a loopback SSE provider: line 2 of a /* */ came out ESC[35m keyword before, dim throughout after.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. src/tui/repl.zig: writeStream re-inits syntax.State per opening fence instead of per line, and the transcript draw takes fenceLineSegments, which inherits the state from the line above or rebuilds it with fenceEntryState (rescan from Line.fence_first) when the window opens mid-block. syntax.advanceLine is the no-output rescan step. Two unit tests plus a live pty REPL run against a loopback SSE provider: line 2 of a /* */ came out ESC[35m keyword before, dim throughout after.
 
 ## Symptom and impact
 

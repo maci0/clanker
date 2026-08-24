@@ -153,7 +153,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [A steer typed while the final iteration streams is echoed as queued and then discarded](bugs/2026-08-23-repl-steer-after-last-poll-silently-dropped.md) — Open
 
-- [Fenced block comments and multi-line strings mis-highlight in the REPL but not in clanker run](bugs/2026-08-23-tui-syntax-state-not-carried-across-lines.md) — Open
+- [Fenced block comments and multi-line strings mis-highlight in the REPL but not in clanker run](bugs/2026-08-23-tui-syntax-state-not-carried-across-lines.md) — Resolved
 
 - [The same @path line inlines a file when idle and reaches the model literally mid-run](bugs/2026-08-23-repl-mentions-not-expanded-when-steering.md) — Open
 
