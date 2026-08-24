@@ -55,33 +55,71 @@ pub fn clampedMaxTokens(params: api.RequestParams) u32 {
     return @min(requested, window / 2);
 }
 
-/// Writes `temperature`, `top_p`, and `reasoning_effort`. Precedence is
-/// per-run override, then the model's configured value, then the use-case
-/// table. An explicit config value still wins; the table only fills a gap.
-pub fn writeSamplingParams(s: *json.Stringify, params: api.RequestParams) !void {
+/// The sampling knobs a request should carry, resolved but not yet written.
+/// Precedence is per-run override, then the model's configured value, then
+/// the use-case table (PRD 0024); an explicit config value still wins and the
+/// table only fills a gap.
+///
+/// Separate from `writeSamplingParams` because the field *names* are per-wire
+/// while the precedence chain is not: Gemini writes `topP` inside
+/// `generationConfig` and the Responses API nests the effort under
+/// `reasoning`, so those codecs resolve here and spell it themselves rather
+/// than re-implementing three `orelse` chains each
+/// (`gemini.zig` did, and its copy silently dropped the effort).
+pub const Sampling = struct {
+    temperature: ?f64 = null,
+    top_p: ?f64 = null,
+    /// Wire string, not the config enum: the per-run override and the
+    /// use-case table are already strings.
+    reasoning_effort: ?[]const u8 = null,
+};
+
+pub fn resolveSampling(params: api.RequestParams) Sampling {
     const rec = sampling.forParams(params);
     const model = params.provider.activeModel();
-    const temp = params.temperature orelse model.temperature orelse rec.temperature;
-    if (temp) |t| {
-        try s.objectField("temperature");
-        try s.print("{d}", .{t});
-    }
-    const nucleus = params.top_p orelse model.top_p orelse rec.top_p;
-    if (nucleus) |tp| {
-        try s.objectField("top_p");
-        try s.print("{d}", .{tp});
-    }
     // The model's value is a validated enum — config rejects anything outside
     // the five levels — while the per-run override and the use-case table are
     // wire strings. Flatten to the wire form so the precedence chain stays one
     // expression.
     const model_effort: ?[]const u8 = if (model.reasoning_effort) |re| @tagName(re) else null;
-    const effort = params.reasoning_effort orelse model_effort orelse rec.reasoning_effort;
-    if (effort) |re| {
+    return .{
+        .temperature = params.temperature orelse model.temperature orelse rec.temperature,
+        .top_p = params.top_p orelse model.top_p orelse rec.top_p,
+        .reasoning_effort = params.reasoning_effort orelse model_effort orelse rec.reasoning_effort,
+    };
+}
+
+/// Writes `temperature`, `top_p`, and the reasoning knob into the body being
+/// built, in the shape `thinkingSchemaOr(wire_default)` selects.
+///
+/// `wire_default` is the shape this endpoint accepts when neither the model
+/// nor the provider names one, and the caller is the codec because that is
+/// where wire knowledge lives (ADR 0004). It is not a style preference: a
+/// single shared default is what put OpenAI's flat `reasoning_effort` on
+/// `POST /v1/messages`, which Anthropic refuses as an extra input.
+pub fn writeSamplingParams(s: *json.Stringify, params: api.RequestParams, wire_default: config.ThinkingSchema) !void {
+    const schema = params.provider.thinkingSchemaOr(wire_default);
+    const rec = resolveSampling(params);
+    // Current Claude models (Opus 4.7 and later, Sonnet 5, Fable 5) removed
+    // `temperature`, `top_p` and `top_k` outright and answer 400 on any
+    // value, so the Anthropic thinking wire drops both writes rather than
+    // reconciling them against the thinking block.
+    if (schema != .anthropic_thinking) {
+        if (rec.temperature) |t| {
+            try s.objectField("temperature");
+            try s.print("{d}", .{t});
+        }
+        if (rec.top_p) |tp| {
+            try s.objectField("top_p");
+            try s.print("{d}", .{tp});
+        }
+    }
+    if (rec.reasoning_effort) |re| {
         // The knob's wire shape is a per-model/provider choice: some
         // endpoints want the flat OpenAI field, some the OpenRouter nest,
-        // some GLM's thinking toggle, and some 400 on any of them.
-        switch (params.provider.effectiveThinkingSchema()) {
+        // some GLM's thinking toggle, some Anthropic's adaptive block, and
+        // some 400 on any of them.
+        switch (schema) {
             .reasoning_effort => {
                 try s.objectField("reasoning_effort");
                 try s.write(re);
@@ -100,9 +138,32 @@ pub fn writeSamplingParams(s: *json.Stringify, params: api.RequestParams) !void 
                 try s.write(if (std.mem.eql(u8, re, "none")) "disabled" else "enabled");
                 try s.endObject();
             },
+            .anthropic_thinking => try writeAnthropicThinking(s, re),
             .none => {},
         }
     }
+}
+
+/// Anthropic Messages' reasoning controls: `thinking.type` is the on/off
+/// switch and `output_config.effort` carries the depth. `adaptive` is the only
+/// on-mode on current models — `{"type":"enabled","budget_tokens":N}` is
+/// removed from Opus 4.7 and later, Sonnet 5 and Fable 5 and answers 400, so
+/// GLM's `enabled` (the `.thinking` arm above) is not a substitute. `none`
+/// maps to `{"type":"disabled"}` and sends no effort, since the request is to
+/// turn thinking off rather than to run it shallowly.
+fn writeAnthropicThinking(s: *json.Stringify, effort: []const u8) !void {
+    const off = std.mem.eql(u8, effort, "none");
+    try s.objectField("thinking");
+    try s.beginObject();
+    try s.objectField("type");
+    try s.write(if (off) "disabled" else "adaptive");
+    try s.endObject();
+    if (off) return;
+    try s.objectField("output_config");
+    try s.beginObject();
+    try s.objectField("effort");
+    try s.write(effort);
+    try s.endObject();
 }
 
 /// `base_url` + the provider's `path` override, or the wire kind's default.
@@ -217,7 +278,7 @@ test "writeSamplingParams fills the use-case table when nothing is configured" {
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = json.Stringify{ .writer = &out.writer };
     try s.beginObject();
-    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} }, .reasoning_effort);
     try s.endObject();
     try std.testing.expect(std.mem.find(u8, out.written(), "\"temperature\":0.7") != null);
 }
@@ -232,7 +293,7 @@ test "writeSamplingParams keeps an explicit model temperature" {
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = json.Stringify{ .writer = &out.writer };
     try s.beginObject();
-    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} }, .reasoning_effort);
     try s.endObject();
     try std.testing.expect(std.mem.find(u8, out.written(), "\"temperature\":0.2") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "\"temperature\":0.7") == null);
@@ -250,7 +311,7 @@ test "writeSamplingParams sends reasoning_effort for thinking models" {
     var out: std.Io.Writer.Allocating = .init(arena);
     var s = json.Stringify{ .writer = &out.writer };
     try s.beginObject();
-    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} });
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} }, .reasoning_effort);
     try s.endObject();
     try std.testing.expect(std.mem.find(u8, out.written(), "\"reasoning_effort\":\"medium\"") != null);
     try std.testing.expect(std.mem.find(u8, out.written(), "temperature") == null);
@@ -352,11 +413,84 @@ test "clampedMaxTokens leaves the budget intact when the context window is unkno
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var p = try config.Provider.single(arena, "p", "https://p.test", .openai_compat, "m", .{ .max_tokens = 16384 });
-    // context_window is at its zero default here (no snapshot fill in a unit
-    // test): an unknown window must not clamp a known budget down to zero.
-    try std.testing.expectEqual(@as(u32, 16384), clampedMaxTokens(.{ .provider = &p, .messages = &.{} }));
-    // A known window still caps the budget at half of it.
     var it = p.models.iterator();
-    it.next().?.value_ptr.context_window = 16384;
+    const m = it.next().?.value_ptr;
+
+    // `Model.context_window` defaults to 131072, not 0, so `Provider.single`
+    // above carries a *known* window and the assertion below passes through
+    // the clamp (16384 < 65536), never reaching the `window == 0` return. This
+    // test's comment used to claim the opposite, which left the zero-window
+    // guard with no coverage at all (PRD 0024 known issue 4). Pin both paths
+    // separately, starting with the default.
+    try std.testing.expectEqual(@as(u32, 131072), m.context_window);
+    try std.testing.expectEqual(@as(u32, 16384), clampedMaxTokens(.{ .provider = &p, .messages = &.{} }));
+
+    // The guard itself: an unknown window (a hand-written `context_window = 0`,
+    // or a snapshot row with no limit) must not clamp a known budget to zero.
+    m.context_window = 0;
+    try std.testing.expectEqual(@as(u32, 16384), clampedMaxTokens(.{ .provider = &p, .messages = &.{} }));
+
+    // A known window still caps the budget at half of it.
+    m.context_window = 16384;
     try std.testing.expectEqual(@as(u32, 8192), clampedMaxTokens(.{ .provider = &p, .messages = &.{} }));
+}
+
+test "the Anthropic thinking wire sends adaptive plus output_config.effort and no sampling" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var p = try config.Provider.single(arena, "p", "https://p.test", .anthropic, "m", .{ .temperature = 0.2, .top_p = 0.9, .reasoning_effort = .high });
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} }, .anthropic_thinking);
+    try s.endObject();
+    const body = out.written();
+
+    try std.testing.expect(std.mem.find(u8, body, "\"thinking\":{\"type\":\"adaptive\"}") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"output_config\":{\"effort\":\"high\"}") != null);
+    // The three shapes that answer 400 on every current Claude model.
+    try std.testing.expect(std.mem.find(u8, body, "reasoning_effort") == null);
+    try std.testing.expect(std.mem.find(u8, body, "budget_tokens") == null);
+    try std.testing.expect(std.mem.find(u8, body, "\"type\":\"enabled\"") == null);
+    // Even an explicitly configured temperature/top_p is dropped: those are
+    // removed from the models, not merely constrained alongside thinking.
+    try std.testing.expect(std.mem.find(u8, body, "temperature") == null);
+    try std.testing.expect(std.mem.find(u8, body, "top_p") == null);
+}
+
+test "effort none disables Anthropic thinking and sends no output_config" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const p = try config.Provider.single(arena, "p", "https://p.test", .anthropic, "m", .{ .reasoning_effort = .none });
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try writeSamplingParams(&s, .{ .provider = &p, .messages = &.{} }, .anthropic_thinking);
+    try s.endObject();
+    const body = out.written();
+
+    try std.testing.expect(std.mem.find(u8, body, "\"thinking\":{\"type\":\"disabled\"}") != null);
+    try std.testing.expect(std.mem.find(u8, body, "output_config") == null);
+}
+
+test "the wire default is only the bottom of the chain" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // A model that names its own schema still wins over the codec's default,
+    // which is what lets an operator run an older Claude SKU on the flat field.
+    const pinned = try config.Provider.single(arena, "p", "https://p.test", .anthropic, "m", .{ .reasoning_effort = .high, .thinking_schema = .reasoning_effort });
+    try std.testing.expectEqual(config.ThinkingSchema.reasoning_effort, pinned.thinkingSchemaOr(.anthropic_thinking));
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    try writeSamplingParams(&s, .{ .provider = &pinned, .messages = &.{} }, .anthropic_thinking);
+    try s.endObject();
+    try std.testing.expect(std.mem.find(u8, out.written(), "\"reasoning_effort\":\"high\"") != null);
+    try std.testing.expect(std.mem.find(u8, out.written(), "adaptive") == null);
 }
