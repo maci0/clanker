@@ -97,17 +97,3 @@ does not enforce.
   `iterTools`, `toolPolicy`), `src/cli.zig` (`cmdRun`'s filter, `cmdReplVaxis`
   dispatch), `src/tui/repl.zig` (`ReplOptions`), `src/toolhost/registry.zig`
   (`lazyToolDefs`, `catalogText`), `src/preset/preset.zig`
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

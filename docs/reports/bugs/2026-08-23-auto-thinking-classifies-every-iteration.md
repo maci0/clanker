@@ -114,17 +114,3 @@ the default log level. Not fixed here; filed separately.
 - Code: `src/agent/loop.zig` (`classifyEffort`, `ThinkingCache`),
   `src/agent/thinking.zig` (`classify`), `tools/zig/thinking_logic.zig`
   (`parseLevel`)
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

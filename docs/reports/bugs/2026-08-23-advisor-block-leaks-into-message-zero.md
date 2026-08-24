@@ -97,17 +97,3 @@ coverage.
 - PRD: [0015-advisor.md](../../prds/0015-advisor.md)
 - Code: `src/agent/loop.zig` (the advisor insert/`defer` pair, the TTSR arm,
   `compactMiddle`, `run`'s system-prompt prepend, `refreshSystemPrompt`)
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

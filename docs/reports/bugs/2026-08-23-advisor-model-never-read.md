@@ -104,17 +104,3 @@ debug, because a typo otherwise reads as "the provider rejected the advisor".
 - Docs: `docs/configuration.md` `[advisor]`
 - Code: `src/agent/advisor.zig` (`review`), `src/agent/thinking.zig`
   (`resolveClassifier`, the pattern it now matches)
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

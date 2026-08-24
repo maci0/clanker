@@ -72,17 +72,3 @@ nested results.
 - Code: `src/hooks/config.zig` (command validation, timeout validation),
   `src/hooks/runner.zig` (`splitCommand`, the `argv[0]` log lines),
   `src/sandbox/host.zig` (`execUnderPolicyInput`, the `timeout_ms == 0` read)
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet

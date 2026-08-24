@@ -203,3 +203,52 @@ a duplicated heading, the RFC template prose in 27 records, the `## Appendix`
 decision, and the eight PRDs with instruction paragraphs under real content.
 None of those is a cause, and the sweep is still the wide edit this record
 declined.
+## Partial sweep, 2026-08-24 — the complete trailing scaffold blocks
+
+Eleven report records carried a **complete** `reports create` bug scaffold
+appended at end of file — all six of `## Reproduction`, `## Root cause`,
+`## Resolution`, `## Verification`, `## Follow-up`, `## References` present,
+every one of them empty (or holding only the `- Investigation: none yet`
+placeholder), while the same headings above carried the real content. Removed.
+
+Detection criterion, deliberately strict so the edit is reviewable: the trailing
+run must be exactly that six-heading set, every body empty by the same rule
+`isPlaceholderBody` uses, and at least one of those headings must already carry
+content earlier in the record. `## Blocked on` is never removed — an empty body
+there is the store's own convention for 'not blocked'.
+
+Files: advisor-block-leaks-into-message-zero, advisor-model-never-read,
+auto-thinking-classifies-every-iteration, dump-config-header-redaction-cuts-on-equals,
+hook-command-trim-set-is-mis-escaped, improve-history-read-failure-reads-as-empty,
+improve-merge-pin-advances-before-the-resync, learnings-prompt-keeps-the-oldest-notes,
+preset-tool-filter-is-inert, profile-overlay-errors-name-the-wrong-file,
+gemini-thinking-row-inert.
+
+Verified by auditing every removed line rather than trusting the script: the
+whole diff is 77 blank lines, 66 `## ` headings (11 x 6), and 11
+`- Investigation: none yet` placeholders. **No prose line was removed.**
+
+## What is left, measured
+
+**83 empty duplicate headings across 34 records** still remain in
+`docs/reports/` and `docs/runbooks/`. These are *partial* runs, not whole
+scaffold blocks, and they were left alone on purpose: two defensible algorithms
+for grouping a partial run disagreed on where its boundary falls (one reported
+31 files / 128 headings, another 11 / 61, and one record's count moved between
+them). A boundary that shifts with the algorithm is a per-record judgement, not
+a mechanical sweep, and mass-editing on the looser rule would have produced a
+diff nobody could review.
+
+A first attempt was looser still and would have touched 72 files: it stripped
+any trailing empty section, which also deletes a legitimately unfilled final
+`## Follow-up` or `## References`. That is scaffold structure, not residue.
+Recording the wrong version here because the difference is the whole lesson —
+'empty at the end' and 'a duplicate that was never authored' are not the same
+predicate.
+
+The RFC half of this record is untouched: it needs the `## Appendix` decision
+this record already calls for, which is a judgement about intent rather than a
+sweep. The eight PRDs carrying instruction prose under real content are also
+untouched.
+
+This record therefore stays **Open**.

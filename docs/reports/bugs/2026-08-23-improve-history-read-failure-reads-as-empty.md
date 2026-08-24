@@ -95,17 +95,3 @@ same commit.
 - Code: `src/improve/history.zig` (`loadAll`, `loadTail`, `append`,
   `markReverted`, `tailLines`), `src/improve/engine.zig` (the dedup gates,
   `contentReverts`), `src/improve/reverts.zig`
-
-## Reproduction
-
-## Root cause
-
-## Resolution
-
-## Verification
-
-## Follow-up
-
-## References
-
-- Investigation: none yet
