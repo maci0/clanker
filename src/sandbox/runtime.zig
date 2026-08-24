@@ -1523,6 +1523,123 @@ test "reports wasm tool searches report history and current runbooks" {
     try std.testing.expect(std.mem.find(u8, updated_runbook, "then run the focused gate") == null);
 }
 
+test "reports wasm tool rename lists leftover references at paths that exist" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "docs/reports/bugs");
+    try tmp.dir.createDirPath(io, "docs/runbooks");
+    // The prose mention outside the inventory markers is deliberate: the link
+    // rewrite only touches `bugs/<stem>.md`, so this line survives it and the
+    // index is therefore still a grep hit. It is what pins that the index is
+    // skipped by path rather than by a bare `README.md` comparison that never
+    // matched anything, because the host reports repo-rooted paths.
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/reports/README.md", .data =
+        \\# Reports
+        \\
+        \\Historical note: 2026-08-14-alpha.md was the first record here.
+        \\
+        \\<!-- inventory:bug:start -->
+        \\- [Bug — alpha](bugs/2026-08-14-alpha.md) — Open
+        \\<!-- inventory:bug:end -->
+        \\
+        \\<!-- inventory:investigation:start -->
+        \\<!-- inventory:investigation:end -->
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/reports/bugs/2026-08-14-alpha.md", .data =
+        \\# Bug — alpha
+        \\
+        \\## Status
+        \\
+        \\Open.
+        \\
+    });
+    // The record that still names the one being renamed. It is a directory
+    // level below the store root, which is the whole reason this store broke:
+    // `docs/reports` is the only store that nests.
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/reports/bugs/2026-08-14-beta.md", .data =
+        \\# Bug — beta
+        \\
+        \\## References
+        \\
+        \\- Related: [alpha](2026-08-14-alpha.md)
+        \\
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/runbooks/README.md", .data =
+        \\# Runbooks
+        \\
+        \\<!-- inventory:runbook:start -->
+        \\No runbooks yet.
+        \\<!-- inventory:runbook:end -->
+        \\
+    });
+    // The second store, flat, so both branches of the walk are exercised.
+    try tmp.dir.writeFile(io, .{ .sub_path = "docs/runbooks/rollback.md", .data =
+        \\# Runbook — rollback
+        \\
+        \\Diagnosed in 2026-08-14-alpha.md.
+        \\
+    });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "docs/reports/", "docs/runbooks/" },
+        .environ_map = &env_map,
+    };
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/reports.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+    const renamed = try mod.executeTool(
+        "{\"action\":\"rename\",\"path\":\"docs/reports/bugs/2026-08-14-alpha.md\",\"slug\":\"2026-08-15-alpha\"}",
+    );
+    defer std.testing.allocator.free(renamed);
+
+    try std.testing.expect(std.mem.find(u8, renamed, "\"ok\":true") != null);
+    try std.testing.expect(std.mem.find(u8, renamed, "docs/reports/bugs/2026-08-15-alpha.md") != null);
+    try std.testing.expect(std.mem.find(u8, renamed, "\"indexed\":true") != null);
+
+    // The bug: the store root was joined onto a hit `ck_fs_grep` already
+    // reports repo-rooted, so every path on this list named
+    // `docs/reports/docs/reports/…` and opened nothing. The list is the only
+    // reason to run the verb rather than `git mv`.
+    try std.testing.expect(std.mem.find(u8, renamed, "docs/reports/docs/reports") == null);
+    try std.testing.expect(std.mem.find(u8, renamed, "docs/runbooks/docs/runbooks") == null);
+    try std.testing.expect(std.mem.find(u8, renamed, "docs/reports/bugs/2026-08-14-beta.md") != null);
+    try std.testing.expect(std.mem.find(u8, renamed, "docs/runbooks/rollback.md") != null);
+    // Each store's index is skipped by path: it was just rewritten, and the
+    // reply already says so when that failed.
+    try std.testing.expect(std.mem.find(u8, renamed, "docs/reports/README.md") == null);
+
+    // Every listed path has to open, which is the property the printed list
+    // claims and the one that was false.
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, renamed, .{});
+    defer parsed.deinit();
+    const refs = parsed.value.object.get("references").?.array.items;
+    try std.testing.expectEqual(@as(usize, 2), refs.len);
+    for (refs) |r| {
+        const st = tmp.dir.statFile(io, r.string, .{}) catch {
+            std.debug.print("rename named a reference that does not exist: {s}\n", .{r.string});
+            return error.TestUnexpectedResult;
+        };
+        try std.testing.expect(st.size > 0);
+    }
+}
+
 test "research wasm tool plans a sweep and keeps the note it produces" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();

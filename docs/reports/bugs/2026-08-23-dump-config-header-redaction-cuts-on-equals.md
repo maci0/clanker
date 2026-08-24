@@ -4,11 +4,11 @@
 
 - **What failed:** writeKvNames in src/config.zig serves both the env and headers lists and cuts at the first equals sign before trying the colon, unconditionally. A header's separator is the colon, so any equals inside the value wins and the cut lands past the secret: a Basic credential ending in base64 padding is dumped almost whole. Any padded token or signature header is the same. The existing test uses a value with no equals sign, so it passes.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed in ac242be4; writeKvNames now takes the separator from the caller (':' for headers, '=' for env) and the redaction test carries a base64-padded Basic credential. Verified by clanker gate (11/11 PASS) and by a live --dump-config over an mcp_servers entry with '=' in both a header and an env value.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed in ac242be4; writeKvNames now takes the separator from the caller (':' for headers, '=' for env) and the redaction test carries a base64-padded Basic credential. Verified by clanker gate (11/11 PASS) and by a live --dump-config over an mcp_servers entry with '=' in both a header and an env value.
 
 ## Symptom and impact
 

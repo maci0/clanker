@@ -41,14 +41,30 @@ const DiagnosticSource = struct {
 /// the caller that passed the name explicitly saw the overlay and the rest
 /// of the run silently read base+local only, so `clanker --dump-config
 /// --profile p` and `clanker run --profile p` described two different
-/// configs on one invocation. Threadlocal like the diagnostic state above.
-threadlocal var overlay_profile: ?[]const u8 = null;
+/// configs on one invocation.
+///
+/// Process-global, deliberately *not* threadlocal like the diagnostic state
+/// above: a spawned thread got a fresh null and reverted to base+local. That
+/// made `clanker serve --profile p`'s `ConfigWatch` thread validate a stack
+/// the process is not running, so every config edit either logged "config
+/// changed but does not load ... keeping the last known good config" against
+/// a process that was fine, or green-lit a restart into a config that cannot
+/// boot. Written once on the main thread before any command runs and read
+/// everywhere after, so the unsynchronized access is a publish, not a race.
+var overlay_profile: ?[]const u8 = null;
 
 /// Names the profile every subsequent load overlays between the local file
 /// and the struct defaults. An explicit `loadWithProfile` argument still
 /// wins over this.
 pub fn setProfileOverlay(name: ?[]const u8) void {
     overlay_profile = name;
+}
+
+/// The armed overlay name, for a caller that has to carry `--profile` across
+/// a process boundary rather than load with it: `buildServeArgvTail` repeats
+/// it on the hot-reload re-exec, which otherwise drops back to base+local.
+pub fn profileOverlay() ?[]const u8 {
+    return overlay_profile;
 }
 
 /// The wire format a provider speaks. One tag per entry in the
@@ -124,19 +140,41 @@ pub const ToolSchema = enum {
 };
 
 /// How the reasoning knob is encoded on the wire. `reasoning_effort` is the
-/// flat OpenAI field (the default today); `reasoning` nests it OpenRouter
-/// style (`"reasoning":{"effort":...}`); `thinking` sends the GLM/Zhipu
-/// toggle (`"thinking":{"type":"enabled"}`); `none` omits every reasoning
-/// field for endpoints that 400 on unknown keys.
+/// flat OpenAI field (the OpenAI-compatible wire's default); `reasoning`
+/// nests it OpenRouter style (`"reasoning":{"effort":...}`); `thinking` sends
+/// the GLM/Zhipu toggle (`"thinking":{"type":"enabled"}`);
+/// `anthropic_thinking` is the Anthropic Messages shape,
+/// `"thinking":{"type":"adaptive"}` with the level in
+/// `"output_config":{"effort":...}`; `none` omits every reasoning field for
+/// endpoints that 400 on unknown keys.
+///
+/// There is no single default: which shape an endpoint accepts is a property
+/// of the wire, so the provider codec supplies the bottom of the chain via
+/// `thinkingSchemaOr`. One shared default is what put OpenAI's flat field on
+/// `POST /v1/messages`
+/// ([bug](../docs/reports/bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md)).
 pub const ThinkingSchema = enum {
     reasoning_effort,
     reasoning,
     thinking,
+    anthropic_thinking,
     none,
 
     pub fn fromStr(s: []const u8) ?ThinkingSchema {
         return std.meta.stringToEnum(ThinkingSchema, s);
     }
+
+    /// Every accepted spelling, comma-separated, for the load diagnostic when
+    /// a config names one this binary does not know. Derived from the enum so
+    /// a new arm cannot leave the message stale.
+    pub const known_names: []const u8 = blk: {
+        var out: []const u8 = "";
+        for (std.meta.fieldNames(ThinkingSchema), 0..) |field_name, i| {
+            if (i > 0) out = out ++ ", ";
+            out = out ++ "\"" ++ field_name ++ "\"";
+        }
+        break :blk out;
+    };
 };
 
 /// How reasoning is read OUT of a response. The request side is
@@ -352,9 +390,21 @@ pub const Provider = struct {
     }
 
     /// Wire encoding for the active model's reasoning knob: model, then
-    /// provider, then the flat `reasoning_effort` field.
+    /// provider, then the flat `reasoning_effort` field. The OpenAI-compatible
+    /// wire's spelling of `thinkingSchemaOr`, kept for callers that are only
+    /// ever on that wire.
     pub fn effectiveThinkingSchema(self: *const Provider) ThinkingSchema {
-        return self.activeModel().thinking_schema orelse self.thinking_schema orelse .reasoning_effort;
+        return self.thinkingSchemaOr(.reasoning_effort);
+    }
+
+    /// The same model-then-provider chain with the wire kind's own shape at
+    /// the bottom. The provider codec passes it, because which reasoning field
+    /// an endpoint accepts is a property of the wire and not of config, and
+    /// [ADR 0004](../docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md)
+    /// keeps kind knowledge inside `src/llm/providers/`. One shared default
+    /// here is what sent OpenAI's flat `reasoning_effort` to Anthropic.
+    pub fn thinkingSchemaOr(self: *const Provider, wire_default: ThinkingSchema) ThinkingSchema {
+        return self.activeModel().thinking_schema orelse self.thinking_schema orelse wire_default;
     }
 
     /// How the active model's reasoning is read out of a response: model,
@@ -1245,10 +1295,19 @@ pub const Config = struct {
     /// stdout, which lands in terminals, logs, and bug reports. Only the
     /// names are written, so the dump still shows which env var / header
     /// each server gets.
-    fn writeKvNames(s: *std.json.Stringify, items: []const []const u8) !void {
+    ///
+    /// `sep` comes from the caller because only the caller knows which field
+    /// it is dumping, and the two separators are not interchangeable: this
+    /// used to try `=` first and fall back to `:` for both shapes, so any `=`
+    /// *inside* a header value won and the cut landed past the secret. A
+    /// base64 `Basic` credential is `=`-padded, so
+    /// `Authorization: Basic dXNlcjpwYXNzd29yZA==` dumped as
+    /// `Authorization: Basic dXNlcjpwYXNzd29yZA` -- the whole credential, one
+    /// padding character short.
+    fn writeKvNames(s: *std.json.Stringify, items: []const []const u8, sep: u8) !void {
         try s.beginArray();
         for (items) |item| {
-            const cut = std.mem.findScalar(u8, item, '=') orelse std.mem.findScalar(u8, item, ':') orelse item.len;
+            const cut = std.mem.findScalar(u8, item, sep) orelse item.len;
             try s.write(item[0..cut]);
         }
         try s.endArray();
@@ -1287,8 +1346,10 @@ pub const Config = struct {
                     inline for (st.fields) |f| {
                         if (comptime !isParseBookkeeping(f.name)) {
                             try s.objectField(f.name);
-                            if (comptime std.mem.eql(u8, f.name, "env") or std.mem.eql(u8, f.name, "headers")) {
-                                try writeKvNames(s, @field(value, f.name));
+                            if (comptime std.mem.eql(u8, f.name, "env")) {
+                                try writeKvNames(s, @field(value, f.name), '=');
+                            } else if (comptime std.mem.eql(u8, f.name, "headers")) {
+                                try writeKvNames(s, @field(value, f.name), ':');
                             } else {
                                 try writeJsonValue(s, @field(value, f.name));
                             }
@@ -1356,8 +1417,13 @@ pub const Config = struct {
         try cfg.mcp_servers.put(gpa, "github", .{
             .transport = "stdio",
             .command = "github-mcp-server",
-            .env = &.{ "GITHUB_TOKEN=ghp_super_secret_abc123", "PLAIN" },
-            .headers = &.{ "Authorization: Bearer tok_very_secret", "X-No-Value" },
+            // Third env entry: a `:`-bearing *value* under an `=` separator,
+            // the mirror of the header case below. `=` must win there.
+            .env = &.{ "GITHUB_TOKEN=ghp_super_secret_abc123", "PLAIN", "PROXY_URL=http://u:p_secret_pass@host" },
+            // Third header entry: a base64 `Basic` credential, so the value
+            // half ends in `=` padding. Preferring `=` over `:` cut past the
+            // whole credential and printed it one character short.
+            .headers = &.{ "Authorization: Bearer tok_very_secret", "X-No-Value", "Proxy-Authorization: Basic dXNlcjpwYXNzd29yZA==" },
         });
 
         var out: std.Io.Writer.Allocating = .init(gpa);
@@ -1367,19 +1433,24 @@ pub const Config = struct {
         // Token values never reach the dump at all...
         try std.testing.expect(std.mem.find(u8, out.written(), "ghp_super_secret_abc123") == null);
         try std.testing.expect(std.mem.find(u8, out.written(), "tok_very_secret") == null);
+        try std.testing.expect(std.mem.find(u8, out.written(), "p_secret_pass") == null);
+        try std.testing.expect(std.mem.find(u8, out.written(), "dXNlcjpwYXNzd29yZA") == null);
+        try std.testing.expect(std.mem.find(u8, out.written(), "Basic") == null);
         // ...and the field keeps its shape: names only, separators cut.
         var arena: std.heap.ArenaAllocator = .init(gpa);
         defer arena.deinit();
         const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), out.written(), .{});
         const row = parsed.object.get("mcp_servers").?.object.get("github").?.object;
         const env = row.get("env").?.array;
-        try std.testing.expectEqual(@as(usize, 2), env.items.len);
+        try std.testing.expectEqual(@as(usize, 3), env.items.len);
         try std.testing.expectEqualStrings("GITHUB_TOKEN", env.items[0].string);
         try std.testing.expectEqualStrings("PLAIN", env.items[1].string);
+        try std.testing.expectEqualStrings("PROXY_URL", env.items[2].string);
         const headers = row.get("headers").?.array;
-        try std.testing.expectEqual(@as(usize, 2), headers.items.len);
+        try std.testing.expectEqual(@as(usize, 3), headers.items.len);
         try std.testing.expectEqualStrings("Authorization", headers.items[0].string);
         try std.testing.expectEqualStrings("X-No-Value", headers.items[1].string);
+        try std.testing.expectEqualStrings("Proxy-Authorization", headers.items[2].string);
     }
 
     /// Loads `file_name` (TOML) plus `local_file_name` (if present) from
@@ -1420,6 +1491,17 @@ pub const Config = struct {
                 // Deferred like the local file's: read against the merged
                 // config, so a profile can add a model to a provider only the
                 // base file declares without redeclaring the provider.
+                if (loaded.models_table) |models| try distributeModels(arena, &cfg, models);
+                if (loaded.cfg.default_provider_present) cfg.default_provider_from = loaded.path;
+            }
+            // `profiles/<name>.local.toml`: the checkout-private half of a
+            // named profile, exactly as `config.local.toml` is of the base
+            // file, and `.optional` for the same reason. PRD 0042 Goal 1
+            // names it; only `profiles/<name>.toml` was ever built as a path,
+            // so the file was silently ignored.
+            const prof_local_path = try std.fmt.allocPrint(arena, "profiles/{s}.local.toml", .{prof});
+            if (try loadFile(io, arena, dir, prof_local_path, .optional)) |loaded| {
+                try merge(&cfg, loaded.cfg, arena);
                 if (loaded.models_table) |models| try distributeModels(arena, &cfg, models);
                 if (loaded.cfg.default_provider_present) cfg.default_provider_from = loaded.path;
             }
@@ -1530,7 +1612,10 @@ pub const Config = struct {
     /// against its own `[providers]` right away. `optional` (the local
     /// override) and `overlay` (a named profile) both defer that table to
     /// `loadInner`, so either file can add a model to a provider only the
-    /// base declares; they differ only in whether a missing file is an error.
+    /// base declares; they differ in whether a missing file is an error and,
+    /// when it is, in which error: `required` gives `error.MissingConfig`,
+    /// `overlay` gives `error.MissingProfile` so the report can name the
+    /// profile instead of the base config.
     const LoadMode = enum { required, optional, overlay };
 
     /// A parsed config file plus the path it came from, kept so
@@ -1551,9 +1636,28 @@ pub const Config = struct {
     /// than an error telling the user to convert the file.
     fn loadFile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, file_name: []const u8, mode: LoadMode) !?Loaded {
         const raw = dir.readFileAlloc(io, file_name, arena, .limited(1 << 20)) catch |err| switch (err) {
-            error.FileNotFound => return switch (mode) {
-                .required, .overlay => error.MissingConfig,
-                .optional => null,
+            error.FileNotFound => switch (mode) {
+                .required => return error.MissingConfig,
+                // A distinct error, and a line naming the file: `.overlay`
+                // used to reuse `.required`'s `error.MissingConfig`, so a
+                // typo'd `--profile` was reported as "config.toml not found;
+                // run `clanker setup` to create one" -- a file that exists,
+                // and a remedy that cannot help.
+                .overlay => {
+                    // Gated like every other diagnostic: the startup dotenv
+                    // probe (`loadQuiet`) loads the same stack a moment
+                    // before the command does, so an ungated line printed
+                    // the refusal twice. `last_load_diagnostic` stays unset
+                    // on purpose -- setting it would replace main.zig's
+                    // MissingProfile hint with the generic "correct the
+                    // setting reported above", and there is no setting to
+                    // correct.
+                    if (!diagnostics_suppressed) {
+                        log.log(.error_, "config: --profile names {s}, which does not exist", .{file_name});
+                    }
+                    return error.MissingProfile;
+                },
+                .optional => return null,
             },
             else => return err,
         };
@@ -1837,7 +1941,7 @@ pub const Config = struct {
         if (obj.get("thinking_schema")) |k| {
             const s = try jsonStr(k, "thinking_schema");
             p.thinking_schema = ThinkingSchema.fromStr(s) orelse {
-                log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
                 return error.UnknownThinkingSchema;
             };
         }
@@ -2138,7 +2242,7 @@ pub const Config = struct {
         if (obj.get("thinking_schema")) |k| {
             const s = try jsonStr(k, "thinking_schema");
             m.thinking_schema = ThinkingSchema.fromStr(s) orelse {
-                log.log(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                log.log(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
                 return error.UnknownThinkingSchema;
             };
         }
@@ -3769,6 +3873,123 @@ test "a --profile overlay that names a default_provider owns the provenance" {
     const cfg = try Config.loadWithProfile(io, arena, dir, "config.toml", "config.local.toml", "offline");
     try std.testing.expectEqualStrings("local", cfg.default_provider);
     try std.testing.expectEqualStrings("profiles/offline.toml", cfg.default_provider_from.?);
+}
+
+test "a --profile name with no file is error.MissingProfile, not MissingConfig" {
+    // The `.overlay` FileNotFound arm used to reuse `.required`'s
+    // error.MissingConfig, and main.zig's hint table renders that as
+    // "config.toml not found; run `clanker setup` to create one" -- naming a
+    // file that exists and is fine, and prescribing a remedy that cannot
+    // help. PRD 0042's failure table requires the error to name the missing
+    // profiles/<name>.toml.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = env.tmp.dir;
+    const io = env.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "deepseek"
+        \\
+        \\[providers.deepseek]
+        \\base_url = "https://api.deepseek.com"
+        \\
+        \\[models."deepseek/deepseek-chat"]
+        \\provider = "deepseek"
+        \\
+        ,
+    });
+
+    // The base config loads fine on its own, so nothing but the profile can
+    // be the failure.
+    _ = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectError(
+        error.MissingProfile,
+        Config.loadWithProfile(io, arena, dir, "config.toml", "config.local.toml", "definitely-not-a-profile"),
+    );
+}
+
+test "profiles/<name>.local.toml overlays profiles/<name>.toml" {
+    // PRD 0042 Goal 1 names the `.local` variant and is marked shipped, but
+    // Config.load only ever built `profiles/{s}.toml`, so the file beside it
+    // had no effect at all. It is the checkout-private half of a named
+    // profile, so it merges last: base < config.local.toml <
+    // profiles/<name>.toml < profiles/<name>.local.toml.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = env.tmp.dir;
+    const io = env.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" }, b = { base_url = "https://b.test" }, c = { base_url = "https://c.test" } }
+        \\models = { "a/m" = { provider = "a" }, "b/m" = { provider = "b" }, "c/m" = { provider = "c" } }
+        \\
+        ,
+    });
+    try dir.createDirPath(io, "profiles");
+    try dir.writeFile(io, .{
+        .sub_path = "profiles/web.toml",
+        .data =
+        \\default_provider = "b"
+        \\
+        \\[agent]
+        \\max_iterations = 7
+        \\
+        ,
+    });
+    try dir.writeFile(io, .{
+        .sub_path = "profiles/web.local.toml",
+        .data =
+        \\default_provider = "c"
+        \\
+        ,
+    });
+
+    const cfg = try Config.loadWithProfile(io, arena, dir, "config.toml", "config.local.toml", "web");
+    // The .local half wins over the profile it sits beside...
+    try std.testing.expectEqualStrings("c", cfg.default_provider);
+    try std.testing.expectEqualStrings("profiles/web.local.toml", cfg.default_provider_from.?);
+    // ...and what it does not name still comes from the profile.
+    try std.testing.expectEqual(@as(u32, 7), cfg.agent.max_iterations);
+}
+
+test "a .local profile half with no profiles/<name>.toml is still an error" {
+    // `.local` is optional, the profile it belongs to is not: a typo'd
+    // --profile must not be rescued into silence by a matching .local file.
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = env.tmp.dir;
+    const io = env.io();
+
+    try dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\
+        ,
+    });
+    try dir.createDirPath(io, "profiles");
+    try dir.writeFile(io, .{
+        .sub_path = "profiles/web.local.toml",
+        .data =
+        \\default_provider = "a"
+        \\
+        ,
+    });
+
+    try std.testing.expectError(
+        error.MissingProfile,
+        Config.loadWithProfile(io, arena, dir, "config.toml", "config.local.toml", "web"),
+    );
 }
 
 test "config.local.toml [instance] is not re-persisted when base lacks one" {

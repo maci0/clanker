@@ -4848,6 +4848,13 @@ fn setConfigCheck(io: std.Io, ok: bool, detail: []const u8) void {
 
 /// Loads the on-disk config pair into a throwaway arena purely to find out
 /// whether it parses and validates. The loader logs the precise diagnostic.
+///
+/// `Config.load` applies the process's armed `--profile` overlay, so this
+/// validates the same stack the server is running. That only became true once
+/// `config.overlay_profile` stopped being threadlocal: on a spawned watcher
+/// thread it read null, so a profile that is what makes the stack valid made
+/// every edit log "config changed but does not load", and the reverse case
+/// green-lit a restart into a config that cannot boot.
 fn configLoads(io: std.Io, gpa: std.mem.Allocator) ?[]const u8 {
     var scratch = std.heap.ArenaAllocator.init(gpa);
     defer scratch.deinit();
@@ -4857,30 +4864,57 @@ fn configLoads(io: std.Io, gpa: std.mem.Allocator) ?[]const u8 {
     return null;
 }
 
-/// Watches config.toml / config.local.toml by mtime. A change revalidates:
-/// clean → graceful restart into the new config (the same idle-aware exec a
-/// binary rebuild uses); broken → warn and keep serving on the config this
-/// process already loaded, which is the last known good one.
+/// The config files a `serve` process reads: the base pair, plus both halves
+/// of the named profile when `--profile` is armed. A profile is a layer of
+/// the same stack, so an edit to it is a config change like any other and the
+/// watcher would otherwise never notice one.
+fn watchedConfigPaths(arena: std.mem.Allocator) []const []const u8 {
+    var paths: std.ArrayList([]const u8) = .empty;
+    paths.append(arena, "config.toml") catch return &.{};
+    paths.append(arena, "config.local.toml") catch return paths.items;
+    if (config.profileOverlay()) |prof| if (prof.len > 0) {
+        inline for (.{ "profiles/{s}.toml", "profiles/{s}.local.toml" }) |fmt| {
+            const path = std.fmt.allocPrint(arena, fmt, .{prof}) catch return paths.items;
+            paths.append(arena, path) catch return paths.items;
+        }
+    };
+    return paths.items;
+}
+
+/// Watches config.toml / config.local.toml (and the armed profile's two
+/// halves) by mtime. A change revalidates: clean → graceful restart into the
+/// new config (the same idle-aware exec a binary rebuild uses); broken → warn
+/// and keep serving on the config this process already loaded, which is the
+/// last known good one.
 const ConfigWatch = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
+    paths: []const []const u8,
+    /// One mtime per watched path, so the slice length is `paths.len`.
+    stamps: []i128,
 
-    fn mtimes(io: std.Io) [2]i128 {
-        var out: [2]i128 = .{ 0, 0 };
-        for ([_][]const u8{ "config.toml", "config.local.toml" }, 0..) |p, i| {
-            const st = std.Io.Dir.cwd().statFile(io, p, .{}) catch continue;
-            out[i] = st.mtime.nanoseconds;
+    fn sample(self: *ConfigWatch) void {
+        for (self.paths, 0..) |p, i| {
+            const st = std.Io.Dir.cwd().statFile(self.io, p, .{}) catch {
+                // A file that is absent (or vanished) reads as 0, so its
+                // later appearance is a change like any other edit.
+                self.stamps[i] = 0;
+                continue;
+            };
+            self.stamps[i] = st.mtime.nanoseconds;
         }
-        return out;
     }
 
     fn watch(self: *ConfigWatch) void {
-        var last = mtimes(self.io);
+        self.sample();
+        const last = self.gpa.alloc(i128, self.stamps.len) catch return;
+        defer self.gpa.free(last);
+        @memcpy(last, self.stamps);
         while (true) {
             std.Io.sleep(self.io, .{ .nanoseconds = 2 * std.time.ns_per_s }, .awake) catch {};
-            const now = mtimes(self.io);
-            if (now[0] == last[0] and now[1] == last[1]) continue;
-            last = now;
+            self.sample();
+            if (std.mem.eql(i128, last, self.stamps)) continue;
+            @memcpy(last, self.stamps);
             if (configLoads(self.io, self.gpa)) |err_name| {
                 log.log(.warn, "config changed but does not load ({s}); keeping the last known good config (see the diagnostics above)", .{err_name});
                 setConfigCheck(self.io, false, err_name);
@@ -4897,7 +4931,11 @@ const ConfigWatch = struct {
 
     fn start(arena: std.mem.Allocator, io: std.Io, gpa: std.mem.Allocator) void {
         const self = arena.create(ConfigWatch) catch return;
-        self.* = .{ .io = io, .gpa = gpa };
+        const paths = watchedConfigPaths(arena);
+        if (paths.len == 0) return;
+        const stamps = arena.alloc(i128, paths.len) catch return;
+        @memset(stamps, 0);
+        self.* = .{ .io = io, .gpa = gpa, .paths = paths, .stamps = stamps };
         const thread = std.Thread.spawn(.{}, ConfigWatch.watch, .{self}) catch return;
         thread.detach();
     }
@@ -4906,9 +4944,17 @@ const ConfigWatch = struct {
 /// Every flag that shapes what the listener is and who it answers to has to be
 /// repeated here, or a hot-reload re-exec silently narrows the policy the
 /// operator started the server with.
-fn buildServeArgvTail(arena: std.mem.Allocator, listen: ListenPolicy) ![]const []const u8 {
+fn buildServeArgvTail(arena: std.mem.Allocator, listen: ListenPolicy, profile: ?[]const u8) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(arena, "serve");
+    // `--profile` shapes no socket, but it decides which config the child
+    // loads, and `[serve]`/`[modules]` live in that config -- so dropping it
+    // reverted `clanker serve --profile web` to base+local after the first
+    // rebuild or config-edit restart, with no log line saying so.
+    if (profile) |p| if (p.len > 0) {
+        try argv.append(arena, "--profile");
+        try argv.append(arena, p);
+    };
     try argv.append(arena, "--host");
     try argv.append(arena, listen.host);
     try argv.append(arena, "--webui-port");
@@ -7610,7 +7656,7 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         // pins the child to what this process actually bound, so a reload
         // cannot quietly rebind somewhere else because the config file was
         // edited or the env changed underneath it.
-        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, listen));
+        hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, listen, config.profileOverlay()));
     }
     // Config hot reload is unconditional: a clean edit restarts (when the
     // reload machinery above is on), a broken one warns and the process
@@ -17485,7 +17531,7 @@ test "the hot-reload re-exec keeps the bind address and the serve-as names" {
         .serve_as_hosts = &.{},
         .proxy_enabled = false,
         .proxy_port = 17921,
-    });
+    }, null);
     try std.testing.expectEqual(@as(usize, 6), bare.len);
     try std.testing.expectEqualStrings("serve", bare[0]);
     try std.testing.expectEqualStrings("--host", bare[1]);
@@ -17502,7 +17548,7 @@ test "the hot-reload re-exec keeps the bind address and the serve-as names" {
         .serve_as_hosts = &.{ "clanker.lan", "box.tailnet.ts.net" },
         .proxy_enabled = false,
         .proxy_port = 8080,
-    });
+    }, null);
     try std.testing.expectEqual(@as(usize, 10), wide.len);
     try std.testing.expectEqualStrings("0.0.0.0", wide[2]);
     try std.testing.expectEqualStrings("8080", wide[4]);
@@ -17522,6 +17568,70 @@ test "the hot-reload re-exec keeps the bind address and the serve-as names" {
     try std.testing.expectEqual(@as(u16, 8080), reparsed.webui_port.?);
     try std.testing.expectEqual(@as(usize, 2), reparsed.serve_as_hosts.len);
     try std.testing.expectEqualStrings("box.tailnet.ts.net", reparsed.serve_as_hosts[1]);
+    // No profile was armed, so none is repeated.
+    try std.testing.expect(reparsed.profile == null);
+}
+
+test "the hot-reload re-exec keeps the --profile overlay" {
+    // `--profile` is not a listener flag, so it was left out of the tail
+    // entirely: `clanker serve --profile web` reverted to base+local on the
+    // first rebuild or config-edit restart, silently serving a different
+    // config than the one the operator started. PRD 0042 known issue 5.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const tail = try buildServeArgvTail(arena, .{
+        .host = "127.0.0.1",
+        .port = 17921,
+        .serve_as_hosts = &.{},
+        .proxy_enabled = false,
+        .proxy_port = 17921,
+    }, "web");
+
+    // The round trip is what matters: re-parsing the tail must rebuild the
+    // same overlay, not merely contain the token somewhere.
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(std.testing.allocator);
+    try argv.append(std.testing.allocator, "clanker");
+    for (tail) |x| try argv.append(std.testing.allocator, x);
+    const reparsed = try parse(argv.items, null);
+    try std.testing.expectEqualStrings("web", reparsed.profile.?);
+    // And it did not cost the listener policy it sits beside.
+    try std.testing.expectEqualStrings("127.0.0.1", reparsed.host.?);
+    try std.testing.expectEqual(@as(u16, 17921), reparsed.webui_port.?);
+
+    // An empty name is not an overlay and must not become a bare `--profile`
+    // with the next flag swallowed as its value.
+    const empty = try buildServeArgvTail(arena, .{
+        .host = "127.0.0.1",
+        .port = 17921,
+        .serve_as_hosts = &.{},
+        .proxy_enabled = false,
+        .proxy_port = 17921,
+    }, "");
+    try std.testing.expectEqualStrings("--host", empty[1]);
+}
+
+test "the config watcher watches the armed profile's two halves" {
+    // ConfigWatch only ever stat'd config.toml and config.local.toml, so an
+    // edit to profiles/<name>.toml -- a layer of the very stack it
+    // revalidates -- was invisible to it.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const base = watchedConfigPaths(arena);
+    try std.testing.expectEqual(@as(usize, 2), base.len);
+    try std.testing.expectEqualStrings("config.toml", base[0]);
+    try std.testing.expectEqualStrings("config.local.toml", base[1]);
+
+    config.setProfileOverlay("web");
+    defer config.setProfileOverlay(null);
+    const with_profile = watchedConfigPaths(arena);
+    try std.testing.expectEqual(@as(usize, 4), with_profile.len);
+    try std.testing.expectEqualStrings("profiles/web.toml", with_profile[2]);
+    try std.testing.expectEqualStrings("profiles/web.local.toml", with_profile[3]);
 }
 
 test "a flag the command does not take is refused, not ignored" {

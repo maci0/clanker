@@ -2,10 +2,18 @@
 
 const std = @import("std");
 const api = @import("api.zig");
+const common = @import("common.zig");
 const types = @import("../types.zig");
 
 pub const BuildOptions = struct {
+    /// Send a completion budget. Off for Codex, whose ChatGPT subscription
+    /// endpoint rejects it.
     max_output_tokens: bool = true,
+    /// Resolve `temperature`/`top_p` and fill the reasoning effort from the
+    /// full three-tier chain (per-run override, then model config, then the
+    /// PRD 0024 use-case table). Off for Codex, which rejects the sampling
+    /// pair; its effort then stays whatever the per-run override pinned, with
+    /// no table fill, which is the behaviour its own test asserts.
     sampling: bool = true,
 };
 
@@ -24,17 +32,25 @@ pub fn buildWithOptions(gpa: std.mem.Allocator, params: api.RequestParams, optio
     try s.write(false);
     try s.objectField("stream");
     try s.write(params.stream);
-    if (options.max_output_tokens) if (params.max_tokens) |n| {
+    // The three-tier chain, not `params` alone. The agent loop never sets
+    // `params.temperature`/`top_p` and the webui's per-run override writes
+    // into the provider's models map, so reading only `params` discarded both
+    // the configured per-model value and PRD 0024's table on every turn
+    // ([bug](../../../docs/reports/bugs/2026-08-23-grok-kind-drops-model-sampling.md)).
+    const rec = common.resolveSampling(params);
+    if (options.max_output_tokens) {
+        // `clampedMaxTokens`, so the half-the-context-window clamp applies
+        // here as it does on the chat-completions wire.
         try s.objectField("max_output_tokens");
-        try s.write(n);
-    };
-    if (options.sampling) if (params.temperature) |value| {
+        try s.print("{d}", .{common.clampedMaxTokens(params)});
+    }
+    if (options.sampling) if (rec.temperature) |value| {
         try s.objectField("temperature");
-        try s.write(value);
+        try s.print("{d}", .{value});
     };
-    if (options.sampling) if (params.top_p) |value| {
+    if (options.sampling) if (rec.top_p) |value| {
         try s.objectField("top_p");
-        try s.write(value);
+        try s.print("{d}", .{value});
     };
     if (params.response_format_json) {
         try s.objectField("text");
@@ -46,11 +62,16 @@ pub fn buildWithOptions(gpa: std.mem.Allocator, params: api.RequestParams, optio
         try s.endObject();
         try s.endObject();
     }
-    if (params.reasoning_effort) |effort| {
+    // The Responses API's own nested shape, so this codec spells the field
+    // itself rather than going through `writeSamplingParams` — which would
+    // write the flat OpenAI field for these kinds. Codex keeps the per-run
+    // pin only; Grok also takes the config and table tiers.
+    const effort = if (options.sampling) rec.reasoning_effort else params.reasoning_effort;
+    if (effort) |value| {
         try s.objectField("reasoning");
         try s.beginObject();
         try s.objectField("effort");
-        try s.write(effort);
+        try s.write(value);
         try s.endObject();
     }
     try s.objectField("input");

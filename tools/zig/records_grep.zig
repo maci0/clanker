@@ -479,7 +479,16 @@ fn renameInventoryLink(index_path: []const u8, old_stem: []const u8, new_stem: [
 /// to the directory it was asked to search (`fsGrepRecurse` seeds its prefix
 /// with the requested path), so a hit already reads `docs/research/x.md` and
 /// prefixing the store onto it again produces `docs/research/docs/research/…`.
-fn collectRenameReferences(
+///
+/// Shared with `reports`, which had its own copy of this walk with the join and
+/// no guard: every leftover reference it printed named
+/// `docs/reports/docs/reports/…`, a path that cannot be opened, and that list
+/// is the only reason to run `rename` rather than `git mv`. One copy now, so
+/// the two cannot disagree again — and the containment test is `doc.isUnder`
+/// rather than `doc.isPathIn`, because `docs/reports` is the one store whose
+/// records nest a level down and the strict predicate answered no for exactly
+/// the caller that needed a yes.
+pub fn collectRenameReferences(
     refs: *std.ArrayList([]const u8),
     dir: []const u8,
     index_path: []const u8,
@@ -497,7 +506,7 @@ fn collectRenameReferences(
         if (file != .string) continue;
         // Defensive: take the path as given when it is already store-rooted,
         // and join only if some future host ever reports it store-relative.
-        const full = if (doc.isPathIn(dir, file.string))
+        const full = if (doc.isUnder(dir, file.string))
             try lib.alloc.dupe(u8, file.string)
         else
             try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ dir, file.string });

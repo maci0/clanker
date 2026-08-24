@@ -143,7 +143,7 @@ fn buildRequest(gpa: std.mem.Allocator, params: api.RequestParams) api.BuildErro
         try s.endArray();
     }
 
-    try common.writeSamplingParams(&s, params);
+    try common.writeSamplingParams(&s, params, .reasoning_effort);
     const max_tokens = common.clampedMaxTokens(params);
     try s.objectField("max_tokens");
     try s.print("{d}", .{max_tokens});

@@ -154,3 +154,80 @@ them.
 The Verification note stands unchanged and is the reason this is still Open: no
 Anthropic key here, and a wire-format change should not ship on a code read.
 This correction is itself a documentation read, not an endpoint test.
+## Wire shape changed 2026-08-24 — deliberately NOT resolved
+
+The corrected target from the Correction section above is implemented. This
+record stays open, because the one thing it says it needs is still missing:
+an Anthropic credential. What follows is what was changed and how far it was
+checked, so the next reader does not have to infer either.
+
+### What changed
+
+- `ThinkingSchema` gained `anthropic_thinking`. It writes
+  `{"thinking":{"type":"adaptive"}}` plus `{"output_config":{"effort":"<level>"}}`
+  and **drops** `temperature`/`top_p`, per the Correction: those are removed
+  from current Claude models, not merely constrained alongside thinking.
+  An effort of `none` writes `{"thinking":{"type":"disabled"}}` and no
+  `output_config`, since the request is to turn thinking off rather than to
+  run it shallowly.
+- The originally-proposed `{"type":"enabled","budget_tokens":N}` was **not**
+  implemented. It is removed from every current model and would have replaced
+  one rejected body with another, which is what the Correction exists to say.
+- `Provider.effectiveThinkingSchema`'s single shared default is gone. The new
+  `Provider.thinkingSchemaOr(wire_default)` takes the bottom of the chain from
+  the codec, and `anthropic.buildBody` passes `.anthropic_thinking`. That
+  keeps kind knowledge inside `src/llm/providers/` (ADR 0004) rather than
+  putting a `kind ==` in `config.zig`, which is the shape the Resolution
+  section above asked for. All four kinds `buildBody` serves — `anthropic`,
+  `claude`, `vertex_anthropic`, and `vertex` on a Claude SKU — reach it
+  through that one argument.
+- `thinking_schema = "reasoning_effort"` is the escape hatch for an older
+  Claude SKU that does still take the flat field and a temperature: the model
+  and provider tiers still win over the codec's default.
+
+### What was verified
+
+Body-shape unit tests in `common.zig` and `anthropic.zig` (adaptive plus
+`output_config.effort`; the `none` disabled form; a model-level
+`thinking_schema` still overriding the wire default; no `reasoning_effort`,
+no `budget_tokens`, no `"type":"enabled"`, no `temperature`/`top_p`), plus a
+capture of what a real run sends. A loopback HTTP recorder stood in for
+`api.anthropic.com`, with a `kind = "anthropic"` provider whose model declared
+`capabilities = ["thinking", "tool_use"]` and `temperature = 0.3`, driven by
+`clanker run --provider anthlocal "say OK"`:
+
+```json
+{"model":"claude-opus-5-fake","stream":true,"max_tokens":1024,
+ "thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}
+```
+
+`high` is the profile table's tool_use row, so the table's thinking row now
+reaches the wire in the Anthropic shape instead of as a rejected flat field.
+The configured `temperature = 0.3` is absent, which is the drop working. With
+`--reasoning-effort none` the same run sent
+`{"thinking":{"type":"disabled"}}` and no `output_config`.
+
+### What was NOT verified, and why this stays open
+
+**The endpoint has still never seen this body.** `.env` in this checkout holds
+`DEEPSEEK_API_KEY` and nothing else; there is no `ANTHROPIC_API_KEY` and no
+`sk-ant-oat` token. So every claim above is about bytes clanker emits, and
+none of it is about what `POST /v1/messages` answers. The Verification section
+above stands unchanged: body-shape assertions are necessary and not
+sufficient here.
+
+Specifically unchecked:
+
+- whether `output_config.effort` is accepted alongside `thinking.type:
+  adaptive` on a live model,
+- whether `{"type":"disabled"}` is accepted at the effort the operator
+  pinned (the Correction records it as accepted on Opus 4.8 and Sonnet 5, on
+  Opus 5 only at `high` or below, and never on Fable 5 — clanker sends
+  `disabled` with no effort at all, which is untested against that rule),
+- whether dropping `temperature` is right for a pre-4.6 Claude SKU an
+  operator has configured. The escape hatch exists; that it is the correct
+  advice is inferred from the Correction, not measured.
+
+To close this: run `clanker run --provider anthropic --reasoning-effort high
+"hi"` with a working key and record the status. A 200 closes it; a 400 names
+which of the three assumptions above is wrong.

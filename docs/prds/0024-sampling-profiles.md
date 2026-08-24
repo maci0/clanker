@@ -189,39 +189,49 @@ relocating the picker fields must not reach into it.
 
 ## Known issues
 
-1. **The Anthropic family is sent OpenAI's `reasoning_effort` field.**
-   `Provider.effectiveThinkingSchema` defaults to `.reasoning_effort` for every
-   wire kind, and `anthropic.buildBody` calls the shared
-   `writeSamplingParams` — so a pinned effort or this PRD's own thinking row
-   puts a top-level `reasoning_effort` on `POST /v1/messages`, which Anthropic
-   refuses as an extra input. The `.thinking` alternative writes GLM's shape and
-   omits `budget_tokens`, which Anthropic requires, so no configured value is
-   both valid and non-discarding. Not fixed: no Anthropic credential was
-   available to check the endpoint's actual answer, and a wire-format change
-   should not ship on a code read.
+1. **The Anthropic family was sent OpenAI's `reasoning_effort` field.**
+   The shared default is gone: `Provider.thinkingSchemaOr` takes the wire
+   kind's own shape from the codec, and `anthropic.buildBody` passes
+   `.anthropic_thinking`, which writes `{"thinking":{"type":"adaptive"}}` plus
+   `{"output_config":{"effort":...}}` and drops `temperature`/`top_p`
+   (removed from current Claude models, not merely constrained). The
+   originally-proposed `{"type":"enabled","budget_tokens":N}` was **not**
+   implemented — it is removed from every current model and would have
+   replaced one rejected body with another; see the bug's Correction section.
+   **Still not verified against the endpoint:** no Anthropic credential was
+   available, so this is a body-shape change grounded in the API reference
+   with unit coverage on the emitted JSON, and the bug report stays open on
+   that basis.
    [Bug](../reports/bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md).
 
-2. **`kind = "grok"` never consults the table, and drops per-model
-   `temperature`/`top_p` too.** `responses.zig` reads only
-   `params.temperature`/`params.top_p`, which the agent loop never sets, so both
-   the configured per-model value and this table's default are silently
-   discarded — against acceptance criteria 1 and 2 for that kind.
-   `clampedMaxTokens` does not run there either.
+2. ~~**`kind = "grok"` never consults the table, and drops per-model
+   `temperature`/`top_p` too.**~~ Fixed: `responses.zig` resolves the same
+   three-tier chain through `common.resolveSampling`, and its
+   `max_output_tokens` goes through `clampedMaxTokens`. Codex keeps its
+   deliberate opt-out via `BuildOptions.sampling`, which now also gates the
+   table fill for the effort so its body is byte-identical to before.
    [Bug](../reports/bugs/2026-08-23-grok-kind-drops-model-sampling.md).
 
-3. **`gemini` computes the thinking row and throws it away.** `gemini.zig`
-   re-implements the two `orelse` chains inline rather than calling
-   `writeSamplingParams`, honours `temperature`/`top_p`, and writes no
-   `thinkingConfig` — so the table's thinking row is inert for `gemini` and for
-   `vertex`-Gemini, and any field added to `Profile` later is silently absent
-   from Gemini requests.
+3. **`gemini` writes no `thinkingConfig`, so the thinking row is inert
+   there.** Half fixed: the duplicated `orelse` chains are gone —
+   `gemini.zig` now resolves through `common.resolveSampling`, so a field
+   added to `Sampling` later is at least visible to that codec instead of
+   being silently absent. The thinking row itself is still unwritten:
+   `generationConfig` has no `reasoning_effort` equivalent, and the correct
+   shape is not established in-tree (Google's own thinking page documents
+   `thinking_level` for the Interactions API and explicitly notes
+   `generateContent` differs). Deliberately not guessed — that is the mistake
+   known issue 1 catalogues.
+   [Report](../reports/bugs/2026-08-24-gemini-thinking-row-inert.md).
 
-4. **`clampedMaxTokens`' zero-window guard is dead, and its test passes for an
-   unrelated reason.** `Model.context_window` defaults to 131072, not 0, and the
-   catalog fill only writes when unset, so the `window == 0` early return is
-   unreachable except from a hand-written `context_window = 0`. The unit test's
-   comment claims it covers that case; `Provider.single` copies the default, so
-   the assertion holds through the clamp instead.
+4. ~~**`clampedMaxTokens`' zero-window guard is dead, and its test passes for
+   an unrelated reason.**~~ The test half is fixed: it now pins the 131072
+   default explicitly, then sets `context_window = 0` to exercise the guard,
+   then a known window to exercise the clamp — three separate assertions
+   instead of one that read as covering all three. The guard itself is kept:
+   reachable from a hand-written `context_window = 0` and from a snapshot row
+   with no limit, and returning zero completion tokens there is worse than an
+   unclamped budget.
 
 ## Acceptance criteria
 
