@@ -15634,20 +15634,14 @@ test shouldWebuiIsolate {
     try std.testing.expect(shouldWebuiIsolate(.{ .worktree = true }, &plain));
 }
 
-/// Whether a model can be handed image_url content blocks. A model that
-/// declares its capabilities (non-empty) but omits `image_in` is telling us
-/// it is not vision-capable, DeepSeek v4-flash's endpoint, for example, only
-/// accepts `content` as a plain string and rejects the typed block array with
-/// an opaque JSON-deserialize 400 ("unknown variant `image_url`, expected
-/// `text`"). A model with no capabilities declared leaves it unknown, so the
-/// attachment is attempted as before and a failure still surfaces the vision
-/// hint (enrichRunError).
+/// Whether a model can be handed image_url content blocks. See
+/// `config.Model.supportsImageInput` for why a model with no declared
+/// capabilities is treated as vision-capable; a failure there still surfaces
+/// the vision hint (enrichRunError). Kept as a named wrapper because the run
+/// gate reads better spelled out, and because the REPL's `/attach` gate needs
+/// the same rule from a module cli.zig imports.
 fn imageAttachmentsSupported(model: config.Model) bool {
-    if (model.capabilities.len == 0) return true;
-    for (model.capabilities) |cap| {
-        if (std.mem.eql(u8, cap, "image_in")) return true;
-    }
-    return false;
+    return model.supportsImageInput();
 }
 
 /// The name of a vision-capable model on `p`, or null if the provider has
