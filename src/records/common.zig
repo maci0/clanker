@@ -252,6 +252,21 @@ pub fn unsignedField(obj: std.json.Value, name: []const u8) u64 {
     return @intCast(v.integer);
 }
 
+/// The block to print for a `create` reply's `date_warning`, or null when the
+/// store had nothing to say.
+///
+/// The stores stamp dates in UTC and the caller types the slug, so a slug typed
+/// east of Greenwich in the evening is off by a day and every surface then
+/// disagrees with the record's own body. `create` is the only place holding both
+/// values, and this is the surface the person who typed the slug is reading, so
+/// swallowing the field here would put the check back where it was.
+pub fn dateWarningBlock(arena: std.mem.Allocator, result: std.json.Value) !?[]const u8 {
+    if (result != .object) return null;
+    const warning = result.object.get("date_warning") orelse return null;
+    if (warning != .string or warning.string.len == 0) return null;
+    return try std.fmt.allocPrint(arena, "\nWarning: {s}\n", .{warning.string});
+}
+
 /// A matched line as it reads in a column: leading and trailing whitespace is
 /// indentation the record needs and the summary does not.
 pub fn ellipsize(s: []const u8, max: usize) []const u8 {

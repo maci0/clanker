@@ -104,6 +104,44 @@ only under Open questions:
   edit). Each phase should be independently checkable. Put "decide X"
   work in Design policy above, not as a phase that re-opens the decision.
 
+## Known issues
+
+Three defects in the shared scaffolding this PRD names as its source of truth,
+all found and fixed 2026-08-24. Kept here because `doc_scaffold.zig` is shared
+with `reports`, `research` and `rfc`, so a defect in it is never one store's.
+
+- **(Fixed) `create` accepted a date-prefixed slug contradicting the date it
+  stamped, in silence.** `civilFromUnix` stamps UTC on purpose and says why in
+  its own comment; the slug is typed by the caller. `create` held both values
+  and compared neither, so a record filed while local and UTC dates differ was
+  internally inconsistent, and the class recurred in four independent sessions
+  on one day. `doc_scaffold.slugDateConflict` is now a pure function of (slug,
+  stamped date) -- pure so it can be tested on both sides, since a check
+  reading the clock would pass vacuously wherever local time is already UTC --
+  and all five stores attach `date_warning` to their `create` reply. It warns
+  and creates rather than refusing: backdating a record about an older event is
+  a real need, and a refusal would be worked around.
+  [Bug](../reports/bugs/2026-08-23-record-slug-date-contradicts-the-stamped-date.md).
+
+- **(Fixed) `appendOrFill` could never fill `## References`.** The fill needs
+  the section to be empty, and `create` seeds that one section with
+  `- Investigation: none yet`, so a `## References` block always landed at the
+  end of the document as a second copy of its heading -- the one scaffolded
+  section the fix for the duplicate-heading class structurally could not reach.
+  A body that is only the scaffold's own placeholder now counts as empty; a
+  section with one authored line in it is left alone exactly as before.
+  [Bug](../reports/bugs/2026-08-23-template-boilerplate-across-rfcs-and-reports.md),
+  in its appended note.
+
+- **(Fixed) One walk over a store existed twice, and the copy with a guard had
+  it aimed at the wrong predicate.** `records_grep.collectRenameReferences`
+  guarded its join with `doc.isPathIn`, which requires the path to sit directly
+  below the store root, so `docs/reports/bugs/<x>.md` failed the test and was
+  joined a second time. The store that nests was the only one the guard could
+  not recognise, and `reports` had its own copy of the walk with the join and
+  no guard at all. One walk now, behind `doc_scaffold.isUnder`.
+  [Bug](../reports/bugs/2026-08-23-reports-rename-doubles-the-store-prefix.md).
+
 ## Failure modes
 
 | Condition | Behaviour |

@@ -4,11 +4,11 @@
 
 - **What failed:** Every store stamps dates in UTC by design (doc_scaffold.civilFromUnix: 'a document dated by whichever machine wrote it is worse than one dated consistently'), but the caller supplies the slug, and create accepts a date-prefixed slug contradicting the stamp without a word. Local here is +08, so for about eight hours a day a hand-typed slug is off by one. Verified 2026-08-23 UTC: date -u +%F gives 2026-08-23 while date +%F gives 2026-08-24.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed in cb7020b6; all five stores now warn when a dated slug contradicts the UTC date they stamp, via the pure doc_scaffold.slugDateConflict, verified by clanker gate (eleven checks) and live on both sides -- a matching slug is silent, a slug dated a day ahead warns.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed in cb7020b6; all five stores now warn when a dated slug contradicts the UTC date they stamp, via the pure doc_scaffold.slugDateConflict, verified by clanker gate (eleven checks) and live on both sides -- a matching slug is silent, a slug dated a day ahead warns.
 
 ## Symptom and impact
 
@@ -66,8 +66,9 @@ the moment it is introduced — nothing looks.
 
 ## Resolution
 
-Open. Filed rather than fixed: the fix is a guest change across five stores and
-this was a docs pass.
+Fixed 2026-08-24 in cb7020b6, by the first of the three shapes below --
+warn. Filed before it was fixed, deliberately: the fix is a guest change across
+five stores and the change that found it was a docs pass.
 
 There is a real design question ahead of the code, and it should be settled
 first. One prior session declined to file this at all, reasoning that since the
@@ -123,3 +124,38 @@ all the exposure.
 - Body-date instance corrected alongside this record: [2026-08-23-repl-composer-latches-into-paste-mode.md](2026-08-23-repl-composer-latches-into-paste-mode.md)
 - Code: `tools/zig/doc_scaffold.zig` (`civilFromUnix`), `tools/zig/reports.zig`
 - Slugs renamed for this class in PR #386
+
+## Note — which shape landed, and the control (2026-08-24)
+
+**Warn**, the cheapest of the three, and for the reason this record gave: it
+keeps the deliberate freedom to backdate a record about an older event, which
+"refuse a mismatch" would have taken away and "default it" would have made
+ambiguous.
+
+The comparison is `doc_scaffold.slugDateConflict(slug, stamped)`, pure in both
+arguments exactly as this record's Verification section asked, so it does not
+read the machine clock and does not pass vacuously in UTC+0. `create` in all
+five stores computes the date it is about to stamp, compares, and attaches
+`date_warning` to its reply; the CLI prints it under `Warning:`. The record is
+still created.
+
+The control was run, both sides, on the built binary rather than only in tests:
+
+```
+$ clanker reports create bug 2026-08-24-live-check-alpha "..." "..."
+created docs/reports/bugs/2026-08-24-live-check-alpha.md
+(no warning)
+
+$ clanker reports create bug 2026-08-25-live-check-beta "..." "..."
+created docs/reports/bugs/2026-08-25-live-check-beta.md
+Warning: the slug is dated 2026-08-25 but the store's UTC date is 2026-08-24 ...
+```
+
+Both scratch records were deleted afterwards. Unit tests cover the mismatch by a
+day, a month and a year, the matching case, and an undated slug -- the numbered
+stores name most of their records without a date and must not start warning.
+
+The *body* half this record also named is not covered and is not claimed to be:
+a hand-typed date inside a record still passes, because nothing stamps prose.
+What the fix does remove is the reason to hand-type one in a status note, since
+`status` stamps its own date.
