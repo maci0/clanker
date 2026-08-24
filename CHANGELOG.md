@@ -113,6 +113,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `End` selected the last-registered plugin rather than the bottom tab, and a
   screen reader read the rail out of order. Both now read the rail itself.
 
+- An `@path` mention typed into the REPL composer while a turn is running is
+  now inlined, the way it already was when the composer was idle. The composer
+  *is* the steer box mid-run, but only the submit path expanded mentions, so
+  `look at @src/main.zig` handed the model a fenced copy of the file when idle
+  and the literal string `@src/main.zig` mid-run, leaving it to guess or spend
+  a `read_file` round trip. The refuse rules (absolute paths, `..`, secret
+  dotenv files) were not consulted on that path either, and now are. Both
+  paths go through one transform, so the same line cannot mean two different
+  things depending on whether a turn happens to be running.
+
 - The REPL's `/attach` now refuses at the command what it used to fail on a
   turn later. A path that is not a png, jpg, jpeg or webp is rejected by name
   (it used to queue, and the submit path then labelled anything unrecognised

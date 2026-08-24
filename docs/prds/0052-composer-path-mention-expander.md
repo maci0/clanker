@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress — REPL half shipped 2026-08-21 (helper + submit expansion); web composer and @ completion picker open. Source of truth: tools/zig/mention_expand.zig (expandAlloc) + src/tui/repl.zig. Decision: [ADR 0041](../adrs/0041-composer-path-mentions-expand-through-a-host-tested-helper.md). RFC: [0029](../rfcs/0029-file-mentions.md).
+In progress — REPL half shipped 2026-08-21 (helper + submit expansion), mid-run steer expansion 2026-08-24; web composer and @ completion picker open. Source of truth: tools/zig/mention_expand.zig (expandAlloc) + src/tui/repl.zig (expandComposerMentions, the single pre-send transform for composer text). Decision: [ADR 0041](../adrs/0041-composer-path-mentions-expand-through-a-host-tested-helper.md). RFC: [0029](../rfcs/0029-file-mentions.md).
 
 ## Problem
 
@@ -54,6 +54,11 @@ TUI completion UI (phase 3). Image mentions (PRD 0041). Directory expansion. For
 5. [x] Email a@b.com is unchanged (Goal 1)
 6. [x] Nine 32 KiB mentions in one message inline eight and leave the
    ninth a bare token with a notice (Goal 3)
+7. [x] The same `@path` line expands identically whether the composer is idle
+   or acting as the mid-run steer box (PRD 0058). Criterion 1 is written about
+   the composer and was read as covering this; it did not, because
+   `steerWhileRunning` duped the text through with no expansion and no refuse
+   rules. Both paths now go through one `expandComposerMentions`.
 
 ## Open questions / future work
 
