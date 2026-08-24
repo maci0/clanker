@@ -112,6 +112,21 @@ pub const History = struct {
         return hit;
     }
 
+    /// Errors when the log exists but cannot be read, so a caller can refuse
+    /// to run before it has spent anything.
+    ///
+    /// Every gate that reads history -- both fingerprint gates and the revert
+    /// sync -- fails open on an unreadable log: the safest thing each of them
+    /// can individually do with no data is nothing, and the sum of that is a
+    /// loop with no memory, re-promoting merged work and re-proposing reverted
+    /// work. There is no per-gate answer to that; the answer is to not run.
+    /// Missing is fine, that is a first run.
+    pub fn checkReadable(self: *History) !void {
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        _ = try self.loadTail(arena_state.allocator(), 1);
+    }
+
     /// Ids of every improvement the log still records as accepted, the set
     /// whose "already in the source" claim the revert sync has to verify
     /// against the tree.
@@ -176,7 +191,7 @@ pub const History = struct {
         var guard = file_lock.acquire(self.io, self.base, self.state_dir, "improvements", self.gpa);
         defer guard.release();
 
-        const raw = self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(1 << 24)) catch |err| switch (err) {
+        const raw = self.dir().readFileAlloc(self.io, self.logPath(), self.gpa, .limited(max_log_read)) catch |err| switch (err) {
             // No log yet means nothing to flip.
             error.FileNotFound => return 0,
             // A log that exists but cannot be read is not "no reverts to
@@ -386,6 +401,54 @@ pub const History = struct {
         try fw.interface.writeAll(record);
         try fw.interface.writeAll("\n");
         try fw.flush();
+
+        // Still under the same lock: the log is append-only and nothing else
+        // trimmed it, so it grew for the life of the checkout. See `trimTo`.
+        self.trimTo(size + record.len + 1);
+    }
+
+    /// The log is trimmed on the append that pushes it past this. Half the
+    /// read cap on purpose: an append can overshoot by at most one record, so
+    /// a log that is being written can never reach `max_log_read` and become
+    /// unreadable. `loadAll` now reports that failure instead of reading it as
+    /// empty, but a history the loop cannot read at all is a stopped loop, and
+    /// the bound is what keeps it from ever getting there.
+    const trim_above_bytes = max_log_read / 2;
+
+    /// Records kept when the log is trimmed. Dropping the oldest costs the
+    /// dedup gates their memory of edits that far back, which is a real loss
+    /// and the reason the threshold is high: at the observed ~1.5 KiB a
+    /// record this is several megabytes of history, thousands of attempts.
+    const trim_keep_entries = 4000;
+
+    /// Truncates the log to its newest `trim_keep_entries` records once it
+    /// passes `trim_above_bytes`. Must be called with the `improvements` lock
+    /// held -- it is a whole-file rewrite of the loop's entire memory, and a
+    /// concurrent appender starting from the pre-trim contents would put the
+    /// dropped records back.
+    ///
+    /// Best-effort by design: the caller has already durably appended its
+    /// record, and failing the append because the *housekeeping* failed would
+    /// lose the one thing this function is protecting. A log that stays
+    /// oversize is now a loud read error rather than a silent empty history.
+    fn trimTo(self: *History, size_after_append: u64) void {
+        if (size_after_append <= trim_above_bytes) return;
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const raw = self.dir().readFileAlloc(self.io, self.logPath(), arena, .limited(max_log_read)) catch |err| {
+            log.log(.warn, "could not trim {s} ({d} bytes): {s}", .{ self.logPath(), size_after_append, @errorName(err) });
+            return;
+        };
+        const kept = tailLines(raw, trim_keep_entries);
+        if (kept.len == raw.len) return;
+        // Atomic for the same reason markReverted is: a truncate-then-write
+        // interrupted halfway leaves a log that stops mid-line.
+        atomic_write.writeFile(self.io, self.dir(), self.logPath(), kept) catch |err| {
+            log.log(.warn, "could not trim {s} ({d} bytes): {s}", .{ self.logPath(), size_after_append, @errorName(err) });
+            return;
+        };
+        log.log(.info, "trimmed {s} from {d} to {d} bytes (newest {d} records kept)", .{ self.logPath(), raw.len, kept.len, trim_keep_entries });
     }
 
     /// Snapshots the given live files (relative paths) into state/history/<id>/.
@@ -463,8 +526,28 @@ pub const History = struct {
         class: []const u8 = "",
     };
 
+    /// Cap on one read of the log. Shared with `markReverted` and with
+    /// `trim_above_bytes` below, which is what keeps a reachable log from
+    /// growing past what a reader will accept.
+    const max_log_read = 1 << 24;
+
+    /// Reads the whole log.
+    ///
+    /// Only `FileNotFound` is empty history: a log that exists but cannot be
+    /// read means the exact opposite of "nothing has been promoted yet", and
+    /// the callers cannot tell the two apart from a `&.{}`. This used to
+    /// `catch return &.{}`, so an oversize or unreadable
+    /// `state/improvements.jsonl` silently disabled both dedup gates --
+    /// `fingerprintHit` answered not-accepted and not-reverted, and the loop
+    /// re-promoted work it had already promoted and re-proposed work a human
+    /// had reverted, which is the one outcome `reverts.zig` exists to
+    /// prevent. `markReverted` in this file already refuses the same shape
+    /// and says why; these two read paths are what feed the gates.
     fn loadAll(self: *History, arena: std.mem.Allocator) ![]Entry {
-        const raw = self.base.readFileAlloc(self.io, self.logPath(), arena, .limited(1 << 24)) catch return &.{};
+        const raw = self.base.readFileAlloc(self.io, self.logPath(), arena, .limited(max_log_read)) catch |err| switch (err) {
+            error.FileNotFound => return &.{},
+            else => return err,
+        };
         return parseEntries(arena, raw);
     }
 
@@ -477,9 +560,13 @@ pub const History = struct {
     /// times and kept every copy. Slicing the raw bytes to the last
     /// `max_entries` lines first makes the parse proportional to what the
     /// caller reads instead of to the log's whole history.
+    /// `FileNotFound` only, for the reason spelled out on `loadAll`.
     fn loadTail(self: *History, arena: std.mem.Allocator, max_entries: usize) ![]Entry {
         if (max_entries == 0) return &.{};
-        const raw = self.base.readFileAlloc(self.io, self.logPath(), arena, .limited(1 << 24)) catch return &.{};
+        const raw = self.base.readFileAlloc(self.io, self.logPath(), arena, .limited(max_log_read)) catch |err| switch (err) {
+            error.FileNotFound => return &.{},
+            else => return err,
+        };
         return parseEntries(arena, tailLines(raw, max_entries));
     }
 
@@ -1291,6 +1378,122 @@ test "an unreadable log is an error from markReverted, not zero flips" {
     try ensure_dir.ensureDir(tmp.dir, io, "state/improvements.jsonl");
     _ = hist.markReverted(&.{.{ .id = "imp-dir", .reason = "r" }}) catch return;
     return error.TestUnexpectedResult;
+}
+
+/// Whether a fallible call failed. Which error a directory-in-place produces
+/// is the platform's business; the claim under test is only that the failure
+/// is reported rather than swallowed into an empty history.
+fn errored(result: anytype) bool {
+    if (result) |_| return false else |_| return true;
+}
+
+test "an unreadable log is an error from the fingerprint gates, not a clean answer" {
+    // `FingerprintHit{}` -- not accepted, not reverted -- is precisely what a
+    // clean history looks like, so a read failure that answers it turns both
+    // dedup gates off without a word: the loop re-promotes work already
+    // merged and re-proposes work a human reverted. A MISSING log is the one
+    // legitimate empty case, and must stay silent.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // No log at all: a first run, not a fault.
+    try hist.checkReadable();
+    try std.testing.expect(!try hist.alreadyAccepted(arena, &.{0x1234}));
+    try std.testing.expect((try hist.acceptedIds(arena)).len == 0);
+
+    const fp = History.changeFingerprint("src/a.zig", "old", "new");
+    try hist.append("imp-1", .accepted, "i", "did a thing", &.{"src/a.zig"}, 0, 1, "", &.{fp}, .behavior);
+    // Control: with the log readable, the gate answers accepted. Without
+    // this the assertions below pass on a fingerprint that never matched.
+    try std.testing.expect((try hist.fingerprintHit(arena, &.{fp})).accepted);
+
+    // A log that exists but cannot be read: a directory in its place, the
+    // same fault injection `markReverted`'s test uses.
+    try tmp.dir.deleteFile(io, "state/improvements.jsonl");
+    try ensure_dir.ensureDir(tmp.dir, io, "state/improvements.jsonl");
+
+    try std.testing.expect(errored(hist.checkReadable()));
+    try std.testing.expect(errored(hist.fingerprintHit(arena, &.{fp})));
+    try std.testing.expect(errored(hist.alreadyAccepted(arena, &.{fp})));
+    try std.testing.expect(errored(hist.revertedByHuman(arena, &.{fp})));
+    try std.testing.expect(errored(hist.acceptedIds(arena)));
+    // The prompt-facing readers go through the same two loads, so they must
+    // report it too rather than rendering an empty history.
+    try std.testing.expect(errored(hist.recentSummary(arena, 6)));
+}
+
+test "append bounds the log so it can never grow past what a reader accepts" {
+    // The log was an unbounded seekToEnd write with no trim anywhere in the
+    // module, so it grew for the life of the checkout until it crossed the
+    // read cap and every reader failed. The bound is what keeps the failure
+    // above from being reachable by ordinary use.
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+
+    // Pad past the trim threshold with records the parser accepts, sized so
+    // that keeping the newest `trim_keep_entries` of them lands back UNDER
+    // the threshold rather than trimming on every append from here on.
+    const line_len = History.trim_above_bytes / History.trim_keep_entries - 48;
+    const pad_lines = History.trim_above_bytes / line_len + 8;
+    try ensure_dir.ensureDir(tmp.dir, io, "state");
+    var pad: std.ArrayList(u8) = .empty;
+    defer pad.deinit(gpa);
+    for (0..pad_lines) |i| {
+        const head = try std.fmt.allocPrint(gpa, "{{\"id\":\"pad-{d:0>6}\",\"status\":\"failed\",\"files\":[],\"detail\":\"", .{i});
+        defer gpa.free(head);
+        try pad.appendSlice(gpa, head);
+        try pad.appendNTimes(gpa, 'x', line_len - head.len - 3);
+        try pad.appendSlice(gpa, "\"}\n");
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/improvements.jsonl", .data = pad.items });
+    try std.testing.expect(pad.items.len > History.trim_above_bytes);
+
+    const fp = History.changeFingerprint("src/z.zig", "", "the newest record");
+    try hist.append("imp-newest", .accepted, "i", "landed last", &.{"src/z.zig"}, 0, 1, "", &.{fp}, .behavior);
+
+    const after = (try tmp.dir.statFile(io, "state/improvements.jsonl", .{})).size;
+    try std.testing.expect(after < History.trim_above_bytes);
+    try std.testing.expect(after < History.max_log_read);
+
+    // The trim drops the OLDEST records and keeps the newest, so the entry
+    // just written -- the one the dedup gates need most -- survives.
+    try std.testing.expect((try hist.fingerprintHit(arena, &.{fp})).accepted);
+    const raw = try tmp.dir.readFileAlloc(io, "state/improvements.jsonl", arena, .limited(History.max_log_read));
+    try std.testing.expect(std.mem.find(u8, raw, "\"id\":\"pad-000000\"") == null);
+    try std.testing.expect(std.mem.find(u8, raw, "\"id\":\"imp-newest\"") != null);
+    // Trimming must not leave a torn line behind: every kept record still
+    // parses, so the count is the keep target and not something less.
+    try std.testing.expectEqual(@as(usize, History.trim_keep_entries), (try hist.loadAll(arena)).len);
 }
 
 test "firstLine trims, takes the first line, and clips to max" {
