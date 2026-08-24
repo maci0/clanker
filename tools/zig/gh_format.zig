@@ -7,10 +7,17 @@ const std = @import("std");
 const gh_url = @import("gh_url.zig");
 
 /// Appended when a response came back holding exactly one page. GitHub reports
-/// the rest only through a `Link: rel="next"` header, which `ck_http` does not
-/// hand to the guest, so a full page is the only truncation signal there is.
-/// Saying so is the point: the shipped tool returned a short list and a partial
-/// diff with nothing to distinguish them from a complete one.
+/// the rest only through a `Link: rel="next"` header, and a full page is the
+/// signal used in its place. Saying so is the point: the shipped tool returned a
+/// short list and a partial diff with nothing to distinguish them from a
+/// complete one.
+///
+/// This is now an inference the transport no longer forces. `ck_http_ex` carries
+/// `Link` (ADR 0049), so the exact fact is available and a page of exactly
+/// `page_size` items no longer has to be read as "there is more" -- which is
+/// wrong for a final page that happens to be full. Replacing it is PRD 0019
+/// work: it changes a shipped output that the tool's own `llm_description`
+/// describes, so it does not ride along with the transport change.
 pub const truncation_note = "\n[truncated: only the first page was fetched; more items exist]\n";
 
 fn append(out: *std.ArrayList(u8), gpa: std.mem.Allocator, s: []const u8) !void {
@@ -218,8 +225,44 @@ pub fn files(gpa: std.mem.Allocator, v: std.json.Value, want: []const u8) ![]u8 
 /// a DNS failure gives, so before the host started parking the status in the
 /// result slot the two documented messages below could not fire: the body scans
 /// they were written around were reading a body that had already been dropped.
-pub fn statusMessage(gpa: std.mem.Allocator, url: []const u8, status: u16, body: []const u8) ![]u8 {
+/// `X-RateLimit-Reset` as `YYYY-MM-DDTHH:MM:SSZ`, or null when there is nothing
+/// usable to render.
+///
+/// GitHub sends the reset as a Unix timestamp, which is not something to put in
+/// front of a model: "resets at 1787571816" is a number it has to be told how to
+/// read, where an ISO 8601 instant is self-describing. UTC with an explicit `Z`
+/// rather than local time -- the header is UTC, and quietly converting it would
+/// make the message depend on the machine that printed it.
+pub fn isoFromUnix(buf: *[20]u8, secs: i64) ?[]const u8 {
+    // A zero or negative stamp is a header that did not parse, not the epoch.
+    if (secs <= 0) return null;
+    const es: std.time.epoch.EpochSeconds = .{ .secs = @intCast(secs) };
+    const year_day = es.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_secs = es.getDaySeconds();
+    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        day_secs.getHoursIntoDay(),
+        day_secs.getMinutesIntoHour(),
+        day_secs.getSecondsIntoMinute(),
+    }) catch null;
+}
+
+/// `reset_epoch` is `X-RateLimit-Reset` when the caller could read it, and null
+/// otherwise. It stays optional rather than becoming required because the header
+/// is only reachable through `ck_http_ex`: a caller on the older `ck_http`
+/// channel has no way to supply it, and the message without a reset time is
+/// still the message that shipped.
+pub fn statusMessage(gpa: std.mem.Allocator, url: []const u8, status: u16, body: []const u8, reset_epoch: ?i64) ![]u8 {
     if (looksLikeRateLimit(body) or status == 429) {
+        if (reset_epoch) |secs| {
+            var buf: [20]u8 = undefined;
+            if (isoFromUnix(&buf, secs)) |iso| {
+                return std.fmt.allocPrint(gpa, "GitHub rate limit exhausted; resets at {s}", .{iso});
+            }
+        }
         return gpa.dupe(u8, "GitHub rate limit exhausted");
     }
     return switch (status) {
@@ -386,27 +429,80 @@ test "a 404 and a rate limit produce their documented messages" {
         "not found: gh://issue/acme/widget/999",
         try statusMessage(arena, "gh://issue/acme/widget/999", 404,
             \\{"message":"Not Found","status":"404"}
-        ),
+        , null),
     );
     // Primary rate limit: GitHub answers 403 with the message in the body.
     try std.testing.expectEqualStrings(
         "GitHub rate limit exhausted",
         try statusMessage(arena, "gh://issue/a/b", 403,
             \\{"message":"API rate limit exceeded for user ID 1."}
-        ),
+        , null),
     );
     // Secondary rate limit: 403 too, with a different message.
     try std.testing.expectEqualStrings(
         "GitHub rate limit exhausted",
         try statusMessage(arena, "gh://issue/a/b", 403,
             \\{"message":"You have exceeded a secondary rate limit."}
-        ),
+        , null),
     );
     // 429 is always a rate limit, whatever the body says.
     try std.testing.expectEqualStrings(
         "GitHub rate limit exhausted",
-        try statusMessage(arena, "gh://issue/a/b", 429, ""),
+        try statusMessage(arena, "gh://issue/a/b", 429, "", null),
     );
+}
+
+test "a rate limit names when it resets, once the reset header is reachable" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // PRD 0019 asks for "the rate-limit error includes a reset time (resets at
+    // <ISO8601>)". It was unshippable rather than unbuilt: `X-RateLimit-Reset`
+    // exists nowhere but the response head, and `ck_http` had no channel for a
+    // header, so no amount of body parsing could recover it. `ck_http_ex` is
+    // that channel (ADR 0049).
+    try std.testing.expectEqualStrings(
+        "GitHub rate limit exhausted; resets at 2026-08-24T11:43:36Z",
+        try statusMessage(arena, "gh://issue/a/b", 403,
+            \\{"message":"API rate limit exceeded for user ID 1."}
+        , 1787571816),
+    );
+    // 429 with no body still gets the time.
+    try std.testing.expectEqualStrings(
+        "GitHub rate limit exhausted; resets at 2026-08-24T11:43:36Z",
+        try statusMessage(arena, "gh://issue/a/b", 429, "", 1787571816),
+    );
+    // A header that did not parse must not turn into a date in 1970: the
+    // message falls back to the one that shipped rather than inventing a time.
+    try std.testing.expectEqualStrings(
+        "GitHub rate limit exhausted",
+        try statusMessage(arena, "gh://issue/a/b", 429, "", 0),
+    );
+    try std.testing.expectEqualStrings(
+        "GitHub rate limit exhausted",
+        try statusMessage(arena, "gh://issue/a/b", 429, "", -5),
+    );
+    // A reset time on a non-rate-limit status changes nothing: the header rides
+    // along on every response and must not leak into unrelated messages.
+    try std.testing.expectEqualStrings(
+        "not found: gh://issue/a/b",
+        try statusMessage(arena, "gh://issue/a/b", 404,
+            \\{"message":"Not Found"}
+        , 1787571816),
+    );
+}
+
+test "isoFromUnix renders UTC, and refuses a stamp that is not one" {
+    var buf: [20]u8 = undefined;
+    // The value measured live from api.github.com's X-RateLimit-Reset.
+    try std.testing.expectEqualStrings("2026-08-24T11:43:36Z", isoFromUnix(&buf, 1787571816).?);
+    // A leap-year end-of-day, since the month/day arithmetic is the part with
+    // an off-by-one waiting in it (`day_index` is 0-based).
+    try std.testing.expectEqualStrings("2024-02-29T23:59:59Z", isoFromUnix(&buf, 1709251199).?);
+    try std.testing.expectEqualStrings("2000-03-01T00:00:00Z", isoFromUnix(&buf, 951868800).?);
+    try std.testing.expect(isoFromUnix(&buf, 0) == null);
+    try std.testing.expect(isoFromUnix(&buf, -1) == null);
 }
 
 test "a 403 that is not a rate limit is not reported as one" {
@@ -416,7 +512,7 @@ test "a 403 that is not a rate limit is not reported as one" {
 
     const text = try statusMessage(arena, "gh://issue/acme/private", 403,
         \\{"message":"Must have admin rights to Repository."}
-    );
+    , null);
     try std.testing.expect(std.mem.find(u8, text, "forbidden") != null);
     try std.testing.expect(std.mem.find(u8, text, "rate limit") == null);
 }
@@ -430,12 +526,12 @@ test "an unclassified status carries the server's own message" {
         "gh://issue/a/b: HTTP 422: Validation Failed",
         try statusMessage(arena, "gh://issue/a/b", 422,
             \\{"message":"Validation Failed","errors":[]}
-        ),
+        , null),
     );
     // A body that is not the JSON the API promises must not invent a message.
     try std.testing.expectEqualStrings(
         "gh://issue/a/b: HTTP 502",
-        try statusMessage(arena, "gh://issue/a/b", 502, "<html>bad gateway</html>"),
+        try statusMessage(arena, "gh://issue/a/b", 502, "<html>bad gateway</html>", null),
     );
 }
 

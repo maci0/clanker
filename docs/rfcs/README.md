@@ -93,6 +93,7 @@ projects, and the strongest case against the recommendation.
 ## Inventory
 
 <!-- inventory:rfc:start -->
+- [RFC 0037 — How a sandboxed guest reads an HTTP response header](0037-how-a-sandboxed-guest-reads-an-http-response-header.md) — Decided
 - [RFC 0036 — Which of an improve-self worktree's runtime state should rejoin the checkout](0036-improve-worktree-runtime-state-sharing.md) — Discussion
 - [RFC 0035 — How the REPL injects mid-stream like web steer](0035-repl-inject.md) — Decided
 - [RFC 0034 — How nested runs pick explore/plan/coder profiles](0034-nested-profiles.md) — Decided

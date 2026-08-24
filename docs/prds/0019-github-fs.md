@@ -201,8 +201,8 @@ generic transport error.
 maximum. Sending no `per_page` gets 30 items with the rest behind a
 `Link: rel="next"` header the guest never sees, so a 40-file PR diff came back
 ten files short and a busy repository listed 30 issues, both with nothing to
-distinguish the result from a complete one. A response holding a full page is
-the only truncation signal `ck_http` leaves, and it now appends
+distinguish the result from a complete one. A response holding a full page was
+the only truncation signal `ck_http` left, and it appends
 `[truncated: only the first page was fetched; more items exist]`. A `per_page`
 the caller wrote into the URL themselves is kept, which is also the way out of
 the trade-off this makes: 100 long issue bodies can exceed `max_http_bytes`
@@ -279,10 +279,16 @@ than silently returning less than was asked for.
   and is not built.
 - **Still not shipped, unchanged by the above:** issue comments (the tool
   fetches only the issue object), `gh.max_list` / `gh.max_comments` /
-  `gh.max_diff_files` config keys, a reset time on the rate-limit error
-  (`ck_http` hands the guest no response headers, so `X-RateLimit-Reset` is out
-  of reach), pagination past page one, GraphQL, writes, and Enterprise
-  `api_base_url`.
+  `gh.max_diff_files` config keys, pagination past page one, GraphQL, writes,
+  and Enterprise `api_base_url`.
+- **The reset time now ships.** It was listed here as unreachable because
+  `ck_http` handed the guest no response headers. That was a transport gap, not
+  a missing feature, and it is closed: `ck_http_ex` carries an allowlisted set
+  of response headers including `X-RateLimit-Reset` (RFC 0037, ADR 0049), and
+  `gh_read` moved onto it. Two of the three things this PRD parked behind that
+  gap -- pagination via `Link`, and `ETag` revalidation -- are now *buildable*
+  and remain unbuilt; they are future work in the ordinary sense rather than
+  blocked.
 
 ## Failure modes
 
@@ -334,8 +340,12 @@ than silently returning less than was asked for.
       loopback server that answers 404 with a body.
 - [x] Every hunk in a multi-file PR diff names its file.
 - [x] A list or diff that comes back holding a full page says so.
-- [ ] The rate-limit error includes a reset time ("resets at <ISO8601>") — not
-      shipped: the error is just "GitHub rate limit exhausted".
+- [x] The rate-limit error includes a reset time ("resets at <ISO8601>").
+      `X-RateLimit-Reset` was out of reach until `ck_http_ex` gave a guest a
+      channel for a response header (ADR 0049); `gh_read` reads it and
+      `gh_format.statusMessage` renders it as UTC ISO 8601. Pinned in
+      `gh_format.zig`, including that an unparseable or absent header falls back
+      to the bare message rather than inventing a date in 1970.
 - [x] `read_file` remains network-free: no `network_allow`, no `gh://` dispatch.
 - [x] Unit tests cover URL parsing (valid and malformed forms).
 - [x] Unit tests cover API endpoint mapping: `apiPath` is pinned for all five
@@ -348,7 +358,9 @@ than silently returning less than was asked for.
   `state/gh_cache/` directory of JSON files with a fixed 300s TTL. A sqlite
   `state/gh_cache.db` with ETag revalidation (`If-None-Match` / 304) and
   soft/hard TTLs via `gh.cache_ttl_soft_s` / `gh.cache_ttl_hard_s` is future
-  work, not shipped.
+  work, not shipped. The `ETag` it needs is reachable since ADR 0049; before
+  that this entry read as "not done yet" when it was really "the transport does
+  not carry it".
 - **GraphQL.** A `gh://graphql` passthrough remains future work.
 - **Write support.** Dedicated write tool or gh-pattern writes remain future
   work after reads are stable.

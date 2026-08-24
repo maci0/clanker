@@ -14,6 +14,7 @@ const std = @import("std");
 extern fn ck_log(level: u32, ptr: u32, len: u32) void;
 extern fn ck_now() u64;
 extern fn ck_http(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_len: u32, hdr_ptr: u32, hdr_len: u32) u32;
+extern fn ck_http_ex(method: u32, url_ptr: u32, url_len: u32, body_ptr: u32, body_len: u32, hdr_ptr: u32, hdr_len: u32) u32;
 extern fn ck_fs_read(path_ptr: u32, path_len: u32) u32;
 extern fn ck_fs_read_range(path_ptr: u32, path_len: u32, offset: u32, length: u32) u32;
 extern fn ck_fs_append(path_ptr: u32, path_len: u32, data_ptr: u32, data_len: u32) u32;
@@ -512,6 +513,79 @@ pub fn httpLastFailure(gpa: std.mem.Allocator) ?HttpFailure {
         else => "",
     };
     return .{ .status = status, .body = body };
+}
+
+/// One HTTP exchange, with the status and the allowlisted response headers.
+///
+/// `body` is the response body; `headers` holds the lowercase names the host
+/// exposes (`link`, `etag`, `last-modified`, `retry-after`, `content-type` and
+/// the `x-ratelimit-*` trio) and only those -- the set is fixed host-side
+/// because a response header is attacker-controlled text (ADR 0049). A name the
+/// server did not send is simply absent.
+pub const HttpResponse = struct {
+    status: u16,
+    body: []const u8,
+    /// The envelope's `headers` object, kept as a parsed `Value` rather than an
+    /// `ObjectMap` so an absent or malformed field needs no empty map to stand
+    /// in for it.
+    headers: std.json.Value,
+
+    /// The value of `name`, or null when the server did not send it or it is not
+    /// on the host's allowlist. `name` must be lowercase: the host normalizes
+    /// what it emits, so a guest never has to case-fold.
+    pub fn header(self: HttpResponse, name: []const u8) ?[]const u8 {
+        const obj = switch (self.headers) {
+            .object => |o| o,
+            else => return null,
+        };
+        return switch (obj.get(name) orelse return null) {
+            .string => |s| s,
+            else => null,
+        };
+    }
+};
+
+/// GET (or any method) through `ck_http_ex`, which unlike `ck_http` reports the
+/// status for *every* response and carries the response headers with it.
+///
+/// The difference that matters when porting a caller: a >= 400 is **not** an
+/// error here. `error.NetworkError` means the exchange did not happen (DNS,
+/// refused connection, timeout); a 404 comes back as a successful call whose
+/// `status` is 404. That is the point -- there is no second call to forget, so a
+/// caller cannot read the body while missing the status the way it can with
+/// `ck_http` plus `httpLastFailure`.
+pub fn httpFull(gpa: std.mem.Allocator, method: u32, url: []const u8, body: []const u8, headers_json: []const u8) HostError!HttpResponse {
+    const u = sliceToMem(url);
+    const b = sliceToMem(body);
+    const h = sliceToMem(headers_json);
+    const raw = try hostResult(ck_http_ex(
+        method,
+        u.ptr,
+        u.len,
+        if (body.len > 0) b.ptr else 0,
+        if (body.len > 0) b.len else 0,
+        if (headers_json.len > 0) h.ptr else 0,
+        if (headers_json.len > 0) h.len else 0,
+    ));
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, gpa, raw, .{}) catch return error.NetworkError;
+    if (parsed != .object) return error.NetworkError;
+    const status = switch (parsed.object.get("status") orelse return error.NetworkError) {
+        .integer => |n| if (n >= 0 and n <= 599) @as(u16, @intCast(n)) else return error.NetworkError,
+        else => return error.NetworkError,
+    };
+    return .{
+        .status = status,
+        .body = switch (parsed.object.get("body") orelse std.json.Value{ .string = "" }) {
+            .string => |s| s,
+            else => "",
+        },
+        .headers = parsed.object.get("headers") orelse .null,
+    };
+}
+
+/// `httpFull` for the common GET case.
+pub fn httpGetFull(gpa: std.mem.Allocator, url: []const u8, headers_json: []const u8) HostError!HttpResponse {
+    return httpFull(gpa, 0, url, "", headers_json);
 }
 
 pub fn httpPost(url: []const u8, body: []const u8) HostError![]const u8 {
