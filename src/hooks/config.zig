@@ -74,7 +74,14 @@ pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, path: []const
                     .string => |s| s,
                     else => return error.HookCommandNotString,
                 } else return error.HookCommandMissing;
-                if (std.mem.trim(u8, command, " \\t\\r\\n").len == 0) return error.HookCommandMissing;
+                // `&std.ascii.whitespace`, not a hand-written literal. This
+                // was spelled `" \\t\\r\\n"`, one backslash too many in every
+                // escape, so the trim set was the five bytes space, backslash,
+                // t, r, n rather than the four whitespace bytes -- a command
+                // that was a bare tab passed and reached `splitCommand` as a
+                // zero-length argv. A guard a panic depends on should not be a
+                // string literal a typo can silently widen.
+                if (std.mem.trim(u8, command, &std.ascii.whitespace).len == 0) return error.HookCommandMissing;
                 var timeout_ms = default_timeout_ms;
                 if (handler.get("timeout")) |v| {
                     const seconds: i64 = switch (v) {
@@ -82,7 +89,10 @@ pub fn load(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, path: []const
                         .number_string => |s| try std.fmt.parseInt(i64, s, 10),
                         else => return error.HookTimeoutNotInteger,
                     };
-                    if (seconds < 0 or seconds > std.math.maxInt(u32) / 1000) return error.HookTimeoutInvalid;
+                    // `0` is refused rather than accepted: the host reads a
+                    // zero `timeout_ms` as *no* deadline, so such a hook would
+                    // block the turn forever.
+                    if (seconds <= 0 or seconds > std.math.maxInt(u32) / 1000) return error.HookTimeoutInvalid;
                     timeout_ms = @intCast(seconds * 1000);
                 }
                 try out.append(arena, .{ .event = event, .matcher = matcher, .command = command, .timeout_ms = timeout_ms });
@@ -224,4 +234,45 @@ test "loader preserves hook order and converts timeout seconds" {
     try std.testing.expectEqual(@as(u32, 2000), cfg.hooks[0].timeout_ms);
     try std.testing.expectEqualStrings("check two", cfg.hooks[1].command);
     try std.testing.expectEqual(@as(u32, 60000), cfg.hooks[1].timeout_ms);
+}
+
+test "a whitespace-only command is rejected and a literal 'nrt' is not" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A real tab used to pass the mis-escaped trim set and reach the runner
+    // as a zero-length argv.
+    try tmp.dir.writeFile(io, .{ .sub_path = "tab.json", .data =
+        \\{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"\t"}]}]}}
+    });
+    try std.testing.expectError(error.HookCommandMissing, load(io, arena, tmp.dir, "tab.json", 60000));
+
+    // The mirror image: a command spelled only out of the bytes that literal
+    // held used to trim to empty and reject the whole file.
+    try tmp.dir.writeFile(io, .{ .sub_path = "nrt.json", .data =
+        \\{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"nrt"}]}]}}
+    });
+    const cfg = try load(io, arena, tmp.dir, "nrt.json", 60000);
+    try std.testing.expectEqual(@as(usize, 1), cfg.hooks.len);
+    try std.testing.expectEqualStrings("nrt", cfg.hooks[0].command);
+}
+
+test "a zero timeout is refused rather than disabling the deadline" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    try tmp.dir.writeFile(io, .{ .sub_path = "hooks.json", .data =
+        \\{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"true","timeout":0}]}]}}
+    });
+    try std.testing.expectError(error.HookTimeoutInvalid, load(io, arena_state.allocator(), tmp.dir, "hooks.json", 60000));
 }

@@ -9,6 +9,7 @@ const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const strField = @import("../util/json.zig").strField;
 const manifest = @import("manifest.zig");
+const preset_mod = @import("../preset/preset.zig");
 const test_env = @import("../util/test_env.zig");
 
 pub const Tool = struct {
@@ -550,7 +551,12 @@ pub const Registry = struct {
     /// whether to ask for its schema. This is what the system prompt carries
     /// instead of every schema, which for this repo is the difference between
     /// roughly 6,600 tokens and roughly 1,000 in every single request.
-    pub fn catalogText(self: *const Registry, arena: std.mem.Allocator, revealed: *const std.array_hash_map.String(void)) ![]const u8 {
+    pub fn catalogText(
+        self: *const Registry,
+        arena: std.mem.Allocator,
+        revealed: *const std.array_hash_map.String(void),
+        preset: ?*const preset_mod.Preset,
+    ) ![]const u8 {
         var out: std.Io.Writer.Allocating = .init(arena);
         // Not "names": Registry.names is a method on this same type, and a
         // local of that name shadows it and does not compile.
@@ -559,6 +565,7 @@ pub const Registry = struct {
         while (it.next()) |kv| {
             const t = kv.value_ptr.*;
             if (t.internal or !t.enabled) continue;
+            if (presetHides(preset, t.name)) continue;
             try listed.append(arena, t.name);
         }
         std.mem.sort([]const u8, listed.items, {}, struct {
@@ -582,13 +589,14 @@ pub const Registry = struct {
     /// registry rather than the loaded tool defs, because in catalog mode a
     /// tool's schema may be lazy-loaded while its usage rules must be visible
     /// from the first request.
-    pub fn guidanceText(self: *const Registry, arena: std.mem.Allocator) ![]const u8 {
+    pub fn guidanceText(self: *const Registry, arena: std.mem.Allocator, preset: ?*const preset_mod.Preset) ![]const u8 {
         var out: std.Io.Writer.Allocating = .init(arena);
         var listed: std.ArrayList([]const u8) = .empty;
         var it = self.tools.iterator();
         while (it.next()) |kv| {
             const t = kv.value_ptr.*;
             if (t.internal or !t.enabled or t.prompt_guidance.len == 0) continue;
+            if (presetHides(preset, t.name)) continue;
             try listed.append(arena, t.name);
         }
         std.mem.sort([]const u8, listed.items, {}, struct {
@@ -623,6 +631,7 @@ pub const Registry = struct {
         arena: std.mem.Allocator,
         core: []const []const u8,
         revealed: *const std.array_hash_map.String(void),
+        preset: ?*const preset_mod.Preset,
     ) ![]types.ToolDef {
         var out: std.ArrayList(types.ToolDef) = .empty;
         try out.append(arena, try loadToolDef(arena));
@@ -630,6 +639,7 @@ pub const Registry = struct {
         while (it.next()) |kv| {
             const t = kv.value_ptr.*;
             if (t.internal or !t.enabled) continue;
+            if (presetHides(preset, t.name)) continue;
             const in_core = for (core) |c| {
                 if (std.mem.eql(u8, c, t.name)) break true;
             } else false;
@@ -643,6 +653,19 @@ pub const Registry = struct {
         }
         std.mem.sort(types.ToolDef, out.items[1..], {}, toolDefNameLt);
         return out.toOwnedSlice(arena);
+    }
+
+    /// Whether the active preset hides `name` from every list the model can
+    /// see. `null` means no preset and nothing hidden.
+    ///
+    /// `load_tools` is exempt on purpose: it is how the catalog is opened, and
+    /// a preset with a non-empty `tools_allow` that does not name it (every
+    /// preset shipped today) would otherwise leave the model with the hot set
+    /// and no door to the rest.
+    pub fn presetHides(preset: ?*const preset_mod.Preset, name: []const u8) bool {
+        const p = preset orelse return false;
+        if (std.mem.eql(u8, name, load_tool_name)) return false;
+        return !preset_mod.allowed(p.*, name);
     }
 
     pub fn toToolDefs(self: *const Registry, arena: std.mem.Allocator) ![]types.ToolDef {
@@ -1144,7 +1167,7 @@ test "prompt_guidance is parsed from the descriptor and rendered for catalog too
     try reg.tools.put(arena, (try Registry.parseDescriptor(arena, hidden)).name, try Registry.parseDescriptor(arena, hidden));
     try reg.tools.put(arena, (try Registry.parseDescriptor(arena, plain)).name, try Registry.parseDescriptor(arena, plain));
 
-    const text = try reg.guidanceText(arena);
+    const text = try reg.guidanceText(arena, null);
     try std.testing.expect(std.mem.find(u8, text, "### rfc") != null);
     try std.testing.expect(std.mem.find(u8, text, "GUIDANCE_MARKER") != null);
     try std.testing.expect(std.mem.find(u8, text, "HIDDEN_MARKER") == null);
@@ -1650,10 +1673,56 @@ test "tool defs are sorted by name so prompts are stable across load order" {
 
     const core = [_][]const u8{ "zeta", "alpha", "mid" };
     var revealed: std.array_hash_map.String(void) = .empty;
-    const lazy = try reg.lazyToolDefs(arena, &core, &revealed);
+    const lazy = try reg.lazyToolDefs(arena, &core, &revealed, null);
     try std.testing.expectEqual(@as(usize, 4), lazy.len);
     try std.testing.expectEqualStrings("load_tools", lazy[0].name);
     try std.testing.expectEqualStrings("alpha", lazy[1].name);
     try std.testing.expectEqualStrings("mid", lazy[2].name);
     try std.testing.expectEqualStrings("zeta", lazy[3].name);
+}
+
+test "an active preset hides denied tools from the offered list and the catalog" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var reg = Registry{};
+    try reg.tools.put(arena, "read_file", .{ .name = "read_file", .description = "read", .llm_description = "read a file", .wasm = "x.wasm", .input_schema = .{ .object = .{} } });
+    try reg.tools.put(arena, "edit_file", .{ .name = "edit_file", .description = "edit", .llm_description = "edit a file", .wasm = "x.wasm", .input_schema = .{ .object = .{} }, .prompt_guidance = "be careful" });
+    try reg.tools.put(arena, "kanban_add", .{ .name = "kanban_add", .description = "card", .llm_description = "add a card", .wasm = "x.wasm", .input_schema = .{ .object = .{} } });
+
+    const research = preset_mod.Preset{ .tools_deny = &.{ "edit_file", "kanban_*" } };
+    const core = [_][]const u8{ "read_file", "edit_file", "kanban_add" };
+    var revealed: std.array_hash_map.String(void) = .empty;
+
+    // The offered list is the assertion PRD 0033's "neither offered nor
+    // callable" turns on: the dispatch gate refusing later is not enough.
+    const lazy = try reg.lazyToolDefs(arena, &core, &revealed, &research);
+    try std.testing.expectEqual(@as(usize, 2), lazy.len);
+    try std.testing.expectEqualStrings("load_tools", lazy[0].name);
+    try std.testing.expectEqualStrings("read_file", lazy[1].name);
+
+    // The system prompt's catalog text is the other half: it used to
+    // enumerate every registry tool, denied ones included.
+    const catalog = try reg.catalogText(arena, &revealed, &research);
+    try std.testing.expect(std.mem.find(u8, catalog, "read_file") != null);
+    try std.testing.expect(std.mem.find(u8, catalog, "edit_file") == null);
+    try std.testing.expect(std.mem.find(u8, catalog, "kanban_add") == null);
+
+    // And the per-tool usage rules, which are rendered from the whole
+    // registry rather than the offered defs.
+    const guidance = try reg.guidanceText(arena, &research);
+    try std.testing.expectEqualStrings("", guidance);
+
+    // A preset with a non-empty allow list that does not name `load_tools`
+    // still gets it: it is the catalog's only door.
+    const minimal = preset_mod.Preset{ .tools_allow = &.{"read_file"} };
+    const only_read = try reg.lazyToolDefs(arena, &core, &revealed, &minimal);
+    try std.testing.expectEqual(@as(usize, 2), only_read.len);
+    try std.testing.expectEqualStrings("load_tools", only_read[0].name);
+    try std.testing.expectEqualStrings("read_file", only_read[1].name);
+    try std.testing.expect(!Registry.presetHides(&minimal, Registry.load_tool_name));
+    try std.testing.expect(Registry.presetHides(&minimal, "edit_file"));
+    // No preset hides nothing.
+    try std.testing.expect(!Registry.presetHides(null, "edit_file"));
 }

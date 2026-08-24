@@ -179,20 +179,20 @@ principle the plugin manifest validator already applies to a malformed
 
 ## Known issues
 
-1. **A whitespace-only hook command panics the agent.** The command validator's
-   trim set is written as a plain string literal with unescaped backslashes, so
-   the set is the five bytes `{space, \\, t, r, n}` rather than the four
-   whitespace bytes. A command that is a bare tab passes validation,
-   `splitCommand` returns a zero-length argv, the host correctly answers
-   `.not_allowed`, and the runner's warn log then formats `argv[0]` on the empty
-   slice. Contradicts the failure-modes rule that a typo'd hook must not take
-   the agent down. The same literal rejects the whole `hooks.json` for a command
-   spelled `nrt`.
+None open.
+
+1. ~~**A whitespace-only hook command panics the agent.**~~ Fixed. The trim set
+   is `&std.ascii.whitespace`, so a bare tab is rejected and a command spelled
+   `nrt` no longer trims to empty and fails the whole file. Independently, the
+   runner's three warn lines name a `argv0` local that is `""` for an empty
+   argv instead of indexing `argv[0]`, so the guard no longer depends on a
+   string literal a typo can widen.
    [Bug](../reports/bugs/2026-08-23-hook-command-trim-set-is-mis-escaped.md).
 
-2. **`"timeout": 0` disables the deadline instead of being refused.** It passes
-   validation, and the host reads `timeout_ms == 0` as *no* deadline, so such a
-   hook blocks the turn forever. Same bug record.
+2. ~~**`"timeout": 0` disables the deadline instead of being refused.**~~
+   Fixed: the loader refuses a non-positive `timeout` alongside a negative or
+   over-large one, so `timeout_ms` can never reach the host's "no deadline"
+   reading from a hooks file. Same bug record.
 
 ## Acceptance criteria
 
