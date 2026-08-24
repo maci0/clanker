@@ -82,6 +82,8 @@ Project agents receive this workflow through the harness prompt and
 <!-- inventory:bug:start -->
 - [The saturation 503 closes a socket with the request still unread, so the RST can discard the response body](bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md) — Open
 
+- [reports status doubles its own 'Resolved on <date>.' sentence when the note repeats it](bugs/2026-08-24-reports-status-doubles-its-own-sentence.md) — Resolved
+
 - [verify.sh runs clanker gate before apply-patches.sh, so a fresh worktree always fails dep-patches](bugs/2026-08-24-verify-sh-gates-before-applying-patches.md) — Resolved
 
 - [scripts/apply-patches.sh exits 0 after applying nothing, so a caller checking the exit status proceeds on an unpatched tree](bugs/2026-08-24-apply-patches-exits-0-having-applied-nothing.md) — Resolved
@@ -157,9 +159,9 @@ Project agents receive this workflow through the harness prompt and
 
 - [A steer typed while the final iteration streams is echoed as queued and then discarded](bugs/2026-08-23-repl-steer-after-last-poll-silently-dropped.md) — Open
 
-- [Fenced block comments and multi-line strings mis-highlight in the REPL but not in clanker run](bugs/2026-08-23-tui-syntax-state-not-carried-across-lines.md) — Open
+- [Fenced block comments and multi-line strings mis-highlight in the REPL but not in clanker run](bugs/2026-08-23-tui-syntax-state-not-carried-across-lines.md) — Resolved
 
-- [The same @path line inlines a file when idle and reaches the model literally mid-run](bugs/2026-08-23-repl-mentions-not-expanded-when-steering.md) — Open
+- [The same @path line inlines a file when idle and reaches the model literally mid-run](bugs/2026-08-23-repl-mentions-not-expanded-when-steering.md) — Resolved
 
 - [An escape sequence split across two deltas has its introducer dropped and its tail printed as prose](bugs/2026-08-23-mdstream-split-escape-tail-printed.md) — Resolved
 

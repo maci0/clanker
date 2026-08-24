@@ -125,9 +125,13 @@ fn clean(gpa: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
 /// "truncated with notice" row in PRD 0052's Failure modes. A bounded read of
 /// the prefix keeps the ceiling (a huge file is never fully allocated) while
 /// still producing bytes to truncate.
-fn readMentionFile(io: std.Io, arena: std.mem.Allocator, path: []const u8) ?[]const u8 {
+/// `dir` is the root mentions resolve against, `std.Io.Dir.cwd()` in the REPL.
+/// A parameter only so the shared transform above it can be driven against a
+/// tmpDir: the refuse rules reject absolute paths, so a test cannot reach a
+/// scratch file any other way.
+fn readMentionFile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, path: []const u8) ?[]const u8 {
     const want = mention_expand.per_file_cap + 1;
-    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+    var file = dir.openFile(io, path, .{}) catch return null;
     defer file.close(io);
     const buf = arena.alloc(u8, want) catch return null;
     var reader = file.reader(io, &.{});
@@ -135,6 +139,79 @@ fn readMentionFile(io: std.Io, arena: std.mem.Allocator, path: []const u8) ?[]co
     // stream ended, so a short answer is the whole file.
     const n = reader.interface.readSliceShort(buf) catch return null;
     return buf[0..n];
+}
+
+/// Inlines every `@path` mention in one line of composer text, resolving
+/// against `dir`. The result is arena-owned; on OOM it is `input` itself, so
+/// callers must pass arena-owned text (a literal mention beats losing the
+/// line).
+///
+/// The single pre-send transform for composer text, and it has to stay single.
+/// PRD 0058 makes the composer *be* the steer box while a turn runs, so one
+/// widget and one key must not mean two different things depending on state the
+/// user has no reason to connect to @-expansion. This had one caller,
+/// `submitTaskWithGoal`, while `steerWhileRunning` duped the same composer text
+/// through untouched: `look at @src/main.zig` inlined the file when idle and
+/// reached the model as that literal string mid-run, so the model guessed or
+/// spent a `read_file` round trip. The refuse rules went unconsulted on that
+/// path for the same reason, and now cover both.
+fn expandComposerMentions(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, input: []const u8) []const u8 {
+    const Ctx = struct {
+        io: std.Io,
+        arena: std.mem.Allocator,
+        dir: std.Io.Dir,
+        pub fn refuse(_: @This(), path: []const u8) bool {
+            if (path.len == 0) return true;
+            if (path[0] == '/') return true;
+            if (std.mem.find(u8, path, "..") != null) return true;
+            return secret_dotenv.isSecretDotenvPath(path);
+        }
+        pub fn readFile(c: @This(), path: []const u8) ?[]const u8 {
+            return readMentionFile(c.io, c.arena, c.dir, path);
+        }
+    };
+    return mention_expand.expandAlloc(arena, input, Ctx{ .io = io, .arena = arena, .dir = dir }) catch input;
+}
+
+test "expandComposerMentions inlines a mention and honours every refuse rule" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "notes.txt", .data = "the secret is 41" });
+    try tmp.dir.writeFile(io, .{ .sub_path = ".env", .data = "TOKEN=hunter2" });
+
+    // The line both the idle and the mid-run path now send: the file is
+    // inlined as a fenced block, so the model does not have to go and read it.
+    const out = expandComposerMentions(arena, io, tmp.dir, "look at @notes.txt");
+    try std.testing.expect(std.mem.find(u8, out, "```notes.txt") != null);
+    try std.testing.expect(std.mem.find(u8, out, "the secret is 41") != null);
+
+    // The three refusals leave the mention literal and read nothing. A dotenv
+    // is the one that matters: the mid-run path consulted no refuse rules at
+    // all, so this content had a route to the provider it should never have.
+    const dotenv = expandComposerMentions(arena, io, tmp.dir, "look at @.env");
+    try std.testing.expect(std.mem.find(u8, dotenv, "hunter2") == null);
+    try std.testing.expect(std.mem.find(u8, dotenv, "@.env") != null);
+
+    const absolute = expandComposerMentions(arena, io, tmp.dir, "look at @/etc/hosts");
+    try std.testing.expect(std.mem.find(u8, absolute, "@/etc/hosts") != null);
+    try std.testing.expect(std.mem.find(u8, absolute, "```") == null);
+
+    const traversal = expandComposerMentions(arena, io, tmp.dir, "look at @../notes.txt");
+    try std.testing.expect(std.mem.find(u8, traversal, "@../notes.txt") != null);
+    try std.testing.expect(std.mem.find(u8, traversal, "```") == null);
+
+    // A refused mention says so, rather than leaving the user to wonder why
+    // the file did not appear.
+    try std.testing.expect(std.mem.find(u8, dotenv, "[mention refused:") != null);
+
+    // Nothing to expand passes through byte-identical.
+    try std.testing.expectEqualStrings("no mentions here", expandComposerMentions(arena, io, tmp.dir, "no mentions here"));
 }
 
 test "a mention of a file over the cap is truncated, not dropped" {
@@ -164,7 +241,7 @@ test "a mention of a file over the cap is truncated, not dropped" {
     // The defect: `.limited(cap + 1)` answered error.StreamTooLong for any
     // file at or over the cap, so this was null and the mention stayed a bare
     // token with no fenced block and no notice.
-    const bytes = readMentionFile(io, arena, abs) orelse return error.MentionFileWasDropped;
+    const bytes = readMentionFile(io, arena, std.Io.Dir.cwd(), abs) orelse return error.MentionFileWasDropped;
     try std.testing.expectEqual(mention_expand.per_file_cap + 1, bytes.len);
 
     const Ctx = struct {
@@ -837,6 +914,12 @@ const Line = struct {
     text: []const u8,
     dim: bool = false,
     fence_lang: ?[]const u8 = null,
+    /// True on the first body line of a fenced block. Highlighter state
+    /// (an open block comment, an unterminated string) is carried from line to
+    /// line within one fence, so the draw needs to know where a run starts:
+    /// the fence markers are not stored as lines, so two back-to-back fences
+    /// are otherwise indistinguishable from one.
+    fence_first: bool = false,
     /// The user's own echoed prompt ("clanker> ..."), rendered in the accent
     /// prompt colour so each turn's starting point is scannable on scrollback.
     user: bool = false,
@@ -1014,6 +1097,7 @@ fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer
     const owned = if (safe.ptr == answer.ptr) (arena.dupe(u8, safe) catch return) else safe;
 
     var in_fence = false;
+    var fence_opened = false;
     var fence_lang: []const u8 = "";
     var first = true;
     var it = std.mem.splitScalar(u8, owned, '\n');
@@ -1024,6 +1108,7 @@ fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer
                 in_fence = false;
             } else {
                 in_fence = true;
+                fence_opened = true;
                 fence_lang = std.mem.trim(u8, trimmed[3..], " ");
             }
             continue; // fence markers themselves are not shown
@@ -1034,7 +1119,8 @@ fn appendAnswerLines(arena: std.mem.Allocator, out: *std.ArrayList(Line), answer
         else
             src_line;
         first = false;
-        out.append(arena, .{ .text = prefixed, .fence_lang = lang }) catch {};
+        out.append(arena, .{ .text = prefixed, .fence_lang = lang, .fence_first = in_fence and fence_opened }) catch {};
+        if (in_fence) fence_opened = false;
     }
 }
 
@@ -3445,7 +3531,15 @@ const Model = struct {
         // agent loop frames the request copy (applySteerFraming), so a TUI
         // steer reads to the model as the same mid-run course correction a web
         // one does without the framing reaching the saved transcript.
-        const queued = bridge_gpa.dupe(u8, task) catch {
+        //
+        // `@path` mentions are inlined first, through the same transform and
+        // the same refuse rules `submit` uses when idle: the composer is the
+        // steer box (PRD 0058), so the identical line must not mean two
+        // different things depending on whether a turn happens to be running.
+        // The echo below deliberately keeps `task`, the typed line, since an
+        // inlined file is not something to paste into the transcript.
+        const expanded = self.expandMentions(self.arena.dupe(u8, task) catch task);
+        const queued = bridge_gpa.dupe(u8, expanded) catch {
             self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
@@ -4404,6 +4498,12 @@ const Model = struct {
         return self.submitTaskWithGoal(ctx, task, null);
     }
 
+    /// `expandComposerMentions` against the run root. `input` must already be
+    /// arena-owned: it is what comes back when there is nothing to expand.
+    fn expandMentions(self: *Model, input: []const u8) []const u8 {
+        return expandComposerMentions(self.arena, self.io, std.Io.Dir.cwd(), input);
+    }
+
     /// Reads the `/attach` queue for the turn about to be submitted and puts
     /// every failure in the transcript. Does not touch the queue: submit
     /// clears it only once the worker thread owns the parts.
@@ -4476,23 +4576,7 @@ const Model = struct {
         // once the worker is joined.
         self.summary_before = stats_mod.summaryState(self.messages.items);
 
-        const owned_task = blk: {
-            const copied = try self.arena.dupe(u8, task);
-            const Ctx = struct {
-                io: std.Io,
-                arena: std.mem.Allocator,
-                pub fn refuse(_: @This(), path: []const u8) bool {
-                    if (path.len == 0) return true;
-                    if (path[0] == '/') return true;
-                    if (std.mem.find(u8, path, "..") != null) return true;
-                    return secret_dotenv.isSecretDotenvPath(path);
-                }
-                pub fn readFile(c: @This(), path: []const u8) ?[]const u8 {
-                    return readMentionFile(c.io, c.arena, path);
-                }
-            };
-            break :blk mention_expand.expandAlloc(self.arena, copied, Ctx{ .io = self.io, .arena = self.arena }) catch copied;
-        };
+        const owned_task = self.expandMentions(try self.arena.dupe(u8, task));
         if (self.session_title.len == 0) {
             var title_buf: [session_mod.title_max]u8 = undefined;
             const t = session_mod.titleFromTask(&title_buf, owned_task);
@@ -6309,8 +6393,17 @@ const Model = struct {
         var syn_style = syntax.Style.fromTheme(&active);
         const hit_line = self.currentHitLine();
         self.fold_hits.clearRetainingCapacity();
+        // Highlighter state is carried from one fenced line to the next inside
+        // one block, so a multi-line comment or string keeps its colour past
+        // its first line. Cleared here at the top of every iteration: any line
+        // that is not the next fenced line of the same block (a fold's plain
+        // body, a search hit, prose, or a `continue` out of the fold branch)
+        // ends the run, and the next fenced line then rebuilds its own state.
+        var syn_carry: ?syntax.State = null;
         var i: usize = start;
         while (i < view_end and row < bottom) : (i += 1) {
+            const carried = syn_carry;
+            syn_carry = null;
             // A folded reply draws its header row, then only the lines the
             // animation has revealed, and the loop jumps the rest. The header
             // row is recorded so a click can map back to the fold.
@@ -6366,10 +6459,10 @@ const Model = struct {
                 // thing that matters while the search bar is up.
                 writeWrapped(surface, &row, bottom, text_width, l.text, .{ .reverse = true });
             } else if (l.fence_lang) |lang| {
-                var state = syntax.State.init(lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
-                if (syntax.spansVaxis(&state, &syn_style, ctx.arena, l.text, &segs)) {
+                if (fenceLineSegments(self.lines.items, i, lang, carried, &syn_style, ctx.arena, &segs)) |next| {
                     writeWrappedSegments(ctx, surface, &row, bottom, text_width, segs.items);
+                    syn_carry = next;
                 } else |_| {
                     writeWrapped(surface, &row, bottom, text_width, l.text, dim);
                 }
@@ -6679,6 +6772,11 @@ const Model = struct {
         _ = self;
         var in_fence = false;
         var fence_lang: []const u8 = "";
+        // Carried across the block's lines, re-initialized by each opening
+        // fence: a `/* ... */` or a multi-line string keeps its colour past
+        // its first line, the way the `clanker run` renderer already did. It
+        // used to be built inside the loop, so every line started clean.
+        var state: syntax.State = .init("");
         var it = std.mem.splitScalar(u8, text, '\n');
         while (it.next()) |line| {
             if (row.* >= bottom) return;
@@ -6689,11 +6787,11 @@ const Model = struct {
                 } else {
                     in_fence = true;
                     fence_lang = std.mem.trim(u8, trimmed[3..], " ");
+                    state = .init(fence_lang);
                 }
                 continue; // markers themselves are not shown, same as finishTurn
             }
             if (in_fence and fence_on) {
-                var state = syntax.State.init(fence_lang);
                 var segs: std.ArrayList(vaxis.Segment) = .empty;
                 if (syntax.spansVaxis(&state, syn_style, ctx.arena, line, &segs)) {
                     writeWrappedSegments(ctx, surface, row, bottom, width, segs.items);
@@ -6718,6 +6816,54 @@ const Model = struct {
         }
     }
 };
+
+/// The highlighter state the fenced line at `i` inherits: whatever the earlier
+/// lines of its own block left open (a `/* ... */` spanning lines, an
+/// unterminated string). The transcript draw starts at an arbitrary window row,
+/// so a block's first *visible* line has no predecessor to inherit from and has
+/// to rescan from the block's own first line — hoisting a variable out of the
+/// draw loop would only cover the case where the whole fence is on screen.
+/// Costs one rescan per visible block per frame, not one per line.
+///
+/// Zig needs none of this: `use_zig_tokenizer` is line-local by language
+/// (no block comments, and a `\\` string is one token per line), so the walk
+/// is skipped there rather than run to no effect.
+fn fenceEntryState(lines: []const Line, i: usize, lang: []const u8, arena: std.mem.Allocator) syntax.State {
+    var state = syntax.State.init(lang);
+    if (state.use_zig_tokenizer) return state;
+    var run_start = i;
+    while (run_start > 0 and !lines[run_start].fence_first and lines[run_start - 1].fence_lang != null)
+        run_start -= 1;
+    var k = run_start;
+    while (k < i) : (k += 1) {
+        // Out of arena: the inherited state is unknown, so start clean rather
+        // than colour the line from a half-built one.
+        syntax.advanceLine(&state, arena, lines[k].text) catch return syntax.State.init(lang);
+    }
+    return state;
+}
+
+/// One fenced transcript line rendered the way the transcript draw loop
+/// renders it, returning the highlighter state the next line of the block
+/// inherits. `carried` is that state from the line above, or null when this is
+/// the first line of the block this window shows — the draw starts at an
+/// arbitrary row, so there may be no line above to inherit from.
+fn fenceLineSegments(
+    lines: []const Line,
+    i: usize,
+    lang: []const u8,
+    carried: ?syntax.State,
+    style: *const syntax.Style,
+    arena: std.mem.Allocator,
+    out: *std.ArrayList(vaxis.Segment),
+) !syntax.State {
+    var state = if (!lines[i].fence_first and carried != null)
+        carried.?
+    else
+        fenceEntryState(lines, i, lang, arena);
+    try syntax.spansVaxis(&state, style, arena, lines[i].text, out);
+    return state;
+}
 
 /// How many terminal rows one transcript line occupies at `width`: its
 /// display width divided up by the wrap column, at least one. Embedded
@@ -9560,6 +9706,92 @@ test "appendAnswerLines splits on newlines, tags fences, and arrows only the fir
     try std.testing.expectEqualStrings("zig", lines.items[1].fence_lang.?);
     try std.testing.expectEqualStrings("outro", lines.items[2].text);
     try std.testing.expect(lines.items[2].fence_lang == null);
+}
+
+/// Every style the fenced line at `i` renders with, drawn the way the
+/// transcript draw loop draws it.
+fn fenceLineStyles(
+    arena: std.mem.Allocator,
+    lines: []const Line,
+    i: usize,
+    carried: ?syntax.State,
+) !struct { styles: []vaxis.Style, next: syntax.State } {
+    const style = syntax.Style.fromTheme(&theme_mod.Theme.default);
+    var segs: std.ArrayList(vaxis.Segment) = .empty;
+    const next = try fenceLineSegments(lines, i, lines[i].fence_lang.?, carried, &style, arena, &segs);
+    var out = try arena.alloc(vaxis.Style, segs.items.len);
+    for (segs.items, 0..) |s, k| out[k] = s.style;
+    return .{ .styles = out, .next = next };
+}
+
+test "a fenced block comment stays a comment on the lines after it" {
+    // The REPL's transcript draw used to build a fresh syntax.State per line,
+    // so the second line of a /* ... */ read as code: `const` bold-magenta
+    // inside a comment, a stray `*/` in plain style. The `clanker run`
+    // renderer (MdStream) carries the state, so the two disagreed on the same
+    // bytes. Both entry points into the draw are covered: inheriting from the
+    // line above, and starting cold on a window that opens mid-block.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var lines: std.ArrayList(Line) = .empty;
+    appendAnswerLines(arena, &lines, "intro\n```js\n/* start\nconst x = 1; still comment */\nafter\n```\n");
+    try std.testing.expect(lines.items[1].fence_first);
+    try std.testing.expect(!lines.items[2].fence_first);
+
+    const comment = syntax.Style.fromTheme(&theme_mod.Theme.default).vaxisFor(.comment);
+    const keyword = syntax.Style.fromTheme(&theme_mod.Theme.default).vaxisFor(.keyword);
+
+    // Sequential draw: line 2 inherits the open block comment from line 1.
+    const opener = try fenceLineStyles(arena, lines.items, 1, null);
+    try std.testing.expect(opener.next.in_block_comment);
+    const inherited = try fenceLineStyles(arena, lines.items, 2, opener.next);
+    try std.testing.expect(inherited.styles.len > 0);
+    for (inherited.styles) |s| try std.testing.expectEqual(comment, s);
+
+    // Scrolled draw: the window opens on line 2, so there is no state to
+    // inherit and the block is rescanned from its own first line.
+    const cold = try fenceLineStyles(arena, lines.items, 2, null);
+    try std.testing.expectEqual(inherited.styles.len, cold.styles.len);
+    for (cold.styles) |s| try std.testing.expectEqual(comment, s);
+
+    // Control, so the assertion above is not just "everything is dim": the
+    // same `const` outside a comment does highlight as a keyword.
+    var plain: std.ArrayList(Line) = .empty;
+    appendAnswerLines(arena, &plain, "```js\nconst x = 1;\n```\n");
+    const code = try fenceLineStyles(arena, plain.items, 0, null);
+    var saw_keyword = false;
+    for (code.styles) |s| {
+        if (std.meta.eql(s, keyword)) saw_keyword = true;
+    }
+    try std.testing.expect(saw_keyword);
+}
+
+test "two back-to-back fences do not inherit each other's state" {
+    // The ``` markers are not stored as lines, so the last line of one block
+    // and the first of the next are adjacent in the transcript. `fence_first`
+    // is what keeps the second block from opening inside the first block's
+    // unterminated string.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var lines: std.ArrayList(Line) = .empty;
+    appendAnswerLines(arena, &lines, "```js\nconst s = \"open\n```\n```js\nconst t = 1;\n```");
+    try std.testing.expectEqual(@as(usize, 2), lines.items.len);
+    try std.testing.expect(lines.items[1].fence_first);
+
+    const first = try fenceLineStyles(arena, lines.items, 0, null);
+    try std.testing.expect(first.next.in_string != 0);
+    const second = try fenceLineStyles(arena, lines.items, 1, first.next);
+    try std.testing.expect(second.next.in_string == 0);
+    const keyword = syntax.Style.fromTheme(&theme_mod.Theme.default).vaxisFor(.keyword);
+    var saw_keyword = false;
+    for (second.styles) |s| {
+        if (std.meta.eql(s, keyword)) saw_keyword = true;
+    }
+    try std.testing.expect(saw_keyword);
 }
 
 test "appendAnswerLines copies the answer instead of borrowing it" {
