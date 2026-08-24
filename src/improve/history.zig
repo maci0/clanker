@@ -5,6 +5,7 @@ const json = std.json;
 const utf8 = @import("../util/utf8.zig");
 const log = @import("../util/log.zig");
 const file_lock = @import("../util/file_lock.zig");
+const append_line = @import("../util/append_line.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const inert = @import("inert_check.zig");
@@ -394,13 +395,9 @@ pub const History = struct {
         // wrote the whole thing back, making every append O(log_size).
         const file = try self.dir().createFile(self.io, self.logPath(), .{ .truncate = false });
         defer file.close(self.io);
+        // Pre-append length, still what trimTo's watermark arithmetic wants.
         const size = (try file.stat(self.io)).size;
-        var wbuf: [8192]u8 = undefined;
-        var fw = file.writer(self.io, &wbuf);
-        try fw.seekToUnbuffered(size);
-        try fw.interface.writeAll(record);
-        try fw.interface.writeAll("\n");
-        try fw.flush();
+        try append_line.appendLine(self.io, file, record);
 
         // Still under the same lock: the log is append-only and nothing else
         // trimmed it, so it grew for the life of the checkout. See `trimTo`.
