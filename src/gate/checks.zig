@@ -1301,6 +1301,51 @@ test "toolsTsToolchainGate accepts the live tools/ts manifest" {
     try std.testing.expect(result.ok);
 }
 
+/// Keep a Changelog section types a version block may contain. RELEASES.md's
+/// release gate groups entries under these headings, one block each, so a
+/// repeated heading inside one `## [...]` means the grouping drifted.
+const changelog_section_types = [_][]const u8{
+    "Breaking", "Added", "Changed", "Deprecated", "Removed", "Fixed", "Security",
+};
+
+/// Returns an allocated detail string when any standard `### Section` heading
+/// appears more than once inside the same `## [version]` block of the
+/// changelog, null otherwise.
+fn findDuplicateChangelogSection(gpa: std.mem.Allocator, changelog: []const u8) !?[]const u8 {
+    var seen: [changelog_section_types.len][]const u8 = undefined;
+    var seen_count: usize = 0;
+    var in_block = false;
+
+    var it = std.mem.splitScalar(u8, changelog, '\n');
+    while (it.next()) |line| {
+        if (std.mem.startsWith(u8, line, "## [")) {
+            seen_count = 0;
+            in_block = true;
+            continue;
+        }
+        if (!in_block or !std.mem.startsWith(u8, line, "### ")) continue;
+        const title = std.mem.trim(u8, line["### ".len..], " ");
+        for (changelog_section_types) |known| {
+            if (!std.mem.eql(u8, title, known)) continue;
+            var duplicate = false;
+            for (seen[0..seen_count]) |s| {
+                if (std.mem.eql(u8, s, known)) duplicate = true;
+            }
+            if (duplicate) {
+                return try std.fmt.allocPrint(
+                    gpa,
+                    "CHANGELOG.md repeats '### {s}' inside one version block; group its entries under the first one",
+                    .{known},
+                );
+            }
+            seen[seen_count] = known;
+            seen_count += 1;
+            break;
+        }
+    }
+    return null;
+}
+
 /// Validates the consumer-facing release contract files that must stay aligned
 /// with `build.zig.zon` and the policy in RELEASES.md.
 pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
@@ -1315,6 +1360,9 @@ pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
     defer gpa.free(changelog);
     if (std.mem.find(u8, changelog, "## [Unreleased]") == null) {
         return .{ .ok = false, .label = "release-contract", .detail = "CHANGELOG.md must have a [Unreleased] section" };
+    }
+    if (try findDuplicateChangelogSection(gpa, changelog)) |detail| {
+        return .{ .ok = false, .label = "release-contract", .detail = detail };
     }
 
     const readme = dir.readFileAlloc(io, "README.md", gpa, .limited(1 << 20)) catch |err| {
@@ -1351,6 +1399,21 @@ test "releaseContractGate accepts the live release files" {
 test "releaseContractGate rejects a changelog without Unreleased" {
     const bad = "# Changelog\n\n## [0.1.0] - 2026-01-01\n";
     try std.testing.expect(std.mem.find(u8, bad, "## [Unreleased]") == null);
+}
+
+test "findDuplicateChangelogSection flags a repeated heading in one version block" {
+    const gpa = std.testing.allocator;
+    const bad = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a\n\n### Fixed\n\n- b\n\n### Added\n\n- c\n";
+    const detail = (try findDuplicateChangelogSection(gpa, bad)).?;
+    defer gpa.free(detail);
+    try std.testing.expect(std.mem.find(u8, detail, "Added") != null);
+}
+
+test "findDuplicateChangelogSection allows one heading per type across blocks" {
+    const gpa = std.testing.allocator;
+    const good = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a\n\n### Changed\n\n- b\n" ++
+        "\n## [0.1.0] - 2026-08-14\n\n### Added\n\n- c\n\n### Changed\n\n- d\n";
+    try std.testing.expectEqual(@as(?[]const u8, null), try findDuplicateChangelogSection(gpa, good));
 }
 
 // ------------------------------------------------- test-root coverage gate --
@@ -1598,6 +1661,238 @@ test "scanUnrunJsSuites names a suite zig build test would never run" {
     defer result.deinit(gpa);
     try std.testing.expect(!result.ok);
     try std.testing.expect(std.mem.find(u8, result.detail, ".test.mjs") != null);
+}
+
+/// One ceiling in the web UI's first-paint budget.
+const WebuiCap = struct {
+    path: []const u8,
+    limit: usize,
+};
+
+/// Per-file ceilings for the heavy movers of the page's eager set; everything
+/// smaller is covered by the total below, where growth from many small
+/// additions shows up without each file needing its own row to maintain.
+/// Limits are raw bytes measured on this tree with ~15% headroom:
+/// index.html 74382, app.css 168540, views.css 67831, app.js 252003,
+/// patternfly.min.css 625202 (vendored), all as of 2026-08-25. Raising one is
+/// a deliberate edit to this table, made with a fresh measurement beside it.
+const webui_first_paint_caps = [_]WebuiCap{
+    .{ .path = "ui/app/index.html", .limit = 88 * 1024 },
+    .{ .path = "ui/app/app.css", .limit = 194 * 1024 },
+    .{ .path = "ui/app/views.css", .limit = 78 * 1024 },
+    .{ .path = "ui/app/app.js", .limit = 290 * 1024 },
+    .{ .path = "ui/vendor/patternfly.min.css", .limit = 720 * 1024 },
+};
+
+/// Everything every visitor downloads before any interaction: the document
+/// itself plus every `/webui/…` URL its head and body pull eagerly (both
+/// stylesheets, the modulepreloads, the eager `<script type="module">` list).
+/// PatternFly rides `media="print"`, so it is applied late but still fetched
+/// by everyone, which is why it counts here. 1388142 bytes measured across 34
+/// resources on 2026-08-25; the budget is that plus ~15%.
+const webui_eager_budget_bytes: usize = 1_600_000;
+
+/// The web UI's first-paint budget. Nothing else in the repo stated how large
+/// the page's eager download may get, so weight accreted silently: each
+/// feature added a section to the document or a module to the script list,
+/// and no check ever said when enough was enough. This gate is that
+/// statement, and the URL set it measures is parsed out of the shipped
+/// `ui/app/index.html` rather than hand-listed, for the same reason
+/// js-suite-coverage walks `ui/`: two copies of one list drift.
+///
+/// This is deliberately raw bytes, not gzip: the budget has to be stable
+/// across zlib versions and reproducible without compressing anything, and
+/// raw size tracks the wire closely enough to catch accretion, which is its
+/// whole job. Latency itself is not gated here — no lab machine speaks for a
+/// real phone on LTE — only the bytes a real phone would have to download.
+pub fn webuiBudgetGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    const html = dir.readFileAlloc(io, "ui/app/index.html", gpa, .limited(1 << 20)) catch {
+        return .{ .ok = false, .label = "webui-budget", .detail = "ui/app/index.html could not be read" };
+    };
+    defer gpa.free(html);
+    return scanWebuiBudget(gpa, io, dir, html);
+}
+
+/// The gate's body with the document passed in, so a test can drive it
+/// against a synthetic checkout.
+fn scanWebuiBudget(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, index_html: []const u8) !GateResult {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var urls: std.ArrayList([]const u8) = .empty;
+    collectEagerWebuiUrls(arena, index_html, &urls) catch {
+        return .{ .ok = false, .label = "webui-budget", .detail = "index.html could not be scanned" };
+    };
+    if (urls.items.len == 0) {
+        return .{ .ok = false, .label = "webui-budget", .detail = "index.html names no /webui/ resources" };
+    }
+
+    var problems: usize = 0;
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+
+    // The document is the one byte set no tag references; count it first.
+    var total: usize = index_html.len;
+    for (urls.items, 0..) |url, i| {
+        // The same URL appears under both a modulepreload and its script tag;
+        // the browser fetches it once and so does this count. Only entries
+        // before i count: comparing against the whole list would make every
+        // URL its own duplicate.
+        var dup = false;
+        for (urls.items[0..i]) |prev| {
+            if (std.mem.eql(u8, prev, url)) {
+                dup = true;
+                break;
+            }
+        }
+        if (dup) continue;
+        const path = webuiUrlToPath(arena, url) catch {
+            return .{ .ok = false, .label = "webui-budget", .detail = "out of memory" };
+        };
+        const st = dir.statFile(io, path, .{}) catch {
+            problems += 1;
+            miss_w.print("{s} does not exist (referenced as {s}); ", .{ path, url }) catch {};
+            continue;
+        };
+        total += @intCast(st.size);
+        if (webuiFirstPaintCap(path)) |cap| {
+            if (st.size > cap.limit) {
+                problems += 1;
+                miss_w.print("{s} is {d} bytes, cap {d}; ", .{ path, st.size, cap.limit }) catch {};
+            }
+        }
+    }
+    if (total > webui_eager_budget_bytes) {
+        problems += 1;
+        miss_w.print("eager total is {d} bytes, budget {d}; ", .{ total, webui_eager_budget_bytes }) catch {};
+    }
+    if (problems == 0) return .{ .ok = true, .label = "webui-budget" };
+    // miss_buf is this frame's stack. Same aliasing convention as lintGate:
+    // detail and stderr share one owned copy, freed exactly once by deinit.
+    const owned = try gpa.dupe(u8, miss_w.buffered());
+    return .{ .ok = false, .label = "webui-budget", .detail = owned, .stderr = owned };
+}
+
+/// Every `/webui/…` URL the shipped page pulls eagerly, from exactly three
+/// tag shapes: modulepreload links, stylesheet links (both sheets ride
+/// `media="print"` with trailing attributes, so anything may sit around the
+/// href), and eager module scripts. The `rel=` needles are matched anywhere
+/// so attribute order cannot hide a resource. URLs that do not start
+/// `/webui/` are skipped: they are not served by the asset layer this budget
+/// describes.
+fn collectEagerWebuiUrls(arena: std.mem.Allocator, html: []const u8, urls: *std.ArrayList([]const u8)) !void {
+    const needles = [_][]const u8{
+        "rel=\"modulepreload\" href=\"",
+        "rel=\"stylesheet\" href=\"",
+        "<script type=\"module\" src=\"",
+    };
+    for (needles) |needle| {
+        var i: usize = 0;
+        while (std.mem.find(u8, html[i..], needle)) |at| {
+            const start = i + at + needle.len;
+            const end_rel = std.mem.findScalar(u8, html[start..], '"') orelse break;
+            const url = html[start .. start + end_rel];
+            if (std.mem.startsWith(u8, url, "/webui/")) try urls.append(arena, url);
+            i = start + end_rel + 1;
+        }
+    }
+}
+
+/// Request path to repo path. Vendored files route differently than
+/// first-party ones (`isVendorFile` serves them from `ui/vendor/`), so the
+/// mapping mirrors that split.
+fn webuiUrlToPath(arena: std.mem.Allocator, url: []const u8) ![]const u8 {
+    const rest = url["/webui/".len..];
+    if (std.mem.startsWith(u8, rest, "vendor/")) return std.fmt.allocPrint(arena, "ui/{s}", .{rest});
+    return std.fmt.allocPrint(arena, "ui/app/{s}", .{rest});
+}
+
+fn webuiFirstPaintCap(path: []const u8) ?WebuiCap {
+    for (webui_first_paint_caps) |cap| {
+        if (std.mem.eql(u8, cap.path, path)) return cap;
+    }
+    return null;
+}
+
+test "collectEagerWebuiUrls takes the three tag shapes, dedupes, and skips foreign URLs" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var urls: std.ArrayList([]const u8) = .empty;
+    const html =
+        \\<link rel="modulepreload" href="/webui/app.js">
+        \\<link rel="stylesheet" href="/webui/app.css" media="print" data-pf="1">
+        \\<noscript><link rel="stylesheet" href="/webui/views.css"></noscript>
+        \\<link rel="icon" href="data:image/svg+xml,xxx">
+        \\<script type="module" src="/webui/app.js"></script>
+        \\<script type="module" src="/webui/core/utils.js"></script>
+    ;
+    try collectEagerWebuiUrls(arena, html, &urls);
+    try std.testing.expectEqual(@as(usize, 5), urls.items.len);
+    // app.js appears twice (modulepreload + script tag) and the data: favicon
+    // not at all; both folds land in the deduped eager count.
+    var unique: usize = 0;
+    for (urls.items, 0..) |_, i| {
+        var earlier = false;
+        for (urls.items[0..i]) |prev| {
+            if (std.mem.eql(u8, prev, urls.items[i])) earlier = true;
+        }
+        if (!earlier) unique += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 4), unique);
+}
+
+test "scanWebuiBudget names an over-cap file and a missing reference" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "ui/app");
+    // Over the views.css cap (78 KiB) but nowhere near the eager total, so
+    // the failure can only be the per-file one.
+    const big = try gpa.alloc(u8, 80 * 1024);
+    defer gpa.free(big);
+    @memset(big, 'a');
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/app/views.css", .data = big });
+    const html =
+        \\<link rel="stylesheet" href="/webui/views.css">
+        \\<script type="module" src="/webui/core/gone.js"></script>
+    ;
+    var result = try scanWebuiBudget(gpa, io, tmp.dir, html);
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/views.css is ") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/core/gone.js does not exist") != null);
+}
+
+test "scanWebuiBudget passes a synthetic tree whose every file is tiny" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "ui/app/core");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/app/core/utils.js", .data = "export {};" });
+    const html = "\\<script type=\"module\" src=\"/webui/core/utils.js\"></script>";
+    var result = try scanWebuiBudget(gpa, io, tmp.dir, html);
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}
+
+test "webuiBudgetGate passes on the live checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var result = try webuiBudgetGate(gpa, io, std.Io.Dir.cwd());
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
 }
 
 /// Every capability a sandboxed WASM guest can reach is a `pub fn ck…` in

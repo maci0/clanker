@@ -26,7 +26,7 @@ fn intFromFloatChecked(f: f64) ?i64 {
     if (!std.math.isFinite(f)) return null;
     const t = @trunc(f);
     if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) return null;
-    return @intFromFloat(t);
+    return @trunc(t);
 }
 
 const Alarm = alarm_store.Alarm;

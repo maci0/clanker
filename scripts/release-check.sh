@@ -30,6 +30,21 @@ manifest_version=$(sed -n 's/^[[:space:]]*\.version[[:space:]]*=[[:space:]]*"\([
     exit 1
 }
 
+# Secondary version declarations. build.zig.zon is the single source of truth
+# (RELEASES.md); these package manifests must repeat it, never diverge from it.
+for pkg in package.json tools/ts/package.json; do
+    [ -f "$pkg" ] || continue
+    pkg_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg" | head -n1)
+    [ -n "$pkg_version" ] || {
+        echo "release check: $pkg has no \"version\" field" >&2
+        exit 1
+    }
+    [ "$pkg_version" = "$release_version" ] || {
+        echo "release check: $pkg version $pkg_version disagrees with build.zig.zon version $release_version" >&2
+        exit 1
+    }
+done
+
 heading_count=$(grep -Ec "^## \[$release_version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md || true)
 [ "$heading_count" -eq 1 ] || {
     echo "release check: CHANGELOG.md needs exactly one '## [$release_version] - YYYY-MM-DD' heading" >&2

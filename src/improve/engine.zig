@@ -184,6 +184,11 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/config.zig", .needle = "if (obj.get(\"inert_gate\")) |k| im.inert_gate = switch (k)" },
     .{ .file = "src/config.zig", .needle = "if (obj.get(\"plan_phase\")) |k| im.plan_phase = switch (k)" },
     .{ .file = "src/gate/checks.zig", .needle = "configSourceWeakeningGate(" },
+    // And the engine must keep CALLING it against the staged src/config.zig.
+    // Without this the checks.zig definition above can survive as dead code
+    // while the only real check is this unwritable file's own copy; with it,
+    // both implementations judge every proposal that touches src/config.zig.
+    .{ .file = "src/improve/engine.zig", .needle = "gate_checks.configSourceWeakeningGate(" },
     .{ .file = "src/improve/engine.zig", .needle = "stagedConfigWeakened(" },
     // cmdEval is writable. An early `return` before runAll, or `--tasks`
     // with an emptied list, makes the staged `clanker eval` exit 0 with
@@ -1217,6 +1222,23 @@ pub const Engine = struct {
                 self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by a protected gate check: {s}\nDo not disable or bypass the improve-loop gates.", .{detail});
                 self.removeTree(staging);
                 return .failed;
+            }
+            // The writable copy of the config-source check in checks.zig runs
+            // here as a second opinion on the same staged bytes, which is what
+            // its contract has always claimed ("is run against the staged
+            // file"). It cannot replace the private checker above, since
+            // src/gate/ stays writable by design; running both means the two
+            // implementations fail closed on divergence instead of silently
+            // degrading to whichever copy a past patch left weaker.
+            if (std.mem.eql(u8, c.file, "src/config.zig")) {
+                const src_verdict = gate_checks.configSourceWeakeningGate(data);
+                if (!src_verdict.ok) {
+                    log.log(.warn, "proposal rejected: {s}", .{src_verdict.detail});
+                    try self.hist.append(id, .failed, opts.instructions, proposal.summary, gate_files, 0, 0, src_verdict.detail, fingerprints, null);
+                    self.feedback = try std.fmt.allocPrint(self.arena, "Your patch was rejected by the config-weakening gate: {s}\nDo not disable or bypass the improve-loop gates.", .{src_verdict.detail});
+                    self.removeTree(staging);
+                    return .failed;
+                }
             }
         }
 
@@ -3916,10 +3938,49 @@ test "gate_invariants needles still match the live tree" {
     defer threaded.deinit();
     const io = threaded.io();
 
+    // One probe decides whether this cwd is even the repository; everything
+    // below then treats an unreadable invariant target as a failure, never a
+    // skip. The old per-entry `catch continue` made a renamed-away target (or
+    // a wrong cwd) read as green: entries silently stopped asserting while
+    // the test kept passing.
+    const probe = std.Io.Dir.cwd().readFileAlloc(io, "build.zig", gpa, .limited(1 << 20)) catch return error.SkipZigTest;
+    defer gpa.free(probe);
+
+    // Coverage floor: dropping a whole file's block from gate_invariants
+    // shrinks the array without breaking anything else (this happened once
+    // to the checks.zig needles). Each of these files must always carry at
+    // least one needle: the writable gate implementation, the engine call
+    // sites that grade it, the merge machinery, and the config/build wiring.
+    const must_cover = [_][]const u8{
+        "src/gate/checks.zig",
+        "src/improve/engine.zig",
+        "src/improve/worktree.zig",
+        "src/cli.zig",
+        "src/config.zig",
+        "src/main.zig",
+        "build.zig",
+    };
+    for (must_cover) |f| {
+        var found = false;
+        for (gate_invariants) |inv| {
+            if (std.mem.eql(u8, inv.file, f)) found = true;
+        }
+        if (!found) {
+            std.debug.print("gate_invariants lost every needle for {s}\n", .{f});
+            return error.InvariantCoverageLost;
+        }
+    }
+
     for (gate_invariants) |inv| {
-        const data = std.Io.Dir.cwd().readFileAlloc(io, inv.file, gpa, .limited(4 << 20)) catch continue;
+        const data = std.Io.Dir.cwd().readFileAlloc(io, inv.file, gpa, .limited(4 << 20)) catch |err| {
+            std.debug.print("gate_invariants target {s} unreadable: {s}\n", .{ inv.file, @errorName(err) });
+            return error.InvariantTargetUnreadable;
+        };
         defer gpa.free(data);
-        try std.testing.expect(std.mem.find(u8, data, inv.needle) != null);
+        if (std.mem.find(u8, data, inv.needle) == null) {
+            std.debug.print("gate_invariants needle missing from {s}: {s}\n", .{ inv.file, inv.needle });
+            return error.InvariantNeedleMissing;
+        }
     }
 }
 

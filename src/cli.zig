@@ -2562,9 +2562,9 @@ fn reportGate(io: std.Io, name: []const u8, result: gate_checks.GateResult) !voi
 }
 
 /// Runs all deterministic gates (build, test, tools, fmt, lint,
-/// provider-kind, test-root-coverage, js-suite-coverage, sandbox-abi,
-/// tools-ts-toolchain, release-contract, dep-patches) against the current
-/// checkout.
+/// provider-kind, test-root-coverage, js-suite-coverage, webui-budget,
+/// sandbox-abi, tools-ts-toolchain, release-contract, dep-patches) against
+/// the current checkout.
 /// Throws error.GateFailed on the first failure.
 fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !void {
     var build = try gate_checks.buildGate(gpa, io, std.Io.Dir.cwd(), &.{});
@@ -2599,6 +2599,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     var js_suites = try gate_checks.jsSuiteCoverageGate(gpa, io, std.Io.Dir.cwd());
     defer js_suites.deinit(gpa);
     try reportGate(io, "js-suite-coverage", js_suites);
+
+    var webui_budget = try gate_checks.webuiBudgetGate(gpa, io, std.Io.Dir.cwd());
+    defer webui_budget.deinit(gpa);
+    try reportGate(io, "webui-budget", webui_budget);
 
     var sandbox_abi = try gate_checks.sandboxAbiGate(gpa, io, std.Io.Dir.cwd());
     defer sandbox_abi.deinit(gpa);
@@ -8307,9 +8311,9 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_webui_plugin_asset) {
             handleWebuiPluginAsset(io, gpa, cfg, environ_map, path, headers_raw, stream);
         } else if (is_webui_theme_asset) {
-            handleWebuiThemeAsset(io, gpa, path, acceptsGzip(headers_raw), stream);
+            handleWebuiThemeAsset(io, gpa, path, headers_raw, stream);
         } else if (is_webui_command_asset) {
-            handleWebuiCommandAsset(io, gpa, path, acceptsGzip(headers_raw), stream);
+            handleWebuiCommandAsset(io, gpa, path, headers_raw, stream);
         } else if (is_files) {
             handleFiles(io, gpa, target, acceptsGzip(headers_raw), stream);
         } else if (is_logs) {
@@ -12501,7 +12505,7 @@ fn writeThemeCatalog(arena: std.mem.Allocator, entries: []const ThemeEntry) ![]c
 /// Served from disk like plugins: drop a file in `themes/` and the picker
 /// sees it, no host rebuild. `catalog.json` is assembled from the directory
 /// so a drop-in cannot shadow the listing.
-fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, headers_raw: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -12516,7 +12520,7 @@ fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8,
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such theme\"}");
             return;
         };
-        respondCompressible(arena, stream, accepts_gzip, bytes);
+        respondRevalidatableJson(arena, stream, headers_raw, bytes);
         return;
     }
     if (rest.len != 0 and !std.mem.eql(u8, rest, "catalog.json")) {
@@ -12531,14 +12535,14 @@ fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8,
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"themes unreadable\"}");
         return;
     };
-    respondCompressible(arena, stream, accepts_gzip, body);
+    respondRevalidatableJson(arena, stream, headers_raw, body);
 }
 
 const webui_commands_dir = "commands";
 
 /// `GET /webui/commands/<name>.json`. Same name alphabet as themes; a
 /// drop-in JSON file under `commands/` is the catalog (slash commands today).
-fn handleWebuiCommandAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_gzip: bool, stream: std.Io.net.Stream) void {
+fn handleWebuiCommandAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, headers_raw: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -12556,7 +12560,7 @@ fn handleWebuiCommandAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such command catalog\"}");
         return;
     };
-    respondCompressible(arena, stream, accepts_gzip, bytes);
+    respondRevalidatableJson(arena, stream, headers_raw, bytes);
 }
 
 /// `GET /api/janitor`, how much litter is lying around, so the office view can
@@ -16792,7 +16796,37 @@ fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, acce
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
-/// Serves a vendored, build-time-embedded JS asset (webui/vendor/*). They are
+/// Serves a drop-in JSON asset (`/webui/themes/*`, `/webui/commands/*`) with
+/// the same revalidation contract as plugin assets: `no-cache` plus an ETag
+/// hashed from the served body. These files change without a rebuild, so they
+/// can never carry a freshness lifetime, but an unchanged one costs a bodyless
+/// 304 instead of its full bytes on every visit. Without the explicit
+/// `no-cache` a response with no validator and no lifetime is cached by
+/// heuristic, which for a drop-in file means "stale for as long as the browser
+/// feels like".
+fn respondRevalidatableJson(arena: std.mem.Allocator, stream: std.Io.net.Stream, headers_raw: []const u8, body: []const u8) void {
+    var etag_buf: [16]u8 = undefined;
+    const etag = etagFor(&etag_buf, body);
+    if (ifNoneMatchHits(headers_raw, etag)) {
+        request_status = 304;
+        var hbuf304: [256]u8 = undefined;
+        const hdr304 = std.fmt.bufPrint(&hbuf304, "HTTP/1.1 304 Not Modified\r\nETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\n{s}\r\n", .{ etag, connHeader() }) catch return;
+        raw_http.writeAllFd(stream.socket.handle, hdr304);
+        return;
+    }
+    // Same shape as respondCompressible: this body was just read off disk for
+    // this request, so there is nothing stable to key a compression cache on,
+    // and below a packet's worth gzip costs more than it saves.
+    const worth_it = acceptsGzip(headers_raw) and body.len >= 1024;
+    const gzipped = if (worth_it) gzipAlloc(arena, body, .default) else null;
+    const out = gzipped orelse body;
+    const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
+    var hbuf: [512]u8 = undefined;
+    request_status = 200;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ out.len, encoding, etag, connHeader() }) catch return;
+    raw_http.writeAllFd(stream.socket.handle, hdr);
+    if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
+}
 /// gzipped when the client asks, they are the two largest bodies this server
 /// sends, and the page is routinely opened from another machine on the LAN.
 ///
