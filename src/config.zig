@@ -2936,6 +2936,7 @@ pub const Config = struct {
         if (fields.multimodal) dst.multimodal = src.multimodal;
         if (fields.chatrooms) dst.chatrooms = src.chatrooms;
         if (fields.token_stats) dst.token_stats = src.token_stats;
+        if (fields.session_events) dst.session_events = src.session_events;
         if (fields.mesh) dst.mesh = src.mesh;
     }
 
@@ -6049,6 +6050,63 @@ test "improve bool fields reject non-bool values instead of silently defaulting"
         error.FieldNotBool,
         Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "missing.toml"),
     );
+}
+
+test "a local [modules] session_events override survives the merge" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\
+        ,
+    });
+    // The flag parses and is recorded in ModulesFields; applyModulesFields
+    // still has to copy it, or the override loads clean and does nothing.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[modules]
+        \\session_events = false
+        \\
+        ,
+    });
+    const cfg = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(!cfg.modules.session_events);
+
+    // Field-merged, not whole-section: a local file touching one key leaves
+    // the base file's value for another key alone.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[modules]
+        \\session_events = false
+        \\
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[modules]
+        \\mesh = true
+        \\
+        ,
+    });
+    const merged = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expect(!merged.modules.session_events);
+    try std.testing.expect(merged.modules.mesh);
 }
 
 test "modules flags reject non-bool values instead of silently defaulting" {
