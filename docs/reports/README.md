@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [two resolved records still read Open in the reports inventory, so reports list offers finished work](bugs/2026-08-24-report-inventory-drifts-from-the-record.md) — Open
+
 - [reports status doubles its own 'Resolved on <date>.' sentence when the note repeats it](bugs/2026-08-24-reports-status-doubles-its-own-sentence.md) — Resolved
 
 - [verify.sh runs clanker gate before apply-patches.sh, so a fresh worktree always fails dep-patches](bugs/2026-08-24-verify-sh-gates-before-applying-patches.md) — Resolved
@@ -188,9 +190,9 @@ Project agents receive this workflow through the harness prompt and
 
 - [The opt-in 3D arena stage is blank for good after one tab switch](bugs/2026-08-23-arena3d-stage-stays-blank-after-unmount.md) — Resolved
 
-- [The REPL transcript renders bridge_stream_buf as bridgestreambuf](bugs/2026-08-23-repl-markdown-eats-snake-case-underscores.md) — Open
+- [The REPL transcript renders bridge_stream_buf as bridgestreambuf](bugs/2026-08-23-repl-markdown-eats-snake-case-underscores.md) — Resolved
 
-- [A clipboard paste request the terminal never answers leaves the REPL composer unable to submit](bugs/2026-08-23-repl-composer-latches-into-paste-mode.md) — Open
+- [A clipboard paste request the terminal never answers leaves the REPL composer unable to submit](bugs/2026-08-23-repl-composer-latches-into-paste-mode.md) — Resolved
 
 - [A round-1 arena forfeit resolves damage the combatant never had a chance to see](bugs/2026-08-23-arena-round-one-forfeit-eats-unseen-damage.md) — Resolved
 
