@@ -4,11 +4,11 @@
 
 - **What failed:** cardNode (ui/app/features/board.js) builds the assignee avatar as a span with role=button inside the card <button>, and appends the whole member picker into that span. role=button children are presentational, so avatar and picker are invisible to the accessibility tree; and a picker item's click bubbles to the avatar's own listener, which stops propagation and reopens the picker. Read from the source, not observed: no headless browser on this machine.
 - **Impact:** To be confirmed.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-24. Fixed: cardMemberControl() in ui/app/features/board.js builds a real button in the card's <li>, sibling of the card button, with the picker beside it. The avatar left in the card is aria-hidden scenery holding the row open. Also fixes a third consequence the report missed: .card is overflow:hidden and was the popup's containing block, so the picker was clipped. Five new tests in board-card.test.mjs drive the real memberPicker; 6 of 10 red before. Gate: all twelve PASS.
 
 ## Status
 
-Open.
+Resolved on 2026-08-24. Fixed: cardMemberControl() in ui/app/features/board.js builds a real button in the card's <li>, sibling of the card button, with the picker beside it. The avatar left in the card is aria-hidden scenery holding the row open. Also fixes a third consequence the report missed: .card is overflow:hidden and was the popup's containing block, so the picker was clipped. Five new tests in board-card.test.mjs drive the real memberPicker; 6 of 10 red before. Gate: all twelve PASS.
 
 ## Symptom and impact
 
