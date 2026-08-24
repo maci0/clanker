@@ -124,19 +124,41 @@ pub const ToolSchema = enum {
 };
 
 /// How the reasoning knob is encoded on the wire. `reasoning_effort` is the
-/// flat OpenAI field (the default today); `reasoning` nests it OpenRouter
-/// style (`"reasoning":{"effort":...}`); `thinking` sends the GLM/Zhipu
-/// toggle (`"thinking":{"type":"enabled"}`); `none` omits every reasoning
-/// field for endpoints that 400 on unknown keys.
+/// flat OpenAI field (the OpenAI-compatible wire's default); `reasoning`
+/// nests it OpenRouter style (`"reasoning":{"effort":...}`); `thinking` sends
+/// the GLM/Zhipu toggle (`"thinking":{"type":"enabled"}`);
+/// `anthropic_thinking` is the Anthropic Messages shape,
+/// `"thinking":{"type":"adaptive"}` with the level in
+/// `"output_config":{"effort":...}`; `none` omits every reasoning field for
+/// endpoints that 400 on unknown keys.
+///
+/// There is no single default: which shape an endpoint accepts is a property
+/// of the wire, so the provider codec supplies the bottom of the chain via
+/// `thinkingSchemaOr`. One shared default is what put OpenAI's flat field on
+/// `POST /v1/messages`
+/// ([bug](../docs/reports/bugs/2026-08-23-anthropic-wire-gets-openai-reasoning-effort.md)).
 pub const ThinkingSchema = enum {
     reasoning_effort,
     reasoning,
     thinking,
+    anthropic_thinking,
     none,
 
     pub fn fromStr(s: []const u8) ?ThinkingSchema {
         return std.meta.stringToEnum(ThinkingSchema, s);
     }
+
+    /// Every accepted spelling, comma-separated, for the load diagnostic when
+    /// a config names one this binary does not know. Derived from the enum so
+    /// a new arm cannot leave the message stale.
+    pub const known_names: []const u8 = blk: {
+        var out: []const u8 = "";
+        for (std.meta.fieldNames(ThinkingSchema), 0..) |field_name, i| {
+            if (i > 0) out = out ++ ", ";
+            out = out ++ "\"" ++ field_name ++ "\"";
+        }
+        break :blk out;
+    };
 };
 
 /// How reasoning is read OUT of a response. The request side is
@@ -352,9 +374,21 @@ pub const Provider = struct {
     }
 
     /// Wire encoding for the active model's reasoning knob: model, then
-    /// provider, then the flat `reasoning_effort` field.
+    /// provider, then the flat `reasoning_effort` field. The OpenAI-compatible
+    /// wire's spelling of `thinkingSchemaOr`, kept for callers that are only
+    /// ever on that wire.
     pub fn effectiveThinkingSchema(self: *const Provider) ThinkingSchema {
-        return self.activeModel().thinking_schema orelse self.thinking_schema orelse .reasoning_effort;
+        return self.thinkingSchemaOr(.reasoning_effort);
+    }
+
+    /// The same model-then-provider chain with the wire kind's own shape at
+    /// the bottom. The provider codec passes it, because which reasoning field
+    /// an endpoint accepts is a property of the wire and not of config, and
+    /// [ADR 0004](../docs/adrs/0004-providers-are-a-native-vtable-not-wasm.md)
+    /// keeps kind knowledge inside `src/llm/providers/`. One shared default
+    /// here is what sent OpenAI's flat `reasoning_effort` to Anthropic.
+    pub fn thinkingSchemaOr(self: *const Provider, wire_default: ThinkingSchema) ThinkingSchema {
+        return self.activeModel().thinking_schema orelse self.thinking_schema orelse wire_default;
     }
 
     /// How the active model's reasoning is read out of a response: model,
@@ -1837,7 +1871,7 @@ pub const Config = struct {
         if (obj.get("thinking_schema")) |k| {
             const s = try jsonStr(k, "thinking_schema");
             p.thinking_schema = ThinkingSchema.fromStr(s) orelse {
-                log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                log.log(.error_, "provider '{s}': thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
                 return error.UnknownThinkingSchema;
             };
         }
@@ -2138,7 +2172,7 @@ pub const Config = struct {
         if (obj.get("thinking_schema")) |k| {
             const s = try jsonStr(k, "thinking_schema");
             m.thinking_schema = ThinkingSchema.fromStr(s) orelse {
-                log.log(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of \"reasoning_effort\", \"reasoning\", \"thinking\", \"none\"", .{ name, s });
+                log.log(.error_, "models[\"{s}\"]: thinking_schema \"{s}\" is not one of {s}", .{ name, s, ThinkingSchema.known_names });
                 return error.UnknownThinkingSchema;
             };
         }

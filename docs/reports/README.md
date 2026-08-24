@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [gemini and vertex-Gemini write no thinkingConfig, so the PRD 0024 thinking row is inert there](bugs/2026-08-24-gemini-thinking-row-inert.md) — Open
+
 - [the record stores accept a date-prefixed slug that contradicts the UTC date they stamp, with no warning](bugs/2026-08-23-record-slug-date-contradicts-the-stamped-date.md) — Open
 
 - [clanker gate passes on unpatched dependencies, so a fresh worktree gates against pristine upstream deps](bugs/2026-08-23-gate-passes-on-unpatched-dependencies.md) — Open
@@ -90,7 +92,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [the merge-base pin advances before the branch resync it depends on, and the resync failure is only a warning](bugs/2026-08-23-improve-merge-pin-advances-before-the-resync.md) — Open
 
-- [kind = grok discards per-model temperature and top_p and never consults the PRD 0024 profile table](bugs/2026-08-23-grok-kind-drops-model-sampling.md) — Open
+- [kind = grok discards per-model temperature and top_p and never consults the PRD 0024 profile table](bugs/2026-08-23-grok-kind-drops-model-sampling.md) — Resolved
 
 - [a missing profiles/<name>.toml is reported as config.toml not found, and the .local variant is never read](bugs/2026-08-23-profile-overlay-errors-name-the-wrong-file.md) — Open
 

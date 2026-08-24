@@ -305,7 +305,12 @@ pub fn buildBody(gpa: std.mem.Allocator, params: api.RequestParams, opts: BodyOp
         try s.endArray();
     }
 
-    try common.writeSamplingParams(&s, params);
+    // Anthropic Messages, not the OpenAI-compatible wire: the reasoning knob
+    // is `thinking` plus `output_config.effort`, and a flat `reasoning_effort`
+    // here is refused as an extra input. This argument is the whole fix for
+    // that; the four kinds served by this body (anthropic, claude,
+    // vertex_anthropic, and vertex for Claude SKUs) all reach it through here.
+    try common.writeSamplingParams(&s, params, .anthropic_thinking);
     try s.endObject();
 
     return try b.finish();
@@ -899,4 +904,49 @@ test "anthropic endpoint url" {
     const url = try endpointUrl(std.testing.allocator, &p, false);
     defer std.testing.allocator.free(url);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url);
+}
+
+test "the Messages body carries thinking plus output_config, never reasoning_effort" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+
+    // A pinned effort used to land as a top-level `reasoning_effort`, which
+    // POST /v1/messages refuses as an extra input.
+    const pinned = try config.Provider.single(arena, "anthropic", "https://api.anthropic.com", .anthropic, "claude-opus-5", .{ .reasoning_effort = .high });
+    const body = try buildRequest(arena, .{ .provider = &pinned, .messages = &messages });
+    try std.testing.expect(std.mem.find(u8, body, "\"thinking\":{\"type\":\"adaptive\"}") != null);
+    try std.testing.expect(std.mem.find(u8, body, "\"output_config\":{\"effort\":\"high\"}") != null);
+    try std.testing.expect(std.mem.find(u8, body, "reasoning_effort") == null);
+    try std.testing.expect(std.mem.find(u8, body, "budget_tokens") == null);
+
+    // Same for the profile table's own thinking row, which fires on every
+    // Claude SKU once a models.dev snapshot marks it `reasoning`.
+    var table = try config.Provider.single(arena, "anthropic", "https://api.anthropic.com", .anthropic, "claude-opus-5", .{});
+    var it = table.models.iterator();
+    const caps = try arena.alloc([]const u8, 1);
+    caps[0] = "thinking";
+    it.next().?.value_ptr.capabilities = caps;
+    const tabled = try buildRequest(arena, .{ .provider = &table, .messages = &messages });
+    try std.testing.expect(std.mem.find(u8, tabled, "\"output_config\":{\"effort\":\"medium\"}") != null);
+    try std.testing.expect(std.mem.find(u8, tabled, "reasoning_effort") == null);
+
+    // And a non-thinking model still sends no reasoning fields at all, but
+    // also no temperature: those are removed from current Claude models.
+    const plain = try config.Provider.single(arena, "anthropic", "https://api.anthropic.com", .anthropic, "claude-opus-5", .{ .temperature = 0.3 });
+    const plain_body = try buildRequest(arena, .{ .provider = &plain, .messages = &messages });
+    try std.testing.expect(std.mem.find(u8, plain_body, "thinking") == null);
+    try std.testing.expect(std.mem.find(u8, plain_body, "temperature") == null);
+}
+
+test "the Vertex Anthropic body takes the same reasoning shape" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    const p = try config.Provider.single(arena, "vx", "https://us-east5-aiplatform.googleapis.com", .vertex_anthropic, "claude-opus-5", .{ .reasoning_effort = .max });
+    const body = try buildBody(arena, .{ .provider = &p, .messages = &messages }, .{ .anthropic_version = "vertex-2023-10-16" });
+    try std.testing.expect(std.mem.find(u8, body, "\"output_config\":{\"effort\":\"max\"}") != null);
+    try std.testing.expect(std.mem.find(u8, body, "reasoning_effort") == null);
 }

@@ -7,6 +7,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Changed
 
+- `thinking_schema` gained an `anthropic_thinking` value, and its unset
+  default is now the wire kind's own shape rather than one global
+  `reasoning_effort`. The Anthropic Messages body carries
+  `"thinking":{"type":"adaptive"}` with the level in
+  `"output_config":{"effort":...}`, and sends no `temperature`/`top_p`:
+  current Claude models removed all three of `temperature`/`top_p`/`top_k`
+  and answer 400 on any value. Set `thinking_schema = "reasoning_effort"`
+  explicitly to run an older Claude SKU that still takes the flat field.
+  The endpoint's answer to the new body was **not** verified live — no
+  Anthropic credential was available — so this is a body-shape change
+  grounded in the API reference, with unit coverage on the emitted JSON.
+
 - `plugin.json` capabilities can name the whole `pluginApi()` surface. The
   known-name list stopped at 13 names while the page's API kept growing, so a
   view that formats bytes, switches views, or opens another conversation could
@@ -24,6 +36,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Removed the deprecated `serve --port` alias; use `--webui-port`.
 
 ### Fixed
+
+- `kind = "grok"` no longer discards a configured per-model `temperature` and
+  `top_p`. The Responses codec read only `RequestParams.temperature`/`top_p`,
+  which the agent loop never sets and the web UI's per-run override writes
+  past, so a `[models."grok/…"] temperature = 0.2` was dropped on every turn
+  along with the PRD 0024 use-case default. It now resolves the same
+  three-tier chain the chat-completions wire does, and its
+  `max_output_tokens` goes through `clampedMaxTokens`, so the
+  half-the-context-window clamp applies there too. Codex's deliberate opt-out
+  is unchanged.
+
+- `gemini` no longer keeps its own copy of the sampling precedence chain. It
+  spells `topP` inside `generationConfig` itself, but the three tiers are now
+  resolved once in `common.resolveSampling`. (The Gemini thinking row is still
+  inert: `generationConfig` has no equivalent field and the correct
+  `thinkingConfig` shape is not established — see the report.)
 
 - `GET /api/events` at the 32-subscriber cap now sends a `503` a strict client
   can actually read. The refusal was one hand-written literal whose
