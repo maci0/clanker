@@ -462,7 +462,7 @@ function drawRun(g) {
   var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
   if (g.task) { var ht = document.createElement("span"); ht.className = "meta"; ht.style.flexBasis = "100%"; ht.textContent = g.task; head.appendChild(ht); }
   var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id"; upgradePfButton(copyHead);
-  copyHead.addEventListener("click", function(){ try{ navigator.clipboard.writeText(g.run_id); copyHead.textContent="Copied"; setTimeout(function(){ copyHead.textContent="Copy id"; }, 1200);}catch(_){} });
+  copyHead.addEventListener("click", function(){ copyText(g.run_id, copyHead, "Copy id", head); });
   head.appendChild(copyHead);
   var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link"; upgradePfButton(copyLink);
   copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
@@ -470,7 +470,7 @@ function drawRun(g) {
     var sel = el.runGraph.querySelector(".run-node.selected");
     var nodePart = sel && sel.getAttribute("data-label") ? "?node=" + encodeURIComponent(sel.getAttribute("data-label")) : "";
     var u = location.origin + location.pathname + "#runs/" + encodeURIComponent(g.run_id) + nodePart;
-    try{ navigator.clipboard.writeText(u); copyLink.textContent="Copied"; setTimeout(function(){ copyLink.textContent="Copy link"; }, 1200);}catch(_){ copyText(u, copyLink, "Copy link", head); }
+    copyText(u, copyLink, "Copy link", head);
   });
   head.appendChild(copyLink);
   var exportBtn = document.createElement("button"); exportBtn.type = "button"; exportBtn.className = "secondary"; exportBtn.textContent = "Export .html"; upgradePfButton(exportBtn);
@@ -1061,7 +1061,7 @@ function showNodeDetail(kind, node) {
   copyBtn.title = "Copy this node's output";
   copyBtn.addEventListener("click", function(){
     var t = node.output || "";
-    try{ navigator.clipboard.writeText(t); copyBtn.textContent = "Copied"; setTimeout(function(){ copyBtn.textContent="Copy"; }, 1200); }catch(_){ copyText(t, copyBtn, "Copy", out); }
+    copyText(t, copyBtn, "Copy", out);
   });
   head.appendChild(copyBtn);
   var closeBtn = document.createElement("button");

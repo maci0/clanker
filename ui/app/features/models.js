@@ -254,9 +254,8 @@ function saveDefault() {
 /* `navigator.clipboard` exists only in a secure context, and `clanker serve`
    speaks plain http — on `http://192.168.0.5:8080` it is undefined, which is
    the setup this server is built for. So the snippet is on screen and
-   selectable whether or not a copy is possible, and Copy is the shortcut: when
-   it cannot work it says so rather than silently doing nothing, which is what
-   the Prompts view's own Copy still does. */
+   selectable whether or not a copy is possible, and Copy is the shortcut:
+   when it cannot work it says so rather than silently doing nothing. */
 function copySnippet() {
   var btn = document.getElementById("models-snippet-copy");
   var body = document.getElementById("models-snippet-body");

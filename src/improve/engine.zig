@@ -102,7 +102,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/cli.zig", .needle = "@import(\"gate/checks.zig\")" },
     // cli.zig's verifyGates is how an operator runs the whole gate over a
     // promotion (`clanker gate`). The promote path calls build/test/tools/
-    // fmt/lint directly from this unwritable file, but the five checks below
+    // fmt/lint directly from this unwritable file, but the seven checks below
     // run ONLY there, and their implementations sit in writable checks.zig:
     // deleting the call is the one way to stop them failing that leaves both
     // files looking intact.
@@ -111,6 +111,8 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/cli.zig", .needle = "gate_checks.sandboxAbiGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.toolsTsToolchainGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.releaseContractGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.webuiBudgetGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.depPatchesGate(" },
     // The one gate that asks whether a change does anything. It is the gate a
     // loop optimising for acceptance has the most to gain from removing, and
     // removing it would look, to every other check, like a clean patch.
@@ -3319,7 +3321,7 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         // the fixtures below fail on the gate they are about, not on this
         // one.
         .{ .sig = "fn resolveZigBin(", .required = "return gpa.dupe(u8, zig_exe) catch null;", .allow = &.{"accessAbsolute"}, .indent = 8 },
-        // The five clanker-gate-only checks run ONLY from cli.zig's
+        // The seven clanker-gate-only checks run ONLY from cli.zig's
         // verifyGates (`clanker gate`, and cmdImproveSelf's post-merge
         // verification). gate_invariants pins their call sites, but a gutted
         // implementation under a kept call site passes every needle: same
@@ -3340,6 +3342,13 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         .{ .sig = "fn scanUnregisteredHostFns(", .required = "misses += 1;", .allow = &.{}, .indent = 8 },
         .{ .sig = "fn toolsTsToolchainGate(", .required = "if (std.mem.find(u8, npmrc, \"ignore-scripts=true\") == null) {", .allow = &.{}, .indent = 4 },
         .{ .sig = "fn releaseContractGate(", .required = "if (std.mem.find(u8, changelog, \"## [Unreleased]\") == null) {", .allow = &.{}, .indent = 4 },
+        // webui-budget and dep-patches joined the gate after the five above;
+        // they get the same two halves (call-site needle plus shape check).
+        // depPatchesGate's deterministic-order sort carries an honest return
+        // of its own before the marker anchor, so it is allowed explicitly.
+        .{ .sig = "fn webuiBudgetGate(", .required = "return scanWebuiBudget(gpa, io, dir, html);", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn scanWebuiBudget(", .required = "if (total > webui_eager_budget_bytes) {", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn depPatchesGate(", .required = "if (std.mem.find(u8, body, m.text) == null) {", .allow = &.{"std.mem.lessThan(u8, a, b)"}, .indent = 12 },
     };
     for (gates) |g| {
         const body = fnBody(src, g.sig) orelse return g.sig;
@@ -4066,6 +4075,31 @@ const ok_cli_gates =
     \\    };
     \\    if (std.mem.find(u8, changelog, "## [Unreleased]") == null) {
     \\        return .{ .ok = false, .label = "release-contract", .detail = "changelog" };
+    \\    }
+    \\}
+    \\pub fn webuiBudgetGate() !GateResult {
+    \\    const html = dir.readFileAlloc(io, "ui/app/index.html", gpa, .limited(1 << 20)) catch {
+    \\        return .{ .ok = false, .label = "webui-budget", .detail = "unreadable" };
+    \\    };
+    \\    return scanWebuiBudget(gpa, io, dir, html);
+    \\}
+    \\fn scanWebuiBudget() !GateResult {
+    \\    var total: usize = index_html.len;
+    \\    for (urls.items) |url| {
+    \\        total += size_of(url);
+    \\    }
+    \\    if (total > webui_eager_budget_bytes) {
+    \\        return .{ .ok = false, .label = "webui-budget", .detail = "over budget" };
+    \\    }
+    \\}
+    \\pub fn depPatchesGate() !GateResult {
+    \\    var misses: usize = 0;
+    \\    for (names.items) |name| {
+    \\        for (markers) |m| {
+    \\            if (std.mem.find(u8, body, m.text) == null) {
+    \\                misses += 1;
+    \\            }
+    \\        }
     \\    }
     \\}
 ;
@@ -4982,6 +5016,16 @@ test "a patch that strips a clanker-gate-only check from verifyGates is rejected
     // their implementations are writable checks.zig code, so the call site
     // is the only protected half.
     try expectInvariantCaught("src/cli.zig", "gate_checks.testRootCoverageGate(", "");
+}
+
+test "the newer clanker-gate-only checks are pinned too" {
+    // webui-budget and dep-patches joined verifyGates after the original
+    // five were pinned, and nothing else would have noticed them missing
+    // from gate_invariants: each new gate arrives with its call site already
+    // working, so coverage has to be added by hand. Same shape as the five
+    // above: run only in cli.zig, implemented in writable checks.zig.
+    try expectInvariantCaught("src/cli.zig", "gate_checks.webuiBudgetGate(", "");
+    try expectInvariantCaught("src/cli.zig", "gate_checks.depPatchesGate(", "");
 }
 
 test "a patch that flips improve defaults in src/config.zig is rejected" {

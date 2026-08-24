@@ -468,18 +468,24 @@ clanker.registerView({
     copyBtn.addEventListener("click", function() {
       if (!openPath) return;
       var orig = copyBtn.textContent;
-      function done() { copyBtn.textContent = "Copied"; setTimeout(function(){ copyBtn.textContent = orig; }, 1500); }
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(openPath).then(done).catch(done);
+      function restore(label) { copyBtn.textContent = label; setTimeout(function(){ copyBtn.textContent = orig; }, 1500); }
+      // Say so on a failed copy too: claiming "Copied" over a refused write
+      // sends the user away believing the path is on their clipboard.
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(openPath).then(
+          function () { restore("Copied"); },
+          function () { restore("Copy failed"); }
+        );
       } else {
         var t = document.createElement("textarea");
         t.value = openPath;
         t.style.cssText = "position:fixed;opacity:0";
         document.body.appendChild(t);
         t.select();
-        try { document.execCommand("copy"); } catch(_) {}
+        var won = false;
+        try { won = document.execCommand("copy"); } catch(_) {}
         document.body.removeChild(t);
-        done();
+        restore(won ? "Copied" : "Copy failed");
       }
     });
 
