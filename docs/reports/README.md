@@ -155,9 +155,9 @@ Project agents receive this workflow through the harness prompt and
 
 - [The same @path line inlines a file when idle and reaches the model literally mid-run](bugs/2026-08-23-repl-mentions-not-expanded-when-steering.md) — Open
 
-- [An escape sequence split across two deltas has its introducer dropped and its tail printed as prose](bugs/2026-08-23-mdstream-split-escape-tail-printed.md) — Open
+- [An escape sequence split across two deltas has its introducer dropped and its tail printed as prose](bugs/2026-08-23-mdstream-split-escape-tail-printed.md) — Resolved
 
-- [A fenced line longer than 4 KiB is silently cut, not emitted unhighlighted](bugs/2026-08-23-mdstream-fence-line-truncated-past-4kib.md) — Open
+- [A fenced line longer than 4 KiB is silently cut, not emitted unhighlighted](bugs/2026-08-23-mdstream-fence-line-truncated-past-4kib.md) — Resolved
 
 - [Alt+Enter, the documented multi-line fallback, was bound nowhere and did nothing](bugs/2026-08-23-repl-alt-enter-newline-never-bound.md) — Resolved
 
