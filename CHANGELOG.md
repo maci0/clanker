@@ -68,6 +68,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `scripts/verify.sh` applies the dependency patches before running
+  `clanker gate`, not after. The gate's twelfth check `dep-patches` fails
+  while `zig-pkg/` holds pristine upstream trees, so on a fresh clone or any
+  hand-made worktree the documented pre-push check failed on the line
+  immediately before the one that would have fixed it — and the gate's own
+  remedy message named that next line.
+
 - `scripts/apply-patches.sh` now exits 1 when a dependency tree is missing,
   instead of printing a skip note and exiting 0 with "0 applied, 0 already
   up to date" — by exit code and summary line, a run that applied nothing
