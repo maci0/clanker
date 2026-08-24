@@ -125,9 +125,13 @@ fn clean(gpa: std.mem.Allocator, bytes: []const u8) ?[]const u8 {
 /// "truncated with notice" row in PRD 0052's Failure modes. A bounded read of
 /// the prefix keeps the ceiling (a huge file is never fully allocated) while
 /// still producing bytes to truncate.
-fn readMentionFile(io: std.Io, arena: std.mem.Allocator, path: []const u8) ?[]const u8 {
+/// `dir` is the root mentions resolve against, `std.Io.Dir.cwd()` in the REPL.
+/// A parameter only so the shared transform above it can be driven against a
+/// tmpDir: the refuse rules reject absolute paths, so a test cannot reach a
+/// scratch file any other way.
+fn readMentionFile(io: std.Io, arena: std.mem.Allocator, dir: std.Io.Dir, path: []const u8) ?[]const u8 {
     const want = mention_expand.per_file_cap + 1;
-    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+    var file = dir.openFile(io, path, .{}) catch return null;
     defer file.close(io);
     const buf = arena.alloc(u8, want) catch return null;
     var reader = file.reader(io, &.{});
@@ -135,6 +139,79 @@ fn readMentionFile(io: std.Io, arena: std.mem.Allocator, path: []const u8) ?[]co
     // stream ended, so a short answer is the whole file.
     const n = reader.interface.readSliceShort(buf) catch return null;
     return buf[0..n];
+}
+
+/// Inlines every `@path` mention in one line of composer text, resolving
+/// against `dir`. The result is arena-owned; on OOM it is `input` itself, so
+/// callers must pass arena-owned text (a literal mention beats losing the
+/// line).
+///
+/// The single pre-send transform for composer text, and it has to stay single.
+/// PRD 0058 makes the composer *be* the steer box while a turn runs, so one
+/// widget and one key must not mean two different things depending on state the
+/// user has no reason to connect to @-expansion. This had one caller,
+/// `submitTaskWithGoal`, while `steerWhileRunning` duped the same composer text
+/// through untouched: `look at @src/main.zig` inlined the file when idle and
+/// reached the model as that literal string mid-run, so the model guessed or
+/// spent a `read_file` round trip. The refuse rules went unconsulted on that
+/// path for the same reason, and now cover both.
+fn expandComposerMentions(arena: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, input: []const u8) []const u8 {
+    const Ctx = struct {
+        io: std.Io,
+        arena: std.mem.Allocator,
+        dir: std.Io.Dir,
+        pub fn refuse(_: @This(), path: []const u8) bool {
+            if (path.len == 0) return true;
+            if (path[0] == '/') return true;
+            if (std.mem.find(u8, path, "..") != null) return true;
+            return secret_dotenv.isSecretDotenvPath(path);
+        }
+        pub fn readFile(c: @This(), path: []const u8) ?[]const u8 {
+            return readMentionFile(c.io, c.arena, c.dir, path);
+        }
+    };
+    return mention_expand.expandAlloc(arena, input, Ctx{ .io = io, .arena = arena, .dir = dir }) catch input;
+}
+
+test "expandComposerMentions inlines a mention and honours every refuse rule" {
+    const io = std.testing.io;
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "notes.txt", .data = "the secret is 41" });
+    try tmp.dir.writeFile(io, .{ .sub_path = ".env", .data = "TOKEN=hunter2" });
+
+    // The line both the idle and the mid-run path now send: the file is
+    // inlined as a fenced block, so the model does not have to go and read it.
+    const out = expandComposerMentions(arena, io, tmp.dir, "look at @notes.txt");
+    try std.testing.expect(std.mem.find(u8, out, "```notes.txt") != null);
+    try std.testing.expect(std.mem.find(u8, out, "the secret is 41") != null);
+
+    // The three refusals leave the mention literal and read nothing. A dotenv
+    // is the one that matters: the mid-run path consulted no refuse rules at
+    // all, so this content had a route to the provider it should never have.
+    const dotenv = expandComposerMentions(arena, io, tmp.dir, "look at @.env");
+    try std.testing.expect(std.mem.find(u8, dotenv, "hunter2") == null);
+    try std.testing.expect(std.mem.find(u8, dotenv, "@.env") != null);
+
+    const absolute = expandComposerMentions(arena, io, tmp.dir, "look at @/etc/hosts");
+    try std.testing.expect(std.mem.find(u8, absolute, "@/etc/hosts") != null);
+    try std.testing.expect(std.mem.find(u8, absolute, "```") == null);
+
+    const traversal = expandComposerMentions(arena, io, tmp.dir, "look at @../notes.txt");
+    try std.testing.expect(std.mem.find(u8, traversal, "@../notes.txt") != null);
+    try std.testing.expect(std.mem.find(u8, traversal, "```") == null);
+
+    // A refused mention says so, rather than leaving the user to wonder why
+    // the file did not appear.
+    try std.testing.expect(std.mem.find(u8, dotenv, "[mention refused:") != null);
+
+    // Nothing to expand passes through byte-identical.
+    try std.testing.expectEqualStrings("no mentions here", expandComposerMentions(arena, io, tmp.dir, "no mentions here"));
 }
 
 test "a mention of a file over the cap is truncated, not dropped" {
@@ -164,7 +241,7 @@ test "a mention of a file over the cap is truncated, not dropped" {
     // The defect: `.limited(cap + 1)` answered error.StreamTooLong for any
     // file at or over the cap, so this was null and the mention stayed a bare
     // token with no fenced block and no notice.
-    const bytes = readMentionFile(io, arena, abs) orelse return error.MentionFileWasDropped;
+    const bytes = readMentionFile(io, arena, std.Io.Dir.cwd(), abs) orelse return error.MentionFileWasDropped;
     try std.testing.expectEqual(mention_expand.per_file_cap + 1, bytes.len);
 
     const Ctx = struct {
@@ -3454,7 +3531,15 @@ const Model = struct {
         // agent loop frames the request copy (applySteerFraming), so a TUI
         // steer reads to the model as the same mid-run course correction a web
         // one does without the framing reaching the saved transcript.
-        const queued = bridge_gpa.dupe(u8, task) catch {
+        //
+        // `@path` mentions are inlined first, through the same transform and
+        // the same refuse rules `submit` uses when idle: the composer is the
+        // steer box (PRD 0058), so the identical line must not mean two
+        // different things depending on whether a turn happens to be running.
+        // The echo below deliberately keeps `task`, the typed line, since an
+        // inlined file is not something to paste into the transcript.
+        const expanded = self.expandMentions(self.arena.dupe(u8, task) catch task);
+        const queued = bridge_gpa.dupe(u8, expanded) catch {
             self.lines.append(self.arena, .{ .text = "error: steer failed: out of memory", .dim = true }) catch {};
             return;
         };
@@ -4413,6 +4498,12 @@ const Model = struct {
         return self.submitTaskWithGoal(ctx, task, null);
     }
 
+    /// `expandComposerMentions` against the run root. `input` must already be
+    /// arena-owned: it is what comes back when there is nothing to expand.
+    fn expandMentions(self: *Model, input: []const u8) []const u8 {
+        return expandComposerMentions(self.arena, self.io, std.Io.Dir.cwd(), input);
+    }
+
     /// Reads the `/attach` queue for the turn about to be submitted and puts
     /// every failure in the transcript. Does not touch the queue: submit
     /// clears it only once the worker thread owns the parts.
@@ -4485,23 +4576,7 @@ const Model = struct {
         // once the worker is joined.
         self.summary_before = stats_mod.summaryState(self.messages.items);
 
-        const owned_task = blk: {
-            const copied = try self.arena.dupe(u8, task);
-            const Ctx = struct {
-                io: std.Io,
-                arena: std.mem.Allocator,
-                pub fn refuse(_: @This(), path: []const u8) bool {
-                    if (path.len == 0) return true;
-                    if (path[0] == '/') return true;
-                    if (std.mem.find(u8, path, "..") != null) return true;
-                    return secret_dotenv.isSecretDotenvPath(path);
-                }
-                pub fn readFile(c: @This(), path: []const u8) ?[]const u8 {
-                    return readMentionFile(c.io, c.arena, path);
-                }
-            };
-            break :blk mention_expand.expandAlloc(self.arena, copied, Ctx{ .io = self.io, .arena = self.arena }) catch copied;
-        };
+        const owned_task = self.expandMentions(try self.arena.dupe(u8, task));
         if (self.session_title.len == 0) {
             var title_buf: [session_mod.title_max]u8 = undefined;
             const t = session_mod.titleFromTask(&title_buf, owned_task);

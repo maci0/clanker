@@ -113,6 +113,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `End` selected the last-registered plugin rather than the bottom tab, and a
   screen reader read the rail out of order. Both now read the rail itself.
 
+- An `@path` mention typed into the REPL composer while a turn is running is
+  now inlined, the way it already was when the composer was idle. The composer
+  *is* the steer box mid-run, but only the submit path expanded mentions, so
+  `look at @src/main.zig` handed the model a fenced copy of the file when idle
+  and the literal string `@src/main.zig` mid-run, leaving it to guess or spend
+  a `read_file` round trip. The refuse rules (absolute paths, `..`, secret
+  dotenv files) were not consulted on that path either, and now are. Both
+  paths go through one transform, so the same line cannot mean two different
+  things depending on whether a turn happens to be running.
+
 - The REPL's `/attach` now refuses at the command what it used to fail on a
   turn later. A path that is not a png, jpg, jpeg or webp is rejected by name
   (it used to queue, and the submit path then labelled anything unrecognised
@@ -3090,6 +3100,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   there would open a stream the client is waiting for headers from. Write
   routes are unaffected — the rewrite makes a `HEAD` read-shaped, never
   write-shaped, so `HEAD /api/run` is still a 404.
+
+- `clanker serve` records the connection-limit 503. A saturation refusal is
+  answered on the accept thread, outside the request handler where the metric
+  and log work lives, so it incremented no counter and wrote no line: the one
+  load condition an operator greps `/api/metrics` for was the one the server did
+  not record. It now counts as a request and a server error (503 is a 5xx),
+  logs a warning naming the limit, and carries its own `X-Request-ID` instead of
+  the accept thread's last one. It also no longer inherits the previous
+  request's HEAD or keep-alive state, which could make it declare a
+  `Content-Length` it did not send or promise to reuse a socket closed on the
+  next line. Separately, when the server falls back to serving a connection on
+  the accept thread (it cannot spawn a thread), that connection now gets one
+  request rather than up to a hundred — it had been holding the listener for the
+  whole keep-alive budget, during the overload that caused the fallback.
+
+  Not fixed, and filed: a saturation refusal is delivered over a reset
+  connection, because that path never reads the request. The body can be lost.
 
 ## [0.1.0] - 2026-08-14
 
