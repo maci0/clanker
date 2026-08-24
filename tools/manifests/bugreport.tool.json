@@ -72,6 +72,9 @@
     ]
   },
   "tool_call": true,
+  "tool_allow": [
+    "kanban_add"
+  ],
   "sequential": true,
   "fs_prefixes": [],
   "network_allow": [],
