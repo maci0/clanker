@@ -55,6 +55,9 @@ var chatRoomLabel = function (r) { return chatRoomLabelMod(r, isDm, function(rr)
 var el = {
   form: document.getElementById("task-form"),
   task: document.getElementById("task"),
+  // The wrapper that carries role=combobox, which ARIA does not allow on the
+  // textarea itself. See setPromptListOpen().
+  taskCombobox: document.getElementById("task-combobox"),
   attachments: document.getElementById("attachments"),
   submit: document.getElementById("submit"),
   cancel: document.getElementById("cancel"),
@@ -2357,11 +2360,10 @@ function renderFileMentionList() {
     });
     el.promptList.hidden = false;
     // The list is a listbox the composer owns. Opening it silently left
-    // `aria-expanded="false"` on #task, so a screen reader was never told the
-    // popup was there at all; every show and hide goes through the same pair
-    // of states now, exactly as the / and # lists do.
-    el.task.setAttribute("aria-expanded", "true");
-    el.task.setAttribute("aria-activedescendant", "prompt-item-0");
+    // `aria-expanded="false"`, so a screen reader was never told the popup was
+    // there at all; every show and hide goes through the same pair of states
+    // now, exactly as the / and # lists do.
+    setPromptListOpen(true, "prompt-item-0");
     // A failed listing closes the list rather than leaving a stale one open
     // under an `aria-expanded` that no longer describes the page.
   }).catch(function () { if (seq === fileMentionSeq) hidePromptList(); });
@@ -4800,21 +4802,33 @@ function renderPromptList() {
     el.promptList.appendChild(li);
   });
   el.promptList.hidden = false;
-  el.task.setAttribute("aria-expanded", "true");
-  el.task.setAttribute("aria-activedescendant", "prompt-item-" + promptIndex);
+  setPromptListOpen(true, "prompt-item-" + promptIndex);
   el.promptList.setAttribute("data-count", String(matches.length));
 }
 
 function hidePromptList() {
   el.promptList.hidden = true;
   el.promptList.textContent = "";
-  el.task.setAttribute("aria-expanded", "false");
-  el.task.removeAttribute("aria-activedescendant");
+  setPromptListOpen(false, null);
   // The one place that means "no suggestion list is open", so it is also where
   // the mention list's own state stops being true. Leaving the flag set is what
   // let a key meant for one list be dispatched against another.
   kbMentionActive = false;
   kbMentionIndex = 0;
+}
+
+/* One place says whether the composer's suggestion listbox is open, because
+   that state now lives on two elements. ARIA allows `combobox` on an input and
+   not on a textarea -- a textarea is already a textbox with aria-multiline, and
+   overriding the role told an AT the field was single-line -- so the role, the
+   popup reference and `aria-expanded` sit on the #task-combobox wrapper, while
+   `aria-activedescendant` stays on #task, which is the textbox the ARIA 1.1
+   combobox pattern points at. All four renderers and hidePromptList come
+   through here so the two halves can never disagree. */
+function setPromptListOpen(open, activeId) {
+  el.taskCombobox.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open && activeId) el.task.setAttribute("aria-activedescendant", activeId);
+  else el.task.removeAttribute("aria-activedescendant");
 }
 
 function runSlashModel(arg) {
@@ -4860,8 +4874,7 @@ function renderSlashList(){
     el.promptList.appendChild(li);
   });
   el.promptList.hidden = false;
-  el.task.setAttribute("aria-expanded","true");
-  el.task.setAttribute("aria-activedescendant","prompt-item-"+promptIndex);
+  setPromptListOpen(true, "prompt-item-" + promptIndex);
 }
 function hideSlashList(){ hidePromptList(); }
 function useSlash(entry, arg){
@@ -5420,8 +5433,7 @@ function renderKbMentionList() {
       el.promptList.appendChild(li);
     });
     el.promptList.hidden = false;
-    el.task.setAttribute("aria-expanded","true");
-    el.task.setAttribute("aria-activedescendant","prompt-item-"+kbMentionIndex);
+    setPromptListOpen(true, "prompt-item-" + kbMentionIndex);
   }).catch(function(){ if (seq === kbMentionSeq) hidePromptList(); });
 }
 // Integrated input handler so #knowledge and / prompts + Delete share one promptList cleanly
