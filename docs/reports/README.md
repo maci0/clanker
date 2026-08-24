@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [reports status doubles its own 'Resolved on <date>.' sentence when the note repeats it](bugs/2026-08-24-reports-status-doubles-its-own-sentence.md) — Resolved
+
 - [verify.sh runs clanker gate before apply-patches.sh, so a fresh worktree always fails dep-patches](bugs/2026-08-24-verify-sh-gates-before-applying-patches.md) — Resolved
 
 - [scripts/apply-patches.sh exits 0 after applying nothing, so a caller checking the exit status proceeds on an unpatched tree](bugs/2026-08-24-apply-patches-exits-0-having-applied-nothing.md) — Resolved

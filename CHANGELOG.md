@@ -68,6 +68,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker reports status` no longer writes its own "<Label> on <date>."
+  sentence twice when the note opens by repeating it — the natural thing to
+  write, since it is what the finished record reads like. The echo is
+  absorbed, narrowly: an authored note that merely starts with the label
+  ("Resolved by reverting the merge") survives whole, and a note that is
+  nothing but the echo is refused as carrying no evidence rather than
+  silently accepted.
+
 - A web UI plugin's `refresh` hook is reached again. The page marks a view
   loaded after its first successful mount and never calls its loader a second
   time, so the re-entry hook the registration API documents fired only from the

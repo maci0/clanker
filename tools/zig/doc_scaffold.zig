@@ -426,6 +426,36 @@ pub fn labelFrom(wanted: []const u8, vocabulary: []const []const u8) ?[]const u8
     return null;
 }
 
+/// A status note with the store's own "<Label> on <date>." sentence stripped
+/// off the front, when the note opens by echoing it.
+///
+/// `status` composes "<Label> on <date>. <note>", so a caller who writes the
+/// same sentence into the note gets it twice: "Resolved on 2026-08-24.
+/// Resolved on 2026-08-24. reordered ...", in the `## Status` section and the
+/// TL;DR bullet both. Echoing it is the natural thing to write, because that
+/// is what the finished record reads like.
+///
+/// Deliberately narrow: it strips only a literal `<Label> on ` opening, up to
+/// and including the first `.` that follows. An authored sentence that merely
+/// starts with the label -- "Resolved by reverting the merge" -- means
+/// something, and losing its first clause would be worse than the doubling
+/// this prevents. Same shape as the doubled "Bug — " title prefix fixed
+/// earlier: the tool owns that text, so the tool absorbs a caller's copy of
+/// it rather than concatenating.
+pub fn stripStatusEcho(label: []const u8, note: []const u8) []const u8 {
+    const trimmed = std.mem.trim(u8, note, " \t\r\n");
+    if (!std.mem.startsWith(u8, trimmed, label)) return trimmed;
+    const after_label = trimmed[label.len..];
+    const on = " on ";
+    if (!std.mem.startsWith(u8, after_label, on)) return trimmed;
+    // Only an echo of the tool's own sentence gets absorbed, and the sentence
+    // ends at its period. No period means the note is one unterminated phrase
+    // ("Resolved on a hunch") -- ambiguous, so leave it whole.
+    const rest = after_label[on.len..];
+    const dot = std.mem.findScalar(u8, rest, '.') orelse return trimmed;
+    return std.mem.trim(u8, rest[dot + 1 ..], " \t\r\n");
+}
+
 fn normalizeStatusByte(c: u8) u8 {
     return switch (c) {
         '_', '-' => ' ',
@@ -1542,6 +1572,47 @@ test "appendOrFill fills a section whose only body is the scaffold placeholder" 
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "## References"));
     try std.testing.expect(std.mem.find(u8, text, "none yet") == null);
     try std.testing.expect(std.mem.endsWith(u8, text, "## References\n\n- Investigation: [x](x.md)\n"));
+}
+
+test "stripStatusEcho absorbs the tool's own sentence and keeps authored prose" {
+    // The reported doubling: a note that opens with the sentence `status`
+    // is about to compose anyway.
+    try std.testing.expectEqualStrings(
+        "reordered the steps",
+        stripStatusEcho("Resolved", "Resolved on 2026-08-24. reordered the steps"),
+    );
+    // Any date, and surrounding whitespace, since the caller wrote it by hand.
+    try std.testing.expectEqualStrings(
+        "fixed in #400",
+        stripStatusEcho("Resolved", "  Resolved on 2026-01-02.   fixed in #400  "),
+    );
+    try std.testing.expectEqualStrings(
+        "still digging",
+        stripStatusEcho("Investigating", "Investigating on 2026-08-24. still digging"),
+    );
+
+    // A sentence that merely starts with the label is authored prose and must
+    // survive whole -- losing its first clause would be worse than doubling.
+    try std.testing.expectEqualStrings(
+        "Resolved by reverting the merge",
+        stripStatusEcho("Resolved", "Resolved by reverting the merge"),
+    );
+    // "on" without a terminating period is one unterminated phrase, so it is
+    // ambiguous rather than an echo.
+    try std.testing.expectEqualStrings(
+        "Resolved on a hunch",
+        stripStatusEcho("Resolved", "Resolved on a hunch"),
+    );
+    // A different label's echo is not this label's echo.
+    try std.testing.expectEqualStrings(
+        "Reopened on 2026-08-24. came back",
+        stripStatusEcho("Resolved", "Reopened on 2026-08-24. came back"),
+    );
+    // Ordinary notes are returned trimmed and otherwise untouched.
+    try std.testing.expectEqualStrings("fixed the parser", stripStatusEcho("Resolved", " fixed the parser "));
+    try std.testing.expectEqualStrings("", stripStatusEcho("Resolved", "   "));
+    // An echo and nothing else leaves an empty note rather than a doubled one.
+    try std.testing.expectEqualStrings("", stripStatusEcho("Resolved", "Resolved on 2026-08-24."));
 }
 
 test "isPlaceholderBody matches every store's none-yet line and nothing authored" {
