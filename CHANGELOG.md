@@ -92,6 +92,33 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `End` selected the last-registered plugin rather than the bottom tab, and a
   screen reader read the rail out of order. Both now read the rail itself.
 
+- `scripts/verify.sh` applies the dependency patches before running
+  `clanker gate`, not after. The gate's twelfth check `dep-patches` fails
+  while `zig-pkg/` holds pristine upstream trees, so on a fresh clone or any
+  hand-made worktree the documented pre-push check failed on the line
+  immediately before the one that would have fixed it — and the gate's own
+  remedy message named that next line.
+
+- A fenced line longer than 4 KiB is no longer silently cut in `clanker run`.
+  The streaming markdown renderer buffers each fenced line before handing it
+  to the highlighter, and every byte past the buffer was discarded with no
+  flag, no fallback and no truncation marker, so a minified bundle, a
+  one-line JSON blob or a base64 payload stopped mid-line and read as though
+  the model had produced a short line. The overflow is now flushed
+  unhighlighted, in buffer-sized pieces, and the rest of that line follows
+  unhighlighted so it is never half coloured — which is what the code always
+  documented. Nothing is dropped, so nothing needs a marker.
+
+- An escape sequence split across two streamed deltas no longer prints its
+  tail as prose in `clanker run`. The renderer scanned a CSI/OSC only within
+  one delta window: a trailing lone `ESC` was consumed with nothing held, and
+  a sequence running to the end of the window took the whole remainder, so
+  `"a\x1b[3"` followed by `"1mB"` rendered `a1mB`. The renderer now carries
+  the sequence state across deltas the way it already did for a split C1
+  control, so the sequence is dropped whole however the deltas fall. No ESC
+  reached the terminal before or after; this was visible junk, not a
+  sanitisation hole.
+
 - `scripts/apply-patches.sh` now exits 1 when a dependency tree is missing,
   instead of printing a skip note and exiting 0 with "0 applied, 0 already
   up to date" — by exit code and summary line, a run that applied nothing
