@@ -554,6 +554,19 @@ pub fn spansVaxis(state: *State, style: *const Style, gpa: std.mem.Allocator, li
     }
 }
 
+/// Advances `state` over one line without producing any output: the state a
+/// mid-fence line inherits (an open block comment, an unterminated string) is
+/// whatever the lines above it left behind, and the vaxis transcript draws
+/// from an arbitrary window row, so the fence's earlier lines have to be
+/// rescanned to get there. Sanitizes exactly as `spansVaxis` does, so the
+/// state evolves over the same bytes the drawn lines did.
+pub fn advanceLine(state: *State, gpa: std.mem.Allocator, line: []const u8) !void {
+    var toks: std.ArrayList(Token) = .empty;
+    defer toks.deinit(gpa);
+    const clean = try sanitizeAlloc(gpa, line);
+    try highlightLine(state, gpa, clean, &toks);
+}
+
 // ------------------------------------------------------------------- tests --
 
 fn renderAlloc(allocator: std.mem.Allocator, fence_lang: []const u8, code: []const u8, style: *const Style) ![]u8 {

@@ -68,6 +68,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A fenced block comment or multi-line string in `clanker repl` keeps its
+  colour past its first line. Both vaxis render paths built a fresh
+  highlighter state inside their per-line loop, so the second line of a
+  `/* ... */` read as ordinary code — `const` bold inside a comment, a stray
+  `*/` in plain style — while `clanker run` rendered the same bytes dim
+  throughout, because its renderer already carried the state. The live
+  streaming path now carries it across the block's lines, and the transcript
+  draw, which starts at an arbitrary scroll row, rebuilds it by rescanning
+  from the block's own first line (one rescan per visible block per frame).
+  Two back-to-back fences do not share a state either: the ``` markers are
+  not stored as transcript lines, so the block boundary is now marked on the
+  line itself.
+
 - `clanker reports status` no longer writes its own "<Label> on <date>."
   sentence twice when the note opens by repeating it — the natural thing to
   write, since it is what the finished record reads like. The echo is
