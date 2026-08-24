@@ -21,6 +21,5 @@
   },
   "fs_prefixes": ["state/schedule.json", "state/schedule/"],
   "network_allow": [],
-  "category": "agent",
-  "confirm": false
+  "category": "agent"
 }

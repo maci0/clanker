@@ -16,6 +16,5 @@
     }
   },
   "fs_prefixes": ["skills", "state/skills.json"],
-  "confirm": false,
   "category": "agent"
 }

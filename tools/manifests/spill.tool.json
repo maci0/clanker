@@ -15,6 +15,5 @@
     }
   },
   "fs_prefixes": ["state/spills/"],
-  "confirm": false,
   "category": "agent"
 }

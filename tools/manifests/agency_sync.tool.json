@@ -14,6 +14,5 @@
   },
   "fs_prefixes": ["agency"],
   "network_allow": ["raw.githubusercontent.com", "api.github.com"],
-  "confirm": false,
   "category": "agent"
 }

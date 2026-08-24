@@ -131,6 +131,34 @@ pub fn sourceCallsModel(source: []const u8) bool {
     return false;
 }
 
+/// Guest helpers in `tools/zig/lib.zig` that create, change, move, or delete
+/// files. A tool whose guest calls one carries filesystem write access, and
+/// `confirm` exists exactly for that: a descriptor with `"confirm": false`
+/// claims the tool is read-only, which keeps it out of plan mode (the loop
+/// refuses what `needsConfirm` says is write-capable) and out of the
+/// browser-attached confirm gate. Same rule as `model_call_markers`: the list
+/// lives here because both the registry's conformance test and
+/// `clanker plugins validate` consult it.
+pub const fs_write_markers = [_][]const u8{
+    "lib.fsAppend(",
+    "lib.fsCopy(",
+    "lib.fsDelete(",
+    "lib.fsDeleteTree(",
+    "lib.fsMkdir(",
+    "lib.fsRename(",
+    "lib.fsWrite(",
+    "lib.fsWriteIf(",
+};
+
+/// True when guest source text writes, renames, or deletes through any known
+/// helper.
+pub fn sourceWritesFiles(source: []const u8) bool {
+    for (fs_write_markers) |marker| {
+        if (std.mem.find(u8, source, marker) != null) return true;
+    }
+    return false;
+}
+
 pub const Severity = enum {
     /// The manifest is wrong: the loader will refuse it, or accept it and do
     /// something other than what it says.
@@ -980,6 +1008,15 @@ test "sourceCallsModel spots every helper the descriptor gate cares about" {
     try testing.expect(sourceCallsModel("const x = try lib.llmSystem(alloc, sys, prompt);"));
     try testing.expect(sourceCallsModel("lib.subagentBriefed("));
     try testing.expect(!sourceCallsModel("// lib.llmish( is not a helper\nconst y = 1;"));
+}
+
+test "sourceWritesFiles spots every write helper and no read helper" {
+    try testing.expect(sourceWritesFiles("try lib.fsWriteIf(path, hash, body);"));
+    try testing.expect(sourceWritesFiles("lib.fsDeleteTree(a, path)"));
+    // A read helper shares a prefix with a write one (fsWrite / fsWriteIf,
+    // fsDelete / fsDeleteTree): the marker's `(` must not match the longer name.
+    try testing.expect(!sourceWritesFiles("const raw = lib.fsRead(path);"));
+    try testing.expect(!sourceWritesFiles("lib.fsList(dir) catch return;"));
 }
 
 test "exec_allow glob is rejected as a no-op grant" {

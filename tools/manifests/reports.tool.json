@@ -75,6 +75,5 @@
     "docs/runbooks/"
   ],
   "network_allow": [],
-  "category": "knowledge",
-  "confirm": false
+  "category": "knowledge"
 }

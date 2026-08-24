@@ -15,6 +15,5 @@
   },
   "fs_prefixes": ["docs/prompts", "state/gauntlet", "state/gauntlet_state.json"],
   "network_allow": ["raw.githubusercontent.com", "api.github.com"],
-  "confirm": false,
   "category": "agent"
 }

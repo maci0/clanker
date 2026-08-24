@@ -76,6 +76,5 @@
     "state/goals.json"
   ],
   "internal": true,
-  "confirm": false,
   "category": "agent"
 }

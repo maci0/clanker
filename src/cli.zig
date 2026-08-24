@@ -6393,6 +6393,17 @@ fn withCrossChecks(
                 ),
             });
         }
+        if (manifest_mod.sourceWritesFiles(body) and !(tool.confirm orelse true)) {
+            try out.append(arena, .{
+                .severity = .err,
+                .key = "confirm",
+                .message = try std.fmt.allocPrint(
+                    arena,
+                    "{s} writes files, so the descriptor must not set \"confirm\": false: that opt-out claims a read-only tool and keeps its calls out of plan mode and the confirm gate",
+                    .{src_path},
+                ),
+            });
+        }
         break;
     }
     return out.items;

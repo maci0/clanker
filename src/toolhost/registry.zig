@@ -1350,6 +1350,66 @@ test "confirm derives from exec/fs grants and the descriptor overrides it" {
     try std.testing.expect(delegator.needsConfirm());
 }
 
+test "a guest that writes files does not opt out of confirmation" {
+    // The opt-out is documented as read-only-only, and plan mode refuses
+    // exactly what needsConfirm says is write-capable, so a writing guest with
+    // `"confirm": false` could change state from a run that must not change
+    // any (config set rewrote config.local.toml in plan mode; schedule add
+    // created recurring exec runs there). Reading the guests is the only way
+    // to connect a source file to its manifest; the helper list lives in
+    // manifest.zig beside `model_call_markers` for the same reason.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var src_dir = std.Io.Dir.cwd().openDir(io, "tools/zig", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer src_dir.close(io);
+    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    defer man_dir.close(io);
+
+    // One pass over the manifests: keep each descriptor's wasm output name and
+    // parsed form, so a writer whose module is `add_goal.wasm` finds
+    // goal_add.tool.json even though the names disagree.
+    const Manifest = struct { wasm: []const u8, tool: Tool };
+    var manifests: std.ArrayList(Manifest) = .empty;
+    var mit = man_dir.iterate();
+    while (mit.next(io) catch null) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
+        const raw = try man_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
+        const t = try Registry.parseDescriptor(arena, raw);
+        try manifests.append(arena, .{ .wasm = t.wasm, .tool = t });
+    }
+    try std.testing.expect(manifests.items.len > 50);
+
+    var writers_seen: usize = 0;
+    var it = src_dir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
+        if (!manifest.sourceWritesFiles(body)) continue;
+        writers_seen += 1;
+
+        const stem = entry.name[0 .. entry.name.len - ".zig".len];
+        for (manifests.items) |m| {
+            const suffix = std.fmt.allocPrint(arena, "{s}.wasm", .{stem}) catch return error.OutOfMemory;
+            if (!std.mem.endsWith(u8, m.wasm, suffix)) continue;
+            if (m.tool.confirm) |c| {
+                if (!c) {
+                    std.debug.print("{s}.zig writes files but {s} sets \"confirm\": false\n", .{ stem, m.tool.name });
+                    return error.WriterOptedOutOfConfirm;
+                }
+            }
+            break;
+        }
+    }
+    // The check is vacuous without guests it can judge.
+    try std.testing.expect(writers_seen > 10);
+}
+
 test "descriptor statusline flag parses and defaults off" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

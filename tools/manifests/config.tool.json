@@ -27,6 +27,5 @@
     "config.local.toml"
   ],
   "network_allow": [],
-  "confirm": false,
   "category": "harness"
 }
