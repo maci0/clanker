@@ -134,6 +134,7 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
     if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory was not updated (it changed concurrently). Add the link\nby hand from the index README without replacing the other edit.\n");
     }
+    if (try common.dateWarningBlock(arena, result)) |warning| try w.writer.writeAll(warning);
     try common.out(io, w.written());
 }
 

@@ -161,6 +161,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
     if (!common.boolField(result, "indexed")) {
         try w.writer.writeAll("\nThe inventory was not updated (it changed concurrently). Add the link\nby hand in docs/research/README.md without replacing the other edit.\n");
     }
+    if (try common.dateWarningBlock(arena, result)) |warning| try w.writer.writeAll(warning);
     return try w.toOwnedSlice();
 }
 

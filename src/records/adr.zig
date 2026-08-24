@@ -122,6 +122,10 @@ fn create(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
         json_util.strFieldOrEmpty(result.object, "rfc"),
         common.boolField(result, "indexed"),
     ));
+    // The slug is derived from the title in this store, so a dated slug here
+    // comes from a dated title rather than a typed one -- rarer than in
+    // `reports`, and the same self-contradiction when it happens.
+    if (try common.dateWarningBlock(arena, result)) |warning| try common.out(io, warning);
 }
 
 /// What to do with the record once it exists. The RFC line is printed only
