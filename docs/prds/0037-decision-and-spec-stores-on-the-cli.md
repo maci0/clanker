@@ -90,20 +90,6 @@ warns, because a warning on a record nobody re-reads is the same as silence.
 `cli.zig` for the CLI call. No new host capability: both descriptors grant only
 `fs_prefixes` under `docs/` and no network.
 
-If a table of ops/fields/endpoints exists in code, mirror it here exactly;
-treat a mismatch between this table and the code as a bug in the PRD, not
-a stylistic choice, and fix it the same day it's noticed.
-
-For a **Draft** (or partially shipped) PRD, Design must also settle build
-blockers and sequencing — do not leave "must decide before coding" items
-only under Open questions:
-
-- **Dependencies.** Other PRDs, ADRs, and existing code this rides on.
-  Hard blockers first; soft/related after.
-- **Implementation.** Numbered phases with concrete file paths (create /
-  edit). Each phase should be independently checkable. Put "decide X"
-  work in Design policy above, not as a phase that re-opens the decision.
-
 ## Known issues
 
 Three defects in the shared scaffolding this PRD names as its source of truth,

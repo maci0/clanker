@@ -4,12 +4,6 @@
 
 Decided — 2026-08-21. ADR 0036
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 jcode agent-grep returns enclosing functions with each hit so the model infers file shape without a full read. clanker's repo_search and symbols tools are separate; hits carry no outline. Decide whether to attach enclosing symbols on the grep path.
@@ -27,12 +21,6 @@ jcode agent-grep returns enclosing functions with each hit so the model infers f
 tools/zig/repo_search.zig returns rg/ast-grep/semcode matches as file:line:text. tools/zig/symbols.zig finds Zig declarations by name, not enclosing scope of a line. The model must call both. Files: a host-tested helper (tools/zig/grep_outline.zig) imported by repo_search; tests in host_tested_helpers.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Enclosing-symbol walk on repo_search hits (Zig first)
 
@@ -92,9 +80,6 @@ Evidence: repo_search.zig default engine ast-grep.
 
 ## Implications by horizon
 
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
-
 ### Short term (this release / 0–3 months)
 
 If A: rg hits carry enclosing Zig symbols this release. If B: a prompt sentence nobody will obey. If status quo: extra reads. If D: ast-grep users unchanged, rg users unchanged.
@@ -113,27 +98,7 @@ If A: outline stays a field on the existing tool. If C: we keep paying for read_
 
 **Confidence:** 8/10
 
-**Why this confidence.** What the score is resting on, and what would move it:
-the specific evidence that would raise it, and the finding that would sink the
-recommendation entirely.
-
 **Rationale.** One tool call, no new catalog name, testable without HTTP. Prompt-guidance will be skipped. ast-grep default does not outline a regex hit.
-
-**Reversibility.** How hard it is to undo, and the point of no return (a
-migrated data format, a public API, a dependency baked into the build).
-
-## Open questions
-
-Questions whose answers could change the recommendation, each with who or what
-can answer it. Keep them here until they are answered; do not silently drop the
-ones that turned out to be inconvenient.
-
-## Next steps / action items
-
-- [ ] What happens if this recommendation is accepted, in order.
-- [ ] The experiment or spike that would settle an open question above.
-- [ ] Who is being asked for comment, and by when.
-- [ ] Write the ADR once the decision is made.
 
 ## References
 
@@ -141,8 +106,3 @@ ones that turned out to be inconvenient.
 
 - Research: [jcode feature inventory](../research/jcode-features.md).
 - tools/zig/repo_search.zig, tools/zig/symbols.zig. jcode README Agent grep (2026-08-21).
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

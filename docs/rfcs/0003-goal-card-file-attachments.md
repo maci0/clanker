@@ -5,12 +5,6 @@
 Discussion, opened 2026-08-16, revised the same day to cover links
 (http(s), Google Drive, and other URIs), not only uploaded files.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 An operator attaches a spec, a paste, a website, or a Google Drive doc to

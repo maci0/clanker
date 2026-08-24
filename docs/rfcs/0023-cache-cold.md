@@ -4,12 +4,6 @@
 
 Decided — 2026-08-21. ADR 0035
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Anthropic's prompt cache expires after five minutes idle. clanker already parses cache_read_input_tokens but never clocks idle time, so a cache miss after a pause is silent and expensive. Decide whether and how to warn.
@@ -27,12 +21,6 @@ Anthropic's prompt cache expires after five minutes idle. clanker already parses
 src/llm/providers/anthropic.zig maps cache_read_input_tokens into usage. src/tui/turn_stats.zig prints a cache segment when the provider reported accounting; omitted rather than 0%. Nothing stores last-success time per provider/model. A 6-minute pause then a turn looks like any other miss. Files: a pure helper (cache_cold.zig or tokens.zig), a stamp at the client choke point (state/token_stats.jsonl already appends per completion), turn_stats / log line before send.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Stamp last Anthropic success; warn when idle exceeds TTL
 
@@ -92,9 +80,6 @@ Evidence: src/stats/tokens.zig.
 
 ## Implications by horizon
 
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
-
 ### Short term (this release / 0–3 months)
 
 If A: a pause over 5 min is named before the next Claude turn. If B: forbidden by ADR 0008. If status quo: miss stays silent until the bill. If D: operators grep stats after the fact.
@@ -113,27 +98,7 @@ If A: the helper stays even if Anthropic changes the number. If status quo: peop
 
 **Confidence:** 8/10
 
-**Why this confidence.** What the score is resting on, and what would move it:
-the specific evidence that would raise it, and the finding that would sink the
-recommendation entirely.
-
 **Rationale.** No daemon, uses usage we already parse, unit-testable. Warming contradicts ADR 0008. Stats-after-the-fact does not prevent the miss.
-
-**Reversibility.** How hard it is to undo, and the point of no return (a
-migrated data format, a public API, a dependency baked into the build).
-
-## Open questions
-
-Questions whose answers could change the recommendation, each with who or what
-can answer it. Keep them here until they are answered; do not silently drop the
-ones that turned out to be inconvenient.
-
-## Next steps / action items
-
-- [ ] What happens if this recommendation is accepted, in order.
-- [ ] The experiment or spike that would settle an open question above.
-- [ ] Who is being asked for comment, and by when.
-- [ ] Write the ADR once the decision is made.
 
 ## References
 
@@ -141,8 +106,3 @@ ones that turned out to be inconvenient.
 
 - Research: [jcode feature inventory](../research/jcode-features.md).
 - ADR 0008 (no daemon). PRD 0005 cache segment. jcode README Misc (opened 2026-08-21).
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

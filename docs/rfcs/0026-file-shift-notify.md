@@ -4,12 +4,6 @@
 
 Decided — 2026-08-21. ADR 0038
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 jcode notifies agent B when agent A edits a file B has read. ck_swarm members cannot see each other; the concurrent-sessions runbook is recovery after damage. Decide whether live sessions get a typed file-touch notify.
@@ -27,12 +21,6 @@ jcode notifies agent B when agent A edits a file B has read. ck_swarm members ca
 Concurrent sessions share a checkout. File writes go through guests (ck_fs_write / edit_file). Nothing records which session last read a path. The runbook tells humans to talk. chat_dm exists if they think to use it. Files: a host read-set in sandbox/host.zig or agent session, notify via existing ck_chat or a tool result injection at a safe point.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Host read-set per session; on write, notify other live sessions that read the path
 
@@ -92,9 +80,6 @@ Evidence: RFC 0008 worktree option; src/improve/worktree.zig.
 
 ## Implications by horizon
 
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
-
 ### Short term (this release / 0–3 months)
 
 If A: whoToNotify is testable immediately; wiring can follow. If B: wait on claims. If status quo: next collision is the runbook again. If D: REPL sessions still share a tree.
@@ -113,27 +98,7 @@ If A: notify stays even after claims exist (read-set is not a lock). If C: we ke
 
 **Confidence:** 7/10
 
-**Why this confidence.** What the score is resting on, and what would move it:
-the specific evidence that would raise it, and the finding that would sink the
-recommendation entirely.
-
 **Rationale.** The incident is real and claims (RFC 0008) are a different question still open. Worktrees do not help two interactive sessions on one tree. Phase 1 is the pure whoToNotify helper so this is reversible.
-
-**Reversibility.** How hard it is to undo, and the point of no return (a
-migrated data format, a public API, a dependency baked into the build).
-
-## Open questions
-
-Questions whose answers could change the recommendation, each with who or what
-can answer it. Keep them here until they are answered; do not silently drop the
-ones that turned out to be inconvenient.
-
-## Next steps / action items
-
-- [ ] What happens if this recommendation is accepted, in order.
-- [ ] The experiment or spike that would settle an open question above.
-- [ ] Who is being asked for comment, and by when.
-- [ ] Write the ADR once the decision is made.
 
 ## References
 
@@ -141,8 +106,3 @@ ones that turned out to be inconvenient.
 
 - Research: [jcode feature inventory](../research/jcode-features.md).
 - RFC 0008, PRD 0008, ADR 0006. Bug 2026-08-16 concurrent sessions. jcode SWARM_ARCHITECTURE.md.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

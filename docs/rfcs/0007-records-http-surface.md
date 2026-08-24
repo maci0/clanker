@@ -4,12 +4,6 @@
 
 Decided — 2026-08-16. Decided as ADR 0019 — Record stores are exposed over HTTP as one relay endpoint per tool.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Every web UI view is backed by an /api/ endpoint, and no docs/ record store has one, which is the only reason reports, RFCs, ADRs, PRDs and research notes cannot get a view. The five stores already have guests (reports, rfc, adr, prd, research) whose input_schema is an action plus fields. What has to be decided before writing any handler: whether HTTP relays writes at all or only reads, and what the URL and status vocabulary is.
@@ -324,8 +318,3 @@ That is the deciding horizon.
 - `src/cli.zig` — `handleLogs`, `handleSkills`, `skillsRouteToToolInput`,
   `handleSessions`, `requestPath`, `toolRefusalStatus`: the relay machinery
   every option above reuses.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -8,18 +8,9 @@ Draft. Later phases, not implement-now this round. Decision: [ADR 0038](../adrs/
 
 When session A writes a file session B has read, B does not hear about it. Concurrent sessions recover after damage via a runbook rather than during the write.
 
-What breaks or is impossible without this, stated from the situation that
-forced the decision, not from the solution. Include real constraints
-(no server to mediate, must ride an existing transport, sandbox must be
-able to enforce it) that shaped the design, not just the desired outcome.
-
 ## Goals
 
 1. whoToNotify is a pure function over read-sets, path, and writer id.  2. Live sessions record successful reads.  3. A write notifies other live sessions that hold the path, advisory, fail-open.  4. No lock and no ck_swarm rewrite.
-
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
 
 ## Non-goals
 

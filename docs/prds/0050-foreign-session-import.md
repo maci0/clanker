@@ -8,18 +8,9 @@ Draft. Later phases, not implement-now this round. Decision: [ADR 0039](../adrs/
 
 A crashed Claude Code (or later Codex/OpenCode/pi) session cannot continue in clanker. Own sessions resume; foreign transcripts can only be pasted as a user message, losing tool history.
 
-What breaks or is impossible without this, stated from the situation that
-forced the decision, not from the solution. Include real constraints
-(no server to mediate, must ride an existing transport, sandbox must be
-able to enforce it) that shaped the design, not just the desired outcome.
-
 ## Goals
 
 1. clanker session import parses Claude Code JSONL into a new session.  2. Unknown schema is refused, not partially imported.  3. The foreign file is not mutated.  4. Other harnesses are later phases.
-
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
 
 ## Non-goals
 

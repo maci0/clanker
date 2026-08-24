@@ -8,18 +8,9 @@ In progress — phases 1 and 2 shipped 2026-08-21 (rg, ast-grep, and host-fallba
 
 repo_search hits are file:line:text. The model cannot tell which function a hit sat in without a follow-up read_file or symbols call, burning tokens on file shape.
 
-What breaks or is impossible without this, stated from the situation that
-forced the decision, not from the solution. Include real constraints
-(no server to mediate, must ride an existing transport, sandbox must be
-able to enforce it) that shaped the design, not just the desired outcome.
-
 ## Goals
 
 1. rg and host-fallback hits include enclosing symbol kind, name, and declaration line when the file is readable.  2. Zig declarations are recognized; a weak generic fallback covers def/function/class.  3. Outline bytes are capped.  4. Host tests drive the shipped helper on real source, not a reimplementation.
-
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
 
 ## Non-goals
 

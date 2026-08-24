@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0027
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Kimi harness parity's last open gap per docs/reviews/webui.md is lifecycle hooks (partial: confirm_writes/plan_mode exist, but no hooks.json bridge). Decide how clanker runs external policy scripts at PreToolUse/PostToolUse/UserPromptSubmit/Stop/SessionStart without forking a new runner or diverging from Claude Code's exit-code/stdout wire contract.
@@ -28,12 +22,6 @@ Today: `src/hooks/config.zig` + `src/hooks/runner.zig` exist as stubs with tests
 Files touched by a full bridge: `src/hooks/*`, `src/config.zig:Hooks`, `src/agent/loop.zig` (5 hook sites), plus `host.execUnderPolicy` stdin/timeout plumbing already via `!cmd`.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Claude-dialect bridge with DSH's dialect-neutral core (matcher, JSON decode, most-restrictive merge)
 
@@ -59,16 +47,7 @@ not finished looking.
 
 ### Option C — Status quo
 
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -106,15 +85,3 @@ one horizon, say so — that is usually the deciding fact.
 ## Next steps / action items
 
 - [ ] ADR 00XX; PRD 0028 checklist clear; wire 5 points and land `src/hooks/` behind `[hooks] enabled` (PRD 0028 Goals).
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -14,10 +14,6 @@ Constraint: providers are a native vtable (ADR 0004). The request body is built 
 
 1. extra_body parses from provider config as a JSON object and is refused at load if it is not an object.  2. openai_compat and azure request bodies merge extra_body keys last, overriding same-name generated fields.  3. Empty extra_body is omitted and does not change the body.  4. Host tests drive merge and config parse from the shipped functions.
 
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
-
 ## Non-goals
 
 Anthropic Messages extra fields (different body). A new ProviderKind. A WASM request transform (ADR 0004). Env-only overlay as the store. Multi-account login.

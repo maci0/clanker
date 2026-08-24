@@ -4,12 +4,6 @@
 
 Decided — 2026-08-21. ADR 0037
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 jcode passively injects cosine memory hits every turn. clanker memorySearch fires only on /api/run; REPL and clanker run require the model to call the memory tool. Decide whether every Agent.run turn injects hits on the existing hash embedder.
@@ -27,12 +21,6 @@ jcode passively injects cosine memory hits every turn. clanker memorySearch fire
 src/cli.zig memorySearch is called from handleRun (/api/run) only. tools/zig/memory.zig search is a catalog tool. REPL/clanker run Agent.run does not inject. Workaround: hope the model calls memory, or use the web UI. Files: share memorySearch with Agent.run (src/agent/loop.zig or a helper both call), keep the fence and cap from PRD 0007.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Inject memorySearch on every Agent.run turn, same guest and fence as /api/run
 
@@ -92,9 +80,6 @@ Evidence: note_write tool; system prompt assembly.
 
 ## Implications by horizon
 
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
-
 ### Short term (this release / 0–3 months)
 
 If A: REPL/run get the same inject /api/run already has. If B: every turn pays a second completion. If status quo: TUI stays tool-only. If D: learnings keep growing the system prompt.
@@ -113,27 +98,7 @@ If A: swapping the embedder later does not change the inject site. If C: two RAG
 
 **Confidence:** 8/10
 
-**Why this confidence.** What the score is resting on, and what would move it:
-the specific evidence that would raise it, and the finding that would sink the
-recommendation entirely.
-
 **Rationale.** Closes the surface split without a new embedder. Sidecar is priced every turn. learnings are not retrieval. RFC 0004 remains about Muninn I/O, not this inject.
-
-**Reversibility.** How hard it is to undo, and the point of no return (a
-migrated data format, a public API, a dependency baked into the build).
-
-## Open questions
-
-Questions whose answers could change the recommendation, each with who or what
-can answer it. Keep them here until they are answered; do not silently drop the
-ones that turned out to be inconvenient.
-
-## Next steps / action items
-
-- [ ] What happens if this recommendation is accepted, in order.
-- [ ] The experiment or spike that would settle an open question above.
-- [ ] Who is being asked for comment, and by when.
-- [ ] Write the ADR once the decision is made.
 
 ## References
 
@@ -141,8 +106,3 @@ ones that turned out to be inconvenient.
 
 - Research: [jcode feature inventory](../research/jcode-features.md).
 - PRD 0007, RFC 0004, ADR 0015. jcode MEMORY_ARCHITECTURE.md (2026-08-21).
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

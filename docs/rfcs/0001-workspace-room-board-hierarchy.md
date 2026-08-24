@@ -7,12 +7,6 @@ goal-is-a-card); recorded in ADR 0020. The earlier arena
 (`arena-1786861439-dad384e4`) that rejected goal-is-a-card is what settled the
 goal/task split.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 An operator wants to treat "the project" as one thing with several parts:

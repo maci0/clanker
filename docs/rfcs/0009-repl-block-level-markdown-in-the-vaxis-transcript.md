@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0021
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 The vaxis REPL renders markdown line-by-line (headings, bold/italic, single bullet). Tables, block quotes and nested lists remain unstyled, unlike clanker run's MdStream. Decide the parser/renderer shape, reuse, and performance budget for extending src/tui/repl.zig to block-level.
@@ -27,12 +21,6 @@ The vaxis REPL renders markdown line-by-line (headings, bold/italic, single bull
 `src/tui/repl.zig:mdLineSegments` + `appendInline` does line-level markdown per transcript line (headings `#..######`, single bullet `-/*/+`, inline `**bold**`/`*italic*`/`_italic_`/`code`). `src/tui/transcript.zig:MdStream` does block-level streaming md for `clanker run` (fences, headings, quotes, lists) over ANSI. REPL draws via vaxis segments/styles, not ANSI. Gap: `> quote`, `| table |`, nested `  - ` lists.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Extend repl.zig with pure-Zig block parser emitting vaxis segments
 
@@ -67,18 +55,7 @@ not finished looking.
 - **Cost to leave:** Rip out C dep and rebuild.
 - **Evidence:** Out-of-box: not in tree, not in `build.zig` — verified absent.
 
-### Option D — status quo
-
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -120,15 +97,3 @@ one horizon, say so — that is usually the deciding fact.
 - [ ] PRD checklist for block-level md; ADR for the choice.
 - [ ] Implement A, add tests, verify draw perf.
 - [ ] Write the ADR once decided.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -8,18 +8,9 @@ In progress — phase 1 shipped 2026-08-21; phases 2 (turn_stats segment) and 3 
 
 A pause longer than Anthropic prompt-cache TTL silently pays a full prompt on the next Claude turn. Cache accounting exists after the fact but nothing warns before send.
 
-What breaks or is impossible without this, stated from the situation that
-forced the decision, not from the solution. Include real constraints
-(no server to mediate, must ride an existing transport, sandbox must be
-able to enforce it) that shaped the design, not just the desired outcome.
-
 ## Goals
 
 1. A pure helper classifies cold vs warm given last success, now, and TTL.  2. Last success is stamped at the client choke point for cache-accounted completions.  3. A cold send is named on stderr/turn_stats before the request.  4. An unexpected miss (warm expected, cache_hit 0) is logged.  5. No daemon and no dummy warmer.
-
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
 
 ## Non-goals
 

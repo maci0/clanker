@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0022
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 vxfw.TextField is single-line; Enter always submits. Users cannot compose multi-paragraph tasks without bracketed paste folding. Need a deliberate input affordance (Shift+Enter, Alt+Enter, or modal) and a newline representation that survives submit history and the agent task boundary.
@@ -27,12 +21,6 @@ vxfw.TextField is single-line; Enter always submits. Users cannot compose multi-
 `src/tui/repl.zig` uses single-line `vxfw.TextField`; Enter always submits and literal newlines only appear via bracketed-paste CR/LF folding. Pasted multi-line turns into one logical transcript row with spacing.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Shift+Enter inserts newline, Enter still submits (in composer)
 
@@ -69,16 +57,7 @@ not finished looking.
 
 ### Option D — status quo
 
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -117,15 +96,3 @@ one horizon, say so — that is usually the deciding fact.
 ## Next steps / action items
 
 - [ ] PRD for REPL multi-line input; ADR; impl in `src/tui/repl.zig`.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -8,18 +8,9 @@ Draft. Later phases, not implement-now this round. Decision: [ADR 0037](../adrs/
 
 memorySearch injects Knowledge hits only on /api/run. REPL and clanker run require the model to call the memory tool, so those surfaces have no RAG unless the model remembers.
 
-What breaks or is impossible without this, stated from the situation that
-forced the decision, not from the solution. Include real constraints
-(no server to mediate, must ride an existing transport, sandbox must be
-able to enforce it) that shaped the design, not just the desired outcome.
-
 ## Goals
 
 1. Agent.run injects memory hits through the same guest, fence, and byte cap as /api/run.  2. Search errors fail open and do not block the turn.  3. No ONNX and no sidecar verifier in v1.  4. Session-end extraction is a named later phase, not silent.
-
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
 
 ## Non-goals
 

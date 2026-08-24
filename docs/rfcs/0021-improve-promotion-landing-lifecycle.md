@@ -4,12 +4,6 @@
 
 Discussion — 2026-08-19. Drafted 2026-08-19 at operator request after promotions were lost via 124d592e; open for the operator's comment — the phase-2 trigger (open question 2) is the main thing to settle.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Worktree.mergeBack lands a promotion as a local update-ref on refs/heads/main: src/improve/ contains no git fetch, no reference to origin, and no git push (checked by grep over src/improve/*.zig, 2026-08-19). Three operational consequences are now on record: the invoking checkout is left showing the promotion's inverse diff, which an operator committed and pushed as 124d592e, deleting two promotions (bug 2026-08-19-improve-self-merge-leaves-worktree-reverted, reopened, fifth occurrence); promotions sit unpushed on local main until the operator notices; and because the worktree bases on the local main tip without fetching, a stale local main produces non-fast-forward push rejections. The decision: what lifecycle should a promotion follow between the engine's worktree, the invoking checkout, and origin.
@@ -33,12 +27,6 @@ All in src/improve/worktree.zig and engine.zig, verified 2026-08-19 by reading m
 The workaround in place of a decision is operational guidance (AGENTS.md src/improve bullet, the reopened bug report): git restore --staged + git restore --source=HEAD --worktree, never commit the diff, push manually.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — local landing, made honest: fetch-fresh base, checkout resync, push reminder
 
@@ -139,8 +127,3 @@ The options differ most in the short term (whether the data-loss path closes now
 - RFC 0001 (workspace/worktree hierarchy) — why runs isolate in worktrees; does not decide landing.
 - ADR 0008 (scheduler is cron-driven) — the unattended-runs future that triggers phase 2.
 - src/improve/worktree.zig mergeBack + the reset-pinned-to-worktree comment — current mechanism, read 2026-08-19; grep of src/improve/ for fetch/origin/push (zero hits) — supports the no-fetch/no-push claims.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

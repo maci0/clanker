@@ -4,12 +4,6 @@
 
 Decided — 2026-08-18. See ADR 0032.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 The operator has Claude Code, Codex, and/or Grok Build logins (OAuth / subscription) and no console API keys for those vendors. Pasting an oat or similar token into clanker's provider env does not make clanker those agents: the tokens are issued for each vendor's own CLI client, they expire, and the Messages / Responses APIs reject them from a third-party User-Agent. What they want is clanker as the harness (board, runs, autolearn, improve-self, sandboxed tools) and Claude Code / Codex / Grok Build as the *program* that holds the login and talks to the vendor. That path is not built. ACP is a candidate common wire, not a given: Grok Build ships first-party `agent stdio`; Codex ACP is a published adapter; Claude Code has no first-party acp verb. Related but opposite records: RFC 0014 / ADR 0026 / PRD 0030 (clanker is the ACP *server* an IDE drives), PRD 0026 (foreign clients spend clanker keys), RFC 0013 (clanker consumes MCP servers), RFC 0015 (hooks dialect). Decide the integration shape before anyone spoofs vendor headers or forks serve --proxy into a subscription relay.

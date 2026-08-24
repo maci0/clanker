@@ -4,12 +4,6 @@
 
 Decided — 2026-08-21. ADR 0041
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Kimi Code loads a relative path when the operator types @path in the composer. Clanker has no mention expander. Decide how mentions are parsed, which paths they may read, and where the bytes land in the saved session.
@@ -112,37 +106,9 @@ Evidence: PRD 0041.
 
 **Confidence:** 8/10
 
-**Why this confidence.** What the score is resting on, and what would move it:
-the specific evidence that would raise it, and the finding that would sink the
-recommendation entirely.
-
 **Rationale.** Shares one helper, refuses dotenv, and logs model-visible bytes. B forges tool results. D mismatches /attach image shape.
-
-**Reversibility.** How hard it is to undo, and the point of no return (a
-migrated data format, a public API, a dependency baked into the build).
-
-## Open questions
-
-Questions whose answers could change the recommendation, each with who or what
-can answer it. Keep them here until they are answered; do not silently drop the
-ones that turned out to be inconvenient.
-
-## Next steps / action items
-
-- [ ] What happens if this recommendation is accepted, in order.
-- [ ] The experiment or spike that would settle an open question above.
-- [ ] Who is being asked for comment, and by when.
-- [ ] Write the ADR once the decision is made.
 
 ## References
 
 - Research: [Research — Kimi Code CLI feature inventory for clanker](../research/kimi-code-features.md) — read 2026-08-21. Its claims are unverified here until each is checked against the source it cites (the URL, repository, or file — the note itself is not the source).
 
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

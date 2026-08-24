@@ -4,12 +4,6 @@
 
 Decided — 2026-08-24. Decided as recommended: option A, an allowlisted envelope on ck_http_ex. Recorded in ADR 0049. One divergence from the recommendation, and it is the fallback the RFC named: ck_http was left on std.http.Client.fetch rather than sharing the head-retaining path, so the open question about existing guests' transport is not answered but is also no longer load-bearing.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 `ck_http` returns the response body and nothing else, so no guest can read

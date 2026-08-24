@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0028
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 DeepSeek Harness repeat-tool-reminder is a zero-cost deterministic nudge for repeated identical tool calls (distinct from priced Advisor). Decide whether to adopt it as a non-LLM reminder in clanker's agent loop.
@@ -27,12 +21,6 @@ DeepSeek Harness repeat-tool-reminder is a zero-cost deterministic nudge for rep
 Today: `src/agent/loop_guard.zig` and wiring in `src/agent/loop.zig:Agent.executeCalls` exist as a shipped PRD 0029 implementation; `agent.repeat_tool_thresholds`/`repeat_tool_exclude` config is parsed and validated. This RFC documents the decision that led there; alternative paths are recorded for traceability.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Deterministic canonical chain in `LoopGuard` with thresholds [3,5,8] + excludes
 
@@ -58,16 +46,7 @@ not finished looking.
 
 ### Option C — Status quo
 
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -105,15 +84,3 @@ one horizon, say so — that is usually the deciding fact.
 ## Next steps / action items
 
 - [ ] ADR 00XX linking this RFC; PRD 0029 already Shipped.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0025
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Clanker only serves MCP today; the Kimi harness parity gap notes "MCP client configuration (clanker already serves MCP; /mcp-config-style client management is new)" as the next open item. Need a user-facing way to configure external MCP servers the agent can consume, bridging them into the existing WASM tool registry without breaking the sandbox trust model.
@@ -27,12 +21,6 @@ Clanker only serves MCP today; the Kimi harness parity gap notes "MCP client con
 Today: `clanker mcp` is a stdio JSON-RPC *server* (`src/mcp/server.zig`) exposing local tools to an MCP client such as an IDE. Consuming an external MCP server (e.g. the `github` filesystem server) requires a custom WASM shim per server. No `[mcp_servers.<name>]` config exists; no client transport exists; `src/toolhost/registry.zig` only registers WASM-backed tools.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Native MCP client bridge with `[mcp_servers.<name>]` + `mcp__<server>__<tool>` registry kind (DSH mcp-client shape)
 
@@ -69,16 +57,7 @@ not finished looking.
 
 ### Option D — Status quo
 
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -119,15 +98,3 @@ one horizon, say so — that is usually the deciding fact.
 
 - [ ] ADR 00XX naming the registry-kind change; PRD 0032 checklist cleared before building.
 - [ ] Implement `src/mcp_client/` with `tools/list`/`tools/call` over stdio + HTTP, `config: mcp_servers`, registry kind, and `modules.mcp_client` gate. Test against a toy stdio echo server and one real external MCP server.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

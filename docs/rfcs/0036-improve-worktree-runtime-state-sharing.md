@@ -4,12 +4,6 @@
 
 Discussion — 2026-08-22. Options and recommendation written from the tree at 03a79fef; open for comment. Blocking question is 2 (does the learnings-must-not-escape rule still hold), which the operator answers.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 An improve-self run works in a git worktree with its own private `state/`. Two entries (`state/improvements.jsonl`, `state/history/`) are symlinked back to the checkout, five are copied in one-way, and `state/runs/`+`state/sessions/` start empty; everything the run writes to the copies and the empty directories is deleted with the worktree. Decide whether that is still the policy, and if not, which entries rejoin the checkout and by what mechanism.

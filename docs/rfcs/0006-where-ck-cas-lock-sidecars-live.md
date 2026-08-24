@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. Decided as Option A in ADR 0031 (docs/adrs/0031-compare-and-swap-locks-live-in-state-locks-keyed-by-a-hash.md): the lock moved to state/locks/<sha256-of-target>.lock. The deciding fact the recommendation named — whether anyone minds the sidecars in practice — was answered on 2026-08-17 when the operator reported 46 of them as uncleaned litter.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Every ck_fs_write_if compare-and-swap creates a permanent zero-byte <target>.ck_cas.lock beside its target. The lock file is correct and must never be unlinked while held, but when the target is a repo document the sidecar lands in the source tree: 34 were found across the checkout, 20 of them copied into .clanker-worktrees. They are gitignored and inert, so this is a placement question, not a correctness one, and it is open because the alternative changes the sandbox's lock path convention.
@@ -37,12 +31,6 @@ should. `src/util/file_lock.zig` is deliberately identical. There is no
 workaround in place — the files are simply left where they fall.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — lock under state/locks/, keyed by a hash of the target path
 
@@ -197,8 +185,3 @@ inert once nothing looks there, exactly as the old sidecars are now.
   — why unlinking a held lock breaks mutual exclusion.
 - `src/util/file_lock.zig` — the measured lost-update result that motivates
   locking at all, and the `{dir}/{name}.lock` convention Option A adopts.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -8,18 +8,9 @@ Draft. Later phases, not implement-now this round. Decision: [ADR 0040](../adrs/
 
 The model has no catalog tool named browser. Page control depends on an MCP server the operator must configure and the model must discover by qualified name. fetch_web is GET, not a page.
 
-What breaks or is impossible without this, stated from the situation that
-forced the decision, not from the solution. Include real constraints
-(no server to mediate, must ride an existing transport, sandbox must be
-able to enforce it) that shaped the design, not just the desired outcome.
-
 ## Goals
 
 1. A catalog tool named browser implements status and setup, reporting not_ready when no backend is configured.  2. status is launchable twice with stable JSON.  3. open/click/snapshot are later phases.  4. MCP client remains available.
-
-Numbered, verifiable. Each goal should be checkable against the Acceptance
-criteria below — if a goal has no matching checkbox, either the goal is
-wrong or the criteria are incomplete.
 
 ## Non-goals
 

@@ -4,12 +4,6 @@
 
 Decided — 2026-08-21. ADR 0039
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 jcode resumes Claude Code, Codex, OpenCode, and pi sessions. clanker resumes only its own store (ADR 0033). RFC 0020 drives those CLIs as children, it does not parse their logs. Decide whether to import foreign transcripts.
@@ -27,12 +21,6 @@ jcode resumes Claude Code, Codex, OpenCode, and pi sessions. clanker resumes onl
 clanker sessions are per-id SQLite (ADR 0033) or the still-supported JSON path during migration. --continue/--session resume ours. No importer. Workaround: paste the transcript as a user message. Files: tools/zig/session_import.zig (or sessions guest op), clanker session import CLI.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Guest parser, Claude Code JSONL first, writes a new clanker session
 
@@ -92,9 +80,6 @@ Evidence: session_export guest.
 
 ## Implications by horizon
 
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
-
 ### Short term (this release / 0–3 months)
 
 If A: Claude Code JSONL import works on fixtures. If B: you still need their CLI healthy. If status quo: paste. If D: export does not import.
@@ -113,27 +98,7 @@ If A: adapters are a maintenance tax; pin schema versions. If C: never portable 
 
 **Confidence:** 7/10
 
-**Why this confidence.** What the score is resting on, and what would move it:
-the specific evidence that would raise it, and the finding that would sink the
-recommendation entirely.
-
 **Rationale.** RFC 0020 is a different question (drive the binary). HTML export does not read theirs. Formats drift, so phase 1 is one adapter with fail-closed parse tests.
-
-**Reversibility.** How hard it is to undo, and the point of no return (a
-migrated data format, a public API, a dependency baked into the build).
-
-## Open questions
-
-Questions whose answers could change the recommendation, each with who or what
-can answer it. Keep them here until they are answered; do not silently drop the
-ones that turned out to be inconvenient.
-
-## Next steps / action items
-
-- [ ] What happens if this recommendation is accepted, in order.
-- [ ] The experiment or spike that would settle an open question above.
-- [ ] Who is being asked for comment, and by when.
-- [ ] Write the ADR once the decision is made.
 
 ## References
 
@@ -141,8 +106,3 @@ ones that turned out to be inconvenient.
 
 - Research: [jcode feature inventory](../research/jcode-features.md).
 - ADR 0033, RFC 0020, PRD 0005. jcode RESUME_BEHAVIOR.md and README.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0024
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Config layering is config.toml < config.local.toml < env < flags with no way to NAME a stack; the candidate shape per ROADMAP is profiles/<name>.toml as an overlay between config.local.toml and env plus --dump-config that prints the merged result.
@@ -27,12 +21,6 @@ Config layering is config.toml < config.local.toml < env < flags with no way to 
 Today: `Config.load` merges `config.toml` and `config.local.toml` then env/flags. `profiles/` directory does not exist. Tooling `clanker --profile/--dump-config` flags do not exist; the config-doc test already proves the schema is reflectable. Candidate code change: `src/config.zig` add `profiles/<name>.toml` as an extra overlay between `config.local.toml` and env; `src/cli.zig` add `--profile` and `--dump-config` handling; mirror in `src/serve/*` hot-reload path if needed.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — File-based overlay: `profiles/<name>.toml` between config.local.toml and env + `--dump-config`
 
@@ -69,16 +57,7 @@ not finished looking.
 
 ### Option D — Status quo
 
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -118,15 +97,3 @@ one horizon, say so — that is usually the deciding fact.
 ## Next steps / action items
 
 - [ ] ADR 00XX; PRD for profiles; thin impl in `src/config.zig` + CLI flags.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

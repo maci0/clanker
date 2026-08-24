@@ -4,12 +4,6 @@
 
 Discussion — 2026-08-19. Options R/S/T folded in from research Draft 5 and the recommendation revised to option T's staged path at 7/10 (2026-08-19); open for comment — the blocking product questions are 1 and 2.
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Decide which backend, concurrency-control mechanism and access path clanker should use so that runs isolated in git worktrees, and instances running on different servers in a network, can read and write shared agent state concurrently without copying state directories. The research note in docs/research/decentralized-state-store.md surveys the field — 17 candidates at Draft 4, plus the distributed-ledger family (R) and the spine options (S, T) added in Draft 5, 2026-08-19 — across two independent axes — an access path (tier 1: how a sandboxed guest reaches state at all) and a topology/consistency choice (tier 2: where state lives and who resolves concurrency across N servers) — and records evidence for each without picking. This RFC is the decision that follows.

@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0026
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Clanker has clanker mcp as an MCP server but no ACP server for IDEs (Zed) to drive it as an agent; the Kimi parity gap names ACP/IDE integration as open. Need to choose transport/framing, session lifecycle, and edit permission model for clanker acp, analogous to DSH's minimal automation-only ACP and MCP as prior art.
@@ -27,12 +21,6 @@ Clanker has clanker mcp as an MCP server but no ACP server for IDEs (Zed) to dri
 Today: `src/acp/server.zig` implements framing + `initialize` (protocol v1, baseline caps), `authenticate` (empty ok), and `session/cancel` as a no-op; `src/cli.zig:cmdAcp` guards by `modules.acp` (default false) and unknown methods return `-32601`. No `session/new`|`prompt`|`permission` flow yet; PRD 0030 is `In progress`. Status quo for users is using `clanker run`/`repl` directly, not via an editor.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — Minimal automation-only ACP over stdio (DSH/ACP spec: session/new, session/prompt, session/update, permission)
 
@@ -68,16 +56,7 @@ not finished looking.
 
 ### Option D — Out-of-the-box: shell out to an external ACP bridge process
 
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -116,15 +95,3 @@ one horizon, say so — that is usually the deciding fact.
 ## Next steps / action items
 
 - [ ] ADR 00XX and PRD 0030 checklist; wire `session/new|prompt|update|permission` in `src/acp/server.zig` behind `modules.acp`. Test over fake stdio frames and one live Zed round-trip.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. Decided as ADR 0030
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Every session gets the same tools and prompt today; there is no way to hand one session a restricted, enforceable bundle (research-only with no writes, ops runbook with only exec+gh) without editing global config. Feynman audit proposes role files that only change what the model is told, never what it can call; DSH agent-presets combine persona + actual tool allow/deny. Need to choose preset storage, selection, and enforcement.
@@ -27,12 +21,6 @@ Every session gets the same tools and prompt today; there is no way to hand one 
 Today: every `Agent` gets the same `Registry` tool set from `agent.tools_dir` plus the same system prompt; `subagent`'s free-text task is the only per-session steering, and it is advisory only. `docs/prompts/` has persona markdown but no registry filter; `config.toml` has no per-session override. Workaround is editing `config.toml` or hand-writing a task that says "don't use writes" — not enforceable.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — preset.toml multi-root with registry filter (PRD 0033 shape)
 
@@ -105,28 +93,3 @@ not finished looking.
 **Rationale.** Only Option A gives enforceable allow/deny plus persona in a named bundle per session; out-of-box role files are advisory only and config-only filter has no inventory.
 
 **Reversibility.** _How hard is this to undo, and where is the point of no return?_
-
-## Open questions
-
-Questions whose answers could change the recommendation, each with who or what
-can answer it. Keep them here until they are answered; do not silently drop the
-ones that turned out to be inconvenient.
-
-## Next steps / action items
-
-- [ ] What happens if this recommendation is accepted, in order.
-- [ ] The experiment or spike that would settle an open question above.
-- [ ] Who is being asked for comment, and by when.
-- [ ] Write the ADR once the decision is made.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.

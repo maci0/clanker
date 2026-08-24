@@ -5,12 +5,6 @@
 Decided, 2026-08-16. Choice recorded in
 [ADR 0014](../adrs/0014-chat-uploads-land-in-knowledge.md).
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 An operator drops a file on Chat and expects later turns to retrieve it.

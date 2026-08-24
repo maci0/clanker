@@ -4,12 +4,6 @@
 
 Decided — 2026-08-17. ADR 0023
 
-An RFC is a *request for comment*: it presents the options and a recommendation
-so a decision can be made, and it is not itself the decision record. When it is
-decided, set the status, then write the
-[ADR](../adrs/) that records the choice and link it from References. A later
-reversal supersedes that ADR; this file keeps the reasoning that produced it.
-
 ## Overview
 
 Web UI has an image attachment path (webui-plan 1.3, media-src blob:). The vaxis REPL has no route for a task that needs an image — users must leave the REPL or use the web UI. Decide the attachment surface for  and how binary payloads reach the agent.
@@ -27,12 +21,6 @@ Web UI has an image attachment path (webui-plan 1.3, media-src blob:). The vaxis
 The vaxis REPL (`src/tui/repl.zig`) has no image path: tasks are `TextField` text only; images via drag/drop or clipboard are ignored. `clanker run` and the web composer both send images as `image_in` to the agent. Files changed would be `src/tui/repl.zig` (and possibly `src/agent/*` plumbing to propagate the new input) plus docs. The workaround today is to paste an image path as text and hope the agent can read the file, which is inconsistent and privatized to `read_file`.
 
 ## Options considered
-
-One subsection per option. Include the status quo ("do nothing / keep the
-workaround") and at least one *out-of-the-box* option — something already in
-the tree, a standard-library or OS primitive, an existing tool used differently,
-or buying instead of building. An RFC with only the two obvious libraries has
-not finished looking.
 
 ### Option A — `/attach <path>` command + drag-drop/paste that populates an `images` list sent as `image_in`
 
@@ -67,18 +55,7 @@ not finished looking.
 - **Cost to leave:** Remove overlay.
 - **Evidence:** Overlays exist in `repl.zig` modal paths — verified.
 
-### Option D — status quo
-
-- **What it is:** keep doing what we do today.
-- **Pros:**
-- **Cons:**
-- **Cost to adopt:** zero now; state what it costs later.
-- **Evidence:**
-
 ## Implications by horizon
-
-What following each candidate means over time. Where the options differ only in
-one horizon, say so — that is usually the deciding fact.
 
 ### Short term (this release / 0–3 months)
 
@@ -119,15 +96,3 @@ one horizon, say so — that is usually the deciding fact.
 
 - [ ] PRD checklist; ADR; implement A in `src/tui/repl.zig`.
 - [ ] Verify drag-drop/paste reachability in vaxis event stream.
-
-## References
-
-
-
-- Related ADRs, PRDs, reports, and prior RFCs.
-- External sources, each with what it supports.
-
-## Appendix
-
-Optional: benchmark output, diagrams, licence texts, transcript excerpts, and
-anything else too long for the body but needed to re-check the reasoning.
