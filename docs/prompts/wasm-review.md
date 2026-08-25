@@ -117,7 +117,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_env`, `ck_getenv` | Read one environment variable | `env_allow`. A tool that declares nothing gets a fixed harmless set (`PWD`, `HOME`, `PATH` and similar); a tool that declares any variable gets exactly those. This process loads API keys from `.env`, so the default is deny |
 | `ck_std_api` | Look up a symbol in the Zig standard library source | Always available |
 | `ck_stats`, `ck_config` | Token usage, the tool's own config | Always available |
-| `ck_harness_config` | Structured harness config (providers, peers, workflows, etc.) | Privileged: only named tools (`providers`, `peers`, `workflows`, `chain`, `plugins`, `tools`) |
+| `ck_harness_config` | Structured harness config (providers, peers, workflows, etc.) | Privileged: only tools the `harnessConfigAccess` allowlist in `src/sandbox/host.zig` names; read that list, do not trust any enumeration here |
 | `ck_tool` | Call another WASM tool by name | Available when the registry allows the target |
 | `ck_kernel` | Kernel-mode operations | `kernel.enabled` plus tool allowlist |
 | `ck_debug` | DAP adapter operations | `debug.enabled` plus tool allowlist |

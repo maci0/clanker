@@ -57,7 +57,7 @@ already closed.
 | `ui/app/app.js` + `core/*.js` + `lib/*.js` | What actually drives interaction: composer, streaming, toasts, palette |
 | `src/tui/repl.zig` (module doc comment, `command_registry`, `printHelp`, `completeSlashCommand`, `handlePickerKey`) | The TUI's whole interaction surface — one file, single `Model` widget |
 | `src/tui/transcript.zig`, `src/tui/theme.zig` | Card rendering (left-bar tool-call style), the theme/color mapping the TUI draws with |
-| `src/cli.zig` (`command_specs`, `printUsage`, `printUsageHint`, `printCommandHelp`, the `ErrorDiag` machinery) | The whole CLI surface: every command's usage/blurb/detail, how `--help` is grouped and rendered, how argument errors are worded |
+| `src/cli.zig` (`command_specs`, `printUsage`, `printUsageHint`, `printCommandHelp`, the `setDiag`/`diag` error-diagnostic machinery) | The whole CLI surface: every command's usage/blurb/detail, how `--help` is grouped and rendered, how argument errors are worded |
 | `src/main.zig` (error switch after `parseArgs`) | How parse/run errors actually reach stderr — including which ones go through the timestamped log format and which get a clean human line |
 | `src/doctor.zig` | The `[ok]`/`[warn]` report format: clanker's one built-in "why is this broken" surface, and the recovery voice the other commands should match |
 | `docs/assets/webui/*.png` | Already-captured screenshots — compare against these before deciding something regressed vs. was never fixed |

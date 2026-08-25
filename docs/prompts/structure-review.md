@@ -150,8 +150,9 @@ comm -3 <(ls tools/manifests/*.tool.json | xargs -n1 basename | sed 's/\.tool\.j
         <(ls tools/zig/*.zig tools/ts/*.ts | xargs -n1 basename | sed 's/\.\(zig\|ts\)$//' | sort)
 
 # Files with tests that main.zig's registry may not import
-rg -l "^test \"" src | sort > /tmp/have_tests
-rg -o '@import\("[^"]+\.zig"\)' src/main.zig | sed 's/.*"\(.*\)".*/src\/\1/' | sort > /tmp/registered
+# (no temp files: a sandboxed run cannot write outside its granted prefixes)
+comm -3 <(rg -l "^test \"" src | sort) \
+        <(rg -o '@import\("[^"]+\.zig"\)' src/main.zig | sed 's/.*"\(.*\)".*/src\/\1/' | sort)
 
 # Tracked files that match an ignore intent
 git ls-files | rg '\.(o|so|log|tmp|bak|png)$' | head

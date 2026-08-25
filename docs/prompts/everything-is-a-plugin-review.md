@@ -138,3 +138,12 @@ Two parallel read-only passes (one per pass above), then one ranked list:
 At most 10 findings. Each one: path, current shape, the plugin shape it
 belongs in, why it is not there (missing pin, or leak), smallest next
 step. No patches.
+
+## Finding severity
+
+| Sev | Meaning | Examples |
+|---|---|---|
+| **P0** | A boundary leak with a concrete caller today | Two writers of one `state/*.json` store; a provider kind-switch outside `src/llm/providers/` |
+| **P1** | A capability with an obvious plugin shape whose native row has no pin | An `/api/*` handler reimplementing logic a guest already owns; a built-in view blocked from migrating by a missing `pluginApi()` method |
+| **P2** | Shape drift that costs the next editor | A plugin view using capabilities its `plugin.json` does not declare honestly |
+| **P3** | Nit | Manifest wording |

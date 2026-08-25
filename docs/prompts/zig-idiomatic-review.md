@@ -204,8 +204,9 @@ passed (field/method names used, not only shape peeks that coerce badly).
 **Hot path** here means anything that can run once per streamed token/delta,
 or once per agent-loop iteration, not just once per CLI invocation. Includes:
 
-- `Agent.on_token` callbacks: `replDelta`, `runDelta`, `runStreamDelta`
-  (`src/cli.zig`) and everything they call, including `MdStream.feed`
+- `Agent.on_token` callbacks: `onToken` (`src/tui/repl.zig`), `runDelta`
+  and `runStreamDelta` (`src/cli.zig`) and everything they call, including
+  `MdStream.feed`
 - The agent loop body in `Agent.run` (`src/agent/loop.zig`): one pass per
   LLM round trip, potentially many per task
 - SSE parsing in `client.chatStream` (`src/llm/client.zig`): runs per chunk
@@ -306,7 +307,8 @@ Do not drop to `std.posix` because it is "what the kernel wants." clanker
 already has a short, deliberate residual; know it before flagging a new hit.
 
 **Current residual (re-verify, don't assume this list is exhaustive or still
-accurate):**
+accurate). Kept in lockstep with section D of `zig-0.16-changelog-review.md`;
+update both tables together:**
 
 | Site | Shape | Why it's residual, not a bug |
 |---|---|---|

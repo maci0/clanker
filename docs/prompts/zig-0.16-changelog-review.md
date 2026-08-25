@@ -152,7 +152,8 @@ direction: **Go higher: use `std.Io`** or **Go lower: use `std.posix.system`
 directly**. More removals are planned."
 
 clanker's residual (re-verify with the recipe below, don't trust this list
-blindly: it rots):
+blindly: it rots). Kept in lockstep with section 7 of
+`zig-idiomatic-review.md`; update both tables together:
 
 | Site (re-verify line numbers) | Call | Why it's residual, not a bug |
 |---|---|---|

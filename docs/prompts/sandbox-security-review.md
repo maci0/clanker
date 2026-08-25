@@ -149,10 +149,10 @@ file under `tools/manifests/`, `src/sandbox/`, and any `tools/zig/*.zig` /
 
 ### C. Exec authority (`exec_allow`, the git/gh deny lists)
 
-- [ ] Default `ck_exec` set (`git`, `rg`, `ast-grep`, `semcode`, `zig`) is
-      the ceiling; a tool's `exec_allow` *replaces* it, never adds to it
-      (`src/sandbox/host.zig`) — a finding that assumes `exec_allow` is
-      additive is itself wrong, verify the actual merge semantics before
+- [ ] Default `ck_exec` set (`git`, `zig`, `rg`, `ast-grep`, `semcode`,
+      `uv`) is the ceiling; a tool's `exec_allow` *replaces* it, never adds
+      to it (`src/sandbox/host.zig`) — a finding that assumes `exec_allow`
+      is additive is itself wrong, verify the actual merge semantics before
       reporting.
 - [ ] `git`'s deny list (`reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`,
       `stash`, and the PR-lifecycle verbs `push`/`merge`/`checkout` unless
