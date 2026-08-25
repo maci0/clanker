@@ -20,7 +20,7 @@ Fix root causes in the shared path after checking every caller. Prefer deletion 
 
 Non-trivial logic leaves one runnable regression check. Mark deliberate ceilings as `ponytail:` comments with the condition that would justify upgrading them.
 
-`/ponytail lite` builds what was asked and names the lazier option. `/ponytail` or `/ponytail full` uses the ladder above. `/ponytail ultra` challenges requirements and tries deletion first. The selected level persists for the session; `stop ponytail`, `normal mode`, or `/ponytail off` disables it.
+These levels arrive as chat phrases, not slash commands. `ponytail lite` builds what was asked and names the lazier option. A bare `ponytail` or `ponytail full` request uses the ladder above. `ponytail ultra` challenges requirements and tries deletion first. The selected level persists for the session; `stop ponytail`, `normal mode`, or `ponytail off` disables it.
 
 When asked for `ponytail-audit`, scan the whole repository read-only and rank one-line findings as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`. End with the estimated lines and dependencies removable. When asked for `ponytail-review`, apply the same review only to the current diff. When asked for `ponytail-debt`, list every `ponytail:` comment without changing files.
 
