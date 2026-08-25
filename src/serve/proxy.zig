@@ -520,6 +520,13 @@ fn xcodeStream(
     var buf: [client.http_scratch_buf_bytes]u8 = undefined;
     var total: usize = 0;
     var at_eof = false;
+    // Bytes of `sse` already scanned for a frame delimiter. Each read resumes
+    // three bytes back instead of rescanning the whole buffer from zero, so a
+    // long event trickling in over many reads costs O(bytes) overall rather
+    // than O(reads × buffered length). Three covers "\r\n\r\n" split across
+    // two reads: the longest delimiter minus its first byte.
+    const scan_overlap: usize = 3;
+    var scanned: usize = 0;
     // Set by any exit that is not "the upstream finished". The terminal event
     // this function synthesizes below says the answer is complete, so emitting
     // it after a failed read would hand the client a truncated answer dressed
@@ -548,7 +555,9 @@ fn xcodeStream(
                 break;
             };
         }
-        while (sseFrameEnd(sse.items)) |frame_end| {
+        var from = scanned -| scan_overlap;
+        while (sseFrameEnd(sse.items[from..])) |rel_end| {
+            const frame_end = from + rel_end;
             const delim_len: usize = if (std.mem.startsWith(u8, sse.items[frame_end..], "\r\n\r\n")) 4 else 2;
             const frame = sse.items[0..frame_end];
             payloads.clearRetainingCapacity();
@@ -575,7 +584,9 @@ fn xcodeStream(
             const rest = sse.items[frame_end + delim_len ..];
             std.mem.copyForwards(u8, sse.items[0..rest.len], rest);
             sse.items.len = rest.len;
+            from = 0; // the residue shifted left; rescan it whole next round
         }
+        scanned = sse.items.len;
         if (at_eof) break;
     }
     if (truncated) return;
