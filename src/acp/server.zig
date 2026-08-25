@@ -442,7 +442,7 @@ test "ACP session/prompt rejects a concurrent in-flight prompt" {
     defer std.testing.allocator.free(new_s);
     // Simulate an in-flight prompt by setting the busy flag directly; a second
     // prompt on the same session must be rejected with -32603, not queued or dropped.
-    const busy = conn.prompt_busy.getPtr("acp-1") orelse return;
+    const busy = conn.prompt_busy.getPtr("acp-1") orelse return error.SessionSlotMissing;
     busy.* = true;
     const concurrent = try conn.handleLine(std.testing.allocator,
         \\{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"acp-1","prompt":"second"}}

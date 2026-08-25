@@ -309,11 +309,9 @@ test("no views.css selector styles chat/chrome runtime content", function () {
 test("the two sheets still cover everything the page styles", function () {
   // Every rule that used to live in app.css must still exist in one of the two
   // sheets: the split moves whole rules, it never edits them.
-  const cssRulesBefore = cssRules(html); // noop guard, rules are read from files above
   const combined = appCss + "\n" + viewsCss;
   // Spot-check rules that the first paint depends on are in the blocking sheet.
   for (const sel of [".rail", ".composer .toolbar #submit", "#transcript", ".chip", "input[type=\"text\"]:not(.pf-v6-c-form-control)"]) {
     assert.ok(combined.includes(sel.slice(0, 30)), `stylesheet split dropped ${sel}`);
   }
-  assert.ok(cssRulesBefore.length >= 0); // silence unused
 });

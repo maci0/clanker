@@ -50,7 +50,8 @@ fn openAndCloseSse(io: std.Io, port: u16) !void {
     const req = try std.fmt.bufPrint(&req_buf, "GET /api/events HTTP/1.1\r\nHost: 127.0.0.1:{d}\r\nAccept: text/event-stream\r\n\r\n", .{port});
     try raw_http.writeAll(conn.socket.handle, req);
     const tv: std.posix.timeval = .{ .sec = 5, .usec = 0 };
-    std.posix.setsockopt(conn.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch {};
+    // A failed setsockopt would leave the read below unbounded; fail loudly.
+    std.posix.setsockopt(conn.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch return error.RcvTimeoUnavailable;
     var buf: [256]u8 = undefined;
     const n = try std.posix.read(conn.socket.handle, &buf);
     if (std.mem.find(u8, buf[0..n], "200 OK") == null) return error.NotOk;
@@ -138,9 +139,18 @@ test "a hung-up /api/events subscriber releases its slot without waiting for a w
     // No publisher and no keepalive ping is due, so nothing will write to the
     // dead socket. The subscriber has to notice the hangup on its own; each of
     // `max_subs` slots it fails to release is one the next page cannot have.
-    std.Io.sleep(io, .{ .nanoseconds = 600 * std.time.ns_per_ms }, .awake) catch {};
-
-    const after_body = try harness.httpGet(io, gpa, metrics);
-    defer gpa.free(after_body);
-    try std.testing.expectEqual(before, try inFlight(after_body));
+    // Poll until the slot is back instead of sleeping a fixed nap and sampling
+    // once: the release cadence is the idle tick's business, not ours.
+    const start = std.Io.Timestamp.now(io, .awake).nanoseconds;
+    var released = false;
+    while (!released and std.Io.Timestamp.now(io, .awake).nanoseconds - start < 8 * std.time.ns_per_s) {
+        const body = try harness.httpGet(io, gpa, metrics);
+        defer gpa.free(body);
+        if ((try inFlight(body)) == before) {
+            released = true;
+            break;
+        }
+        std.Io.sleep(io, .{ .nanoseconds = 100 * std.time.ns_per_ms }, .awake) catch {};
+    }
+    try std.testing.expect(released);
 }

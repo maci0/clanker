@@ -120,8 +120,11 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     // either call silences every check without touching a pinned line, and
     // both calls are byte-identical, so each needle carries one line of
     // context that is unique to its site.
-    .{ .file = "src/cli.zig", .needle = "cfg.improve.max_cache_bytes);\n    try verifyGates(gpa, io, arena);" },
-    .{ .file = "src/cli.zig", .needle = "if (!opts.dry_run) {\n        try verifyGates(gpa, io, arena);" },
+    // Both stop before the allocator argument: the advisory invariant below
+    // refuses any needle naming "arena", and the context line alone already
+    // makes each site unique.
+    .{ .file = "src/cli.zig", .needle = "cfg.improve.max_cache_bytes);\n    try verifyGates(gpa, io" },
+    .{ .file = "src/cli.zig", .needle = "if (!opts.dry_run) {\n        try verifyGates(gpa, io" },
     // The one gate that asks whether a change does anything. It is the gate a
     // loop optimising for acceptance has the most to gain from removing, and
     // removing it would look, to every other check, like a clean patch.
@@ -5038,14 +5041,14 @@ test "a patch that deletes verifyGates' post-merge caller is rejected" {
     // call is the one grading pass over the merged result everyone else
     // works in. Deleting it leaves all seven check sites inside verifyGates
     // intact, so the caller itself is what has to be pinned.
-    try expectInvariantCaught("src/cli.zig", "if (!opts.dry_run) {\n        try verifyGates(gpa, io, arena);", "");
+    try expectInvariantCaught("src/cli.zig", "if (!opts.dry_run) {\n        try verifyGates(gpa, io", "");
 }
 
 test "a patch that deletes verifyGates' clanker-gate caller is rejected" {
     // Same shape as the post-merge caller: `clanker gate` is how an operator
     // (and CI) runs every deterministic check, and its call text is
     // identical to the other site, hence the context line.
-    try expectInvariantCaught("src/cli.zig", "cfg.improve.max_cache_bytes);\n    try verifyGates(gpa, io, arena);", "");
+    try expectInvariantCaught("src/cli.zig", "cfg.improve.max_cache_bytes);\n    try verifyGates(gpa, io", "");
 }
 
 test "the newer clanker-gate-only checks are pinned too" {

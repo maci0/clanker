@@ -1484,15 +1484,22 @@ test "an expired stop wait keeps the adapter alive and the late event is drained
     try std.testing.expect(std.mem.find(u8, cont, "\"stopped\"") == null);
     try std.testing.expect(reg.get("dbg-late2", "dap") != null);
 
-    // Give the event time to land in the OS pipe, with nothing reading it.
-    std.Io.sleep(io, .{ .nanoseconds = 600 * std.time.ns_per_ms }, .awake) catch {};
-    // takeEvents alone (no request in flight) must see it: this is the
-    // fillAvailable path — before it, bytes sitting unread in the pipe were
-    // invisible until the next request's response wait swallowed them.
-    const events = try sess.takeEvents(arena);
+    // Wait for the late event rather than hoping one fixed nap covers python
+    // startup plus its 400 ms delay: poll takeEvents until the stopped event
+    // lands or the budget runs out.
+    const started = std.Io.Timestamp.now(io, .awake);
     var saw_stopped = false;
-    for (events) |e| {
-        if (std.mem.find(u8, e, "\"stopped\"") != null) saw_stopped = true;
+    while (!saw_stopped and started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds < 5 * std.time.ns_per_s) {
+        // takeEvents alone (no request in flight) must see it: this is the
+        // fillAvailable path — before it, bytes sitting unread in the pipe were
+        // invisible until the next request's response wait swallowed them.
+        const events = try sess.takeEvents(arena);
+        for (events) |e| {
+            if (std.mem.find(u8, e, "\"stopped\"") != null) saw_stopped = true;
+        }
+        if (!saw_stopped) {
+            std.Io.sleep(io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake) catch {};
+        }
     }
     try std.testing.expect(saw_stopped);
     _ = try handle(&sess, opts, "{\"op\":\"disconnect\"}");

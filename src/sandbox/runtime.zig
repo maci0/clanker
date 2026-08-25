@@ -2235,7 +2235,25 @@ test "symbolic_regression wasm fits y=2x+1" {
     defer std.testing.allocator.free(out);
     try std.testing.expect(std.mem.startsWith(u8, out, "{\"ok\":true"));
     try std.testing.expect(std.mem.find(u8, out, "\"equations\"") != null);
-    try std.testing.expect(std.mem.find(u8, out, "\"mse\":0") != null or std.mem.find(u8, out, "e-") != null);
+    // Parsed, not substring-matched: a bare "e-" scan passed any negative-
+    // exponent number anywhere in the payload, fitted or not.
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, out, .{});
+    defer parsed.deinit();
+    const eqs = parsed.value.object.get("equations") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(eqs == .array and eqs.array.items.len > 0);
+    var best_mse: f64 = std.math.inf(f64);
+    for (eqs.array.items) |eq| {
+        try std.testing.expect(eq == .object);
+        const mse_v = eq.object.get("mse") orelse return error.TestUnexpectedResult;
+        const mse: f64 = switch (mse_v) {
+            .float => |f| f,
+            .integer => |i| @floatFromInt(i),
+            else => return error.TestUnexpectedResult,
+        };
+        best_mse = @min(best_mse, mse);
+    }
+    // y=2x+1 is exactly representable, so the survivor fits to numerical noise.
+    try std.testing.expect(best_mse < 1e-9);
 }
 
 test "assemblyscript calc_ts tool executes" {

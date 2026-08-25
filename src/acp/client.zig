@@ -700,13 +700,12 @@ fn fakeAgentMain(job: *FakeJob) void {
     }
 }
 
-fn runAgainst(mode: FakeMode, timeout_ms: u64) !struct { result: PromptResult, pair: *Pair, client: *Client, arena: *std.heap.ArenaAllocator } {
+fn runAgainst(mode: FakeMode, timeout_ms: u64) !struct { result: PromptResult, pair: *Pair, client: *Client, arena: *std.heap.ArenaAllocator, agent: std.Thread } {
     const gpa = std.testing.allocator;
     const pair = try gpa.create(Pair);
     pair.* = Pair.init(gpa);
     pair.job = .{ .pair = pair, .mode = mode };
-    const thread = try std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job});
-    thread.detach();
+    const agent = try std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job});
     const arena = try gpa.create(std.heap.ArenaAllocator);
     arena.* = std.heap.ArenaAllocator.init(gpa);
     const client = try gpa.create(Client);
@@ -716,13 +715,16 @@ fn runAgainst(mode: FakeMode, timeout_ms: u64) !struct { result: PromptResult, p
         .timeout_ms = timeout_ms,
     };
     const result = try client.prompt("/tmp", "hello");
-    return .{ .result = result, .pair = pair, .client = client, .arena = arena };
+    return .{ .result = result, .pair = pair, .client = client, .arena = arena, .agent = agent };
 }
 
 fn cleanupRun(run: anytype) void {
     run.pair.to_agent.close();
     run.pair.to_client.close();
-    pauseNs(20 * std.time.ns_per_ms);
+    // Join instead of a fixed hope: close() makes the fake agent's next pop
+    // fail within one 2 ms poll tick, so this is prompt, and freeing the Pair
+    // under a still-running detached thread was a use-after-free window.
+    run.agent.join();
     run.client.deinit();
     std.testing.allocator.destroy(run.client);
     run.arena.deinit();
@@ -771,16 +773,19 @@ test "ACP client times out a hung prompt as Hang and cancels" {
     const gpa = std.testing.allocator;
     const pair = try gpa.create(Pair);
     pair.* = Pair.init(gpa);
+    pair.job = .{ .pair = pair, .mode = .hang };
+    const agent = std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job}) catch |err| {
+        pair.deinit();
+        gpa.destroy(pair);
+        return err;
+    };
     defer {
         pair.to_agent.close();
         pair.to_client.close();
-        pauseNs(20 * std.time.ns_per_ms);
+        agent.join();
         pair.deinit();
         gpa.destroy(pair);
     }
-    pair.job = .{ .pair = pair, .mode = .hang };
-    const thread = try std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job});
-    thread.detach();
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     var client = Client{
@@ -796,16 +801,19 @@ test "ACP client refuses fs/* from the agent" {
     const gpa = std.testing.allocator;
     const pair = try gpa.create(Pair);
     pair.* = Pair.init(gpa);
+    pair.job = .{ .pair = pair, .mode = .demand_fs };
+    const agent = std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job}) catch |err| {
+        pair.deinit();
+        gpa.destroy(pair);
+        return err;
+    };
     defer {
         pair.to_agent.close();
         pair.to_client.close();
-        pauseNs(20 * std.time.ns_per_ms);
+        agent.join();
         pair.deinit();
         gpa.destroy(pair);
     }
-    pair.job = .{ .pair = pair, .mode = .demand_fs };
-    const thread = try std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job});
-    thread.detach();
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     var client = Client{

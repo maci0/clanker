@@ -84,7 +84,10 @@ test("a failed chunk import is not cached: every lazy view loader drops its prom
   // promise so a second open does not re-fetch. A rejected promise must not
   // stay cached, or the view's Try again and every later open re-throw the
   // same dead promise and the view stays broken for the life of the page.
-  const markers = app.match(/null; \/\/ a failed chunk import must be retryable/g) || [];
+  // Pin the mechanism, not the comment: each loader resets its own
+  // `...ModulePromise` variable, so copying the comment without the
+  // assignment no longer satisfies the count.
+  const markers = app.match(/ModulePromise = null; \/\/ a failed chunk import must be retryable/g) || [];
   assert.equal(markers.length, 11, "all eleven lazy loaders reset their module promise on rejection");
   // The failure still reaches the caller (showView surfaces it) — the reset
   // must rethrow, not swallow.

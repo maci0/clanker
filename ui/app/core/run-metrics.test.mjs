@@ -27,7 +27,9 @@ test("live tick grows LLM time without waiting for done", function () {
   var t1 = formatRunMetrics(m, 4000);
   assert.match(t0, /1 turn/);
   assert.match(t0, /1 step/);
-  assert.match(t1, /3/);
+  // The elapsed seconds sit directly after the "LLM" label; matching there
+  // instead of anywhere in the strip keeps a stray "3" from passing.
+  assert.match(t1, /LLM\s*3/);
   assert.notEqual(t0, t1);
   assert.equal(liveElapsedMs(m, 4000), 3000);
 });
@@ -39,8 +41,7 @@ test("tool time is carved out of live elapsed", function () {
   m.liveToolMs = 2000;
   m.turnCount = 1;
   var line = formatRunMetrics(m, 5000);
-  assert.match(line, /Tool call/);
-  assert.match(line, /2/);
+  assert.match(line, /Tool call\s*2/);
 });
 
 test("done event folds this turn into session totals and stops live", function () {

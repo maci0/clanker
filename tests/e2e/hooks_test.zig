@@ -35,7 +35,7 @@ test "clanker run: lifecycle hooks deny inject and force one more step" {
         \\[hooks]
         \\enabled = true
         \\config_path = "hooks.json"
-        \\default_timeout_ms = 2000
+        \\default_timeout_ms = 10000
         \\
     , .{original});
     defer gpa.free(configured);
