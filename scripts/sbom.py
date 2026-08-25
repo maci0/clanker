@@ -6,12 +6,12 @@ list anywhere:
 
 - build.zig.zon            — zwasm, vaxis (zig hash-pinned)
 - vendor/toml/README.md    — vendored zig-toml (MIT)
-- tools/ts/package-lock.json — assemblyscript + transitive npm deps
+- tools/ts/bun.lock        — assemblyscript + transitive npm deps
 - ui/vendor/README.md      — vendored web UI JS/CSS
 - scripts/setup-python-wasi.sh — optional kernel CPython interpreter
 
 Every component is tied back to the exact in-tree artifact that pins it (the
-zig hash, the npm `integrity` digest, or the committed vendored file path), so
+zig hash, the bun.lock registry digest, or the committed vendored file path), so
 consumers and vulnerability scanners know precisely what shipped even for
 files whose upstream version is not recorded in the file itself.
 
@@ -119,21 +119,30 @@ def vendored_toml() -> dict | None:
     }
 
 
-# --- npm toolchain (tools/ts/package-lock.json) -----------------------------
+# --- npm toolchain (tools/ts/bun.lock) --------------------------------------
 
 def npm_components() -> list:
-    lock = json.loads(read("tools/ts/package-lock.json"))
-    packages = lock.get("packages", {})
+    # bun.lock is JSONC: valid JSON except for trailing commas, which bun emits
+    # to keep diffs one-line-per-package. Strip them and parse as JSON.
+    text = re.sub(r",(\s*[}\]])", r"\1", read("tools/ts/bun.lock"))
+    lock = json.loads(text)
     out = []
-    for path, info in packages.items():
-        if path == "":
-            continue  # the project root
+    # Each entry is [spec, registry, metadata, integrity]; spec is "name@version"
+    # and integrity is the registry digest ("sha512-..."), absent for workspaces.
+    for key, entry in lock.get("packages", {}).items():
+        if not isinstance(entry, list) or not entry:
+            continue
+        spec = entry[0]
+        name, _, version = spec.rpartition("@")
+        integrity = next((f for f in entry[1:] if isinstance(f, str) and f.startswith("sha")), None)
         out.append({
-            "name": info.get("name", path.rsplit("/", 1)[-1]),
-            "version": info.get("version", "unknown"),
-            "integrity": info.get("integrity"),
-            "license": info.get("license"),
-            "dev": bool(info.get("dev")),
+            "name": name or key,
+            "version": version or "unknown",
+            "integrity": integrity,
+            # bun.lock records no license field; tools/ts declares only
+            # devDependencies, so everything resolved from it is dev-only.
+            "license": None,
+            "dev": True,
         })
     return out
 

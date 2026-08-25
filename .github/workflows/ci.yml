@@ -6,7 +6,7 @@ on:
     tags: ["v*.*.*"]
   pull_request:
   workflow_dispatch:
-  # Weekly run on an unchanged tree: npm audit findings and toolchain
+  # Weekly run on an unchanged tree: bun audit findings and toolchain
   # breakage appear without a commit to surface them.
   schedule:
     - cron: "17 4 * * 1"
@@ -47,15 +47,8 @@ jobs:
         with:
           use-cache: true
 
-      - name: Install Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          # Both toolchains: tools/ts (audit + verify.sh) and the root one
-          # whose oxlint the Lint JavaScript step runs.
-          cache-dependency-path: |
-            tools/ts/package-lock.json
-            package-lock.json
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
 
       # Extract the pinned dependency trees and re-apply patches/*.patch
       # (patches/README.md). build.zig refuses to configure against pristine
@@ -81,18 +74,18 @@ jobs:
       # failing until paid down.
       - name: Lint JavaScript
         run: |
-          npm ci
-          npm run lint
+          bun install --frozen-lockfile
+          bun run lint
 
       # The root lockfile (oxlint and its napi bindings) gets the same audit
       # the AssemblyScript toolchain gets below; nothing else scanned it.
       - name: Audit root JavaScript toolchain
-        run: npm audit --audit-level=high
+        run: bun audit --audit-level=high
 
       - name: Audit AssemblyScript toolchain
         working-directory: tools/ts
         run: |
-          npm audit --audit-level=high
+          bun audit --audit-level=high
           ./verify.sh
 
       # Smoke-tests scripts/sbom.py against every manifest it reads, so a
@@ -126,7 +119,7 @@ jobs:
   # on arm64 macs; this job is the regression guard for that promise.
   # `zig build test` pulls in the wasm tools build (the sandbox tests load
   # zig-out/tools/*.wasm), so this covers native + wasm compilation and the
-  # full unit-test suite. Lint, shellcheck, npm audit and e2e stay
+  # full unit-test suite. Lint, shellcheck, bun audit and e2e stay
   # linux-only: they check sources, not the host target.
   verify-macos:
     runs-on: macos-15
@@ -142,14 +135,10 @@ jobs:
         with:
           use-cache: true
 
-      # `zig build test` runs the ~20 node --test suites under ui/app, so the
-      # runner's floating preinstalled Node would test against whatever version
-      # the image happens to ship. Pin .nvmrc here too, like the linux verify
-      # job; no npm cache is warmed because nothing on this job runs npm.
-      - name: Install Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
+      # `zig build test` runs the ~20 bun test suites under ui/app, so bun must
+      # be on PATH here too, like the linux verify job.
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
 
       # Same reason as the verify job: build.zig refuses pristine upstream
       # dependencies, and the patches must land after extraction.

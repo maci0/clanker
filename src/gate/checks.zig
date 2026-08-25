@@ -1237,18 +1237,11 @@ test "configSourceWeakeningGate requires the enabled defaults and rejects a flip
 }
 
 /// Verifies the AssemblyScript toolchain manifest under `tools/ts/`: one
-/// dev-only compiler dependency, npm lifecycle scripts disabled at install,
-/// and lockfile integrity fields for supply-chain verification.
+/// dev-only compiler dependency, no install-time lifecycle scripts, and
+/// lockfile integrity fields for supply-chain verification. bun runs
+/// lifecycle scripts only for packages listed in `trustedDependencies`, so
+/// the absence of that key is what keeps `bun install` inert.
 pub fn toolsTsToolchainGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
-    const npmrc = dir.readFileAlloc(io, "tools/ts/.npmrc", gpa, .limited(4096)) catch |err| {
-        const detail = try std.fmt.allocPrint(gpa, "cannot read tools/ts/.npmrc: {s}", .{@errorName(err)});
-        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
-    };
-    defer gpa.free(npmrc);
-    if (std.mem.find(u8, npmrc, "ignore-scripts=true") == null) {
-        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/.npmrc must set ignore-scripts=true" };
-    }
-
     const pkg_raw = dir.readFileAlloc(io, "tools/ts/package.json", gpa, .limited(1 << 20)) catch |err| {
         const detail = try std.fmt.allocPrint(gpa, "cannot read tools/ts/package.json: {s}", .{@errorName(err)});
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
@@ -1266,6 +1259,9 @@ pub fn toolsTsToolchainGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir)
         .object => |o| o,
         else => return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json is not a JSON object" },
     };
+    if (root.get("trustedDependencies")) |_| {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json must not declare trustedDependencies (bun would run their lifecycle scripts)" };
+    }
     if (root.get("dependencies")) |_| {
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json must not declare production dependencies" };
     }
@@ -1280,13 +1276,13 @@ pub fn toolsTsToolchainGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir)
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package.json must declare only assemblyscript as a devDependency" };
     }
 
-    const lock = dir.readFileAlloc(io, "tools/ts/package-lock.json", gpa, .limited(1 << 20)) catch |err| {
-        const detail = try std.fmt.allocPrint(gpa, "cannot read tools/ts/package-lock.json: {s}", .{@errorName(err)});
+    const lock = dir.readFileAlloc(io, "tools/ts/bun.lock", gpa, .limited(1 << 20)) catch |err| {
+        const detail = try std.fmt.allocPrint(gpa, "cannot read tools/ts/bun.lock: {s}", .{@errorName(err)});
         return .{ .ok = false, .label = "tools-ts-toolchain", .detail = detail };
     };
     defer gpa.free(lock);
-    if (std.mem.find(u8, lock, "\"integrity\":") == null) {
-        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/package-lock.json is missing npm integrity hashes" };
+    if (std.mem.find(u8, lock, "sha512-") == null) {
+        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "tools/ts/bun.lock is missing registry integrity hashes" };
     }
 
     return .{ .ok = true, .label = "tools-ts-toolchain" };
@@ -1541,7 +1537,7 @@ test "testRootCoverageGate names a module whose tests would never run" {
 // ------------------------------------------------- js-suite coverage gate --
 
 /// True when `build.zig` hands `rel` to a build step. Every node suite is
-/// registered as an `addFileArg(b.path("<rel>"))` on a `node --test` system
+/// registered as an `addFileArg(b.path("<rel>"))` on a `bun test` system
 /// command, so the quoted path is the registration, and the quotes are part
 /// of the needle: `ui/app/core/scroll.test.mjs` cannot be satisfied by
 /// `ui/app/core/scroll.test.mjs.bak`.
@@ -1552,7 +1548,7 @@ fn buildRegistersJsSuite(build_src: []const u8, rel: []const u8) bool {
 }
 
 /// `zig build test` drives the web UI's node suites by name: one
-/// `addSystemCommand(&.{ "node", "--test" })` per `.test.mjs`, listed by hand
+/// `addSystemCommand(&.{ "bun", "test" })` per `.test.mjs`, listed by hand
 /// in `build.zig`. A new suite nobody adds a line for is never run, and the
 /// suite output cannot show it — the file is simply not in the list, so the
 /// run is green on the tests it does not have. The obvious alternative,
@@ -1599,7 +1595,7 @@ fn scanUnrunJsSuites(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, build_
     // exactly once by deinit.
     const owned = try std.fmt.allocPrint(
         gpa,
-        "these node suites are never run by `zig build test`; register each in build.zig as an addSystemCommand(&.{{ \"node\", \"--test\" }}) with addFileArg(b.path(\"...\")): {s}",
+        "these JS suites are never run by `zig build test`; register each in build.zig as an addSystemCommand(&.{{ \"bun\", \"test\" }}) with addFileArg(b.path(\"...\")): {s}",
         .{miss_w.buffered()},
     );
     return .{ .ok = false, .label = "js-suite-coverage", .detail = owned, .stderr = owned };

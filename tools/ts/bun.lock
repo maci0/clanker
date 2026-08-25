@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 0,
+  "workspaces": {
+    "": {
+      "name": "clanker-as-tools",
+      "devDependencies": {
+        "assemblyscript": "0.28.20",
+      },
+    },
+  },
+  "packages": {
+    "assemblyscript": ["assemblyscript@0.28.20", "", { "dependencies": { "binaryen": "131.0.0-nightly.20260721", "long": "^5.2.4" }, "bin": { "asc": "bin/asc.js", "asinit": "bin/asinit.js" } }, "sha512-5PM7GZpvcLypHcLmi30aP8mqm5HjU+LL3BdV1xDyA3USGtL2w+iMiUnhtH+vW8+2kOuHlAyPu7M+QgyEw5he1g=="],
+
+    "binaryen": ["binaryen@131.0.0-nightly.20260721", "", { "bin": { "wasm-as": "bin/wasm-as", "wasm-ctor-eval": "bin/wasm-ctor-eval", "wasm-dis": "bin/wasm-dis", "wasm-merge": "bin/wasm-merge", "wasm-metadce": "bin/wasm-metadce", "wasm-opt": "bin/wasm-opt", "wasm-reduce": "bin/wasm-reduce", "wasm-shell": "bin/wasm-shell", "wasm2js": "bin/wasm2js" } }, "sha512-AAQIkhfbYXh4FBObwBrlO+5L+6Rp6OOMOjh6AdT0M+GLNLyrwKWgtW+EzmizNgx9CWDfTJPfDtKoZi62QESbtg=="],
+
+    "long": ["long@5.3.2", "", {}, "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="],
+  }
+}

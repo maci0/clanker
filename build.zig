@@ -306,12 +306,12 @@ pub fn build(b: *std.Build) void {
     proxy_step.dependOn(&b.addInstallArtifact(proxy_exe, .{}).step);
 
     // ------------------------------------------------------------------ tests
-    // Run one test instead of the whole suite: the full run (Zig + the node
+    // Run one test instead of the whole suite: the full run (Zig + the bun
     // --test suites) is minutes, so a contributor iterating on one `test`
     // block needs a tight loop. The filter is a substring match applied at
     // compile time (Zig 0.16's `zig test --test-filter`), so the test binary
-    // only registers matching tests. The node --test suites still run; for a
-    // JS-only loop run `node --test <file>` directly.
+    // only registers matching tests. The bun test suites still run; for a
+    // JS-only loop run `bun test <file>` directly.
     const test_filter = b.option([]const u8, "test-filter", "run only Zig unit tests whose name contains this substring (a filter matching nothing passes with 0 tests)") orelse "";
     const test_filters: []const []const u8 = if (test_filter.len > 0) &.{test_filter} else &.{};
     // Tests run on the host's own architecture, so `zig build test` works on any
@@ -366,138 +366,138 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
-    // Chat scroll math lives in the shipped ESM helper; node --test drives
+    // Chat scroll math lives in the shipped ESM helper; bun test drives
     // that file, not a Zig reimplementation.
-    const scroll_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const scroll_js_test = b.addSystemCommand(&.{ "bun", "test" });
     scroll_js_test.addFileArg(b.path("ui/app/core/scroll.test.mjs"));
     test_step.dependOn(&scroll_js_test.step);
     // The critical-path preloads and the lazy-view failure path are contracts
     // of the served HTML/JS; pin them against the embedded files.
-    const webui_load_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const webui_load_js_test = b.addSystemCommand(&.{ "bun", "test" });
     webui_load_js_test.addFileArg(b.path("ui/app/webui-load.test.mjs"));
     test_step.dependOn(&webui_load_js_test.step);
     // The app.css/views.css split is a first-paint contract: nothing in the
     // deferred sheet may style an element the first draw shows.
-    const css_split_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const css_split_js_test = b.addSystemCommand(&.{ "bun", "test" });
     css_split_js_test.addFileArg(b.path("ui/app/css-split.test.mjs"));
     test_step.dependOn(&css_split_js_test.step);
     // Radii and type steps are tokens, not literals: a stray `border-radius:
     // 12px` reads as no bug at all, so nothing catches the sheet drifting back
     // toward the rounded-card default one declaration at a time.
-    const design_tokens_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const design_tokens_js_test = b.addSystemCommand(&.{ "bun", "test" });
     design_tokens_js_test.addFileArg(b.path("ui/app/design-tokens.test.mjs"));
     test_step.dependOn(&design_tokens_js_test.step);
     // What a visitor actually downloads, and what it is allowed to grow to.
     // These numbers are the regression record for the critical path.
-    const weight_budget_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const weight_budget_js_test = b.addSystemCommand(&.{ "bun", "test" });
     weight_budget_js_test.addFileArg(b.path("ui/app/weight-budget.test.mjs"));
     test_step.dependOn(&weight_budget_js_test.step);
     // Operator vs Chat column widths live in the shipped stylesheet.
-    const layout_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const layout_js_test = b.addSystemCommand(&.{ "bun", "test" });
     layout_js_test.addFileArg(b.path("ui/app/core/layout.test.mjs"));
     test_step.dependOn(&layout_js_test.step);
-    const markdown_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const markdown_js_test = b.addSystemCommand(&.{ "bun", "test" });
     markdown_js_test.addFileArg(b.path("ui/app/lib/markdown.test.mjs"));
     test_step.dependOn(&markdown_js_test.step);
     // The Runs list derives a date and a state from a summary that carries
     // neither directly; its clock has to agree with graph_listing.runOrderKey.
-    const runs_list_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const runs_list_js_test = b.addSystemCommand(&.{ "bun", "test" });
     runs_list_js_test.addFileArg(b.path("ui/app/lib/runs-list.test.mjs"));
     test_step.dependOn(&runs_list_js_test.step);
     // The Activity timeline merges two feeds that are each incomplete alone.
-    const board_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const board_js_test = b.addSystemCommand(&.{ "bun", "test" });
     board_js_test.addFileArg(b.path("ui/app/lib/board.test.mjs"));
     test_step.dependOn(&board_js_test.step);
-    const labels_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const labels_js_test = b.addSystemCommand(&.{ "bun", "test" });
     labels_js_test.addFileArg(b.path("ui/app/core/labels.test.mjs"));
     test_step.dependOn(&labels_js_test.step);
     // The provider-availability contract: rows marked usable:false stay
     // listed as inventory but never reach the chat picker's set.
-    const utils_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const utils_js_test = b.addSystemCommand(&.{ "bun", "test" });
     utils_js_test.addFileArg(b.path("ui/app/core/utils.test.mjs"));
     test_step.dependOn(&utils_js_test.step);
     // Every Refresh button in the page reaches a handler that gives busy
     // feedback: three shipped with no listener at all.
-    const refresh_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const refresh_js_test = b.addSystemCommand(&.{ "bun", "test" });
     refresh_js_test.addFileArg(b.path("ui/app/core/refresh.test.mjs"));
     test_step.dependOn(&refresh_js_test.step);
     // The plugin host's three contracts with the page: `refresh` is reachable
     // on re-entry, each plugin announces into its own live region, and the rail
     // is navigated in rail order rather than registration order.
-    const plugin_host_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const plugin_host_js_test = b.addSystemCommand(&.{ "bun", "test" });
     plugin_host_js_test.addFileArg(b.path("ui/app/core/plugins.test.mjs"));
     test_step.dependOn(&plugin_host_js_test.step);
-    const files_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const files_js_test = b.addSystemCommand(&.{ "bun", "test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);
-    const music_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const music_js_test = b.addSystemCommand(&.{ "bun", "test" });
     music_js_test.addFileArg(b.path("ui/plugins/music/music.test.mjs"));
     test_step.dependOn(&music_js_test.step);
-    const office_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const office_js_test = b.addSystemCommand(&.{ "bun", "test" });
     office_js_test.addFileArg(b.path("ui/plugins/office/office.test.mjs"));
     test_step.dependOn(&office_js_test.step);
-    const composer_suggest_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const composer_suggest_js_test = b.addSystemCommand(&.{ "bun", "test" });
     composer_suggest_js_test.addFileArg(b.path("ui/app/composer-suggest.test.mjs"));
     test_step.dependOn(&composer_suggest_js_test.step);
-    const board_card_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const board_card_js_test = b.addSystemCommand(&.{ "bun", "test" });
     board_card_js_test.addFileArg(b.path("ui/app/features/board-card.test.mjs"));
     test_step.dependOn(&board_card_js_test.step);
-    const harden_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const harden_js_test = b.addSystemCommand(&.{ "bun", "test" });
     harden_js_test.addFileArg(b.path("ui/app/core/harden.test.mjs"));
     test_step.dependOn(&harden_js_test.step);
-    const theme_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const theme_js_test = b.addSystemCommand(&.{ "bun", "test" });
     theme_js_test.addFileArg(b.path("ui/app/core/theme.test.mjs"));
     test_step.dependOn(&theme_js_test.step);
-    const slash_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const slash_js_test = b.addSystemCommand(&.{ "bun", "test" });
     slash_js_test.addFileArg(b.path("ui/app/core/slash.test.mjs"));
     test_step.dependOn(&slash_js_test.step);
-    const distill_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const distill_js_test = b.addSystemCommand(&.{ "bun", "test" });
     distill_js_test.addFileArg(b.path("ui/app/core/distill.test.mjs"));
     test_step.dependOn(&distill_js_test.step);
-    const run_metrics_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const run_metrics_js_test = b.addSystemCommand(&.{ "bun", "test" });
     run_metrics_js_test.addFileArg(b.path("ui/app/core/run-metrics.test.mjs"));
     test_step.dependOn(&run_metrics_js_test.step);
-    const models_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const models_js_test = b.addSystemCommand(&.{ "bun", "test" });
     models_js_test.addFileArg(b.path("ui/app/features/models.test.mjs"));
     test_step.dependOn(&models_js_test.step);
     // Settings fields are typed by the descriptor's declared config_types,
     // not by typeof on whatever value happens to be saved.
-    const tools_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const tools_js_test = b.addSystemCommand(&.{ "bun", "test" });
     tools_js_test.addFileArg(b.path("ui/app/core/tools.test.mjs"));
     test_step.dependOn(&tools_js_test.step);
-    const compare_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const compare_js_test = b.addSystemCommand(&.{ "bun", "test" });
     compare_js_test.addFileArg(b.path("ui/plugins/compare/compare.test.mjs"));
     test_step.dependOn(&compare_js_test.step);
-    const search_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const search_js_test = b.addSystemCommand(&.{ "bun", "test" });
     search_js_test.addFileArg(b.path("ui/plugins/search/search.test.mjs"));
     test_step.dependOn(&search_js_test.step);
-    const mesh_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const mesh_js_test = b.addSystemCommand(&.{ "bun", "test" });
     mesh_js_test.addFileArg(b.path("ui/plugins/mesh/mesh.test.mjs"));
     test_step.dependOn(&mesh_js_test.step);
     // A plugin.json capability declaration must name what that addon's app.js
     // actually calls, and every pluginApi member needs a declarable name.
-    const plugin_caps_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const plugin_caps_js_test = b.addSystemCommand(&.{ "bun", "test" });
     plugin_caps_js_test.addFileArg(b.path("ui/plugins/capabilities.test.mjs"));
     test_step.dependOn(&plugin_caps_js_test.step);
-    const arena_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const arena_js_test = b.addSystemCommand(&.{ "bun", "test" });
     arena_js_test.addFileArg(b.path("ui/app/features/arena.test.mjs"));
     test_step.dependOn(&arena_js_test.step);
     // The Skills panel renders its cards into the container; the shipped
     // loadSkills is driven over the DOM stub.
-    const skills_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const skills_js_test = b.addSystemCommand(&.{ "bun", "test" });
     skills_js_test.addFileArg(b.path("ui/app/core/skills.test.mjs"));
     test_step.dependOn(&skills_js_test.step);
     // The chat composer's steering ledger: what was sent mid-run, in what
     // order, and what the run never consumed.
-    const steer_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const steer_js_test = b.addSystemCommand(&.{ "bun", "test" });
     steer_js_test.addFileArg(b.path("ui/app/core/steer.test.mjs"));
     test_step.dependOn(&steer_js_test.step);
     // Which model and reasoning effort a conversation runs on: the per-chat
     // pin, its bound, and the browser default it falls back to.
-    const chatprefs_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const chatprefs_js_test = b.addSystemCommand(&.{ "bun", "test" });
     chatprefs_js_test.addFileArg(b.path("ui/app/core/chatprefs.test.mjs"));
     test_step.dependOn(&chatprefs_js_test.step);
-    const modelpicker_js_test = b.addSystemCommand(&.{ "node", "--test" });
+    const modelpicker_js_test = b.addSystemCommand(&.{ "bun", "test" });
     modelpicker_js_test.addFileArg(b.path("ui/app/core/modelpicker.test.mjs"));
     test_step.dependOn(&modelpicker_js_test.step);
 

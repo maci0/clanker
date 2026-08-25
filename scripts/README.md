@@ -83,11 +83,11 @@ unmeasured). Restore is a copy-out, never an edit of
 `scripts/sbom.py` emits a CycloneDX 1.5 inventory of everything clanker ships
 or builds against, read only from in-tree manifests (no network, no installs):
 `build.zig.zon` (zwasm, vaxis), `vendor/toml/` (zig-toml),
-`tools/ts/package-lock.json` (assemblyscript + transitive deps),
+`tools/ts/bun.lock` (assemblyscript + transitive deps),
 `ui/vendor/README.md` (vendored web UI), and
 `scripts/setup-python-wasi.sh` (optional kernel interpreter). Every component
-carries the pin that actually fixes it — the zig content hash, the npm
-`integrity` digest, or the committed vendored file path.
+carries the pin that actually fixes it — the zig content hash, the bun.lock
+registry digest, or the committed vendored file path.
 
 ```bash
 ./scripts/sbom.py -o sbom.cdx.json

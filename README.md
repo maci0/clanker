@@ -50,10 +50,10 @@ policy.
 
 Requirements: **Zig 0.16.x** and, for `zig build test`, **Node ≥ 20**. The Zig
 release is pinned in `build.zig.zon`'s `minimum_zig_version` (CI installs
-exactly that release from it) and the Node version in [.nvmrc](.nvmrc).
-`zig build` and `zig build tools` need no Node — `tools/ts/dist/` is committed
-so a checkout without a Node toolchain still builds and runs every tool — but
-the test step drives its JS suites with `node --test`.
+exactly that release from it). `zig build` and `zig build tools` need no bun
+— `tools/ts/dist/` is committed so a checkout without a JS toolchain still
+builds and runs every tool — but the test step drives its JS suites with
+`bun test`.
 
 Build the binary, compile the WASM tools, run the test suite, create local
 state, run the complete gate, and enable the repository hooks:
@@ -83,9 +83,8 @@ fresh dependency fetch replaced the trees.
 loop has a single-test path: `zig build test -Dtest-filter="<substring>"`
 compiles the Zig binary with only the matching tests registered (a filter
 that matches nothing passes with 0 tests; the JS suites still run). For a
-JS-only loop, run one suite directly, e.g. `node --test ui/app/core/scroll.test.mjs`,
-or sweep them all with `node --test 'ui/**/*.test.mjs'` (quoted — node expands
-the pattern; a directory positional is resolved as a module and fails).
+JS-only loop, run one suite directly, e.g. `bun test ui/app/core/scroll.test.mjs`,
+or sweep them all with `bun test ui/app` (bun walks the directory itself).
 
 `clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
 but CI also runs shellcheck, a Python syntax check, the SBOM generation, and

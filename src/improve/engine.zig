@@ -3340,7 +3340,7 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         .{ .sig = "fn scanUnrunJsSuites(", .required = "misses += 1;", .allow = &.{"no ui/ dir"}, .indent = 8 },
         .{ .sig = "fn sandboxAbiGate(", .required = "return scanUnregisteredHostFns(gpa, host_src, runtime_src);", .allow = &.{}, .indent = 4 },
         .{ .sig = "fn scanUnregisteredHostFns(", .required = "misses += 1;", .allow = &.{}, .indent = 8 },
-        .{ .sig = "fn toolsTsToolchainGate(", .required = "if (std.mem.find(u8, npmrc, \"ignore-scripts=true\") == null) {", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn toolsTsToolchainGate(", .required = "if (std.mem.find(u8, lock, \"sha512-\") == null) {", .allow = &.{}, .indent = 4 },
         .{ .sig = "fn releaseContractGate(", .required = "if (std.mem.find(u8, changelog, \"## [Unreleased]\") == null) {", .allow = &.{}, .indent = 4 },
         // webui-budget and dep-patches joined the gate after the five above;
         // they get the same two halves (call-site needle plus shape check).
@@ -4059,11 +4059,11 @@ const ok_cli_gates =
     \\    }
     \\}
     \\pub fn toolsTsToolchainGate() !GateResult {
-    \\    const npmrc = dir.readFileAlloc(io, "tools/ts/.npmrc", gpa, .limited(4096)) catch {
+    \\    const lock = dir.readFileAlloc(io, "tools/ts/bun.lock", gpa, .limited(1 << 20)) catch {
     \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "unreadable" };
     \\    };
-    \\    if (std.mem.find(u8, npmrc, "ignore-scripts=true") == null) {
-    \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "scripts" };
+    \\    if (std.mem.find(u8, lock, "sha512-") == null) {
+    \\        return .{ .ok = false, .label = "tools-ts-toolchain", .detail = "integrity" };
     \\    }
     \\}
     \\pub fn releaseContractGate() !GateResult {
