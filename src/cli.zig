@@ -16288,7 +16288,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"an image exceeds the 4 MB limit\"}");
                 return;
             }
-            imgs.append(arena, .{ .mime = im.mime, .b64 = im.b64 }) catch {};
+            // Dropping an image here would run the turn with fewer
+            // attachments than the user sent and report success, so refuse
+            // the request instead (same rule as the history load below).
+            imgs.append(arena, .{ .mime = im.mime, .b64 = im.b64 }) catch {
+                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory staging the images\"}");
+                return;
+            };
         }
         if (imgs.items.len > 0) {
             a.pending_images = imgs.items;

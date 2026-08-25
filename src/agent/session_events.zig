@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
+const log = @import("../util/log.zig");
 
 /// The suffix appended to a session id to name its event database. The JSON
 /// The events table lives in the session's own database (`<id>.db`); this
@@ -293,8 +294,14 @@ pub const Recorder = struct {
         // triggers are part of the session schema (session.zig).
         const rel = std.fmt.allocPrint(self.arena, "state/sessions/{s}.db", .{self.session_id}) catch return;
         const path = self.arena.dupeZ(u8, rel) catch return;
-        std.Io.Dir.cwd().createDirPath(self.io, "state/sessions") catch {};
-        self.store = Store.open(self.arena, path) catch return;
+        std.Io.Dir.cwd().createDirPath(self.io, "state/sessions") catch |err| {
+            log.log(.debug, "session '{s}': events not recorded, 'state/sessions' cannot be created: {s}", .{ self.session_id, @errorName(err) });
+            return;
+        };
+        self.store = Store.open(self.arena, path) catch |err| {
+            log.log(.debug, "session '{s}': events not recorded, '{s}' cannot be opened: {s}", .{ self.session_id, rel, @errorName(err) });
+            return;
+        };
     }
 
     /// Records one event. Fail-open: nothing here may propagate.
@@ -303,7 +310,9 @@ pub const Recorder = struct {
         self.openIfNeeded();
         const s = &(self.store orelse return);
         const ts_ms: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(self.io, .real).nanoseconds, std.time.ns_per_ms));
-        _ = s.append(ts_ms, kind, payload) catch return;
+        _ = s.append(ts_ms, kind, payload) catch |err| {
+            log.log(.debug, "session '{s}': {s} event not recorded: {s}", .{ self.session_id, kind, @errorName(err) });
+        };
     }
 
     /// Builds a payload object from fields and records it.
