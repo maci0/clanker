@@ -15,7 +15,6 @@ files; replace from upstream releases and update this table.
 | `three.module.min.js` | [three](https://www.npmjs.com/package/three) | r180 module | MIT |
 | `three.core.min.js` | [three](https://www.npmjs.com/package/three) | r180 core split | MIT |
 | `patternfly.min.css` | [@patternfly/patternfly](https://www.npmjs.com/package/@patternfly/patternfly) `patternfly.min.css` | 6.6.1 | MIT |
-| `patternfly-addons.css` | [@patternfly/patternfly](https://www.npmjs.com/package/@patternfly/patternfly) `patternfly-addons.css` | 6.6.1 | MIT |
 
 `patternfly.min.css` is served without its upstream `@font-face` blocks: the
 cabinet UI uses system stacks (`--sans` / `--mono`), and the Red Hat webfont
@@ -28,8 +27,11 @@ nav, button, form, check, label, alert, backdrop, modal).
 Table/wizard/drawer/menu are unused. Regenerate from the full upstream
 copy (`scripts/subset-patternfly.py`); do not re-subset this file.
 
-`patternfly-addons.css` stays in the tree for optional utility classes but is
-not linked from `index.html` (unused `pf-v6-u-*` would add ~180KB for no gain).
+`patternfly-addons.css` was removed 2026-08-26: it stayed unlinked from
+`index.html`, no view or plugin used any `pf-v6-u-*` utility class, and serving
+the ~180KB sheet for nothing only widened the network surface. Re-add it from
+npm (and register it in `webui_assets.zig` + `cli.zig`) if a utility class is
+ever actually needed.
 
 `three.module.min.js` imports `./three.core.min.js`; both must be updated
 together from the same Three.js release.

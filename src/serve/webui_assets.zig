@@ -198,7 +198,6 @@ pub const vendor_files = [_][]const u8{
     "three.module.min.js",
     "three.core.min.js",
     "patternfly.min.css",
-    "patternfly-addons.css",
 };
 
 pub fn isVendorFile(name: []const u8) bool {

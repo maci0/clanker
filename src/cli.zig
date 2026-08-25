@@ -102,7 +102,6 @@ const webui_vendor_mermaid = ui_vendor.mermaid;
 const webui_vendor_three = ui_vendor.three;
 const webui_vendor_three_core = ui_vendor.three_core;
 const webui_vendor_patternfly = ui_vendor.patternfly;
-const webui_vendor_patternfly_addons = ui_vendor.patternfly_addons;
 const edit_distance = @import("util/edit_distance.zig");
 const no_color = @import("util/no_color.zig");
 const test_env = @import("util/test_env.zig");
@@ -8087,8 +8086,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             std.mem.eql(u8, path, "/webui/vendor/mermaid.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/three.module.min.js") or
             std.mem.eql(u8, path, "/webui/vendor/three.core.min.js") or
-            std.mem.eql(u8, path, "/webui/vendor/patternfly.min.css") or
-            std.mem.eql(u8, path, "/webui/vendor/patternfly-addons.css");
+            std.mem.eql(u8, path, "/webui/vendor/patternfly.min.css");
         const is_a2a = std.mem.eql(u8, path, "/.well-known/agent.json") or (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message"));
         const is_notify = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/notify");
         const is_peers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/peers");
@@ -8209,8 +8207,6 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             respondJs(gpa, stream, webui_vendor_three_core, &gzip_three_core, acceptsGzip(headers_raw), headers_raw);
         } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/patternfly.min.css")) {
             respondCss(gpa, stream, webui_vendor_patternfly, &gzip_patternfly, acceptsGzip(headers_raw), headers_raw);
-        } else if (isWebuiRead(method) and std.mem.eql(u8, path, "/webui/vendor/patternfly-addons.css")) {
-            respondCss(gpa, stream, webui_vendor_patternfly_addons, &gzip_patternfly_addons, acceptsGzip(headers_raw), headers_raw);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/.well-known/agent.json")) {
             handleAgentCard(gpa, cfg, port, stream);
         } else if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/status")) {
@@ -10704,7 +10700,6 @@ const vendor_tag_files = .{
     .{ "three.module.min.js", webui_vendor_three },
     .{ "three.core.min.js", webui_vendor_three_core },
     .{ "patternfly.min.css", webui_vendor_patternfly },
-    .{ "patternfly-addons.css", webui_vendor_patternfly_addons },
 };
 
 fn webuiAssetTag(
@@ -16811,7 +16806,6 @@ var gzip_mermaid: GzipCache = .{};
 var gzip_three: GzipCache = .{};
 var gzip_three_core: GzipCache = .{};
 var gzip_patternfly: GzipCache = .{};
-var gzip_patternfly_addons: GzipCache = .{};
 
 /// A JSON body, gzipped when the client takes it and the saving is worth the
 /// work. Uncached on purpose: these bodies are per-request (a session list, a
