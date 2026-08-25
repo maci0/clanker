@@ -291,7 +291,7 @@ function loadHost(page, extras) {
     icon: () => makeElement("span"),
     searchFoldFind: () => {},
     wireRefresh: () => {},
-    ...(extras || {})
+    ...extras
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
@@ -318,7 +318,7 @@ function bootHost(options) {
     fmtBytes: String, fmtInt: String, fmtCost: String, formatChatTime: String,
     openSession: () => {},
     observeStatus: (node) => observed.push(node),
-    ...(options || {})
+    ...options
   });
   // What a plugin's app.js is written against: the global the host installs.
   return {
