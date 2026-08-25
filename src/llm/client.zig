@@ -406,7 +406,7 @@ pub fn chat(
             // the header is absent. Sleeping the fixed backoff through a
             // `Retry-After: 0` "retry now" makes a brief rate limit look like
             // a stall and stretches every retry storm.
-            const delay = outcome.retry_after_ns orelse retryDelayNs(ctx.io, attempt);
+            const delay = outcome.retry_after_ns orelse retryDelayNs(attempt, provider.name);
             log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{ @intFromEnum(outcome.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts });
             ctx.gpa.free(outcome.body);
             // A cancellation during the backoff sleep must abort the retry,
@@ -939,9 +939,14 @@ fn elapsedMs(io: std.Io, started: std.Io.Timestamp) u64 {
     return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
 }
 
-fn retryDelayNs(io: std.Io, attempt: u32) u64 {
+/// Jitter is hashed from the attempt and the provider name, not read off the
+/// clock: the awake clock's nanosecond phase varies between runs of the same
+/// seed, so a clock-derived delay would make a retry-timing-sensitive failure
+/// unreproducible even with `agent.seed` pinned. A pure function of state the
+/// run already fixed keeps two identical runs on identical backoff schedules.
+fn retryDelayNs(attempt: u32, salt: []const u8) u64 {
     const base: u64 = @as(u64, attempt) * std.time.ns_per_s;
-    const jitter: u64 = @intCast(@mod(std.Io.Timestamp.now(io, .awake).nanoseconds, 500_000_000));
+    const jitter: u64 = std.hash.Wyhash.hash(0x9E3779B97F4A7C15 ^ @as(u64, attempt), salt) % 500_000_000;
     return base + jitter;
 }
 
@@ -968,11 +973,11 @@ fn headerValueIgnoreCase(head: std.http.Client.Response.Head, name: []const u8) 
     return null;
 }
 
-fn retryDelayForHead(io: std.Io, attempt: u32, head: std.http.Client.Response.Head) u64 {
+fn retryDelayForHead(attempt: u32, head: std.http.Client.Response.Head, salt: []const u8) u64 {
     if (headerValueIgnoreCase(head, "retry-after")) |v| {
         if (parseRetryAfterNs(v)) |ns| return ns;
     }
-    return retryDelayNs(io, attempt);
+    return retryDelayNs(attempt, salt);
 }
 
 fn sendStreamBody(req: *std.http.Client.Request, body: []const u8) !void {
@@ -1008,7 +1013,7 @@ fn retryAfterTransportError(
 }
 
 fn sleepRetry(io: std.Io, attempt: u32, provider_name: []const u8, http_status: u16, reason: []const u8) !void {
-    const delay = retryDelayNs(io, attempt);
+    const delay = retryDelayNs(attempt, provider_name);
     if (http_status == 0) {
         log.log(.warn, "request to '{s}' failed: {s}, retrying in {d}ms (attempt {d}/{d})", .{
             provider_name, reason, delay / std.time.ns_per_ms, attempt, max_attempts,
@@ -1265,7 +1270,7 @@ pub fn chatStream(
 
         if (isRetryable(response.head.status) and attempt < max_attempts and !abortWasTriggered(ctx)) {
             noteRetry();
-            const delay = retryDelayForHead(ctx.io, attempt, response.head);
+            const delay = retryDelayForHead(attempt, response.head, provider.name);
             log.log(.warn, "HTTP {d} from '{s}', retrying in {d}ms (attempt {d}/{d})", .{
                 @intFromEnum(response.head.status), provider.name, delay / std.time.ns_per_ms, attempt, max_attempts,
             });
@@ -1621,6 +1626,19 @@ test "Retry-After is integer seconds, capped, and ignores HTTP-date" {
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs(""));
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("Wed, 21 Oct 2015 07:28:00 GMT"));
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("-1"));
+}
+
+test "retry backoff jitter is a pure function of attempt and provider" {
+    // Same inputs, same delay: a run replayed with the pinned seed must wait
+    // exactly as long between retries as the run that failed, or a failure
+    // whose outcome turns on retry timing cannot be reproduced.
+    try std.testing.expectEqual(retryDelayNs(2, "openai"), retryDelayNs(2, "openai"));
+    // Jitter stays inside its [base, base + 500ms) window.
+    const delay = retryDelayNs(2, "openai");
+    try std.testing.expect(delay >= 2 * std.time.ns_per_s);
+    try std.testing.expect(delay < 2 * std.time.ns_per_s + 500_000_000);
+    // Different providers on the same attempt do not sync their waits.
+    try std.testing.expect(retryDelayNs(3, "openai") != retryDelayNs(3, "anthropic"));
 }
 
 // ------------------------------------------------------------------- tests --

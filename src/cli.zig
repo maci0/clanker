@@ -6496,9 +6496,15 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     // --seed pins the tool-RNG seed for this run, beating whatever config.toml
     // says, so `clanker eval --seed 42` and a failing run re-run the identical
     // ck_random stream. The sandbox reads cfg.agent.seed per tool call.
+    // Either way the run states its seed: a failure nobody can replay from a
+    // recorded seed is not reproducible, whatever else holds.
     if (opts.eval_seed) |s| {
         cfg.agent.seed = s;
         log.log(.info, "eval: tool-RNG seed pinned to {d} (agent.seed)", .{s});
+    } else if (cfg.agent.seed == 0) {
+        log.log(.info, "eval: agent.seed=0 (time-seeded per tool load); pass --seed <n> to make re-runs byte-identical", .{});
+    } else {
+        log.log(.info, "eval: agent.seed={d} from config; same seed re-runs the identical ck_random stream", .{cfg.agent.seed});
     }
 
     std.Io.Dir.cwd().createDirPath(io, cfg.agent.sandbox_root) catch |err|
