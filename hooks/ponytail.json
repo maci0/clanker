@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"additionalContext\":\"PONYTAIL MODE ACTIVE — level: full. For every coding task, load and follow the enabled Ponytail skill. Mode changes and deactivation in later user prompts override this context.\"}'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
