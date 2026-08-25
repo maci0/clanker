@@ -289,6 +289,7 @@ pub fn main(init: std.process.Init) !void {
     defer subprocess.deinitProcessRegistry();
     defer vertex_token.deinit(init.io, gpa);
     defer rate_limit.deinit(init.io, gpa);
+    // Residual posix: process rlimits have no std.Io equivalent; go lower.
     std.posix.setrlimit(.STACK, .{ .cur = std.math.maxInt(u64), .max = std.math.maxInt(u64) }) catch {};
     const arena = init.arena.allocator();
 

@@ -208,7 +208,11 @@ export function summarizeTitle(raw) {
       if (w2) words.push(w2);
     }
   }
-  var out = (words.join(" ") || t).slice(0, 28);
+  // Codepoints, not UTF-16 units: a 28-unit cut lands inside a surrogate
+  // pair on any astral emoji and ships a lone half downstream.
+  var joined = words.join(" ") || t;
+  var cps = Array.from(joined);
+  var out = cps.length > 28 ? cps.slice(0, 28).join("") : joined;
   return out || "(untitled)";
 }
 

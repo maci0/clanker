@@ -13352,11 +13352,11 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     s.objectField("ok") catch return;
     s.write(true) catch return;
     s.objectField("path") catch return;
-    s.write(path) catch return;
+    utf8.writeJsonString(arena, &s, path) catch return;
     s.objectField("root") catch return;
     s.write(root) catch return;
     s.objectField("parent") catch return;
-    s.write(parent_buf) catch return;
+    utf8.writeJsonString(arena, &s, parent_buf) catch return;
     s.objectField("at_root") catch return;
     s.write(path.len == 0) catch return;
     s.objectField("entries") catch return;
@@ -13394,7 +13394,10 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     for (list.items) |e| {
         s.beginObject() catch return;
         s.objectField("name") catch return;
-        s.write(e.name) catch return;
+        // A filename the filesystem holds as raw bytes (latin-1 name, mojibake
+        // download) serialized as an array of numbers and broke every row's
+        // consumer; sanitize to the same U+FFFD rule as storage boundaries.
+        utf8.writeJsonString(arena, &s, e.name) catch return;
         s.objectField("is_dir") catch return;
         s.write(e.is_dir) catch return;
         s.objectField("size") catch return;
@@ -13451,13 +13454,13 @@ fn handleFileContent(io: std.Io, arena: std.mem.Allocator, root_dir: std.Io.Dir,
     s.objectField("ok") catch return;
     s.write(true) catch return;
     s.objectField("path") catch return;
-    s.write(path) catch return;
+    utf8.writeJsonString(arena, &s, path) catch return;
     s.objectField("name") catch return;
-    s.write(name) catch return;
+    utf8.writeJsonString(arena, &s, name) catch return;
     s.objectField("root") catch return;
     s.write(root) catch return;
     s.objectField("parent") catch return;
-    s.write(parent_buf) catch return;
+    utf8.writeJsonString(arena, &s, parent_buf) catch return;
     s.objectField("is_file") catch return;
     s.write(true) catch return;
     s.objectField("size") catch return;
@@ -13470,7 +13473,10 @@ fn handleFileContent(io: std.Io, arena: std.mem.Allocator, root_dir: std.Io.Dir,
     s.write(truncated) catch return;
     if (!binary) {
         s.objectField("content") catch return;
-        s.write(data) catch return;
+        // A text file in a non-UTF-8 encoding (no NUL byte, so not refused as
+        // binary) serialized as an array of numbers; the preview degrades to
+        // U+FFFD instead, the same rule storage boundaries apply.
+        utf8.writeJsonString(arena, &s, data) catch return;
     }
     s.endObject() catch return;
     respondCompressible(arena, stream, accepts_gzip, out.written());

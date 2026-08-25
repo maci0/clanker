@@ -52,6 +52,20 @@ pub fn sanitize(gpa: std.mem.Allocator, s: []const u8) ![]const u8 {
     return gpa.realloc(out, o);
 }
 
+/// Writes `s` into `stringify` as one JSON string, replacing invalid UTF-8
+/// bytes with U+FFFD first (`sanitize`). `std.json.Stringify.write` serializes
+/// a slice that is not valid UTF-8 as an *array of byte numbers*, so any
+/// filesystem name or file body written raw turned that element into an
+/// array: one weird-but-legal filename broke every reader expecting a string,
+/// from the web UI's `/api/files` listing to guests walking `ck_fs_list`
+/// output. The valid fast path is the plain write, no copy.
+pub fn writeJsonString(gpa: std.mem.Allocator, stringify: *std.json.Stringify, s: []const u8) !void {
+    if (std.unicode.utf8ValidateSlice(s)) return stringify.write(s);
+    const clean = try sanitize(gpa, s);
+    defer if (clean.ptr != s.ptr) gpa.free(clean);
+    return stringify.write(clean);
+}
+
 test "cap never splits a codepoint" {
     try std.testing.expectEqualStrings("", cap("", 5));
     try std.testing.expectEqualStrings("hello", cap("hello", 100));
@@ -73,6 +87,22 @@ test "sanitize passes valid UTF-8 through untouched" {
     try std.testing.expectEqualStrings("", try sanitize(std.testing.allocator, ""));
     const clean = "café — déjà vu ✨";
     try std.testing.expectEqualStrings(clean, try sanitize(std.testing.allocator, clean));
+}
+
+test "writeJsonString emits a string for invalid bytes, not an array of numbers" {
+    var buf: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer buf.deinit();
+    var s = std.json.Stringify{ .writer = &buf.writer, .options = .{} };
+    // A latin-1 filename byte: `Stringify.write` alone would emit [195, 169].
+    try writeJsonString(std.testing.allocator, &s, "caf\xe9.txt");
+    const out = buf.written();
+    try std.testing.expect(std.mem.startsWith(u8, out, "\"caf"));
+    try std.testing.expect(std.mem.endsWith(u8, out, ".txt\""));
+    try std.testing.expect(std.mem.indexOf(u8, out, "[") == null);
+    // Parsed back, it is a string carrying the replacement character.
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, out, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("caf\u{FFFD}.txt", parsed.value.string);
 }
 
 test "sanitize replaces invalid bytes without splitting valid sequences" {

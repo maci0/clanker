@@ -146,14 +146,23 @@ pub const MockServer = struct {
     }
 
     fn record(self: *MockServer, target: []const u8, headers_raw: []const u8, body: []const u8) void {
-        const cap = Captured{
-            .target = self.gpa.dupe(u8, target) catch return,
-            .headers_raw = self.gpa.dupe(u8, headers_raw) catch return,
-            .body = self.gpa.dupe(u8, body) catch return,
+        const t = self.gpa.dupe(u8, target) catch return;
+        const h = self.gpa.dupe(u8, headers_raw) catch {
+            self.gpa.free(t);
+            return;
+        };
+        const b = self.gpa.dupe(u8, body) catch {
+            self.gpa.free(t);
+            self.gpa.free(h);
+            return;
         };
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        self.captured.append(self.gpa, cap) catch {};
+        self.captured.append(self.gpa, .{ .target = t, .headers_raw = h, .body = b }) catch {
+            self.gpa.free(t);
+            self.gpa.free(h);
+            self.gpa.free(b);
+        };
     }
 
     fn respond(self: *MockServer, stream: std.Io.net.Stream) void {

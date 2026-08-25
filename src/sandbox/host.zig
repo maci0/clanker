@@ -1924,7 +1924,8 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     w.interface.writeAll(req) catch return Err.network;
     w.interface.flush() catch return Err.network;
 
-    // Read the full response.
+    // Read the full response. Residual posix: raw unix-socket HTTP pump,
+    // same hand-rolled socket family as the webui server in cli.zig.
     var resp = std.ArrayList(u8).empty;
     defer resp.deinit(h.sandbox.gpa);
     var tmp: [4096]u8 = undefined;
@@ -3959,13 +3960,15 @@ pub fn ckFsList(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
         // A huge directory must not fail the whole listing: stop at the cap
         // and return a truncated (but still valid JSON) array instead of
         // Err.too_large, so tools always learn at least part of a directory.
-        if (w.end + entry.name.len + 5 > h.sandbox.max_fs_bytes) break;
+        // The budget assumes the worst-case sanitized encoding (3x) so the
+        // "still valid JSON" promise holds for non-UTF-8 names too.
+        if (w.end + entry.name.len * 3 + 5 > h.sandbox.max_fs_bytes) break;
         if (entry.kind == .directory) {
             const name_slash = std.fmt.allocPrint(h.sandbox.gpa, "{s}/", .{entry.name}) catch return Err.too_large;
             defer h.sandbox.gpa.free(name_slash);
-            s.write(name_slash) catch return Err.too_large;
+            utf8.writeJsonString(h.sandbox.gpa, &s, name_slash) catch return Err.too_large;
         } else {
-            s.write(entry.name) catch return Err.too_large;
+            utf8.writeJsonString(h.sandbox.gpa, &s, entry.name) catch return Err.too_large;
         }
     }
     s.endArray() catch return Err.too_large;
@@ -4050,7 +4053,7 @@ fn fsFindRecurse(h: *Host, s: *std.json.Stringify, dir: std.Io.Dir, prefix: []co
             if (!globMatch(pattern, entry.name)) continue;
             const rel = joinRel(h.sandbox.gpa, prefix, entry.name) catch return error.OutOfMemory;
             defer h.sandbox.gpa.free(rel);
-            try s.write(rel);
+            try utf8.writeJsonString(h.sandbox.gpa, s, rel);
             count.* += 1;
         }
     }
@@ -4209,11 +4212,13 @@ fn fsGrepFile(
             const display = utf8.cap(line, fs_grep_max_line);
             s.beginObject() catch return error.OutOfMemory;
             s.objectField("file") catch return error.OutOfMemory;
-            s.write(rel_path) catch return error.OutOfMemory;
+            utf8.writeJsonString(h.sandbox.gpa, s, rel_path) catch return error.OutOfMemory;
             s.objectField("line") catch return error.OutOfMemory;
             s.print("{d}", .{line_no}) catch return error.OutOfMemory;
             s.objectField("text") catch return error.OutOfMemory;
-            s.write(display) catch return error.OutOfMemory;
+            // A latin-1 hit line is not "binary" (no NUL) but is not UTF-8
+            // either; written raw it serialized as an array of byte numbers.
+            utf8.writeJsonString(h.sandbox.gpa, s, display) catch return error.OutOfMemory;
             s.endObject() catch return error.OutOfMemory;
             count.* += 1;
         }

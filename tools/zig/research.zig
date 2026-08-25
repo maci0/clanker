@@ -259,7 +259,10 @@ const Sweep = struct {
             }
         }
         const owned = lib.alloc.dupe(u8, key) catch return true;
-        self.keys.append(lib.alloc, owned) catch {};
+        self.keys.append(lib.alloc, owned) catch {
+            lib.alloc.free(owned);
+            return true;
+        };
         return true;
     }
 

@@ -514,7 +514,7 @@ fn logSinkWrite(ctx: *const anyopaque, line: []const u8) void {
 /// control-stripped by `logSinkWrite`; only its trusted prefix is parsed.
 fn humanLogRecord(arena: std.mem.Allocator, record: []const u8) ?[]const u8 {
     if (record.len == 0 or record[0] != '[') return null;
-    const close = std.mem.indexOfScalar(u8, record, ']') orelse return null;
+    const close = std.mem.findScalar(u8, record, ']') orelse return null;
     const level = record[1..close];
     const voice: []const u8 = if (std.mem.eql(u8, level, "ERROR"))
         "error"
@@ -526,12 +526,12 @@ fn humanLogRecord(arena: std.mem.Allocator, record: []const u8) ?[]const u8 {
     const stamp = " ts_ms=";
     if (!std.mem.startsWith(u8, rest, stamp)) return null;
     rest = rest[stamp.len..];
-    const digits = std.mem.indexOfNone(u8, rest, "0123456789") orelse return null;
+    const digits = std.mem.findNone(u8, rest, "0123456789") orelse return null;
     rest = rest[digits..];
     const req_id = " request_id=";
     if (std.mem.startsWith(u8, rest, req_id)) {
         rest = rest[req_id.len..];
-        const token_end = std.mem.indexOfAny(u8, rest, " \t") orelse return null;
+        const token_end = std.mem.findAny(u8, rest, " \t") orelse return null;
         rest = rest[token_end..];
     }
     if (rest.len == 0 or rest[0] != ' ') return null;

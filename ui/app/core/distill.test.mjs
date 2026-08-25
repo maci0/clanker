@@ -70,6 +70,20 @@ test("sidebar title filter matches words the compact label drops", async functio
   assert.equal(sessionMatchesFilter({ title: "other", id: "sess-ledger", messages: 1 }, "ledger"), true);
 });
 
+test("summarizeTitle never splits a surrogate pair on the length cut", async function () {
+  const { summarizeTitle } = await import("./utils.js");
+  // A title of astral emoji: every unit is one codepoint, so a codepoint cut
+  // yields whole emoji, while a UTF-16 .slice(0, 28) would end mid-pair.
+  const title = "\u{1F680}".repeat(30);
+  const out = summarizeTitle(title);
+  assert.ok(Array.from(out).length >= 1 && Array.from(out).length <= 28);
+  for (const ch of out) {
+    const cp = ch.codePointAt(0);
+    const lone = ch.length === 1 && cp >= 0xd800 && cp <= 0xdfff;
+    assert.ok(!lone, "lone surrogate in output: " + JSON.stringify(ch));
+  }
+});
+
 test("Board filters sit behind a disclosure and Only mine is singular", function () {
   assert.match(html, /class="board-filter-fold"/);
   assert.match(html, /Saves a Ready card/);

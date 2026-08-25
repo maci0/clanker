@@ -94,7 +94,7 @@ fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !s
     // (read-only path, disk full, a `messages` that is not a table) surfaces
     // here, not later as a confusing missing-column bind error on first write.
     for (added_message_columns) |ddl| conn.exec(ddl) catch |err| {
-        const known = std.mem.indexOf(u8, conn.last_error, "duplicate column name") != null;
+        const known = std.mem.find(u8, conn.last_error, "duplicate column name") != null;
         if (!known) {
             conn.close();
             return err;
