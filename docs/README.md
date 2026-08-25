@@ -388,11 +388,9 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   compiles and its tests never run; `zig build test` stays green either way,
   which is why this is a gate and not a convention.
 - `js-suite-coverage`: every `ui/**/*.test.mjs` on disk is registered in
-  `build.zig` as a `node --test` step. The web UI suites are named one by
-  one there, because node has no working directory mode — `node --test
-  ui/app/` resolves the positional as a module path and fails on the
-  directory itself — so an unregistered suite is simply never run and the
-  green suite output cannot show it.
+  `build.zig` as a `bun test` step. The web UI suites are named one by one
+  there rather than handed a directory, so an unregistered suite is simply
+  never run and the green suite output cannot show it.
 - `sandbox-abi`: every `pub fn ck…` in `src/sandbox/host.zig` is registered
   with the zwasm linker in `src/sandbox/runtime.zig`. An unregistered one is
   not a capability waiting to be granted, it is unreachable: no guest can
@@ -597,13 +595,13 @@ Tools are discovered by the registry (`src/toolhost/registry.zig`) from the conf
 | `zig build tools` | Compile `tools/zig/*.zig` to `zig-out/tools/*.wasm` |
 | `zig build proxy` | Build `clanker-proxy`, the standalone compatibility proxy (not in the default install) |
 | `zig build test` | Run the unit and integration tests |
-| `zig build test -Dtest-filter="<name>"` | Run only the Zig unit tests whose name contains the substring (compile-time filter; a filter matching nothing passes with 0 tests, and the JS suites still run). A JS-only loop runs one suite directly: `node --test ui/app/core/scroll.test.mjs`, or every suite at once: `node --test 'ui/**/*.test.mjs'` |
+| `zig build test -Dtest-filter="<name>"` | Run only the Zig unit tests whose name contains the substring (compile-time filter; a filter matching nothing passes with 0 tests, and the JS suites still run). A JS-only loop runs one suite directly: `bun test ui/app/core/scroll.test.mjs`, or every suite at once: `bun test ui/app` (bun walks the directory itself) |
 | `zig fmt --check src/ tools/zig/` | Verify formatting |
 | `clanker gate` | Run all of the above the way the self-improvement gate does |
 | `scripts/verify.sh` | Mirror the full CI verify job locally: shellcheck, `tools/ts` audit + rebuild-and-diff, SBOM generation, Python syntax check, then `zig build` + `clanker gate` + `zig build e2e`. The checks CI runs that `clanker gate` does not (shellcheck, Python, SBOM) live only in `.github/workflows/ci.yml` otherwise |
-| `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/ts/dist/*.wasm`, to catch drift `clanker gate` cannot see (requires node) |
+| `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/ts/dist/*.wasm`, to catch drift `clanker gate` cannot see (requires bun) |
 
-All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool. `tools/ts/verify.sh` is not part of `clanker gate` (a node toolchain is not guaranteed) and must be run by hand after editing `tools/ts/`; `scripts/verify.sh` runs it (and the other CI-only steps) for you.
+All of them must pass before a change is promoted, so a tool source that fails to compile blocks the whole loop, not just its own tool. `tools/ts/verify.sh` is not part of `clanker gate` (a bun toolchain is not guaranteed) and must be run by hand after editing `tools/ts/`; `scripts/verify.sh` runs it (and the other CI-only steps) for you.
 
 ## Tool catalog
 
@@ -1395,7 +1393,7 @@ Fields:
 - `instance`: identity of this agent.
 - `notify`: `on` / `topic` for peer notifications.
 - `chatrooms`: default room subscriptions (`rooms`, `max_history`) — separate from the `modules.chatrooms` on/off flag.
-- `modules`: feature on/off flags (`mcp`, `mcp_client`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `acp`, `mesh`). All default to `true` except `acp`, `mesh`, and `mcp_client`, which default `false`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
+- `modules`: feature on/off flags (`mcp`, `mcp_client`, `peers`, `a2a`, `webui`, `graphs`, `sessions`, `goal`, `goal_auto_steer`, `token_budget`, `streaming`, `dotenv`, `hot_reload`, `autolearn`, `subagents`, `rlm`, `multimodal`, `chatrooms`, `token_stats`, `session_events`, `acp`, `mesh`). All default to `true` except `acp`, `mesh`, and `mcp_client`, which default `false`. `goal_auto_steer` only controls automatic attachment of the newest active goal; explicit goals continue to work when it is off.
 - `improve`: settings for self-improvement.
   - `max_context_bytes`: byte budget for the proposal context slice.
   - `max_context_requests`: how many `{"need": [...]}` context refills a run gets (default 3, 0 disables).

@@ -48,7 +48,7 @@ policy.
 
 ## Quick start
 
-Requirements: **Zig 0.16.x** and, for `zig build test`, **Node ≥ 20**. The Zig
+Requirements: **Zig 0.16.x** and, for `zig build test`, **Bun**. The Zig
 release is pinned in `build.zig.zon`'s `minimum_zig_version` (CI installs
 exactly that release from it). `zig build` and `zig build tools` need no bun
 — `tools/ts/dist/` is committed so a checkout without a JS toolchain still
