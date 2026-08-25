@@ -1659,6 +1659,191 @@ test "scanUnrunJsSuites names a suite zig build test would never run" {
     try std.testing.expect(std.mem.find(u8, result.detail, ".test.mjs") != null);
 }
 
+// ---------------------------------------------- reports inventory gate --
+
+/// The states `reports status` writes. One vocabulary on both sides of the
+/// comparison; a word outside it does not parse and is skipped rather than
+/// failed (legacy records predate some of these).
+const report_statuses = [_][]const u8{ "Open", "Investigating", "Resolved", "Reopened", "Closed" };
+
+/// The stores whose records carry a `## Status` section mirrored into the
+/// docs/reports/README.md inventory. Runbooks are current or superseded by
+/// their own text and their row carries a summary, not a status, so they are
+/// not compared here.
+const report_record_dirs = [_][]const u8{ "docs/reports/bugs", "docs/reports/investigations" };
+
+/// Between an inventory row's link and its state word.
+const status_separator = " — ";
+
+/// A record states its state in two machine-read places: its own `## Status`
+/// section and its row in the docs/reports/README.md inventory. The inventory
+/// is the half that gets read (`reports list` and `reports search` render it,
+/// not the bodies), so a drifted row hands out finished work as live tasks —
+/// exactly what happened on 2026-08-24
+/// (docs/reports/bugs/2026-08-24-report-inventory-drifts-from-the-record.md).
+/// `reports status` writes both sides in one call, but nothing failed when
+/// only one side landed; this gate is that missing failure.
+pub fn reportsInventoryGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    const inventory = dir.readFileAlloc(io, "docs/reports/README.md", gpa, .limited(4 << 20)) catch |err| switch (err) {
+        error.FileNotFound => return .{ .ok = true, .label = "reports-inventory", .detail = "no reports inventory (ok on a minimal checkout)" },
+        else => return .{ .ok = false, .label = "reports-inventory", .detail = "docs/reports/README.md could not be read" },
+    };
+    defer gpa.free(inventory);
+    return scanReportsInventory(gpa, io, dir, inventory);
+}
+
+/// The gate's body with the inventory text passed in, so a test can pin the
+/// failing verdict against a synthetic README.
+fn scanReportsInventory(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, inventory: []const u8) !GateResult {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var drift: usize = 0;
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+    for (report_record_dirs) |kind_dir| {
+        var scope = dir.openDir(io, kind_dir, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return .{ .ok = false, .label = "reports-inventory", .detail = "a reports store directory could not be walked" },
+        };
+        defer scope.close(io);
+        var it = scope.iterate();
+        while (try it.next(io)) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
+            if (std.mem.eql(u8, entry.name, "TEMPLATE.md")) continue;
+            const record = scope.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch {
+                return .{ .ok = false, .label = "reports-inventory", .detail = "a report record could not be read" };
+            };
+            const word = recordStatusWord(record) orelse continue;
+            const row = inventoryStatusFor(inventory, kind_dir, entry.name) orelse {
+                drift += 1;
+                miss_w.print("{s}/{s}: no inventory row; ", .{ kind_dir, entry.name }) catch {};
+                continue;
+            };
+            if (!std.mem.eql(u8, word, row)) {
+                drift += 1;
+                miss_w.print("{s}/{s}: record says {s}, row says {s}; ", .{ kind_dir, entry.name, word, row }) catch {};
+            }
+        }
+    }
+    if (drift == 0) return .{ .ok = true, .label = "reports-inventory" };
+    // miss_buf is this frame's stack. Same aliasing convention as lintGate:
+    // detail and stderr share one owned copy, freed once by deinit.
+    const owned = try std.fmt.allocPrint(
+        gpa,
+        "these report records disagree with their docs/reports/README.md inventory row (move state with clanker reports status, not by hand): {s}",
+        .{miss_w.buffered()},
+    );
+    return .{ .ok = false, .label = "reports-inventory", .detail = owned, .stderr = owned };
+}
+
+/// The state word a record's `## Status` section opens with, or null when the
+/// section is absent or opens with something else ("Resolved on <date>. …"
+/// and bare "Open." both parse). Null means skip: the gate compares only what
+/// it can parse, so legacy records without the section pass untouched.
+pub fn recordStatusWord(record: []const u8) ?[]const u8 {
+    const marker = "\n## Status\n";
+    const at = std.mem.find(u8, record, marker) orelse return null;
+    var lines = std.mem.splitScalar(u8, record[at + marker.len ..], '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) continue;
+        return leadingStatusWord(trimmed);
+    }
+    return null;
+}
+
+/// The state word of the README inventory row linking `<leaf>/<slug>`, where
+/// leaf is `kind_dir`'s last component ("bugs", "investigations"), or null
+/// when no row links it. The row format is `- [Title](path) — Word`; titles
+/// may contain an em dash of their own, which is why parsing starts after the
+/// link's closing paren and takes the first separator from there.
+pub fn inventoryStatusFor(inventory: []const u8, kind_dir: []const u8, slug: []const u8) ?[]const u8 {
+    const leaf = if (std.mem.lastIndexOfScalar(u8, kind_dir, '/')) |slash| kind_dir[slash + 1 ..] else kind_dir;
+    var needle_buf: [512]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "]({s}/{s})", .{ leaf, slug }) catch return null;
+    var lines = std.mem.splitScalar(u8, inventory, '\n');
+    while (lines.next()) |line| {
+        // Rows only: a reference to the same file elsewhere in the README
+        // must not read as the row.
+        if (!std.mem.startsWith(u8, std.mem.trimStart(u8, line, " "), "- [")) continue;
+        const at = std.mem.find(u8, line, needle) orelse continue;
+        const rest = line[at + needle.len ..];
+        // The separator between link and state; without skipping it the word
+        // match would see "— Open".
+        const sep = std.mem.find(u8, rest, status_separator) orelse continue;
+        return leadingStatusWord(std.mem.trim(u8, rest[sep + status_separator.len ..], " \t"));
+    }
+    return null;
+}
+
+/// The vocabulary word `line` opens with, when the boundary after it is not a
+/// word byte ("Opened" is not "Open").
+fn leadingStatusWord(line: []const u8) ?[]const u8 {
+    for (report_statuses) |s| {
+        if (!std.mem.startsWith(u8, line, s)) continue;
+        const after = line[s.len..];
+        if (after.len == 0 or !std.ascii.isAlphanumeric(after[0])) return s;
+    }
+    return null;
+}
+
+test "reportsInventoryGate passes on the live checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var result = try reportsInventoryGate(gpa, io, std.Io.Dir.cwd());
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}
+
+test "scanReportsInventory names a drifted row" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "docs/reports/bugs");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "docs/reports/bugs/2026-01-01-fixed-but-listed-open.md",
+        .data = "# Bug — x\n\n## TL;DR\n\n- **Resolution:** fixed.\n\n## Status\n\nResolved on 2026-01-01. Done.\n",
+    });
+    const readme = "- [Fixed but listed open](bugs/2026-01-01-fixed-but-listed-open.md) — Open\n";
+    var result = try scanReportsInventory(gpa, io, tmp.dir, readme);
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "record says Resolved") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "row says Open") != null);
+
+    // Same tree, honest row: green.
+    const honest = "- [Fixed but listed open](bugs/2026-01-01-fixed-but-listed-open.md) — Resolved\n";
+    var ok = try scanReportsInventory(gpa, io, tmp.dir, honest);
+    defer ok.deinit(gpa);
+    try std.testing.expect(ok.ok);
+}
+
+test "inventoryStatusFor survives an em dash inside the title" {
+    const readme = "- [Bug — a run using the debug tool leaks](bugs/2026-08-23-leak.md) — Open\n" ++
+        "See also (bugs/2026-08-23-leak.md) elsewhere.\n";
+    try std.testing.expectEqualStrings("Open", inventoryStatusFor(readme, "docs/reports/bugs", "2026-08-23-leak.md").?);
+    try std.testing.expectEqual(@as(?[]const u8, null), inventoryStatusFor(readme, "docs/reports/bugs", "2026-08-24-absent.md"));
+    try std.testing.expectEqualStrings("Investigating", inventoryStatusFor("- [t](investigations/i.md) — Investigating\n", "docs/reports/investigations", "i.md").?);
+}
+
+test "recordStatusWord parses dated and bare statuses, skips records without one" {
+    try std.testing.expectEqualStrings("Resolved", recordStatusWord("# Bug\n\n## Status\n\nResolved on 2026-08-23. note\n").?);
+    try std.testing.expectEqualStrings("Closed", recordStatusWord("# Inv\n\n## Status\n\nClosed on 2026-01-01.\n").?);
+    try std.testing.expectEqualStrings("Open", recordStatusWord("# Bug\n\n## Status\n\nOpen.\n").?);
+    try std.testing.expectEqual(@as(?[]const u8, null), recordStatusWord("# Legacy\n\nno status section\n"));
+    // A non-vocabulary opener is unparseable, not a false match.
+    try std.testing.expectEqual(@as(?[]const u8, null), recordStatusWord("# Bug\n\n## Status\n\nOpened by hand\n"));
+}
+
 /// One ceiling in the web UI's first-paint budget.
 const WebuiCap = struct {
     path: []const u8,

@@ -111,9 +111,10 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/cli.zig", .needle = "gate_checks.sandboxAbiGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.toolsTsToolchainGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.releaseContractGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.reportsInventoryGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.webuiBudgetGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.depPatchesGate(" },
-    // The seven checks above live in verifyGates, which has exactly two
+    // The checks above live in verifyGates, which has exactly two
     // callers: cmdGate (`clanker gate`) and cmdImproveSelf's post-merge
     // pass -- the only grading that runs against the tree a promotion
     // actually landed in, not the staging copy it was gated from. Deleting
@@ -3361,6 +3362,12 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         .{ .sig = "fn webuiBudgetGate(", .required = "return scanWebuiBudget(gpa, io, dir, html);", .allow = &.{}, .indent = 4 },
         .{ .sig = "fn scanWebuiBudget(", .required = "if (total > webui_eager_budget_bytes) {", .allow = &.{}, .indent = 4 },
         .{ .sig = "fn depPatchesGate(", .required = "if (std.mem.find(u8, body, m.text) == null) {", .allow = &.{"std.mem.lessThan(u8, a, b)"}, .indent = 12 },
+        // reports-inventory joined the gate with the two halves like the
+        // others; the no-inventory early return is an allowed pre-anchor exit
+        // on a minimal checkout, and an unreadable record fails loudly rather
+        // than silently skipping (an .ok = false return, allowed by shape).
+        .{ .sig = "fn reportsInventoryGate(", .required = "return scanReportsInventory(gpa, io, dir, inventory);", .allow = &.{"no reports inventory"}, .indent = 4 },
+        .{ .sig = "fn scanReportsInventory(", .required = "drift += 1;", .allow = &.{}, .indent = 16 },
     };
     for (gates) |g| {
         const body = fnBody(src, g.sig) orelse return g.sig;
