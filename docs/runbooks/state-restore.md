@@ -50,13 +50,18 @@ never more than one interval behind a running backup. Because retention
 point-in-time restore can go back up to the retention window — the realistic
 recovery for logical corruption, where the newest snapshot is the one you do
 *not* want. RTO is measured by `scripts/verify-backup.sh`, which restores a
-snapshot to a scratch dir and reports the copy time; until a drill has been
-run on the target size, treat RTO as unmeasured.
+snapshot to a scratch dir and reports the copy time; the install wires that
+as `clanker-state-verify.timer`, a weekly drill whose journal history keeps
+the number current. Until a drill has covered the target size, treat RTO as
+unmeasured.
 
-A snapshot is crash-consistent, not transactional: `rsync -a` copies each file
-as it is read, so a `.jsonl` tail caught mid-append may carry a torn last line.
-Every later check reads such files leniently, but verify after restore (below)
-rather than assuming.
+Session databases are checkpointed before the copy and quick-checked after
+(when the `sqlite3` CLI is present), so what lands in a snapshot loads; if
+the checkpoint could not complete for a hot database the run says so in its
+output. The text stores (`*.jsonl`) are still copied each file as it is read,
+so a tail caught mid-append may carry a torn last line. Every later check
+reads such files leniently, but verify after restore (below) rather than
+assuming.
 
 ## Diagnose
 
@@ -94,7 +99,8 @@ this runbook can manufacture a snapshot that does not exist.
    repl`, and any `clanker run`/goal loops. Restoring over a live tree mixes
    old and new writes and the next backup re-snapshots the mess.
    `systemctl --user stop clanker-state-backup.timer` if the timer is enabled,
-   so a mid-restore run does not snapshot the half-restored tree.
+   so a mid-restore run does not snapshot the half-restored tree (the weekly
+   verify drill only reads snapshots, so it can keep running).
 2. Restore into the *target* of the `state` link — the external storage root —
    not into the checkout, so the checkout's link keeps working. Anchor on the
    snapshot path you picked in Diagnose, not on `state`, which the incident
@@ -133,12 +139,15 @@ this runbook can manufacture a snapshot that does not exist.
   affected `*.jsonl`: a torn last line is normal and the file's reader
   tolerates it — do not "repair" the whole store for it.
 - `readlink -f <storage_root>/backups/latest` points at a snapshot newer than
-  the restore time, and `systemctl --user is-failed
-  clanker-state-backup.service` prints nothing.
+  the restore time, and neither `systemctl --user is-failed
+  clanker-state-backup.service` nor `systemctl --user is-failed
+  clanker-state-verify.service` prints `failed`.
 - A restore is only proven by a drill. `scripts/verify-backup.sh` is the
   drill: it restores a snapshot into a scratch directory, compares every
-  entry byte-for-byte, and reports the copy time. Run it before this
-  procedure and log its output as the drill artifact.
+  entry byte-for-byte, and reports the copy time. The install schedules it
+  weekly (`clanker-state-verify.timer`, catch-up run after downtime), so the
+  journal holds recent drill artifacts; run it once more before this
+  procedure on the exact snapshot you picked.
 
 ## Escalate or follow up
 
@@ -155,11 +164,14 @@ this runbook can manufacture a snapshot that does not exist.
 
 - Code: `scripts/backup-state.sh`, `scripts/install-state-backup.sh`,
   `scripts/verify-backup.sh`,
-  `scripts/systemd/clanker-state-backup.{service,timer}`
+  `scripts/systemd/clanker-state-backup.{service,timer}`,
+  `scripts/systemd/clanker-state-verify.{service,timer}`
 - Docs: `scripts/README.md` (State backup),
   [state-backups-not-running.md](state-backups-not-running.md)
 - Layout: `state/` is one of the checkout-wide shared roots
   (`src/improve/worktree.zig`); stores under it are listed in
   `docs/README.md`
-- Last verified: never by a full manual restore; run
-  `scripts/verify-backup.sh` as the first drill
+- Last verified: the weekly drill (`clanker-state-verify.timer`) restores a
+  snapshot into a scratch dir on schedule; its journal entries are the
+  standing drill artifacts. A full manual restore of this procedure has not
+  been recorded yet — log one when it happens.

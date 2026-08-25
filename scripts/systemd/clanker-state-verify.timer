@@ -1,0 +1,10 @@
+[Unit]
+Description=Restore-verify clanker state backups weekly
+
+[Timer]
+OnCalendar=Sat *-*-* 03:17:00
+Persistent=true
+Unit=clanker-state-verify.service
+
+[Install]
+WantedBy=timers.target

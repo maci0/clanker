@@ -31,10 +31,23 @@ next run — they dominate snapshot size (gigabytes vs. tens of megabytes of
 real store) and would dominate restore time, so they stay out the same way
 `.clanker-worktrees/` is not covered by design.
 
+**Session databases.** Sessions are one WAL-mode SQLite database per
+conversation (`state/sessions/<id>.db`) and stay open for as long as a
+serve/repl runs, so a plain copy can catch a main db and `-wal` sidecar that
+never existed together. When the `sqlite3` CLI is available the script
+checkpoints every session database immediately before copying (committed
+turns move into the main db file; no durability setting changes), then runs
+`PRAGMA quick_check` against each staged database and refuses to promote a
+snapshot whose copy does not load — `latest` keeps pointing at the last good
+snapshot and the journal names the store at fault. Without `sqlite3` the run
+falls back to a crash-consistent copy and says so. Text stores (`*.jsonl`)
+keep their known torn-last-line tolerance either way.
+
 `clanker-state-backup.timer` runs at `:00` and `:30`. Its persistent setting
 runs one catch-up backup when the user systemd manager returns after downtime.
-The installed launcher lives at `~/.local/bin/clanker-state-backup`; it is
-local configuration and is not committed.
+The installed launchers live at `~/.local/bin/clanker-state-backup` and
+`~/.local/bin/clanker-state-verify`; they are local configuration and are not
+committed.
 
 Snapshots older than `CLANKER_BACKUP_RETENTION_DAYS` (default 30) are pruned
 on each successful backup; set it to `0` to keep every snapshot. Staging
@@ -55,14 +68,23 @@ store's disk: this posture protects the store against checkout loss
 (re-clone, `git clean`), accidental deletion, and logical corruption, but a
 loss of the storage-root volume itself takes the snapshots with it. If that
 volume dies, there is no recovery from these backups — that is the accepted
-single-failure-domain trade-off; a copy on a second volume is the operator's
-call, not something the script can arrange.
+single-failure-domain trade-off. To buy a second domain, set
+`CLANKER_BACKUP_OFFSITE_DEST` in the service environment to an rsync
+destination outside the storage root (another disk, or another machine:
+`user@host:/vol/clanker-backups`); every successful run mirrors the whole
+backup root there, and a failed mirror fails the run loudly rather than
+leaving a silently stale second copy. The mirror never gets `--delete`: local
+retention prunes do not propagate, so one deletion path cannot destroy both
+copies (reclaim mirror space with a deliberate manual `rsync -a --delete`).
 
 **Restore verification.** A backup that has never been restored is a
 hypothesis. `scripts/verify-backup.sh` restores a snapshot's entries into a
 scratch directory, compares them byte-for-byte against the snapshot, and
-prints the copy time — run it as a periodic drill (and before every
-incident-time restore) so RTO stops being an unknown:
+prints the copy time. The install wires it as
+`clanker-state-verify.timer`, a weekly drill (Saturdays 03:17, catch-up run
+after downtime) so restore verification does not depend on anyone remembering;
+run it by hand before every incident-time restore so RTO stops being an
+unknown:
 
 ```bash
 ./scripts/verify-backup.sh               # newest snapshot
@@ -74,9 +96,10 @@ writes are lost, and `Persistent=true` runs a catch-up snapshot after downtime.
 Retention (default 30 days) also bounds how far back a point-in-time restore
 can go — restore any snapshot up to the retention window, not just the latest.
 RTO is the time to copy a chosen snapshot back; `scripts/verify-backup.sh`
-measures it on every drill (none has been run yet, so it is still
-unmeasured). Restore is a copy-out, never an edit of
-`backups/`: see [docs/runbooks/state-restore.md](../docs/runbooks/state-restore.md).
+measures it on every drill (weekly via `clanker-state-verify.timer`; check
+its last run before trusting an old number). Restore is a copy-out, never an
+edit of `backups/`: see
+[docs/runbooks/state-restore.md](../docs/runbooks/state-restore.md).
 
 ## Software bill of materials
 

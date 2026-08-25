@@ -40,6 +40,33 @@ mkdir -p "$backup_root"
 trap 'rm -rf -- "$staging"' EXIT
 mkdir "$staging"
 
+# Session databases are WAL-mode SQLite (`src/util/sqlite.zig` sets
+# journal_mode=WAL; one db per conversation under `state/sessions/<id>.db`)
+# and stay open for the life of a serve/repl. A plain rsync of a hot WAL pair
+# can capture a main db plus sidecar that never existed together on disk:
+# committed turns live in `<id>.db-wal`, and a torn or mismatched pair does
+# not load on restore. Checkpointing each database immediately before the
+# copy moves every committed transaction into the main db file, so the
+# snapshot is a consistent single file even though writers continue
+# afterwards (their later commits land in a fresh wal the next run
+# checkpoints). This is maintenance, not a durability change: nothing about
+# how clanker writes is altered. Without the sqlite3 CLI the copy falls back
+# to today's crash-consistent behavior and says so instead of pretending.
+checkpoint_session_wal() {
+    command -v sqlite3 >/dev/null 2>&1 || {
+        printf 'note: sqlite3 not found; session snapshots stay crash-consistent (wal not checkpointed)\n' >&2
+        return 0
+    }
+    local db
+    for db in "$state_root"/sessions/*.db; do
+        [ -e "$db" ] || return 0
+        sqlite3 -- "$db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 ||
+            printf 'warning: wal checkpoint on %s did not complete; its snapshot stays crash-consistent\n' \
+                "$(basename -- "$db")" >&2
+    done
+}
+checkpoint_session_wal
+
 for entry in state:state agents:.agents local:.local; do
     name=${entry%%:*}
     repo_name=${entry#*:}
@@ -97,6 +124,28 @@ for name in $copied; do
         exit 1
     }
 done
+
+# A snapshot is only a backup if the current system can load it. quick_check
+# runs against the *staged copy* -- what a restore would actually read -- so
+# corruption introduced by the copy itself (or by an uncheckpointable hot wal
+# pair) fails this run instead of surfacing during the incident. A failing
+# database refuses promotion: `latest` keeps pointing at the last good
+# snapshot, and the journal shows which store to look at.
+verify_snapshot_dbs() {
+    command -v sqlite3 >/dev/null 2>&1 || return 0
+    local db result
+    for db in "$staging"/state/sessions/*.db; do
+        [ -e "$db" ] || return 0
+        if ! result=$(sqlite3 -- "$db" "PRAGMA quick_check;" 2>&1) || [ "$result" != "ok" ]; then
+            printf 'error: staged %s failed integrity check (%s); refusing to promote a corrupt snapshot\n' \
+                "$(basename -- "$db")" "${result:-sqlite3 failed}" >&2
+            return 1
+        fi
+    done
+}
+if ! verify_snapshot_dbs; then
+    exit 1
+fi
 mv "$staging" "$snapshot"
 ln -sfn "$timestamp" "$latest"
 
@@ -140,3 +189,31 @@ prune_old_snapshots() {
 }
 
 prune_old_snapshots || printf 'warning: snapshot pruning failed; backups are intact\n' >&2
+
+# Second failure domain. Snapshots under `<storage_root>/backups/` share the
+# store's disk (the accepted posture above); when that volume dies they die
+# too. CLANKER_BACKUP_OFFSITE_DEST names an rsync destination outside that
+# domain -- another disk, another machine (`user@host:/vol/clanker-backups`)
+# -- and every successful run mirrors the whole backup root there. The mirror
+# deliberately never gets --delete: local retention prunes must not propagate,
+# or one fat finger (or one ransomware process) deletes both copies through
+# the same run. Reclaiming mirror space is a manual, deliberate
+# `rsync -a --delete` from an operator who has checked what is being removed.
+# A failed mirror fails the run loudly (systemd marks the service failed) even
+# though the local snapshot just taken is complete: a silently stale second
+# copy is worse than a visible failure.
+offsite_dest=${CLANKER_BACKUP_OFFSITE_DEST:-}
+if [ -n "$offsite_dest" ]; then
+    case "$offsite_dest" in
+        "$repo_root"/*|"$backup_root"|"$backup_root"/*)
+            printf 'error: CLANKER_BACKUP_OFFSITE_DEST=%s is inside the checkout or the backup root itself; it protects nothing\n' "$offsite_dest" >&2
+            exit 1
+            ;;
+    esac
+    if rsync -a "$backup_root/" "$offsite_dest/"; then
+        printf 'mirrored backup root to %s\n' "$offsite_dest" >&2
+    else
+        printf 'error: mirroring to %s failed; the local snapshot is complete but the off-site copy did not update\n' "$offsite_dest" >&2
+        exit 1
+    fi
+fi

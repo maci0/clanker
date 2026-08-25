@@ -1,0 +1,6 @@
+[Unit]
+Description=Verify clanker state backup restores cleanly
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/clanker-state-verify

@@ -7,6 +7,10 @@ user_bin="${HOME:?}/.local/bin"
 
 mkdir -p "$user_bin"
 ln -sfn "$script_dir/backup-state.sh" "$user_bin/clanker-state-backup"
+# The weekly restore drill is part of the same install: a backup that has
+# never been restored is a hypothesis, and nothing else runs
+# verify-backup.sh on its own (ADR 0008: nothing fires alone).
+ln -sfn "$script_dir/verify-backup.sh" "$user_bin/clanker-state-verify"
 
 # `systemctl link` fails with "File exists" when the unit is already linked,
 # so a plain second run of this script exits 1 instead of converging. Link
@@ -27,5 +31,8 @@ link_unit() {
 }
 link_unit clanker-state-backup.service
 link_unit clanker-state-backup.timer
+link_unit clanker-state-verify.service
+link_unit clanker-state-verify.timer
 systemctl --user daemon-reload
 systemctl --user enable --now clanker-state-backup.timer
+systemctl --user enable --now clanker-state-verify.timer
