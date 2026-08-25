@@ -113,6 +113,15 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/cli.zig", .needle = "gate_checks.releaseContractGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.webuiBudgetGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.depPatchesGate(" },
+    // The seven checks above live in verifyGates, which has exactly two
+    // callers: cmdGate (`clanker gate`) and cmdImproveSelf's post-merge
+    // pass -- the only grading that runs against the tree a promotion
+    // actually landed in, not the staging copy it was gated from. Deleting
+    // either call silences every check without touching a pinned line, and
+    // both calls are byte-identical, so each needle carries one line of
+    // context that is unique to its site.
+    .{ .file = "src/cli.zig", .needle = "cfg.improve.max_cache_bytes);\n    try verifyGates(gpa, io, arena);" },
+    .{ .file = "src/cli.zig", .needle = "if (!opts.dry_run) {\n        try verifyGates(gpa, io, arena);" },
     // The one gate that asks whether a change does anything. It is the gate a
     // loop optimising for acceptance has the most to gain from removing, and
     // removing it would look, to every other check, like a clean patch.
@@ -5016,6 +5025,21 @@ test "a patch that strips a clanker-gate-only check from verifyGates is rejected
     // their implementations are writable checks.zig code, so the call site
     // is the only protected half.
     try expectInvariantCaught("src/cli.zig", "gate_checks.testRootCoverageGate(", "");
+}
+
+test "a patch that deletes verifyGates' post-merge caller is rejected" {
+    // The promotion gates run against staging before anything lands; this
+    // call is the one grading pass over the merged result everyone else
+    // works in. Deleting it leaves all seven check sites inside verifyGates
+    // intact, so the caller itself is what has to be pinned.
+    try expectInvariantCaught("src/cli.zig", "if (!opts.dry_run) {\n        try verifyGates(gpa, io, arena);", "");
+}
+
+test "a patch that deletes verifyGates' clanker-gate caller is rejected" {
+    // Same shape as the post-merge caller: `clanker gate` is how an operator
+    // (and CI) runs every deterministic check, and its call text is
+    // identical to the other site, hence the context line.
+    try expectInvariantCaught("src/cli.zig", "cfg.improve.max_cache_bytes);\n    try verifyGates(gpa, io, arena);", "");
 }
 
 test "the newer clanker-gate-only checks are pinned too" {
