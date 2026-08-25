@@ -330,21 +330,30 @@ pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
         return &.{};
     };
     if (AggregateCache.get(path, st)) |cached| return cached;
-    const stats = try aggregateFold(base, io, gpa, path);
+    const stats = aggregateFold(base, io, gpa, path) catch |err| switch (err) {
+        // A read that fails after a successful stat (a mid-flight trim, a
+        // permission flip) must not be stored: an entry would pin "no usage"
+        // until the log next changes. Answer nothing this call; the next one
+        // re-stats and retries.
+        error.LogUnreadable => return &.{},
+        else => return err,
+    };
     return AggregateCache.store(path, st, stats);
 }
 
 /// The read + fold half of `aggregate`, allocating the group rows from the
 /// cache's allocator so the public function can hand back process-stable
-/// memory. Never caches a failed read: the caller stores only on success.
-/// The map-key dupes are not reclaimed on cache replacement (bounded: a few
-/// dozen short strings per log change, like the wasm cache's documented
-/// superseded-generation leak); the row names in `out` are freed by
-/// `AggregateCache.store`.
+/// memory. A read that fails after the stat returns `error.LogUnreadable`
+/// rather than an empty slice, so the caller can leave the cache alone; a
+/// genuinely empty log reads as zero rows and is cached like any other
+/// version. OutOfMemory propagates. The map-key dupes are not reclaimed on
+/// cache replacement (bounded: a few dozen short strings per log change, like
+/// the wasm cache's documented superseded-generation leak); the row names in
+/// `out` are freed by `AggregateCache.store`.
 fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]Stat {
     const raw = base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + read_slack_bytes)) catch |err| {
         if (err != error.FileNotFound) log.log(.warn, "[stats] read of {s} failed: {s}", .{ path, @errorName(err) });
-        return &.{};
+        return error.LogUnreadable;
     };
     defer gpa.free(raw);
 
@@ -705,6 +714,51 @@ test "an over-cap log still aggregates instead of reporting no usage" {
     try std.testing.expectEqual(@as(usize, 1), stats.len);
     try std.testing.expect(stats[0].calls > 0);
     try std.testing.expectEqual(stats[0].calls * 2, stats[0].total_tokens);
+}
+
+test "an unreadable log is not cached as zero usage" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    // The slot is process-wide and other tests fill it; start empty so the
+    // assertion below sees only what this test stored.
+    AggregateCache.lock();
+    if (AggregateCache.entry) |e| AggregateCache.freeEntry(e);
+    AggregateCache.entry = null;
+    AggregateCache.mutex.unlock();
+
+    // A directory at the log path stats fine but fails to read: exactly the
+    // post-stat read failure (a mid-flight trim, a permission flip) that must
+    // answer "nothing this call", never be remembered as "no usage".
+    try env.tmp.dir.createDirPath(io, stat_path);
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 0), stats.len);
+
+    {
+        AggregateCache.lock();
+        defer AggregateCache.mutex.unlock();
+        try std.testing.expect(AggregateCache.entry == null);
+    }
+
+    // The same path serving a real log afterwards aggregates normally.
+    try env.tmp.dir.deleteDir(io, stat_path);
+    append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
+        .ts = 1,
+        .provider = "p",
+        .model = "m",
+        .prompt_tokens = 1,
+        .completion_tokens = 1,
+        .total_tokens = 2,
+        .cache_hit = 0,
+        .cache_miss = 1,
+        .cost = 0.0,
+        .duration_ms = 1,
+    });
+    const after = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 1), after.len);
+    try std.testing.expectEqual(@as(u64, 1), after[0].calls);
 }
 
 test "thinking metadata aggregates into CLI and API distributions" {

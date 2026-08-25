@@ -4844,9 +4844,15 @@ test "an Arena verdict cannot satisfy a gate or reject a proposal on its own" {
 
     // 1. No gate invariant names the advisory. If one did, removing the
     //    advisory would fail the gate check, which would make it load-bearing.
+    //    Matched by the advisory's own names, not the bare word "arena":
+    //    that is also cli.zig's allocator parameter, and invariant needles
+    //    quote the source they pin (the verifyGates call sites), so a bare
+    //    substring would fire on any pinned line that ends `, io, arena)`.
     for (gate_invariants) |inv| {
-        try std.testing.expect(std.mem.find(u8, inv.needle, "arena") == null);
-        try std.testing.expect(std.mem.find(u8, inv.needle, "Arena") == null);
+        try std.testing.expect(std.mem.find(u8, inv.needle, "arenaAdvisory") == null);
+        try std.testing.expect(std.mem.find(u8, inv.needle, "arena_note") == null);
+        try std.testing.expect(std.mem.find(u8, inv.needle, "arena_advisory") == null);
+        try std.testing.expect(std.mem.find(u8, inv.needle, "ArenaMatch") == null);
     }
 
     // 2. arenaAdvisory returns nothing. A function that cannot report anything
