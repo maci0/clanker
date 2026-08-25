@@ -167,7 +167,8 @@ fit four maximum-sized images after base64 expansion (~21.4 MiB) plus JSON
 framing; the socket reader in `handleConnection` enforces this same limit
 and returns 413, not a silent truncation.
 
-**Fork.** Sessions are files (`state/sessions/<id>.json`), so fork is
+**Fork.** Sessions are per-session SQLite databases (`state/sessions/<id>.db`,
+PRD 0044), so fork is
 copy-with-new-id and a title of "fork of \<title\>" —
 `POST /api/sessions/<id>/fork`.
 

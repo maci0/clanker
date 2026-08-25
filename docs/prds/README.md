@@ -70,7 +70,7 @@ and Implementation lists checkable file-level phases.
 | [0009](0009-schedule.md) | Scheduled runs | Shipped | (Fixed) sweep-exit Known issue |
 | [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
 | [0011](0011-clanker-mesh.md) | Clanker mesh | In progress | Serve listener + `clanker mesh` + HTTP join/leave/status/pending in; `ck_mesh` guests and Phase 3 share open |
-| [0012](0012-surface-plugins.md) | Surface plugins | Partial | Web UI shipped; TUI/CLI draft |
+| [0012](0012-surface-plugins.md) | Surface plugins | Shipped | Web UI, TUI slash-command scan and CLI two-tier all shipped (TUI/CLI 2026-08-20) |
 | [0013](0013-ttsr.md) | TTSR | Shipped | Substring/`*` abort-and-retry |
 | [0014](0014-hashline.md) | Hashline edit format | Shipped | `hashes:true` + `op:hashline` |
 | [0015](0015-advisor.md) | Advisor | Shipped | Off by default; fail-open |
@@ -116,7 +116,7 @@ and Implementation lists checkable file-level phases.
 | [0055](0055-markdown-session-export.md) | Markdown session export | In progress | format=md + CLI .md inference shipped; TUI /export-md open |
 | [0056](0056-goal-queue-started-only-on-complete.md) | Goal queue started only on complete | Draft |  |
 | [0057](0057-nested-explore-plan-coder-presets.md) | Nested explore/plan/coder presets | Draft |  |
-| [0058](0058-repl-mid-stream-inject-via-steer.md) | REPL mid-stream inject via steer | Draft |  |
+| [0058](0058-repl-mid-stream-inject-via-steer.md) | REPL mid-stream inject via steer | Shipped | Composer-as-steer-box shipped differently than drafted; no `/steer` command, no Ctrl-S binding |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts and open in-progress work)
@@ -125,7 +125,7 @@ Packaging and reliability first, then agent-loop quality, then heavy
 optional subsystems. Shipped PRDs (0021, 0033, …) are not listed.
 
 1. **0016** supervisors / **0017** DAP — the remaining 0016 phases (JS kernel, venv bridge) and 0017's live-lldb follow-up
-2. **0018** / **0011** / **0012 TUI+CLI** — opt-in or larger surface work
+2. **0018** / **0011** — opt-in or larger surface work
 3. **0030** — ACP server session methods (`session/update`, `session/request_permission`, and the Agent binding for `session/new` + `session/prompt`)
 4. **0032** — MCP client bridge (largest: needs a new registry dispatch kind; soft-depends on 0016 for a long-lived subprocess handle)
 

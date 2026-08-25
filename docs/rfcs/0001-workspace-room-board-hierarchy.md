@@ -104,7 +104,7 @@ per-project roster yet.
 | Folder | an absolute directory on one machine | the `path` on a workspace row, or the serve cwd |
 | Workspace | `state/workspaces.json` (`src/agent/workspace.zig`) | **exactly one** folder + sessions tagged with that id. Empty id is the cwd and is never stored |
 | Component / root | *does not exist* | a workspace cannot name a second folder today |
-| Session | `state/sessions/<id>.json` | a single `workspace` string (`src/agent/session.zig`) |
+| Session | `state/sessions/<id>.db` (SQLite; was `<id>.json`, PRD 0044) | a single `workspace` string (`src/agent/session.zig`) |
 | Chatroom | `state/chatrooms.jsonl` | a fleet-scoped named log. Subscribe is per instance, not per workspace (PRD 0001). DMs are ordinary rooms `dm:<a>\|<b>` with no folder and no board; arenas already get per-object rooms `arena-<id>` |
 | Kanban | fold of a room, default `"board"` (`tools/zig/board.zig`) | the room the caller named, otherwise one global board for the instance. The board is already a room fold; there is no per-project `#general` room and no goal rooms |
 | Goal | `state/goals.json` | optional `worktree` (git branch/path). No workspace field (`tools/zig/add_goal.zig`) |

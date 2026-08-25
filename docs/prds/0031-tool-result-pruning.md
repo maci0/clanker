@@ -59,8 +59,8 @@ untouched.
   start and end.
 - **Keeping a recoverable copy of the pruned original in memory or on disk
   for later un-pruning.** Once pruned, the original bytes are gone from the
-  in-memory request-bound message list. This does not touch
-  `state/sessions/*.json` at all (see Design) — the on-disk transcript is
+  in-memory request-bound message list. This does not touch the on-disk
+  session store at all (see Design) — the saved transcript is
   unaffected by this feature.
 - **Pruning non-tool messages.** Assistant and user text are never touched;
   only `role == .tool` content.
@@ -71,8 +71,9 @@ untouched.
 build blocker this PRD has to settle rather than leave open, because getting
 it backwards would make the on-disk session transcript lossy in a way it is
 not today. `session.compactMessages`'s existing save-time trim
-(`src/agent/session.zig`) drops whole messages from what gets written to
-`state/sessions/*.json`; that mechanism is untouched. `Agent.requestMessages`
+(`src/agent/session.zig`) drops whole messages from what gets written to the
+per-session store (`state/sessions/<id>.db`); that mechanism is untouched.
+`Agent.requestMessages`
 first makes a shallow copy of the message structs, then `pruneToolResults`
 rewrites content only in that request copy. The model pays for less; the
 canonical and saved transcript stay exact. A reader of a saved session sees
@@ -145,9 +146,9 @@ gate, no other Draft PRD required.
 - [x] A `role == .tool` message over `tool_result_prune_bytes` is rewritten
       to head + marker + tail, and is under the threshold afterward.
 - [x] Assistant and user messages are never modified by pruning.
-- [x] `state/sessions/*.json` for a session that triggered pruning contains
-      the original, unpruned tool-result content — pruning is provably
-      request-side only.
+- [x] The saved session (`state/sessions/<id>.db`) of a session that triggered
+      pruning contains the original, unpruned tool-result content — pruning is
+      provably request-side only.
 - [x] A second pruning pass over already-pruned content is a no-op (byte
       count unchanged).
 - [x] Defaults are 8192/4096/1024 for threshold/head/tail bytes; `0` on the

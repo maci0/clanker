@@ -342,7 +342,11 @@ on the existing Fleet / status surface; no dedicated tree browser.
 **Shared workspaces (Phase 3).** Sharing is explicit
 (`workspace_share {"workspace":"research","share":true}`), never
 implied by JOIN. The member that first shares a session is its
-**home**. Home writes the canonical `state/sessions/<id>.json`.
+**home**. Home writes the canonical
+`state/sessions/<id>.db` (sessions are per-session SQLite databases,
+[ADR 0033](../adrs/0033-sessions-are-per-session-sqlite-databases-with-an-append.md);
+its stream-replication-at-cursor+1 decision supersedes this section's
+file-copy sketch where the two disagree).
 Other members hold a read-only replica under
 `state/mesh/<home-id>/sessions/<id>.json`. Continuing the
 conversation is `SESSION_APPEND` to home; home assigns order and
