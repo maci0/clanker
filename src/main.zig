@@ -243,6 +243,7 @@ comptime {
     _ = @import("peers/session_sync.zig");
     _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
+    _ = @import("llm/stream.zig");
     _ = @import("tui/width.zig");
     _ = @import("tui/sanitize.zig");
     _ = @import("tui/transcript.zig");

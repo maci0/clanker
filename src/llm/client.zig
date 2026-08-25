@@ -17,6 +17,7 @@ const config = @import("../config.zig");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const token_stats = @import("../stats/tokens.zig");
+const stream = @import("stream.zig");
 const cache_cold = @import("cache_cold.zig");
 const rate_limit = @import("rate_limit.zig");
 const build_options = @import("build_options");
@@ -856,9 +857,23 @@ fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Prov
         }
     }
     const cfg = ctx.cfg orelse return;
-    if (!cfg.modules.token_stats) return;
     const u = usage orelse return;
     if (u.total_tokens == 0 and u.prompt_tokens == 0 and u.completion_tokens == 0) return;
+
+    // --stream is independent of the token_stats module: one wants a live
+    // reading on stdout, the other a durable log in state/, and a monitor
+    // should not depend on the log being switched on.
+    stream.emitUsage(ctx.io, .{
+        .provider = provider.name,
+        .model = provider.activeModelName(),
+        .prompt_tokens = u.prompt_tokens,
+        .completion_tokens = u.completion_tokens,
+        .total_tokens = u.total_tokens,
+        .cache_hit = u.prompt_cache_hit_tokens,
+        .duration_ms = duration_ms,
+    });
+
+    if (!cfg.modules.token_stats) return;
 
     const cost = totalCost(provider, u);
 

@@ -5,6 +5,7 @@ const builtin = @import("builtin");
 const toml = @import("toml");
 const config = @import("config.zig");
 const client = @import("llm/client.zig");
+const llm_stream = @import("llm/stream.zig");
 const providers = @import("llm/registry.zig");
 const catalog_mod = @import("llm/catalog.zig");
 const models_dev = @import("llm/models_dev.zig");
@@ -370,6 +371,7 @@ pub const Options = struct {
     /// `clanker sessions`, reading an id and pasting it back is the workaround
     /// it replaces.
     continue_last: bool = false,
+    stream: bool = false,
     /// `--mascot[=off|type|loop]`: the REPL easter egg. Null means the flag was
     /// absent and `tui.mascot` decides; the value is left as a string here and
     /// parsed in the REPL, so a bad spelling is one error message rather than
@@ -767,6 +769,9 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
                 opts.continue_last = true;
                 used = .continue_last;
+            } else if (std.mem.eql(u8, a, "--stream")) {
+                opts.stream = true;
+                used = .stream;
             } else if (std.mem.eql(u8, a, "--mascot")) {
                 // Inline value only, never the following token: bare `--mascot`
                 // is a valid spelling that means "on, pick the default mode",
@@ -1544,6 +1549,10 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             return error.MissingArg;
         }
     }
+    // Machine-readable usage goes on as soon as it is parsed: the flag is a
+    // display mode, and every model call from here on should carry it.
+    llm_stream.enabled = opts.stream;
+
     return opts;
 }
 
@@ -1951,6 +1960,7 @@ const Flag = enum {
     backend,
     session,
     continue_last,
+    stream,
     mascot,
     mascot_size,
     mascot_facing,
@@ -2009,6 +2019,7 @@ const Flag = enum {
             .backend => "--backend",
             .session => "--session",
             .continue_last => "--continue, -c",
+            .stream => "--stream",
             .mascot => "--mascot[=<mode>]",
             .mascot_size => "--mascot-size <size>",
             .mascot_facing => "--mascot-facing <dir>",
@@ -2073,6 +2084,7 @@ const Flag = enum {
             .backend => "drive a local coding-agent CLI (grok, claude, or codex) instead of the in-process LLM loop",
             .session => "resume a saved conversation by id",
             .continue_last => "pick up the most recently touched session",
+            .stream => "also print one JSON usage line per model response, for monitors",
             .mascot => "run the mascot: off, type, loop, place, or input",
             .mascot_size => "mascot size: mini, xsmall, small, medium (default), or large",
             .mascot_facing => "which way the mascot faces: default or inverted",
@@ -2185,7 +2197,7 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--quiet`/`-q`, `--help`/`-h` and `--version` are accepted
 /// everywhere and so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop; [agent] backend is the\n                   same key. Unset keeps today's in-process loop\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop; [agent] backend is the\n                   same key. Unset keeps today's in-process loop\n--stream           also print one JSON usage line per model response, so a\n                   monitor can show live tokens per second\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  default or inverted: which way the mascot faces.\n                   tui.mascot_facing. Applies to loop and place; place\n                   faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that." },
     .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop" },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
