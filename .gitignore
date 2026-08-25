@@ -66,6 +66,10 @@ chatrooms.jsonl
 tools/grammars/*.so
 .playwright-mcp/
 
+# Local tool caches (mypy over scripts/*.py; impeccable skill session state)
+.mypy_cache/
+.impeccable/
+
 # Runtime lock for the review loop (github.com/maci0/gauntlet, formerly
 # review-prompts and named review-loop.py; .review-loop.lock is its old name).
 .review-loop.lock
