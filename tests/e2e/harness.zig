@@ -219,6 +219,44 @@ pub fn writeMeshConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, opts
     try dir.writeFile(io, .{ .sub_path = "config.toml", .data = toml });
 }
 
+/// Two providers for a fallback-chain journey: the primary dead (127.0.0.1:9
+/// refuses the connect, the same never-listening port the mesh fixtures use),
+/// the fallback a scripted mock on 127.0.0.1:`port`. No `api_key_env` on
+/// either, so both pass the offline credential gate and only the transport
+/// decides.
+pub fn writeFallbackConfig(io: std.Io, dir: std.Io.Dir, gpa: std.mem.Allocator, port: u16) !void {
+    const toml = try std.fmt.allocPrint(gpa,
+        \\default_provider = "dead"
+        \\
+        \\[providers.dead]
+        \\kind = "openai_compat"
+        \\base_url = "http://127.0.0.1:9"
+        \\default_model = "mock"
+        \\
+        \\[models."dead/mock"]
+        \\provider = "dead"
+        \\context_window = 32000
+        \\max_tokens = 4096
+        \\
+        \\[providers.e2e-mock]
+        \\kind = "openai_compat"
+        \\base_url = "http://127.0.0.1:{d}"
+        \\default_model = "mock2"
+        \\
+        \\[models."e2e-mock/mock2"]
+        \\provider = "e2e-mock"
+        \\context_window = 32000
+        \\max_tokens = 4096
+        \\
+        \\[agent]
+        \\tools_dir = {f}
+        \\fallback_providers = ["e2e-mock"]
+        \\
+    , .{ port, std.json.fmt(tools_manifests_dir, .{}) });
+    defer gpa.free(toml);
+    try dir.writeFile(io, .{ .sub_path = "config.toml", .data = toml });
+}
+
 /// Sequential ports so parallel e2e tests do not steal a just-released bind.
 /// Probe without SO_REUSEADDR: `clanker serve` sets reuse_address, so a
 /// leftover e2e serve would otherwise share the port and 404 half the GETs.

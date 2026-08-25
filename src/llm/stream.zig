@@ -40,22 +40,9 @@ pub const Usage = struct {
 /// the first time a model or provider name contains a quote.
 pub fn emitUsage(io: std.Io, u: Usage) void {
     if (!enabled) return;
-
     var buf: [1024]u8 = undefined;
-    var w = std.Io.Writer.fixed(&buf);
-    var s = std.json.Stringify{ .writer = &w };
-    s.write(Line{
-        .provider = u.provider,
-        .model = u.model,
-        .prompt_tokens = u.prompt_tokens,
-        .completion_tokens = u.completion_tokens,
-        .total_tokens = u.total_tokens,
-        .reasoning_tokens = u.reasoning_tokens,
-        .cache_hit = u.cache_hit,
-        .duration_ms = u.duration_ms,
-    }) catch return; // a name long enough to overflow is not worth a line
-    w.writeByte('\n') catch return;
-    std.Io.File.stdout().writeStreamingAll(io, w.buffered()) catch {};
+    const line = render(&buf, u) catch return; // a name long enough to overflow is not worth a line
+    std.Io.File.stdout().writeStreamingAll(io, line) catch {};
 }
 
 /// The wire record. Field names are the OpenAI spellings, which is what every
