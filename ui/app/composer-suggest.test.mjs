@@ -105,7 +105,12 @@ function harness(taskValue) {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(hideSrc + "\n" + fileSrc + "\n" + kbSrc, ctx);
-  return { ctx, task, taskCombobox, promptList, fetches };
+  // Read a top-level binding inside the context rather than off the context
+  // object: bun's vm serves stale property values for globals another
+  // function has reassigned (node does not), so `ctx.kbMentionActive` read
+  // here lagged one mutation behind the code under test.
+  const g = (name) => vm.runInContext(name, ctx);
+  return { ctx, task, taskCombobox, promptList, fetches, g };
 }
 
 const settle = () => new Promise((r) => setImmediate(r));
@@ -182,7 +187,7 @@ test("dismissing the # list does not leave #task claiming to be expanded", async
   h.fetches[0].reply({ collections: [{ id: "zig", title: "zig", doc_count: 3 }] });
   await settle();
   assert.equal(h.taskCombobox.getAttribute("aria-expanded"), "true");
-  assert.equal(h.ctx.kbMentionActive, true);
+  assert.equal(h.g("kbMentionActive"), true);
 
   // Pick the collection. Nothing else fires afterwards — the composer's value
   // is rewritten in code, so no `input` event comes along to tidy up.
@@ -196,7 +201,7 @@ test("dismissing the # list does not leave #task claiming to be expanded", async
     h.task.getAttribute("aria-activedescendant"), null,
     "aria-activedescendant kept pointing at an option that is no longer shown"
   );
-  assert.equal(h.ctx.kbMentionActive, false);
+  assert.equal(h.g("kbMentionActive"), false);
 });
 
 test("hidePromptList is the only place that hides the suggestion list", function () {
