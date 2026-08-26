@@ -1692,7 +1692,7 @@ pub const Agent = struct {
         if (self.events) |*rec| {
             const compaction_summary = messages.items[1].content orelse "";
             rec.recordObject(session_events.EventKind.compaction, &.{
-                .{ .name = "replaced_with", .value = .{ .text = if (compaction_summary.len > 2000) compaction_summary[0..2000] else compaction_summary } },
+                .{ .name = "replaced_with", .value = .{ .text = utf8.cap(compaction_summary, 2000) } },
             });
         }
         return after;
@@ -3346,7 +3346,7 @@ pub const Agent = struct {
                 rec.recordObject(session_events.EventKind.tool_result, &.{
                     .{ .name = "name", .value = .{ .text = tc.name } },
                     .{ .name = "ok", .value = .{ .bool_ = !std.mem.startsWith(u8, out, "{\"ok\":false") } },
-                    .{ .name = "preview", .value = .{ .text = if (out.len > 4000) out[0..4000] else out } },
+                    .{ .name = "preview", .value = .{ .text = utf8.cap(out, 4000) } },
                 });
             }
         }

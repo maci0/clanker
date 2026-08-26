@@ -11,6 +11,7 @@ const registry = @import("../toolhost/registry.zig");
 const builder = @import("../toolhost/builder.zig");
 const scorers = @import("scorers.zig");
 const log = @import("../util/log.zig");
+const utf8 = @import("../util/utf8.zig");
 
 pub const Result = struct {
     name: []const u8,
@@ -83,7 +84,7 @@ pub const Runner = struct {
             .kind = e.kind,
             .score = score,
             .ok = score >= 1.0,
-            .detail = if (answer.len > 200) answer[0..200] else answer,
+            .detail = utf8.cap(answer, 200),
         };
     }
 
@@ -120,5 +121,5 @@ pub const Runner = struct {
 
 fn trimDetail(arena: std.mem.Allocator, s: []const u8) []const u8 {
     if (s.len <= 600) return s;
-    return arena.dupe(u8, s[s.len - 600 ..]) catch s;
+    return arena.dupe(u8, utf8.tail(s, 600)) catch s;
 }

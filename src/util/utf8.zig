@@ -19,6 +19,19 @@ pub fn cap(s: []const u8, max_bytes: usize) []const u8 {
     return s[0..end];
 }
 
+/// Returns `s` unchanged when it fits, otherwise a suffix of at most
+/// `max_bytes` that begins on a codepoint boundary. The mirror of `cap` for
+/// callers that keep the end of the text (a build gate's stderr tail).
+pub fn tail(s: []const u8, max_bytes: usize) []const u8 {
+    if (s.len <= max_bytes) return s;
+    var start = s.len - max_bytes;
+    // Skip forward over any continuation bytes so the cut does not land in
+    // the middle of a multi-byte sequence; all-continuation (invalid) input
+    // walks to the end and yields an empty slice rather than a dangling one.
+    while (start < s.len and (s[start] & 0xC0) == 0x80) start += 1;
+    return s[start..];
+}
+
 /// Returns `s` unchanged when it is valid UTF-8, otherwise a copy with every
 /// invalid byte replaced by U+FFFD. Storage boundaries use this so a file the
 /// reader will parse as UTF-8 JSON is never written with the arbitrary bytes
@@ -81,6 +94,23 @@ test "cap never splits a codepoint" {
     // Mixed: "aéé" is 5 bytes; a cap of 3 ("a" + complete first "é") leaves
     // the second "é" untouched rather than half of it.
     try std.testing.expectEqualStrings("aé", cap("aéé", 3));
+}
+
+test "tail never splits a codepoint" {
+    try std.testing.expectEqualStrings("", tail("", 5));
+    try std.testing.expectEqualStrings("hello", tail("hello", 100));
+    try std.testing.expectEqualStrings("llo", tail("hello", 3));
+
+    // A tail of "héllo" starting on é's second byte walks forward to the
+    // next lead byte instead of emitting a dangling continuation.
+    try std.testing.expectEqualStrings("llo", tail("héllo", 4));
+    try std.testing.expectEqualStrings("", tail("é", 1));
+    try std.testing.expectEqualStrings("é", tail("é", 2));
+
+    // "😀" is 4 bytes: a 3-byte tail cannot hold it whole, so nothing is
+    // left; a 4-byte tail keeps the emoji complete.
+    try std.testing.expectEqualStrings("", tail("a😀", 3));
+    try std.testing.expectEqualStrings("😀", tail("a😀", 4));
 }
 
 test "sanitize passes valid UTF-8 through untouched" {
