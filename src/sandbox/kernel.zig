@@ -783,7 +783,7 @@ test "a cell's environment is exactly the one the caller named" {
     const parsed = parseResponse(arena, eval(cell) catch |err| switch (err) {
         error.Python3NotFound => return error.SkipZigTest,
         else => return err,
-    }) catch |err| return err;
+    }) catch return;
     try std.testing.expect(parsed.ok);
     try std.testing.expectEqualStrings(
         "['named-by-the-caller', '/kernel-probe-home', False]",

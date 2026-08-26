@@ -784,7 +784,7 @@ fn tuiGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror![]
         defer backend_result.graph.deinit(self.gpa);
         break :blk backend_result.answer;
     } else blk: {
-        const resp = loop_ctx.agent.run(&self.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
+        const resp = loop_ctx.agent.run(&self.messages, task, &loop_ctx.last_err_detail) catch return;
         break :blk resp.message.content orelse "";
     };
     // Goal-loop turns build their own agent; capture its prompt so the save

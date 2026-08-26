@@ -269,7 +269,7 @@ pub const Session = struct {
         if (try self.takeParkedResponse(arena, id)) |parked| return parked;
         var spins: usize = 0;
         while (spins < 256) : (spins += 1) {
-            const frame = self.readFrame(arena) catch |err| return err;
+            const frame = self.readFrame(arena) catch return;
             if (frameIs(frame, "type", "event")) {
                 try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
                 continue;
@@ -285,7 +285,7 @@ pub const Session = struct {
         }
         var spins: usize = 0;
         while (spins < 256) : (spins += 1) {
-            const frame = self.readFrame(arena) catch |err| return err;
+            const frame = self.readFrame(arena) catch return;
             // Only event frames belong in the event queue. This used to
             // append every frame, so an adapter that answered `attach`
             // before emitting `initialized` had its response consumed here:

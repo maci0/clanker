@@ -5143,7 +5143,7 @@ fn serverGoalLoopRunTurn(context: *anyopaque, _: u32, task: []const u8) anyerror
         defer backend_result.graph.deinit(loop_ctx.ctx.gpa);
         break :blk backend_result.answer;
     } else blk: {
-        const resp = loop_ctx.a.run(loop_ctx.messages, task, &loop_ctx.last_err_detail) catch |err| return err;
+        const resp = loop_ctx.a.run(loop_ctx.messages, task, &loop_ctx.last_err_detail) catch return;
         break :blk resp.message.content orelse "";
     };
     if (loop_ctx.answers.items.len > 0) try loop_ctx.answers.appendSlice(loop_ctx.arena, "\n\n");
