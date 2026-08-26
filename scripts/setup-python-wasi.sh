@@ -16,6 +16,10 @@ url="https://github.com/vmware-labs/webassembly-language-runtimes/releases/downl
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 dest="${repo_root}/vendor/python-wasi"
 wasm_binary="${dest}/bin/python-3.12.0.wasm"
+# Records the archive checksum the current extraction came from, so a
+# re-run against a moved pin refuses instead of silently keeping the old
+# interpreter under the new pin's name.
+stamp="${dest}/.pinned-sha256"
 
 # sha256sum is GNU coreutils; macOS ships the Perl Digest::SHA shasum instead,
 # with the same --check/--status interface and <hash>  <file> input format, so
@@ -34,8 +38,14 @@ verify() {
 }
 
 if [ -f "$wasm_binary" ]; then
-    echo "already present: $wasm_binary"
-    exit 0
+    if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$sha256" ]; then
+        echo "already present: $wasm_binary"
+        exit 0
+    fi
+    echo "setup-python-wasi: $wasm_binary exists but was not installed from the pinned archive" >&2
+    echo "setup-python-wasi: (missing or stale $stamp; the pin is ${release_tag})" >&2
+    echo "setup-python-wasi: remove $dest and re-run to install the pinned release" >&2
+    exit 1
 fi
 
 command -v tar >/dev/null || { echo "setup-python-wasi: tar is required" >&2; exit 1; }
@@ -54,6 +64,7 @@ fi
 
 mkdir -p "$dest"
 tar xzf "$work/$archive" -C "$dest"
+printf '%s\n' "$sha256" > "$stamp"
 
 echo "installed: $wasm_binary"
 echo "set [kernel] enabled = true in config.local.toml to use it"

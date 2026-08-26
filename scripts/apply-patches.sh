@@ -29,19 +29,25 @@ if [ -n "${ZIG_GLOBAL_CACHE_DIR:-}" ]; then roots+=("$ZIG_GLOBAL_CACHE_DIR"); fi
 if [ -n "${ZIG_LOCAL_CACHE_DIR:-}" ]; then roots+=("$ZIG_LOCAL_CACHE_DIR"); fi
 if [ -d "$HOME/.cache/zig" ]; then roots+=("$HOME/.cache/zig"); fi
 
-# patches/<name>.patch -> directory prefix to search for. Order matters:
+# patches/<name>.patch -> directory prefix to search for, answered by
+# target_for() rather than an associative array so the script also runs on
+# stock macOS, whose /bin/bash is 3.2 (associative arrays need bash 4; this
+# script is the documented bootstrap step and must not require a brew shell).
+# Order matters:
 # vaxis-winch-self-pipe also edits src/main.zig, which the sixel patch
 # touches, so the README's listing order is the apply order. The zwasm
 # patch is independent of the vaxis set (different package), so its place
 # in the list is arbitrary; it was re-derived against zwasm 2.5.0 when the
 # build.zig.zon pin moved from 2.4.1.
 order=(vaxis-sixel-graphics vaxis-ss3-keypad-enter vaxis-winch-self-pipe zwasm-lazy-mem-cksum)
-declare -A targets=(
-  [vaxis-sixel-graphics]=vaxis-0.6.0-
-  [vaxis-ss3-keypad-enter]=vaxis-0.6.0-
-  [vaxis-winch-self-pipe]=vaxis-0.6.0-
-  [zwasm-lazy-mem-cksum]=zwasm-2.5.0-
-)
+target_for() {
+    case "$1" in
+        vaxis-sixel-graphics)   printf '%s' 'vaxis-0.6.0-' ;;
+        vaxis-ss3-keypad-enter) printf '%s' 'vaxis-0.6.0-' ;;
+        vaxis-winch-self-pipe)  printf '%s' 'vaxis-0.6.0-' ;;
+        zwasm-lazy-mem-cksum)   printf '%s' 'zwasm-2.5.0-' ;;
+    esac
+}
 
 status=0
 applied=0
@@ -51,9 +57,11 @@ for name in "${order[@]}"; do
     patch_file="$(pwd)/patches/$name.patch"
     [ -f "$patch_file" ] || continue
 
+    prefix=$(target_for "$name")
+
     dir=""
     for root in "${roots[@]}"; do
-        found="$(find "$root" -maxdepth 2 -type d -name "${targets[$name]}*" 2>/dev/null | head -1 || true)"
+        found="$(find "$root" -maxdepth 2 -type d -name "${prefix}*" 2>/dev/null | head -1 || true)"
         if [ -n "$found" ]; then
             dir="$found"
             break
@@ -68,7 +76,7 @@ for name in "${order[@]}"; do
     # so `apply-patches.sh && zig build test` proceeded unpatched (the bug
     # report in docs/reports/).
     if [ -z "$dir" ]; then
-        echo "apply-patches: $name: no ${targets[$name]}* tree under ${roots[*]}" >&2
+        echo "apply-patches: $name: no ${prefix}* tree under ${roots[*]}" >&2
         skipped=$((skipped + 1))
         continue
     fi
