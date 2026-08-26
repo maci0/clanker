@@ -74,7 +74,8 @@ below), then R3 abuse cases, then R4-R6.
   (`docs/reports/bugs/2026-08-19-vertex-error-bodies-discarded.md`).
 - `state/models-dev.json` snapshot (fetched from models.dev at runtime), parsed as
   config-adjacent JSON.
-- Saved sessions loaded from `state/sessions/*.json`, goal records from `state/goals.json`,
+- Saved sessions loaded from `state/sessions/<id>.db` (one SQLite database per
+  conversation), goal records from `state/goals.json`,
   board from `state/board*.json`; on-disk state is a trust boundary (see T5).
 
 ### Deployment / dependency surface
@@ -92,7 +93,7 @@ below), then R3 abuse cases, then R4-R6.
 | T2 | **HTTP control plane → agent/tools** | `/api/run` task text → agent loop → sandboxed tools | Descriptor policy: `fs_prefixes`, `env_allow`, `network_allow`, `exec_allow` (`src/sandbox/host.zig:249-326`); privileged `ck_*` channels check `tool_self_name` (`src/sandbox/host.zig`, `rg -c tool_self_name` ≈ 33 sites) |
 | T3 | **Peer/mesh → local state** | `POST /api/chat/message`, mesh CHAT frames → `state/chatrooms.jsonl`, `state/notifications.jsonl` | Chat fan-out via sandboxed `peers` tool (`chat_fanout`, `network_from_config`); mesh admission handshake (`mesh_net.zig:392-421`); no wire crypto |
 | T4 | **Provider API → agent loop** | LLM response stream → conversation → next model request | Prompts treat provider output and retrieved text as untrusted (R3); sandbox is the enforcement point. History sent to model is append-only; request-only copies for compaction (`docs/README.md` agent section) |
-| T5 | **Disk state → process** | `state/sessions/*.json`, `state/goals.json`, `state/models-dev.json`, `state/board*.json`, `state/plugins.json` + `plugin_config.json` | Parsed with explicit bounds (1 MiB arena reads via `ck_fs_read_range`); `.env` refused by `safeJoin`; symlinked components refused by `safeJoinSecure` (ADR 0017) |
+| T5 | **Disk state → process** | `state/sessions/<id>.db`, `state/goals.json`, `state/models-dev.json`, `state/board*.json`, `state/plugins.json` + `plugin_config.json` | JSON state parsed with explicit bounds (1 MiB arena reads via `ck_fs_read_range`); sessions are one SQLite database per conversation (`src/agent/session.zig`), read by tools through the `ck_session` channel rather than as files; `.env` refused by `safeJoin`; symlinked components refused by `safeJoinSecure` (ADR 0017) |
 | T6 | **Secrets → code** | Provider keys via `api_key_env` (`src/config.zig` provider tables), `[serve] proxy_token_env` (`src/config.zig:982`), Vertex service-account JWT minting (`src/llm/vertex_token.zig`) | Keys live in `config.toml`/`config.local.toml`/env; guest access gated by `env_allow` + named `ck_getenv`; proxy forwards creds only on `/v1/*` paths (`src/serve/proxy.zig:40-47`); token comparison is constant-time over digests (`src/serve/proxy.zig:53`) |
 
 Privilege transitions not explicitly documented anywhere as a list:
@@ -111,7 +112,7 @@ Privilege transitions not explicitly documented anywhere as a list:
 |-------|-----------|-----------------------------|
 | Provider credentials (LLM keys, Vertex service account) | `config.toml`, `config.local.toml`, env (`api_key_env`); read via `src/llm/auth.zig` | Financial (token spend), impersonation of the operator's provider identity |
 | Full agent control (read/write/exec on the checkout + state) | `/api/run`, `/api/ask`, `/api/steer` | Machine compromise up to sandbox policy; with kernel/docker on, host compromise |
-| Conversation transcripts (sessions) | `state/sessions/*.json` (+ `state/spills/<session>/`, `state/exports/<id>.html`) | Data disclosure (conversations contain task context, possibly secrets pasted in) |
+| Conversation transcripts (sessions) | `state/sessions/<id>.db` (+ `state/spills/<session>/`, `state/exports/<id>.html`) | Data disclosure (conversations contain task context, possibly secrets pasted in) |
 | Source code + git history | working tree, `.git` | Integrity; the improve loop can *self-modify* the repo through gated promotion (`src/improve/engine.zig`) |
 | LLM spend | `state/token_stats.jsonl` (32 MiB cap, `docs/README.md:438`) | Financial; also an availability signal |
 | Mesh membership + chatrooms | `state/chatrooms.jsonl`, `state/chatrooms-sub.json` | Spoofing/reputation; fan-out amplification to peers |
@@ -282,7 +283,7 @@ Origin header are the only "identity"; neither is a secret.
 
 ## 8. Response readiness (note only)
 
-- Audit trail: `state/sessions/*.json` (transcripts), `state/token_stats.jsonl`, `state/logs/`
+- Audit trail: `state/sessions/<id>.db` (transcripts), `state/token_stats.jsonl`, `state/logs/`
   (via `GET /api/logs`), mesh/chat logs, `state/history/` snapshots. Structure is owned by
   o11y-review; noted here that security events (a failed proxy auth, a refused host or Origin,
   a refused sandbox path, a saturation 503) surface in logs and, since 08-21, saturation is

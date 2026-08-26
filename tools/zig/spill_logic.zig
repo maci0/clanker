@@ -65,7 +65,7 @@ pub fn pathFor(session_id: []const u8, id: []const u8, buf: []u8) ![]u8 {
 
 /// The directory holding one session's spills, which is what erasing that
 /// session has to remove: a spill file is the verbatim middle of a tool result
-/// from that conversation, so deleting only `state/sessions/<id>.json` leaves
+/// from that conversation, so deleting only `state/sessions/<id>.db` leaves
 /// the same content readable under this path.
 pub fn dirFor(session_id: []const u8, buf: []u8) ![]u8 {
     return std.fmt.bufPrint(buf, "state/spills/{s}", .{session_id});
