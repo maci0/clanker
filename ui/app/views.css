@@ -1267,6 +1267,17 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .fleet-meta { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; overflow-wrap: anywhere; }
 
+/* A real button wearing the link clothes the run rows used to get from an
+   href="#" anchor, so Enter activates it and it is not announced as a link
+   that navigates nowhere. */
+.fleet-run-link {
+  font: inherit; color: var(--accent-text); background: none; border: 0;
+  padding: 0; cursor: pointer; text-decoration: underline;
+  min-height: 24px;
+}
+.fleet-run-link:hover { text-decoration: none; }
+.fleet-run-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .fleet-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
 
 .fleet-card { transition: border-color 140ms ease, background 140ms ease; cursor: pointer; border-radius: var(--radius); }

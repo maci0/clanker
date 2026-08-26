@@ -130,13 +130,19 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
         var bar = wrap.querySelector("input[type=range]");
         var times = wrap.querySelectorAll(".music-time");
         if (bar) bar.value = String(Math.round(ratio * 1000));
+        // Position as time, not as 0–1000: a screen reader reading the bare
+        // value says "500" where "1:23 of 3:45" is what the sighted times
+        // beside it say.
+        if (bar) bar.setAttribute("aria-valuetext", nowTxt + " of " + endTxt);
         if (times[0]) times[0].textContent = nowTxt;
         if (times[1]) times[1].textContent = endTxt;
       });
     }
     document.querySelectorAll(".music-vol input[type=range]").forEach(function (vol) {
       if (document.activeElement === vol) return;
-      vol.value = String(Math.round((audio.muted ? 0 : audio.volume) * 100));
+    vol.value = String(Math.round((audio.muted ? 0 : audio.volume) * 100));
+    vol.setAttribute("aria-valuetext", vol.value + "%");
+      vol.setAttribute("aria-valuetext", vol.value + "%");
     });
   }
 
@@ -280,11 +286,16 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     bar.setAttribute("aria-label", "Seek");
     var dur = audio.duration;
     if (isFinite(dur) && dur > 0) bar.value = String(Math.round((audio.currentTime / dur) * 1000));
+    bar.setAttribute("aria-valuetext", fmtTime(audio.currentTime) + " of " + fmtTime(isFinite(dur) ? dur : 0));
     bar.addEventListener("pointerdown", function () { scrubbing = true; });
     bar.addEventListener("pointerup", function () { scrubbing = false; });
     bar.addEventListener("pointercancel", function () { scrubbing = false; });
     bar.addEventListener("input", function () {
       scrubbing = true;
+      // Announced while scrubbing: syncChrome skips the bar mid-drag.
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        bar.setAttribute("aria-valuetext", fmtTime((Number(bar.value) / 1000) * audio.duration) + " of " + fmtTime(audio.duration));
+      }
       if (!isFinite(audio.duration) || audio.duration <= 0) return;
       audio.currentTime = (Number(bar.value) / 1000) * audio.duration;
     });
@@ -315,6 +326,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     vol.addEventListener("input", function () {
       audio.muted = false;
       audio.volume = Number(vol.value) / 100;
+      vol.setAttribute("aria-valuetext", vol.value + "%");
       syncChrome();
     });
     wrap.appendChild(mute);

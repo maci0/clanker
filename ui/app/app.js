@@ -5233,9 +5233,13 @@ wireRefresh(el.logsRefresh, loadLogList);
       var ul=document.createElement("ul"); ul.className="fleet-roster-list";
       recent.forEach(function(r){
         var li=document.createElement("li"); li.className="fleet-meta";
-        var a=document.createElement("a"); a.href="#"; a.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+((r.duration_ms||0)+"ms");
-        a.addEventListener("click", function(e){ e.preventDefault(); if(typeof openRun==="function") openRun(r.run_id); });
-        li.appendChild(a);
+        // A button wearing link clothes rather than an href="#" anchor:
+        // the action opens the run in place, so a link was announced as one
+        // that navigates somewhere it doesn't.
+        var openRunBtn=document.createElement("button"); openRunBtn.type="button"; openRunBtn.className="fleet-run-link";
+        openRunBtn.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+((r.duration_ms||0)+"ms");
+        openRunBtn.addEventListener("click", function(){ if(typeof openRun==="function") openRun(r.run_id); });
+        li.appendChild(openRunBtn);
         var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="var(--space-3)";
         rev.addEventListener("click", function(){
           uiConfirm("Revert to "+r.run_id+"? This restores the worktree from that run where available.", { danger: true, confirmLabel: "Revert" }).then(function (yes) {
