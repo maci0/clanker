@@ -12836,6 +12836,46 @@ fn handleLogs(
 /// own (ADR 0008) and never looks at exports, so nothing else closes the gap.
 /// Each store's writes belong to a guest, and so do these deletes.
 ///
+/// Session teardown for surfaces where no single command owns the session's
+/// whole life: SIGTERM + reap its kernel/DAP/job processes, drop its DAP live
+/// state (leftover bytes, queued events), and remove its kernel working
+/// directory. Same cleanup the CLI run and the REPL run at exit; without it a
+/// deleted session's python supervisor kept running and its
+/// `state/kernels/<id>` directory stayed on disk for the life of a long-lived
+/// `clanker serve`.
+fn endServeSession(io: std.Io, cfg: *const config.Config, id: []const u8) void {
+    subprocess.endSession(id);
+    dap.dropLive(id);
+    // endSession reaped this session's processes synchronously, so its kernel
+    // working directories can go now (PRD 0016).
+    if (cfg.kernel.enabled) kernel_mod.cleanupSessionDirs(
+        io,
+        std.Io.Dir.cwd(),
+        cfg.agent.state_dir,
+        id,
+        cfg.kernel.cleanup_delay_ms,
+        subprocess.existingRegistry(),
+    );
+}
+
+test "endServeSession releases a deleted session's registered processes" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const reg = try subprocess.processRegistry(std.testing.allocator, io);
+    defer subprocess.deinitProcessRegistry();
+    const sid = "serve-end-check";
+    try reg.register(sid, "python", 7);
+    const cfg = config.Config{};
+    endServeSession(io, &cfg, sid);
+    // The registry row is what keeps a deleted session's supervisor alive in
+    // a long-lived serve; it must go with the transcript.
+    try std.testing.expect(reg.get(sid, "python") == null);
+    try std.testing.expectEqual(@as(usize, 0), reg.count());
+    // A second pass over an already-ended session is a no-op.
+    endServeSession(io, &cfg, sid);
+}
+
 /// Best effort: the transcript is already gone, so a missing tool or a refused
 /// delete must not turn a completed deletion into an error for the caller. It
 /// is logged instead, because leftover conversation content is worth noticing.
@@ -13105,6 +13145,7 @@ fn handleSessions(
                 return;
             };
             forgetSessionArtifacts(io, gpa, arena, cfg, environ_map, id);
+            endServeSession(io, cfg, id);
             respond(stream, 200, "OK", "{\"ok\":true}");
             return;
         }
