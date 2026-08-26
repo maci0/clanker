@@ -305,7 +305,12 @@ fi
 
 RUN_LOG="$LOG_FILE"
 if [ -z "$RUN_LOG" ]; then
-  RUN_LOG="$(mktemp state/logs/improve-run.XXXXXX.log)"
+  # A template with a suffix after the X's is GNU mktemp only; BSD/macOS
+  # mktemp requires the X's at the end. Create bare, rename onto the name
+  # the rest of the script logs against.
+  RUN_LOG="$(mktemp state/logs/improve-run.XXXXXX)"
+  mv "$RUN_LOG" "$RUN_LOG.log"
+  RUN_LOG="$RUN_LOG.log"
   trap 'rm -f "$RUN_LOG"' EXIT
 fi
 if [ -n "$LOG_FILE" ]; then info "logging to $LOG_FILE"; fi

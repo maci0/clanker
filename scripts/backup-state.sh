@@ -172,8 +172,15 @@ prune_old_snapshots() {
         rm -rf -- "$stale"
     done < <(find "$backup_root" -maxdepth 1 -type d -name '.*.incomplete' 2>/dev/null)
 
-    local cutoff
-    if ! cutoff=$(date -u -d "-$keep_days days" +%Y%m%dT%H%M%SZ 2>/dev/null); then
+    local cutoff epoch
+    # `date -d` is GNU-only (BSD/macOS date has no `-d STRING`), so compute
+    # the cutoff from epoch arithmetic instead: `date +%s` and one of the
+    # two epoch-to-UTC forms exist everywhere this runs. If neither answers,
+    # keep every snapshot, exactly as before.
+    epoch=$(( $(date +%s) - keep_days * 86400 ))
+    cutoff=$(date -u -d "@$epoch" +%Y%m%dT%H%M%SZ 2>/dev/null) ||
+        cutoff=$(date -u -r "$epoch" +%Y%m%dT%H%M%SZ 2>/dev/null)
+    if [ -z "$cutoff" ]; then
         printf 'warning: cannot compute the retention cutoff; keeping all snapshots\n' >&2
         return 0
     fi

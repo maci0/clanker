@@ -107,12 +107,21 @@ FRAMING='You are reviewing the repository in your current working directory: cla
 Report findings only, do not patch anything. For each finding give: the file and line, what is wrong, why it matters, and the smallest concrete fix. Order by impact, put the strongest finding first, and say plainly when a section of the review has nothing worth reporting rather than padding it.'
 
 ts="$(date +%Y%m%d-%H%M%S)"
+# `timeout` is GNU coreutils; macOS ships none. Without it a run that wedges
+# wedges the loop too, so say so instead of failing silently.
+TIMEOUT_CMD=()
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_CMD=(timeout 1800)
+else
+  warn "no 'timeout' on this platform; each review run is unbounded"
+fi
 failed=0
 for name in "${NAMES[@]}"; do
   out="$OUT_DIR/$ts-$name.md"
   info "review: $name -> $out"
   {
-    printf '# %s review\n\n_provider: %s · %s_\n\n' "$name" "${PROVIDER:-default}" "$(date -Iseconds)"
+    # `date -Iseconds` is GNU-only; this UTC form reads the same on BSD date.
+    printf '# %s review\n\n_provider: %s · %s_\n\n' "$name" "${PROVIDER:-default}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >"$out"
 
   # The prompt is passed as one task; the agent's answer is the review.
@@ -121,7 +130,7 @@ for name in "${NAMES[@]}"; do
 ---
 
 $FRAMING"
-  if ! timeout 1800 ./zig-out/bin/clanker "${CLANKER_ARGS[@]}" run "$task" >>"$out" 2>"$out.log"; then
+  if ! ${TIMEOUT_CMD+"${TIMEOUT_CMD[@]}"} ./zig-out/bin/clanker "${CLANKER_ARGS[@]}" run "$task" >>"$out" 2>"$out.log"; then
     warn "$name: review run failed (see $out.log)"
     failed=$((failed + 1))
     continue
