@@ -106,8 +106,19 @@ function cssRules(src) {
 }
 
 // ---------- selector matching ----------
+// The contract test walks every views.css rule against every first-paint
+// element, and each walk used to re-parse the selector per element and again
+// per ancestor step -- enough reparses to push the run past the runner's
+// default 5s budget and fail the suite under load. Parse each selector once;
+// the parsed forms are read-only from here on.
+const listCache = new Map();
+const chainCache = new Map();
+const compoundCache = new Map();
+
 function splitList(sel) {
-  const out = [];
+  let out = listCache.get(sel);
+  if (out) return out;
+  out = [];
   let depth = 0, cur = "";
   for (const ch of sel) {
     if (ch === "(" || ch === "[") depth++;
@@ -116,10 +127,13 @@ function splitList(sel) {
     else cur += ch;
   }
   if (cur.trim()) out.push(cur.trim());
+  listCache.set(sel, out);
   return out;
 }
 function splitCompound(sel) {
-  const out = [];
+  let out = chainCache.get(sel);
+  if (out) return out;
+  out = [];
   let depth = 0, cur = "";
   const flush = () => { const t = cur.trim(); if (t) out.push({ compound: t, comb: null }); cur = ""; };
   for (let i = 0; i < sel.length; i++) {
@@ -140,10 +154,13 @@ function splitCompound(sel) {
     cur += ch;
   }
   flush();
+  chainCache.set(sel, out);
   return out;
 }
 function parseCompound(comp) {
-  const parts = [];
+  let parts = compoundCache.get(comp);
+  if (parts) return parts;
+  parts = [];
   let i = 0;
   while (i < comp.length) {
     const ch = comp[i];
@@ -184,6 +201,7 @@ function parseCompound(comp) {
       i = Math.max(j, i + 1);
     } else { i++; }
   }
+  compoundCache.set(comp, parts);
   return parts;
 }
 function matchCompound(parts, el) {
