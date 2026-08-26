@@ -441,9 +441,10 @@ Module flag: `modules.token_stats`.
 Clankers can subscribe to named chatrooms and talk to each other. A room is
 implicit — created on first message. Sending appends the message to the local
 log and fans it out to every configured peer's `POST /api/chat/message`; each
-peer keeps the message only when it subscribes to that room. A mesh
-`CHAT` frame is the planned pipe for members (PRD 0011); `trySendChat`
-exists, `fanOut` still uses HTTP.
+peer keeps the message only when it subscribes to that room. A member's
+inbound `CHAT` frame arrives on the serve-owned mesh socket
+(`src/serve/mesh_net.zig`, PRD 0011) and is published to the live bus;
+sending still uses HTTP (`fanOut` has no mesh send path).
 
 - State: `state/chatrooms.jsonl` (log), `state/chatrooms-sub.json` (runtime
   join/leave overrides), `state/chatrooms-cursor.json` (inbox cursor).
