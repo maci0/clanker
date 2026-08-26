@@ -106,8 +106,15 @@ function cssRules(src) {
 }
 
 // ---------- selector matching ----------
+// Every parser below is a pure function of its string input, but the
+// first-paint sweep calls them once per (selector, element) pair; as the
+// sheets grew that re-parsing pushed the test past bun's 5s default timeout.
+// Memoize by input so each distinct compound/list is parsed exactly once.
+const parseCache = new Map();
 function splitList(sel) {
-  const out = [];
+  let out = parseCache.get(sel);
+  if (out !== undefined) return out;
+  out = [];
   let depth = 0, cur = "";
   for (const ch of sel) {
     if (ch === "(" || ch === "[") depth++;
@@ -116,10 +123,14 @@ function splitList(sel) {
     else cur += ch;
   }
   if (cur.trim()) out.push(cur.trim());
+  parseCache.set(sel, out);
   return out;
 }
+const compoundCache = new Map();
 function splitCompound(sel) {
-  const out = [];
+  let out = compoundCache.get(sel);
+  if (out !== undefined) return out;
+  out = [];
   let depth = 0, cur = "";
   const flush = () => { const t = cur.trim(); if (t) out.push({ compound: t, comb: null }); cur = ""; };
   for (let i = 0; i < sel.length; i++) {
@@ -140,10 +151,14 @@ function splitCompound(sel) {
     cur += ch;
   }
   flush();
+  compoundCache.set(sel, out);
   return out;
 }
+const partsCache = new Map();
 function parseCompound(comp) {
-  const parts = [];
+  let parts = partsCache.get(comp);
+  if (parts !== undefined) return parts;
+  parts = [];
   let i = 0;
   while (i < comp.length) {
     const ch = comp[i];
@@ -184,6 +199,7 @@ function parseCompound(comp) {
       i = Math.max(j, i + 1);
     } else { i++; }
   }
+  partsCache.set(comp, parts);
   return parts;
 }
 function matchCompound(parts, el) {
