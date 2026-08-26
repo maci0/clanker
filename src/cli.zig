@@ -13329,6 +13329,16 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     }
     const path = std.mem.join(arena, "/", comps.items) catch "";
 
+    // A symlinked component resolves outside the workspace: git checks a
+    // cloned repo's symlinks out as-is, so `link -> /etc` inside the tree is
+    // enough to read host files through the browser. The guest sandbox refuses
+    // exactly this shape (`safeJoinSecure`, ADR 0017); the HTTP surface
+    // applies the same rule instead of serving what it denies its guests.
+    if (pathHasSymlinkComponent(io, root_dir.dir, path)) {
+        respond(stream, 403, "Forbidden", "{\"ok\":false,\"error\":\"symlinked path not served\"}");
+        return;
+    }
+
     // A resolved path naming a file, not a directory, is a content request:
     // checked before openDir below, since openDir on a file fails in a way
     // indistinguishable from "does not exist" and would otherwise silently
@@ -13497,6 +13507,45 @@ fn handleFileContent(io: std.Io, arena: std.mem.Allocator, root_dir: std.Io.Dir,
     }
     s.endObject() catch return;
     respondCompressible(arena, stream, accepts_gzip, out.written());
+}
+
+/// True when any already-existing component of `rel_path` (relative to
+/// `root_dir`) is a symlink, checked no-follow from the root down. Absent
+/// components end the walk: nothing below them exists to be a link yet.
+fn pathHasSymlinkComponent(io: std.Io, root_dir: std.Io.Dir, rel_path: []const u8) bool {
+    if (rel_path.len == 0) return false;
+    var end: usize = 0;
+    while (end < rel_path.len) {
+        end = std.mem.findScalarPos(u8, rel_path, end, '/') orelse rel_path.len;
+        const stat = root_dir.statFile(io, rel_path[0..end], .{ .follow_symlinks = false }) catch break;
+        if (stat.kind == .sym_link) return true;
+        if (end == rel_path.len) break;
+        end += 1;
+    }
+    return false;
+}
+
+test "the file browser's symlink walk refuses a planted link but passes real paths" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/real.txt", .data = "hi" });
+    try std.testing.expect(!pathHasSymlinkComponent(io, tmp.dir, "src"));
+    try std.testing.expect(!pathHasSymlinkComponent(io, tmp.dir, "src/real.txt"));
+    try std.testing.expect(!pathHasSymlinkComponent(io, tmp.dir, ""));
+    // A path that does not exist yet is not a link.
+    try std.testing.expect(!pathHasSymlinkComponent(io, tmp.dir, "src/deeper/file.txt"));
+
+    // The shape a cloned repo carries: a link whose target leaves the tree.
+    // Absolute and relative targets both count; the component clamp in
+    // handleFiles never sees them because the link name itself has no `..`.
+    try tmp.dir.symLink(io, "/etc/passwd", "src/abs", .{});
+    try tmp.dir.symLink(io, "../../../etc", "src/rel", .{});
+    try std.testing.expect(pathHasSymlinkComponent(io, tmp.dir, "src/abs"));
+    try std.testing.expect(pathHasSymlinkComponent(io, tmp.dir, "src/rel"));
+    try std.testing.expect(pathHasSymlinkComponent(io, tmp.dir, "src/abs/passwd"));
 }
 
 /// Basename of the absolute working directory, used as the workspace label.
