@@ -5,29 +5,29 @@
     "correctness": "error"
   },
   // Anti-slop: syntactic shortcuts that read as AI-generated filler and
-  // survive `tsc`/`zig build` unnoticed. Warnings print locally and in CI's
-  // Lint JavaScript step without failing it; `npx oxlint --deny-warnings`
-  // fails on them when you want the stricter gate.
+  // survive `tsc`/`zig build` unnoticed. Rules whose count reached zero were
+  // promoted to error and block CI; the rest are warn-level with a recorded
+  // debt, so they stay visible without failing until paid down, then get the
+  // same promotion (`npx oxlint --deny-warnings` previews the stricter gate).
   "rules": {
-    "no-console": "warn",
+    "no-console": "error",
     "no-empty-function": "warn",
     // Loose equality is the classic LLM drift (`== null` vs `=== null`);
     // tools/ts AssemblyScript targets intentionally use `==` against
     // JKind discriminants so the override turns this off there.
     "eqeqeq": "warn",
-    "no-duplicate-imports": "warn",
+    "no-duplicate-imports": "error",
     "no-useless-escape": "warn",
-    "typescript/no-explicit-any": "warn",
-    "typescript/no-non-null-assertion": "warn",
-    "typescript/no-non-null-asserted-optional-chain": "warn",
-    "typescript/no-empty-object-type": "warn",
-    // Warn, not error: the existing debt (202 hits when this landed, and
-    // it moves with every ui/ edit) would make every run exit 1. Keep it
-    // as signal until paid, then promote back to error; current count any
-    // time: `npx oxlint 2>&1 | grep -c 'warning '`.
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-non-null-asserted-optional-chain": "error",
+    "typescript/no-empty-object-type": "error",
+    // Warn, not error: the existing debt moves with every ui/ edit and would
+    // make every run exit 1. Keep it as signal until paid, then promote back
+    // to error; current count any time: `npx oxlint 2>&1 | grep -c 'warning '`.
     "no-unused-vars": ["warn", { "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }],
     "no-unused-expressions": "warn",
-    "no-useless-empty-export": "warn"
+    "no-useless-empty-export": "error"
   },
   "env": {
     "builtin": true,

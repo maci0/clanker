@@ -68,10 +68,11 @@ jobs:
       - name: Check shell scripts
         run: git ls-files -z '*.sh' '.githooks/pre-commit' | xargs -0 -r shellcheck
 
-      # oxlint over ui/ and tools/ts sources. Correctness-category rules are
-      # errors here and block the job; the anti-slop rules in .oxlintrc.json
-      # are warn-level with a recorded debt, so they stay visible without
-      # failing until paid down.
+      # oxlint over ui/ and tools/ts sources. Correctness-category rules and
+      # the paid-off anti-slop rules are errors here and block the job; the
+      # remaining warn-level rules in .oxlintrc.json carry a recorded debt, so
+      # they stay visible without failing until paid down. A disable directive
+      # that no longer silences anything is an error too.
       - name: Lint JavaScript
         run: |
           bun install --frozen-lockfile
