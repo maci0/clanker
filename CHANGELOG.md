@@ -96,6 +96,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker doctor` (and `setup`) gained a `state backups` section that reads
+  the layout `scripts/backup-state.sh` maintains: it warns when `state` is a
+  checkout directory the backup script refuses, when no snapshot has ever
+  been promoted, when the newest snapshot is over two hours old (the timer
+  runs every 30 minutes), and when `CLANKER_BACKUP_OFFSITE_DEST` is unset so
+  every copy still shares the store's disk. Backup health was previously
+  visible only in the systemd journal.
+
 - Bug reports gained a `## Blocked on` convention: a non-empty body names the
   concrete thing this machine lacks (a credential, a live endpoint, an
   external reference), and the improve backlog refuses to seed such a report

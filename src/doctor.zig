@@ -138,6 +138,231 @@ const linked_worktree_paths = blk: {
     break :blk out;
 };
 
+/// The cadence of the state backup (`scripts/systemd/clanker-state-backup.timer`
+/// fires every 30 minutes) and how far past one interval the newest snapshot
+/// may lag before doctor calls the schedule missed. Two hours rides out a
+/// suspended machine catching up through the timer's `Persistent=true`
+/// without crying wolf four times a day.
+const backup_interval_min: i64 = 30;
+const backup_stale_after_s: i64 = 2 * 60 * 60;
+
+/// `scripts/backup-state.sh` names snapshots `<YYYYmmddTHHMMSS>Z` in UTC.
+fn isSnapshotName(name: []const u8) bool {
+    if (!isSnapshotShape(name)) return false;
+    // The digits being a real date is part of the shape: month 13 sorts
+    // lexicographically like any other name and would otherwise win the
+    // newest-name scan or be reported as the schedule.
+    return snapshotEpoch(name) != null;
+}
+
+/// Byte shape only: `<YYYYmmddTHHMMSS>Z`, which is what keeps `latest`,
+/// `.incomplete` staging dirs, and anything else out of the scan.
+fn isSnapshotShape(name: []const u8) bool {
+    if (name.len != 16) return false;
+    if (name[8] != 'T' or name[15] != 'Z') return false;
+    for (name[0..8]) |ch| {
+        if (ch < '0' or ch > '9') return false;
+    }
+    for (name[9..15]) |ch| {
+        if (ch < '0' or ch > '9') return false;
+    }
+    return true;
+}
+
+/// Days since 1970-01-01 for a civil date (Howard Hinnant's algorithm). Only
+/// ever fed dates a snapshot name already claimed were real.
+fn daysFromCivil(y: i64, m: i64, d: i64) i64 {
+    const yy = if (m <= 2) y - 1 else y;
+    const era = @divFloor(yy, 400);
+    const yoe = yy - era * 400;
+    const mp = @mod(m + 9, 12);
+    const doy = @divFloor(153 * mp + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+/// A snapshot name to unix seconds, or null when the date is not real.
+fn snapshotEpoch(name: []const u8) ?i64 {
+    if (name.len != 16) return null;
+    if (name[8] != 'T' or name[15] != 'Z') return null;
+    const p = struct {
+        fn digits(s: []const u8) ?i64 {
+            var v: i64 = 0;
+            for (s) |ch| {
+                if (ch < '0' or ch > '9') return null;
+                v = v * 10 + (ch - '0');
+            }
+            return v;
+        }
+    };
+    const year = p.digits(name[0..4]) orelse return null;
+    const month = p.digits(name[4..6]) orelse return null;
+    const day = p.digits(name[6..8]) orelse return null;
+    const hour = p.digits(name[9..11]) orelse return null;
+    const minute = p.digits(name[11..13]) orelse return null;
+    const second = p.digits(name[13..15]) orelse return null;
+    if (month < 1 or month > 12 or day < 1 or day > 31) return null;
+    if (hour > 23 or minute > 59 or second > 59) return null;
+    return daysFromCivil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second;
+}
+
+/// The inverse of `snapshotEpoch`: unix seconds to the UTC stamp a snapshot
+/// directory is named with. Written into `buf`, which must be >= 16 bytes.
+/// The digits are placed by hand rather than `std.fmt.bufPrint` because the
+/// fixed-buffer writer of this std refuses an exactly-full final write
+/// (NoSpaceLeft at 16 bytes into a 16-byte buffer).
+fn writeStamp(buf: []u8, epoch: i64) []const u8 {
+    const days = @divFloor(epoch, 86400);
+    var secs = @mod(epoch, 86400);
+    // Civil-from-days (Hinnant).
+    const z = days + 719468;
+    const era = @divFloor(z, 146097);
+    const doe = z - era * 146097;
+    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365);
+    var y = yoe + era * 400;
+    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
+    const mp = @divFloor(5 * doy + 2, 153);
+    const d = doy - @divFloor(153 * mp + 2, 5) + 1;
+    const m = if (mp < 10) mp + 3 else mp - 9;
+    if (m <= 2) y += 1;
+    const h = @divFloor(secs, 3600);
+    secs -= h * 3600;
+    const mi = @divFloor(secs, 60);
+    const s = secs - mi * 60;
+    const put2 = struct {
+        fn f(out: []u8, v: i64) void {
+            out[0] = '0' + @as(u8, @intCast(@divTrunc(v, 10)));
+            out[1] = '0' + @as(u8, @intCast(@mod(v, 10)));
+        }
+    }.f;
+    put2(buf[0..2], @divTrunc(y, 100));
+    put2(buf[2..4], @mod(y, 100));
+    put2(buf[4..6], m);
+    put2(buf[6..8], d);
+    buf[8] = 'T';
+    put2(buf[9..11], h);
+    put2(buf[11..13], mi);
+    put2(buf[13..15], s);
+    buf[15] = 'Z';
+    return buf[0..16];
+}
+
+/// Reports the durability posture of the runtime-local store: whether the
+/// state backup is installed and current, and whether a second failure
+/// domain exists at all. Read-only and offline, like every doctor check; the
+/// facts come from the layout `scripts/backup-state.sh` creates, so the
+/// check cannot drift into describing an arrangement the script would
+/// refuse. A backup whose failures live only in the systemd journal is a
+/// backup nobody notices losing -- this section is the proactive surface.
+///
+/// `offsite_dest` is the `CLANKER_BACKUP_OFFSITE_DEST` value (empty when
+/// unset) and `now_s` the wall clock, both passed rather than read here so
+/// tests can pin them.
+fn checkStateBackups(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    dir: std.Io.Dir,
+    offsite_dest: []const u8,
+    now_s: i64,
+    rep: *Report,
+) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    // Derived from the same name the backup script reads: wherever `state`
+    // resolves, its parent holds `backups/`. A relative link target composes
+    // against cwd exactly as the kernel would resolve it, so opening the
+    // derived backup root lands in the same place the script writes.
+    const n = dir.readLink(io, "state", &buf) catch |err| switch (err) {
+        // Never scaffolded: the directories section already reported that,
+        // and there is no store here to back up yet.
+        error.FileNotFound => return,
+        // What scripts/backup-state.sh refuses outright: snapshots would land
+        // inside the checkout, on the data's own disk, and a re-clone or
+        // `git clean` deletes them. The timer shows this as a failed service
+        // in its journal only; say it where an operator looks.
+        error.NotLink => {
+            rep.line(
+                .warn,
+                "state",
+                "a real directory in the checkout, not a link into an external storage root; scripts/backup-state.sh refuses to back this up",
+            );
+            return;
+        },
+        else => {
+            rep.line(.warn, "state", @errorName(err));
+            return;
+        },
+    };
+    const resolved = buf[0..n];
+    const storage_root = std.fs.path.dirname(resolved) orelse return;
+    const backup_root = try std.fmt.allocPrint(arena, "{s}/backups", .{storage_root});
+    var bdir = std.Io.Dir.cwd().openDir(io, backup_root, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => {
+            rep.line(
+                .warn,
+                "snapshots",
+                try std.fmt.allocPrint(arena, "none under {s}: the state backup has never run; install it with scripts/install-state-backup.sh", .{backup_root}),
+            );
+            return;
+        },
+        else => {
+            rep.line(.warn, "snapshots", @errorName(err));
+            return;
+        },
+    };
+    defer bdir.close(io);
+
+    // Names are fixed-width UTC stamps, so lexicographic order IS
+    // chronological order (the prune in backup-state.sh relies on the same).
+    var newest: []const u8 = "";
+    var count: usize = 0;
+    var it = bdir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (!isSnapshotName(entry.name)) continue;
+        count += 1;
+        if (newest.len == 0 or std.mem.order(u8, entry.name, newest) == .gt) {
+            newest = try arena.dupe(u8, entry.name);
+        }
+    }
+    if (count == 0) {
+        rep.line(
+            .warn,
+            "snapshots",
+            try std.fmt.allocPrint(arena, "no snapshot under {s}; every timer run is failing -- see docs/runbooks/state-backups-not-running.md", .{backup_root}),
+        );
+    } else {
+        var stamp_buf: [16]u8 = undefined;
+        const cutoff = writeStamp(&stamp_buf, now_s - backup_stale_after_s);
+        const ts = snapshotEpoch(newest) orelse 0;
+        const age_s = @max(now_s - ts, 0);
+        if (std.mem.order(u8, newest, cutoff) == .lt) {
+            rep.line(
+                .warn,
+                "snapshots",
+                try std.fmt.allocPrint(arena, "newest is {s}, over {d} min old (timer runs every {d} min): the schedule is being missed -- docs/runbooks/state-backups-not-running.md", .{ newest, backup_stale_after_s / 60, backup_interval_min }),
+            );
+        } else if (age_s >= 90 * 60) {
+            rep.line(.ok, "snapshots", try std.fmt.allocPrint(arena, "{d} present, newest {s} ({d} h old)", .{ count, newest, @divTrunc(age_s, 3600) }));
+        } else {
+            rep.line(.ok, "snapshots", try std.fmt.allocPrint(arena, "{d} present, newest {s} ({d} min old)", .{ count, newest, @divTrunc(age_s, 60) }));
+        }
+    }
+
+    // Second failure domain. Snapshots live beside the store they protect
+    // (accepted posture, documented in the script and the restore runbook),
+    // so without an off-site mirror one dead volume takes every copy. The
+    // variable is read from the environment the way the timer's service
+    // inherits it.
+    if (offsite_dest.len > 0) {
+        rep.line(.ok, "offsite mirror", offsite_dest);
+    } else {
+        rep.line(
+            .warn,
+            "offsite mirror",
+            "CLANKER_BACKUP_OFFSITE_DEST is unset: every copy shares the store's disk; set it to an rsync destination outside that volume",
+        );
+    }
+}
+
 /// The main checkout a linked worktree's `.git` FILE points back at, or null
 /// when this is not a linked worktree. In an ordinary checkout `.git` is a
 /// DIRECTORY, so the read fails and doctor skips the whole section rather than
@@ -380,6 +605,18 @@ fn runChecks(
     if (dirExists(io, cfg.agent.skills_dir) and !dirHasEntries(io, cfg.agent.skills_dir)) {
         rep.line(.warn, "skills", try std.fmt.allocPrint(arena, "{s} is empty; no skill files found", .{cfg.agent.skills_dir}));
     }
+
+    // Durability of everything under `state/`: whether the backup timer's
+    // snapshots are appearing and whether a second failure domain exists.
+    rep.section("state backups");
+    try checkStateBackups(
+        io,
+        arena,
+        std.Io.Dir.cwd(),
+        environ_map.get("CLANKER_BACKUP_OFFSITE_DEST") orelse "",
+        @intCast(@divTrunc(log.unixMilliseconds(), std.time.ms_per_s)),
+        rep,
+    );
 
     // Only inside a linked worktree, where these names are supposed to be
     // symlinks back to the main checkout. An ordinary checkout has no main
@@ -716,4 +953,157 @@ test "a checkout that is not a linked worktree has no main checkout" {
     defer tmp.cleanup();
     try tmp.dir.createDirPath(io, ".git");
     try std.testing.expect(worktreeMainCheckout(io, arena_state.allocator(), tmp.dir) == null);
+}
+
+// Anchors are well-known instants, not round-trips of each other, so a bug
+// in either direction cannot hide behind the other.
+test "snapshot stamps convert to and from unix seconds" {
+    try std.testing.expectEqual(@as(i64, 0), snapshotEpoch("19700101T000000Z").?);
+    try std.testing.expectEqual(@as(i64, 1_000_000_000), snapshotEpoch("20010909T014640Z").?);
+    try std.testing.expectEqual(@as(i64, 1_700_000_000), snapshotEpoch("20231114T221320Z").?);
+
+    var buf: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("19700101T000000Z", writeStamp(&buf, 0));
+    try std.testing.expectEqualStrings("20010909T014640Z", writeStamp(&buf, 1_000_000_000));
+    try std.testing.expectEqualStrings("20231114T221320Z", writeStamp(&buf, 1_700_000_000));
+}
+
+test "snapshot stamps reject impossible dates and foreign names" {
+    try std.testing.expect(snapshotEpoch("20261301T000000Z") == null); // month 13
+    try std.testing.expect(snapshotEpoch("20260100T000000Z") == null); // day 0
+    try std.testing.expect(snapshotEpoch("20260101T250000Z") == null); // hour 25
+    try std.testing.expect(snapshotEpoch("latest") == null);
+    try std.testing.expect(snapshotEpoch(".20260101T000000Z.incomplete") == null);
+    try std.testing.expect(!isSnapshotName("latest"));
+    // A staging dir's first byte hides it behind the dot convention; the
+    // shape check must not mistake its tail for a timestamp.
+    try std.testing.expect(!isSnapshotName(".not-a-snapshot"));
+    try std.testing.expect(isSnapshotName("20260826T095913Z"));
+}
+
+// The layout scripts/backup-state.sh maintains: `state` links into an
+// external storage root whose parent holds timestamped snapshots plus the
+// `latest` pointer, and doctor must read the schedule from the names alone.
+const backup_layout_now: i64 = 1_800_000_000;
+
+fn setupBackupLayout(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    tmp: *std.testing.TmpDir,
+) !std.Io.Dir {
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+    try tmp.dir.createDirPath(io, "store/state/sessions");
+    try tmp.dir.createDirPath(io, "checkout");
+    try tmp.dir.symLink(
+        io,
+        try std.fmt.allocPrint(arena, "{s}/store/state", .{root}),
+        "checkout/state",
+        .{ .is_directory = true },
+    );
+    return try tmp.dir.openDir(io, "checkout", .{});
+}
+
+test "doctor reports a current schedule and the missing second failure domain" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ck = try setupBackupLayout(io, arena, &tmp);
+    defer ck.close(io);
+
+    try tmp.dir.createDirPath(io, "store/backups/20260101T000000Z");
+    var stamp_buf: [16]u8 = undefined;
+    const newest = try arena.dupe(u8, writeStamp(&stamp_buf, backup_layout_now - 5 * 60));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "store/backups/{s}", .{newest}));
+    try tmp.dir.symLink(io, newest, "store/backups/latest", .{ .is_directory = true });
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, "", backup_layout_now, &rep);
+    const text = buf[0..w.end];
+
+    try std.testing.expectEqual(@as(usize, 0), rep.failures);
+    // Exactly one warning: the unset offsite mirror, which is a real gap
+    // even when the local schedule is healthy.
+    try std.testing.expectEqual(@as(usize, 1), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, text, "2 present") != null);
+    try std.testing.expect(std.mem.find(u8, text, newest) != null);
+    try std.testing.expect(std.mem.find(u8, text, "min old") != null);
+    try std.testing.expect(std.mem.find(u8, text, "CLANKER_BACKUP_OFFSITE_DEST") != null);
+}
+
+test "doctor flags a missed backup schedule" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ck = try setupBackupLayout(io, arena, &tmp);
+    defer ck.close(io);
+
+    var stamp_buf: [16]u8 = undefined;
+    const stale = try arena.dupe(u8, writeStamp(&stamp_buf, backup_layout_now - 3 * 60 * 60));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "store/backups/{s}", .{stale}));
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, "", backup_layout_now, &rep);
+    const text = buf[0..w.end];
+
+    try std.testing.expectEqual(@as(usize, 0), rep.failures);
+    try std.testing.expectEqual(@as(usize, 2), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, text, stale) != null);
+    try std.testing.expect(std.mem.find(u8, text, "schedule is being missed") != null);
+}
+
+test "doctor points at the installer when no snapshot was ever taken" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ck = try setupBackupLayout(io, arena, &tmp);
+    defer ck.close(io);
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, "", backup_layout_now, &rep);
+    const text = buf[0..w.end];
+
+    try std.testing.expectEqual(@as(usize, 1), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, text, "install-state-backup.sh") != null);
+}
+
+test "doctor names the checkout-confined state the backup script refuses" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "checkout/state");
+    var ck = try tmp.dir.openDir(io, "checkout", .{});
+    defer ck.close(io);
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, "/mnt/offsite/backups", backup_layout_now, &rep);
+    const text = buf[0..w.end];
+
+    try std.testing.expectEqual(@as(usize, 1), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, text, "refuses to back this up") != null);
 }
