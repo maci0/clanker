@@ -48,7 +48,7 @@ jobs:
           use-cache: true
 
       - name: Install Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       # Extract the pinned dependency trees and re-apply patches/*.patch
       # (patches/README.md). build.zig refuses to configure against pristine
@@ -139,7 +139,7 @@ jobs:
       # `zig build test` runs the ~20 bun test suites under ui/app, so bun must
       # be on PATH here too, like the linux verify job.
       - name: Install Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       # Same reason as the verify job: build.zig refuses pristine upstream
       # dependencies, and the patches must land after extraction.
