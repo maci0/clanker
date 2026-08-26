@@ -1413,7 +1413,7 @@ Fields:
 
 ### Environment variables
 
-- `CLANKER_ENV_FILE`: path to the `.env`-style file `dotenv.load` reads (default `./.env`; gated by `modules.dotenv`). Real environment variables always win over values loaded from this file. See `.env.example` for the keys providers reference via `api_key_env`.
+- `CLANKER_ENV_FILE`: path to the `.env`-style file `dotenv.load` reads (default `./.env`; gated by `modules.dotenv`). Real environment variables always win over values loaded from this file. In that file a whole line starting with `#` is a comment, and an unquoted value also ends at a `#` that whitespace introduces (`KEY=value  # note` loads just `value`); put side notes on their own line. See `.env.example` for the keys providers reference via `api_key_env`.
 - `CLANKER_LOG_LEVEL`: `debug` | `info` | `warn` | `error` (default `info`). Lets a headless deployment (systemd, docker) set the log level without editing the invocation. The flags still override it: `--quiet`/`-q` to `error`, `--verbose`/`-v` to `debug`, and `--verbose` wins if both are given.
 - `CLANKER_THEME`: default palette for the REPL and `clanker run` output (`mocha`/`catppuccin`, `latte`, `frappe`, `macchiato`, `tokyonight`, `storm`, `day`, `mono`, `default`). `clanker repl --theme <name>` overrides it for one invocation; `/theme <name>` switches the current session.
 - `CLANKER_DEBUG_BODY`: set to any value to log provider name and request byte count on each LLM call (to stderr). Only metadata is printed, never request content.

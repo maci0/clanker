@@ -1488,6 +1488,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A `.env` line whose value carries a side note (`DEEPSEEK_API_KEY=sk-...
+  # staging key`) no longer loads the note as part of the value: an unquoted
+  value now ends at a `#` that whitespace introduces, so the credential
+  sent to the provider was previously the note text and every request
+  401'd with a key nobody could tell was wrong. A `#` glued to the value
+  (`a#b`) or opening it (`#b`) stays literal, as bash reads it, and quoted
+  values keep their `#` untouched. `.env.example` no longer annotates keys
+  with trailing comments for the same reason and gains the missing
+  `XAI_API_KEY` for the configured `[providers.grok]`.
+
 - A fenced block comment or multi-line string in `clanker repl` keeps its
   colour past its first line. Both vaxis render paths built a fresh
   highlighter state inside their per-line loop, so the second line of a
