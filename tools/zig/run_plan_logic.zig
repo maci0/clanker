@@ -22,6 +22,20 @@ pub fn clampMax(n: usize) usize {
     return @min(n, max_steps_ceiling);
 }
 
+/// One actionable sentence for a failed `ck_tool` step. The raw Zig error
+/// name ("SandboxDenied", "NotFound") reaches the model as the step's error
+/// field and gives it nothing to do; these say which way to move instead.
+pub fn stepErrorMessage(err: anyerror) []const u8 {
+    return switch (err) {
+        error.SandboxDenied => "this plan is not allowed to call that tool (its tool_call/tool_allow policy refuses it)",
+        error.NotFound => "no tool by that name is loaded",
+        error.TooLarge => "the tool call or its result exceeded a size cap",
+        error.NetworkError => "the tool call did not complete",
+        error.InvalidArg => "the tool rejected the step's args",
+        else => "the tool call failed",
+    };
+}
+
 pub fn validate(steps: []const Step, max_steps: usize) Error!void {
     if (steps.len == 0) return error.EmptySteps;
     if (steps.len > clampMax(max_steps)) return error.TooManySteps;
@@ -30,6 +44,12 @@ pub fn validate(steps: []const Step, max_steps: usize) Error!void {
         if (std.mem.eql(u8, s.tool, "run_plan") or std.mem.eql(u8, s.tool, "chain"))
             return error.NestedPlan;
     }
+}
+
+test "step errors name the fix, not the zig error" {
+    try std.testing.expectEqualStrings("no tool by that name is loaded", stepErrorMessage(error.NotFound));
+    try std.testing.expect(std.mem.indexOf(u8, stepErrorMessage(error.SandboxDenied), "not allowed") != null);
+    try std.testing.expectEqualStrings("the tool rejected the step's args", stepErrorMessage(error.InvalidArg));
 }
 
 test "validate refuses empty, overflow, and nested plans" {

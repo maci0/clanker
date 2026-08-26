@@ -60,7 +60,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try std.json.Stringify.value(step.tool, .{}, &w);
         const result = lib.toolCall(step.tool, step.args) catch |err| {
             try w.writeAll(",\"ok\":false,\"error\":");
-            try std.json.Stringify.value(@errorName(err), .{}, &w);
+            try std.json.Stringify.value(logic.stepErrorMessage(err), .{}, &w);
             try w.writeByte('}');
             continue;
         };
