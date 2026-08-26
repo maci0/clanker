@@ -3222,33 +3222,41 @@ fn writeHttpFailure(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, code: u
 /// afterthought a guest may forget to read (ADR 0049, driver 2: the contract is
 /// a type, not a comment). A guest here cannot get a reply without also getting
 /// the status and the allowlisted headers.
-fn httpExImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
-    const uri = std.Uri.parse(url) catch return Err.invalid;
-    const hostname = switch (uri.host orelse return Err.invalid) {
+/// Everything `ck_http` and `ck_http_ex` agree on before their transports
+/// diverge: URL parse, the network_allow gate, custom-header parsing, method
+/// decode and argument assembly. One copy so the two entry points cannot drift
+/// on the gate or the request shape; only the fetch itself differs, which RFC
+/// 0037 records as a deliberate two-transport cost.
+const HttpPrepared = union(enum) {
+    ok: HttpFetchArgs,
+    /// An `Err.*` code; the refusal is already logged where it was decided.
+    refused: u32,
+};
+
+fn prepareHttpFetch(
+    h: *Host,
+    arena: std.mem.Allocator,
+    method: u32,
+    url: []const u8,
+    body: []const u8,
+    hdr_json: ?[]const u8,
+    custom_hdrs: *[max_custom_headers]std.http.Header,
+    resp_buf: []u8,
+) HttpPrepared {
+    const uri = std.Uri.parse(url) catch return .{ .refused = Err.invalid };
+    const hostname = switch (uri.host orelse return .{ .refused = Err.invalid }) {
         .raw => |hh| hh,
         .percent_encoded => |hh| hh,
     };
-
     if (!networkAllowed(h.sandbox.network_allow, hostname)) {
         log.log(.warn, "[sandbox] tool denied network access to '{s}'", .{hostname});
-        return Err.denied;
+        return .{ .refused = Err.denied };
     }
 
-    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var custom_hdrs: [max_custom_headers]std.http.Header = undefined;
-    const n_custom = parseCustomHeaders(arena, hdr_json, &custom_hdrs);
-
-    const resp_buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_http_bytes) catch return Err.too_large;
-    defer h.sandbox.gpa.free(resp_buf);
-    const hdr_buf = h.sandbox.gpa.alloc(u8, exposed_headers_buf_len) catch return Err.too_large;
-    defer h.sandbox.gpa.free(hdr_buf);
-
-    const req_method = httpMethodFromCode(method) orelse return Err.invalid;
+    const n_custom = parseCustomHeaders(arena, hdr_json, custom_hdrs);
+    const req_method = httpMethodFromCode(method) orelse return .{ .refused = Err.invalid };
     const has_body = req_method == .POST or req_method == .PUT or req_method == .PATCH;
-    const args: HttpFetchArgs = .{
+    return .{ .ok = .{
         .io = h.sandbox.io,
         .gpa = h.sandbox.gpa,
         .url = url,
@@ -3256,6 +3264,23 @@ fn httpExImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []c
         .payload = if (has_body) body else null,
         .extra_headers = if (n_custom > 0) custom_hdrs[0..n_custom] else &.{},
         .out = resp_buf,
+    } };
+}
+
+fn httpExImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
+    var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var custom_hdrs: [max_custom_headers]std.http.Header = undefined;
+    const resp_buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_http_bytes) catch return Err.too_large;
+    defer h.sandbox.gpa.free(resp_buf);
+    const hdr_buf = h.sandbox.gpa.alloc(u8, exposed_headers_buf_len) catch return Err.too_large;
+    defer h.sandbox.gpa.free(hdr_buf);
+
+    const args = switch (prepareHttpFetch(h, arena, method, url, body, hdr_json, &custom_hdrs, resp_buf)) {
+        .ok => |a| a,
+        .refused => |code| return code,
     };
 
     const outcome = httpHeadWithTimeout(h.sandbox.io, args, hdr_buf, http_timeout_ms) orelse {
@@ -3305,38 +3330,17 @@ fn writeHttpEnvelope(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, status
 }
 
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
-    const uri = std.Uri.parse(url) catch return Err.invalid;
-    const hostname = switch (uri.host orelse return Err.invalid) {
-        .raw => |hh| hh,
-        .percent_encoded => |hh| hh,
-    };
-
-    const allowed = networkAllowed(h.sandbox.network_allow, hostname);
-    if (!allowed) {
-        log.log(.warn, "[sandbox] tool denied network access to '{s}'", .{hostname});
-        return Err.denied;
-    }
-
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     var custom_hdrs: [max_custom_headers]std.http.Header = undefined;
-    const n_custom = parseCustomHeaders(arena, hdr_json, &custom_hdrs);
-
     const resp_buf = h.sandbox.gpa.alloc(u8, h.sandbox.max_http_bytes) catch return Err.too_large;
     defer h.sandbox.gpa.free(resp_buf);
 
-    const req_method = httpMethodFromCode(method) orelse return Err.invalid;
-    const has_body = req_method == .POST or req_method == .PUT or req_method == .PATCH;
-    const args: HttpFetchArgs = .{
-        .io = h.sandbox.io,
-        .gpa = h.sandbox.gpa,
-        .url = url,
-        .method = req_method,
-        .payload = if (has_body) body else null,
-        .extra_headers = if (n_custom > 0) custom_hdrs[0..n_custom] else &.{},
-        .out = resp_buf,
+    const args = switch (prepareHttpFetch(h, arena, method, url, body, hdr_json, &custom_hdrs, resp_buf)) {
+        .ok => |a| a,
+        .refused => |code| return code,
     };
 
     const outcome = httpWithTimeout(h.sandbox.io, args, http_timeout_ms) orelse {
