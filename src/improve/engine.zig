@@ -4121,6 +4121,22 @@ const ok_cli_gates =
     \\        }
     \\    }
     \\}
+    \\pub fn reportsInventoryGate() !GateResult {
+    \\    const inventory = dir.readFileAlloc(io, "docs/reports/README.md", gpa, .limited(4 << 20)) catch {
+    \\        return .{ .ok = true, .label = "reports-inventory", .detail = "no reports inventory" };
+    \\    };
+    \\    return scanReportsInventory(gpa, io, dir, inventory);
+    \\}
+    \\fn scanReportsInventory() !GateResult {
+    \\    for (report_record_dirs) |kind_dir| {
+    \\        while (try it.next(io)) |entry| {
+    \\            const row = inventoryStatusFor(inventory, kind_dir, entry.name) orelse {
+    \\                drift += 1;
+    \\                continue;
+    \\            };
+    \\        }
+    \\    }
+    \\}
 ;
 
 test "the live checks.zig gate functions still reach their load-bearing calls" {
