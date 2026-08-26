@@ -23,7 +23,6 @@
 //! (default off), the same stance as state/webui_plugins.json.
 
 const std = @import("std");
-const log = @import("../util/log.zig");
 const plugin_state = @import("../util/plugin_state.zig");
 
 pub const state_path = "state/cli_plugins.json";

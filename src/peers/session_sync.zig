@@ -14,7 +14,6 @@
 
 const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
-const log = @import("../util/log.zig");
 const session_events = @import("../agent/session_events.zig");
 
 pub const replica_root = "state/mesh";

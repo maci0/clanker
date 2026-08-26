@@ -12,7 +12,6 @@
 //! deliveries cannot both append: one CAS wins, the loser re-reads, sees the
 //! id, and reports the duplicate.
 
-const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("notifications_logic.zig");
 

@@ -31,8 +31,6 @@ const SearchHit = struct {
 
 const SearchResponse = struct { ok: bool = true, query: []const u8 = "", hits: []const SearchHit = &.{} };
 
-const GetResponse = struct { ok: bool = true, id: []const u8 = "" };
-
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }

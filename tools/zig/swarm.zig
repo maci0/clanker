@@ -3,7 +3,6 @@
 //! Input:  {"tasks": ["...", "..."], "provider": "kimi-k3"}
 //! Output: {"ok": true, "text": "<JSON array of {task, ok, text|error}>"}
 
-const std = @import("std");
 const lib = @import("lib.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {

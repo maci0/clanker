@@ -13,7 +13,6 @@
 //! finding it at all.
 
 const std = @import("std");
-const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 

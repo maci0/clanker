@@ -2,7 +2,6 @@
 //! Input: {"op":"list"} | {"op":"start","argv":["zig","build"]} |
 //!        {"op":"wait","id":"..."} | {"op":"kill","id":"..."}
 
-const std = @import("std");
 const lib = @import("lib.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {

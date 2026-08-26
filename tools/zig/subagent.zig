@@ -3,7 +3,6 @@
 //! Input:  {"task": "...", "context": ["..."], "files": ["src/x.zig"], "provider": "kimi-k3", "background": false}
 //! Output: {"ok": true, "text": "<sub-agent answer>"} or {"ok":true,"job":"...","status":"running"}
 
-const std = @import("std");
 const lib = @import("lib.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {

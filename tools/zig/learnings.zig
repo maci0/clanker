@@ -3,7 +3,6 @@
 //! Input:  {}
 //! Output: {"ok": true, "text": "<learnings>"}
 
-const std = @import("std");
 const lib = @import("lib.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
