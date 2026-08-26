@@ -69,9 +69,10 @@ already closed.
 
 - **No em dashes. No AI attribution.**
 - **Drive it, don't read it.** For the web UI: `zig build && zig build tools`
-  then `./zig-out/bin/clanker serve --webui-port <free port>`, hit it with a real
-  browser driver (`playwright`, or `curl` only for what a browser tool can't
-  show), click through views, submit a task, watch it stream. For the TUI:
+  then `./zig-out/bin/clanker serve --webui-port <free port>`, hit it with a
+  real browser driver (`playwright` if one is already installed; never
+  install packages; `curl` only for what a browser tool can't show), click
+  through views, submit a task, watch it stream. For the TUI:
   launch `./zig-out/bin/clanker repl` inside `tmux`, `send-keys`/
   `capture-pane` real interaction — type a partial slash command and press
   Tab, page the transcript, trigger `/model`'s picker. For the CLI: run the

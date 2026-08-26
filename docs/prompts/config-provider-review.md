@@ -53,7 +53,7 @@ belongs there instead.
 
 | Source | Use |
 |---|---|
-| `docs/README.md` ("Configuration" section) | Full field reference, the rejection table for the legacy nested-models shape, `ck_harness_config`'s role |
+| `docs/configuration.md` ("Configuration errors" section) | Full field reference, the load-error contract, and the flat-models shape the loader enforces |
 | `src/config.zig` | `Config.load`, `loadFile`, `parseConfig`, `distributeModels`, `validateProviderModels`, `merge` — the actual load/merge/validate pipeline |
 | `src/sandbox/host.zig` | `ckHarnessConfig`/`harnessConfigJSON` — the host-side bridge that hands sandboxed guests the merged config as JSON, since a `wasm32-freestanding` guest has no TOML parser |
 | `tools/zig/lib.zig` | `readConfigFile`/`harnessConfig` — the guest-side helpers that consume config |
@@ -61,7 +61,7 @@ belongs there instead.
 
 ## Read first
 
-`docs/README.md`'s Configuration section, `src/config.zig` in full, and
+`docs/configuration.md` in full, `src/config.zig` in full, and
 every `tools/zig/*.zig` file that calls `lib.harnessConfig()`,
 `lib.readConfigFile()`, or `lib.config()`.
 
@@ -100,7 +100,7 @@ Review the paths named by the runner or user. If none are named, review
 ### A. Load and merge correctness
 
 - [ ] `Config.load`'s file-name derivation and fallback order match what
-      `docs/README.md` documents: a `.toml` sibling wins when present,
+      `docs/configuration.md` documents: a `.toml` sibling wins when present,
       `.json` is a fallback only if no `.toml` exists — confirm both are
       still true in `loadFile`, since this exact order has been the source
       of a real prior bug (a `.json` fallback silently masking a broken
@@ -265,7 +265,7 @@ Return the following in the captured response:
 - Scope (paths, mode, date)
 - A load/merge correctness table: each section (`providers`, `models`,
   `agent`, `instance`, `web`, ...) and whether its merge semantics match
-  `docs/README.md`
+  `docs/configuration.md`
 - A guest-bridge field-parity table: `harnessConfigJSON`'s emitted fields
   vs. each consumer's mirror struct
 - Ordered fix plan: secrets first, then silent-failure regressions, then
@@ -274,7 +274,7 @@ Return the following in the captured response:
 
 ## Success criteria
 
-- [ ] Load/merge semantics checked against `docs/README.md`'s documented
+- [ ] Load/merge semantics checked against `docs/configuration.md`'s documented
       behavior, not assumed correct
 - [ ] Every legacy-shape rejection explicitly re-verified as a hard error
 - [ ] Guest-bridge field parity checked by hand across every consumer, not

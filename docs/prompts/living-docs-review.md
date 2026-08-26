@@ -76,9 +76,9 @@ stop: a stub has nothing to drift.
    differently (`AGENTS.md` vs `CLAUDE.md` vs `docs/README.md`), both cannot
    be right; name the current truth from source and the file to fix.
 
-If available, use: `rg` (or the sandboxed `repo_search`) to verify path and
-symbol claims mechanically, and `git log --follow` on a named path when a
-claim looks like it predates a move.
+If available, use: the sandboxed `repo_search` (or shell `rg` where it exists)
+to verify path and symbol claims mechanically, and `git log --follow` on a
+named path when a claim looks like it predates a move.
 
 ## Search recipes (run early)
 

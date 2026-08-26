@@ -48,7 +48,7 @@ reach through the improve loop specifically), and **not** the tool ABI review
 | `AGENTS.md` ("Self-improvement loop" section) | The promoted-change contract: what every promotion must pass |
 | `docs/README.md` ("Self-improvement engine" section) | The five-step loop: collect context, propose, apply+gate in isolation, promote, merge back |
 | `src/improve/engine.zig` | `gate_invariants`, `brokenInvariant`, `Engine.run`, promotion and merge logic |
-| `src/improve/proposal.zig` | `allowed_prefixes` (the modifiable surface), `isAppendOnly` (the eval-suite anti-cheat) |
+| `src/improve/proposal.zig` | `allowed_prefixes` plus `validatePath`'s explicit denials (the modifiable surface), `isAppendOnly` (the eval-suite anti-cheat) |
 | `src/improve/worktree.zig` | Isolation: worktree creation, shared-state symlinking, `mergeBack`'s CAS merge |
 | `src/gate/checks.zig` | The actual gate implementations `gate_invariants` protects — deliberately *outside* the protected surface so the loop can improve its own gates, which is exactly why the invariant checks exist |
 
@@ -62,11 +62,14 @@ engine section, `src/improve/engine.zig`, `src/improve/proposal.zig`,
 
 - **No em dashes. No AI attribution.**
 - **Keep `zig build && zig build test` green** if you propose an edit.
-- **The protected surface (`src/improve/`, `src/evals/`,
-  `src/toolhost/builder.zig`, `evals/`) is asserted in `proposal.zig`, not
-  assumed** — verify `allowed_prefixes` still excludes them by omission
-  (there is no explicit deny list; a path not prefixed by an allowed entry is
-  refused) rather than trusting the doc comment.
+- **The denied surface (`src/improve/`, `src/evals/`,
+  `src/toolhost/builder.zig`, `tools/ts/dist/`, `ui/vendor/`) is asserted in
+  `validatePath` (`src/improve/proposal.zig`), not assumed** —
+  `allowed_prefixes` grants coarsely (`src/` itself is an allowed prefix) and
+  `validatePath` then refuses those paths explicitly, so verifying the grant
+  list alone proves nothing; `evals/` is separate: creatable as `.task.json`
+  only, never edited (`isAppendOnly`). Check both halves against current
+  source rather than trusting the doc comment.
 - **`src/gate/checks.zig` is deliberately NOT protected.** A finding that
   proposes adding it to the protected surface is out of scope — the design
   intent is that clanker can strengthen its own gates. The correct
@@ -91,10 +94,12 @@ every file under `src/improve/` plus `src/gate/checks.zig`.
 
 ### A. The modifiable surface (`proposal.zig`)
 
-- [ ] `allowed_prefixes` is the only thing standing between "clanker can
-      improve itself" and "clanker can rewrite its own referee" — confirm
-      every entry is still a real, intentional grant (a stray `"vendor/"` or
-      `".git"`-adjacent prefix would be a P0).
+- [ ] `allowed_prefixes` plus `validatePath`'s explicit denials are what
+      stand between "clanker can improve itself" and "clanker can rewrite its
+      own referee" — confirm every grant is still a real, intentional one (a
+      stray `"vendor/"` or `".git"`-adjacent prefix would be a P0) and every
+      denial still fires (`src/improve/`, `src/evals/`,
+      `src/toolhost/builder.zig`, `tools/ts/dist/`, `ui/vendor/`).
 - [ ] `validatePath`'s absolute-path and `..`-component rejection is checked
       *before* the prefix match, not after (an unchecked prefix match alone
       is bypassable with a relative path that escapes via `..` before
@@ -106,8 +111,9 @@ every file under `src/improve/` plus `src/gate/checks.zig`.
       category, a new `src/` subsystem) that should logically be excluded
       from self-modification (because it's part of the grading path, like
       `src/gate/` conceptually is, minus the deliberate exception) — flag if
-      you find one that isn't in `allowed_prefixes` for the wrong reason
-      (accidental omission) vs. the right one (deliberately excluded).
+      you find one sitting inside an allowed prefix that `validatePath` does
+      not deny and no stated reason covers (accidental inclusion) vs. the
+      right one (deliberately exposed).
 
 ### B. Gate invariants (`gate_invariants`, `brokenInvariant`)
 
@@ -259,8 +265,8 @@ Return the following in the captured response:
 - [ ] For every gate implementation outside the protected surface, checked
       whether its load-bearing internals (not just the delegation call) are
       covered
-- [ ] `allowed_prefixes` and `isAppendOnly` explicitly checked, not assumed
-      correct from the doc comment
+- [ ] `allowed_prefixes`, `validatePath`'s denials, and `isAppendOnly`
+      explicitly checked, not assumed correct from the doc comment
 - [ ] Merge-back CAS and post-merge resync explicitly checked
 - [ ] No recommendation to add `src/gate/checks.zig` to the protected
       surface (design intent is invariant coverage, not exclusion)
