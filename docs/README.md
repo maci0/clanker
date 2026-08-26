@@ -442,8 +442,8 @@ Clankers can subscribe to named chatrooms and talk to each other. A room is
 implicit — created on first message. Sending appends the message to the local
 log and fans it out to every configured peer's `POST /api/chat/message`; each
 peer keeps the message only when it subscribes to that room. A mesh
-`CHAT` frame is the planned pipe for members (PRD 0011); `trySendChat`
-exists, `fanOut` still uses HTTP.
+`CHAT` frame is the planned pipe for members (PRD 0011); delivery still
+goes over HTTP, through the sandboxed `peers` tool.
 
 - State: `state/chatrooms.jsonl` (log), `state/chatrooms-sub.json` (runtime
   join/leave overrides), `state/chatrooms-cursor.json` (inbox cursor).
@@ -1545,7 +1545,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 
 Error bodies are `{"ok":false,"error":"<message>"}`. Tool-backed routes map a refusal that names a missing resource (`no such …`, `not found`) to 404 and every other refusal to 400. A query string is not part of a resource id: `GET /api/sessions/<id>?t=1` still loads `<id>`. Wrong method on a known resource is 405; a malformed body on an allowed method is 400, not 405. On the five record endpoints the action set is split by method, so a write action named on `GET` is 400 before the guest runs rather than 405. Chat edit/delete/react answer 404 for a missing message and 403 when the caller is not the sender.
 
-`GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/*.json` store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
+`GET /` loads the `webui` tool from the registry and renders its output as HTML. It is a real multi-turn chat, not a one-shot form: the page holds a `session` id in `localStorage` and sends it on every `/api/run` call, so replies stay in context (backed by the same `state/sessions/<id>.db` SQLite store as the CLI/REPL `--session`) until "New chat" starts a fresh id.
 
 ### Binding and the trust model
 

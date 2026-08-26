@@ -133,8 +133,9 @@ this runbook can manufacture a snapshot that does not exist.
 - `clanker sessions` lists the sessions the snapshot contained (not just a
   fresh empty list).
 - Spot-check transcripts against the snapshot:
-  `cmp <storage_root>/state/sessions/<id>.json
-  <SNAP>/state/sessions/<id>.json` for one pre-incident session id.
+  `cmp <storage_root>/state/sessions/<id>.db
+  <SNAP>/state/sessions/<id>.db` for one pre-incident session id
+  (each session is one SQLite database).
 - If a torn tail is suspected (snapshots are crash-consistent), open the
   affected `*.jsonl`: a torn last line is normal and the file's reader
   tolerates it — do not "repair" the whole store for it.
