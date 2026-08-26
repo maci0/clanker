@@ -16,6 +16,11 @@ const guest = readFileSync(join(here, "..", "..", "webui.zig"), "utf8");
 // 2026-08-16T22:42:57Z, the newest run in the store when the list was built.
 const NOW = 1786920177000;
 
+// Relative labels come from Intl.RelativeTimeFormat at the runtime locale, and
+// date stamps from toLocaleDateString — so expectations are built from the same
+// formatters instead of pinning English wording that another machine won't emit.
+const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
 // Local-calendar yesterday at midnight: the day-bucket boundaries under test
 // are local midnights, so a fixed "30h before NOW" instant lands on either
 // side of yesterday depending on the machine's timezone (CI pins TZ=UTC).
@@ -45,19 +50,28 @@ test("both id shapes order on the same clock", function () {
 });
 
 test("fmtWhen says how long ago, then falls back to a date", function () {
-  assert.equal(fmtWhen(NOW - 5 * 1000, NOW), "just now");
-  assert.equal(fmtWhen(NOW - 12 * 60 * 1000, NOW), "12m ago");
-  assert.equal(fmtWhen(NOW - 3 * 3600 * 1000, NOW), "3h ago");
-  assert.equal(fmtWhen(YESTERDAY, NOW), "yesterday");
-  assert.match(fmtWhen(NOW - 6 * 86400 * 1000, NOW), /^[A-Z][a-z]{2} \d{1,2}$/);
+  assert.equal(fmtWhen(NOW - 5 * 1000, NOW), RELATIVE.format(0, "second"));
+  assert.equal(fmtWhen(NOW - 12 * 60 * 1000, NOW), RELATIVE.format(-12, "minute"));
+  assert.equal(fmtWhen(NOW - 3 * 3600 * 1000, NOW), RELATIVE.format(-3, "hour"));
+  assert.equal(fmtWhen(YESTERDAY, NOW), RELATIVE.format(-1, "day"));
+  // Older than yesterday names its calendar date: whatever the locale calls
+  // the month or orders the parts, the day number must be there.
+  assert.match(fmtWhen(NOW - 6 * 86400 * 1000, NOW), /\d/);
   // An id with no timestamp gets no invented one.
   assert.equal(fmtWhen(0, NOW), "");
 });
 
 test("dayBucket names today and yesterday before it names a date", function () {
-  assert.equal(dayBucket(NOW - 60 * 1000, NOW), "Today");
-  assert.equal(dayBucket(YESTERDAY, NOW), "Yesterday");
-  assert.match(dayBucket(NOW - 9 * 86400 * 1000, NOW), /\d/);
+  assert.equal(dayBucket(NOW - 60 * 1000, NOW), RELATIVE.format(0, "day"));
+  assert.equal(dayBucket(YESTERDAY, NOW), RELATIVE.format(-1, "day"));
+  // A different year's run carries the year in its stamp; this year's does not.
+  const oldYear = new Date(NOW); oldYear.setFullYear(oldYear.getFullYear() - 2);
+  const cross = dayBucket(oldYear.getTime(), NOW);
+  assert.ok(/\d/.test(cross) && String(oldYear.getFullYear()).length > 0 && cross.includes(String(oldYear.getFullYear())), cross);
+  const thisYear = new Date(NOW); thisYear.setHours(0, 0, 0, 0);
+  thisYear.setDate(thisYear.getDate() - 3);
+  const same = dayBucket(thisYear.getTime(), NOW);
+  assert.ok(/\d/.test(same) && !same.includes(String(new Date(NOW).getFullYear())), same);
   assert.equal(dayBucket(0, NOW), "Undated");
 });
 
@@ -71,7 +85,7 @@ test("rows carry what the dropdown could not show", function () {
   );
   assert.equal(rows.length, 2);
   assert.equal(rows[0].id, "run-1786920177");
-  assert.equal(rows[0].when, "just now");
+  assert.equal(rows[0].when, RELATIVE.format(0, "second"));
   assert.equal(rows[0].provider, "deepseek");
   assert.equal(rows[0].nodes, 4);
   assert.equal(rows[0].tokens, 46933);
@@ -129,9 +143,9 @@ test("grouping puts each row under the day it ran", function () {
     ),
     NOW,
   );
-  assert.equal(groups[0].day, "Today");
+  assert.equal(groups[0].day, RELATIVE.format(0, "day"));
   assert.equal(groups[0].rows.length, 1);
-  assert.equal(groups[1].day, "Yesterday");
+  assert.equal(groups[1].day, RELATIVE.format(-1, "day"));
   // Days appear once each, in the order the rows arrived.
   const days = groups.map(function (g) { return g.day; });
   assert.equal(new Set(days).size, days.length);

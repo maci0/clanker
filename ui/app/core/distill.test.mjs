@@ -84,6 +84,15 @@ test("summarizeTitle never splits a surrogate pair on the length cut", async fun
   }
 });
 
+test("summarizeTitle keeps accented and non-Latin letters on word edges", async function () {
+  const { summarizeTitle } = await import("./utils.js");
+  // The old ASCII trim class [A-Za-z0-9'] ate accents off word edges and
+  // stripped a CJK title to nothing; a letter is a letter in any script.
+  assert.equal(summarizeTitle("Água do poço"), "Água poço");
+  assert.equal(summarizeTitle('"Émigré" notes'), "Émigré notes");
+  assert.ok(/测试/.test(summarizeTitle("测试标题 one")));
+});
+
 test("Board filters sit behind a disclosure and Only mine is singular", function () {
   assert.match(html, /class="board-filter-fold"/);
   assert.match(html, /Saves a Ready card/);

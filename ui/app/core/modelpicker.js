@@ -465,8 +465,8 @@ export function loadProviders() {
         var models = (prov.models || []).filter(function (m) { return m.enabled !== false; }).slice().sort(function (a, b) {
           var ac = a.category || "", bc = b.category || "";
           if (!ac !== !bc) return ac ? -1 : 1;
-          if (ac !== bc) return ac < bc ? -1 : 1;
-          return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+          if (ac !== bc) return ac.localeCompare(bc);
+          return String(a.name || "").localeCompare(String(b.name || ""));
         });
         models.forEach(function (m) {
           var value = prov.name + " " + m.name;

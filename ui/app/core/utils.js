@@ -196,15 +196,19 @@ export function summarizeTitle(raw) {
   var skip = { a:1, an:1, the:1, to:1, of:1, for:1, and:1, or:1, in:1, on:1, at:1, is:1, are:1, be:1, been:1, being:1, should:1, would:1, could:1, can:1, will:1, just:1, please:1, this:1, that:1, it:1, with:1, from:1, as:1, by:1, if:1, so:1, do:1, does:1, did:1, not:1, no:1, we:1, i:1, you:1, my:1, our:1, me:1, have:1, has:1, had:1, how:1, what:1, when:1, where:1, why:1, also:1, need:1, want:1, make:1, add:1 };
   var parts = t.split(" ");
   var words = [];
+  // Trim punctuation with \p{L}\p{N}, not [A-Za-z0-9]: the ASCII class ate
+  // accents off word edges ("Água" became "gu") and stripped a CJK title to
+  // nothing; a letter is a letter in any script.
+  var trimWord = function (w) { return w.replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, ""); };
   for (var i = 0; i < parts.length && words.length < 3; i++) {
-    var w = parts[i].replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9'-]+$/g, "");
+    var w = trimWord(parts[i]);
     if (!w) continue;
     if (skip[w.toLowerCase()]) continue;
     words.push(w);
   }
   if (!words.length) {
     for (var j = 0; j < parts.length && words.length < 2; j++) {
-      var w2 = parts[j].replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9'-]+$/g, "");
+      var w2 = trimWord(parts[j]);
       if (w2) words.push(w2);
     }
   }

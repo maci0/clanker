@@ -554,11 +554,12 @@ function railRowFor(s, current) {
 function workspacesOf(sessions) {
   var names = {};
   sessions.forEach(function (s) { names[s.workspace || ""] = true; });
+  // localeCompare, not `<`: folder names can be non-ASCII.
   return Object.keys(names).sort(function (a, b) {
     if (a === b) return 0;
     if (a === "") return -1;
     if (b === "") return 1;
-    return a < b ? -1 : 1;
+    return a.localeCompare(b);
   });
 }
 

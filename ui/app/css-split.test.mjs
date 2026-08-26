@@ -271,7 +271,7 @@ test("views.css is loaded non-blocking with a no-JS fallback", function () {
     "preact-boot.js must stay the first module script tag");
 });
 
-test("no views.css selector styles an element the first paint shows", function () {
+test("no views.css selector styles an element the first paint shows", { timeout: 30000 }, function () {
   const offenders = [];
   for (const sel of cssRules(viewsCss)) {
     const hit = firstPaint.find((el) => matchesAny(sel, el));

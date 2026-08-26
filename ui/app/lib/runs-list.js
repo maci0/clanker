@@ -42,30 +42,39 @@ function calendarDaysAgo(startedAt, now) {
   return Math.round((startOfDay(now) - startOfDay(startedAt)) / 86400000);
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/* Dates and relative labels follow the runtime locale, the way core/utils.js
+   formats them (Intl.RelativeTimeFormat, toLocaleDateString): a listing opened
+   on a German or Japanese machine reads its own month names and its own
+   "yesterday", not English ones wired into this file. */
+const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
-/** "just now" / "12m ago" / "3h ago" / "yesterday" / "Aug 11". Empty for a run
-    whose id carries no timestamp — better no date than an invented one. */
+function dayStamp(startedAt, withYear) {
+  const opts = withYear
+    ? { year: "numeric", month: "short", day: "numeric" }
+    : { month: "short", day: "numeric" };
+  return new Date(startedAt).toLocaleDateString(undefined, opts);
+}
+
+/** "now" / "12 minutes ago" / "3 hours ago" / "yesterday" / "Aug 11". Empty
+    for a run whose id carries no timestamp — better no date than an invented
+    one. */
 export function fmtWhen(startedAt, now) {
   if (!startedAt) return "";
   const ms = now - startedAt;
-  if (ms < 60000) return "just now";
-  if (ms < 3600000) return Math.floor(ms / 60000) + "m ago";
-  if (ms < 86400000) return Math.floor(ms / 3600000) + "h ago";
-  if (calendarDaysAgo(startedAt, now) === 1) return "yesterday";
-  const d = new Date(startedAt);
-  return MONTHS[d.getMonth()] + " " + d.getDate();
+  if (ms < 60000) return RELATIVE.format(0, "second");
+  if (ms < 3600000) return RELATIVE.format(-Math.floor(ms / 60000), "minute");
+  if (ms < 86400000) return RELATIVE.format(-Math.floor(ms / 3600000), "hour");
+  if (calendarDaysAgo(startedAt, now) === 1) return RELATIVE.format(-1, "day");
+  return dayStamp(startedAt, false);
 }
 
 /** The heading a row sits under. */
 export function dayBucket(startedAt, now) {
   if (!startedAt) return "Undated";
   const days = calendarDaysAgo(startedAt, now);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  const d = new Date(startedAt);
-  const stamp = MONTHS[d.getMonth()] + " " + d.getDate();
-  return d.getFullYear() === new Date(now).getFullYear() ? stamp : stamp + ", " + d.getFullYear();
+  if (days === 0) return RELATIVE.format(0, "day");
+  if (days === 1) return RELATIVE.format(-1, "day");
+  return dayStamp(startedAt, new Date(startedAt).getFullYear() !== new Date(now).getFullYear());
 }
 
 /* A summary reports `nodes` as a count while a whole graph reports it as an

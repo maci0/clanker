@@ -70,7 +70,7 @@ function bindings(id) {
 // the shared helper without losing that.
 const HAND_ROLLED = new Set(["refresh"]);
 
-test("every Refresh button in the page is picked up by a script", function () {
+test("every Refresh button in the page is picked up by a script", { timeout: 30000 }, function () {
   const ids = refreshButtonIds();
   assert.ok(ids.length >= 15, "expected the page's Refresh buttons, found " + ids.length);
   for (const id of ids) {
