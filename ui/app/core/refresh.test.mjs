@@ -70,7 +70,13 @@ function bindings(id) {
 // the shared helper without losing that.
 const HAND_ROLLED = new Set(["refresh"]);
 
-test("every Refresh button in the page is picked up by a script", { timeout: 30000 }, function () {
+// The two static scans walk every JS file under ui/app per button id; on a
+// loaded machine (or after heavier suites in the same sweep) that can exceed
+// bun's 5s default, which reads as a failure rather than slowness. The budget
+// below is headroom, not a target: the scans take ~1s warm.
+const SCAN_TIMEOUT = 30_000;
+
+test("every Refresh button in the page is picked up by a script", { timeout: SCAN_TIMEOUT }, function () {
   const ids = refreshButtonIds();
   assert.ok(ids.length >= 15, "expected the page's Refresh buttons, found " + ids.length);
   for (const id of ids) {
@@ -78,7 +84,7 @@ test("every Refresh button in the page is picked up by a script", { timeout: 300
   }
 });
 
-test("every Refresh button has a handler that gives busy feedback", function () {
+test("every Refresh button has a handler that gives busy feedback", { timeout: SCAN_TIMEOUT }, function () {
   for (const id of refreshButtonIds()) {
     if (HAND_ROLLED.has(id)) continue;
     const where = bindings(id);
@@ -93,7 +99,7 @@ test("every Refresh button has a handler that gives busy feedback", function () 
   }
 });
 
-test("wireRefresh re-enables the button whether the load resolves or rejects", async function () {
+test("wireRefresh re-enables the button whether the load resolves or rejects", { timeout: SCAN_TIMEOUT }, async function () {
   const { wireRefresh } = await import("./utils.js");
   const calls = [];
   function fakeButton() {

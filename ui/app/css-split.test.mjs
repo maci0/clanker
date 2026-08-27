@@ -106,18 +106,14 @@ function cssRules(src) {
 }
 
 // ---------- selector matching ----------
-// The contract test walks every views.css rule against every first-paint
-// element, and each walk used to re-parse the selector per element and again
-// per ancestor step -- enough reparses to push the run past the runner's
-// default 5s budget and fail the suite under load. Parse each selector once;
-// the parsed forms are read-only from here on.
-const listCache = new Map();
-const chainCache = new Map();
-const compoundCache = new Map();
-
+// Every parser below is a pure function of its string input, but the
+// first-paint sweep calls them once per (selector, element) pair; as the
+// sheets grew that re-parsing pushed the test past bun's 5s default timeout.
+// Memoize by input so each distinct compound/list is parsed exactly once.
+const parseCache = new Map();
 function splitList(sel) {
-  let out = listCache.get(sel);
-  if (out) return out;
+  let out = parseCache.get(sel);
+  if (out !== undefined) return out;
   out = [];
   let depth = 0, cur = "";
   for (const ch of sel) {
@@ -127,12 +123,13 @@ function splitList(sel) {
     else cur += ch;
   }
   if (cur.trim()) out.push(cur.trim());
-  listCache.set(sel, out);
+  parseCache.set(sel, out);
   return out;
 }
+const compoundCache = new Map();
 function splitCompound(sel) {
-  let out = chainCache.get(sel);
-  if (out) return out;
+  let out = compoundCache.get(sel);
+  if (out !== undefined) return out;
   out = [];
   let depth = 0, cur = "";
   const flush = () => { const t = cur.trim(); if (t) out.push({ compound: t, comb: null }); cur = ""; };
@@ -154,12 +151,13 @@ function splitCompound(sel) {
     cur += ch;
   }
   flush();
-  chainCache.set(sel, out);
+  compoundCache.set(sel, out);
   return out;
 }
+const partsCache = new Map();
 function parseCompound(comp) {
-  let parts = compoundCache.get(comp);
-  if (parts) return parts;
+  let parts = partsCache.get(comp);
+  if (parts !== undefined) return parts;
   parts = [];
   let i = 0;
   while (i < comp.length) {
@@ -201,7 +199,7 @@ function parseCompound(comp) {
       i = Math.max(j, i + 1);
     } else { i++; }
   }
-  compoundCache.set(comp, parts);
+  partsCache.set(comp, parts);
   return parts;
 }
 function matchCompound(parts, el) {
@@ -289,9 +287,9 @@ test("views.css is loaded non-blocking with a no-JS fallback", function () {
     "preact-boot.js must stay the first module script tag");
 });
 
-// The selector x element scan runs long enough under a loaded machine to
-// cross bun's default 5s test timeout and flip the suite red without any
-// assertion failing, so it gets explicit headroom.
+// Memoized parsing keeps this near a second warm; the budget is headroom for
+// a loaded machine, where the scan used to cross bun's 5s default and read as
+// a failure rather than slowness.
 test("no views.css selector styles an element the first paint shows", { timeout: 60000 }, function () {
   const offenders = [];
   for (const sel of cssRules(viewsCss)) {

@@ -209,7 +209,9 @@ The patch guards all six call sites (1 interp, 5 JIT/WASI) with
 `ZWASM_DEBUG=mem.cksum` set is unchanged.
 
 Status: local-only. The right fix is an upstream PR to
-`github.com/clojurewasm/zwasm` and a version bump here; this file and the
+`github.com/zwasm/zwasm` (the org the pin in `build.zig.zon` fetches from;
+formerly `clojurewasm/zwasm`, which still redirects) and a version bump here;
+this file and the
 patch exist so the fix survives a `zig-pkg` wipe until then. Related tracked
 change that *is* in the repo: `build.zig` passes `target`/`optimize` through
 to the zwasm dependency, so release builds stop compiling the interpreter at
