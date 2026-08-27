@@ -1496,6 +1496,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- The "prompt cache likely cold (ttl 300s)" warning no longer fires on
+  local `openai_compat` backends (llama.cpp, ollama, vLLM). The 300s
+  idle clock is Anthropic's hosted prompt-cache window and now defaults
+  only on `anthropic` / `claude` / `vertex_anthropic`. Other kinds
+  default to off. Override per provider with `cache_ttl_ms` (`0` =
+  disable).
 - A `.env` line whose value carries a side note (`DEEPSEEK_API_KEY=sk-...
   # staging key`) no longer loads the note as part of the value: an unquoted
   value now ends at a `#` that whitespace introduces, so the credential

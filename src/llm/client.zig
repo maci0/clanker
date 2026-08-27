@@ -817,14 +817,20 @@ pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
     return cost;
 }
 
+fn cacheTtlMs(provider: *const config.Provider) u64 {
+    return provider.cacheTtlMs(providers.forKind(provider.kind).cache_ttl_ms);
+}
+
 fn warnIfCacheCold(ctx: *Ctx, provider: *const config.Provider) void {
+    const ttl = cacheTtlMs(provider);
+    if (ttl == 0) return;
     const now_ms: u64 = @intCast(@divTrunc(std.Io.Timestamp.now(ctx.io, .real).nanoseconds, std.time.ns_per_ms));
     const model = provider.activeModelName();
     const last = cache_cold.lastOk(provider.name, model);
-    if (cache_cold.shouldWarn(last, now_ms, cache_cold.default_ttl_ms)) {
+    if (cache_cold.shouldWarn(last, now_ms, ttl)) {
         const idle_s = (now_ms - last) / 1000;
         log.log(.warn, "prompt cache likely cold for '{s}'/{s} ({d}s idle, ttl {d}s)", .{
-            provider.name, model, idle_s, cache_cold.default_ttl_ms / 1000,
+            provider.name, model, idle_s, ttl / 1000,
         });
     }
 }
@@ -850,6 +856,7 @@ fn recordUsage(ctx: *Ctx, arena: std.mem.Allocator, provider: *const config.Prov
             u.prompt_cache_hit_tokens,
             u.prompt_cache_miss_tokens,
             now_ms,
+            cacheTtlMs(provider),
         )) {
             log.log(.warn, "unexpected prompt-cache miss for '{s}'/{s}", .{
                 provider.name, provider.activeModelName(),

@@ -24,6 +24,7 @@ pub const body_version = "vertex-2023-10-16";
 
 pub const provider: api.Provider = .{
     .kind = .vertex_anthropic,
+    .cache_ttl_ms = 300_000,
     .auth = .{
         // An access token in `api_key_env` still wins (handy for a
         // short-lived token pasted in by hand); otherwise it is minted from

@@ -17,4 +17,4 @@ Stamp last successful cache-accounted completion per provider/model. Before the 
 
 ## Consequences
 
-A pause over five minutes is named before the bill. The honest downside: 300s is Anthropic-specific and will be wrong if they change the window; a config override is a later phase. False warnings after a process restart (no stamp) are fail-open, not a hang. The helper must not switch on ProviderKind outside src/llm/providers/.
+A pause over five minutes is named before the bill. The TTL lives on the provider vtable (300s on Anthropic Messages kinds, 0 = off elsewhere) and `[providers.<name>] cache_ttl_ms` overrides it; 0 disables. False warnings after a process restart (no stamp) are fail-open, not a hang. The helper must not switch on ProviderKind outside src/llm/providers/.

@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress — phase 1 shipped 2026-08-21; phases 2 (turn_stats segment) and 3 (per-provider ttl_ms config) open. Decision: [ADR 0035](../adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md). RFC: [0023](../rfcs/0023-cache-cold.md). Source of truth: src/llm/cache_cold.zig plus stamp in src/llm/client.zig.
+Shipped — phase 1 2026-08-21; phase 3 (per-provider `cache_ttl_ms`, 0 = off; Anthropic kinds default 300s, others 0) 2026-08-27. Phase 2 (turn_stats segment) still open. Decision: [ADR 0035](../adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md). RFC: [0023](../rfcs/0023-cache-cold.md). Source of truth: src/llm/cache_cold.zig plus stamp in src/llm/client.zig.
 
 ## Problem
 
@@ -30,7 +30,7 @@ A dummy cache warmer (ADR 0008). Switching on ProviderKind outside src/llm/provi
 
 1. implement-now: helper + tests in src/llm/cache_cold.zig; stamp last_ok in client.zig; warn log. Files: src/llm/cache_cold.zig (create), src/llm/client.zig (edit), src/main.zig comptime import if needed.
 2. later: turn_stats segment and REPL line. Files: src/tui/turn_stats.zig.
-3. later: per-provider ttl_ms config. Files: src/config.zig.
+3. later: per-provider ttl_ms config. Files: src/config.zig. **Shipped 2026-08-27:** `[providers.<name>] cache_ttl_ms`; 0 disables; unset uses the vtable default (300s on Anthropic Messages kinds, 0 elsewhere).
 
 ## Failure modes
 
@@ -51,4 +51,4 @@ A dummy cache warmer (ADR 0008). Switching on ProviderKind outside src/llm/provi
 
 ## Open questions / future work
 
-Whether Anthropic's published TTL changes (retune the default). Per-provider ttl is phase 3, not a blocker.
+Whether Anthropic's published TTL changes (retune the vtable default). Per-provider ttl shipped as `cache_ttl_ms`.

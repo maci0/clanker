@@ -9,6 +9,7 @@ const anthropic = @import("anthropic.zig");
 
 pub const provider: api.Provider = .{
     .kind = .claude,
+    .cache_ttl_ms = 300_000,
     .auth = .{ .default = .api_key },
     .proxy = .{ .family = .anthropic, .vtable_messages = true, .overlay_anthropic = true },
     .buildRequest = anthropic.provider.buildRequest,

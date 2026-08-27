@@ -23,6 +23,7 @@ pub const version_header = "2023-06-01";
 
 pub const provider: api.Provider = .{
     .kind = .anthropic,
+    .cache_ttl_ms = 300_000,
     // Same wire kind, two auth paths, told apart by the credential's shape:
     // an `sk-ant-oat…` token is an OAuth access token, anything else is an
     // API key. That is `oauth_static` in ADR 0005's terms, and keeping the
