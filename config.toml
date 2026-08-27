@@ -38,6 +38,13 @@ default_provider = "moonshotai"
 # # 0 = no ceiling.
 # check_timeout_seconds = 3
 #
+# # Prompt-cache idle warning TTL in milliseconds. Unset uses the wire
+# # kind's default: 300000 on anthropic / claude / vertex_anthropic, 0
+# # (off) on openai_compat and every other kind. Local llama.cpp reports
+# # cached_tokens but has no idle cache TTL, so 0 is the right value there.
+# # 0 disables the warning for this provider.
+# cache_ttl_ms = 0
+#
 # # JSON object merged last into openai_compat / azure chat bodies so
 # # non-standard fields (NVIDIA NIM chat_template_kwargs) can be sent.
 # # Same-name keys overwrite generated fields. Omit or leave empty for none.
@@ -141,13 +148,18 @@ base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 
 # Local runtimes. Put a LAN URL in config.local.toml if the host is not this box.
+# cache_ttl_ms = 0 is redundant with the openai_compat default; it is written
+# so a local endpoint that reports cached_tokens is never judged by Anthropic's
+# 5-minute cloud cache window.
 [providers.ollama]
 kind = "openai_compat"
 base_url = "http://127.0.0.1:11434/v1"
+cache_ttl_ms = 0
 
 [providers.vllm-local]
 kind = "openai_compat"
 base_url = "http://127.0.0.1:8000/v1"
+cache_ttl_ms = 0
 
 # Every key a [models."<provider>/<model>"] entry takes. The table key carries
 # the provider prefix and `provider` names it again; both are checked against
