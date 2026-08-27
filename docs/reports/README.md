@@ -80,6 +80,8 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
+- [webui-budget gate fails: eager JS is 144.1K gz against a 144K budget](bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md) — Open
+
 - [two resolved records still read Open in the reports inventory, so reports list offers finished work](bugs/2026-08-24-report-inventory-drifts-from-the-record.md) — Open
 
 - [The saturation 503 closes a socket with the request still unread, so the RST can discard the response body](bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md) — Open
