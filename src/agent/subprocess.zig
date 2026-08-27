@@ -155,7 +155,7 @@ pub const Registry = struct {
         const h = self.findLocked(session_id, kind) orelse return null;
         const line_bytes = std.mem.sliceTo(h.leftover.items, '\n');
         if (line_bytes.len == h.leftover.items.len) return null;
-        const line = arena.dupe(u8, std.mem.trimEnd(u8, line_bytes, "\r")) catch return;
+        const line = try arena.dupe(u8, std.mem.trimEnd(u8, line_bytes, "\r"));
         const rest = h.leftover.items[line_bytes.len + 1 ..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
         h.leftover.shrinkRetainingCapacity(rest.len);
@@ -168,7 +168,7 @@ pub const Registry = struct {
         const h = self.findLocked(session_id, kind) orelse return null;
         if (h.leftover.items.len == 0) return null;
         const n = @min(h.leftover.items.len, max);
-        const out = arena.dupe(u8, h.leftover.items[0..n]) catch return;
+        const out = try arena.dupe(u8, h.leftover.items[0..n]);
         const rest = h.leftover.items[n..];
         std.mem.copyForwards(u8, h.leftover.items, rest);
         h.leftover.shrinkRetainingCapacity(rest.len);

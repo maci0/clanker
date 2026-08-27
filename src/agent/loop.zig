@@ -2392,7 +2392,7 @@ pub const Agent = struct {
         const cache_key = try std.fmt.allocPrint(self.arena, "transform:{s}", .{tool.name});
         // moduleFor logs the specific load failure; returning the error lets
         // runChain note it and pass the payload through unchanged.
-        const mod = self.moduleFor(cache_key, tool) catch return;
+        const mod = try self.moduleFor(cache_key, tool);
 
         const out = try mod.executeTool(input);
         defer self.ctx.gpa.free(out);
