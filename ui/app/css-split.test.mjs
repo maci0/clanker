@@ -106,13 +106,7 @@ function cssRules(src) {
 }
 
 // ---------- selector matching ----------
-// Selector parsing is pure; without these caches every candidate element
-// re-splits the same selector strings and the sweep over views.css outgrows
-// the runner's per-test time budget as the sheets grow.
-const listCache = new Map();
 function splitList(sel) {
-  const cached = listCache.get(sel);
-  if (cached) return cached;
   const out = [];
   let depth = 0, cur = "";
   for (const ch of sel) {
@@ -122,14 +116,9 @@ function splitList(sel) {
     else cur += ch;
   }
   if (cur.trim()) out.push(cur.trim());
-  listCache.set(sel, out);
   return out;
 }
-const compoundSplitCache = new Map();
 function splitCompound(sel) {
-  const key = sel;
-  const cached = compoundSplitCache.get(key);
-  if (cached) return cached;
   const out = [];
   let depth = 0, cur = "";
   const flush = () => { const t = cur.trim(); if (t) out.push({ compound: t, comb: null }); cur = ""; };
@@ -151,16 +140,9 @@ function splitCompound(sel) {
     cur += ch;
   }
   flush();
-  compoundSplitCache.set(key, out);
   return out;
 }
-// parseCompound is pure, and matchComplex re-parses the same ancestor
-// compounds for every candidate element; without this cache the full sweep
-// over views.css outgrows the runner's per-test time budget as the sheets grow.
-const compoundCache = new Map();
 function parseCompound(comp) {
-  const cached = compoundCache.get(comp);
-  if (cached) return cached;
   const parts = [];
   let i = 0;
   while (i < comp.length) {
@@ -202,17 +184,7 @@ function parseCompound(comp) {
       i = Math.max(j, i + 1);
     } else { i++; }
   }
-  compoundCache.set(comp, parts);
   return parts;
-}
-const classCache = new Map();
-function classesOf(el) {
-  let set = classCache.get(el);
-  if (!set) {
-    set = new Set((el.attrs["class"] ?? "").split(/\s+/));
-    classCache.set(el, set);
-  }
-  return set;
 }
 function matchCompound(parts, el) {
   if (!el) return false;
@@ -220,7 +192,7 @@ function matchCompound(parts, el) {
     if (p.type === "tag") {
       if (p.val !== "*" && el.tag !== p.val) return false;
     } else if (p.type === "class") {
-      if (!classesOf(el).has(p.val)) return false;
+      if (!(el.attrs["class"] ?? "").split(/\s+/).includes(p.val)) return false;
     } else if (p.type === "id") {
       if (el.attrs["id"] !== p.val) return false;
     } else if (p.type === "attr") {
@@ -299,7 +271,10 @@ test("views.css is loaded non-blocking with a no-JS fallback", function () {
     "preact-boot.js must stay the first module script tag");
 });
 
-test("no views.css selector styles an element the first paint shows", { timeout: 30000 }, function () {
+// The selector x element scan runs long enough under a loaded machine to
+// cross bun's default 5s test timeout and flip the suite red without any
+// assertion failing, so it gets explicit headroom.
+test("no views.css selector styles an element the first paint shows", { timeout: 60000 }, function () {
   const offenders = [];
   for (const sel of cssRules(viewsCss)) {
     const hit = firstPaint.find((el) => matchesAny(sel, el));

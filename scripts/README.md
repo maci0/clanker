@@ -47,7 +47,10 @@ keep their known torn-last-line tolerance either way.
 runs one catch-up backup when the user systemd manager returns after downtime.
 The installed launchers live at `~/.local/bin/clanker-state-backup` and
 `~/.local/bin/clanker-state-verify`; they are local configuration and are not
-committed.
+committed. `clanker doctor` reads the same layout proactively: its `state
+backups` section names a checkout-confined `state`, a backup root with no
+snapshot, a newest snapshot over two hours old, and an unset off-site mirror,
+so a missed schedule is not something only the journal knows.
 
 Snapshots older than `CLANKER_BACKUP_RETENTION_DAYS` (default 30) are pruned
 on each successful backup; set it to `0` to keep every snapshot. Staging
