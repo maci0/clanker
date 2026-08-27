@@ -1497,7 +1497,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   values keep their `#` untouched. `.env.example` no longer annotates keys
   with trailing comments for the same reason and gains the missing
   `XAI_API_KEY` for the configured `[providers.grok]`.
-
+- `clanker gate --help` lists every gate the command runs: the text omitted
+  `webui-budget`, which `clanker gate` has run since it joined the gate
+  runner.
 - A fenced block comment or multi-line string in `clanker repl` keeps its
   colour past its first line. Both vaxis render paths built a fresh
   highlighter state inside their per-line loop, so the second line of a

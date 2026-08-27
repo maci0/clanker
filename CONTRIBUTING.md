@@ -43,9 +43,9 @@ suites.
 ## What must pass
 
 - `clanker gate` — build, test, tools, fmt, lint, and the self-integrity
-  gates (provider-kind, test-root-coverage, js-suite-coverage, sandbox-abi,
-  tools-ts-toolchain,
-  release-contract, dep-patches). This is what the self-improvement loop
+  gates (provider-kind, test-root-coverage, js-suite-coverage, webui-budget,
+  sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory,
+  dep-patches). This is what the self-improvement loop
   demands of its own proposals, so a human change must clear the same bar.
   `dep-patches` is about your checkout rather than your diff: run `zig build`
   and then `scripts/apply-patches.sh` once per worktree.
