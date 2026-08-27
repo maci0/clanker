@@ -3246,4 +3246,5 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
+[unreleased]: https://github.com/maci0/clanker/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/maci0/clanker/releases/tag/v0.1.0

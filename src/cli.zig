@@ -12829,7 +12829,7 @@ fn handleLogs(
 /// transcript has been deleted.
 ///
 /// Two stores hold the same conversation text under the session's own name and
-/// neither is reached by deleting `state/sessions/<id>.json`:
+/// neither is reached by deleting `state/sessions/<id>.db`:
 /// `state/spills/<session>/` (the verbatim middles of tool results the request
 /// pruner dropped) and `state/exports/<id>.html` (the whole transcript
 /// rendered for sharing). `janitor` ages spills out but deletes nothing on its
@@ -15984,7 +15984,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         return;
     };
     // This id becomes both a lock-file name and
-    // `state/sessions/<id>.json`. The dedicated session routes validate the
+    // `state/sessions/<id>.db`. The dedicated session routes validate the
     // same path fragment; the run route must not provide a traversal bypass.
     if (req.session.len > 0 and !session.validSessionId(req.session)) {
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"invalid session id\"}");

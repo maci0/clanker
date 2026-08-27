@@ -2944,7 +2944,7 @@ const Model = struct {
     reg: registry.Registry,
     tool_defs: []const types.ToolDef,
     messages: std.ArrayList(types.Message) = .empty,
-    /// Where this conversation persists (`state/sessions/<id>.json`), written
+    /// Where this conversation persists (`state/sessions/<id>.db`), written
     /// after every completed turn; null only when the sessions module is off
     /// and no `--session` was given.
     session_id: ?[]const u8 = null,
@@ -3424,7 +3424,7 @@ const Model = struct {
         self.summary_before = after;
     }
 
-    /// Writes the conversation to `state/sessions/<id>.json`, called after
+    /// Writes the conversation to `state/sessions/<id>.db`, called after
     /// every completed turn (never mid-turn: the caller joins the worker
     /// first, so `self.messages` is stable). A failed write is reported at
     /// error level, the only log level this REPL leaves enabled, and the
@@ -4688,7 +4688,7 @@ const Model = struct {
         }
     }
 
-    /// Writes the conversation to `state/sessions/<id>.json` so a later
+    /// Writes the conversation to `state/sessions/<id>.db` so a later
     /// `--session <id>` or `--continue` resumes it. Called once when the app
     /// is about to return (every quit path, /quit, Ctrl-C while idle, ends
     /// in `app.run` returning). A fresh conversation gets an id minted here;
