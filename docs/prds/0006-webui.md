@@ -388,14 +388,17 @@ every document; "judged" is what a single ledger row can honestly say.
   is pinned by unit test, since a thread-spawn failure could not be forced.
   [connection limit 503 runs on the accept thread](../reports/bugs/2026-08-23-connection-limit-503-runs-on-the-accept-thread.md).
 
-- **A saturation 503 is delivered over a reset connection.** Found while
-  verifying the above, and untouched by it: the over-limit path never reads the
-  request, so `stream.close` on a socket holding unread received data sends RST
-  rather than FIN, and the RST can discard the response body. Measured live on a
-  virgin server, pre-fix: the header block arrives, `Content-Length: 54`, zero
-  body bytes, `ConnectionResetError`. Post-fix the body wins the race because
-  the metric and log work sit between the write and the close -- a timing
-  artifact, not a guarantee. Filed as
+- **(Fixed) A saturation 503 was delivered over a reset connection.** Found
+  while verifying the above, and untouched by it: the over-limit path never
+  reads the request, so `stream.close` on a socket holding unread received data
+  sent RST rather than FIN, and the RST could discard the response body.
+  Measured live on a virgin server: the header block arrives,
+  `Content-Length: 54`, zero body bytes, `ConnectionResetError`. Fixed by
+  `drainThenClose` on both saturation sites: shutdown the send side, drain the
+  unread request (bounded by a 1s receive timeout and a 64 KiB cap), then
+  close a socket whose receive buffer is empty, so the close is a FIN and the
+  body arrives by specification rather than by winning a race. Pinned by a
+  socketpair unit test. Filed as
   [saturation 503 is reset before the client reads it](../reports/bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md).
 
 ## Failure modes

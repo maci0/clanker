@@ -7783,13 +7783,13 @@ fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     if (in_flight >= max_connection_threads) {
         _ = connection_threads.fetchSub(1, .acq_rel);
         respondSaturated(io, stream);
-        stream.close(io);
+        drainThenClose(io, stream);
         return;
     }
     if (surface == .proxy and in_flight >= max_connection_threads - proxy.webui_reserved_slots) {
         _ = connection_threads.fetchSub(1, .acq_rel);
         respondSaturated(io, stream);
-        stream.close(io);
+        drainThenClose(io, stream);
         return;
     }
 
@@ -7848,6 +7848,64 @@ fn respondSaturated(io: std.Io, stream: std.Io.net.Stream) void {
     respond(stream, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"too many concurrent connections\"}");
     recordHttpRequest(io, 503, 0);
     log.log(.warn, "serve: connection refused at the {d}-connection limit", .{max_connection_threads});
+}
+
+/// Close a refused connection so the 503 survives the close. The saturation
+/// path never reads the request, so the client's bytes sit unread in the
+/// receive buffer, and closing a socket with unread received data sends RST
+/// rather than FIN -- and the RST discards the response still queued in the
+/// send buffer. Measured live: `Content-Length: 54`, zero body bytes,
+/// `ConnectionResetError`
+/// (docs/reports/bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md).
+///
+/// So: shutdown the send side (the client sees FIN and knows nothing more is
+/// coming), then drain what was already sent -- bounded twice over, by a short
+/// receive timeout and a byte cap, because this runs on the accept thread the
+/// connection bound exists to protect -- and only then close, on a socket
+/// whose receive buffer is empty, which makes the close a FIN and lets the
+/// body arrive by specification rather than by winning a race.
+fn drainThenClose(io: std.Io, stream: std.Io.net.Stream) void {
+    defer stream.close(io);
+    stream.shutdown(io, .send) catch return;
+    const tv: std.posix.timeval = .{ .sec = 1, .usec = 0 };
+    std.posix.setsockopt(stream.socket.handle, std.posix.SOL.SOCKET, std.posix.SO.RCVTIMEO, std.mem.asBytes(&tv)) catch return;
+    var drained: usize = 0;
+    var tmp: [4096]u8 = undefined;
+    while (drained < 64 * 1024) {
+        const n = std.posix.read(stream.socket.handle, &tmp) catch return;
+        if (n == 0) return;
+        drained += n;
+    }
+}
+
+test "drainThenClose empties the receive buffer so the close is a FIN the client can read through" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    // A connected pair stands in for the refused client: the client has sent
+    // its request (the server never reads it on the saturation path) and the
+    // server has queued its 503. Before the fix the close raced an RST past
+    // the response; after it, the drain leaves the receive buffer empty, so
+    // the client reads the whole response and then a clean EOF -- the exact
+    // sequence a reset breaks with ECONNRESET.
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) return error.NoSocketPair;
+    const client_fd = pair[0];
+    defer _ = std.c.close(client_fd);
+    const server: std.Io.net.Stream = .{ .socket = .{ .handle = pair[1], .address = .{ .ip4 = .loopback(0) } } };
+    const request = "GET /api/status HTTP/1.1\r\n\r\n";
+    try std.testing.expect(std.c.write(client_fd, request.ptr, request.len) == request.len);
+    const refusal = "HTTP/1.1 503 Service Unavailable\r\n\r\n";
+    try std.testing.expect(std.c.write(pair[1], refusal.ptr, refusal.len) == refusal.len);
+    drainThenClose(io, server);
+    var buf: [128]u8 = undefined;
+    var got: usize = 0;
+    while (got < buf.len) {
+        const n = try std.posix.read(client_fd, buf[got..]);
+        if (n == 0) break;
+        got += n;
+    }
+    try std.testing.expectEqualStrings(refusal, buf[0..got]);
 }
 
 fn connectionThread(conn: *Connection) void {

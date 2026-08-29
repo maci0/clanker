@@ -4,11 +4,20 @@
 
 - **What failed:** serveConnection never reads the request on the over-limit path, then calls stream.close. Closing a socket with unread received data sends RST, not FIN, and the RST discards the server's unsent send buffer. Measured live on a virgin server: the client gets the 503 header, Content-Length: 54, zero body bytes, and ConnectionResetError. Present before and after the 2026-08-24 metrics fix; that fix only changed the timing.
 - **Impact:** A client refused for saturation cannot reliably read *why*. It gets a TCP reset, which most HTTP clients surface as a transport error rather than as the 503 that was actually sent, so the one refusal that should say "come back later" is indistinguishable from the server having died. The status line usually does arrive, so a client reading headers only may still see the 503; a client reading to the declared `Content-Length` gets a reset instead.
-- **Resolution:** Open.
+- **Resolution:** Resolved on 2026-08-29.
 
 ## Status
 
-Open.
+Resolved on 2026-08-29. Option 2 from the list below: `drainThenClose`
+(src/cli.zig) replaces the bare `stream.close` on both saturation sites. It
+shuts down the send side (the client sees FIN and knows nothing more follows),
+then drains the unread request -- bounded twice over, by a 1s receive timeout
+and a 64 KiB byte cap, since this runs on the accept thread the connection
+bound protects -- and closes a socket whose receive buffer is empty, which
+makes the close a FIN and lets the 503 body arrive by specification rather
+than by winning a race. Pinned by a socketpair unit test: request bytes sent
+and never read by the server, response written, drainThenClose, and the client
+reads the full response then a clean EOF rather than a reset.
 
 ## Blocked on
 
@@ -85,9 +94,18 @@ artifact, not a guarantee**, and nothing in that change makes it one.
 
 ## Resolution
 
-**Open. Not fixed.** Options, none chosen, and the tension is real: every one of
-them spends something on a connection the server is refusing precisely because
-it has nothing to spend.
+Resolved on 2026-08-29. Option 2 (which subsumes option 1): `drainThenClose`
+(src/cli.zig) replaces the bare `stream.close` on both saturation sites. It
+shuts down the send side (the client sees FIN and knows nothing more follows),
+then drains the unread request -- bounded twice over, by a 1s receive timeout
+and a 64 KiB byte cap, since this runs on the accept thread the connection
+bound protects -- and only then closes, on a socket whose receive buffer is
+empty, which makes the close a FIN and lets the 503 body arrive by
+specification rather than by winning a race.
+
+The options as they stood, with the tension named -- every one of them spends
+something on a connection the server is refusing precisely because it has
+nothing to spend:
 
 1. **Drain before closing.** Read and discard the pending request (bounded: one
    buffer, one non-blocking read) so the close is a FIN. Cheapest correct thing,
@@ -103,6 +121,12 @@ it has nothing to spend.
    -- see below.
 
 ## Verification
+
+The fix is pinned by a socketpair unit test ("drainThenClose empties the
+receive buffer so the close is a FIN the client can read through", src/cli.zig):
+request bytes sent and never read by the server, response written,
+drainThenClose, and the client reads the full response and then a clean EOF
+rather than a reset.
 
 What is verified is the defect, live, on both binaries, with the exception
 surfaced rather than swallowed. What is **not** established:
