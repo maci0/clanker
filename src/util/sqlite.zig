@@ -31,8 +31,18 @@ pub const Step = enum {
 pub const Connection = struct {
     db: ?*c.sqlite3 = null,
     /// Human-readable diagnostics from the last failure, for the store to
-    /// report WHERE the error came from.
+    /// report WHERE the error came from. Always a slice of `err_buf` (or a
+    /// static string): sqlite3's own error strings live in memory that
+    /// `sqlite3_free`/`sqlite3_close_v2` reclaims before the caller can read
+    /// a slice of it, so the text is copied out at the failure site.
     last_error: []const u8 = "",
+    err_buf: [256]u8 = undefined,
+
+    fn setErr(self: *Connection, msg: []const u8) void {
+        const n = @min(msg.len, self.err_buf.len);
+        @memcpy(self.err_buf[0..n], msg[0..n]);
+        self.last_error = self.err_buf[0..n];
+    }
 
     /// Opens (creating if needed) the database at `path`.
     pub fn open(self: *Connection, path: [:0]const u8) Error!void {
@@ -42,7 +52,9 @@ pub const Connection = struct {
         const rc = c.sqlite3_open_v2(path.ptr, &out, flags, null);
         if (rc != c.SQLITE_OK) {
             if (out) |db| {
-                self.last_error = std.mem.span(@as([*:0]const u8, @ptrCast(c.sqlite3_errmsg(db))));
+                // Copy before close: the message lives in the handle being
+                // freed on the next line.
+                self.setErr(std.mem.span(@as([*:0]const u8, @ptrCast(c.sqlite3_errmsg(db)))));
                 _ = c.sqlite3_close_v2(db);
             } else {
                 self.last_error = "sqlite3_open_v2 returned no handle";
@@ -76,7 +88,14 @@ pub const Connection = struct {
         defer if (err_msg != null) c.sqlite3_free(@ptrCast(err_msg));
         const rc = c.sqlite3_exec(db, sql.ptr, null, null, &err_msg);
         if (rc != c.SQLITE_OK) {
-            self.last_error = if (err_msg != null) std.mem.span(@as([*:0]const u8, @ptrCast(err_msg))) else "sqlite3_exec failed";
+            // Copy, not alias: the deferred sqlite3_free above reclaims
+            // err_msg when this function returns, and the one reader of
+            // last_error that matters — openDb's duplicate-column check on a
+            // fresh database, where CREATE TABLE already carries the column
+            // the migration ALTER re-adds — was matching against freed
+            // memory and turning the expected "duplicate column name" into
+            // a fatal open error.
+            if (err_msg != null) self.setErr(std.mem.span(@as([*:0]const u8, @ptrCast(err_msg)))) else self.last_error = "sqlite3_exec failed";
             return Error.ExecFailed;
         }
     }
@@ -87,7 +106,9 @@ pub const Connection = struct {
         var out: ?*c.sqlite3_stmt = null;
         const rc = c.sqlite3_prepare_v2(db, sql.ptr, @intCast(sql.len), &out, null);
         if (rc != c.SQLITE_OK) {
-            self.last_error = std.mem.span(@as([*:0]const u8, @ptrCast(c.sqlite3_errmsg(db))));
+            // Same copy as exec: sqlite3_errmsg's buffer is only good until
+            // the next call on this handle.
+            self.setErr(std.mem.span(@as([*:0]const u8, @ptrCast(c.sqlite3_errmsg(db)))));
             return Error.PrepareFailed;
         }
         return .{ .stmt = out };
