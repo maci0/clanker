@@ -467,3 +467,24 @@ which is exactly what the report claimed.
 Live: `clanker serve` returns the new host and app bytes, and enabling `health`
 over `/api/webui/plugins` serves a `health/app.js` with the `announce` gate and
 no `MutationObserver`. Full `clanker gate`: twelve of twelve PASS.
+
+## 2026-08-29 — Retry after a failed plugin script load was a no-op
+
+Found by reading `loadPluginScript` (`ui/app/core/plugins.js`) against the
+error panel's retry path. A deferred plugin's Retry resets the promise cache
+(`pluginScripts[name] = null`) and calls the loader again — but a script whose
+fetch failed left its dead `<script>` element in the head, and the loader's
+existing-tag check (`script[data-plugin="<name>"]`) found it and resolved
+`true` without touching the network. `shell.spec` was still null, so the panel
+showed the same failure again: for a script that 404ed once (server briefly
+down, plugin enabled before its `app.js` was written), Retry could never
+succeed short of a full page reload. `onerror` now removes the tag before
+resolving, so the retry path genuinely refetches.
+
+Pinned in `ui/app/core/plugins.test.mjs`: the failed tag is gone from the head,
+Retry injects a fresh element rather than adopting the dead one, and the
+retried load mounts the plugin once its script registers. Run as a control
+against unfixed `plugins.js`: the new case fails there (`Retry must inject a
+fresh script tag`), the other fourteen pass. The test's DOM stub now hangs
+`head` off the same root `document.querySelector` walks, since the
+existing-tag check is exactly what the stub had been hiding.
