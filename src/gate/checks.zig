@@ -108,7 +108,12 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
     var hit_w: std.Io.Writer = .fixed(&hit_buf);
     for (changed_files) |f| {
         if (!std.mem.endsWith(u8, f, ".zig")) continue;
-        const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
+        // 4 MiB, not 1: `clanker gate` hands this every .zig file in the
+        // tree and src/cli.zig crossed 1 MiB on 2026-08-29, at which point
+        // the read failed with StreamTooLong and the whole gate went red on
+        // an untouched checkout — the unreadable-file rule below is right,
+        // but the ceiling has to sit above the files it legitimately scans.
+        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch |err| {
             // A file the scan cannot read must not pass as clean: a proposal
             // could otherwise promote a change whose forbidden-marker check
             // silently never ran.
@@ -202,7 +207,9 @@ pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir,
         // providers/ is the vtable's home; its own kind logic is what this
         // gate protects everywhere else.
         if (std.mem.find(u8, f, "src/llm/providers/") != null) continue;
-        const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
+        // Same 4 MiB ceiling as lintGate, for the same reason: src/cli.zig
+        // is past 1 MiB and this scan walks the whole tree under `gate`.
+        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch |err| {
             log.log(.warn, "provider-kind: could not read {s}: {s}", .{ f, @errorName(err) });
             return .{ .ok = false, .label = "provider-kind", .detail = "a changed file could not be scanned" };
         };
