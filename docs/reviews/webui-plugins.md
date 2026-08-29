@@ -468,6 +468,51 @@ Live: `clanker serve` returns the new host and app bytes, and enabling `health`
 over `/api/webui/plugins` serves a `health/app.js` with the `announce` gate and
 no `MutationObserver`. Full `clanker gate`: twelve of twelve PASS.
 
+## 2026-08-29 — the list stops eating slightly-wrong manifests
+
+Closes [webui addon list drops a bad manifest with no diagnostic](../reports/bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md).
+
+`actionList` (`tools/zig/webui_addon.zig`) already listed an *unparseable*
+`plugin.json` with a diagnostic description, and then silently `continue`d past
+`capabilitiesRejected` three lines later — so a manifest one typo away from
+valid was strictly worse off than one that was garbage. The rejected manifest
+is now listed the same way the parse failure is: name, title, and the
+rejection message as the description. It ships `enabled: false` deliberately —
+a typo in `capabilities` is still not a grant, so its assets keep 404ing — but
+the owner can now read why from System instead of watching the addon vanish.
+
+The second half was `validGroup` being enforced at `create` and `put` but
+never at `list`: a hand-written manifest with `"group": "Setup"` was passed to
+the page verbatim, matched no rail heading, and `makeViewShell`'s fallback
+appended the tab directly to `.rail-nav`, unstyled and outside the tablist. An
+unknown group now falls back to Watch in the list answer, with a note appended
+to the description naming the group that did not match.
+
+Verified by a new `webui_addon` case in `src/sandbox/runtime.zig` (tmpDir root,
+`fs_prefixes` matching the tool manifest): a `capabilities: ["gett"]` manifest
+is listed with `plugin.json rejected: unknown capability …`, and a
+`group: "Setup"` manifest comes back under Watch with the note, the raw group
+never reaching the page.
+## 2026-08-29 — Retry after a failed plugin script load was a no-op
+
+Found by reading `loadPluginScript` (`ui/app/core/plugins.js`) against the
+error panel's retry path. A deferred plugin's Retry resets the promise cache
+(`pluginScripts[name] = null`) and calls the loader again — but a script whose
+fetch failed left its dead `<script>` element in the head, and the loader's
+existing-tag check (`script[data-plugin="<name>"]`) found it and resolved
+`true` without touching the network. `shell.spec` was still null, so the panel
+showed the same failure again: for a script that 404ed once (server briefly
+down, plugin enabled before its `app.js` was written), Retry could never
+succeed short of a full page reload. `onerror` now removes the tag before
+resolving, so the retry path genuinely refetches.
+
+Pinned in `ui/app/core/plugins.test.mjs`: the failed tag is gone from the head,
+Retry injects a fresh element rather than adopting the dead one, and the
+retried load mounts the plugin once its script registers. Run as a control
+against unfixed `plugins.js`: the new case fails there (`Retry must inject a
+fresh script tag`), the other fourteen pass. The test's DOM stub now hangs
+`head` off the same root `document.querySelector` walks, since the
+existing-tag check is exactly what the stub had been hiding.
 ## 2026-08-29 — Activity follows the board live
 
 Feature. The Activity view merged both feeds correctly but only on mount and
