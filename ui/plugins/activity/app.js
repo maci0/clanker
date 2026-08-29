@@ -109,6 +109,24 @@ clanker.registerView({
 
     refresh.addEventListener("click", load);
     this.reload = load;
+
+    /* Live updates: every board action lands in the board room, and the live
+       bus carries each room message as a `{t:"chat", room:…}` event, so the
+       timeline can follow the board instead of waiting for Refresh. Idle
+       while hidden — `mount` gets the inner <section>, the host toggles
+       `hidden` on the enclosing `.view` panel, so ask the panel the way mesh
+       and office do — and re-entry is covered by the refresh hook. A load
+       already in flight (refresh is disabled for exactly that window) is
+       reporting the state this event announced, so it is not doubled. */
+    function viewHidden() {
+      var view = container.closest ? container.closest(".view") : null;
+      return !!(view && view.hidden);
+    }
+    api.onLive(function (ev) {
+      if (!ev || viewHidden() || refresh.disabled) return;
+      if (ev.t === "chat" && ev.room === "board") load();
+    });
+
     return load();
   },
   refresh: function () {

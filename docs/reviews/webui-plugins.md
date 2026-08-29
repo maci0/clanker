@@ -467,3 +467,25 @@ which is exactly what the report claimed.
 Live: `clanker serve` returns the new host and app bytes, and enabling `health`
 over `/api/webui/plugins` serves a `health/app.js` with the `announce` gate and
 no `MutationObserver`. Full `clanker gate`: twelve of twelve PASS.
+
+## 2026-08-29 — Activity follows the board live
+
+Feature. The Activity view merged both feeds correctly but only on mount and
+Refresh, while the page already carries a live bus that announces every board
+action: each board mutation writes an action message to the board room, and
+`src/serve/live.zig` publishes every room message as a `{t:"chat", room:…}`
+event. The plugin now subscribes (`api.onLive`) and reloads the timeline when a
+`chat` event names the `board` room — the "what has been happening" view keeps
+happening without a button press.
+
+Three guards on the handler, each with a reason: a non-board room's chat is not
+board activity; a hidden view must not poll (the guard reads
+`container.closest(".view")`, the panel the host actually hides — the same
+defect Mesh shipped by reading `container.hidden`); and an event landing while
+a load is in flight is already covered by that load, read off the same
+`refresh.disabled` flag the button uses. Re-entry after events missed while
+hidden was already covered: the refresh hook reloads.
+
+`plugin.json` gains the `live` capability. New `ui/plugins/activity/activity.test.mjs`
+(registered in `build.zig`) drives the mounted plugin in a vm: a board-room
+event reloads, other events and a hidden panel do not.
