@@ -80,7 +80,9 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [webui-budget gate fails: eager JS is 144.1K gz against a 144K budget](bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md) — Open
+- [lint gate fails StreamTooLong once src/cli.zig crossed 1 MiB](bugs/2026-08-29-lint-gate-streamtoolong-on-cli-zig.md) — Resolved
+- [sqlite last_error aliased freed memory, so a fresh session database failed to open](bugs/2026-08-29-sqlite-last-error-aliases-freed-memory.md) — Resolved
+- [webui-budget gate fails: eager JS is 144.1K gz against a 144K budget](bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md) — Resolved
 
 - [two resolved records still read Open in the reports inventory, so reports list offers finished work](bugs/2026-08-24-report-inventory-drifts-from-the-record.md) — Open
 
