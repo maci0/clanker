@@ -335,6 +335,11 @@ function loadPluginScript(name) {
     s.setAttribute("data-plugin", name);
     s.onload = function () { resolve(true); };
     s.onerror = function () {
+      // Take the dead tag out of the head, or every Retry is a no-op: the
+      // error panel's retry resets the promise cache and calls back in here,
+      // and the `existing` check above would find this failed <script> and
+      // resolve true without ever refetching the file.
+      s.remove();
       hostStatus("Plugin " + name + " failed to load.");
       resolve(false);
     };
