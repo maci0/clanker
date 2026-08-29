@@ -513,3 +513,22 @@ against unfixed `plugins.js`: the new case fails there (`Retry must inject a
 fresh script tag`), the other fourteen pass. The test's DOM stub now hangs
 `head` off the same root `document.querySelector` walks, since the
 existing-tag check is exactly what the stub had been hiding.
+## 2026-08-29 — a throwing boot hook is named, not swallowed
+
+Found by reading `registerView` (`ui/app/core/plugins.js`): both call sites ran
+`spec.boot` inside `try { … } catch (e) {}`. `boot` is the page-load hook — a
+persistent dock, a live subscription — and it has no panel for
+`runPluginHook`'s containment to write into, so a throwing boot left the
+plugin's dock simply absent, with nothing anywhere saying why. Music's dock is
+the shipped case: one exception in its boot and the player never appears, the
+enable checkbox stays on, and there is no error to read.
+
+Both branches now go through one `runPluginBoot`, which contains the throw and
+writes "The <title> plugin failed to start: <message>" to the loader's own
+status line — the surface that exists at boot time. A healthy boot writes
+nothing.
+
+Pinned in `ui/app/core/plugins.test.mjs` for both registerView branches (the
+direct one and the deferred-shell one), plus a control that a healthy boot
+stays silent. Run against unfixed `plugins.js`: the new case fails, the other
+fourteen pass.
