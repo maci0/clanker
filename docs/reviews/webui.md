@@ -1948,14 +1948,42 @@ content hashes, so weak comparison of them is exact in practice.
 `clanker gate`. Filed and resolved as
 `docs/reports/bugs/2026-08-29-if-none-match-ignores-weak-etags-and-star.md`.
 
-## Left / next
+## Live provider rows offer the config snippet — once you name the output cap (2026-08-29)
 
-- The config.toml snippet is on the models.dev rows only. The "Live from
-  provider" listing is the case a local Ollama/vLLM user wants it for most, but
-  `GET /models` returns an id and sometimes a context window and never an output
-  limit — so a snippet from there would ship exactly the missing-`max_tokens`
-  footgun the catalog snippet was built to close. It needs a way to ask for, or
-  default, an output cap before it is worth offering.
+The "Left / next" entry this closes said exactly what blocked it: the
+`config.local.toml` snippet was on the models.dev catalog rows only, and the
+"Live from provider" listing is the case a local Ollama/vLLM operator wants it
+for most — but `GET /models` answers an id and sometimes a context window and
+*never* an output limit. A snippet built from a live row would therefore ship
+without `max_tokens`, which is precisely the footgun the catalog snippet exists
+to close: the entry falls to the 1024-token default and truncates every answer.
+
+So the panel asks for the cap rather than guessing one. An "Output cap" number
+input sits beside the provider select, and each live row carries the same
+`config.local.toml` button the catalog rows have. The button refuses while the
+box does not hold a positive whole number — the sr-only status line says why,
+and sighted users get the browser's own validation bubble on the input that
+needs filling, cleared on the next keystroke so it does not nag.
+
+`liveSnippetModel(provider, row, capValue)` (features/models.js) is the pure
+part, exported so the refusal boundary is testable text rather than a DOM
+behaviour: empty, non-numeric, zero, negative and fractional all return null; a
+valid cap returns the snippet input with the operator's number as `max_tokens`,
+carrying the row's context window only when the provider stated one, rather than
+writing a `0`. The provider is one of the configured ones by construction — the
+live select only lists those — so the snippet is the `[models."…"]` table alone,
+with no `[providers.…]` block.
+
+### Verified
+
+`bun test ui/app/features/models.test.mjs`: 17 pass, including the cap-refusal
+boundary in all five rejecting forms and a snippet assertion that the rendered
+TOML carries `max_tokens = 8192` and `context_window = 32768` and no
+`[providers.` block. Plus the full `clanker gate`. Not verified in a browser:
+the button wiring and the validation bubble are asserted against the shipped
+`index.html` and `models.js` source, not clicked.
+
+## Left / next
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
 - The pre-existing axe items logged in the 2026-08-12 sweep entry, re-checked

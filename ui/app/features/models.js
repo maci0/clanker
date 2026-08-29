@@ -285,6 +285,20 @@ function snippetButton(m) {
   return btn;
 }
 
+/** The snippet input for one live-listing row, or null while the output cap
+ *  box does not hold a positive whole number. `GET /models` never states an
+ *  output limit, so a snippet straight off the row would ship without
+ *  `max_tokens` — the missing-cap footgun the catalog snippet was built to
+ *  close. The operator supplies the cap; until then there is nothing honest
+ *  to offer. Pure and exported so the refusal boundary is the tested text. */
+export function liveSnippetModel(provider, row, capValue) {
+  var cap = Math.floor(Number(capValue));
+  if (!capValue || !isFinite(cap) || cap < 1 || cap !== Number(capValue)) return null;
+  var m = { provider: provider, id: row.id, output: cap };
+  if (row.context) m.context = row.context;
+  return m;
+}
+
 /* Puts the chosen provider back after the <select> has been refilled.
    Which provider you are about to ask is a choice, and it has to outlive the
    list being rebuilt — but emptying a <select> throws its selection away, and
@@ -762,15 +776,42 @@ function loadLive() {
     .then(readJson)
     .then(function (d) {
       out.textContent = "";
+      var provider = sel.value;
       var rows = (d.models || []).map(function (m) {
-        return [m.id, m.context ? fmtInt(m.context) : ""];
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "secondary models-snippet-btn";
+        btn.textContent = "config.local.toml";
+        btn.setAttribute("aria-label", "Show the config.local.toml entry for " + provider + "/" + m.id);
+        btn.addEventListener("click", function () {
+          var capEl = document.getElementById("models-live-cap");
+          var model = liveSnippetModel(provider, m, capEl ? capEl.value : "");
+          if (!model) {
+            status("Set the output cap first: the provider's listing does not state one, and an entry without max_tokens truncates every answer at the 1024-token default.", "live");
+            if (capEl) {
+              // The sr-only status line says why; sighted users get the
+              // browser's own validation bubble on the input that needs
+              // filling. Cleared on the next keystroke so it does not nag.
+              capEl.setCustomValidity("Set the model's output token limit; the provider's listing does not state one.");
+              capEl.reportValidity();
+              capEl.addEventListener("input", function clear() {
+                capEl.setCustomValidity("");
+                capEl.removeEventListener("input", clear);
+              });
+              capEl.focus();
+            }
+            return;
+          }
+          showSnippet(model);
+        });
+        return [m.id, m.context ? fmtInt(m.context) : "", btn];
       });
       if (!rows.length) {
         out.appendChild(empty("The provider listed no models."));
         status("The provider listed no models.", "live");
         return;
       }
-      out.appendChild(table(["id", "ctx"], rows));
+      out.appendChild(table(["id", "ctx", ""], rows));
       status(rows.length + " models from " + sel.value + ".", "live");
     })
     .catch(function (err) {

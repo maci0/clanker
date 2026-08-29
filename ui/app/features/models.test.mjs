@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { configSnippet, modelsStatusId } from "./models.js";
+import { configSnippet, modelsStatusId, liveSnippetModel } from "./models.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
@@ -114,4 +114,37 @@ test("live and catalog failures overwrite their panel's status line", function (
   assert.match(js, /status\("Could not list models: " \+ err\.message, "live"\)/);
   assert.match(js, /status\("Catalog search failed: " \+ err\.message, "catalog"\)/);
   assert.match(js, /status\("Catalog refresh failed: " \+ err\.message, "catalog"\)/);
+});
+
+test("a live row only offers a snippet once the output cap is a whole positive number", function () {
+  const row = { id: "qwen3:8b", context: 32768 };
+  // No cap, junk, zero, negative, fractional: nothing honest to offer.
+  assert.equal(liveSnippetModel("ollama", row, ""), null);
+  assert.equal(liveSnippetModel("ollama", row, "soon"), null);
+  assert.equal(liveSnippetModel("ollama", row, "0"), null);
+  assert.equal(liveSnippetModel("ollama", row, "-8"), null);
+  assert.equal(liveSnippetModel("ollama", row, "8192.5"), null);
+  const m = liveSnippetModel("ollama", row, "8192");
+  assert.equal(m.provider, "ollama");
+  assert.equal(m.id, "qwen3:8b");
+  assert.equal(m.output, 8192);
+  assert.equal(m.context, 32768);
+  // A row without a context window stays without one rather than writing 0.
+  assert.equal("context" in liveSnippetModel("ollama", { id: "x" }, "1024"), false);
+});
+
+test("the live snippet carries the operator's cap as max_tokens", function () {
+  // The provider is one of the configured ones (the live select only lists
+  // those), so the snippet is the models table alone with the cap in it.
+  const text = configSnippet(liveSnippetModel("ollama", { id: "qwen3:8b", context: 32768 }, "8192"), ["ollama"], true);
+  assert.doesNotMatch(text, /\[providers\./);
+  assert.match(text, /\[models\."ollama\/qwen3:8b"\]/);
+  assert.match(text, /max_tokens = 8192/);
+  assert.match(text, /context_window = 32768/);
+});
+
+test("the live panel asks for the output cap and refuses without it", function () {
+  assert.match(html, /id="models-live-cap"/);
+  assert.match(js, /Set the output cap first/);
+  assert.match(js, /reportValidity\(\)/);
 });
