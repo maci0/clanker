@@ -707,6 +707,14 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="transcript-tools">
         <label for="models-live-provider">Provider</label>
         <select id="models-live-provider"></select>
+        <!-- GET /models answers an id and sometimes a context window and never
+             an output limit, so a config snippet from a live row would ship
+             without max_tokens — the exact footgun the catalog snippet exists
+             to close (the entry falls to the 1024-token default and truncates
+             every answer). The cap is asked for here instead: the row buttons
+             refuse until it holds a number. -->
+        <label for="models-live-cap">Output cap</label>
+        <input type="number" id="models-live-cap" min="1" step="1" inputmode="numeric" placeholder="max_tokens" title="The model's output token limit; the provider's listing does not state it, and a config entry without max_tokens truncates every answer at 1024 tokens.">
         <button type="button" class="secondary" id="models-live-btn">List models</button>
       </div>
       <div id="models-live-out" class="section-output"></div>
