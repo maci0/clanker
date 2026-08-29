@@ -1894,6 +1894,34 @@ to 144K, the floor above the new number.
 
 `bun test ui/app/weight-budget.test.mjs` (6 pass) and the full `clanker gate`.
 
+## The saturation 503 stops arriving as a connection reset (2026-08-29)
+
+The over-limit path in `serveConnection` never reads the request, so the
+client's bytes sat unread in the receive buffer, and closing a socket in that
+state sends RST rather than FIN — and the RST can discard the 503 still queued
+in the send buffer. Measured live before the fix: the header block arrives,
+`Content-Length: 54`, zero body bytes, `ConnectionResetError`. The one refusal
+that should say "come back later" was indistinguishable from the server having
+died.
+
+`drainThenClose` (src/cli.zig) replaces the bare `stream.close` on both
+saturation sites. It shuts the send side down first (the client sees FIN and
+knows nothing more follows), drains the unread request — bounded twice over, by
+a 1s `SO_RCVTIMEO` and a 64 KiB byte cap, because this runs on the accept
+thread the connection bound exists to protect — and only then closes, on a
+socket whose receive buffer is empty. That close is a FIN, and the body arrives
+by specification rather than by winning a race against the metric and log work
+that happened to sit between the write and the close.
+
+### Verified
+
+A socketpair unit test pins the sequence: request bytes written and never read
+by the server, 503 written, `drainThenClose`, and the client reads the whole
+response and then a clean EOF — the exact sequence a reset breaks with
+ECONNRESET. Plus the full `clanker gate`. Not re-measured against a live
+saturated server; forcing the bound needs the load harness the original report
+used.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
