@@ -143,7 +143,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-23-gh-read-diff-hunks-name-no-file.md) — Resolved
 
-- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
+- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Resolved
 
 - [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-23-plugin-refresh-hook-is-unreachable.md) — Resolved
 

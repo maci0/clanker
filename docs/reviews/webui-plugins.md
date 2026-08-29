@@ -468,6 +468,31 @@ Live: `clanker serve` returns the new host and app bytes, and enabling `health`
 over `/api/webui/plugins` serves a `health/app.js` with the `announce` gate and
 no `MutationObserver`. Full `clanker gate`: twelve of twelve PASS.
 
+## 2026-08-29 — the list stops eating slightly-wrong manifests
+
+Closes [webui addon list drops a bad manifest with no diagnostic](../reports/bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md).
+
+`actionList` (`tools/zig/webui_addon.zig`) already listed an *unparseable*
+`plugin.json` with a diagnostic description, and then silently `continue`d past
+`capabilitiesRejected` three lines later — so a manifest one typo away from
+valid was strictly worse off than one that was garbage. The rejected manifest
+is now listed the same way the parse failure is: name, title, and the
+rejection message as the description. It ships `enabled: false` deliberately —
+a typo in `capabilities` is still not a grant, so its assets keep 404ing — but
+the owner can now read why from System instead of watching the addon vanish.
+
+The second half was `validGroup` being enforced at `create` and `put` but
+never at `list`: a hand-written manifest with `"group": "Setup"` was passed to
+the page verbatim, matched no rail heading, and `makeViewShell`'s fallback
+appended the tab directly to `.rail-nav`, unstyled and outside the tablist. An
+unknown group now falls back to Watch in the list answer, with a note appended
+to the description naming the group that did not match.
+
+Verified by a new `webui_addon` case in `src/sandbox/runtime.zig` (tmpDir root,
+`fs_prefixes` matching the tool manifest): a `capabilities: ["gett"]` manifest
+is listed with `plugin.json rejected: unknown capability …`, and a
+`group: "Setup"` manifest comes back under Watch with the note, the raw group
+never reaching the page.
 ## 2026-08-29 — Retry after a failed plugin script load was a no-op
 
 Found by reading `loadPluginScript` (`ui/app/core/plugins.js`) against the
