@@ -1869,6 +1869,31 @@ Not verified live: none of this was seen in a browser. The composer and board
 changes are DOM/ARIA structure and CSS position, and the render-cache path needs
 an allocation failure to reach at all.
 
+## The weight budget gets its trim back (2026-08-29)
+
+`bun test ui/app/weight-budget.test.mjs` — the runner the gate uses — measured
+the eager JS at 144.1K gz against a 144K budget, while node's zlib read the same
+bytes as 143.9K, which is how the tree could look green locally and gate red.
+The stopgap raised the budget to 145K to unblock every gated change, with the
+explicit instruction that a real trim drop it back
+(`docs/reports/bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md`).
+This is the trim.
+
+`core/logs.js` left the eager set. The log tail viewer only ever renders under
+System, but a static import in `app.js` plus its own `<script type="module">`
+tag made every chat-only visit download it. It defers through the same
+`import()` memo the view modules use, so `loadLogList`/`loadLog` now return the
+module's promise chain rather than calling into an already-resident module. The
+`/webui/core/logs.js` route and the embed in `ui/webui.zig` are untouched — it
+is the eager fetch that goes, not the file.
+
+Measured after: eager JS 143.8K gz across 32 requests, so the budget goes back
+to 144K, the floor above the new number.
+
+### Verified
+
+`bun test ui/app/weight-budget.test.mjs` (6 pass) and the full `clanker gate`.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from

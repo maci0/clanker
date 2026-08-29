@@ -56,6 +56,13 @@ unrelated change was the larger cost. The two routes considered were:
 
 ## Follow-up
 
+- 2026-08-29: the trim route landed. `core/logs.js` (the System log tail
+  viewer) left the eager set — it was statically imported by `app.js` and had
+  its own script tag, so every chat-only visit paid its 0.7K gz; it defers
+  through the same `import()` pattern as the view modules now. Eager JS
+  measures 143.8K gz under bun across 32 requests, and the budget is back at
+  144K, the floor above the new number, per the raise's own instruction.
+
 ## References
 
 - Investigation: none yet

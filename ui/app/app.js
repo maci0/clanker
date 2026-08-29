@@ -18,7 +18,6 @@ import { textPrompt as dialogTextPrompt, finishTextPrompt as dialogFinishTextPro
 import { renderUsageTable as usageRenderTable } from "./core/usage.js";
 import { renderStatusInto as statusRenderInto } from "./core/status.js";
 import { pendingImages as attachImages, max_image_bytes as attachMaxBytes, renderAttachments as attachRender, addMediaFile as attachAddMedia } from "./core/attachments.js";
-import { loadLog as logsLoadLog, loadLogList as logsLoadLogList } from "./core/logs.js";
 import { pluginViews as pluginsViews, bindPlugins as pluginsBind, loadWebuiPlugins as pluginsLoadWebuiPlugins, loadPluginAssets as pluginsLoadPluginAssets, renderWebuiPlugins as pluginsRenderWebuiPlugins, pluginViewShown as pluginsViewShown } from "./core/plugins.js";
 import { bindPalette as paletteBind, paletteKeyHandler as paletteKeyHandle } from "./core/palette.js";
 import { getProviderCache as mpProviderCache, getModelIndex as mpModelIndex, loadProviders as mpLoadProviders, runOptions as mpRunOptions, syncSubmitLabel as mpSyncSubmit, bindModelPicker as mpBind, applyChatPrefs as mpApplyChatPrefs, openModelPicker as mpOpen, toggleModelPicker as mpToggle, setModelChipLabel as mpSetChip } from "./core/modelpicker.js";
@@ -5198,8 +5197,16 @@ var loadWebuiPlugins = pluginsLoadWebuiPlugins;
 var renderWebuiPlugins = pluginsRenderWebuiPlugins;
 pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView: showView, el: el, readJson: readJson, fmtBytes: fmtBytes, fmtInt: fmtInt, fmtCost: fmtCost, formatChatTime: formatChatTime, openSession: function (id, jump) { switchSession(id, jump); showView("chat", true); }, observeStatus: function (node) { observeStatusNode(node); } });
 
-function loadLogList() { return logsLoadLogList(el, readJson, fmtBytes); }
-function loadLog(name) { return logsLoadLog(name, el, readJson, fmtBytes); }
+// The log tail viewer only renders under System, so its module loads on the
+// first call rather than riding the eager import closure the weight budget
+// counts (ui/app/weight-budget.test.mjs) — same deferral as the view modules.
+var logsModulePromise = null;
+function loadLogsModule() {
+  if (!logsModulePromise) logsModulePromise = import("./core/logs.js");
+  return logsModulePromise;
+}
+function loadLogList() { return loadLogsModule().then(function (m) { return m.loadLogList(el, readJson, fmtBytes); }); }
+function loadLog(name) { return loadLogsModule().then(function (m) { return m.loadLog(name, el, readJson, fmtBytes); }); }
 
 el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
 wireRefresh(el.logsRefresh, loadLogList);
