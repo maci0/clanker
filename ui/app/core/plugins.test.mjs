@@ -645,6 +645,8 @@ test("Retry after a failed script load fetches the script again", async () => {
   s2.onload();
   await second;
   assert.equal(mounts, 1, "the retried load mounts the plugin");
+});
+
 /* --------------------------------------------- 5. a throwing boot is named */
 
 test("a throwing boot lands in the loader's status line, not an empty catch", () => {
