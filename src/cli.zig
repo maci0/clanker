@@ -17367,15 +17367,27 @@ fn etagFor(buf: []u8, body: []const u8) []const u8 {
     return std.fmt.bufPrint(buf, "\"{x}\"", .{std.hash.Crc32.hash(body)}) catch unreachable;
 }
 
-/// True when the request's If-None-Match lists this exact ETag, meaning the
-/// client already has this body cached and a 304 can skip resending it.
+/// True when the request's If-None-Match covers this ETag, meaning the client
+/// already has this body cached and a 304 can skip resending it.
+///
+/// RFC 9110 13.1.2 requires two things beyond an exact string compare, and
+/// both were missing. `If-None-Match: *` matches any current representation.
+/// And the comparison is the *weak* one: `W/"x"` matches `"x"`. The second is
+/// not a curiosity — intermediaries weaken ETags they re-encode (nginx's gzip
+/// filter, for one, turns `"x"` into `W/"x"` on the way out), so a client
+/// behind such a proxy revalidates with the weak form forever, and an exact
+/// compare answers 200 with the full body to every one of those requests: a
+/// cache that can never confirm freshness again. The tags this server hands
+/// out are content hashes, so weak comparison of them is exact in practice.
 fn ifNoneMatchHits(headers_raw: []const u8, etag: []const u8) bool {
     var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
     while (lines.next()) |line| {
         if (!std.ascii.startsWithIgnoreCase(line, "if-none-match:")) continue;
         var values = std.mem.tokenizeAny(u8, line["if-none-match:".len..], " ,");
         while (values.next()) |v| {
-            if (std.mem.eql(u8, v, etag)) return true;
+            if (std.mem.eql(u8, v, "*")) return true;
+            const candidate = if (std.mem.startsWith(u8, v, "W/")) v[2..] else v;
+            if (std.mem.eql(u8, candidate, etag)) return true;
         }
     }
     return false;
@@ -17386,6 +17398,17 @@ test "ifNoneMatchHits matches only its own header line and exact value" {
     try std.testing.expect(!ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: \"abc\"\r\n", "\"def\""));
     try std.testing.expect(!ifNoneMatchHits("GET /x HTTP/1.1\r\nHost: If-None-Match: \"def\"\r\n", "\"def\""));
     try std.testing.expect(!ifNoneMatchHits("", "\"def\""));
+}
+
+test "ifNoneMatchHits honors weak comparison and the * form" {
+    // A proxy that re-encodes the response weakens the tag; the client then
+    // revalidates with W/ and must still get its 304.
+    try std.testing.expect(ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: W/\"def\"\r\n", "\"def\""));
+    try std.testing.expect(ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: \"abc\", W/\"def\"\r\n", "\"def\""));
+    try std.testing.expect(ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: *\r\n", "\"anything\""));
+    // W/ is a prefix of the opaque tag, not a substring license.
+    try std.testing.expect(!ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: W/\"abc\"\r\n", "\"def\""));
+    try std.testing.expect(!ifNoneMatchHits("GET / HTTP/1.1\r\nIf-None-Match: \"W/def\"\r\n", "\"def\""));
 }
 
 test "fuzz: header parsing never panics on bytes straight off the socket" {

@@ -1922,6 +1922,32 @@ ECONNRESET. Plus the full `clanker gate`. Not re-measured against a live
 saturated server; forcing the bound needs the load harness the original report
 used.
 
+## Conditional GETs stop ignoring weak ETags and `*` (2026-08-29)
+
+`ifNoneMatchHits` (src/cli.zig) — shared by the served page, the first-party
+assets and the plugin assets — compared each `If-None-Match` value to the
+computed ETag with `std.mem.eql`. RFC 9110 13.1.2 asks for two things that were
+not there: the comparison is the *weak* one, so `W/"x"` matches `"x"`, and the
+`*` form matches any current representation. Both fell through to "no match".
+
+Direct clients never notice, which is why it sat: the server hands out strong
+tags and browsers echo them back verbatim. The failure needs an intermediary
+that re-encodes the response, because re-encoding weakens the tag — nginx's
+gzip filter turns `"abc"` into `W/"abc"` on the way out. After that, every
+revalidation from behind that proxy earns a 200 with the full body, forever:
+the exact transfer the ETag exists to skip, for every asset, on every visit.
+
+Both forms are handled now. The `W/` strip is anchored, so a tag whose opaque
+content merely begins `W/` still mismatches — pinned by test alongside the weak
+match, the weak-in-a-list match and `*`. The tags this server issues are crc32
+content hashes, so weak comparison of them is exact in practice.
+
+### Verified
+
+`zig build test` filtered on `ifNoneMatchHits` (both blocks pass) and the full
+`clanker gate`. Filed and resolved as
+`docs/reports/bugs/2026-08-29-if-none-match-ignores-weak-etags-and-star.md`.
+
 ## Left / next
 
 - The config.toml snippet is on the models.dev rows only. The "Live from
