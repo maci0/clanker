@@ -396,12 +396,16 @@ throw → tab error) if not already true in code.
   the `#models-status` defect already fixed in `docs/reviews/webui.md`, with N
   producers instead of three. Filed as
   [plugin status line is one shared live region](../reports/bugs/2026-08-23-plugin-status-line-is-one-shared-live-region.md).
-- **`actionList` drops a slightly-wrong manifest with no diagnostic.** It goes
-  out of its way to list an unparseable `plugin.json` with a diagnostic
-  description, then silently `continue`s past `capabilitiesRejected`; and
-  `validGroup` is enforced in `create`/`put` but never in `list`, so a manifest
-  with a group that is not `Work`/`Watch`/`Set up` is listed verbatim and its tab
-  lands outside the rail's nav list. Filed as
+- **(Fixed) `actionList` used to drop a slightly-wrong manifest with no
+  diagnostic.** It went out of its way to list an unparseable `plugin.json` with
+  a diagnostic description, then silently `continue`d past
+  `capabilitiesRejected`; and `validGroup` was enforced in `create`/`put` but
+  never in `list`, so a manifest with a group that is not `Work`/`Watch`/`Set
+  up` was listed verbatim and its tab landed outside the rail's nav list. A
+  capabilities-rejected manifest is now listed with the rejection as its
+  description — disabled, since a typo is still not a grant — and an unknown
+  group falls back to Watch with a note in the description. Pinned by a
+  `webui_addon` test in `src/sandbox/runtime.zig`. Filed as
   [webui addon list drops a bad manifest with no diagnostic](../reports/bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md).
 
 ## Failure modes
