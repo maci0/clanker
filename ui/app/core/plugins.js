@@ -468,6 +468,22 @@ export function renderWebuiPlugins(list) {
   });
 }
 
+/* `boot` is the page-load hook (a persistent dock, a live subscription), and it
+   has no panel to show an error in: mount's containment writes into the view's
+   own section, but a throwing boot used to disappear into an empty catch and
+   the plugin's dock was simply absent with nothing anywhere saying why. The
+   loader's status line is the surface that exists at boot time, so the failure
+   lands there, named. */
+function runPluginBoot(spec) {
+  if (typeof spec.boot !== "function") return;
+  try {
+    spec.boot(pluginApi(spec));
+  } catch (e) {
+    var msg = e && e.message ? e.message : String(e);
+    hostStatus("The " + (spec.title || spec.id) + " plugin failed to start: " + msg);
+  }
+}
+
 export function bindPlugins(ctx) {
   _VIEWS = ctx.VIEWS;
   _viewLoaders = ctx.viewLoaders;
@@ -491,9 +507,7 @@ export function bindPlugins(ctx) {
       if (shell) {
         shell.spec = spec;
         pluginViews[spec.id] = { spec: spec, section: shell.section };
-        if (typeof spec.boot === "function") {
-          try { spec.boot(pluginApi(spec)); } catch (e) {}
-        }
+        runPluginBoot(spec);
         return;
       }
       if (_VIEWS.indexOf(spec.id) !== -1) return;
@@ -504,9 +518,7 @@ export function bindPlugins(ctx) {
         if (!st.mounted) return st.mount();
         return st.refresh();
       };
-      if (typeof spec.boot === "function") {
-        try { spec.boot(pluginApi(spec)); } catch (e) {}
-      }
+      runPluginBoot(spec);
     }
   };
   wireRefresh(_el.webuiPluginsRefresh, loadWebuiPlugins);

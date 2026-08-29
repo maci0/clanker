@@ -599,3 +599,46 @@ test("aria-owns is rebuilt in rail order, so a screen reader reads the rail", ()
     "appending the new id put a Work group plugin after System"
   );
 });
+
+/* --------------------------------------------- 4. a throwing boot is named */
+
+test("a throwing boot lands in the loader's status line, not an empty catch", () => {
+  // `boot` runs at page load with no view panel behind it, so mount's
+  // containment cannot catch it; it used to vanish into `catch (e) {}` and an
+  // eager plugin's dock was simply absent with nothing anywhere saying why.
+  const boot = bootHost();
+  const calls = [];
+  boot.clanker.registerView({
+    id: "dock",
+    title: "Dock",
+    group: "Watch",
+    mount: function () {},
+    boot: function (api) { calls.push(typeof api.getJSON); throw new Error("no audio"); }
+  });
+  assert.equal(calls.length, 1, "boot still runs, and is handed the api surface");
+  assert.equal(calls[0], "function");
+  assert.equal(
+    boot.el.webuiPluginsStatus.textContent,
+    "The Dock plugin failed to start: no audio"
+  );
+
+  // And the deferred-shell path reports through the same line: the shell
+  // exists before the script runs, so registerView takes the other branch.
+  boot.host.loadPluginAssets([{ name: "lazy", title: "Lazy", group: "Watch", enabled: true, has_css: false }]);
+  boot.clanker.registerView({
+    id: "lazy",
+    title: "Lazy",
+    group: "Watch",
+    mount: function () {},
+    boot: function () { throw new Error("late throw"); }
+  });
+  assert.equal(
+    boot.el.webuiPluginsStatus.textContent,
+    "The Lazy plugin failed to start: late throw"
+  );
+
+  // Control: a healthy boot says nothing.
+  boot.el.webuiPluginsStatus.textContent = "";
+  boot.clanker.registerView({ id: "fine", title: "Fine", group: "Watch", mount: function () {}, boot: function () {} });
+  assert.equal(boot.el.webuiPluginsStatus.textContent, "");
+});
