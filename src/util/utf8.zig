@@ -128,7 +128,7 @@ test "writeJsonString emits a string for invalid bytes, not an array of numbers"
     const out = buf.written();
     try std.testing.expect(std.mem.startsWith(u8, out, "\"caf"));
     try std.testing.expect(std.mem.endsWith(u8, out, ".txt\""));
-    try std.testing.expect(std.mem.indexOf(u8, out, "[") == null);
+    try std.testing.expect(std.mem.find(u8, out, "[") == null);
     // Parsed back, it is a string carrying the replacement character.
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, out, .{});
     defer parsed.deinit();

@@ -107,7 +107,7 @@ fn requireDependencyPatches(
             );
             std.process.exit(1);
         };
-        if (std.mem.indexOf(u8, contents, c.marker) == null) {
+        if (std.mem.find(u8, contents, c.marker) == null) {
             std.debug.print(
                 \\clanker: dependency '{s}' is missing local patch '{s}'
                 \\  (no `{s}` in {s})

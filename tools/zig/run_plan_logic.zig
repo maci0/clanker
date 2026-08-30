@@ -48,7 +48,7 @@ pub fn validate(steps: []const Step, max_steps: usize) Error!void {
 
 test "step errors name the fix, not the zig error" {
     try std.testing.expectEqualStrings("no tool by that name is loaded", stepErrorMessage(error.NotFound));
-    try std.testing.expect(std.mem.indexOf(u8, stepErrorMessage(error.SandboxDenied), "not allowed") != null);
+    try std.testing.expect(std.mem.find(u8, stepErrorMessage(error.SandboxDenied), "not allowed") != null);
     try std.testing.expectEqualStrings("the tool rejected the step's args", stepErrorMessage(error.InvalidArg));
 }
 
