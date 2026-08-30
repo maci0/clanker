@@ -15626,10 +15626,20 @@ fn handleMeshJoin(gpa: std.mem.Allocator, cfg: *const config.Config, body: []con
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing address\"}");
         return;
     }
-    mesh_net.join(gpa, parsed.address) catch |err| {
-        log.log(.error_, "POST /api/mesh/join: {s}", .{@errorName(err)});
-        respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"join failed\"}");
-        return;
+    mesh_net.join(gpa, parsed.address) catch |err| switch (err) {
+        // The module is on in the config but the listener never came up
+        // (bind failed, no instance id): the same state the sibling
+        // handlers answer with the module's own 404, not a generic
+        // client error.
+        error.MeshOff => {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"modules.mesh is off; set it and restart serve\"}");
+            return;
+        },
+        else => {
+            log.log(.error_, "POST /api/mesh/join: {s}", .{@errorName(err)});
+            respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"join failed\"}");
+            return;
+        },
     };
     respond(stream, 200, "OK", "{\"ok\":true}");
 }

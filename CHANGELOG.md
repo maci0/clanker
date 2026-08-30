@@ -1504,6 +1504,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `POST /api/mesh/join` answers `404` with the module's own message when the
+  mesh is on in the config but its listener never came up (bind failed, no
+  instance id), matching `POST /api/mesh/leave` and `POST /api/mesh/pending`,
+  which already do; it used to fold that state into a `400` `join failed`, so
+  a dead listener read as a client error instead of a module that is not
+  answering.
 - A `.env` line whose value carries a side note (`DEEPSEEK_API_KEY=sk-...
   # staging key`) no longer loads the note as part of the value: an unquoted
   value now ends at a `#` that whitespace introduces, so the credential
