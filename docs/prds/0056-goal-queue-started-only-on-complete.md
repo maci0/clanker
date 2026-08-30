@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-08-21. Name the source files that are the single source of truth, and the surfaces that expose it.
+Draft — opened 2026-08-21. Not built yet; the implementation phases below are the source of truth once they land.
 
 ## Problem
 

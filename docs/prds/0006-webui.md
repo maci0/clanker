@@ -14,6 +14,14 @@ navigation, ChatGPT/Cursor/Claude theme, Phase 6 chat parity, Compare,
 goals↔board sync) is enumerated in Acceptance criteria below rather than
 repeated here.
 
+Drift since shipping: the Compare module was later refactored from
+`ui/app/features/compare.js` (criterion 9.1's `features/compare.js` and its
+`webui.zig` embed / `assetFor` / `render_compare_view` wiring) to the
+`ui/plugins/compare` drop-in plugin served at `/webui/plugins/compare`. The
+compare view, its `GET/POST /api/compare*` surface, and its `#compare/<id>`
+deep-links are unchanged; only the hosting moved from a comptime-embedded
+feature module to a plugin.
+
 ## Problem
 
 The harness can do things the browser could not ask for, and does things the
