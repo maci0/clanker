@@ -9552,6 +9552,7 @@ fn runStreamDelta(delta: []const u8) void {
 const stream_event_prefix = "\x01";
 const stream_event_cap = 4096;
 const stream_tool_call_cap = 8192;
+const stream_tool_names_cap = 512;
 
 fn writeStreamEvent(fd: std.posix.fd_t, event_type: []const u8, extra: anytype) void {
     var buf: [stream_event_cap]u8 = undefined;
@@ -9572,7 +9573,7 @@ fn writeStreamEvent(fd: std.posix.fd_t, event_type: []const u8, extra: anytype) 
 
 fn runStreamToolCall(calls: []const types.ToolCall) void {
     const fd = run_stream_socket orelse return;
-    var names_buf: [512]u8 = undefined;
+    var names_buf: [stream_tool_names_cap]u8 = undefined;
     var names_w: std.Io.Writer = .fixed(&names_buf);
     for (calls, 0..) |tc, i| {
         if (i > 0) names_w.writeAll(", ") catch break;

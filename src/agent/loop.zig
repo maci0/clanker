@@ -70,6 +70,10 @@ fn noteToolError() void {
 /// Each chatroom inbox line injected into a run. Long enough to see what a
 /// peer said, short enough that a burst of rooms cannot fill the context.
 const max_chat_inbox_preview_bytes: usize = 300;
+/// How much of a tool result is kept in the session-event log's `preview`
+/// field. The full result rides the transcript; this is only the durable
+/// after-the-fact record, so a few KB is enough to see what came back.
+const tool_result_preview_bytes: usize = 4000;
 /// Recent messages kept verbatim when compacting history or pruning stale
 /// tool results. Compaction walks further back from this window so a
 /// tool_call/result pair is never split.
@@ -3352,7 +3356,7 @@ pub const Agent = struct {
                 rec.recordObject(session_events.EventKind.tool_result, &.{
                     .{ .name = "name", .value = .{ .text = tc.name } },
                     .{ .name = "ok", .value = .{ .bool_ = !std.mem.startsWith(u8, out, "{\"ok\":false") } },
-                    .{ .name = "preview", .value = .{ .text = utf8.cap(out, 4000) } },
+                    .{ .name = "preview", .value = .{ .text = utf8.cap(out, tool_result_preview_bytes) } },
                 });
             }
         }

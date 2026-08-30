@@ -22,6 +22,11 @@ pub const Theme = theme_mod.Theme;
 const strippedControl = sanitize.isControl;
 const writeSanitized = sanitize.writeSanitized;
 
+/// One fenced line's accumulator. A line that outgrows this is flushed in
+/// buffer-sized pieces rather than truncated, and the fence-line tests size
+/// their fixtures off this cap so they track the buffer if it ever moves.
+const fence_line_cap = 4096;
+
 /// Renders markdown (bold, italic, inline code, fenced blocks, "- " bullets)
 /// straight into ANSI as content streams in, one delta at a time. A marker
 /// can split across two deltas (e.g. "**" arriving as two separate one-byte
@@ -68,7 +73,7 @@ pub const MdStream = struct {
     /// on its newline, so tokens spanning write calls still color correctly.
     /// A line that outgrows the buffer is flushed in buffer-sized pieces
     /// rather than truncated (see `flushFencePiece`).
-    fence_line: [4096]u8 = undefined,
+    fence_line: [fence_line_cap]u8 = undefined,
     fence_line_len: usize = 0,
     /// Set once the current fenced line has overflowed `fence_line` and a
     /// first piece has gone out unhighlighted. The rest of that line follows
@@ -120,7 +125,7 @@ pub const MdStream = struct {
             self.syn_state = syntax.State.init(self.fence_lang[0..self.fence_lang_len]);
             self.syn_style = syntax.Style.fromTheme(&self.theme);
         }
-        // A 4096-byte line produces at most ~200 tokens (24 bytes each).
+        // A fence_line_cap-byte line produces at most ~200 tokens (24 bytes each).
         // A stack-backed fixed buffer avoids the mmap/munmap syscalls that
         // page_allocator would do on every line of every fenced block.
         var fba_buf: [8192]u8 = undefined;
@@ -763,7 +768,7 @@ fn xRun(src: []const u8, len: usize) []const u8 {
 
 test "MdStream emits a fenced line past its buffer instead of cutting it" {
     const allocator = std.testing.allocator;
-    const cap = 4096;
+    const cap = fence_line_cap;
 
     // Exactly the buffer's worth still goes through the highlighter.
     const at_cap = try longFenceSrc(allocator, cap);
@@ -791,7 +796,7 @@ test "MdStream does not read a mid-line backtick run as a closing fence" {
     // The buffer flush that keeps an over-long line whole resets the
     // accumulator mid-line, and the closing-fence check keys off an empty
     // accumulator, so "```" arriving right after a flush must not close.
-    const line = try allocator.alloc(u8, 4096);
+    const line = try allocator.alloc(u8, fence_line_cap);
     defer allocator.free(line);
     @memset(line, 'x');
     const src = try std.fmt.allocPrint(allocator, "```\n{s}```y\nafter\n```\n", .{line});

@@ -15,6 +15,12 @@ pub const Topic = enum { chat, mesh, arena, run, metrics, plugin };
 pub const max_subs = 32;
 pub const queue_cap = 64;
 pub const event_cap = 8 * 1024;
+/// The subscriber's idle tick: `idleTickSawHangup` waits this long on the
+/// socket, and a readable edge without a hangup flag paces on the clock for
+/// the same interval before looking again.
+const idle_tick_ms: u32 = 50;
+/// Ticks of silence before the SSE keepalive ping (15s at the tick period).
+const idle_ping_ticks: u32 = 15_000 / idle_tick_ms;
 
 const Slot = struct {
     used: bool = false,
@@ -289,8 +295,8 @@ fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
     // poll retries EINTR itself, so what is left is NetworkDown /
     // SystemResources / Unexpected. None of those prove the peer is gone;
     // pace the tick on the clock instead and look again next time round.
-    const ready = std.posix.poll(&pfd, 50) catch {
-        std.Io.sleep(io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake) catch {};
+    const ready = std.posix.poll(&pfd, idle_tick_ms) catch {
+        std.Io.sleep(io, .{ .nanoseconds = idle_tick_ms * std.time.ns_per_ms }, .awake) catch {};
         return false;
     };
     if (ready == 0) return false;
@@ -305,7 +311,7 @@ fn idleTickSawHangup(io: std.Io, fd: std.posix.fd_t) bool {
     // makes poll return at once and the tick would otherwise spin.
     var probe: [1]u8 = undefined;
     if (std.c.recv(fd, &probe, probe.len, std.posix.MSG.PEEK) == 0) return true;
-    std.Io.sleep(io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake) catch {};
+    std.Io.sleep(io, .{ .nanoseconds = idle_tick_ms * std.time.ns_per_ms }, .awake) catch {};
     return false;
 }
 
@@ -355,7 +361,7 @@ pub fn serveSse(io: std.Io, fd: std.posix.fd_t, topics: []const u8) u16 {
         }
         if (idleTickSawHangup(io, fd)) return 200;
         idle += 1;
-        if (idle >= 300) {
+        if (idle >= idle_ping_ticks) {
             raw_http.writeAll(fd, ": ping\n\n") catch return 200;
             idle = 0;
         }

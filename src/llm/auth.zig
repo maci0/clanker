@@ -25,6 +25,10 @@ const file_lock = @import("../util/file_lock.zig");
 
 pub const Strategy = config.AuthStrategy;
 
+/// Refresh an OAuth access token this long before its expiry, so an in-flight
+/// request never rides a token that dies mid-stream.
+const refresh_skew_ms: i64 = 5 * 60 * 1000;
+
 /// The slice of `client.Ctx` credential resolution needs. Kept as its own
 /// struct so this module does not import the client (which imports the
 /// provider registry, which imports this).
@@ -143,7 +147,7 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
             const oauth_arena = oauth_arena_state.allocator();
             var record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
             const now_ms: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(env.io, .real).nanoseconds, std.time.ns_per_ms));
-            if (record.needsRefresh(now_ms, 5 * 60 * 1000)) {
+            if (record.needsRefresh(now_ms, refresh_skew_ms)) {
                 // Refresh tokens commonly rotate on use. Serialize across
                 // clanker processes, then reload: another process may have
                 // refreshed while this one waited for the lock.
@@ -152,7 +156,7 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
                 var guard = file_lock.acquire(env.io, env.state_base, lock_dir, lock_name, env.gpa);
                 defer guard.release();
                 record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
-                if (record.needsRefresh(now_ms, 5 * 60 * 1000)) {
+                if (record.needsRefresh(now_ms, refresh_skew_ms)) {
                     record = try oauth_native.refresh(env.io, env.gpa, oauth_arena, plugin.*, record, now_ms);
                     try oauth_store.save(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name, record);
                 }
