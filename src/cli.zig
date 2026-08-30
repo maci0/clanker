@@ -7626,8 +7626,17 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
     // (best-effort; an unreachable owner leaves its tail for the next start).
     if (cfg.modules.session_events) session_sync.backfill(io, gpa, arena, &cfg);
     const dedicated = listen.proxy_enabled and listen.proxy_port != listen.port;
-    if (listen.proxy_enabled and !proxy.isLoopbackHost(listen.host) and cfg.serve.proxy_token_env == null) {
-        log.log(.warn, "serve proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{listen.host});
+    // A proxy on a non-loopback host that is not token-protected lets anyone
+    // who can reach the port spend the configured provider keys. Two spellings
+    // leave it unprotected: no `proxy_token_env` at all, or one that is set but
+    // whose variable is absent/empty (the request-site guard is then skipped).
+    // Both must surface, not just the first.
+    if (listen.proxy_enabled and !proxy.isLoopbackHost(listen.host) and !proxy.tokenInEffect(&cfg.serve, init.environ_map)) {
+        if (cfg.serve.proxy_token_env) |env_name| {
+            log.log(.warn, "serve proxy on {s}: proxy_token_env '{s}' is not set (or is empty), so the proxy serves without auth; anyone who can reach the port spends the configured provider keys", .{ listen.host, env_name });
+        } else {
+            log.log(.warn, "serve proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{listen.host});
+        }
     }
     if (listen.proxy_enabled and !dedicated) {
         log.log(.info, "serve proxy at http://{s}/proxy/v1", .{disp});

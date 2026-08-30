@@ -122,8 +122,17 @@ pub fn main(init: std.process.Init) !void {
     dotenv.load(io, gpa, init.environ_map);
     const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
 
-    if (!proxy.isLoopbackHost(host) and cfg.serve.proxy_token_env == null) {
-        log.log(.warn, "proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{host});
+    // A non-loopback proxy that is not token-protected lets anyone who can
+    // reach the port spend the configured provider keys. Two spellings leave it
+    // unprotected: no `proxy_token_env` at all, or one that is set but whose
+    // variable is absent/empty (the request-site guard is then skipped). Both
+    // must surface, not just the first.
+    if (!proxy.isLoopbackHost(host) and !proxy.tokenInEffect(&cfg.serve, init.environ_map)) {
+        if (cfg.serve.proxy_token_env) |env_name| {
+            log.log(.warn, "proxy on {s}: proxy_token_env '{s}' is not set (or is empty), so the proxy serves without auth; anyone who can reach the port spends the configured provider keys", .{ host, env_name });
+        } else {
+            log.log(.warn, "proxy on {s} has no proxy_token_env; anyone who can reach the port spends the configured provider keys", .{host});
+        }
     }
 
     const addr = try std.Io.net.IpAddress.parse(host, port);

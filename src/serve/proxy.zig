@@ -141,6 +141,24 @@ pub fn isLoopbackHost(addr: []const u8) bool {
     return std.mem.eql(u8, addr, "127.0.0.1") or std.mem.eql(u8, addr, "::1") or std.ascii.eqlIgnoreCase(addr, "localhost");
 }
 
+/// True when the proxy is actually token-protected: `proxy_token_env` names an
+/// environment variable that is present and non-empty.
+///
+/// The request-site guard only runs when the variable resolves to a value, so
+/// a config that declares `proxy_token_env` but leaves the variable unset (or
+/// empty) serves with no auth at all. `proxy_token_env == null` and "set but
+/// the variable is absent" are two spellings of the same condition — "the
+/// proxy is not token-protected" — and a startup warning must catch both. This
+/// is the check that warning needs, and it keeps the request site and the
+/// warning from drifting apart.
+pub fn tokenInEffect(serve: *const config.Serve, environ_map: *std.process.Environ.Map) bool {
+    if (serve.proxy_token_env) |env_name| {
+        if (env_name.len == 0) return false;
+        if (environ_map.get(env_name)) |value| return value.len > 0;
+    }
+    return false;
+}
+
 pub fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
     const rest = v1Rest(v1_path);
     if (anthropicOnly(rest)) return .anthropic;
@@ -1918,4 +1936,35 @@ test "clampUtf8 never cuts a codepoint in half" {
     try std.testing.expectEqualStrings("a", clampUtf8("a…b", 2));
     try std.testing.expectEqualStrings("a", clampUtf8("a…b", 3));
     try std.testing.expectEqualStrings("a…", clampUtf8("a…b", 4));
+}
+
+test "tokenInEffect is true only when the named variable is present and non-empty" {
+    // The two spellings of "the proxy is not token-protected" — no
+    // proxy_token_env at all, or one set to a variable that is absent or empty
+    // — must both read as false, so the startup warning fires for both.
+
+    // No proxy_token_env: never protected.
+    var no_token = config.Config{};
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("SOME_TOKEN", "value");
+    try std.testing.expect(!tokenInEffect(&no_token.serve, &env));
+
+    // proxy_token_env set, but the variable is absent: not protected (the
+    // request-site guard is skipped), so this is the silent case the warning
+    // must catch.
+    var unset = config.Config{};
+    unset.serve.proxy_token_env = "PROXY_TOKEN";
+    try std.testing.expect(!tokenInEffect(&unset.serve, &env));
+
+    // proxy_token_env set and the variable present and non-empty: protected.
+    var set = config.Config{};
+    set.serve.proxy_token_env = "SOME_TOKEN";
+    try std.testing.expect(tokenInEffect(&set.serve, &env));
+
+    // proxy_token_env set and the variable present but empty: not protected.
+    var empty = config.Config{};
+    empty.serve.proxy_token_env = "EMPTY_TOKEN";
+    try env.put("EMPTY_TOKEN", "");
+    try std.testing.expect(!tokenInEffect(&empty.serve, &env));
 }
