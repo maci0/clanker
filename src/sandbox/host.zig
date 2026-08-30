@@ -5686,7 +5686,57 @@ const SubagentCall = struct {
             return;
         };
     }
+    /// Releases the gpa-owned copies this call carries, then the struct
+    /// itself. The background worker calls it after its completion is
+    /// recorded (the job table owns its own copies by then); the starter
+    /// calls it when the thread never started and no worker exists to do it.
+    /// `brief.context`/`brief.files` are gpa-owned by the time a background
+    /// call reaches the worker -- the starter dupes them out of the caller's
+    /// arena, which dies with the call -- so they are freed here too.
+    fn freeOwned(self: *SubagentCall) void {
+        const gpa = self.gpa;
+        gpa.free(self.task);
+        if (self.provider_name) |p| gpa.free(p);
+        gpa.free(self.parent_run_id);
+        if (self.brief.context.len > 0) freeStringArray(gpa, self.brief.context);
+        if (self.brief.files.len > 0) freeStringArray(gpa, self.brief.files);
+        gpa.destroy(self);
+    }
 };
+
+/// The background subagent's worker: runs the nested agent, reports its
+/// completion to the job table, then releases everything it owns. The row's
+/// copies of `task` and the id are the starter's own (`task_row`/`id_row`),
+/// made before the thread started, so the worker can free its originals as
+/// soon as its completion is recorded -- held in a late-completion slot or
+/// attached to a row, either way the job table has its own copies.
+fn subagentBgWorker(c: *SubagentCall, job_id: []const u8) void {
+    c.run();
+    const err_name: ?[]const u8 = if (c.err) |e| @errorName(e) else null;
+    _ = jobs_mod.finishSub(job_id, c.result, err_name);
+    // The runner's result is gpa-owned (the synchronous path frees it the
+    // same way). `finishSub` copied it above when it returned true; a false
+    // return means the copy failed and ownership stayed with the caller --
+    // this worker either way -- so the free is correct for both outcomes.
+    if (c.result) |r| c.gpa.free(@constCast(r));
+    c.gpa.free(job_id);
+    c.freeOwned();
+}
+
+/// Every element of `items` copied to `gpa`, outer array included. The
+/// caller's arena dies with the call that made `items`, so a worker that
+/// outlives the call must hold copies, not pointers into it.
+fn dupedStringArray(gpa: std.mem.Allocator, items: []const []const u8) ![]const []const u8 {
+    const arr = try gpa.alloc([]const u8, items.len);
+    errdefer gpa.free(arr);
+    for (items, 0..) |s, i| arr[i] = try gpa.dupe(u8, s);
+    return arr;
+}
+
+fn freeStringArray(gpa: std.mem.Allocator, items: []const []const u8) void {
+    for (items) |s| gpa.free(s);
+    gpa.free(items);
+}
 
 pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const h = getHost(caller);
@@ -5744,84 +5794,100 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         else => false,
     };
     if (background) {
-        const heap = h.sandbox.gpa.create(SubagentCall) catch return Err.invalid;
+        const gpa = h.sandbox.gpa;
+        const heap = gpa.create(SubagentCall) catch return Err.invalid;
         heap.* = call;
         // ParentAsk is a re-entrant completion on a parked parent. A
         // background child does not park the parent, so that channel would
         // deadlock. The child must not call ask_user {parent:true}.
         heap.parent_ask = null;
-        heap.task = h.sandbox.gpa.dupe(u8, task) catch return Err.invalid;
-        if (provider_name) |p| heap.provider_name = h.sandbox.gpa.dupe(u8, p) catch return Err.invalid;
-        heap.parent_run_id = h.sandbox.gpa.dupe(u8, h.sandbox.parent_run_id) catch return Err.invalid;
+        // The worker outlives this call, so everything it still reads must be
+        // gpa-owned here: the arena above dies with the return, and the
+        // guest's context/files slices ride in it.
+        heap.task = gpa.dupe(u8, task) catch {
+            gpa.destroy(heap);
+            return Err.invalid;
+        };
+        if (provider_name) |p| {
+            heap.provider_name = gpa.dupe(u8, p) catch {
+                gpa.free(heap.task);
+                gpa.destroy(heap);
+                return Err.invalid;
+            };
+        }
+        heap.parent_run_id = gpa.dupe(u8, h.sandbox.parent_run_id) catch {
+            gpa.free(heap.task);
+            if (heap.provider_name) |q| gpa.free(q);
+            gpa.destroy(heap);
+            return Err.invalid;
+        };
+        if (call.brief.context.len > 0) {
+            heap.brief.context = dupedStringArray(gpa, call.brief.context) catch {
+                gpa.free(heap.task);
+                if (heap.provider_name) |q| gpa.free(q);
+                gpa.free(heap.parent_run_id);
+                gpa.destroy(heap);
+                return Err.invalid;
+            };
+        }
+        if (call.brief.files.len > 0) {
+            heap.brief.files = dupedStringArray(gpa, call.brief.files) catch {
+                gpa.free(heap.task);
+                if (heap.provider_name) |q| gpa.free(q);
+                gpa.free(heap.parent_run_id);
+                if (heap.brief.context.len > 0) freeStringArray(gpa, heap.brief.context);
+                gpa.destroy(heap);
+                return Err.invalid;
+            };
+        }
         var id_buf: [16]u8 = undefined;
         const now_ns: u64 = @intCast(@max(std.Io.Timestamp.now(h.sandbox.io, .awake).nanoseconds, 0));
         const id = jobs_mod.makeId(now_ns, &id_buf);
-        const id_owned = h.sandbox.gpa.dupe(u8, id) catch return Err.invalid;
-        const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, struct {
-            /// Runs the nested agent, reports its completion to the job table,
-            /// then releases the heap-allocated call and every gpa-owned copy
-            /// it holds. The row's copies of `task` and the id are made by
-            /// the starter below (`task_row`/`id_row`), owned by the starter
-            /// until `registerSub` returns, so this worker can free its
-            /// originals as soon as its completion is recorded -- held in a
-            /// late-completion slot or attached to a row, either way the job
-            /// table has its own copies.
-            fn run(c: *SubagentCall, job_id: []const u8) void {
-                c.run();
-                const err_name: ?[]const u8 = if (c.err) |e| @errorName(e) else null;
-                _ = jobs_mod.finishSub(job_id, c.result, err_name);
-                c.gpa.free(c.task);
-                c.gpa.free(job_id);
-                if (c.provider_name) |p| c.gpa.free(p);
-                c.gpa.free(c.parent_run_id);
-                // The runner's result is gpa-owned (the synchronous path frees
-                // it the same way); `finishSub` copied it into the row above.
-                if (c.result) |r| c.gpa.free(@constCast(r));
-                c.gpa.destroy(c);
-            }
-        }.run, .{ heap, id_owned }) catch {
-            // The thread never started, so the closure's memory has no owner:
-            // `heap` and its copies were handed to a worker that will not run.
-            h.sandbox.gpa.free(id_owned);
-            h.sandbox.gpa.free(heap.task);
-            if (heap.provider_name) |p| h.sandbox.gpa.free(p);
-            h.sandbox.gpa.free(heap.parent_run_id);
-            h.sandbox.gpa.destroy(heap);
+        const id_owned = gpa.dupe(u8, id) catch {
+            heap.freeOwned();
+            return Err.invalid;
+        };
+        // The worker frees its copies (`id_owned` and `heap`'s) as soon as
+        // its completion is recorded -- a fast failure can land that before
+        // this call reaches the next line -- so the caller must own its
+        // copies from before the spawn. These are never the worker's.
+        const id_row = gpa.dupe(u8, id) catch {
+            gpa.free(id_owned);
+            heap.freeOwned();
+            return Err.invalid;
+        };
+        const task_row = gpa.dupe(u8, task) catch {
+            gpa.free(id_row);
+            gpa.free(id_owned);
+            heap.freeOwned();
+            return Err.invalid;
+        };
+        const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, subagentBgWorker, .{ heap, id_owned }) catch {
+            // The thread never started, so no worker will free its copies.
+            gpa.free(task_row);
+            gpa.free(id_row);
+            gpa.free(id_owned);
+            heap.freeOwned();
             return Err.invalid;
         };
         const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
-        // Registration copies: the worker frees `heap.task`/`id_owned` as
-        // soon as its completion lands, so they must not be what registerSub
-        // reads. These are owned here until the call returns.
-        const task_row = h.sandbox.gpa.dupe(u8, heap.task) catch {
-            th.join();
-            h.sandbox.gpa.free(id_owned);
-            h.sandbox.gpa.free(heap.task);
-            if (heap.provider_name) |p| h.sandbox.gpa.free(p);
-            h.sandbox.gpa.free(heap.parent_run_id);
-            if (heap.result) |r| h.sandbox.gpa.free(@constCast(r));
-            h.sandbox.gpa.destroy(heap);
-            return Err.invalid;
-        };
-        // Build the response from `id_owned` before handing the row's copy
-        // over; both stay alive until registerSub has made its own.
         var out_buf: [128]u8 = undefined;
-        const out = std.fmt.bufPrint(&out_buf, "{{\"ok\":true,\"job\":{f},\"status\":\"running\"}}", .{std.json.fmt(id_owned, .{})}) catch {
+        const out = std.fmt.bufPrint(&out_buf, "{{\"ok\":true,\"job\":{f},\"status\":\"running\"}}", .{std.json.fmt(id_row, .{})}) catch {
+            // Joined: the worker ran to completion and released its copies;
+            // only the caller's are left.
             th.join();
-            h.sandbox.gpa.free(task_row);
-            h.sandbox.gpa.free(id_owned);
-            h.sandbox.gpa.free(heap.task);
-            if (heap.provider_name) |p| h.sandbox.gpa.free(p);
-            h.sandbox.gpa.free(heap.parent_run_id);
-            if (heap.result) |r| h.sandbox.gpa.free(@constCast(r));
-            h.sandbox.gpa.destroy(heap);
+            gpa.free(task_row);
+            gpa.free(id_row);
             return Err.invalid;
         };
-        jobs_mod.registerSub(h.sandbox.gpa, id_owned, sid, task_row, th) catch {
-            h.sandbox.gpa.free(task_row);
+        jobs_mod.registerSub(gpa, id_row, sid, task_row, th) catch {
+            // The thread may still be running; its copies are the worker's.
+            gpa.free(task_row);
+            gpa.free(id_row);
             return Err.invalid;
         };
-        h.sandbox.gpa.free(task_row);
+        gpa.free(task_row);
+        gpa.free(id_row);
         return h.writeResult(bytes, out);
     }
     const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
@@ -6593,7 +6659,15 @@ fn execWithStdin(
         .environ_map = environ_map,
         .stdin = .pipe,
         .stdout = .pipe,
-        .stderr = .pipe,
+        // Never read in this path -- writeExecResult below is called with an
+        // empty stderr, so the child's diagnostic stream was always discarded.
+        // A pipe nobody drains is worse than none: a server that logs more
+        // than one pipe buffer (64 KiB) to stderr blocks on the write while
+        // the reader below blocks on stdout with no deadline, and the run
+        // hangs forever. The hook path (execUnderPolicyInput) drains both
+        // streams and keeps its deadline; here, dropping the stream at the
+        // source is what this path has always done, without the trap.
+        .stderr = .ignore,
     }) catch |err| {
         log.log(.warn, "[exec] {s} failed to spawn: {s}", .{ cmd, @errorName(err) });
         return switch (err) {
@@ -7401,6 +7475,143 @@ test "execUnderPolicy refuses a command that is not on the allowlist" {
     try std.testing.expect(execUnderPolicy(&sb, &.{ "rm", "-rf", "/" }, 1024, 1024) == .not_allowed);
     try std.testing.expect(execUnderPolicy(&sb, &.{}, 1024, 1024) == .not_allowed);
     try std.testing.expect(execUnderPolicy(&sb, &.{""}, 1024, 1024) == .not_allowed);
+}
+
+test "execWithStdin survives a child that floods stderr" {
+    // The stderr pipe used to be spawned and never drained: a child that
+    // wrote more than one pipe buffer (64 KiB) to it blocked on the write
+    // while the reader below blocked on stdout with no deadline, hanging the
+    // run forever. stderr is discarded in this path by design, so the
+    // regression is a child that floods it and still exits 0.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = &env,
+        .exec_allow = &.{},
+    };
+    var host = Host{ .sandbox = &sb, .rng = std.Random.DefaultPrng.init(0) };
+    var mem: [host_arena_cap]u8 = undefined;
+    const script = "head -c 200000 /dev/zero | tr '\\0' 'x' 1>&2; printf 'answer'";
+    const rc = execWithStdin(&host, &mem, &.{ "sh", "-c", script }, std.Io.Dir.cwd(), &env, "ping", "sh");
+    try std.testing.expectEqual(Err.ok, rc);
+    const out = mem[host.result_ptr .. host.result_ptr + host.result_len];
+    try std.testing.expect(std.mem.find(u8, out, "\"code\":0") != null);
+    try std.testing.expect(std.mem.find(u8, out, "answer") != null);
+}
+
+test "dupedStringArray copies every element and freeStringArray releases them" {
+    const gpa = std.testing.allocator;
+    const src: [3][]const u8 = .{ "alpha", "", "gamma" };
+    const copy = try dupedStringArray(gpa, &src);
+    defer freeStringArray(gpa, copy);
+    try std.testing.expectEqual(@as(usize, 3), copy.len);
+    try std.testing.expectEqualStrings("alpha", copy[0]);
+    try std.testing.expectEqualStrings("", copy[1]);
+    try std.testing.expectEqualStrings("gamma", copy[2]);
+    try std.testing.expect(copy[0].ptr != src[0].ptr);
+}
+
+/// Test runner: echoes the task plus whatever the brief hands down, so a
+/// background test can tell the worker's live copies from dead caller memory.
+fn fakeSubagentRunner(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config_mod.Config,
+    task: []const u8,
+    provider_name: ?[]const u8,
+    brief: Brief,
+    parent_ask: ?ParentAsk,
+    parent_run_id: []const u8,
+) ![]const u8 {
+    _ = io;
+    _ = environ_map;
+    _ = cfg;
+    _ = provider_name;
+    _ = parent_ask;
+    _ = parent_run_id;
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(gpa);
+    try list.appendSlice(gpa, task);
+    for (brief.context) |c| {
+        try list.appendSlice(gpa, "|");
+        try list.appendSlice(gpa, c);
+    }
+    for (brief.files) |f| {
+        try list.appendSlice(gpa, "#");
+        try list.appendSlice(gpa, f);
+    }
+    return list.toOwnedSlice(gpa);
+}
+
+test "background subagent: the worker's copies outlive the caller's arena" {
+    const gpa = std.testing.allocator;
+    jobs_mod.testingClear(gpa);
+    defer jobs_mod.testingClear(gpa);
+    // The caller's arena: the guest's context/files slices live here and die
+    // the moment ckSubagent returns -- before the worker has run at all.
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    const arena = arena_state.allocator();
+    const ctx = try arena.alloc([]const u8, 2);
+    ctx[0] = try arena.dupe(u8, "fact one");
+    ctx[1] = try arena.dupe(u8, "fact two");
+    const files = try arena.alloc([]const u8, 1);
+    files[0] = try arena.dupe(u8, "src/agent/loop.zig");
+
+    // Heap-allocated, like the starter's `heap`: freeOwned destroys it.
+    const call = gpa.create(SubagentCall) catch @panic("test alloc");
+    call.* = .{
+        .io = undefined,
+        .gpa = gpa,
+        .environ_map = undefined,
+        .cfg = undefined,
+        .task = try gpa.dupe(u8, "do the task"),
+        .provider_name = null,
+        .brief = .{ .context = ctx, .files = files },
+        .parent_ask = null,
+        .parent_run_id = try gpa.dupe(u8, "run-1"),
+        .runner = &fakeSubagentRunner,
+    };
+    // The starter dupes the brief out of the arena, like the rest of the
+    // worker's copies.
+    call.brief.context = try dupedStringArray(gpa, call.brief.context);
+    call.brief.files = try dupedStringArray(gpa, call.brief.files);
+    // ckSubagent returns: the arena dies.
+    arena_state.deinit();
+
+    var id_buf: [16]u8 = undefined;
+    const id = jobs_mod.makeId(42, &id_buf);
+    const id_owned = try gpa.dupe(u8, id);
+    // A worker that finishes before the starter registers must read only its
+    // own copies and release them exactly once.
+    subagentBgWorker(call, id_owned);
+
+    // The starter proceeds from its own copies, never the worker's.
+    const task_row = try gpa.dupe(u8, "do the task");
+    defer gpa.free(task_row);
+    const id_row = try gpa.dupe(u8, id);
+    defer gpa.free(id_row);
+    const th = try std.Thread.spawn(.{}, struct {
+        fn run() void {}
+    }.run, .{});
+    try jobs_mod.registerSub(gpa, id_row, "sess-bg", task_row, th);
+
+    var wait_state = std.heap.ArenaAllocator.init(gpa);
+    defer wait_state.deinit();
+    const wait = try jobs_mod.waitSub(wait_state.allocator(), "sess-bg", id);
+    try std.testing.expect(std.mem.find(u8, wait, "do the task") != null);
+    try std.testing.expect(std.mem.find(u8, wait, "fact one") != null);
+    try std.testing.expect(std.mem.find(u8, wait, "fact two") != null);
+    try std.testing.expect(std.mem.find(u8, wait, "src/agent/loop.zig") != null);
 }
 
 test "an exec'd child runs at the sandbox root, not the process cwd" {

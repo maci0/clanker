@@ -1561,7 +1561,13 @@ pub const Agent = struct {
     /// Rewrites state/reasoning.jsonl keeping only the newest
     /// `reasoning_keep_lines` lines.
     fn trimReasoningLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator) !void {
-        const raw = try base.readFileAlloc(io, reasoning_path, gpa, .limited(reasoning_max_log_bytes * 2));
+        // A limit reached or exceeded answers StreamTooLong, so size the read
+        // from the stat: the kept tail can legally outgrow any fixed cap
+        // (2,000 lines of ~20 KB escaped reasoning clears 16 MiB), and a cap
+        // the file has grown past turns every trim into a failure and the log
+        // grows without bound — the cap's own failure mode.
+        const st = base.statFile(io, reasoning_path, .{}) catch |err| return err;
+        const raw = try base.readFileAlloc(io, reasoning_path, gpa, .limited(st.size + 1));
         defer gpa.free(raw);
         var lines: std.ArrayList([]const u8) = .empty;
         defer lines.deinit(gpa);

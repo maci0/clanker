@@ -98,6 +98,24 @@ pub fn formatFiles(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_
     return runZigArgs(gpa, io, dir, argv.items, "zig fmt");
 }
 
+/// Reads a whole file for a whole-file scan. `readFileAlloc`'s
+/// `.limited(cap)` answers `error.StreamTooLong` for any file *over* `cap`,
+/// so a fixed cap turns "the tree grew past the cap" into a gate failure on
+/// a healthy checkout: src/cli.zig crossed 1 MiB and the lint and
+/// provider-kind gates failed on it before the scan saw a single byte. Size
+/// the limit from the file itself: files up to the cap read under the cap,
+/// anything larger reads under its own size. A stat failure means the file
+/// is gone or unreadable, which readFileAlloc would report anyway, so fall
+/// through to the cap and let its error stand.
+fn readWholeFile(dir: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
+    const cap: usize = 1 << 20;
+    const st = dir.statFile(io, path, .{}) catch return dir.readFileAlloc(io, path, gpa, .limited(cap));
+    // The limit errors when *reached or exceeded*, so it must sit one past the
+    // size, not on it: `.limited(size)` for a file of exactly `size` bytes is
+    // the same StreamTooLong the fixed cap produced.
+    return dir.readFileAlloc(io, path, gpa, .limited(@max(st.size, cap) + 1));
+}
+
 /// Source-hygiene scan of exactly the files changed by a proposal.
 pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_files: []const []const u8) !GateResult {
     // Split so this file does not match its own scan: spelled whole, the
@@ -108,7 +126,7 @@ pub fn lintGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, changed_fil
     var hit_w: std.Io.Writer = .fixed(&hit_buf);
     for (changed_files) |f| {
         if (!std.mem.endsWith(u8, f, ".zig")) continue;
-        const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
+        const content = readWholeFile(dir, io, gpa, f) catch |err| {
             // A file the scan cannot read must not pass as clean: a proposal
             // could otherwise promote a change whose forbidden-marker check
             // silently never ran.
@@ -170,6 +188,55 @@ test "lintGate flags forbidden markers only in changed .zig files" {
     try std.testing.expectEqualStrings("lint", hacky.label);
 }
 
+test "lintGate decides files past the 1 MiB scan cap by their content" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A file just over the cap: a fixed-cap read answers StreamTooLong for
+    // it, which was the failure shape when src/cli.zig crossed 1 MiB. The
+    // clean and dirty shapes must both be decided by the scan itself.
+    var big: std.ArrayList(u8) = .empty;
+    defer big.deinit(gpa);
+    try big.appendSlice(gpa, "const filler = 1;\n");
+    while (big.items.len <= (1 << 20)) try big.appendSlice(gpa, "const filler2 = 2;\n");
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "big_clean.zig", .data = big.items });
+    const clean = try lintGate(gpa, io, tmp.dir, &.{"big_clean.zig"});
+    try std.testing.expect(clean.ok);
+
+    try big.appendSlice(gpa, "// TO" ++ "DO: past the cap\n");
+    try tmp.dir.writeFile(io, .{ .sub_path = "big_dirty.zig", .data = big.items });
+    var dirty = try lintGate(gpa, io, tmp.dir, &.{"big_dirty.zig"});
+    defer dirty.deinit(gpa);
+    try std.testing.expect(!dirty.ok);
+    try std.testing.expect(std.mem.find(u8, dirty.detail, "big_dirty.zig") != null);
+}
+
+test "providerKindLeakGate reads files past the 1 MiB scan cap" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var big: std.ArrayList(u8) = .empty;
+    defer big.deinit(gpa);
+    try big.appendSlice(gpa, "const filler = 1;\n");
+    while (big.items.len <= (1 << 20)) try big.appendSlice(gpa, "const filler2 = 2;\n");
+    // No kind reference anywhere: over-cap but clean.
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/big.zig", .data = big.items });
+    const clean = try providerKindLeakGate(gpa, io, tmp.dir, &.{"src/big.zig"});
+    try std.testing.expect(clean.ok);
+}
+
 /// The provider vtable (`src/llm/providers/`) is the one place `provider.kind`
 /// may decide behaviour; the registry exists to abolish kind-switches
 /// everywhere else, and the audits re-scan for them by hand. This gate makes
@@ -202,7 +269,7 @@ pub fn providerKindLeakGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir,
         // providers/ is the vtable's home; its own kind logic is what this
         // gate protects everywhere else.
         if (std.mem.find(u8, f, "src/llm/providers/") != null) continue;
-        const content = dir.readFileAlloc(io, f, gpa, .limited(1 << 20)) catch |err| {
+        const content = readWholeFile(dir, io, gpa, f) catch |err| {
             log.log(.warn, "provider-kind: could not read {s}: {s}", .{ f, @errorName(err) });
             return .{ .ok = false, .label = "provider-kind", .detail = "a changed file could not be scanned" };
         };
@@ -1464,7 +1531,7 @@ fn scanForUnrootedTests(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, fil
         if (!std.mem.endsWith(u8, f, ".zig")) continue;
         const rel = relativeToSrc(f) orelse continue;
         if (std.mem.eql(u8, rel, "main.zig")) continue;
-        const content = dir.readFileAlloc(io, f, gpa, .limited(4 << 20)) catch |err| {
+        const content = readWholeFile(dir, io, gpa, f) catch |err| {
             log.log(.warn, "test-root-coverage: could not read {s}: {s}", .{ f, @errorName(err) });
             return .{ .ok = false, .label = "test-root-coverage", .detail = "a source file could not be scanned" };
         };

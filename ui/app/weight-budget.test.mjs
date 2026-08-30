@@ -96,12 +96,15 @@ test("the page head still preloads the heavy entry, not the light modules", func
 });
 
 test("eager JS stays inside its weight budget", function () {
-  // Everything a chat-only visit downloads. 144 KiB of gzipped first-party JS
-  // is ~190 ms on a 6 Mbit/s uplink and the bulk of time-to-interactive. The
+  // Everything a chat-only visit downloads. 145 KiB of gzipped first-party JS
+  // is ~200 ms on a 6 Mbit/s uplink and the bulk of time-to-interactive. The
   // budget follows the wins down: it was 192K while the Runs view sat inline
   // in app.js, and a budget left far above the real number stops catching the
-  // accretion it exists to catch.
-  assert.ok(eagerJsGz <= 144, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 144K`);
+  // accretion it exists to catch. It was raised 144 -> 145 on 2026-08-27 on
+  // purpose: the fleet run rows gained a real <button> for screen readers
+  // (44abfedd), adding ~0.1K gz of deliberate bytes. The header says
+  // deliberate bytes get a deliberate budget, not a fix shaved to fit.
+  assert.ok(eagerJsGz <= 145, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 145K`);
 });
 
 test("first paint stays inside its weight budget", function () {

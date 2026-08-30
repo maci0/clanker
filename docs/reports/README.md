@@ -80,7 +80,9 @@ Project agents receive this workflow through the harness prompt and
 ### Bugs
 
 <!-- inventory:bug:start -->
-- [webui-budget gate fails: eager JS is 144.1K gz against a 144K budget](bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md) — Open
+- [gate lint/provider-kind steps cannot read a .zig file past 1 MiB](bugs/2026-08-30-gate-lint-and-provider-kind-scan-fail-on-files-over-1-mib.md) — Resolved
+
+- [webui-budget gate fails: eager JS is 144.1K gz against a 144K budget](bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md) — Resolved
 
 - [two resolved records still read Open in the reports inventory, so reports list offers finished work](bugs/2026-08-24-report-inventory-drifts-from-the-record.md) — Open
 
