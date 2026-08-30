@@ -6,6 +6,7 @@ list anywhere:
 
 - build.zig.zon            — zwasm, vaxis (zig hash-pinned)
 - vendor/toml/README.md    — vendored zig-toml (MIT)
+- vendor/sqlite/README.md  — vendored SQLite amalgamation (Public Domain)
 - tools/ts/bun.lock        — assemblyscript + transitive npm deps
 - ui/vendor/README.md      — vendored web UI JS/CSS
 - scripts/setup-python-wasi.sh — optional kernel CPython interpreter
@@ -116,6 +117,25 @@ def vendored_toml() -> dict | None:
         "version": "v" + m.group(2),
         "commit": m.group(1),
         "license": m.group(3).strip(),
+    }
+
+
+# --- vendored SQLite amalgamation (vendor/sqlite/README.md) ------------------
+
+def vendored_sqlite() -> dict | None:
+    text = read("vendor/sqlite/README.md")
+    ver = re.search(r"SQLite ([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?) amalgamation", text)
+    url = re.search(r"fetched from\s*<([^>]+)>", text)
+    if not ver or not url:
+        return None
+    c_sha = re.search(r"`sqlite3\.c` sha256\s*`([0-9a-f]{64})`", text)
+    h_sha = re.search(r"`sqlite3\.h` sha256\s*`([0-9a-f]{64})`", text)
+    return {
+        "name": "sqlite",
+        "version": ver.group(1),
+        "url": url.group(1),
+        "c_sha256": c_sha.group(1) if c_sha else None,
+        "h_sha256": h_sha.group(1) if h_sha else None,
     }
 
 
@@ -254,6 +274,24 @@ def build() -> dict:
                 {"name": "clanker:vendor-path", "value": "vendor/toml"},
                 {"name": "clanker:upstream-commit", "value": t["commit"]},
             ],
+        }))
+
+    # Vendored SQLite amalgamation (compiled into the host and test binaries)
+    sq = vendored_sqlite()
+    if sq:
+        props = [{"name": "clanker:vendor-path", "value": "vendor/sqlite"}]
+        if sq["c_sha256"]:
+            props.append({"name": "clanker:sha256-sqlite3-c", "value": sq["c_sha256"]})
+        if sq["h_sha256"]:
+            props.append({"name": "clanker:sha256-sqlite3-h", "value": sq["h_sha256"]})
+        comps.append(component({
+            "name": sq["name"],
+            "version": sq["version"],
+            "license": "Public Domain",
+            "purl": f"pkg:generic/{sq['name']}@{sq['version']}",
+            "scope": "required",
+            "externalReferences": [{"type": "distribution", "url": sq["url"]}],
+            "properties": props,
         }))
 
     # AssemblyScript toolchain (dev-scope; not shipped in the binary)
