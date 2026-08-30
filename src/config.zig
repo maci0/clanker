@@ -1561,7 +1561,7 @@ pub const Config = struct {
         try validateToolResultPrune(cfg.agent);
         try validateRepeatToolThresholds(cfg.agent.repeat_tool_thresholds);
         // First boot: neither file named an instance, so `cfg.instance.name`
-        // is the pid-seeded fallback from `defaultInstName`, which would pick
+        // is the Io-seeded fallback from `defaultInstName`, which would pick
         // a *different* name next launch. Persist it once so the instance
         // keeps a stable identity (mesh, chat, run logs) across restarts.
         // Best-effort: a read-only checkout keeps working off the in-memory
@@ -1714,7 +1714,7 @@ pub const Config = struct {
             diagnostic_scope = prior_scope;
             diagnostic_emitted = prior_emitted;
         }
-        var cfg = parseConfig(arena, root) catch |err| {
+        var cfg = parseConfig(io, arena, root) catch |err| {
             // Every helper below emits a detailed error at the field that
             // rejected the value. This fallback protects a new validation
             // path from regressing to an opaque error while it is being added.
@@ -1732,7 +1732,7 @@ pub const Config = struct {
         };
     }
 
-    fn parseConfig(arena: std.mem.Allocator, root: json.Value) !Config {
+    fn parseConfig(io: std.Io, arena: std.mem.Allocator, root: json.Value) !Config {
         var cfg = Config{};
         const obj = switch (root) {
             .object => |o| o,
@@ -1808,13 +1808,14 @@ pub const Config = struct {
             }
         }
         if (obj.get("instance")) |v| {
-            cfg.instance = try parseInstance(arena, v);
+            cfg.instance = try parseInstance(io, arena, v);
             cfg.instance_present = true;
         } else {
             // Only a fallback when nothing parsed one yet: a later local file
             // without an "instance" section must not clobber a named instance
-            // with a pid-based default (merge() checks instance_present).
-            if (!cfg.instance_present) cfg.instance.name = try defaultInstName(arena);
+            // with a default rolled from the Io seam (merge() checks
+            // instance_present).
+            if (!cfg.instance_present) cfg.instance.name = try defaultInstName(io, arena);
         }
         if (obj.get("serve")) |v| {
             const parsed = try parseServe(arena, v);
@@ -2305,7 +2306,7 @@ pub const Config = struct {
         return m;
     }
 
-    fn parseInstance(arena: std.mem.Allocator, v: json.Value) !Instance {
+    fn parseInstance(io: std.Io, arena: std.mem.Allocator, v: json.Value) !Instance {
         const prior_scope = diagnostic_scope;
         diagnostic_scope = "instance";
         defer diagnostic_scope = prior_scope;
@@ -2318,7 +2319,7 @@ pub const Config = struct {
         if (obj.get("name")) |k| {
             inst.name = try jsonStr(k, "name");
         } else {
-            inst.name = try defaultInstName(arena);
+            inst.name = try defaultInstName(io, arena);
         }
         if (obj.get("id")) |k| {
             inst.id = try jsonStr(k, "id");
@@ -2548,15 +2549,15 @@ pub const Config = struct {
         return c;
     }
 
-    fn defaultInstName(arena: std.mem.Allocator) ![]const u8 {
-        var seed: u64 = @as(u64, @intCast(std.c.getpid())) *% 0x9e3779b97f4a7c15;
-        // Residual posix: no std.Io equivalent for hostname; go lower.
-        var host_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
-        if (std.posix.gethostname(&host_buf)) |host| {
-            for (host) |ch| seed ^= std.hash.Wyhash.hash(0, &[_]u8{ch});
-        } else |_| {}
-        seed ^= std.hash.Wyhash.hash(0, std.mem.asBytes(&seed));
-        var prng = std.Random.DefaultPrng.init(seed);
+    /// Entropy comes from the Io seam (io.random), not the pid or hostname,
+    /// so a simulated Io with a seeded RNG yields a reproducible instance
+    /// identity instead of a machine- and process-dependent one. The name is
+    /// persisted on first boot, so this only ever rolls for the rare
+    /// read-only checkout that cannot write it.
+    fn defaultInstName(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
+        var seed: [8]u8 = undefined;
+        std.Io.random(io, &seed);
+        var prng = std.Random.DefaultPrng.init(std.mem.bytesToValue(u64, &seed));
         const n = prng.random().intRangeAtMost(u16, 100, 999);
         const bot = instance_name_nouns[prng.random().intRangeAtMost(usize, 0, instance_name_nouns.len - 1)];
         return std.fmt.allocPrint(arena, "clanker-{s}-{d}", .{ bot, n });
@@ -3576,28 +3577,34 @@ test "tui mascot speed is an integer from zero through ten" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    var io_state = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer io_state.deinit();
+    const io = io_state.io();
 
     const valid = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"tui":{"mascot_speed":3}}
     , .{});
-    const cfg = try Config.parseConfig(arena, valid);
+    const cfg = try Config.parseConfig(io, arena, valid);
     try std.testing.expectEqual(@as(?u8, 3), cfg.tui.mascot_speed);
 
     const quoted = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"tui":{"mascot_speed":"3"}}
     , .{});
-    try std.testing.expectError(error.FieldNotInt, Config.parseConfig(arena, quoted));
+    try std.testing.expectError(error.FieldNotInt, Config.parseConfig(io, arena, quoted));
 
     const out_of_range = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"tui":{"mascot_speed":11}}
     , .{});
-    try std.testing.expectError(error.MascotSpeedOutOfRange, Config.parseConfig(arena, out_of_range));
+    try std.testing.expectError(error.MascotSpeedOutOfRange, Config.parseConfig(io, arena, out_of_range));
 }
 
 test "an integer setting given as a float is range-checked, not trapped" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    var io_state = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer io_state.deinit();
+    const io = io_state.io();
 
     // TOML floats reach jsonInt as json.Value floats (`webui_port = 1e19`,
     // `nan`, `inf` are all legal TOML). The narrowing conversion traps on a
@@ -3605,14 +3612,14 @@ test "an integer setting given as a float is range-checked, not trapped" {
     const huge = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"serve":{"webui_port":1e19}}
     , .{});
-    try std.testing.expectError(error.FieldNotInt, Config.parseConfig(arena, huge));
+    try std.testing.expectError(error.FieldNotInt, Config.parseConfig(io, arena, huge));
 
     // An integral float in range still parses (`60.0`), including the
     // representable extremes.
     const integral = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"serve":{"webui_port":8080.0}}
     , .{});
-    const cfg = try Config.parseConfig(arena, integral);
+    const cfg = try Config.parseConfig(io, arena, integral);
     try std.testing.expectEqual(@as(u16, 8080), cfg.serve.webui_port);
 }
 
@@ -3685,10 +3692,13 @@ test "hooks default off and parse explicit lifecycle settings" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    var io_state = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer io_state.deinit();
+    const io = io_state.io();
     const root = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"hooks":{"enabled":true,"config_path":".claude/settings.json","default_timeout_ms":2500}}
     , .{});
-    const cfg = try Config.parseConfig(arena, root);
+    const cfg = try Config.parseConfig(io, arena, root);
     try std.testing.expect(cfg.hooks.enabled);
     try std.testing.expectEqualStrings(".claude/settings.json", cfg.hooks.config_path);
     try std.testing.expectEqual(@as(u32, 2500), cfg.hooks.default_timeout_ms);
@@ -4100,10 +4110,13 @@ test "web.allow parses hostname entries onto Config" {
     defer arena_state.deinit();
 
     const arena = arena_state.allocator();
+    var io_state = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer io_state.deinit();
+    const io = io_state.io();
     const root = try json.parseFromSliceLeaky(json.Value, arena,
         \\{"web":{"allow":["example.org","docs.example"]}}
     , .{ .ignore_unknown_fields = true });
-    const cfg = try Config.parseConfig(arena, root);
+    const cfg = try Config.parseConfig(io, arena, root);
     try std.testing.expectEqual(@as(usize, 2), cfg.web.allow.len);
     try std.testing.expectEqualStrings("example.org", cfg.web.allow[0]);
     try std.testing.expectEqualStrings("docs.example", cfg.web.allow[1]);
@@ -4113,10 +4126,13 @@ test "web.allow accepts glob patterns and the catch-all" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    var io_state = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer io_state.deinit();
+    const io = io_state.io();
     const root = try json.parseFromSliceLeaky(json.Value, arena,
         \\{"web":{"allow":["*.example.org","sub?.example","*"]}}
     , .{ .ignore_unknown_fields = true });
-    const cfg = try Config.parseConfig(arena, root);
+    const cfg = try Config.parseConfig(io, arena, root);
     try std.testing.expectEqual(@as(usize, 3), cfg.web.allow.len);
     try std.testing.expectEqualStrings("*.example.org", cfg.web.allow[0]);
     try std.testing.expectEqualStrings("sub?.example", cfg.web.allow[1]);
@@ -6003,11 +6019,14 @@ test "extra_body object loads and a non-object is refused" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    var io_state = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer io_state.deinit();
+    const io = io_state.io();
 
     const ok = try std.json.parseFromSliceLeaky(std.json.Value, arena,
         \\{"default_provider":"p","providers":{"p":{"base_url":"https://x.test","extra_body":"{\"chat_template_kwargs\":{\"thinking\":true}}"}},"models":{"p/m":{"provider":"p"}}}
     , .{});
-    const cfg = try Config.parseConfig(arena, ok);
+    const cfg = try Config.parseConfig(io, arena, ok);
     const p = cfg.providers.get("p") orelse return error.MissingProvider;
     try std.testing.expect(std.mem.find(u8, p.extra_body, "chat_template_kwargs") != null);
     try std.testing.expect(std.mem.find(u8, p.extra_body, "thinking") != null);
