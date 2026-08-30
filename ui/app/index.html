@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>clanker</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='3' fill='%23171916'/%3E%3Crect x='3' y='3' width='26' height='26' rx='2' fill='none' stroke='%235c625b' stroke-width='1.5'/%3E%3Ccircle cx='16' cy='13' r='5.5' fill='%23117a3a'/%3E%3Ccircle cx='14' cy='11' r='2' fill='%23ffffff'/%3E%3Crect x='9' y='22' width='14' height='3' rx='1' fill='%235c625b'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='3'%20fill='%23171916'/%3E%3Crect%20x='3'%20y='3'%20width='26'%20height='26'%20rx='2'%20fill='none'%20stroke='%235c625b'%20stroke-width='1.5'/%3E%3Ccircle%20cx='16'%20cy='13'%20r='5.5'%20fill='%23117a3a'/%3E%3Ccircle%20cx='14'%20cy='11'%20r='2'%20fill='%23ffffff'/%3E%3Crect%20x='9'%20y='22'%20width='14'%20height='3'%20rx='1'%20fill='%235c625b'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/webui/vendor/patternfly.min.css" media="print" data-pf="1">
 <noscript><link rel="stylesheet" href="/webui/vendor/patternfly.min.css"></noscript>
 <link rel="stylesheet" href="/webui/app.css">
@@ -93,7 +93,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
   </div>
   <div class="pf-v6-c-masthead__content">
-    <button type="button" class="chip header-model" id="header-model" title="Active model (click to change)" aria-haspopup="dialog" aria-expanded="false">
+    <button type="button" class="chip header-model" id="header-model" title="Active model (click to change)" aria-haspopup="listbox" aria-expanded="false">
       <span class="model-chip__name">…</span>
     </button>
     <span class="chip" id="instance-chip" hidden aria-hidden="true">connecting…</span>
@@ -323,7 +323,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
         <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="toolbar-actions">
-          <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)" aria-haspopup="dialog" aria-expanded="false">
+          <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)" aria-haspopup="listbox" aria-expanded="false">
             <span class="model-chip__name">…</span>
           </button>
           <details class="run-shape" id="run-shape">
