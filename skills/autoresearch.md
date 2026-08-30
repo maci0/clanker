@@ -1,3 +1,9 @@
+---
+title: Autoresearch
+description: When asked to run autoresearch, optimize a scalar metric, or drive `/autoresearch` from the REPL: the measurement loop runs only through the host CLI, not WASM tools.
+enabled: true
+---
+
 # Autoresearch
 
 When asked to run autoresearch, optimize a scalar metric, or drive `/autoresearch` from the REPL: the measurement loop runs only through the host CLI, not WASM tools.

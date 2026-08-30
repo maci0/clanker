@@ -1,3 +1,9 @@
+---
+title: Research skill
+description: When asked to look something up (facts, code, web data, library docs):
+enabled: true
+---
+
 # Research skill
 
 When asked to look something up (facts, code, web data, library docs):

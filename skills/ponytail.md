@@ -1,6 +1,6 @@
 ---
 title: Ponytail
-description: Minimal-code mode: YAGNI, reuse, standard library, native platform, then the shortest correct implementation.
+description: When a ponytail chat phrase appears (ponytail, ponytail lite/full/ultra, ponytail-audit/-review/-debt/-help/-gain, stop ponytail): minimal-code mode — YAGNI, reuse, shortest correct code.
 enabled: true
 ---
 

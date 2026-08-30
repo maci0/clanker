@@ -1,3 +1,9 @@
+---
+title: Writing a goal
+description: Use this skill only when the caller asks to draft, define, or refine a structured goal — never for `clanker goal "<intent>"` or `/goal <intent>`, which start the supplied goal loop.
+enabled: true
+---
+
 # Writing a goal
 
 Use this skill only when the caller asks to draft, define, or refine a structured goal — never for `clanker goal "<intent>"` or `/goal <intent>`, which start the supplied goal loop.

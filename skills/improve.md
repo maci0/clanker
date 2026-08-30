@@ -1,3 +1,9 @@
+---
+title: Self-improvement skill
+description: When asked to improve the codebase, fix a failing eval, or run `clanker improve-self`:
+enabled: true
+---
+
 # Self-improvement skill
 
 When asked to improve the codebase, fix a failing eval, or run `clanker improve-self`:

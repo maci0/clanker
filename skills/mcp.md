@@ -1,3 +1,9 @@
+---
+title: Adding an MCP server integration
+description: When asked to add/configure/remove an external MCP server ("add the github MCP server"), edit `config.local.toml` (never `config.toml`) with `edit_file`:
+enabled: true
+---
+
 # Adding an MCP server integration
 
 When asked to add/configure/remove an external MCP server ("add the github MCP server"), edit `config.local.toml` (never `config.toml`) with `edit_file`:

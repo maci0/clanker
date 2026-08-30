@@ -112,6 +112,7 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/cli.zig", .needle = "gate_checks.toolsTsToolchainGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.releaseContractGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.reportsInventoryGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.skillsInventoryGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.webuiBudgetGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.depPatchesGate(" },
     // The checks above live in verifyGates, which has exactly two
@@ -5081,6 +5082,7 @@ test "the newer clanker-gate-only checks are pinned too" {
     // working, so coverage has to be added by hand. Same shape as the five
     // above: run only in cli.zig, implemented in writable checks.zig.
     try expectInvariantCaught("src/cli.zig", "gate_checks.webuiBudgetGate(", "");
+    try expectInvariantCaught("src/cli.zig", "gate_checks.skillsInventoryGate(", "");
     try expectInvariantCaught("src/cli.zig", "gate_checks.depPatchesGate(", "");
 }
 

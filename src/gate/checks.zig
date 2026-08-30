@@ -11,6 +11,7 @@ const toml_bridge = @import("../util/toml_bridge.zig");
 /// For depPatchesGate's tests, which build a synthetic dependency tree.
 const ensure_dir = @import("../util/ensure_dir.zig");
 const llm_budget = @import("llm_budget");
+const skills_logic = @import("skills_logic");
 
 /// A cold `zig build test` can print more than one MiB while rebuilding its
 /// dependency graph. Gate output is retained only until the result is logged
@@ -1806,6 +1807,58 @@ fn scanReportsInventory(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, inv
     return .{ .ok = false, .label = "reports-inventory", .detail = owned, .stderr = owned };
 }
 
+/// The prompt lists every skill as a name plus a one-line description and
+/// loads the body on demand, so a skill the prompt drops or lists without a
+/// description has no trigger and never fires. Walk the skills directory with
+/// the same logic the prompt uses (skills_logic) and fail on any file that
+/// parses to no metadata, or to metadata with an empty description.
+pub fn skillsInventoryGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, skills_dir: []const u8) !GateResult {
+    var scope = dir.openDir(io, skills_dir, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return .{ .ok = true, .label = "skills-inventory", .detail = "no skills directory (ok on a minimal checkout)" },
+        else => return .{ .ok = false, .label = "skills-inventory", .detail = "the skills directory could not be opened" },
+    };
+    defer scope.close(io);
+    return scanSkillsDir(gpa, io, scope);
+}
+
+/// The gate's body with the opened directory passed in, so a test can pin the
+/// failing verdict against a synthetic skills directory.
+fn scanSkillsDir(gpa: std.mem.Allocator, io: std.Io, scope: std.Io.Dir) !GateResult {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var bad: usize = 0;
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+    var it = scope.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!skills_logic.isSkillFile(entry.name)) continue;
+        const raw = scope.readFileAlloc(io, entry.name, arena, .limited(skills_logic.max_skill_bytes)) catch {
+            return .{ .ok = false, .label = "skills-inventory", .detail = "a skill file could not be read" };
+        };
+        if (skills_logic.parseMeta(raw)) |meta| {
+            if (meta.description.len == 0) {
+                bad += 1;
+                miss_w.print("{s}: listed with no description; ", .{entry.name}) catch {};
+            }
+        } else {
+            bad += 1;
+            miss_w.print("{s}: dropped from the prompt, no parseable metadata; ", .{entry.name}) catch {};
+        }
+    }
+    if (bad == 0) return .{ .ok = true, .label = "skills-inventory" };
+    // miss_buf is this frame's stack. Same aliasing convention as lintGate:
+    // detail and stderr share one owned copy, freed once by deinit.
+    const owned = try std.fmt.allocPrint(
+        gpa,
+        "these skills are not discoverable in the agent's prompt (give each a frontmatter description or a first prose line): {s}",
+        .{miss_w.buffered()},
+    );
+    return .{ .ok = false, .label = "skills-inventory", .detail = owned, .stderr = owned };
+}
+
 /// The state word a record's `## Status` section opens with, or null when the
 /// section is absent or opens with something else ("Resolved on <date>. …"
 /// and bare "Open." both parse). Null means skip: the gate compares only what
@@ -1909,6 +1962,63 @@ test "recordStatusWord parses dated and bare statuses, skips records without one
     try std.testing.expectEqual(@as(?[]const u8, null), recordStatusWord("# Legacy\n\nno status section\n"));
     // A non-vocabulary opener is unparseable, not a false match.
     try std.testing.expectEqual(@as(?[]const u8, null), recordStatusWord("# Bug\n\n## Status\n\nOpened by hand\n"));
+}
+
+test "skillsInventoryGate passes on the live checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var result = try skillsInventoryGate(gpa, io, std.Io.Dir.cwd(), "skills");
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}
+
+test "scanSkillsDir names a skill the prompt drops or lists bare" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // SYSTEM.md is the base prompt, never a skill: skipped by the filter.
+    try tmp.dir.writeFile(io, .{ .sub_path = "SYSTEM.md", .data = "# base\n\nno description here\n" });
+    // A heading with no prose line: the body clears the minimum, so the
+    // prompt lists it as a bare `### name` with nothing to trigger on.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "bare.md",
+        .data = "# A very long heading that is at least twenty bytes\n",
+    });
+    // No frontmatter, no heading, under min_body_bytes: parseMeta returns
+    // null and the prompt drops the file entirely.
+    try tmp.dir.writeFile(io, .{ .sub_path = "ghost.md", .data = "# Ghost\n" });
+    // A healthy skill: frontmatter description, green on its own.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "good.md",
+        .data = "---\ntitle: Good\ndescription: When asked for good.\nenabled: true\n---\n\n# Good\n\nDo the thing.\n",
+    });
+
+    var result = try scanSkillsDir(gpa, io, tmp.dir);
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "bare.md") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ghost.md") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "good.md") == null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "SYSTEM.md") == null);
+
+    // Same tree with both offenders repaired: green.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "bare.md",
+        .data = "# A very long heading that is at least twenty bytes\n\nWhen asked for bare: the trigger line.\n",
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "ghost.md",
+        .data = "# Ghost\n\nWhen asked for ghost: enough body to list.\n",
+    });
+    var ok = try scanSkillsDir(gpa, io, tmp.dir);
+    defer ok.deinit(gpa);
+    try std.testing.expect(ok.ok);
 }
 
 /// One ceiling in the web UI's first-paint budget.

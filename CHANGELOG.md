@@ -96,6 +96,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `clanker gate` has a `skills-inventory` check: every `skills/*.md` file
+  other than `SYSTEM.md` must be discoverable in the agent's prompt with a
+  name and a non-empty description. The prompt discloses only the
+  description, so a skill it drops (unparseable), or lists bare (a name, no
+  description), has no trigger and never fires. The check parses each file
+  with the same `skills_logic.parseMeta` the prompt uses, and names every
+  offender in its failure.
+
 - `clanker doctor` (and `setup`) gained a `state backups` section that reads
   the layout `scripts/backup-state.sh` maintains: it warns when `state` is a
   checkout directory the backup script refuses, when no snapshot has ever
