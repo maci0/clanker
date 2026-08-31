@@ -546,15 +546,21 @@ pub fn build(b: *std.Build) void {
     // -------------------------------------------------------------- fmt gate
     // `zig build fmt`: format-check the checkout without the agent loop or an
     // API key. Uses the interpreter running this build (b.graph.zig_exe), so
-    // no PATH lookup and no version drift.
-    const fmt_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt", "--check" });
+    // no PATH lookup and no version drift. Zig 0.16's `zig fmt` errors
+    // without explicit path arguments, and a root walk would reach the
+    // gitignored zig-pkg/ dependency extractions, so the source trees are
+    // listed: every location holding committed .zig files, nothing else.
+    const fmt_paths = [_][]const u8{ "src", "tests", "tools", "ui", "vendor", "build.zig" };
+    const fmt_argv = [_][]const u8{ b.graph.zig_exe, "fmt", "--check" } ++ fmt_paths;
+    const fmt_cmd = b.addSystemCommand(&fmt_argv);
     const fmt_step = b.step("fmt", "Format-check all Zig source");
     fmt_step.dependOn(&fmt_cmd.step);
 
     // `zig build fmt-fix`: auto-format the checkout (the mutating sibling of
     // the check above). Runs zig fmt without --check, rewriting any file that
     // deviates from canonical formatting.
-    const fmt_fix_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "fmt" });
+    const fmt_fix_argv = [_][]const u8{ b.graph.zig_exe, "fmt" } ++ fmt_paths;
+    const fmt_fix_cmd = b.addSystemCommand(&fmt_fix_argv);
     const fmt_fix_step = b.step("fmt-fix", "Auto-format all Zig source");
     fmt_fix_step.dependOn(&fmt_fix_cmd.step);
 
