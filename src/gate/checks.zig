@@ -1980,7 +1980,10 @@ test "scanSkillsDir names a skill the prompt drops or lists bare" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var tmp = std.testing.tmpDir(.{});
+    // Opened for iteration, as `skillsInventoryGate` opens the real one:
+    // scanSkillsDir walks the directory, and a handle without it fails the
+    // walk with BADF.
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
     // SYSTEM.md is the base prompt, never a skill: skipped by the filter.
     try tmp.dir.writeFile(io, .{ .sub_path = "SYSTEM.md", .data = "# base\n\nno description here\n" });
