@@ -132,6 +132,17 @@ pub fn parseWorkflow(arena: std.mem.Allocator, stem: []const u8, rel_path: []con
     };
 }
 
+/// Same cut as `src/util/utf8.zig` `cap`: never split a codepoint. This file
+/// is a linked helper, and a linked helper cannot import `utf8` by name
+/// (build.zig: one file per module per compilation), so the cut is copied
+/// here, the recorded reason thinking_logic and advisor_logic carry their own.
+fn capUtf8(s: []const u8, max_bytes: usize) []const u8 {
+    if (s.len <= max_bytes) return s;
+    var end = max_bytes;
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
+}
+
 fn inferDescription(body: []const u8) []const u8 {
     var lines = std.mem.splitScalar(u8, body, '\n');
     while (lines.next()) |line| {
@@ -140,12 +151,12 @@ fn inferDescription(body: []const u8) []const u8 {
         // Strip leading markdown heading markers.
         while (t.len > 0 and t[0] == '#') t = std.mem.trim(u8, t[1..], " \t");
         if (t.len == 0) continue;
-        const end = @min(t.len, 120);
+        const capped = capUtf8(t, 120);
         // Cut at sentence end if within budget.
-        if (std.mem.findScalar(u8, t[0..end], '.')) |dot| {
-            if (dot >= 20) return t[0 .. dot + 1];
+        if (std.mem.findScalar(u8, capped, '.')) |dot| {
+            if (dot >= 20) return capped[0 .. dot + 1];
         }
-        return t[0..end];
+        return capped;
     }
     return "";
 }
@@ -240,6 +251,19 @@ test "parseWorkflow: no frontmatter infers description from body" {
     try std.testing.expectEqualStrings("review", wf.name);
     try std.testing.expectEqualStrings("Code review", wf.description);
     try std.testing.expect(std.mem.find(u8, wf.body, "Review this") != null);
+}
+
+test "inferDescription: the 120-byte cap never splits a codepoint" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // 119 ASCII bytes then a 2-byte é (bytes 119-120): the old raw cut at
+    // byte 120 left the é's lead byte dangling, invalid UTF-8 in the
+    // description the catalog hands to the model.
+    const raw = "a" ** 119 ++ "é" ++ "\n";
+    const wf = try parseWorkflow(arena, "cap", "cap.md", raw);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(wf.description));
+    try std.testing.expectEqualStrings("a" ** 119, wf.description);
 }
 
 test "parseWorkflow: quoted description and arg_hint aliases" {

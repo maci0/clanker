@@ -3162,7 +3162,7 @@ fn responseHeaderExposed(name: []const u8) bool {
 /// wire and servers disagree in practice (`ETag` and `etag` both occur). A
 /// duplicate name keeps the first occurrence, since a second one would silently
 /// overwrite it in the guest's parsed object.
-fn writeExposedHeaders(out: []u8, head: std.http.Client.Response.Head) ?usize {
+fn writeExposedHeaders(gpa: std.mem.Allocator, out: []u8, head: std.http.Client.Response.Head) ?usize {
     var w: std.Io.Writer = .fixed(out);
     var s = std.json.Stringify{ .writer = &w };
     s.beginObject() catch return null;
@@ -3175,7 +3175,10 @@ fn writeExposedHeaders(out: []u8, head: std.http.Client.Response.Head) ?usize {
         if (seen[idx]) continue;
         seen[idx] = true;
         s.objectField(exposed_response_headers[idx]) catch return null;
-        s.write(hdr.value[0..@min(hdr.value.len, max_exposed_header_value)]) catch return null;
+        // Header values are raw network bytes: cap on a codepoint boundary and
+        // write through the one JSON-string helper, so a non-UTF-8 value is a
+        // string of replacement characters rather than a byte-number array.
+        utf8.writeJsonString(gpa, &s, hdr.value[0..@min(hdr.value.len, max_exposed_header_value)]) catch return null;
     }
     s.endObject() catch return null;
     return w.end;
@@ -3200,14 +3203,18 @@ const http_failure_marker = "ck_http_status";
 /// different failure. The guest sees no envelope and falls back to the generic
 /// message, which is exactly the behaviour that shipped before.
 fn writeHttpFailure(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, code: u16, body: []const u8) void {
-    const shown = body[0..@min(body.len, http_failure_body_cap)];
+    // The body is raw network bytes: a mid-codepoint cut would leave a dangling
+    // continuation byte, and an invalid byte anywhere would make Stringify emit
+    // a byte-number array where the guest expects a string. Cap on a
+    // codepoint boundary, then write through the one JSON-string helper.
+    const shown = utf8.cap(body, http_failure_body_cap);
     var w: std.Io.Writer.Allocating = .init(arena);
     var s = std.json.Stringify{ .writer = &w.writer };
     s.beginObject() catch return;
     s.objectField(http_failure_marker) catch return;
     s.write(code) catch return;
     s.objectField("body") catch return;
-    s.write(shown) catch return;
+    utf8.writeJsonString(arena, &s, shown) catch return;
     s.endObject() catch return;
     _ = h.writeResult(mem_bytes, w.written());
 }
@@ -3441,7 +3448,7 @@ fn httpFetchHeadTask(args: HttpFetchArgs, hdr_out: []u8, abort: *client.Abort, d
     // Render the headers before reading the body: `head.bytes` is borrowed from
     // the connection's read buffer, and streaming the body is what overwrites
     // it. Rendering after the read returned an object of empty strings.
-    const hdr_len = writeExposedHeaders(hdr_out, response.head) orelse return .too_large;
+    const hdr_len = writeExposedHeaders(args.gpa, hdr_out, response.head) orelse return .too_large;
 
     // The four-way content_encoding branch is `fetch`'s, kept verbatim rather
     // than simplified: a server may answer gzip whether or not it was asked,

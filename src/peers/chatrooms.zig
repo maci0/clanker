@@ -834,10 +834,18 @@ pub fn sendMessage(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: 
 
 pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, environ_map: *std.process.Environ.Map, room: []const u8, text: []const u8, thread_ts: ?[]const u8) !Message {
     const ts: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
+    // argv is the only source that can carry non-UTF-8 bytes (the HTTP path
+    // JSON-parses first). The log is JSON every reader parses as UTF-8 — and
+    // ADR 0001 folds board cards out of it — so an invalid byte would be
+    // stored as a byte-number array, not a string, and the room name is a map
+    // key, where an array breaks the whole file. Sanitize at this boundary,
+    // the way the session log does.
+    const safe_room = try utf8.sanitize(arena, room);
+    const safe_text = try utf8.sanitize(arena, text);
     const msg = Message{
-        .room = room,
+        .room = safe_room,
         .from = cfg.instance.name,
-        .text = text,
+        .text = safe_text,
         .ts = ts,
         .id = try makeId(arena, ts),
         .thread_ts = thread_ts,
@@ -1100,6 +1108,10 @@ fn fanOut(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, environ_
 /// "unsubscribed" so it overrides a config-default subscription).
 pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, state_dir: []const u8, room: []const u8, on: bool) !void {
     if (state_dir.len > 0) try ensure_dir.ensureDir(base, io, state_dir);
+    // argv is the one source of non-UTF-8 bytes here (the HTTP path
+    // JSON-parses first); the sub file is JSON read back as strings, so
+    // sanitize at the boundary before comparing or storing.
+    const room = try utf8.sanitize(arena, room);
     // Subscription changes are read-modify-write operations. Serialize them
     // so concurrent join/leave requests cannot silently discard each other.
     var guard = file_lock.acquire(io, base, if (state_dir.len > 0) state_dir else ".", "chatrooms-sub", gpa);
@@ -1346,6 +1358,38 @@ test "hasMessageId survives a line truncated right after the id bytes" {
     // A longer id in a truncated line still probes the byte after the id,
     // which is a digit here, not a quote.
     try std.testing.expect(!hasMessageId(arena, raw, "m4", 100));
+}
+
+test "sendMessageOpts sanitizes argv bytes before storing" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    var cfg = config_mod.Config{};
+    cfg.instance.name = "test-clanker";
+    cfg.chatrooms.on = true;
+    cfg.chatrooms.rooms = &.{"dev"};
+    cfg.chatrooms.max_history = 100;
+
+    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ.deinit();
+
+    // argv is the one source of bytes no UTF-8 decoder accepts. The log is
+    // JSON every reader parses as strings, and the room name is a map key,
+    // where a byte-number array would corrupt the whole line: an invalid
+    // byte must land as a replacement character, not an array.
+    const bad_room: []const u8 = &.{ 'd', 0x80, 'v' };
+    const bad_text: []const u8 = &.{ 'h', 0x80, 'i' };
+    const safe_room: []const u8 = &.{ 'd', 0xEF, 0xBF, 0xBD, 'v' }; // U+FFFD
+    const safe_text: []const u8 = &.{ 'h', 0xEF, 0xBF, 0xBD, 'i' }; // U+FFFD
+
+    try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, bad_room, bad_text, null);
+
+    const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, safe_room, 0, 50);
+    try std.testing.expectEqual(@as(usize, 1), hist.len);
+    try std.testing.expectEqualStrings(safe_room, hist[0].room);
+    try std.testing.expectEqualStrings(safe_text, hist[0].text);
 }
 
 test "appendLocal skips dedup while append keeps it" {
