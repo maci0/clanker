@@ -436,7 +436,7 @@ pub fn createOn(gpa: std.mem.Allocator, io: std.Io, id: []const u8, branch_prefi
     defer if (origin_ref) |r| gpa.free(r);
     const base_ref: []const u8 = if (sharing == .improve) blk: {
         const r = try std.fmt.allocPrint(gpa, "origin/{s}", .{base_branch});
-        if (refExists(gpa, io, r)) {
+        if (refExists(gpa, io, ".", r)) {
             origin_ref = r;
             break :blk r;
         }
@@ -795,10 +795,10 @@ test "refExists tells a present ref from a missing one" {
     // that `git update-ref` does not require).
     try gitOk(gpa, io, root, &.{ "branch", "origin/main" });
 
-    try std.testing.expect(refExists(gpa, io, "origin/main"));
-    try std.testing.expect(refExists(gpa, io, "main"));
-    try std.testing.expect(!refExists(gpa, io, "origin/nope"));
-    try std.testing.expect(!refExists(gpa, io, "nope"));
+    try std.testing.expect(refExists(gpa, io, root, "origin/main"));
+    try std.testing.expect(refExists(gpa, io, root, "main"));
+    try std.testing.expect(!refExists(gpa, io, root, "origin/nope"));
+    try std.testing.expect(!refExists(gpa, io, root, "nope"));
 }
 
 /// Runs one git command in `repo` and fails the test unless it exits 0.
@@ -1081,8 +1081,14 @@ fn revParse(gpa: std.mem.Allocator, io: std.Io, refname: []const u8) ![]u8 {
 /// Whether `refname` resolves (e.g. `origin/main` exists as a fetched remote
 /// tracking ref). Used by `createOn` to cut an improve-self worktree from the
 /// latest remote code instead of a possibly-stale local branch tip.
-fn refExists(gpa: std.mem.Allocator, io: std.Io, refname: []const u8) bool {
-    const argv = [_][]const u8{ "git", "rev-parse", "--verify", "--quiet", refname };
+/// Whether `repo` resolves `refname`. The repo is explicit because the only
+/// production caller asks about the checkout it is running in ("."), while the
+/// test asks about a fixture repo: querying the process cwd instead made the
+/// test assert against whatever repository it happened to run inside, which
+/// passed on a branch checkout that had `origin/main` and failed on a tag
+/// checkout that did not.
+fn refExists(gpa: std.mem.Allocator, io: std.Io, repo: []const u8, refname: []const u8) bool {
+    const argv = [_][]const u8{ "git", "-C", repo, "rev-parse", "--verify", "--quiet", refname };
     const res = std.process.run(gpa, io, .{ .argv = &argv }) catch return false;
     defer gpa.free(res.stdout);
     defer gpa.free(res.stderr);
