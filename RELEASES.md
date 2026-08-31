@@ -74,6 +74,9 @@ Before creating a tag:
 | 0.2.x | Next `0.MINOR.0` release |
 | 0.1.x | Ended at 0.2.0 |
 
+`v0.2.0` was tagged but never published: its tag build failed, so no release
+or artifact exists for it. `0.2.1` is the first published 0.2 release.
+
 There is no security-backport branch. Fixes for the current `0.MINOR` line
 land on `main` and ship in the next patch release; there is no guarantee a fix
 is backported once a new `0.MINOR.0` has shipped.

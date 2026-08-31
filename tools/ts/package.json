@@ -1,6 +1,6 @@
 {
   "name": "clanker-as-tools",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "scripts": {
     "build": "asc calc_ts.ts -o dist/calc_ts.wasm --optimize --bindings raw --noExportMemory",
