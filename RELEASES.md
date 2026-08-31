@@ -1,9 +1,9 @@
 # Release and compatibility policy
 
-clanker currently has no published releases. Development happens at the version
-declared in `build.zig.zon`; that value alone does not make a release. A version
-is published only when an immutable `vMAJOR.MINOR.PATCH` Git tag and a matching
-dated `CHANGELOG.md` section exist for the same commit.
+Development happens at the version declared in `build.zig.zon`; that value alone
+does not make a release. A version is published only when an immutable
+`vMAJOR.MINOR.PATCH` Git tag and a matching dated `CHANGELOG.md` section exist
+for the same commit.
 
 `build.zig.zon` is the single source of truth for the program version. The build
 passes it to `clanker --version`, HTTP agent cards, MCP server metadata, and HTTP
@@ -71,7 +71,8 @@ Before creating a tag:
 
 | Version | Supported until |
 |---|---|
-| 0.1.x | Next `0.MINOR.0` release |
+| 0.2.x | Next `0.MINOR.0` release |
+| 0.1.x | Ended at 0.2.0 |
 
 There is no security-backport branch. Fixes for the current `0.MINOR` line
 land on `main` and ship in the next patch release; there is no guarantee a fix

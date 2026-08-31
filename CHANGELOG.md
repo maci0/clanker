@@ -5,6 +5,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-31
+
 ### Breaking
 
 - The committed `config.toml` renames the Moonshot provider table
@@ -1504,6 +1506,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- A `wait` on the first background subagent a process starts no longer hangs
+  forever. The starter spawns the worker before it registers the job row, so
+  a worker that finished first found no allocator recorded, its completion was
+  dropped, and the row read `running` for the life of the process while
+  `wait` spun on it at 100% of a core. The worker records the allocator itself
+  before it can complete.
 - `POST /api/mesh/join` answers `404` with the module's own message when the
   mesh is on in the config but its listener never came up (bind failed, no
   instance id), matching `POST /api/mesh/leave` and `POST /api/mesh/pending`,
@@ -3270,5 +3278,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-[unreleased]: https://github.com/maci0/clanker/compare/v0.1.0...HEAD
+[unreleased]: https://github.com/maci0/clanker/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/maci0/clanker/releases/tag/v0.2.0
 [0.1.0]: https://github.com/maci0/clanker/releases/tag/v0.1.0
