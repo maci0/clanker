@@ -45,10 +45,14 @@ fi
 # JavaScript lint, when the root toolchain is installed (`bun install`; CI runs it
 # regardless). Same config and flags as CI (`bun run lint`): correctness errors
 # fail, warn-level anti-slop findings print without failing, and a disable
-# directive that no longer silences anything fails too.
+# directive that no longer silences anything fails too. Explicit file paths make
+# oxlint apply .oxlintrc.json's ignorePatterns but exit 1 when every path is
+# ignored, so a commit touching only the two unparsable AssemblyScript sources
+# (calc_ts.ts, lib.ts) would be rejected although CI accepts them; the flag
+# turns that no-op case into a pass.
 if [ -x node_modules/.bin/oxlint ]; then
     if [ -n "$(staged '*.js' '*.mjs' '*.ts' | tr -d '\0')" ]; then
-        staged '*.js' '*.mjs' '*.ts' | xargs -0 ./node_modules/.bin/oxlint --report-unused-disable-directives-severity=error ||
+        staged '*.js' '*.mjs' '*.ts' | xargs -0 ./node_modules/.bin/oxlint --report-unused-disable-directives-severity=error --no-error-on-unmatched-pattern ||
             fail "oxlint failed (fix or scope the finding; bun run lint:fix may help)"
     fi
 fi

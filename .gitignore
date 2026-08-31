@@ -2,6 +2,7 @@
 
 # Zig build artifacts
 .zig-cache/
+.zig-global-cache/
 zig-out/
 zig-pkg/
 
