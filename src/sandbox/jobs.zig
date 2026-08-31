@@ -116,6 +116,20 @@ var execs: std.ArrayList(*ExecJob) = .empty;
 var gpa_ref: ?std.mem.Allocator = null;
 var id_seq: std.atomic.Value(u64) = std.atomic.Value(u64).init(1);
 
+/// Records the allocator `finishSub` copies a held completion with, for a
+/// starter that spawns its worker before it registers the row. The
+/// background subagent path does exactly that, so a worker finishing before
+/// `registerSub` reached `finishSub` with no allocator recorded yet on the
+/// process's first job: the completion was dropped, the row was born
+/// `running` and stayed so for the life of the process, and `waitSub` spun
+/// on `done` forever at 100% of a core. `startExec` and `registerSub` record
+/// it too; this is the same store, reachable before the spawn.
+pub fn rememberAllocator(gpa: std.mem.Allocator) void {
+    mu.lock();
+    defer mu.unlock();
+    gpa_ref = gpa;
+}
+
 pub fn makeId(now_ns: u64, buf: []u8) []const u8 {
     const mixed = now_ns ^ (id_seq.fetchAdd(1, .monotonic) << 8);
     const hex = "0123456789abcdef";

@@ -5718,6 +5718,12 @@ const SubagentCall = struct {
 /// soon as its completion is recorded -- held in a late-completion slot or
 /// attached to a row, either way the job table has its own copies.
 fn subagentBgWorker(c: *SubagentCall, job_id: []const u8) void {
+    // The starter spawns this thread before it registers the row, so on the
+    // process's first job `finishSub` below would otherwise reach a job table
+    // that has recorded no allocator yet and drop the completion: the row is
+    // then born `running`, stays so for the life of the process, and any
+    // `wait` on it spins on `done` at 100% of a core forever.
+    jobs_mod.rememberAllocator(c.gpa);
     c.run();
     const err_name: ?[]const u8 = if (c.err) |e| @errorName(e) else null;
     _ = jobs_mod.finishSub(job_id, c.result, err_name);
