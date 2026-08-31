@@ -81,12 +81,14 @@ Project agents receive this workflow through the harness prompt and
 
 <!-- inventory:bug:start -->
 - [gate lint/provider-kind steps cannot read a .zig file past 1 MiB](bugs/2026-08-30-gate-lint-and-provider-kind-scan-fail-on-files-over-1-mib.md) — Resolved
-
+- [If-None-Match ignores weak ETags and `*`, so revalidation behind an ETag-weakening proxy never 304s](bugs/2026-08-29-if-none-match-ignores-weak-etags-and-star.md) — Resolved
+- [lint gate fails StreamTooLong once src/cli.zig crossed 1 MiB](bugs/2026-08-29-lint-gate-streamtoolong-on-cli-zig.md) — Resolved
+- [sqlite last_error aliased freed memory, so a fresh session database failed to open](bugs/2026-08-29-sqlite-last-error-aliases-freed-memory.md) — Resolved
 - [webui-budget gate fails: eager JS is 144.1K gz against a 144K budget](bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md) — Resolved
 
 - [two resolved records still read Open in the reports inventory, so reports list offers finished work](bugs/2026-08-24-report-inventory-drifts-from-the-record.md) — Open
 
-- [The saturation 503 closes a socket with the request still unread, so the RST can discard the response body](bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md) — Open
+- [The saturation 503 closes a socket with the request still unread, so the RST can discard the response body](bugs/2026-08-24-saturation-503-is-reset-before-the-client-reads-it.md) — Resolved
 
 - [reports status doubles its own 'Resolved on <date>.' sentence when the note repeats it](bugs/2026-08-24-reports-status-doubles-its-own-sentence.md) — Resolved
 
@@ -143,7 +145,7 @@ Project agents receive this workflow through the harness prompt and
 
 - [A gh_read PR diff is a run of hunks that names no file](bugs/2026-08-23-gh-read-diff-hunks-name-no-file.md) — Resolved
 
-- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Open
+- [A plugin with one typo in capabilities vanishes from the list with nothing to read, and group is never checked](bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md) — Resolved
 
 - [A plugin's refresh hook is documented as the re-entry point but the host never calls a view loader twice](bugs/2026-08-23-plugin-refresh-hook-is-unreachable.md) — Resolved
 

@@ -148,6 +148,12 @@ pub const Provider = struct {
     /// this in rather than adding a `switch (provider.kind)` in the proxy.
     proxy: Proxy = .{},
 
+    /// Default prompt-cache idle warning TTL for this wire, in milliseconds.
+    /// 0 disables the warning (openai_compat, local llama.cpp, etc.).
+    /// Anthropic Messages kinds use 300_000. `[providers.<name>] cache_ttl_ms`
+    /// overrides; 0 there also disables.
+    cache_ttl_ms: u64 = 0,
+
     // -- wire codec: pure, no I/O, no credentials ---------------------------
 
     /// Serializes a request body into a newly allocated buffer (caller frees).

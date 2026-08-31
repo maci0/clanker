@@ -467,3 +467,90 @@ which is exactly what the report claimed.
 Live: `clanker serve` returns the new host and app bytes, and enabling `health`
 over `/api/webui/plugins` serves a `health/app.js` with the `announce` gate and
 no `MutationObserver`. Full `clanker gate`: twelve of twelve PASS.
+
+## 2026-08-29 — the list stops eating slightly-wrong manifests
+
+Closes [webui addon list drops a bad manifest with no diagnostic](../reports/bugs/2026-08-23-webui-addon-list-drops-a-bad-manifest-with-no-diagnostic.md).
+
+`actionList` (`tools/zig/webui_addon.zig`) already listed an *unparseable*
+`plugin.json` with a diagnostic description, and then silently `continue`d past
+`capabilitiesRejected` three lines later — so a manifest one typo away from
+valid was strictly worse off than one that was garbage. The rejected manifest
+is now listed the same way the parse failure is: name, title, and the
+rejection message as the description. It ships `enabled: false` deliberately —
+a typo in `capabilities` is still not a grant, so its assets keep 404ing — but
+the owner can now read why from System instead of watching the addon vanish.
+
+The second half was `validGroup` being enforced at `create` and `put` but
+never at `list`: a hand-written manifest with `"group": "Setup"` was passed to
+the page verbatim, matched no rail heading, and `makeViewShell`'s fallback
+appended the tab directly to `.rail-nav`, unstyled and outside the tablist. An
+unknown group now falls back to Watch in the list answer, with a note appended
+to the description naming the group that did not match.
+
+Verified by a new `webui_addon` case in `src/sandbox/runtime.zig` (tmpDir root,
+`fs_prefixes` matching the tool manifest): a `capabilities: ["gett"]` manifest
+is listed with `plugin.json rejected: unknown capability …`, and a
+`group: "Setup"` manifest comes back under Watch with the note, the raw group
+never reaching the page.
+## 2026-08-29 — Retry after a failed plugin script load was a no-op
+
+Found by reading `loadPluginScript` (`ui/app/core/plugins.js`) against the
+error panel's retry path. A deferred plugin's Retry resets the promise cache
+(`pluginScripts[name] = null`) and calls the loader again — but a script whose
+fetch failed left its dead `<script>` element in the head, and the loader's
+existing-tag check (`script[data-plugin="<name>"]`) found it and resolved
+`true` without touching the network. `shell.spec` was still null, so the panel
+showed the same failure again: for a script that 404ed once (server briefly
+down, plugin enabled before its `app.js` was written), Retry could never
+succeed short of a full page reload. `onerror` now removes the tag before
+resolving, so the retry path genuinely refetches.
+
+Pinned in `ui/app/core/plugins.test.mjs`: the failed tag is gone from the head,
+Retry injects a fresh element rather than adopting the dead one, and the
+retried load mounts the plugin once its script registers. Run as a control
+against unfixed `plugins.js`: the new case fails there (`Retry must inject a
+fresh script tag`), the other fourteen pass. The test's DOM stub now hangs
+`head` off the same root `document.querySelector` walks, since the
+existing-tag check is exactly what the stub had been hiding.
+## 2026-08-29 — a throwing boot hook is named, not swallowed
+
+Found by reading `registerView` (`ui/app/core/plugins.js`): both call sites ran
+`spec.boot` inside `try { … } catch (e) {}`. `boot` is the page-load hook — a
+persistent dock, a live subscription — and it has no panel for
+`runPluginHook`'s containment to write into, so a throwing boot left the
+plugin's dock simply absent, with nothing anywhere saying why. Music's dock is
+the shipped case: one exception in its boot and the player never appears, the
+enable checkbox stays on, and there is no error to read.
+
+Both branches now go through one `runPluginBoot`, which contains the throw and
+writes "The <title> plugin failed to start: <message>" to the loader's own
+status line — the surface that exists at boot time. A healthy boot writes
+nothing.
+
+Pinned in `ui/app/core/plugins.test.mjs` for both registerView branches (the
+direct one and the deferred-shell one), plus a control that a healthy boot
+stays silent. Run against unfixed `plugins.js`: the new case fails, the other
+fourteen pass.
+
+## 2026-08-29 — Activity follows the board live
+
+Feature. The Activity view merged both feeds correctly but only on mount and
+Refresh, while the page already carries a live bus that announces every board
+action: each board mutation writes an action message to the board room, and
+`src/serve/live.zig` publishes every room message as a `{t:"chat", room:…}`
+event. The plugin now subscribes (`api.onLive`) and reloads the timeline when a
+`chat` event names the `board` room — the "what has been happening" view keeps
+happening without a button press.
+
+Three guards on the handler, each with a reason: a non-board room's chat is not
+board activity; a hidden view must not poll (the guard reads
+`container.closest(".view")`, the panel the host actually hides — the same
+defect Mesh shipped by reading `container.hidden`); and an event landing while
+a load is in flight is already covered by that load, read off the same
+`refresh.disabled` flag the button uses. Re-entry after events missed while
+hidden was already covered: the refresh hook reloads.
+
+`plugin.json` gains the `live` capability. New `ui/plugins/activity/activity.test.mjs`
+(registered in `build.zig`) drives the mounted plugin in a vm: a board-room
+event reloads, other events and a hidden panel do not.

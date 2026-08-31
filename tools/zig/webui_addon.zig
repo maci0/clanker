@@ -67,12 +67,40 @@ fn actionList(out: *lib.Out) !void {
                 });
                 continue;
             };
-            if (logic.capabilitiesRejected(m.capabilities)) |_| continue;
+            if (logic.capabilitiesRejected(m.capabilities)) |why| {
+                // Same treatment as a manifest that will not parse: a typo in
+                // capabilities is still not a grant (the row ships disabled,
+                // so its assets keep 404ing), but the addon stays listed with
+                // the rejection to read instead of vanishing from System.
+                const diag = std.fmt.allocPrint(lib.alloc, "plugin.json rejected: {s}", .{why}) catch continue;
+                try addons.append(lib.alloc, .{
+                    .name = name,
+                    .title = if (m.title.len > 0) m.title else name,
+                    .description = diag,
+                    .group = "Watch",
+                    .enabled = false,
+                    .has_css = hasCss(name),
+                });
+                continue;
+            }
+            // `create` and `put` enforce validGroup, but a hand-written
+            // manifest reaches `list` unchecked: a group that names no rail
+            // heading would put the tab outside the nav list, unstyled. Fall
+            // back to Watch and say so in the description.
+            const group_ok = logic.validGroup(m.group);
+            const description = if (group_ok or m.group.len == 0)
+                m.description
+            else
+                std.fmt.allocPrint(lib.alloc, "{s}{s}(group \"{s}\" is not Work, Watch, or Set up; shown under Watch)", .{
+                    m.description,
+                    if (m.description.len > 0) " " else "",
+                    m.group,
+                }) catch m.description;
             try addons.append(lib.alloc, .{
                 .name = name,
                 .title = if (m.title.len > 0) m.title else name,
-                .description = m.description,
-                .group = if (m.group.len > 0) m.group else "Watch",
+                .description = description,
+                .group = if (group_ok) m.group else "Watch",
                 .enabled = logic.addonEnabled(state.enabled, state.disabled, name),
                 .has_css = hasCss(name),
                 .capabilities = m.capabilities,

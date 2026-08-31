@@ -1034,6 +1034,68 @@ test "webui wasm tool serves every module the asset route names" {
     }
 }
 
+test "webui_addon list surfaces a rejected manifest and falls an unknown group back to Watch" {
+    // actionList used to `continue` past capabilitiesRejected with no row —
+    // one typo in capabilities and the addon vanished from System with
+    // nothing to read, its assets 404ing off the same answer — and validGroup
+    // was enforced in create/put but never in list, so a group naming no rail
+    // heading was passed to the page verbatim and the tab landed unstyled
+    // outside the nav list.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/webui_addon.wasm", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(wasm);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "ui/plugins/badcaps");
+    try tmp.dir.createDirPath(io, "ui/plugins/badgroup");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "ui/plugins/badcaps/plugin.json",
+        .data = "{\"name\":\"badcaps\",\"title\":\"Bad Caps\",\"description\":\"d\",\"group\":\"Watch\",\"capabilities\":[\"gett\"]}",
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/plugins/badcaps/app.js", .data = "clanker.registerView({});" });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "ui/plugins/badgroup/plugin.json",
+        .data = "{\"name\":\"badgroup\",\"title\":\"Bad Group\",\"description\":\"g\",\"group\":\"Setup\"}",
+    });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/plugins/badgroup/app.js", .data = "clanker.registerView({});" });
+    const root = try std.fmt.allocPrint(std.testing.allocator, ".zig-cache/tmp/{s}", .{tmp.sub_path});
+    defer std.testing.allocator.free(root);
+
+    var cfg = config_mod.Config{};
+    var sb = host.Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = root,
+        .network_allow = &.{},
+        .fs_prefixes = &.{ "ui/plugins", "state/webui_plugins.json" },
+        .environ_map = &env_map,
+        .cfg = &cfg,
+        .tool_self_name = "webui_addon",
+    };
+    const mod = try ToolModule.load(std.testing.allocator, io, &sb, wasm);
+    defer mod.deinit();
+
+    const out = try mod.executeTool("{\"action\":\"list\"}");
+    defer std.testing.allocator.free(out);
+    try std.testing.expect(std.mem.find(u8, out, "\"ok\":true") != null);
+    // The typo'd manifest is listed with the rejection to read, and stays a
+    // non-grant: the row ships disabled.
+    try std.testing.expect(std.mem.find(u8, out, "\"name\":\"badcaps\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "plugin.json rejected: unknown capability") != null);
+    // The unknown group never reaches the page; the row lands under Watch and
+    // the description says why.
+    try std.testing.expect(std.mem.find(u8, out, "\"name\":\"badgroup\"") != null);
+    try std.testing.expect(std.mem.find(u8, out, "\"group\":\"Setup\"") == null);
+    try std.testing.expect(std.mem.find(u8, out, "(group \\\"Setup\\\" is not Work, Watch, or Set up; shown under Watch)") != null);
+}
+
 fn stubParentAnswer(ctx: *anyopaque, gpa: std.mem.Allocator, question: []const u8, options: []const []const u8) anyerror![]const u8 {
     _ = ctx;
     _ = question;

@@ -49,6 +49,13 @@ pub const registry = [_]Provider{
     claude.provider,
 };
 
+test "Anthropic Messages kinds default a 300s cache TTL; openai_compat is off" {
+    try std.testing.expectEqual(@as(u64, 300_000), anthropic.provider.cache_ttl_ms);
+    try std.testing.expectEqual(@as(u64, 300_000), claude.provider.cache_ttl_ms);
+    try std.testing.expectEqual(@as(u64, 300_000), vertex_anthropic.provider.cache_ttl_ms);
+    try std.testing.expectEqual(@as(u64, 0), openai.provider.cache_ttl_ms);
+}
+
 /// The vtable for a configured provider. Resolved once per request by the
 /// client, then called through for the whole exchange.
 pub fn forKind(kind: config.ProviderKind) *const Provider {

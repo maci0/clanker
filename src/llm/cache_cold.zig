@@ -1,9 +1,10 @@
-//! Anthropic prompt-cache idle clock (ADR 0035 / PRD 0046).
+//! Prompt-cache idle clock (ADR 0035 / PRD 0046).
 //!
 //! Pure classification plus a process-wide last-success stamp *per
 //! provider/model*. No daemon, no dummy warmer, no ProviderKind switch.
 //! A missing stamp (process start, or a pair never seen) is cold for the
 //! helper and not a warning: we have not observed a warm cache yet.
+//! `ttl_ms = 0` disables the warning (local openai_compat / llama.cpp).
 
 const std = @import("std");
 
@@ -18,8 +19,10 @@ pub fn isCold(last_ok_ms: u64, now_ms: u64, ttl_ms: u64) bool {
 }
 
 /// Warn only when we have a real stamp that has aged past the TTL. A first
-/// request in a process is cold by `isCold` but not a surprise.
+/// request in a process is cold by `isCold` but not a surprise. `ttl_ms = 0`
+/// is off.
 pub fn shouldWarn(last_ok_ms: u64, now_ms: u64, ttl_ms: u64) bool {
+    if (ttl_ms == 0) return false;
     return last_ok_ms != 0 and isCold(last_ok_ms, now_ms, ttl_ms);
 }
 
@@ -36,15 +39,18 @@ pub fn hasCacheAccounting(cache_hit: u32, cache_miss: u32) bool {
 /// Stamp last success for this provider/model when usage has cache
 /// accounting. Returns true when a hit was expected and cache_hit is 0
 /// (caller logs). Independent of token_stats: call this before that guard.
+/// `ttl_ms = 0` disables stamping and the unexpected-miss signal.
 pub fn afterUsage(
     provider: []const u8,
     model: []const u8,
     cache_hit: u32,
     cache_miss: u32,
     now_ms: u64,
+    ttl_ms: u64,
 ) bool {
+    if (ttl_ms == 0) return false;
     if (!hasCacheAccounting(cache_hit, cache_miss)) return false;
-    const expected_warm = !isCold(lastOk(provider, model), now_ms, default_ttl_ms);
+    const expected_warm = !isCold(lastOk(provider, model), now_ms, ttl_ms);
     const miss = unexpectedMiss(expected_warm, cache_hit);
     stamp(provider, model, now_ms);
     return miss;
@@ -156,7 +162,7 @@ test "stamp is visible to lastOk for that provider/model only" {
 
 test "afterUsage stamps only the pair that reported cache accounting" {
     const now: u64 = 50_000;
-    try std.testing.expect(!afterUsage("p-a", "m-a", 0, 12, now));
+    try std.testing.expect(!afterUsage("p-a", "m-a", 0, 12, now, default_ttl_ms));
     try std.testing.expectEqual(@as(u64, now), lastOk("p-a", "m-a"));
     try std.testing.expectEqual(@as(u64, 0), lastOk("p-b", "m-a"));
     try std.testing.expectEqual(@as(u64, 0), lastOk("p-a", "m-b"));
@@ -165,16 +171,23 @@ test "afterUsage stamps only the pair that reported cache accounting" {
 
 test "afterUsage reports unexpected miss per pair, not globally" {
     const t0: u64 = 80_000;
-    _ = afterUsage("p-warm", "m-1", 10, 0, t0);
+    _ = afterUsage("p-warm", "m-1", 10, 0, t0, default_ttl_ms);
     // A sibling model has never succeeded; it must not inherit warmth.
-    try std.testing.expect(!afterUsage("p-warm", "m-2", 0, 4, t0 + 1_000));
+    try std.testing.expect(!afterUsage("p-warm", "m-2", 0, 4, t0 + 1_000, default_ttl_ms));
     // The original pair is still inside the TTL, so a 0-hit is a surprise.
-    try std.testing.expect(afterUsage("p-warm", "m-1", 0, 4, t0 + 1_000));
+    try std.testing.expect(afterUsage("p-warm", "m-1", 0, 4, t0 + 1_000, default_ttl_ms));
     stamp("p-warm", "m-1", 0);
     stamp("p-warm", "m-2", 0);
 }
 
 test "afterUsage with no cache accounting does not stamp" {
-    try std.testing.expect(!afterUsage("p-none", "m-none", 0, 0, 99));
+    try std.testing.expect(!afterUsage("p-none", "m-none", 0, 0, 99, default_ttl_ms));
     try std.testing.expectEqual(@as(u64, 0), lastOk("p-none", "m-none"));
+}
+
+test "ttl 0 disables stamp, warn, and unexpected-miss" {
+    const now: u64 = 90_000;
+    try std.testing.expect(!afterUsage("p-local", "m-local", 10, 0, now, 0));
+    try std.testing.expectEqual(@as(u64, 0), lastOk("p-local", "m-local"));
+    try std.testing.expect(!shouldWarn(1, 1 + default_ttl_ms, 0));
 }

@@ -1869,14 +1869,121 @@ Not verified live: none of this was seen in a browser. The composer and board
 changes are DOM/ARIA structure and CSS position, and the render-cache path needs
 an allocation failure to reach at all.
 
-## Left / next
+## The weight budget gets its trim back (2026-08-29)
 
-- The config.toml snippet is on the models.dev rows only. The "Live from
-  provider" listing is the case a local Ollama/vLLM user wants it for most, but
-  `GET /models` returns an id and sometimes a context window and never an output
-  limit — so a snippet from there would ship exactly the missing-`max_tokens`
-  footgun the catalog snippet was built to close. It needs a way to ask for, or
-  default, an output cap before it is worth offering.
+`bun test ui/app/weight-budget.test.mjs` — the runner the gate uses — measured
+the eager JS at 144.1K gz against a 144K budget, while node's zlib read the same
+bytes as 143.9K, which is how the tree could look green locally and gate red.
+The stopgap raised the budget to 145K to unblock every gated change, with the
+explicit instruction that a real trim drop it back
+(`docs/reports/bugs/2026-08-27-webui-weight-budget-exceeded-by-100-bytes.md`).
+This is the trim.
+
+`core/logs.js` left the eager set. The log tail viewer only ever renders under
+System, but a static import in `app.js` plus its own `<script type="module">`
+tag made every chat-only visit download it. It defers through the same
+`import()` memo the view modules use, so `loadLogList`/`loadLog` now return the
+module's promise chain rather than calling into an already-resident module. The
+`/webui/core/logs.js` route and the embed in `ui/webui.zig` are untouched — it
+is the eager fetch that goes, not the file.
+
+Measured after: eager JS 143.8K gz across 32 requests, so the budget goes back
+to 144K, the floor above the new number.
+
+### Verified
+
+`bun test ui/app/weight-budget.test.mjs` (6 pass) and the full `clanker gate`.
+
+## The saturation 503 stops arriving as a connection reset (2026-08-29)
+
+The over-limit path in `serveConnection` never reads the request, so the
+client's bytes sat unread in the receive buffer, and closing a socket in that
+state sends RST rather than FIN — and the RST can discard the 503 still queued
+in the send buffer. Measured live before the fix: the header block arrives,
+`Content-Length: 54`, zero body bytes, `ConnectionResetError`. The one refusal
+that should say "come back later" was indistinguishable from the server having
+died.
+
+`drainThenClose` (src/cli.zig) replaces the bare `stream.close` on both
+saturation sites. It shuts the send side down first (the client sees FIN and
+knows nothing more follows), drains the unread request — bounded twice over, by
+a 1s `SO_RCVTIMEO` and a 64 KiB byte cap, because this runs on the accept
+thread the connection bound exists to protect — and only then closes, on a
+socket whose receive buffer is empty. That close is a FIN, and the body arrives
+by specification rather than by winning a race against the metric and log work
+that happened to sit between the write and the close.
+
+### Verified
+
+A socketpair unit test pins the sequence: request bytes written and never read
+by the server, 503 written, `drainThenClose`, and the client reads the whole
+response and then a clean EOF — the exact sequence a reset breaks with
+ECONNRESET. Plus the full `clanker gate`. Not re-measured against a live
+saturated server; forcing the bound needs the load harness the original report
+used.
+
+## Conditional GETs stop ignoring weak ETags and `*` (2026-08-29)
+
+`ifNoneMatchHits` (src/cli.zig) — shared by the served page, the first-party
+assets and the plugin assets — compared each `If-None-Match` value to the
+computed ETag with `std.mem.eql`. RFC 9110 13.1.2 asks for two things that were
+not there: the comparison is the *weak* one, so `W/"x"` matches `"x"`, and the
+`*` form matches any current representation. Both fell through to "no match".
+
+Direct clients never notice, which is why it sat: the server hands out strong
+tags and browsers echo them back verbatim. The failure needs an intermediary
+that re-encodes the response, because re-encoding weakens the tag — nginx's
+gzip filter turns `"abc"` into `W/"abc"` on the way out. After that, every
+revalidation from behind that proxy earns a 200 with the full body, forever:
+the exact transfer the ETag exists to skip, for every asset, on every visit.
+
+Both forms are handled now. The `W/` strip is anchored, so a tag whose opaque
+content merely begins `W/` still mismatches — pinned by test alongside the weak
+match, the weak-in-a-list match and `*`. The tags this server issues are crc32
+content hashes, so weak comparison of them is exact in practice.
+
+### Verified
+
+`zig build test` filtered on `ifNoneMatchHits` (both blocks pass) and the full
+`clanker gate`. Filed and resolved as
+`docs/reports/bugs/2026-08-29-if-none-match-ignores-weak-etags-and-star.md`.
+
+## Live provider rows offer the config snippet — once you name the output cap (2026-08-29)
+
+The "Left / next" entry this closes said exactly what blocked it: the
+`config.local.toml` snippet was on the models.dev catalog rows only, and the
+"Live from provider" listing is the case a local Ollama/vLLM operator wants it
+for most — but `GET /models` answers an id and sometimes a context window and
+*never* an output limit. A snippet built from a live row would therefore ship
+without `max_tokens`, which is precisely the footgun the catalog snippet exists
+to close: the entry falls to the 1024-token default and truncates every answer.
+
+So the panel asks for the cap rather than guessing one. An "Output cap" number
+input sits beside the provider select, and each live row carries the same
+`config.local.toml` button the catalog rows have. The button refuses while the
+box does not hold a positive whole number — the sr-only status line says why,
+and sighted users get the browser's own validation bubble on the input that
+needs filling, cleared on the next keystroke so it does not nag.
+
+`liveSnippetModel(provider, row, capValue)` (features/models.js) is the pure
+part, exported so the refusal boundary is testable text rather than a DOM
+behaviour: empty, non-numeric, zero, negative and fractional all return null; a
+valid cap returns the snippet input with the operator's number as `max_tokens`,
+carrying the row's context window only when the provider stated one, rather than
+writing a `0`. The provider is one of the configured ones by construction — the
+live select only lists those — so the snippet is the `[models."…"]` table alone,
+with no `[providers.…]` block.
+
+### Verified
+
+`bun test ui/app/features/models.test.mjs`: 17 pass, including the cap-refusal
+boundary in all five rejecting forms and a snippet assertion that the rendered
+TOML carries `max_tokens = 8192` and `context_window = 32768` and no
+`[providers.` block. Plus the full `clanker gate`. Not verified in a browser:
+the button wiring and the validation bubble are asserted against the shipped
+`index.html` and `models.js` source, not clicked.
+
+## Left / next
 - Decompose remaining `app.js` feature slices (`features/board.js`, `features/goals.js`, remaining view logic) per `docs/prds/0006-webui.md`'s Design → Framework choice — now cheaper because imports are real and the serve path is complete.
 - Promote `axe-core` into the repo + `clanker gate` so the a11y proof is not `/tmp`-vendored; add narrow-viewport Fleet interaction (hamburger → Fleet) to the screenshot harness so the drawer path is also photographed.
 - The pre-existing axe items logged in the 2026-08-12 sweep entry, re-checked

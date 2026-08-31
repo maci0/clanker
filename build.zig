@@ -427,6 +427,9 @@ pub fn build(b: *std.Build) void {
     const plugin_host_js_test = b.addSystemCommand(&.{ "bun", "test" });
     plugin_host_js_test.addFileArg(b.path("ui/app/core/plugins.test.mjs"));
     test_step.dependOn(&plugin_host_js_test.step);
+    const activity_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    activity_js_test.addFileArg(b.path("ui/plugins/activity/activity.test.mjs"));
+    test_step.dependOn(&activity_js_test.step);
     const files_js_test = b.addSystemCommand(&.{ "bun", "test" });
     files_js_test.addFileArg(b.path("ui/plugins/files/files.test.mjs"));
     test_step.dependOn(&files_js_test.step);

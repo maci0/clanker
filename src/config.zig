@@ -373,6 +373,11 @@ pub const Provider = struct {
     /// (ADR 0034). Empty means none. Stored as canonical JSON text.
     extra_body: []const u8 = "",
 
+    /// Prompt-cache idle warning TTL in milliseconds. Null uses the wire
+    /// kind's default (300s on Anthropic Messages kinds, 0 = off elsewhere).
+    /// 0 disables the warning for this provider (local llama.cpp, ollama).
+    cache_ttl_ms: ?u64 = null,
+
     /// Name of the active model (sent as the API `model` field).
     /// Builds a provider with one model. JSON loading normalizes into exactly
     /// this shape, so programmatic callers (tests, ad-hoc providers) do not
@@ -442,6 +447,11 @@ pub const Provider = struct {
     /// then provider, then the provider kind's native field.
     pub fn effectiveReasoningFormat(self: *const Provider) ReasoningFormat {
         return self.activeModel().reasoning_format orelse self.reasoning_format orelse .auto;
+    }
+
+    /// Prompt-cache idle TTL: config override, else the wire kind's default.
+    pub fn cacheTtlMs(self: *const Provider, wire_default: u64) u64 {
+        return self.cache_ttl_ms orelse wire_default;
     }
 
     /// This provider with the active model's endpoint overrides folded in,
@@ -1886,6 +1896,7 @@ pub const Config = struct {
             "reasoning_format",
             "check_timeout_seconds",
             "extra_body",
+            "cache_ttl_ms",
             // Legacy names: flagged with a dedicated error below, not a warning.
             "model",
             "models",
@@ -1992,6 +2003,9 @@ pub const Config = struct {
         }
         if (obj.get("extra_body")) |eb| {
             p.extra_body = try parseExtraBody(arena, name, eb);
+        }
+        if (obj.get("cache_ttl_ms")) |k| {
+            p.cache_ttl_ms = try jsonUnsigned(u64, k, "cache_ttl_ms");
         }
 
         // Some kinds address the model by project/location in the URL
@@ -5327,6 +5341,26 @@ test "the providers-check timeout has a short default, a global key, and a per-p
     // distinguishable from "set to the same number".
     try std.testing.expect(cfg.providers.getPtr("hosted").?.check_timeout_seconds == null);
     try std.testing.expectEqual(@as(u32, 2), cfg.providers.getPtr("lan").?.check_timeout_seconds.?);
+}
+
+test "cache_ttl_ms loads, 0 disables, unset stays null" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "local"
+        \\providers = { local = { base_url = "http://127.0.0.1:8082/v1", cache_ttl_ms = 0 }, cloud = { base_url = "https://a.test", kind = "anthropic", cache_ttl_ms = 120000 }, plain = { base_url = "https://b.test" } }
+        \\models = { "local/m" = { provider = "local" }, "cloud/m" = { provider = "cloud" }, "plain/m" = { provider = "plain" } }
+        ,
+    });
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(u64, 0), cfg.providers.getPtr("local").?.cache_ttl_ms.?);
+    try std.testing.expectEqual(@as(u64, 120_000), cfg.providers.getPtr("cloud").?.cache_ttl_ms.?);
+    try std.testing.expect(cfg.providers.getPtr("plain").?.cache_ttl_ms == null);
 }
 
 test "a negative check timeout is rejected instead of wrapping into a huge one" {

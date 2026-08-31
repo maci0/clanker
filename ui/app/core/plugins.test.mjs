@@ -170,9 +170,15 @@ const BUILT_INS = [
 
 function makePage() {
   const root = makeElement("body");
+  // The head hangs off the same root the stub's document queries walk, so
+  // `document.querySelector` can see what `loadPluginScript` appends there —
+  // in a browser <head> is part of the document, and the host's existing-tag
+  // check depends on that.
+  const head = makeElement("head");
+  root.appendChild(head);
   const doc = {
     documentElement: root,
-    head: makeElement("head"),
+    head: head,
     createElement: makeElement,
     createTextNode: makeText,
     getElementById(id) {
@@ -301,10 +307,10 @@ function loadHost(page, extras) {
 
 // A host bound to a fresh page, with the bits of app.js's context the tests
 // need. `viewLoaded` mirrors app.js: set once a load has succeeded.
-function bootHost(options) {
+function bootHost(options, extras) {
   const page = makePage();
   const observed = [];
-  const { host, sandbox } = loadHost(page);
+  const { host, sandbox } = loadHost(page, extras);
   const el = { webuiPluginsStatus: makeElement("p"), webuiPlugins: makeElement("div"), webuiPluginsRefresh: null };
   const views = page.views.slice();
   const viewLoaders = {};
@@ -598,4 +604,88 @@ test("aria-owns is rebuilt in rail order, so a screen reader reads the rail", ()
      "tab-tools", "tab-system"],
     "appending the new id put a Work group plugin after System"
   );
+});
+
+/* --------------------------------------- 4. a failed script load can retry */
+
+test("Retry after a failed script load fetches the script again", async () => {
+  // The error panel's retry resets the promise cache and calls the loader
+  // again, but the failed <script> tag used to stay in the head, where the
+  // loader's existing-tag check found it and resolved true without a fetch:
+  // Retry could never succeed for a deferred plugin whose script had 404ed.
+  const retries = [];
+  const boot = bootHost({}, {
+    showLoadError: (el, msg, retryFn) => {
+      el.appendChild(makeText(msg));
+      retries.push(retryFn);
+    }
+  });
+  boot.host.loadPluginAssets([{ name: "ghost", title: "Ghost", group: "Watch", enabled: true, has_css: false }]);
+  assert.equal(typeof boot.viewLoaders.ghost, "function", "a deferred plugin gets a loader");
+
+  const first = boot.viewLoaders.ghost();
+  const s1 = boot.page.doc.head.querySelector('script[data-plugin="ghost"]');
+  assert.ok(s1, "the loader injects a script tag");
+  s1.onerror();
+  await first;
+  assert.equal(
+    boot.page.doc.head.querySelector('script[data-plugin="ghost"]'), null,
+    "a failed script tag must not stay in the head"
+  );
+  const panel = boot.page.doc.getElementById("view-ghost");
+  assert.match(panel.textContent, /Could not load the Ghost plugin/);
+  assert.equal(retries.length, 1, "the failure offers a Retry");
+
+  const second = retries[0]();
+  const s2 = boot.page.doc.head.querySelector('script[data-plugin="ghost"]');
+  assert.ok(s2 && s2 !== s1, "Retry must inject a fresh script tag, not find the dead one");
+  // This time the script arrives and registers, the way app.js running would.
+  let mounts = 0;
+  boot.clanker.registerView({ id: "ghost", title: "Ghost", group: "Watch", mount: function () { mounts++; } });
+  s2.onload();
+  await second;
+  assert.equal(mounts, 1, "the retried load mounts the plugin");
+});
+
+/* --------------------------------------------- 5. a throwing boot is named */
+
+test("a throwing boot lands in the loader's status line, not an empty catch", () => {
+  // `boot` runs at page load with no view panel behind it, so mount's
+  // containment cannot catch it; it used to vanish into `catch (e) {}` and an
+  // eager plugin's dock was simply absent with nothing anywhere saying why.
+  const boot = bootHost();
+  const calls = [];
+  boot.clanker.registerView({
+    id: "dock",
+    title: "Dock",
+    group: "Watch",
+    mount: function () {},
+    boot: function (api) { calls.push(typeof api.getJSON); throw new Error("no audio"); }
+  });
+  assert.equal(calls.length, 1, "boot still runs, and is handed the api surface");
+  assert.equal(calls[0], "function");
+  assert.equal(
+    boot.el.webuiPluginsStatus.textContent,
+    "The Dock plugin failed to start: no audio"
+  );
+
+  // And the deferred-shell path reports through the same line: the shell
+  // exists before the script runs, so registerView takes the other branch.
+  boot.host.loadPluginAssets([{ name: "lazy", title: "Lazy", group: "Watch", enabled: true, has_css: false }]);
+  boot.clanker.registerView({
+    id: "lazy",
+    title: "Lazy",
+    group: "Watch",
+    mount: function () {},
+    boot: function () { throw new Error("late throw"); }
+  });
+  assert.equal(
+    boot.el.webuiPluginsStatus.textContent,
+    "The Lazy plugin failed to start: late throw"
+  );
+
+  // Control: a healthy boot says nothing.
+  boot.el.webuiPluginsStatus.textContent = "";
+  boot.clanker.registerView({ id: "fine", title: "Fine", group: "Watch", mount: function () {}, boot: function () {} });
+  assert.equal(boot.el.webuiPluginsStatus.textContent, "");
 });
