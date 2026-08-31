@@ -1111,7 +1111,7 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     // argv is the one source of non-UTF-8 bytes here (the HTTP path
     // JSON-parses first); the sub file is JSON read back as strings, so
     // sanitize at the boundary before comparing or storing.
-    const room = try utf8.sanitize(arena, room);
+    const safe_room = try utf8.sanitize(arena, room);
     // Subscription changes are read-modify-write operations. Serialize them
     // so concurrent join/leave requests cannot silently discard each other.
     var guard = file_lock.acquire(io, base, if (state_dir.len > 0) state_dir else ".", "chatrooms-sub", gpa);
@@ -1144,20 +1144,20 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     if (on) {
         var already = false;
         for (rooms.items) |r| {
-            if (std.mem.eql(u8, r, room)) already = true;
+            if (std.mem.eql(u8, r, safe_room)) already = true;
         }
-        if (!already) try rooms.append(arena, room);
+        if (!already) try rooms.append(arena, safe_room);
         var keep: std.ArrayList([]const u8) = .empty;
         for (unsub.items) |r| {
-            if (!std.mem.eql(u8, r, room)) try keep.append(arena, r);
+            if (!std.mem.eql(u8, r, safe_room)) try keep.append(arena, r);
         }
         unsub = keep;
     } else {
         var already = false;
         for (unsub.items) |r| {
-            if (std.mem.eql(u8, r, room)) already = true;
+            if (std.mem.eql(u8, r, safe_room)) already = true;
         }
-        if (!already) try unsub.append(arena, room);
+        if (!already) try unsub.append(arena, safe_room);
     }
 
     var buf: [16 * 1024]u8 = undefined;
@@ -1174,7 +1174,7 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
     try s.endArray();
     try s.endObject();
     try atomic_write.writeFilePerms(io, base, path, buf[0..w.end], atomic_write.private_file);
-    log.log(.info, "chat: subscribed to '{s}' = {any}", .{ room, on });
+    log.log(.info, "chat: subscribed to '{s}' = {any}", .{ safe_room, on });
 }
 
 // ------------------------------------------------------------- agent inbox --
@@ -1384,7 +1384,7 @@ test "sendMessageOpts sanitizes argv bytes before storing" {
     const safe_room: []const u8 = &.{ 'd', 0xEF, 0xBF, 0xBD, 'v' }; // U+FFFD
     const safe_text: []const u8 = &.{ 'h', 0xEF, 0xBF, 0xBD, 'i' }; // U+FFFD
 
-    try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, bad_room, bad_text, null);
+    _ = try sendMessageOpts(env.tmp.dir, io, std.testing.allocator, arena, "", &cfg, &environ, bad_room, bad_text, null);
 
     const hist = try readHistory(env.tmp.dir, io, arena, "", &cfg, safe_room, 0, 50);
     try std.testing.expectEqual(@as(usize, 1), hist.len);
