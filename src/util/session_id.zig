@@ -29,6 +29,12 @@ test "validSessionId accepts the harness alphabet and refuses escapes" {
     try std.testing.expect(!validSessionId(""));
     try std.testing.expect(!validSessionId("a/b"));
     try std.testing.expect(!validSessionId("../x"));
+    try std.testing.expect(!validSessionId("a\\b"));
+    try std.testing.expect(!validSessionId("a:b"));
+    try std.testing.expect(!validSessionId("a.b"));
+    try std.testing.expect(!validSessionId("a b"));
+    try std.testing.expect(!validSessionId("sess@id"));
+    try std.testing.expect(!validSessionId("a\x00b"));
     var too_long: [65]u8 = .{'x'} ** 65;
     try std.testing.expect(!validSessionId(&too_long));
     const max_len: [64]u8 = .{'x'} ** 64;

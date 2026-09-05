@@ -37,7 +37,8 @@ test("operator sections fill the main column", function () {
 
   const main = ruleBody("main.pf-v6-c-page__main");
   const mainMax = decl(main, "max-width");
-  if (mainMax) assert.ok(fillsColumn(mainMax), "main should fill, got " + mainMax);
+  assert.ok(mainMax, "main.pf-v6-c-page__main must set max-width");
+  assert.ok(fillsColumn(mainMax), "main should fill, got " + mainMax);
 });
 
 test("Chat header, transcript and composer share the full column width", function () {

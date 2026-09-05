@@ -565,9 +565,10 @@ test "gh_read reads a response status through ck_http_ex (skips when offline)" {
     const out = mod.executeTool("{\"url\":\"gh://issue/ziglang/zig/1\"}") catch return error.SkipZigTest;
     defer std.testing.allocator.free(out);
 
-    // Offline, or GitHub answered something else: say nothing rather than fail
-    // the tool gate on a transient outage. The 401 is the only assertable case.
-    if (std.mem.find(u8, out, "401") == null) return;
+    // Offline, or GitHub answered something else: skip rather than pass with
+    // no assertion, which used to paint a green gate over a transient outage.
+    // The 401 is the only assertable case.
+    if (std.mem.find(u8, out, "401") == null) return error.SkipZigTest;
     try std.testing.expect(std.mem.find(u8, out, "rejected by GitHub") != null);
 }
 
@@ -575,8 +576,8 @@ test "web_search wasm tool returns results from a live backend (skips when offli
     // Runs the real web_search.wasm through the real ck_http host bridge, so it
     // exercises input parsing, URL building, the network call, RSS/HTML parsing,
     // entity/URL decoding and JSON output together. Network-dependent: when no
-    // backend is reachable (offline CI), the run fails gracefully and the test
-    // asserts nothing rather than failing the tool gate on a transient outage.
+    // backend is reachable (offline CI), SkipZigTest rather than a green pass
+    // that asserted nothing.
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
@@ -602,7 +603,7 @@ test "web_search wasm tool returns results from a live backend (skips when offli
         .config_json = "{}",
     };
 
-    const wasm = try std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/web_search.wasm", std.testing.allocator, .limited(1 << 20));
+    const wasm = std.Io.Dir.cwd().readFileAlloc(io, "zig-out/tools/web_search.wasm", std.testing.allocator, .limited(1 << 20)) catch return error.SkipZigTest;
     defer std.testing.allocator.free(wasm);
 
     const mod = ToolModule.load(std.testing.allocator, io, &sb, wasm) catch return error.SkipZigTest;
@@ -615,30 +616,23 @@ test "web_search wasm tool returns results from a live backend (skips when offli
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out, .{});
-    if (parsed != .object) return;
+    // A non-object reply is a tool bug, not an outage.
+    try std.testing.expect(parsed == .object);
 
-    // A successful search must parse as an object; when it advertises ok and
-    // carries results, verify the shape (backend tag, real URLs). When the
-    // network is down or a backend is empty, nothing here is asserted, so the
-    // tool gate cannot fail on a transient outage.
-    switch (parsed) {
-        .object => |obj| {
-            const ok_v = obj.get("ok");
-            if (ok_v == null or ok_v.? != .bool or !ok_v.?.bool) return;
-            const backend = obj.get("backend");
-            try std.testing.expect(backend != null and backend.? == .string);
-            const arr = obj.get("results");
-            if (arr == null or arr.? != .array or arr.?.array.items.len == 0) return;
-            if (arr.?.array.items[0] == .object) {
-                if (arr.?.array.items[0].object.get("url")) |u| {
-                    if (u == .string) {
-                        try std.testing.expect(std.mem.startsWith(u8, u.string, "http"));
-                    }
-                }
-            }
-        },
-        else => return,
-    }
+    // When the reply advertises ok and carries results, verify the shape
+    // (backend tag, real URLs). When the network is down or a backend is
+    // empty, skip so the tool gate cannot fail on a transient outage.
+    const obj = parsed.object;
+    const ok_v = obj.get("ok");
+    if (ok_v == null or ok_v.? != .bool or !ok_v.?.bool) return error.SkipZigTest;
+    const backend = obj.get("backend");
+    try std.testing.expect(backend != null and backend.? == .string);
+    const arr = obj.get("results");
+    if (arr == null or arr.? != .array or arr.?.array.items.len == 0) return error.SkipZigTest;
+    try std.testing.expect(arr.?.array.items[0] == .object);
+    const url = arr.?.array.items[0].object.get("url");
+    try std.testing.expect(url != null and url.? == .string);
+    try std.testing.expect(std.mem.startsWith(u8, url.?.string, "http"));
 }
 
 /// One `board.wasm` call. Each op is its own descriptor config, so each step is

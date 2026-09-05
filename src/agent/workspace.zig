@@ -398,7 +398,9 @@ test "validRootName allows the unnamed root and rejects separators" {
     try std.testing.expect(validRootName("core"));
     try std.testing.expect(validRootName("web ui"));
     try std.testing.expect(!validRootName("a/b"));
+    try std.testing.expect(!validRootName("a\\b"));
     try std.testing.expect(!validRootName("a:b"));
+    try std.testing.expect(!validRootName("a\nb"));
 }
 
 test "workspace registry create list update remove" {

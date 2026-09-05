@@ -67,11 +67,13 @@ test("dayBucket names today and yesterday before it names a date", function () {
   // A different year's run carries the year in its stamp; this year's does not.
   const oldYear = new Date(NOW); oldYear.setFullYear(oldYear.getFullYear() - 2);
   const cross = dayBucket(oldYear.getTime(), NOW);
-  assert.ok(/\d/.test(cross) && String(oldYear.getFullYear()).length > 0 && cross.includes(String(oldYear.getFullYear())), cross);
+  assert.match(cross, /\d/);
+  assert.ok(cross.includes(String(oldYear.getFullYear())), cross);
   const thisYear = new Date(NOW); thisYear.setHours(0, 0, 0, 0);
   thisYear.setDate(thisYear.getDate() - 3);
   const same = dayBucket(thisYear.getTime(), NOW);
-  assert.ok(/\d/.test(same) && !same.includes(String(new Date(NOW).getFullYear())), same);
+  assert.match(same, /\d/);
+  assert.ok(!same.includes(String(new Date(NOW).getFullYear())), same);
   assert.equal(dayBucket(0, NOW), "Undated");
 });
 

@@ -7847,6 +7847,10 @@ test "safeJoin refuses dotenv files even under a wide fs_prefixes grant" {
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, ".envrc"));
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "state/.env"));
     try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "foo/.env.production"));
+    // `.envrc` mid-path used to slip past a full-path spelling that only
+    // checked `/.envrc` at the end; safeJoin must refuse it at any depth.
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "dir/.envrc"));
+    try std.testing.expectError(error.PathOutsideSandbox, safeJoin(&sb, "a/.envrc/x"));
     // A name that only shares the prefix bytes is not a dotenv file.
     const ok = try safeJoin(&sb, ".environment/x");
     defer std.testing.allocator.free(ok);

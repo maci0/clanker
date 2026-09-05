@@ -78,7 +78,10 @@ test("a switched-off module is a settled state, not a retryable failure", functi
 test("a 404 that is not a disabled module stays retryable", function () {
   const err = new Error("no such session");
   err.status = 404;
-  assert.equal(classifyLoadFailure(err).kind, "failed");
+  const out = classifyLoadFailure(err);
+  assert.equal(out.kind, "failed");
+  assert.equal(out.retry, true);
+  assert.equal(out.message, "no such session");
 });
 
 test("a server error is retryable and keeps the server's own words", function () {
