@@ -2,7 +2,7 @@
 
 ## Status
 
-Shipped — phase 1 2026-08-21; phase 3 (per-provider `cache_ttl_ms`, 0 = off; Anthropic kinds default 300s, others 0) 2026-08-27. Phase 2 (turn_stats segment) still open. Decision: [ADR 0035](../adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md). RFC: [0023](../rfcs/0023-cache-cold.md). Source of truth: src/llm/cache_cold.zig plus stamp in src/llm/client.zig.
+In progress — phase 1 2026-08-21; phase 3 (per-provider `cache_ttl_ms`, 0 = off; Anthropic kinds default 300s, others 0) 2026-08-27. Phase 2 (turn_stats segment) still open. Decision: [ADR 0035](../adrs/0035-anthropic-cache-cold-is-a-timestamp-compare-at-request-time.md). RFC: [0023](../rfcs/0023-cache-cold.md). Source of truth: src/llm/cache_cold.zig plus stamp in src/llm/client.zig.
 
 ## Problem
 

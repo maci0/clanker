@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-21. Records the decision opened in [RFC 0034 — How nested runs pick explore/plan/coder profiles](../rfcs/0034-nested-profiles.md).
+Accepted — 2026-08-21. Records the decision opened in [RFC 0034 — How nested runs pick explore/plan/coder profiles](../rfcs/0034-nested-profiles.md). Not yet implemented: `presets/explore.toml`, `plan.toml`, and `coder.toml` are not in the tree. Tracked as [PRD 0057](../prds/0057-nested-explore-plan-coder-presets.md).
 
 ## Context
 

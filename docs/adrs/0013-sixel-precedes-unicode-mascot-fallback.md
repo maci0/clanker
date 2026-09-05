@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Implemented 2026-08-17 as
+[PRD 0036](../prds/0036-sixel-mascot-rendering.md).
 
 ## Context
 

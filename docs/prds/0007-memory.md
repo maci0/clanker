@@ -130,8 +130,13 @@ file outright.
 
 **`/api/run` injection (`src/cli.zig`, `handleRun` + `memorySearch`).** Fires
 only on the HTTP path, only when `req.knowledge` is non-empty and
-`cfg.memory.backend` is `hybrid`/`vector`/`keyword`. It goes through the
-sandboxed guest, not around it: `memorySearch` builds a `search` request
+`cfg.memory.backend` is `hybrid`/`vector`/`keyword`. Every-turn inject on
+`Agent.run` (REPL and `clanker run`, not only `/api/run`) is decided in
+[ADR 0037](../adrs/0037-every-agent-run-turn-injects-memory-hits-through-the.md)
+and specified in
+[PRD 0048](0048-passive-memory-inject-on-every-turn.md); it is not built.
+The `/api/run` path goes through the sandboxed guest, not around it:
+`memorySearch` builds a `search` request
 (query truncated to 4000 bytes, `top_k` from `vector.top_k`, `threshold`
 from `vector.threshold`) and dispatches the `memory` WASM tool via
 `toolJson`. `mode` is `"keyword"` when the backend is `keyword`, otherwise

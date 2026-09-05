@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-21. Records the decision opened in [RFC 0030 — How session permission modes sit on confirm_writes](../rfcs/0030-permission-modes.md).
+Accepted — 2026-08-21. Records the decision opened in [RFC 0030 — How session permission modes sit on confirm_writes](../rfcs/0030-permission-modes.md). Not yet implemented. Tracked as [PRD 0053](../prds/0053-session-permission-modes-on-confirm-writes.md).
 
 ## Context
 

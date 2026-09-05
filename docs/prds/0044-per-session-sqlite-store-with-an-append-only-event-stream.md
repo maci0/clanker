@@ -2,14 +2,15 @@
 
 ## Status
 
-Shipped — 2026-08-20. src/agent/session.zig, src/agent/session_events.zig, src/util/sqlite.zig, src/peers/session_sync.zig, src/sandbox/host.zig ck_session, src/cli.zig /api/sessions/<id>/events
-per-session store: meta + messages + events tables in `state/sessions/<id>.db`),
-`src/agent/session_events.zig` (the append-only writer), `src/util/sqlite.zig`
-(the vendored binding), `src/peers/session_sync.zig` (replica store + cursor
-semantics), `ck_session` in `src/sandbox/host.zig` (the guest seam), and the
-HTTP handlers in `src/cli.zig` (`GET|POST /api/sessions/<id>/events`). The
-JSON transcript format and the separate `.events.db` are gone; no migration
-is provided or planned. Decision: [ADR 0033](../adrs/0033-sessions-are-per-session-sqlite-databases-with-an-append.md).
+Shipped — 2026-08-20. Sources of truth: `src/agent/session.zig` (the
+per-session store: meta + messages + events tables in
+`state/sessions/<id>.db`), `src/agent/session_events.zig` (the append-only
+writer), `src/util/sqlite.zig` (the vendored binding),
+`src/peers/session_sync.zig` (replica store + cursor semantics), `ck_session`
+in `src/sandbox/host.zig` (the guest seam), and the HTTP handlers in
+`src/cli.zig` (`GET|POST /api/sessions/<id>/events`). The JSON transcript
+format and the separate `.events.db` are gone; no migration is provided or
+planned. Decision: [ADR 0033](../adrs/0033-sessions-are-per-session-sqlite-databases-with-an-append.md).
 
 ## Problem
 

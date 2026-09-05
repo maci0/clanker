@@ -2,11 +2,12 @@
 
 ## Status
 
-In progress — 2026-08-17. thin slice: [mcp_servers.<name>] parsing already landed, modules.mcp_client gate (default false) now wired; transport/dispatch/reconnect/list remain open
-streamable-HTTP transports, `tools/list`/`tools/call` JSON-RPC), a new
-dispatch-kind split in `src/toolhost/registry.zig`'s `Tool` struct, and
-`[mcp_servers.<name>]` config stanzas. Gated by `modules.mcp_client = false`
-(default off — an explicit opt-in). Modeled on
+In progress — 2026-08-17. Thin slice: `[mcp_servers.<name>]` parsing already
+landed and the `modules.mcp_client` gate (default false) is wired.
+Transport, dispatch, reconnect, and list remain open: stdio and
+streamable-HTTP, `tools/list`/`tools/call` JSON-RPC, and a dispatch-kind
+split in `src/toolhost/registry.zig`'s `Tool` struct. Gated by
+`modules.mcp_client = false` (default off — an explicit opt-in). Modeled on
 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)'s
 `packages/mcp/mcp-client/`.
 

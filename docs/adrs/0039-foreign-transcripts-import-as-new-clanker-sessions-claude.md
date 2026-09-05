@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-21. Records the decision opened in [RFC 0027 — Whether clanker imports foreign harness session transcripts](../rfcs/0027-foreign-session-resume.md).
+Accepted — 2026-08-21. Records the decision opened in [RFC 0027 — Whether clanker imports foreign harness session transcripts](../rfcs/0027-foreign-session-resume.md). Not yet implemented. Tracked as [PRD 0050](../prds/0050-foreign-session-import.md).
 
 ## Context
 

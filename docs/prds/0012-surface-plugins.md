@@ -5,13 +5,13 @@
 **Web UI plugins: Shipped.** `ui/plugins/<name>/` (`plugin.json` +
 `app.js` + optional `app.css`), created from chat by the `webui_addon`
 tool, discovered by the `webui_addon` guest (`list` scans `ui/plugins/`
-fresh; `handleWebuiPlugins`, `src/cli.zig:9994-10042`, only relays to it),
+fresh; `handleWebuiPlugins` in `src/cli.zig` only relays to it),
 served same-origin from `/webui/plugins/<name>/*`
-(`handleWebuiPluginAsset`, `src/cli.zig:10048-10103`), registered client-side
-via `window.clanker.registerView()` (`ui/app/core/plugins.js:171-221`),
+(`handleWebuiPluginAsset` in `src/cli.zig`), registered client-side
+via `window.clanker.registerView()` (`ui/app/core/plugins.js`),
 toggled in System → Web UI plugins, state in `state/webui_plugins.json`.
-Nine plugin directories ship on disk today (`activity`, `files`, `health`,
-`mesh`, `music`, `office`, `schedule`, `search`, `compare`); a fresh checkout
+Ten plugin directories ship on disk today (`activity`, `arena3d`, `files`,
+`health`, `mesh`, `music`, `office`, `schedule`, `search`, `compare`); a fresh checkout
 seeds `files`, `music`, `schedule`, `search`, `compare`, `mesh` on. No PRD or ADR
 covered the web UI half before this one; its prior documentation was
 `ui/plugins/README.md` plus the review log
@@ -139,26 +139,25 @@ write `plugin.json` + `app.js` (+ optional `app.css`), `enable`/`disable`
 toggle the name in `state/webui_plugins.json` (`{"enabled": [...],
 "disabled": [...]}`), and a missing state file seeds `default_enabled`. The
 host does **not** keep a second copy: `handleWebuiPlugins`
-(`src/cli.zig:9994-10042`) only relays `GET`/`POST /api/webui/plugins` to the
-guest, and `listedEnabled` (`src/cli.zig:9950-9971`) reads the guest's `list`
+in `src/cli.zig` only relays `GET`/`POST /api/webui/plugins` to the
+guest, and `listedEnabled` reads the guest's `list`
 answer to decide a name's on/off. The only native struct left is
-`WebuiPluginPost` (`{name, enabled}`, `src/cli.zig:9897-9900`) — the POST
+`WebuiPluginPost` (`{name, enabled}`) — the POST
 body shape; the old `WebuiPlugin` (manifest) and `WebuiPluginState`
 (enabled-list) structs are gone. A plugin is off until turned on — presence
 on disk is not consent to run it.
 
 **Asset serving.** `GET /webui/plugins/<name>/<file>`
-(`handleWebuiPluginAsset`, `src/cli.zig:10048-10103`), same-origin, read
-fresh from disk every request. `pluginAssetType` (`src/cli.zig:9921-9930`)
+(`handleWebuiPluginAsset` in `src/cli.zig`), same-origin, read
+fresh from disk every request. `pluginAssetType`
 allow-lists exactly `app.js`/`app.css`/`sprites.png`/`characters.png`;
 anything else 404s, and a disabled plugin's assets 404 too — toggling off
 actually stops the code from reaching the browser, not just from being
-invoked. Names pass `validPluginName` (`src/cli.zig:9902-9904`, which
-delegates to `session.validSessionId`) against path traversal (tested
-`src/cli.zig:9906-9914`).
+invoked. Names pass `validPluginName` (which
+delegates to `session.validSessionId`) against path traversal.
 
 **Registration API.** `app.js` calls `window.clanker.registerView(spec)`
-(`ui/app/core/plugins.js:171-221`) with `{id, title, group, mount,
+(`ui/app/core/plugins.js`) with `{id, title, group, mount,
 refresh?}`. `registerView` inserts a real `.rail-tab` button under the
 matching `.rail-group` heading, pushes the id into `VIEWS`, and wires it
 through the same `wireTab`/`showView` machinery as a built-in view — a
@@ -431,7 +430,7 @@ throw → tab error) if not already true in code.
       appears as a real rail-nav tab once enabled, indistinguishable from a
       built-in view (already true today). (G1)
 - [x] A disabled web UI plugin's assets are unreachable by direct URL, not
-      just absent from the nav (`src/cli.zig:10076-10078`). (G1)
+      just absent from the nav (`handleWebuiPluginAsset` + `listedEnabled`). (G1)
 - [x] Web UI plugins are discovered by scanning `ui/plugins/` at request
       time (the `webui_addon` guest's `list`), not compiled in. (G4)
 - [x] A TUI plugin manifest naming an existing tool becomes a working slash

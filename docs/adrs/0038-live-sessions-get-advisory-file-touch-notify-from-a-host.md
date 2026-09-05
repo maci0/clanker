@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-21. Records the decision opened in [RFC 0026 — How live sessions are notified when a file they read is edited](../rfcs/0026-file-shift-notify.md).
+Accepted — 2026-08-21. Records the decision opened in [RFC 0026 — How live sessions are notified when a file they read is edited](../rfcs/0026-file-shift-notify.md). Not yet implemented. Tracked as [PRD 0049](../prds/0049-file-touch-notify-for-live-sessions.md).
 
 ## Context
 

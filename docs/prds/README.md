@@ -63,9 +63,9 @@ and Implementation lists checkable file-level phases.
 | [0002](0002-kanban-board.md) | Shared kanban board | Shipped | |
 | [0003](0003-run-todos.md) | Run todo checklists | Shipped | Private vs shared; room todos removed |
 | [0004](0004-autoresearch.md) | Autoresearch | Shipped | |
-| [0005](0005-repl-tui.md) | REPL / TUI | Shipped (gaps) | Multi-line (0040) and `/attach` (0041) shipped; iteration-limit landing, truecolor autodetection, drag-drop open |
+| [0005](0005-repl-tui.md) | REPL / TUI | Shipped (gaps) | Multi-line (0040), `/attach` (0041), and iteration-limit landing shipped; truecolor autodetection and drag-drop/image paste open |
 | [0006](0006-webui.md) | Web UI | Shipped | |
-| [0007](0007-memory.md) | Memory layer | In progress | Builtin path shipped; pluggable config remains open |
+| [0007](0007-memory.md) | Memory layer | In progress | Builtin path shipped; pluggable embedder/vector keys deleted, not stranded; every-turn inject is 0048 |
 | [0008](0008-arena.md) | Arena | In progress | Phase 3 (multi-instance) open |
 | [0009](0009-schedule.md) | Scheduled runs | Shipped | (Fixed) sweep-exit Known issue |
 | [0010](0010-plugin-manifest-sdk.md) | Plugin manifest SDK | Shipped | Out-of-tree list → 0022 |
@@ -104,7 +104,7 @@ and Implementation lists checkable file-level phases.
 | [0043](0043-external-coding-agent-driver-acp-client-headless-fallback.md) | External coding-agent driver (ACP client, headless fallback) | In progress | Goals 1–5 shipped; Goal 6 image ContentBlocks for grok/claude/codex not forwarded yet |
 | [0044](0044-per-session-sqlite-store-with-an-append-only-event-stream.md) | Per-session SQLite store with an append-only event stream and mesh replication | Shipped |  |
 | [0045](0045-provider-extra-body.md) | Provider extra_body | In progress | phase 1 shipped; env overlay + per-model extra_body open |
-| [0046](0046-anthropic-cache-cold-warning.md) | Anthropic cache-cold warning | In progress | phase 1 shipped; turn_stats segment + per-provider ttl open |
+| [0046](0046-anthropic-cache-cold-warning.md) | Anthropic cache-cold warning | In progress | phases 1 and 3 shipped; turn_stats segment open |
 | [0047](0047-structure-aware-grep-outline.md) | Structure-aware grep outline | In progress | rg/ast-grep/host-fallback outline shipped; seen-set truncation open |
 | [0048](0048-passive-memory-inject-on-every-turn.md) | Passive memory inject on every turn | Draft |  |
 | [0049](0049-file-touch-notify-for-live-sessions.md) | File-touch notify for live sessions | Draft |  |

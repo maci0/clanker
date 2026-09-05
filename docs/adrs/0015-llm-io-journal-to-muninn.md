@@ -13,9 +13,9 @@ implemented (2026-08-19): `recordUsage` / `recordFailure` still write only
 `src/llm/client.zig` already records every harness completion as **counts**
 in `state/token_stats.jsonl` and refuses to store request bodies (they can
 echo prompts and credentials). Session transcripts keep the visible chat,
-not `ck_llm`, improve, or arena calls. PRD 0007's `vector.backend =
-"muninndb"` is unused and would only rank Knowledge chunks, not capture
-model I/O.
+not `ck_llm`, improve, or arena calls. PRD 0007's `vector.backend`
+key was unused and has since been removed; restoring Muninn as a Knowledge
+vector backend would only rank chunks, not capture model I/O.
 
 RFC 0004 compared a Muninn POST at that tap (A), journaling only the
 agent loop (B), status quo (C), a local jsonl with no Muninn process (D),

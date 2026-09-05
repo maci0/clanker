@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-21. Records the decision opened in [RFC 0028 — Whether clanker ships a first-class browser catalog tool](../rfcs/0028-first-class-browser.md).
+Accepted — 2026-08-21. Records the decision opened in [RFC 0028 — Whether clanker ships a first-class browser catalog tool](../rfcs/0028-first-class-browser.md). Not yet implemented: there is no `browser` catalog tool. Tracked as [PRD 0051](../prds/0051-first-class-browser-catalog-tool.md).
 
 ## Context
 

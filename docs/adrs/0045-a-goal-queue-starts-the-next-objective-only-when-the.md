@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-21. Records the decision opened in [RFC 0033 — How a goal queue sits beside the one active goal](../rfcs/0033-goal-queue.md).
+Accepted — 2026-08-21. Records the decision opened in [RFC 0033 — How a goal queue sits beside the one active goal](../rfcs/0033-goal-queue.md). Not yet implemented. Tracked as [PRD 0056](../prds/0056-goal-queue-started-only-on-complete.md).
 
 ## Context
 

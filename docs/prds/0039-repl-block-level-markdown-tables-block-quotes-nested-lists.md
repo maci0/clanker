@@ -2,9 +2,8 @@
 
 ## Status
 
-Shipped — 2026-08-17. src/tui/repl.zig: block quotes/tables/nested+ordered lists via mdLineSegments; tests in repl.zig
-
-Planned: sources `src/tui/repl.zig`, `src/tui/transcript.zig` (reference). Draft per checklist.
+Shipped — 2026-08-17. `src/tui/repl.zig`: block quotes/tables/nested+ordered
+lists via `mdLineSegments`; tests in `repl.zig`.
 
 ## Problem
 

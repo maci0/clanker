@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted — 2026-08-21. Records the decision opened in [RFC 0025 — Whether every agent turn injects memory hits without a tool call](../rfcs/0025-passive-memory-inject.md).
+Accepted — 2026-08-21. Records the decision opened in [RFC 0025 — Whether every agent turn injects memory hits without a tool call](../rfcs/0025-passive-memory-inject.md). Not yet implemented: `memorySearch` still runs only from `handleRun` (`/api/run`). Tracked as [PRD 0048](../prds/0048-passive-memory-inject-on-every-turn.md).
 
 ## Context
 

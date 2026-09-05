@@ -99,12 +99,14 @@
   `/compact [hint]` ([PRD 0054](prds/0054-operator-compact-with-optional-hint.md),
   [ADR 0043](adrs/0043-operator-compact-is-the-existing-summarizer-plus-an.md)),
   markdown session export ([PRD 0055](prds/0055-markdown-session-export.md),
-  [ADR 0044](adrs/0044-markdown-session-export-is-a-second-renderer-in-the.md)).
+  [ADR 0044](adrs/0044-markdown-session-export-is-a-second-renderer-in-the.md)),
+  REPL steer inject ([PRD 0058](prds/0058-repl-mid-stream-inject-via-steer.md),
+  [ADR 0047](adrs/0047-repl-mid-stream-inject-is-the-existing-steer-queue.md))
+  — composer-as-steer-box, not the drafted `/steer` command.
   **Later phases, not this round:** session permission modes
   ([PRD 0053](prds/0053-session-permission-modes-on-confirm-writes.md)),
   goal queue ([PRD 0056](prds/0056-goal-queue-started-only-on-complete.md)),
-  nested explore/plan/coder ([PRD 0057](prds/0057-nested-explore-plan-coder-presets.md)),
-  REPL steer inject ([PRD 0058](prds/0058-repl-mid-stream-inject-via-steer.md)).
+  nested explore/plan/coder ([PRD 0057](prds/0057-nested-explore-plan-coder-presets.md)).
   Rejected: plugin marketplace (ADR 0007), Computer Use, Datasource,
   WebSocket (PRD 0006), millisecond-startup race.
 
