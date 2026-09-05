@@ -1,12 +1,10 @@
 ---
 title: Writing a goal
-description: Use this skill only when the caller asks to draft, define, or refine a structured goal — never for `clanker goal "<intent>"` or `/goal <intent>`, which start the supplied goal loop.
+description: When asked to draft, write, or save a structured goal (`clanker write-goal`, `/write-goal`, `goal_write`/`goal_add`). Not `clanker goal` or `/goal`, which start the loop.
 enabled: true
 ---
 
 # Writing a goal
-
-Use this skill only when the caller asks to draft, define, or refine a structured goal — never for `clanker goal "<intent>"` or `/goal <intent>`, which start the supplied goal loop.
 
 Do not make a draft a prerequisite for `goal_add`; persistence is a separate explicit choice.
 
@@ -47,7 +45,6 @@ measurable one (and a test script when measurable) rather than left blank. A
 goal that stops at objective + criterion is worth keeping when the rest is
 genuinely unknown. Prefer a short honest goal to a padded one.
 
-Read the board and the goals index first. `goal_add` only appends the durable
-record — it cannot update an existing entry, and it does not create the board
-card itself. If the intent restates an open goal, do not create a duplicate
-card. Return that goal's id and explain that it already covers the intent.
+`goal_write` already inspects `state/goals.json` for an open goal covering
+the intent. `goal_add` only appends; it cannot update an existing entry and
+does not create the board card. If it reports a duplicate, return that id.

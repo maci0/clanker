@@ -1,6 +1,6 @@
 ---
 title: Ponytail
-description: When a ponytail chat phrase appears (ponytail, ponytail lite/full/ultra, ponytail-audit/-review/-debt/-help/-gain, stop ponytail): minimal-code mode — YAGNI, reuse, shortest correct code.
+description: When a ponytail chat phrase appears (ponytail, ponytail lite/full/ultra, ponytail-audit/-review/-debt/-help/-gain, stop ponytail): minimal-code mode, YAGNI, reuse, shortest correct code.
 enabled: true
 ---
 
@@ -24,6 +24,6 @@ These levels arrive as chat phrases, not slash commands. `ponytail lite` builds 
 
 When asked for `ponytail-audit`, scan the whole repository read-only and rank one-line findings as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`. End with the estimated lines and dependencies removable. When asked for `ponytail-review`, apply the same review only to the current diff. When asked for `ponytail-debt`, list every `ponytail:` comment without changing files.
 
-When asked for `ponytail-help`, summarize these levels and commands. When asked for `ponytail-gain`, show the published benchmark ranges—80–94% fewer lines, 47–77% lower cost, and 3–6× faster—and clearly label them as benchmark medians, never measurements of the current repository.
+When asked for `ponytail-help`, summarize these levels and commands. When asked for `ponytail-gain`, show the published benchmark ranges (80-94% fewer lines, 47-77% lower cost, and 3-6x faster) and clearly label them as benchmark medians, never measurements of the current repository.
 
 Report code first, then at most three short lines: what was skipped and when it should be added.

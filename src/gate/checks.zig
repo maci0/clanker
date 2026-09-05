@@ -1843,6 +1843,15 @@ fn scanSkillsDir(gpa: std.mem.Allocator, io: std.Io, scope: std.Io.Dir) !GateRes
                 bad += 1;
                 miss_w.print("{s}: listed with no description; ", .{entry.name}) catch {};
             }
+            const fm = skills_logic.splitFrontmatter(raw);
+            if (fm.description.len > skills_logic.desc_clip) {
+                bad += 1;
+                miss_w.print("{s}: description is {d} bytes, prompt indexes only {d}; ", .{
+                    entry.name,
+                    fm.description.len,
+                    skills_logic.desc_clip,
+                }) catch {};
+            }
         } else {
             bad += 1;
             miss_w.print("{s}: dropped from the prompt, no parseable metadata; ", .{entry.name}) catch {};
@@ -1853,7 +1862,7 @@ fn scanSkillsDir(gpa: std.mem.Allocator, io: std.Io, scope: std.Io.Dir) !GateRes
     // detail and stderr share one owned copy, freed once by deinit.
     const owned = try std.fmt.allocPrint(
         gpa,
-        "these skills are not discoverable in the agent's prompt (give each a frontmatter description or a first prose line): {s}",
+        "these skills are not discoverable in the agent's prompt (give each a frontmatter description or a first prose line, at most 220 bytes): {s}",
         .{miss_w.buffered()},
     );
     return .{ .ok = false, .label = "skills-inventory", .detail = owned, .stderr = owned };
@@ -2010,7 +2019,19 @@ test "scanSkillsDir names a skill the prompt drops or lists bare" {
     try std.testing.expect(std.mem.find(u8, result.detail, "good.md") == null);
     try std.testing.expect(std.mem.find(u8, result.detail, "SYSTEM.md") == null);
 
+    // A frontmatter description longer than desc_clip is listed, but the
+    // prompt drops the tail, so the trigger the author wrote never fires.
+    const over_desc = "When asked " ++ ("x" ** skills_logic.desc_clip);
+    const over_body = try std.fmt.allocPrint(gpa, "---\ntitle: Over\ndescription: {s}\nenabled: true\n---\n\n# Over\n\nDo the thing.\n", .{over_desc});
+    defer gpa.free(over_body);
+    try tmp.dir.writeFile(io, .{ .sub_path = "over.md", .data = over_body });
+    var over = try scanSkillsDir(gpa, io, tmp.dir);
+    defer over.deinit(gpa);
+    try std.testing.expect(!over.ok);
+    try std.testing.expect(std.mem.find(u8, over.detail, "over.md") != null);
+
     // Same tree with both offenders repaired: green.
+    try tmp.dir.deleteFile(io, "over.md");
     try tmp.dir.writeFile(io, .{
         .sub_path = "bare.md",
         .data = "# A very long heading that is at least twenty bytes\n\nWhen asked for bare: the trigger line.\n",

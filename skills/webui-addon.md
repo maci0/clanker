@@ -6,9 +6,7 @@ enabled: true
 
 # Web UI addons
 
-When the operator asks to add something to the web UI (a music player, a
-timer, a scratch pad, a dashboard), do not edit `ui/app/`. Create an addon
-with the `webui_addon` tool.
+Do not edit `ui/app/`. Create an addon with the `webui_addon` tool.
 
 An addon is `ui/plugins/<name>/plugin.json` + `app.js` (+ optional `app.css`).
 The page discovers it at request time. No host rebuild.
@@ -45,8 +43,10 @@ The tool rejects app.js that skips `clanker.registerView` or uses
 is `script-src 'self'`, so no CDNs. Follow in the app.js you ship: every
 control needs a visible label or `aria-label` and a 32px target.
 
-`api`: `el`, `getJSON`, `status`, `fmt`, `showView`, `van`, `preact`, `html`,
-`signals`, `render.markdown` / `render.code`.
+`api`: `el`, `getJSON`/`postJSON`/`del`, `onLive`, `status`, `fmt`, `showView`,
+`van`, `preact`, `html`, `signals`, `render.markdown` / `render.code`.
+`create` also takes `eager` (run at page load, for a dock) or `module`
+(ES module another view imports); the two are mutually exclusive.
 
 ## Music player (shipped)
 

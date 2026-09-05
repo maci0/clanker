@@ -408,7 +408,8 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   whose `## Status` opens with a known state word has an inventory row in
   the same state.
 - `skills-inventory`: every `skills/*.md` except `SYSTEM.md` appears in the
-  agent's prompt with a name and a non-empty description.
+  agent's prompt with a name and a non-empty description of at most 220
+  bytes (the prompt indexes only that prefix).
 - `dep-patches`: every `patches/*.patch` is applied to the dependency tree
   its `build.zig.zon` `.hash` pin names, under `zig-pkg/`. That directory is
   gitignored and therefore per-worktree, `zig build` extracts pristine

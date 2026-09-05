@@ -84,7 +84,10 @@ pub fn splitFrontmatter(raw: []const u8) Frontmatter {
         if (std.ascii.eqlIgnoreCase(key, "title") and val.len > 0) {
             out.title = val;
         } else if (std.ascii.eqlIgnoreCase(key, "description") and val.len > 0) {
-            out.description = clipTo(val, desc_clip);
+            // Unclipped: the prompt indexes `clipTo(..., desc_clip)`, and the
+            // skills-inventory gate fails a longer frontmatter description
+            // rather than letting the tail go unseen.
+            out.description = val;
         } else if (std.ascii.eqlIgnoreCase(key, "enabled") and val.len > 0) {
             out.enabled = !(std.ascii.eqlIgnoreCase(val, "false") or std.mem.eql(u8, val, "0") or std.ascii.eqlIgnoreCase(val, "no") or std.ascii.eqlIgnoreCase(val, "off"));
         }
@@ -104,7 +107,7 @@ pub fn parseMeta(content: []const u8) ?Meta {
         if (title.len == 0) title = heading.title;
         if (description.len == 0) description = heading.description;
     }
-    return .{ .title = title, .description = description, .enabled = fm.enabled };
+    return .{ .title = title, .description = clipTo(description, desc_clip), .enabled = fm.enabled };
 }
 
 fn headingMeta(content: []const u8) Meta {
@@ -285,4 +288,12 @@ test "clipTo does not split a UTF-8 sequence" {
     const s = "abc\u{00e9}xyz";
     try std.testing.expectEqualStrings("abc", clipTo(s, 4));
     try std.testing.expectEqualStrings(s, clipTo(s, 64));
+}
+
+test "parseMeta clips a frontmatter description to desc_clip" {
+    const long = "When asked " ++ ("x" ** desc_clip);
+    const raw = "---\ntitle: T\ndescription: " ++ long ++ "\nenabled: true\n---\n\n# T\n\nBODY_KEPT\n";
+    const meta = parseMeta(raw) orelse return error.ExpectedMeta;
+    try std.testing.expectEqual(@as(usize, desc_clip), meta.description.len);
+    try std.testing.expect(splitFrontmatter(raw).description.len > desc_clip);
 }

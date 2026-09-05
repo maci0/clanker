@@ -5,6 +5,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Skill triggers: `lookup` (was `research`) no longer steals the `research`
+  tool; `improve` no longer fires on ordinary code edits; `write-goal`,
+  `mcp`, and `ponytail` descriptions name the phrases that should load them.
+  `clanker gate` skills-inventory now fails a frontmatter description longer
+  than the 220-byte prompt clip, instead of listing a truncated trigger.
+
 ### Fixed
 
 - Creating a board card that names a goal already mirrored by a live card
