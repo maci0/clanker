@@ -250,6 +250,9 @@ test "fts candidates find substring matches across sessions" {
     try std.testing.expectEqual(@as(usize, 1), hits.len);
     try std.testing.expectEqualStrings("sess-a", hits[0]);
 
+    const st = try std.Io.Dir.cwd().statFile(io, index_path, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+
     // A mid-word substring still matches via the trigram tokenizer.
     const mid = candidates(io, std.testing.allocator, arena, "needle") orelse return error.FtsUnavailable;
     try std.testing.expectEqual(@as(usize, 1), mid.len);

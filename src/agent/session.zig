@@ -1348,6 +1348,33 @@ test "a session database opens in WAL journal mode" {
     try std.testing.expectEqualStrings("wal", stmt.columnText(0) orelse "");
 }
 
+test "a saved session database and its WAL sidecars are owner-only" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "private",
+        .title = "private",
+        .messages = &.{.{ .role = .user, .content = "my email is user@example.test" }},
+        .created = 1,
+        .updated = 2,
+    });
+
+    const path = try std.fmt.allocPrint(arena, "{s}/private{s}", .{ dir, db_suffix });
+    const st = try std.Io.Dir.cwd().statFile(io, path, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+    // Sidecars hold the same transcript pages; a 0644 -wal is the leak the
+    // chmod on the main file would miss.
+    for ([_][]const u8{ "-wal", "-shm" }) |suffix| {
+        const side = try std.fmt.allocPrint(arena, "{s}{s}", .{ path, suffix });
+        const side_st = std.Io.Dir.cwd().statFile(io, side, .{}) catch continue;
+        try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(side_st.permissions)) & 0o777);
+    }
+}
+
 test "a migration failure that is not duplicate-column fails the open" {
     var env: test_env.Env = .init();
     defer env.deinit();

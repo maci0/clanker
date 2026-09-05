@@ -32,6 +32,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   the flag exists to print.
 - `clanker chat send <room>` with no message said `clanker notify` needed
   one. The two commands shared the same missing-argument token.
+- Session databases, their WAL sidecars, and the session full-text index are
+  created owner-only (0600). sqlite3's default create mode left conversation
+  text world-readable on a shared machine.
+- Trimming `state/reasoning.jsonl` keeps the owner-only mode; the rewrite
+  used to drop it to the process umask.
+- A failed scheduled entry logs the task's length, not the task text.
 
 ### Changed
 

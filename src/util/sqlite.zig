@@ -79,6 +79,13 @@ pub const Connection = struct {
         // failure (read-only path, filesystem without shared memory) keeps
         // the default rollback journal and nothing else changes.
         _ = c.sqlite3_exec(self.db.?, "PRAGMA journal_mode=WAL;", null, null, null);
+        // sqlite3_open_v2 creates the file with the process umask (typically
+        // 0644). WAL sidecars appear on the first write, not on the pragma,
+        // so a reserved-lock no-op is what makes them exist to chmod.
+        // Conversation text lives in all three files. Matches atomic_write.private_file.
+        _ = c.sqlite3_exec(self.db.?, "BEGIN IMMEDIATE;", null, null, null);
+        _ = c.sqlite3_exec(self.db.?, "COMMIT;", null, null, null);
+        tightenDbFiles(path);
     }
 
     pub fn close(self: *Connection) void {
@@ -221,3 +228,75 @@ pub const Transaction = struct {
         }
     }
 };
+
+fn chmodOwnerOnly(path: [*:0]const u8) void {
+    _ = std.posix.system.chmod(path, 0o600);
+}
+
+/// Owner-only (0600) on `path` and the SQLite journal sidecars. A missing
+/// sidecar is ignored: WAL files appear only after the journal_mode pragma,
+/// and a rollback-journal file is only there after a crash.
+fn tightenDbFiles(path: [:0]const u8) void {
+    chmodOwnerOnly(path.ptr);
+    const suffixes = [_][]const u8{ "-wal", "-shm", "-journal" };
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    for (suffixes) |suffix| {
+        const n = path.len + suffix.len;
+        if (n + 1 > buf.len) continue;
+        @memcpy(buf[0..path.len], path);
+        @memcpy(buf[path.len..][0..suffix.len], suffix);
+        buf[n] = 0;
+        chmodOwnerOnly(buf[0..n :0].ptr);
+    }
+}
+
+const test_env = @import("test_env.zig");
+
+fn expectOwnerOnly(io: std.Io, path: []const u8) !void {
+    const st = try std.Io.Dir.cwd().statFile(io, path, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+}
+
+test "open tightens the database and WAL sidecars to owner-only" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/conv.db", .{&env.tmp.sub_path});
+    const pathz = try arena.dupeZ(u8, path);
+
+    var conn: Connection = .{};
+    try conn.open(pathz);
+    defer conn.close();
+
+    try expectOwnerOnly(io, path);
+    try expectOwnerOnly(io, try std.fmt.allocPrint(arena, "{s}-wal", .{path}));
+    try expectOwnerOnly(io, try std.fmt.allocPrint(arena, "{s}-shm", .{path}));
+}
+
+test "open re-tightens a database that was created world-readable" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/old.db", .{&env.tmp.sub_path});
+    const pathz = try arena.dupeZ(u8, path);
+
+    {
+        var conn: Connection = .{};
+        try conn.open(pathz);
+        conn.close();
+    }
+    // A file written before the chmod, or by another writer, can sit at 0644.
+    // The next open must heal it rather than leave the transcript world-readable.
+    _ = std.posix.system.chmod(pathz.ptr, 0o644);
+    {
+        const st = try std.Io.Dir.cwd().statFile(io, path, .{});
+        try std.testing.expectEqual(@as(std.posix.mode_t, 0o644), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+    }
+
+    var conn: Connection = .{};
+    try conn.open(pathz);
+    defer conn.close();
+    try expectOwnerOnly(io, path);
+}

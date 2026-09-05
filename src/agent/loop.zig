@@ -1582,7 +1582,11 @@ pub const Agent = struct {
         defer gpa.free(raw);
         const out = try file_tail.joinNewestLines(gpa, raw, reasoning_keep_lines);
         defer gpa.free(out);
-        try base.writeFile(io, .{ .sub_path = reasoning_path, .data = out });
+        // Same owner-only mode as the append path: a default-permission
+        // rewrite would make the traces world-readable after the first trim.
+        // The file holds the user's task text and the model's reasoning,
+        // which can echo conversation content.
+        try atomic_write.writeFilePerms(io, base, reasoning_path, out, atomic_write.private_file);
     }
 
     /// Estimates the total token count across all messages in the conversation.
@@ -3416,6 +3420,20 @@ pub fn lastAssistantProse(messages: []const types.Message) ?[]const u8 {
         if (std.mem.trim(u8, c, " \t\r\n").len > 0) return c;
     }
     return null;
+}
+
+test "trimReasoningLog rewrites the log owner-only" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/reasoning.jsonl", .data = "{\"ts\":1,\"task\":\"my email is user@example.test\"}\n" });
+    try Agent.trimReasoningLog(tmp.dir, io, std.testing.allocator);
+    const st = try tmp.dir.statFile(io, "state/reasoning.jsonl", .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
 }
 
 test "lastAssistantProse walks back past tool-call-only turns" {
