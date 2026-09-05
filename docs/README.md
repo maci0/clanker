@@ -396,6 +396,19 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   not a capability waiting to be granted, it is unreachable: no guest can
   import it and nothing compiles it, so it rots against zwasm API changes in
   silence while reading like a live part of the ABI.
+- `provider-kind`: no `switch (provider.kind)` (or kind comparison) outside
+  `src/llm/providers/`. The proxy's Vertex Gemini model-name sniff is the
+  sole allowed comparison, and it is on the model name, not the kind.
+- `webui-budget`: first-paint `/webui/` assets named by `ui/app/index.html`
+  stay under the size budget `src/gate/checks.zig` pins.
+- `tools-ts-toolchain`: `tools/ts/package.json` declares only assemblyscript
+  as a devDependency (no production deps, no `trustedDependencies`) and
+  `tools/ts/bun.lock` carries registry integrity hashes.
+- `reports-inventory`: every record in `docs/reports/bugs|investigations`
+  whose `## Status` opens with a known state word has an inventory row in
+  the same state.
+- `skills-inventory`: every `skills/*.md` except `SYSTEM.md` appears in the
+  agent's prompt with a name and a non-empty description.
 - `dep-patches`: every `patches/*.patch` is applied to the dependency tree
   its `build.zig.zon` `.hash` pin names, under `zig-pkg/`. That directory is
   gitignored and therefore per-worktree, `zig build` extracts pristine
@@ -422,7 +435,7 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
 
 ### Peers (`tools/zig/peers.zig`)
 
-`clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL. Both CLI commands dispatch into the sandboxed `peers` WASM tool (`cmdNotify` in `src/cli.zig`, `cmdPhonebook` in `src/peers/phonebook.zig`) rather than a native HTTP client, so peer traffic is gated by that tool's `network_from_config` allowlist like any model-initiated call.
+`clanker notify <peer> "<message>"` sends a notification to a peer. `clanker phonebook` lists peer agent cards by fetching `/.well-known/agent.json` from each configured peer URL. Both CLI commands dispatch into the sandboxed `peers` WASM tool (`cmdNotify` and `cmdPhonebook` in `src/cli.zig`; `src/peers/phonebook.zig` only renders) rather than a native HTTP client, so peer traffic is gated by that tool's `network_from_config` allowlist like any model-initiated call.
 
 Clustering (join, leave, live TCP) is `clanker mesh`, not these two. See [Mesh](#mesh-srcpeersmeshzig).
 
@@ -597,8 +610,8 @@ Tools are discovered by the registry (`src/toolhost/registry.zig`) from the conf
 | `zig build proxy` | Build `clanker-proxy`, the standalone compatibility proxy (not in the default install) |
 | `zig build test` | Run the unit and integration tests |
 | `zig build test -Dtest-filter="<name>"` | Run only the Zig unit tests whose name contains the substring (compile-time filter; a filter matching nothing passes with 0 tests, and the JS suites still run). A JS-only loop runs one suite directly: `bun test ui/app/core/scroll.test.mjs`, or every suite at once: `bun test ui/app` (bun walks the directory itself) |
-| `zig fmt --check src/ tools/zig/` | Verify formatting |
-| `clanker gate` | Run all of the above the way the self-improvement gate does |
+| `zig build fmt` | Format-check committed Zig (`src`, `tests`, `tools`, `ui`, `vendor`, `build.zig`) |
+| `clanker gate` | Build, test, tools, fmt, lint, provider-kind, test-root-coverage, js-suite-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory, skills-inventory, dep-patches. Does not build the standalone proxy. |
 | `scripts/verify.sh` | Mirror the full CI verify job locally: shellcheck, `tools/ts` audit + rebuild-and-diff, SBOM generation, Python syntax check, then `zig build` + `clanker gate` + `zig build e2e`. The checks CI runs that `clanker gate` does not (shellcheck, Python, SBOM) live only in `.github/workflows/ci.yml` otherwise |
 | `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/ts/dist/*.wasm`, to catch drift `clanker gate` cannot see (requires bun) |
 
@@ -856,6 +869,7 @@ iter 2
 | `repl` | Interactive REPL with streaming (vaxis-backed; the default for a bare `clanker`) |
 | `sessions`, `history` | List saved conversations |
 | `session export <id> [path]` | Write one saved session as a self-contained HTML transcript. Defaults to `state/exports/<id>.html`; a second positional names the file instead. One document, no scripts and no external stylesheet, font or image, so it opens from `file://` with no network. A session's text is model and tool output, so every field is HTML-escaped on the way in (`tools/zig/session_export.zig`) and markup in a transcript renders as the characters that were typed. There is deliberately no upload and no public URL: sharing is copying the file |
+| `session search <query>` | Find saved conversations containing a substring |
 | `graph [run-id]` | List recorded runs, or render one as an ASCII timeline |
 | `graph answer [run-id]` | Print a recorded run's final answer (64 KiB retained per run) |
 | `tools list` | List registered tools |
@@ -863,11 +877,13 @@ iter 2
 | `eval [name] [--tasks] [--seed N]` | Run evals; `--seed` pins the tool-RNG seed so a run replays byte-identically |
 | `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
-| `gate` | Run the full deterministic gate (build/test/tools/fmt/lint/release-contract) on the current checkout |
+| `gate` | Run the deterministic gates on the current checkout: build, test, tools, fmt, lint, provider-kind, test-root-coverage, js-suite-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory, skills-inventory, dep-patches |
 | `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Serve tools over MCP (stdio) |
+| `write-goal "<intent>"` | Draft a structured goal without saving or running it |
 | `add-goal` | Save a structured goal without running it |
+| `goal "<completion condition>"` | Start a goal loop until achieved, blocked, cancelled, or budget-limited |
 | `arena "<question>" --for X --against Y` | Run a judged debate between two positions; repeated `--position` (3-8) runs a Battle Royale instead. `--judge third` pays a provider that is not fighting to score every move; `--defend <text|file> --alternative <text|file>` runs a design review instead, seeding both sides with a real artifact and returning a review finding; `--match <id>` prints a stored match |
 | `compare "<prompt>" --with a --with b@model` | Ask 2-8 models the same prompt concurrently and show the answers unlabeled. Repeated `--with <provider>` or `--with <provider@model>`, or none at all to use every configured provider. `--judge <provider>` names the scorer (default: the configured default provider, with a caveat on the verdict when it is itself an entrant), `--judge none` leaves the pick to you; `--synthesize` merges the answers, `--reveal` prints the label-to-model key with no verdict, `--show <id>` prints a stored comparison and `--show <id> --pick <letter>` records your pick. The web UI's Compare tab is the same thing in a browser: the answers side by side and a pick button per column, reading blind and recording through the same tool op |
 | `autoresearch [--target F] [--harness C]` | Measurement-driven research loop: the agent edits targets, the harness scores, the best result wins. `--metric`, `--direction min\|max`, `--pattern`, `--budget`, `--iters`, `--dry-run` |
@@ -880,7 +896,7 @@ iter 2
 | `chat rooms` | List chatrooms and this instance's subscriptions |
 | `chat subscribe <room> [on]` | Join or leave a chatroom (`on` = true/false) |
 | `schedule [list\|add\|remove\|enable\|disable\|run\|run-due\|log]` | Recurring agent runs from `state/schedule.json`; see [Scheduled runs](#scheduled-runs) |
-| `reports [list\|search <query>\|open <path>\|create\|append\|update]` | Read and record the operational reports and runbooks in `docs/reports/` and `docs/runbooks/`; see [Reports and runbooks](#reports-and-runbooks) |
+| `reports [list\|search <query>\|open <path>\|create\|append\|update\|status\|rename]` | Read and record the operational reports and runbooks in `docs/reports/` and `docs/runbooks/`; see [Reports and runbooks](#reports-and-runbooks) |
 | `research [list\|plan\|sweep\|search\|open\|create\|append\|update\|status\|rename]` | Gather sources and keep durable research notes under `docs/research/` |
 | `rfc [list\|search\|open\|checklist\|create\|...\|status\|rename]` | Open decisions under `docs/rfcs/`; see [Open decisions](#open-decisions-rfcs) |
 | `adr [list\|search\|open\|create\|append\|update\|status\|rename]` | Decisions already made under `docs/adrs/`; see [Decisions already made](#decisions-already-made-adrs) |
@@ -1027,6 +1043,7 @@ Write them:
 clanker reports create investigation 2026-08-19-demo-record "clanker run never finishes" "TL;DR of the symptom"
 clanker reports append docs/reports/investigations/2026-08-19-demo-record.md "## New evidence"
 clanker reports update docs/reports/investigations/2026-08-19-demo-record.md "Investigating." "Resolved."
+clanker reports status docs/reports/investigations/2026-08-19-demo-record.md resolved "fixed in <sha>"
 ```
 
 `create` writes a TL;DR-first scaffold and adds it to the matching inventory; its kind is `bug`, `investigation`, `missing-tool` or `runbook`, report slugs start `YYYY-MM-DD-`, and runbook slugs are lowercase and hyphenated. `missing-tool` records a basic verb clanker lacks: it lands in the investigations store and the tool inserts `missing-clanker-tool-` into the filename after the date itself, so these records are findable by name without trusting the author to mark them. `rename <path> <new-slug>` moves a record inside its own store, rewrites the inventory link under compare-and-swap, preserves a `missing-clanker-tool-` marker whether or not the new slug carries it, and lists every in-store file still naming the old record (mentions elsewhere in the tree are outside the tool's grants — search for them). `append` adds markdown to the end of a record, except that a block whose first line is a heading the record already carries *empty* fills that section in place instead of leaving a second copy of the heading (the reply says `filled ## <section>` when it does). `update` replaces one exact passage, or every copy of it with `--replace-all` — which is what editing a `status` note takes, since that sentence is written into the TL;DR bullet and the `## Status` section alike. Both are compare-and-swap writes: a concurrent documentation edit is refused rather than overwritten, so reopen the record and retry against its current text. A refused write exits 1, a usage mistake exits 2.

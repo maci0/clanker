@@ -225,7 +225,7 @@ Adding one is one file, one registry row, one `ProviderKind` tag — never a new
 | Guided first run | `clanker setup` |
 | Diagnose config, credentials, build outputs | `clanker doctor` |
 | Create `config.local.toml` and `state/` | `clanker init` |
-| Build, test, tools, fmt, lint gates | `clanker gate` |
+| Build, test, tools, fmt, lint, and the integrity gates | `clanker gate` |
 | Prepare a hand-made git worktree | `clanker worktree prepare` |
 | Create a worktree and prepare it | `clanker worktree add <path>` |
 | Run evals: all, or one by name | `clanker eval [name]` |
