@@ -18,6 +18,7 @@ const raw_http = @import("../util/raw_http.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
 const vertex = @import("../llm/providers/vertex.zig");
 const xcode = @import("proxy_transcode.zig");
+const http = @import("http.zig");
 const build_options = @import("build_options");
 
 pub const Surface = enum { webui, proxy, both };
@@ -1409,15 +1410,7 @@ fn presentedToken(headers_raw: []const u8) ?[]const u8 {
     return null;
 }
 
-pub fn headerValue(headers_raw: []const u8, name: []const u8) ?[]const u8 {
-    var lines = std.mem.splitSequence(u8, headers_raw, "\r\n");
-    while (lines.next()) |line| {
-        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
-        if (!std.ascii.eqlIgnoreCase(line[0..colon], name)) continue;
-        return std.mem.trim(u8, line[colon + 1 ..], " ");
-    }
-    return null;
-}
+pub const headerValue = http.headerValue;
 
 /// A caller-supplied correlation id, accepted only as a deliberately narrow,
 /// single-line value because it is reflected into both logs and the response

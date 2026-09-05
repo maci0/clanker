@@ -36,7 +36,6 @@ const kernel_mod = @import("kernel.zig");
 const dap = @import("../debug/dap.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const tail_util = @import("../util/tail.zig");
-const live_mod = @import("../serve/live.zig");
 const cas_lock_record = @import("cas_lock_record");
 const cas_lock = @import("../util/cas_lock.zig");
 
@@ -2837,6 +2836,18 @@ fn chatAccessAllowed(tool_name: []const u8, op: []const u8) bool {
     return false;
 }
 
+/// Payload cap for `ck_publish`. Half of `serve/live.zig`'s `event_cap` so the
+/// wrapped `{"t":"plugin","from":...,"data":...}` still fits one bus event.
+/// Kept here rather than imported from serve: the host must not import the
+/// HTTP layer, the same cycle rule as `chatrooms.peers_runner`.
+pub const plugin_publish_cap: usize = 4 * 1024;
+
+/// `ck_publish` lands on the serve live bus through this callback, injected
+/// from `cli.zig` at startup (`live.notePlugin`). Null means the payload is
+/// validated and then dropped: no subscriber is listening.
+pub const PluginPublish = *const fn (from: []const u8, data_json: []const u8) void;
+pub var plugin_publish: ?PluginPublish = null;
+
 /// ck_publish(json) posts one event onto the serve live bus. The payload is
 /// the `data` value; the host stamps `t:"plugin"` and `from` as the calling
 /// tool's name so a guest cannot spoof chat/run/metrics or another tool.
@@ -2849,7 +2860,7 @@ pub fn ckPublish(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     }
     const bytes = memBytes(caller) orelse return Err.invalid;
     const raw = sliceOf(bytes, ptr, len) orelse return Err.invalid;
-    if (raw.len == 0 or raw.len > live_mod.event_cap / 2) return Err.too_large;
+    if (raw.len == 0 or raw.len > plugin_publish_cap) return Err.too_large;
 
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
@@ -2866,9 +2877,18 @@ pub fn ckPublish(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     var s = std.json.Stringify{ .writer = &w.writer, .options = .{ .emit_null_optional_fields = false } };
     s.write(parsed) catch return Err.invalid;
     const encoded = w.written();
-    if (encoded.len == 0 or encoded.len > live_mod.event_cap / 2) return Err.too_large;
-    live_mod.notePlugin(h.sandbox.tool_self_name, encoded);
+    if (encoded.len == 0 or encoded.len > plugin_publish_cap) return Err.too_large;
+    if (plugin_publish) |publish| publish(h.sandbox.tool_self_name, encoded);
     return Err.ok;
+}
+
+test "sandbox host does not import the serve layer" {
+    const src = @embedFile("host.zig");
+    try std.testing.expect(std.mem.indexOf(u8, src, "../serve/") == null);
+}
+
+test "ck_publish payload cap is half a live-bus event" {
+    try std.testing.expectEqual(@as(usize, 4 * 1024), plugin_publish_cap);
 }
 
 /// ck_stats() returns the host-side aggregate of token_stats.jsonl to the

@@ -185,6 +185,7 @@ comptime {
     _ = @import("peers/command.zig");
     _ = @import("serve/live.zig");
     _ = @import("serve/mesh_net.zig");
+    _ = @import("serve/http.zig");
     _ = @import("serve/webui_assets.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/workspace.zig");

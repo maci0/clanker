@@ -14,6 +14,9 @@ pub const Topic = enum { chat, mesh, arena, run, metrics, plugin };
 
 pub const max_subs = 32;
 pub const queue_cap = 64;
+/// One bus event. `ck_publish` and `POST /api/live` cap the payload at half
+/// of this (`host.plugin_publish_cap`) so the wrapped plugin envelope still
+/// fits. The host copies the number rather than importing this module.
 pub const event_cap = 8 * 1024;
 /// The subscriber's idle tick: `idleTickSawHangup` waits this long on the
 /// socket, and a readable edge without a hangup flag paces on the clock for
@@ -482,6 +485,10 @@ test "pluginEvent wraps data and escapes from" {
     const quoted = pluginEvent(&buf, "a\"b", "true") orelse return error.Short;
     try std.testing.expectEqualStrings("{\"t\":\"plugin\",\"from\":\"a\\\"b\",\"data\":true}", quoted);
     try std.testing.expect(pluginEvent(&buf, "", "{}") == null);
+}
+
+test "plugin payload bound is half an event so the envelope fits" {
+    try std.testing.expectEqual(@as(usize, 4 * 1024), event_cap / 2);
 }
 
 test "notePlugin publishes on the plugin topic" {
