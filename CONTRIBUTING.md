@@ -36,9 +36,9 @@ suites.
   once after the first `zig build` (idempotent; `scripts/verify.sh` does it
   for you).
 - Before pushing: `scripts/verify.sh` — mirrors everything CI's verify job
-  runs (shellcheck, Python syntax check, SBOM generation, AssemblyScript
-  rebuild-and-diff, `clanker gate`, e2e), so a red CI run is not the first
-  place you hear about it.
+  runs (shellcheck, oxlint, Python syntax check, SBOM generation,
+  AssemblyScript rebuild-and-diff, `clanker gate`, e2e), so a red CI run is
+  not the first place you hear about it.
 
 ## What must pass
 
@@ -50,9 +50,10 @@ suites.
   `dep-patches` is about your checkout rather than your diff: run `zig build`
   and then `scripts/apply-patches.sh` once per worktree.
 - CI — the workflow in `.github/workflows/ci.yml` additionally checks shell
-  scripts with shellcheck, every tracked `.py` with a syntax parse, the SBOM
-  generation, and that `tools/ts/dist/*.wasm` matches a clean rebuild
-  (`tools/ts/verify.sh`). `scripts/verify.sh` reproduces all of it locally.
+  scripts with shellcheck, `ui/` and `tools/ts` with oxlint, every tracked
+  `.py` with a syntax parse, the SBOM generation, and that
+  `tools/ts/dist/*.wasm` matches a clean rebuild (`tools/ts/verify.sh`).
+  `scripts/verify.sh` reproduces all of it locally.
 - The pre-commit hook (fast checks over staged files only). Bypass for WIP
   with `git commit --no-verify`.
 

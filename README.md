@@ -87,10 +87,11 @@ JS-only loop, run one suite directly, e.g. `bun test ui/app/core/scroll.test.mjs
 or sweep them all with `bun test ui/app` (bun walks the directory itself).
 
 `clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
-but CI also runs shellcheck, a Python syntax check, the SBOM generation, and
-the AssemblyScript rebuild-and-diff. `scripts/verify.sh` mirrors every CI
-step locally, so the full pre-push verification is one command instead of a
-list of steps that live only in the CI workflow:
+but CI also runs shellcheck, oxlint on `ui/` and `tools/ts`, a Python syntax
+check, the SBOM generation, and the AssemblyScript rebuild-and-diff.
+`scripts/verify.sh` mirrors every CI step locally, so the full pre-push
+verification is one command instead of a list of steps that live only in the
+CI workflow:
 
 ```sh
 scripts/verify.sh

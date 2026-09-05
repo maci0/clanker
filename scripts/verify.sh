@@ -2,16 +2,17 @@
 # Run everything CI's verify job runs, locally, in one command.
 #
 # CI (.github/workflows/ci.yml) checks more than `clanker gate` does:
-# shell script linting (shellcheck), the AssemblyScript rebuild-and-diff, the
-# SBOM generation, and a syntax check of every tracked .py. None of those
-# are part of `clanker gate` (shellcheck and bun are not guaranteed on a
-# contributor machine), so a change that passes the gate locally can still
-# fail on push. This script mirrors the CI steps so the full pre-push
-# verification is one command instead of tribal knowledge.
+# shell script linting (shellcheck), oxlint over ui/ and tools/ts, the
+# AssemblyScript rebuild-and-diff, the SBOM generation, and a syntax check
+# of every tracked .py. None of those are part of `clanker gate` (shellcheck
+# and bun are not guaranteed on a contributor machine), so a change that
+# passes the gate locally can still fail on push. This script mirrors the CI
+# steps so the full pre-push verification is one command instead of tribal
+# knowledge.
 #
 # Usage: scripts/verify.sh
-#   Requires: zig, python3. Bun only for the JavaScript-toolchain audits
-#   and the AssemblyScript rebuild-and-diff (CI runs those steps
+#   Requires: zig, python3. Bun only for oxlint, the JavaScript-toolchain
+#   audits, and the AssemblyScript rebuild-and-diff (CI runs those steps
 #   regardless; the script mirrors the pre-commit hook's soft-skip for
 #   tools that are not installed).
 #   Runs from the repository root; pass the path if invoked elsewhere.
@@ -30,13 +31,17 @@ else
     echo "shellcheck not installed; skipping (CI will run it)"
 fi
 
-step "JavaScript toolchains (CI: Audit JavaScript toolchains)"
 if command -v bun >/dev/null 2>&1; then
+    step "JavaScript lint (CI: Lint JavaScript)"
+    bun install --frozen-lockfile || status=1
+    bun run lint || status=1
+
+    step "JavaScript toolchains (CI: Audit JavaScript toolchains)"
     bun audit --audit-level=high || status=1
     (cd tools/ts && bun audit --audit-level=high) || status=1
     (cd tools/ts && ./verify.sh) || status=1
 else
-    echo "bun not installed; skipping tools/ts verification (CI will run it)"
+    echo "bun not installed; skipping JavaScript lint and tools/ts verification (CI will run them)"
 fi
 
 step "SBOM generation (CI: Check SBOM generation)"

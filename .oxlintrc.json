@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "unicorn", "oxc"],
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
   "categories": {
     "correctness": "error"
   },
@@ -27,7 +27,42 @@
     // to error; current count any time: `npx oxlint 2>&1 | grep -c 'warning '`.
     "no-unused-vars": ["warn", { "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }],
     "no-unused-expressions": "warn",
-    "no-useless-empty-export": "error"
+    "no-useless-empty-export": "error",
+    // Defect-class rules the tree already passes. Categories such as
+    // suspicious/restriction still have unpaid hits, so they stay off as
+    // groups; these individuals cannot regress without failing CI.
+    "array-callback-return": "error",
+    "no-alert": "error",
+    "no-constructor-return": "error",
+    "no-extend-native": "error",
+    "no-extra-bind": "error",
+    "no-new-wrappers": "error",
+    "no-proto": "error",
+    "no-return-assign": "error",
+    "no-script-url": "error",
+    "no-self-compare": "error",
+    "no-sequences": "error",
+    "no-template-curly-in-string": "error",
+    "no-throw-literal": "error",
+    "no-unexpected-multiline": "error",
+    "no-unmodified-loop-condition": "error",
+    "no-unneeded-ternary": "error",
+    "no-useless-concat": "error",
+    "no-useless-constructor": "error",
+    "preserve-caught-error": "error",
+    "radix": "error",
+    "import/no-duplicates": "error",
+    "import/no-empty-named-blocks": "error",
+    "import/no-self-import": "error",
+    "import/no-webpack-loader-syntax": "error",
+    "oxc/approx-constant": "error",
+    "oxc/misrefactored-assign-op": "error",
+    "typescript/no-confusing-non-null-assertion": "error",
+    "typescript/no-unnecessary-type-constraint": "error",
+    "unicorn/no-instanceof-builtins": "error",
+    "unicorn/prefer-array-flat-map": "error",
+    "unicorn/require-module-specifiers": "error",
+    "unicorn/require-post-message-target-origin": "error"
   },
   "env": {
     "builtin": true,
