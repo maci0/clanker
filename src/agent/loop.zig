@@ -83,6 +83,14 @@ const original_request_anchor_cap: usize = 4096;
 /// Total size `localSummary`'s extractive fallback is allowed to reach, so it
 /// cannot itself blow the context it is shrinking.
 const local_summary_max_bytes: usize = 4000;
+/// Per-role excerpt sizes inside `localSummary`. Named so a later cap
+/// change is one place rather than three magic numbers in the builder.
+const local_summary_content_preview_chars: usize = 200;
+const local_summary_tool_preview_chars: usize = 150;
+const local_summary_args_preview_chars: usize = 120;
+/// Transcript handed to the LLM summarizer, so the summary request itself
+/// cannot blow the context it is shrinking.
+const summary_transcript_max_bytes: usize = 12000;
 /// Room the summary that replaces the compacted middle is allowed to take:
 /// `localSummary`'s cap plus the preserved original-request anchor. Counted as
 /// immovable, because compaction writes it back every time. Derived from
@@ -758,7 +766,7 @@ pub const Agent = struct {
             self.modules.clearRetainingCapacity();
             // wasm_cache is gpa-owned and survives across turns (freed once
             // in Agent.deinit at session end): do NOT clear it here.
-            const run_ms: u64 = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            const run_ms = elapsedMs(self.ctx.io, run_start);
             const tps: f64 = if (run_ms > 0) @as(f64, @floatFromInt(self.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(run_ms)) / 1000.0) else 0;
             const prompt_total = self.stats.total_cache_hit_tokens + self.stats.total_cache_miss_tokens;
             const hit_rate: f64 = if (prompt_total > 0) @as(f64, @floatFromInt(self.stats.total_cache_hit_tokens)) / @as(f64, @floatFromInt(prompt_total)) * 100.0 else 0;
@@ -787,7 +795,7 @@ pub const Agent = struct {
         // Execution graph: record every LLM call and tool invocation, then
         // persist it to state/runs/<run-id>.json on every exit path.
         const started_ns = std.Io.Timestamp.now(self.ctx.io, .real).nanoseconds;
-        const started_at: i64 = @intCast(@divTrunc(started_ns, 1_000_000_000));
+        const started_at: i64 = std.math.cast(i64, @divTrunc(started_ns, 1_000_000_000)) orelse 0;
         var g = graph_mod.Graph{
             // Nanosecond resolution because two top-level runs starting in the
             // same second (a web UI run beside a goal loop) would otherwise
@@ -802,7 +810,7 @@ pub const Agent = struct {
             .started_at = started_at,
         };
         defer {
-            g.duration_ms = @intCast(@divTrunc(run_start.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            g.duration_ms = elapsedMs(self.ctx.io, run_start);
             // Stamped at exit, not only at start: `chatWithFallbackChain`
             // repoints `self.provider` to whoever actually served, and a
             // graph that kept the requested name would record a provider
@@ -1084,7 +1092,7 @@ pub const Agent = struct {
                 .detail = resp.finish_reason orelse "",
                 .prompt_tokens = if (resp.usage) |u| u.prompt_tokens else 0,
                 .completion_tokens = if (resp.usage) |u| u.completion_tokens else 0,
-                .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                .duration_ms = elapsedMs(self.ctx.io, llm_t0),
                 .ok = true,
                 // Set here as on every other node: `output` is only the first
                 // `output_preview_cap` bytes, so the full length is what tells
@@ -1142,7 +1150,7 @@ pub const Agent = struct {
                     .label = "final",
                     .detail = resp.finish_reason orelse "",
                     .result_bytes = answer_len,
-                    .duration_ms = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms)),
+                    .duration_ms = elapsedMs(self.ctx.io, llm_t0),
                     .ok = !(cut and answer_len == 0),
                     .output = graph_mod.finalAnswerPreview(resp.message.content orelse ""),
                 });
@@ -1217,7 +1225,7 @@ pub const Agent = struct {
             // module is stateful and the cached instance is reused.
             const results = try self.executeCalls(calls);
             if (self.on_tool_result) |cb| {
-                const tool_ms: u64 = @intCast(@divTrunc(tool_t0.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+                const tool_ms = elapsedMs(self.ctx.io, tool_t0);
                 cb(tool_ms);
             }
             if (self.cfg.advisor.enabled) {
@@ -1882,9 +1890,9 @@ pub const Agent = struct {
 
         // Cap the total summary size so it does not itself blow the context.
         const max_summary = local_summary_max_bytes;
-        const content_preview_chars = 200;
-        const tool_result_preview_chars = 150;
-        const args_preview_chars = 120;
+        const content_preview_chars = local_summary_content_preview_chars;
+        const tool_result_preview_chars = local_summary_tool_preview_chars;
+        const args_preview_chars = local_summary_args_preview_chars;
         var tool_calls_seen: std.array_hash_map.String(void) = .empty;
         defer tool_calls_seen.deinit(self.ctx.gpa);
 
@@ -1980,9 +1988,9 @@ pub const Agent = struct {
     /// extractive summary, then a static placeholder.
     fn summarizeMessages(self: *Agent, msgs: []const types.Message) ![]const u8 {
         if (msgs.len == 0) return error.EmptyMessages;
-        // Build a textual transcript of the messages to summarize, capped at
-        // ~12k chars so the summary request itself does not blow the context.
-        const max_transcript: usize = 12000;
+        // Build a textual transcript of the messages to summarize, capped so
+        // the summary request itself does not blow the context.
+        const max_transcript = summary_transcript_max_bytes;
         var buf: std.ArrayList(u8) = .empty;
         defer buf.deinit(self.ctx.gpa);
         try buf.ensureTotalCapacity(self.ctx.gpa, max_transcript);
@@ -2811,8 +2819,8 @@ pub const Agent = struct {
             rec.recordObject(session_events.EventKind.llm, &.{
                 .{ .name = "provider", .value = .{ .text = self.provider.name } },
                 .{ .name = "model", .value = .{ .text = self.provider.activeModelName() } },
-                .{ .name = "prompt_tokens", .value = .{ .int = @intCast(self.stats.total_prompt_tokens) } },
-                .{ .name = "completion_tokens", .value = .{ .int = @intCast(self.stats.total_completion_tokens) } },
+                .{ .name = "prompt_tokens", .value = .{ .int = eventInt(self.stats.total_prompt_tokens) } },
+                .{ .name = "completion_tokens", .value = .{ .int = eventInt(self.stats.total_completion_tokens) } },
                 .{ .name = "ok", .value = .{ .bool_ = true } },
             });
         }
@@ -2835,7 +2843,7 @@ pub const Agent = struct {
         err: anyerror,
         detail: ?[]const u8,
     ) !void {
-        const ms: u64 = @intCast(@divTrunc(started.durationTo(std.Io.Timestamp.now(self.ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+        const ms = elapsedMs(self.ctx.io, started);
         const why = detail orelse @errorName(err);
         log.log(.error_, "LLM call failed at iteration {d}: {s} ({s})", .{ iteration + 1, @errorName(err), why });
         try g.add(self.ctx.gpa, .{
@@ -2850,8 +2858,8 @@ pub const Agent = struct {
             rec.recordObject(session_events.EventKind.llm, &.{
                 .{ .name = "provider", .value = .{ .text = self.provider.name } },
                 .{ .name = "model", .value = .{ .text = self.provider.activeModelName() } },
-                .{ .name = "prompt_tokens", .value = .{ .int = @intCast(self.stats.total_prompt_tokens) } },
-                .{ .name = "completion_tokens", .value = .{ .int = @intCast(self.stats.total_completion_tokens) } },
+                .{ .name = "prompt_tokens", .value = .{ .int = eventInt(self.stats.total_prompt_tokens) } },
+                .{ .name = "completion_tokens", .value = .{ .int = eventInt(self.stats.total_completion_tokens) } },
                 .{ .name = "ok", .value = .{ .bool_ = false } },
             });
         }
@@ -3535,6 +3543,23 @@ threadlocal var ttsr_guard: ?*TtsrStreamGuard = null;
 /// `max_tokens` is the grant.
 fn turnCompletionBudget(provider: *const config.Provider) u32 {
     return provider.activeModel().max_tokens;
+}
+
+/// Monotonic elapsed milliseconds, saturating at zero. `durationTo` is a
+/// signed i96 subtraction, and `@intCast` of a negative value into u64
+/// panics in Debug / wraps in ReleaseFast.
+fn elapsedMs(io: std.Io, started: std.Io.Timestamp) u64 {
+    return durationToMs(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
+}
+
+fn durationToMs(ns: i96) u64 {
+    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
+}
+
+/// Session-event integers are i64. Token totals are u64; a wrap would
+/// record a huge negative spend.
+fn eventInt(n: u64) i64 {
+    return std.math.cast(i64, n) orelse std.math.maxInt(i64);
 }
 
 fn ttsrStreamWrap(delta: []const u8) void {
@@ -4890,6 +4915,18 @@ test "nextFallbackProvider skips unknown names and already-tried ones" {
     const second = nextFallbackProvider(&cfg, &env, arena, "b", &.{ "missing", "a", "b", "c" }, &.{ "a", "b" }, &i).?;
     try std.testing.expectEqualStrings("c", second.name);
     try std.testing.expect(nextFallbackProvider(&cfg, &env, arena, "c", &.{ "missing", "a", "b", "c" }, &.{ "a", "b", "c" }, &i) == null);
+}
+
+test "durationToMs saturates a negative span at zero" {
+    try std.testing.expectEqual(@as(u64, 0), durationToMs(-1));
+    try std.testing.expectEqual(@as(u64, 0), durationToMs(-std.time.ns_per_s));
+    try std.testing.expectEqual(@as(u64, 1000), durationToMs(std.time.ns_per_s));
+}
+
+test "eventInt saturates u64 totals that do not fit in i64" {
+    try std.testing.expectEqual(@as(i64, 0), eventInt(0));
+    try std.testing.expectEqual(@as(i64, 42), eventInt(42));
+    try std.testing.expectEqual(@as(i64, std.math.maxInt(i64)), eventInt(std.math.maxInt(u64)));
 }
 
 test "turnCompletionBudget uses the model grant, not max_tokens_per_turn" {

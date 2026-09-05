@@ -1198,7 +1198,11 @@ const LlmManyCall = struct {
 };
 
 fn elapsedMsFrom(io: std.Io, t0: std.Io.Timestamp) i64 {
-    return @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+    return durationToMs(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
+}
+
+fn durationToMs(ns: i96) i64 {
+    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
 }
 
 /// ck_llm_many(request) -> a JSON array of completions, one per target, in the
@@ -1924,13 +1928,16 @@ pub fn ckDocker(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     w.interface.writeAll(req) catch return Err.network;
     w.interface.flush() catch return Err.network;
 
-    // Read the full response. Residual posix: raw unix-socket HTTP pump,
-    // same hand-rolled socket family as the webui server in cli.zig.
+    // Same std.Io reader the write side already uses. The HTTP server and
+    // mesh pumps still drop to posix.read because they need TTY/SO_RCVTIMEO
+    // semantics this unix-socket reply does not.
     var resp = std.ArrayList(u8).empty;
     defer resp.deinit(h.sandbox.gpa);
+    var rbuf: [4096]u8 = undefined;
+    var reader = stream.reader(h.sandbox.io, &rbuf);
     var tmp: [4096]u8 = undefined;
     while (true) {
-        const nr = std.posix.read(stream.socket.handle, &tmp) catch |err| {
+        const nr = reader.interface.readSliceShort(&tmp) catch |err| {
             log.log(.warn, "[docker] read failed: {s}", .{@errorName(err)});
             return Err.network;
         };
@@ -8029,6 +8036,12 @@ test "parseCkLlmRequest ignores malformed and out-of-range fields" {
     // A max_tokens beyond u32 range must be ignored, not panic @intCast.
     const big = parseCkLlmRequest(arena, "{\"prompt\":\"x\",\"max_tokens\":9000000000}") orelse return error.TestUnexpectedNull;
     try std.testing.expect(big.max_tokens == null);
+}
+
+test "durationToMs saturates a negative span at zero" {
+    try std.testing.expectEqual(@as(i64, 0), durationToMs(-1));
+    try std.testing.expectEqual(@as(i64, 0), durationToMs(-std.time.ns_per_s));
+    try std.testing.expectEqual(@as(i64, 1000), durationToMs(std.time.ns_per_s));
 }
 
 test "ck_llm max_tokens cannot exceed the descriptor grant" {

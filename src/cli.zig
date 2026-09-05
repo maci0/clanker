@@ -2836,8 +2836,11 @@ const PingResult = struct {
 };
 
 fn elapsedMs(io: std.Io, t0: std.Io.Timestamp) i64 {
-    const ns = t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
-    return @intCast(@divTrunc(ns, std.time.ns_per_ms));
+    return durationToMs(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
+}
+
+fn durationToMs(ns: i96) i64 {
+    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
 }
 
 /// Which kind of not-working a failed ping was. `error.ApiError` is the client's
@@ -5011,7 +5014,10 @@ fn runDelta(delta: []const u8) void {
     const w = run_out orelse return;
     if (run_stdout_color and !run_answer_started) {
         run_answer_started = true;
-        w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch return;
+        w.interface.writeAll("\x1b[1;35m\xe2\x80\xba \x1b[0m") catch {
+            run_out = null;
+            return;
+        };
     }
     if (run_stdout_color) {
         run_md.feed(&w.interface, delta);
@@ -5019,9 +5025,14 @@ fn runDelta(delta: []const u8) void {
         // Same fail-fast as the color branch above: a closed stdout pipe must
         // not keep taking a failed write + flush per delta for the rest of
         // the stream.
-        w.interface.writeAll(delta) catch return;
+        w.interface.writeAll(delta) catch {
+            run_out = null;
+            return;
+        };
     }
-    w.interface.flush() catch {};
+    w.interface.flush() catch {
+        run_out = null;
+    };
 }
 
 /// Surface adapter for the shared goal-loop driver. The agent and its message
@@ -16660,7 +16671,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .on_decision = serverGoalLoopDecision,
             }) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
-                const failed_ms: i64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+                const failed_ms = elapsedMs(io, t0);
                 // The HTTP status was already sent as 200 when the stream
                 // opened, so a stream-level failure never reaches the generic
                 // completion log (which only reports >= 400): without this line
@@ -16685,7 +16696,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         } else blk: {
             const resp = a.run(&messages, final_task, &err_detail) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
-                const failed_ms: i64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+                const failed_ms = elapsedMs(io, t0);
                 log.log(.error_, "run failed duration_ms={d} phase=agent: {s}", .{ failed_ms, detail });
                 writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
                 return;
@@ -16719,7 +16730,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
             if (cfg.modules.session_events) session_sync.pushTail(io, gpa, arena, cfg, req.session);
         }
-        const ms: u64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+        const ms: u64 = @intCast(elapsedMs(io, t0));
         // When the fallback chain replaced the requested provider mid-run,
         // say so on the stream: the run must not finish looking like the
         // provider that never answered.
@@ -16827,7 +16838,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     s.objectField("served_by") catch return;
     s.write(a.provider.name) catch return;
     s.endObject() catch return;
-    const elapsed_ms: i64 = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms));
+    const elapsed_ms = elapsedMs(io, t0);
     log.log(.info, "run complete provider={s} duration_ms={d} prompt_tokens={d} completion_tokens={d}", .{ a.provider.name, elapsed_ms, a.stats.total_prompt_tokens, a.stats.total_completion_tokens });
     respond(stream, 200, "OK", rbuf[0..w.end]);
 }

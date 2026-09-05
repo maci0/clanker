@@ -452,7 +452,7 @@ pub fn chat(
         recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), redact.forStats(&stats_detail_buf, err_detail.* orelse @errorName(err)), elapsedMs(ctx.io, llm_t0));
         return err;
     };
-    const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+    const ms = elapsedMs(ctx.io, llm_t0);
     recordUsage(ctx, arena, provider, resp.usage, ms);
     var out = resp;
     applyReasoningFormat(provider, &out);
@@ -942,7 +942,12 @@ fn recordFailure(
 }
 
 fn elapsedMs(io: std.Io, started: std.Io.Timestamp) u64 {
-    const ns = started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
+    return durationToMs(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
+}
+
+/// `durationTo` is a signed subtraction. A negative span must not `@intCast`
+/// into u64 (Debug panic, ReleaseFast wrap).
+fn durationToMs(ns: i96) u64 {
     return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
 }
 
@@ -1427,7 +1432,7 @@ pub fn chatStream(
     }
 
     var resp = try acc.finish();
-    const ms: u64 = @intCast(@divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(ctx.io, .awake)).nanoseconds, std.time.ns_per_ms));
+    const ms = elapsedMs(ctx.io, llm_t0);
     resp.ttft_ms = ttft_ms;
     applyReasoningFormat(provider, &resp);
     recordUsage(ctx, arena, provider, resp.usage, ms);
@@ -1633,6 +1638,14 @@ test "Retry-After is integer seconds, capped, and ignores HTTP-date" {
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs(""));
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("Wed, 21 Oct 2015 07:28:00 GMT"));
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("-1"));
+}
+
+test "durationToMs saturates a negative span at zero" {
+    try std.testing.expectEqual(@as(u64, 0), durationToMs(-1));
+    try std.testing.expectEqual(@as(u64, 0), durationToMs(-std.time.ns_per_s));
+    try std.testing.expectEqual(@as(u64, 0), durationToMs(0));
+    try std.testing.expectEqual(@as(u64, 1), durationToMs(std.time.ns_per_ms));
+    try std.testing.expectEqual(@as(u64, 1000), durationToMs(std.time.ns_per_s));
 }
 
 test "retry backoff jitter is a pure function of attempt and provider" {
