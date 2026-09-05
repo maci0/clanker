@@ -78,13 +78,6 @@ export var ICON_PATHS = {
     "M7 3.5a2 2 0 110 4 2 2 0 010-4z",
     "M7 16.5a2 2 0 110 4 2 2 0 010-4z",
     "M17 9.5a2 2 0 110 4 2 2 0 010-4z"],
-  // rh-ui-icon-ai-experience: sparkle cluster + experience frame.
-  aiSparkle: [
-    "M6 4l.9 2.4L4.5 8.5l2.6.9-1.4 2.4 1.5-2.6-1.4-2.4 2.6-.9-1.5-2.4 2.4 1.4.9-2.4z",
-    "M14 9h6v6h-6z",
-  ],
-  // Circle-i for persistent review notices.
-  aiInfo: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M12 11v5", "M12 8h.01"],
   // A face: the rooms emoji picker trigger.
   smile: ["M12 5.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13z", "M9 10v.5", "M15 10v.5", "M8.5 14c1.1 1.6 2.7 2.4 3.5 2.4s2.4-.8 3.5-2.4"],
   // Transport. The music dock typed these from three Unicode blocks at once

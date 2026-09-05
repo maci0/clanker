@@ -52,7 +52,7 @@
   font-size: var(--step--1);
   color: var(--fg-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-label);
 }
 
 .health-tile-value {
@@ -108,7 +108,7 @@
   font-weight: 600;
   color: var(--fg-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--track-label);
   border-bottom: 1px solid var(--border);
 }
 

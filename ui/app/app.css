@@ -127,6 +127,10 @@
   --step-1: 1rem;
   --step-2: 1.125rem;
   --step-3: 1.375rem;
+  /* Engraved legend plates: one tracking, the 0.06em DESIGN.md names.
+     Headings stay untracked; tight tracking is the SaaS default this page
+     does not use. */
+  --track-label: 0.06em;
 
   --space-1: 0.25rem;
   --space-2: 0.4rem;
@@ -239,6 +243,31 @@
   --pf-t--global--font--family--body: var(--sans);
   --pf-t--global--font--family--heading: var(--sans);
   --pf-t--global--font--family--mono: var(--mono);
+  /* PatternFly's radius scale is 4/6/16/24px plus a glass blur. Left alone
+     those values reintroduce the soft-card look the cabinet radii exist to
+     refuse, on any PF class that still reads the library tokens. Map the
+     rungs onto the plate scale; kill glass. */
+  --pf-t--global--border--radius--0: 0px;
+  --pf-t--global--border--radius--100: var(--radius-sm);
+  --pf-t--global--border--radius--200: var(--radius);
+  --pf-t--global--border--radius--300: var(--radius-lg);
+  --pf-t--global--border--radius--400: var(--radius-lg);
+  --pf-t--global--border--radius--500: var(--radius-pill);
+  --pf-t--global--border--radius--tiny: var(--radius-sm);
+  --pf-t--global--border--radius--small: var(--radius);
+  --pf-t--global--border--radius--medium: var(--radius-lg);
+  --pf-t--global--border--radius--large: var(--radius-lg);
+  --pf-t--global--border--radius--pill: var(--radius-pill);
+  --pf-t--global--border--radius--sharp: 0;
+  --pf-t--global--border--radius--glass--default: var(--radius-lg);
+  --pf-t--global--border--radius--action--default: var(--radius-pill);
+  --pf-t--global--border--radius--action--plain--default: var(--radius);
+  --pf-t--global--border--radius--control--default: var(--radius);
+  --pf-t--global--border--radius--control--form-element: var(--radius);
+  --pf-t--global--background--image--default: none;
+  --pf-t--global--background--filter--glass--blur--primary: none;
+  --pf-t--global--background--color--glass--primary--default: var(--surface);
+  --pf-t--global--box-shadow--glass--default: none;
 }
 
 /* Night-shift cabinet: anthracite backplane, green-grey panel faces.
@@ -377,7 +406,6 @@ body {
   font-family: var(--sans);
   font-size: var(--step-1);
   font-weight: 600;
-  letter-spacing: -0.01em;
   text-transform: none;
   margin: 0;
   color: var(--fg);
@@ -430,8 +458,7 @@ body {
   #view-chat .conversation-header > .transcript-tools { display: none; }
 }
 h1 {
-  font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
-  letter-spacing: -0.01em; text-transform: none;
+  font-family: var(--sans); font-size: var(--step-1); font-weight: 600; text-transform: none;
   margin: 0; color: var(--fg);
   padding: 0.15rem var(--space-2);
   border: 0; background: transparent;
@@ -566,7 +593,7 @@ main.pf-v6-c-page__main {
 .run-shape > summary {
   list-style: none; cursor: pointer;
   font-family: var(--mono); font-size: var(--step--1); font-weight: 600;
-  letter-spacing: 0.04em; color: var(--fg-muted);
+  letter-spacing: var(--track-label); color: var(--fg-muted);
   min-height: 32px; padding: var(--space-1) 0.55rem;
   border: 1px solid var(--rule); border-radius: var(--radius-pill);
   background: var(--surface);
@@ -584,7 +611,7 @@ main.pf-v6-c-page__main {
   background: var(--surface); box-shadow: var(--lift);
 }
 .plan-toggle.safety-toggle span {
-  font-family: var(--mono); letter-spacing: 0.03em;
+  font-family: var(--mono); letter-spacing: var(--track-label);
 }
 #submit { display: inline-flex; align-items: center; gap: 0.35rem; }
 .view:not(#view-chat):not([hidden]) {
@@ -796,7 +823,7 @@ form[hidden] { display: none; }
 .turn-you.md .md-h { margin: 0.4em 0 0.25em; font-size: 1em; }
 .turn-you.md ul, .turn-you.md ol { margin: 0.3em 0; }
 .turn-you.md .code-block { margin: 0.4em 0; }
-.turn-author { color: var(--fg); font-weight: 700; letter-spacing: -0.01em; }
+.turn-author { color: var(--fg); font-weight: 700; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
 .turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
@@ -1084,7 +1111,7 @@ form[hidden] { display: none; }
 }
 .code-lang {
   font-family: var(--mono); font-size: var(--step-0); text-transform: uppercase;
-  letter-spacing: 0.1em; color: var(--fg-muted);
+  letter-spacing: var(--track-label); color: var(--fg-muted);
 }
 .code-block .copy-code-btn { opacity: 0; transition: opacity 120ms ease, background 120ms ease, border-color 120ms ease; }
 .code-block:hover .copy-code-btn, .code-block:focus-within .copy-code-btn { opacity: 1; }
@@ -1501,7 +1528,7 @@ dialog.slack-dialog.pf-v6-c-modal-box {
 }
 .run-metrics[hidden] { display: none; }
 .run-metrics-cell { white-space: nowrap; }
-.run-metrics-scope { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.run-metrics-scope { font-weight: 600; letter-spacing: var(--track-label); text-transform: uppercase; }
 .knowledge-badge {
   display: none; margin: 0.35rem 0 0; padding: 0.35rem 0.55rem;
   border: 1px dashed var(--rule); border-radius: var(--radius-lg); background: var(--surface-2);
@@ -1534,7 +1561,7 @@ section { margin-top: var(--space-3); border-top: 0; padding-top: 0; }
 .section-list { margin-top: var(--space-5); }
 h2 {
   font-family: var(--sans);
-  font-size: var(--step-1); font-weight: 600; letter-spacing: -0.01em;
+  font-size: var(--step-1); font-weight: 600;
   color: var(--fg); margin: 0; line-height: 1.3;
 }
 .runs { margin-top: var(--space-4); }.run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }.run-picker input[type="search"] { font-family: var(--sans); font-size: var(--step-0); letter-spacing: 0; line-height: 1.4; border-radius: var(--radius-pill); }.run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }.run-list-head {
@@ -1549,7 +1576,7 @@ h2 {
   padding: var(--space-2) var(--space-3);
   background: var(--surface-2); border-bottom: 1px solid var(--border);
   font-family: var(--mono); font-size: var(--step--1); text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--fg-muted);
+  letter-spacing: var(--track-label); color: var(--fg-muted);
 }.run-row {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
@@ -1666,7 +1693,7 @@ select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); o
 dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
 dd ul { list-style: none; margin: 0; padding: 0; }
 dd ul li + li { margin-top: var(--space-1); }
-dt { font-family: var(--mono); font-size: var(--step-0); letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-muted); }
+dt { font-family: var(--mono); font-size: var(--step-0); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted); }
 dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
 dd ul { margin: 0; padding-left: 1.1rem; }
 a { color: var(--accent-text); overflow-wrap: anywhere; }
@@ -1832,7 +1859,7 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
 .palette-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .palette-kind {
   flex: none; min-width: 4.5rem; color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: 0.1em; font-size: var(--step-0);
+  text-transform: uppercase; letter-spacing: var(--track-label); font-size: var(--step-0);
 }
 .palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .palette-hint { margin: var(--space-3) 0 0; color: var(--fg-muted); font-size: var(--step-0); }
@@ -1931,7 +1958,7 @@ button.header-model[aria-expanded="true"] .model-chip__chevron {
 .model-picker__group + .model-picker__group { margin-top: var(--space-2); }
 .model-picker__group-title {
   font-family: var(--mono); font-size: var(--step--2); font-weight: 600;
-  letter-spacing: 0.08em; text-transform: uppercase;
+  letter-spacing: var(--track-label); text-transform: uppercase;
   color: var(--fg-muted); padding: 0.35rem 0.55rem var(--space-1);
 }
 .model-picker__option {
@@ -1988,9 +2015,9 @@ button.header-model[aria-expanded="true"] .model-chip__chevron {
 .plan-badge {
   font-family: var(--mono); font-size: var(--step--1);
   padding: 0.05rem var(--space-2); margin-left: var(--space-2);
-  border: 1px solid var(--violet); border-radius: var(--radius-sm);
-  color: var(--violet-text); white-space: nowrap;
-  text-transform: uppercase; letter-spacing: 0.08em;
+  border: 1px solid var(--accent); border-radius: var(--radius-sm);
+  color: var(--accent-text); white-space: nowrap;
+  text-transform: uppercase; letter-spacing: var(--track-label);
 }
 /* The current/last turn's receipt: goal, tool-call count, sub-agent count,
    todo progress. Sits under the session title, above the transcript. */
@@ -2004,7 +2031,7 @@ button.header-model[aria-expanded="true"] .model-chip__chevron {
   border: 1px solid var(--rule); border-radius: var(--radius-pill);
   color: var(--fg-muted); white-space: nowrap;
 }
-#status-goal { border-color: var(--violet); color: var(--violet-text); }
+#status-goal { border-color: var(--accent); color: var(--accent-text); }
 input[type="checkbox"] {
   flex: none; width: 1.05rem; height: 1.05rem; margin: 0;
   accent-color: var(--accent);
@@ -2060,7 +2087,7 @@ mark {
 #transcript-empty[hidden] { display: none !important; }
 #transcript-empty p:first-child {
   font-family: var(--mono); font-size: var(--step--1); font-weight: 600;
-  letter-spacing: 0.06em; text-transform: uppercase;
+  letter-spacing: var(--track-label); text-transform: uppercase;
   color: var(--fg-muted); margin: 0;
 }
 #transcript-empty p:first-child + p {
@@ -2153,7 +2180,7 @@ mark {
 .board-filter-fold { margin: var(--space-3) 0; }
 .board-filter-fold > summary {
   cursor: pointer; font-family: var(--mono); font-size: var(--step--1);
-  font-weight: 600; letter-spacing: 0.04em; color: var(--fg-muted);
+  font-weight: 600; letter-spacing: var(--track-label); color: var(--fg-muted);
   min-height: 32px;
 }
 .board-create-fold { margin: 0 0 var(--space-3); }
@@ -2171,7 +2198,7 @@ mark {
 .board-create-note { grid-column: 1 / -1; margin: var(--space-2) 0 0; }
 .board-header-icon { font-size: var(--step-3); }
 .board-header-title {
-  font-size: var(--step-2); font-weight: 700; margin: 0; letter-spacing: -0.01em;
+  font-size: var(--step-2); font-weight: 700; margin: 0;
   color: var(--fg);
 }
 .board-header-sep { flex: 1; }
@@ -2212,7 +2239,7 @@ mark {
 .board-empty[hidden] { display: none; }
 .board-empty strong {
   color: var(--fg-muted); font-family: var(--mono); font-size: var(--step--1);
-  font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  font-weight: 600; letter-spacing: var(--track-label); text-transform: uppercase;
 }
 .board-empty span { max-width: 62ch; }
 .board-activity { margin-top: var(--space-4); border-top: 1px solid var(--rule); padding-top: var(--space-3); }
@@ -2357,7 +2384,7 @@ main.pf-v6-c-page__main {
   margin: var(--space-3) 0 var(--space-1); padding: 0.2rem 0;
   border: none; background: transparent; text-align: left;
   font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  text-transform: uppercase; letter-spacing: var(--track-label); font-weight: 600;
 }
 button.rail-group { cursor: pointer; }
 .rail-group:first-child,
@@ -2415,7 +2442,7 @@ h2#session-title {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600; color: var(--fg);
-  text-transform: none; letter-spacing: -0.01em;
+  text-transform: none;
 }
 #rail-toggle { display: none; }
 #app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: none; }
@@ -2486,7 +2513,6 @@ h2#session-title {
   font-family: var(--sans); font-size: var(--step-1); font-weight: 700;
   color: var(--fg); margin: var(--space-6) 0 var(--space-3); line-height: 1.25;
   scroll-margin-top: var(--space-5);
-  letter-spacing: -0.01em;
 }
 .md h3.md-h { font-size: var(--step-2); line-height: 1.25; }
 /* Most model output leads with "##", which lands here. Below it, the legend
@@ -2494,7 +2520,7 @@ h2#session-title {
    last two levels are distinguishable without inventing a type scale. */
 .md h5.md-h, .md h6.md-h {
   font-family: var(--mono);
-  font-size: var(--step-0); letter-spacing: 0.1em;
+  font-size: var(--step-0); letter-spacing: var(--track-label);
   text-transform: uppercase; color: var(--fg-muted);
 }
 .md .md-h:first-child { margin-top: 0; }
@@ -2535,7 +2561,7 @@ h2#session-title {
   padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--rule);
   text-align: left; vertical-align: top; font-variant-numeric: tabular-nums;
 }
-.md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--step--1); background: var(--surface-2); }
+.md-table th { color: var(--fg-muted); text-transform: uppercase; letter-spacing: var(--track-label); font-size: var(--step--1); background: var(--surface-2); }
 .md-img { max-width: 100%; height: auto; border-radius: var(--radius-sm); }
 .md-task { list-style: none; margin-left: -1.2em; }
 .md-task input { margin-right: var(--space-2); }
@@ -2576,7 +2602,7 @@ h2#session-title {
 .board-col[data-collapsed="true"] { flex: 0 0 40px; min-width: 40px; max-width: 40px; cursor: pointer; opacity: 0.8; }
 .board-col[data-collapsed="true"]:hover { opacity: 1; }
 .board-col[data-collapsed="true"] .board-cards, .board-col[data-collapsed="true"] .board-quick-add, .board-col[data-collapsed="true"] .board-empty-slot { display: none; }
-.board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 0.04em; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: var(--track-label); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .board-col[data-collapsed="true"] .board-col-actions { display: none; }
 .board-col[data-collapsed="true"] .board-col-head { padding: 0.65rem var(--space-2); justify-content: center; }
 .board-col[data-drop="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); box-shadow: inset 0 0 0 2px var(--accent); }
@@ -2588,7 +2614,7 @@ h2#session-title {
   user-select: none; -webkit-user-select: none;
   cursor: pointer;
 }
-.board-col-title { color: var(--fg); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; flex: 1; min-width: 0; font-size: var(--step-0); }
+.board-col-title { color: var(--fg); font-weight: 700; text-transform: uppercase; letter-spacing: var(--track-label); flex: 1; min-width: 0; font-size: var(--step-0); }
 .board-col-actions { display: flex; gap: var(--space-1); align-items: center; }
 .board-col-actions button { min-height: 24px; padding: 0 var(--space-2); font-size: var(--step--1); border-radius: var(--radius-pill); }
 .board-quick-add { padding: var(--space-2) 0.5rem; border-top: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); background: transparent; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
@@ -2633,7 +2659,7 @@ h2#session-title {
 .board-col-menu.is-open { display: block; }
 .board-col-menu-title {
   padding: 0.5rem 0.75rem; font-size: var(--step-0); font-weight: 700;
-  color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--fg-muted); text-transform: uppercase; letter-spacing: var(--track-label);
 }
 .board-col-menu-sep { border: none; border-top: 1px solid var(--border); margin: 0.15rem 0; }
 .board-col-menu-item {
@@ -3011,7 +3037,7 @@ h2#session-title {
 
 .card-detail-main { min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); }
 .card-detail-sidebar { display: flex; flex-direction: column; gap: var(--space-2); }
-.card-detail-sidebar-title { font-size: var(--step--1); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-muted); margin-bottom: 0.15rem; }
+.card-detail-sidebar-title { font-size: var(--step--1); font-weight: 600; text-transform: uppercase; letter-spacing: var(--track-label); color: var(--fg-muted); margin-bottom: 0.15rem; }
 .card-detail-sidebar button {
   width: 100%; text-align: left; min-height: 32px; font-size: var(--step-0);
   border-radius: var(--radius-lg); padding: 0.35rem var(--space-3); background: var(--surface-2);
@@ -3046,7 +3072,7 @@ h2#session-title {
 }
 .card-detail-meta-label {
   font-size: var(--step--2); font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.06em; color: var(--fg-muted);
+  letter-spacing: var(--track-label); color: var(--fg-muted);
 }
 .card-detail-meta-value {
   font-size: var(--step-0); color: var(--fg); padding: var(--space-1) 0.5rem;
@@ -3138,7 +3164,7 @@ h2#session-title {
 /* Claimed by this instance: the one thing you scan a shared list for. */
 .detail-head {
   margin: var(--space-4) 0 var(--space-2); font-family: var(--sans); font-size: var(--step--1); font-weight: 600;
-  color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--fg-muted); text-transform: uppercase; letter-spacing: var(--track-label);
 }
 .detail-head:first-of-type { margin-top: var(--space-3); }
 .detail-body { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; }

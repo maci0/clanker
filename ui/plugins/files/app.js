@@ -41,12 +41,12 @@ var COLOR = {
   ts: "var(--accent-text)", tsx: "var(--accent-text)", jsx: "var(--accent-text)",
   py: "var(--accent-text)", rs: "var(--fg)", go: "var(--accent-text)",
   c: "var(--fg-muted)", h: "var(--fg-muted)", cpp: "var(--fg)", java: "var(--fg)",
-  rb: "var(--danger)", md: "var(--violet-text)", markdown: "var(--violet-text)",
-  mdx: "var(--violet-text)", json: "var(--fg-muted)", toml: "var(--fg-muted)",
+  rb: "var(--danger)", md: "var(--fg)", markdown: "var(--fg)",
+  mdx: "var(--fg)", json: "var(--fg-muted)", toml: "var(--fg-muted)",
   yaml: "var(--fg-muted)", yml: "var(--fg-muted)", css: "var(--accent-text)",
   scss: "var(--accent-text)", html: "var(--fg)", xml: "var(--fg)",
   svg: "var(--warn)", sh: "var(--ok)", bash: "var(--ok)", zsh: "var(--ok)",
-  wasm: "var(--violet)", sql: "var(--warn)", lock: "var(--fg-muted)",
+  wasm: "var(--accent-text)", sql: "var(--warn)", lock: "var(--fg-muted)",
 };
 
 function extOf(n) {

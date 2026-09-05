@@ -85,7 +85,7 @@
   .files-when { display: none; }
 }
 .files-filter:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.files-toggle-btn { font-family: var(--mono); letter-spacing: .05em; }
+.files-toggle-btn { font-family: var(--mono); letter-spacing: var(--track-label); }
 .files-toggle-btn.active { border-color: var(--accent); color: var(--accent); }
 
 /* ─── split panes ───────────────────────────────────────────────────────────

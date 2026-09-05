@@ -76,7 +76,7 @@
 
 .knowledge-empty h3 {
   margin: 0 0 var(--space-2); font-family: var(--mono); font-size: var(--step--1);
-  font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
+  font-weight: 600; letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted);
 }
 
 .knowledge-empty p { margin: 0 0 var(--space-4); max-width: 52ch; color: var(--fg-muted); line-height: 1.6; }
@@ -108,7 +108,7 @@
 
 .run-minimap-viewport:active { cursor: grabbing; }
 
-.run-minimap-label { position: absolute; left: 4px; top: 2px; font-family: var(--mono); font-size: var(--step--2); letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); pointer-events: none; }
+.run-minimap-label { position: absolute; left: 4px; top: 2px; font-family: var(--mono); font-size: var(--step--2); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted); pointer-events: none; }
 
 .run-minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
@@ -143,7 +143,7 @@
 
 .run-node-kind {
   display: flex; align-items: center; gap: 0.3rem;
-  font-size: var(--step-0); letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: var(--step-0); letter-spacing: var(--track-label); text-transform: uppercase;
   color: var(--fg-muted); margin-bottom: 0.1rem;
 }
 
@@ -155,9 +155,9 @@
 
 .run-node[data-match="true"] { outline: 2px solid var(--warn); outline-offset: 2px; }
 
-.run-node[data-jump="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--violet) 35%, transparent), var(--lift-low); }
+.run-node[data-jump="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent), var(--lift-low); }
 
-.run-node[data-jump="true"] .run-node-label::after { content: " ↗"; color: var(--violet-text); font-weight: 700; }
+.run-node[data-jump="true"] .run-node-label::after { content: " ↗"; color: var(--accent-text); font-weight: 700; }
 
 .run-node[data-highlight="true"] { border-color: var(--accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); z-index: 1; }
 
@@ -369,7 +369,7 @@
   display: flex; align-items: center; gap: var(--space-1);
   padding: var(--space-1) 0.75rem; font-size: var(--step-0); font-weight: 600;
   color: var(--fg-muted); cursor: pointer; user-select: none;
-  text-transform: uppercase; letter-spacing: 0.06em;
+  text-transform: uppercase; letter-spacing: var(--track-label);
   /* A real button now, so it needs the button reset a row of slack-room-item
      buttons already has: full width, no UA border/background, text left. */
   width: 100%; text-align: left; border: 0; background: none;
@@ -704,7 +704,7 @@
   display: flex; align-items: center; gap: 0.75rem;
   margin: 0.5rem 0; padding: 0 1rem;
   font-size: var(--step--1); font-weight: 700; color: var(--danger);
-  text-transform: uppercase; letter-spacing: 0.04em;
+  text-transform: uppercase; letter-spacing: var(--track-label);
 }
 
 .slack-new-divider::before, .slack-new-divider::after {
@@ -770,7 +770,7 @@
 
 .chat-unread-divider span {
   font-family: var(--sans); font-size: var(--step--1); font-weight: 700;
-  color: var(--danger); text-transform: uppercase; letter-spacing: 0.03em;
+  color: var(--danger); text-transform: uppercase; letter-spacing: var(--track-label);
   white-space: nowrap;
 }
 
@@ -834,7 +834,7 @@
 
 .chat-msg:hover { background: color-mix(in srgb, var(--surface-2) 40%, transparent); border-left-color: var(--rule); }
 
-.chat-day { display: flex; align-items: center; gap: 0.75rem; font-family: var(--sans); font-size: var(--step--1); font-weight: 600; color: var(--fg-muted); letter-spacing: 0.04em; text-transform: uppercase; padding: 0.5rem 0 0.35rem; margin-top: var(--space-2); border-top: 0; }
+.chat-day { display: flex; align-items: center; gap: 0.75rem; font-family: var(--sans); font-size: var(--step--1); font-weight: 600; color: var(--fg-muted); letter-spacing: var(--track-label); text-transform: uppercase; padding: 0.5rem 0 0.35rem; margin-top: var(--space-2); border-top: 0; }
 
 .chat-day::before, .chat-day::after { content: ""; flex: 1; height: 1px; background: color-mix(in srgb, var(--rule) 60%, transparent); }
 
@@ -916,7 +916,7 @@
 .usage { width: 100%; border-collapse: collapse; margin-top: 1rem; font-family: var(--mono); font-size: var(--step-0); }
 
 .usage th {
-  text-align: left; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  text-align: left; font-weight: 700; letter-spacing: var(--track-label); text-transform: uppercase;
   color: var(--fg-muted); padding: var(--space-2) 0.7rem var(--space-2) 0; border-bottom: 1px solid var(--rule); white-space: nowrap;
 }
 
@@ -1031,7 +1031,7 @@
   border: none; border-top: 1px solid var(--rule); background: transparent;
   cursor: pointer; text-align: left;
   font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  text-transform: uppercase; letter-spacing: var(--track-label); font-weight: 600;
 }
 
 .tool-group:first-child { margin-top: 0; border-top: none; }
@@ -1095,7 +1095,7 @@
   max-height: 9rem; overflow: auto;
 }
 
-.tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; letter-spacing: -0.01em; line-height: 1.4; }
+.tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; line-height: 1.4; }
 
 button.tool-name:hover { color: var(--accent-text); }
 
@@ -1156,7 +1156,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .tool-detail-h {
   font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
-  letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-muted);
+  letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted);
   margin: 0.75rem 0 0.35rem;
 }
 
@@ -1213,7 +1213,7 @@ button.tool-name:hover { color: var(--accent-text); }
 .tool-field { display: flex; flex-direction: column; gap: var(--space-1); }
 
 .tool-field label {
-  margin: 0; font-size: var(--step-0); letter-spacing: 0.1em;
+  margin: 0; font-size: var(--step-0); letter-spacing: var(--track-label);
   text-transform: uppercase; color: var(--fg-muted);
 }
 
@@ -1257,7 +1257,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .fleet-roster-head {
   font-family: var(--mono); font-size: var(--step--1); font-weight: 700;
-  letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted);
+  letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted);
   margin: 0 0 var(--space-2);
 }
 
@@ -1318,7 +1318,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .fleet-dm-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
 
-.fleet-dm-badge { font-size: var(--step--1); letter-spacing: 0.06em; text-transform: uppercase; }
+.fleet-dm-badge { font-size: var(--step--1); letter-spacing: var(--track-label); text-transform: uppercase; }
 
 .fleet-dm-preview { margin-top: var(--space-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 
@@ -1330,7 +1330,7 @@ button.tool-name:hover { color: var(--accent-text); }
 
 .fleet-a2a { margin-top: var(--space-4); padding: var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); }
 
-.fleet-a2a-head { font-family: var(--sans); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); margin-bottom: var(--space-2); }
+.fleet-a2a-head { font-family: var(--sans); font-size: var(--step--1); font-weight: 600; letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted); margin-bottom: var(--space-2); }
 
 .fleet-a2a-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); overflow-wrap: anywhere; }
 
@@ -1392,7 +1392,7 @@ button.tool-name:hover { color: var(--accent-text); }
   font-family: var(--sans);
   font-size: var(--step--1);
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
   color: var(--fg-muted);
   margin: 0 0 var(--space-2);
@@ -1475,7 +1475,7 @@ button.tool-name:hover { color: var(--accent-text); }
   fill: var(--fg-muted);
   text-anchor: middle;
   pointer-events: none;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--track-label);
   text-transform: uppercase;
 }
 

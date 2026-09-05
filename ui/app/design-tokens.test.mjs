@@ -157,6 +157,41 @@ test("the scale the sheets reference is the scale app.css declares", () => {
   for (const token of ["--radius-sm", "--radius", "--radius-lg", "--radius-pill"]) {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
+  assert.match(appCss, /\n\s*--track-label\s*:\s*0\.06em\s*;/, "--track-label is the 0.06em DESIGN.md names");
+});
+
+// Engraved labels are one tracking. Headings are untracked. The SaaS pair
+// (tight bold titles + 0.1em all-caps micro-labels) is what this pin refuses.
+test("letter-spacing is --track-label, optical, or none", () => {
+  const allowed = /^(0|normal|0\.01em|0\.02em|\.02em|var\(--track-label\))$/;
+  const strays = [];
+  for (const [name, css] of sheets()) {
+    for (const { value, line } of declarations(css, "letter-spacing")) {
+      if (allowed.test(value)) continue;
+      strays.push(`${name}:${line}  letter-spacing: ${value}`);
+    }
+  }
+  assert.deepEqual(strays, [], `engraved labels use --track-label; headings stay untracked:\n${strays.join("\n")}`);
+});
+
+// PatternFly ships 16px/24px cards and a glass blur. Color remaps do not
+// catch those; a PF class that still reads the library tokens would round
+// a plate into a SaaS card. The rungs have to ride the cabinet scale.
+test("PatternFly radius and glass tokens ride the cabinet scale", () => {
+  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const pairs = [
+    ["--pf-t--global--border--radius--300", "var(--radius-lg)"],
+    ["--pf-t--global--border--radius--400", "var(--radius-lg)"],
+    ["--pf-t--global--border--radius--medium", "var(--radius-lg)"],
+    ["--pf-t--global--border--radius--large", "var(--radius-lg)"],
+    ["--pf-t--global--border--radius--glass--default", "var(--radius-lg)"],
+    ["--pf-t--global--background--filter--glass--blur--primary", "none"],
+    ["--pf-t--global--background--image--default", "none"],
+  ];
+  for (const [token, want] of pairs) {
+    const re = new RegExp(`\\n\\s*${token.replace(/-/g, "\\-")}\\s*:\\s*${want.replace(/[()]/g, "\\$&")}\\s*;`);
+    assert.match(appCss, re, `${token} must be ${want}`);
+  }
 });
 
 // The card cover/label palette is the third axis that drifts, and it drifted
@@ -364,6 +399,12 @@ test("colour emoji are chat content, never drawn chrome", () => {
     });
   }
   assert.deepEqual(strays, [], `chrome is drawn from ICON_PATHS, not typed:\n${strays.join("\n")}`);
+});
+
+test("ICON_PATHS has no sparkle chrome", () => {
+  const icons = readFileSync(join(here, "core", "icons.js"), "utf8");
+  assert.doesNotMatch(icons, /\baiSparkle\b/, "sparkle is leftover AI-experience chrome");
+  assert.doesNotMatch(icons, /\baiInfo\b/, "unused info sparkle sibling; help already draws the circle-i");
 });
 
 test("the icons the music dock names are drawn in the one grid", () => {

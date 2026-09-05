@@ -31,6 +31,8 @@ typography:
     fontWeight: 600
     lineHeight: 1.4
     letterSpacing: "0.06em"
+tracking:
+  label: "0.06em"
 rounded:
   sm: "2px"
   md: "3px"
@@ -117,10 +119,10 @@ Warm cabinet neutrals carry the interface; blue is reserved for operator action,
 
 ### Hierarchy
 
-- **Title** (600, `1.375rem`): view and panel headings.
+- **Title** (600, `1.375rem`): view and panel headings. Untracked: tight tracking is not a cabinet idea.
 - **Body** (400, `1rem`, `1.6`): prose, transcript content, and explanations; cap reading measure near `70ch`.
 - **Control** (600, `0.875rem`): buttons, inputs, and dense operational rows.
-- **Label** (600, `0.75rem`, `0.06em`): uppercase group labels and compact readings.
+- **Label** (600, `0.75rem`, `--track-label` / `0.06em`): uppercase group labels and compact readings.
 - **Micro** (`0.6875rem`): counts and graph stamps only.
 
 **The Engraving Rule.** Use monospace only where alignment, measurement, code, or equipment labeling earns it.
@@ -146,7 +148,7 @@ Depth is structural: panel faces sit on a backplane, controls are raised or pres
 
 ## Shapes
 
-Panels and fields use tight `2–4px` radii, like machined plates rather than soft cards. Pills are reserved for compact actuators, chips, lamps, and status housings. Borders are usually one pixel and use the semantic edge or rule token.
+Panels and fields use tight `2–4px` radii, like machined plates rather than soft cards. Pills are reserved for compact actuators, chips, lamps, and status housings. Borders are usually one pixel and use the semantic edge or rule token. PatternFly's radius and glass tokens (`--pf-t--global--border--radius-*`, glass blur, felt wallpaper) remap onto this scale in `ui/app/app.css`; leaving them at the library's 16px/24px defaults reintroduces a soft card on any PF class that still reads those tokens.
 
 ## Components
 
@@ -197,5 +199,6 @@ The lamp is the signature component. Use the shared dome, ring, and glow tokens;
 - **Don't** introduce a second blue or unrelated status palette.
 - **Don't** use lamps, glow, or monospace as decoration.
 - **Don't** round working surfaces into generic soft SaaS cards.
+- **Don't** leave PatternFly radius or glass tokens at library defaults.
 - **Don't** add one-off shadows, spacing values, or hard-coded theme colors when a token exists.
 - **Don't** place new non-chat features on the eager load path without updating and justifying the weight budget.

@@ -55,6 +55,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `subscribe`) on the usage line. Bare `chat` is still `chat rooms`.
 - `clanker config --help` names `dump` on the usage line. Bare `config` is
   still a dump.
+- Web UI PatternFly radius and glass tokens follow the cabinet 2–4px plate
+  scale instead of PatternFly's 16px/24px cards and blur. Engraved labels
+  share `--track-label`; titles are untracked.
 
 ## [0.2.1] - 2026-08-31
 
