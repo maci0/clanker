@@ -41,6 +41,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Process-global DAP session and background-job tables are released at
   exit, so a debug-tool run that timed out no longer leaves a hash-map
   allocation in the DebugAllocator leak report.
+- `clanker doctor` no longer treats a backup snapshot named with an impossible
+  calendar date (31 April, 29 February in a non-leap year) as the newest
+  snapshot. Those names used to overflow into a later real day and win the
+  lexicographic newest-name scan.
+- The Runs list labels a run "yesterday" on calendar day, not after 24 wall
+  hours. The morning after a spring-forward a Sunday run was still "23 hours
+  ago".
 
 ### Changed
 

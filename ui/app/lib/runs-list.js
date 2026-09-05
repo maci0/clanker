@@ -63,8 +63,12 @@ export function fmtWhen(startedAt, now) {
   const ms = now - startedAt;
   if (ms < 60000) return RELATIVE.format(0, "second");
   if (ms < 3600000) return RELATIVE.format(-Math.floor(ms / 60000), "minute");
-  if (ms < 86400000) return RELATIVE.format(-Math.floor(ms / 3600000), "hour");
-  if (calendarDaysAgo(startedAt, now) === 1) return RELATIVE.format(-1, "day");
+  // Calendar days, not 24-hour blocks: after a spring-forward the previous
+  // local day is 23 hours, so a Sunday-midnight run viewed at Monday 00:30
+  // is 23.5h old and still yesterday. Same-day hours stay hours.
+  const days = calendarDaysAgo(startedAt, now);
+  if (days === 0) return RELATIVE.format(-Math.floor(ms / 3600000), "hour");
+  if (days === 1) return RELATIVE.format(-1, "day");
   return dayStamp(startedAt, false);
 }
 

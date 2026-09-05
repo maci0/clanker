@@ -24,6 +24,11 @@ const oauth_store = @import("llm/oauth_store.zig");
 /// main checkout. Reading the names from the module that creates the links is
 /// what keeps the assertion here from drifting away from the linking there.
 const worktree = @import("improve/worktree.zig");
+/// Snapshot stamps are UTC civil dates. The conversion lives in one place
+/// (`schedule_cron.zig`); a second Hinnant copy here used to accept 31 April
+/// and 29 February in a non-leap year, which then overflowed into a later
+/// real day and won the newest-name scan.
+const cron = @import("schedule_cron");
 const build_options = @import("build_options");
 const plat_os: []const u8 = switch (@import("builtin").os.tag) {
     .linux => "linux",
@@ -169,19 +174,10 @@ fn isSnapshotShape(name: []const u8) bool {
     return true;
 }
 
-/// Days since 1970-01-01 for a civil date (Howard Hinnant's algorithm). Only
-/// ever fed dates a snapshot name already claimed were real.
-fn daysFromCivil(y: i64, m: i64, d: i64) i64 {
-    const yy = if (m <= 2) y - 1 else y;
-    const era = @divFloor(yy, 400);
-    const yoe = yy - era * 400;
-    const mp = @mod(m + 9, 12);
-    const doy = @divFloor(153 * mp + 2, 5) + d - 1;
-    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
-    return era * 146097 + doe - 719468;
-}
-
 /// A snapshot name to unix seconds, or null when the date is not real.
+/// Field ranges (month 13, hour 25) are not enough: Hinnant's civil-from-days
+/// overflows 31 April into 1 May and 29 February of a non-leap year into
+/// 1 March, which would then sort as a later, "newer" snapshot.
 fn snapshotEpoch(name: []const u8) ?i64 {
     if (name.len != 16) return null;
     if (name[8] != 'T' or name[15] != 'Z') return null;
@@ -203,7 +199,23 @@ fn snapshotEpoch(name: []const u8) ?i64 {
     const second = p.digits(name[13..15]) orelse return null;
     if (month < 1 or month > 12 or day < 1 or day > 31) return null;
     if (hour > 23 or minute > 59 or second > 59) return null;
-    return daysFromCivil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second;
+    // Four name digits fit i32; the range checks above fit u8.
+    const epoch = cron.epochFromCivil(
+        @intCast(year),
+        @intCast(month),
+        @intCast(day),
+        @intCast(hour),
+        @intCast(minute),
+        @intCast(second),
+    );
+    const back = cron.civilFromEpoch(epoch);
+    if (@as(i64, back.year) != year or
+        @as(i64, back.month) != month or
+        @as(i64, back.day) != day or
+        @as(i64, back.hour) != hour or
+        @as(i64, back.minute) != minute or
+        @as(i64, back.second) != second) return null;
+    return epoch;
 }
 
 /// The inverse of `snapshotEpoch`: unix seconds to the UTC stamp a snapshot
@@ -212,37 +224,21 @@ fn snapshotEpoch(name: []const u8) ?i64 {
 /// fixed-buffer writer of this std refuses an exactly-full final write
 /// (NoSpaceLeft at 16 bytes into a 16-byte buffer).
 fn writeStamp(buf: []u8, epoch: i64) []const u8 {
-    const days = @divFloor(epoch, 86400);
-    var secs = @mod(epoch, 86400);
-    // Civil-from-days (Hinnant).
-    const z = days + 719468;
-    const era = @divFloor(z, 146097);
-    const doe = z - era * 146097;
-    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), 365);
-    var y = yoe + era * 400;
-    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
-    const mp = @divFloor(5 * doy + 2, 153);
-    const d = doy - @divFloor(153 * mp + 2, 5) + 1;
-    const m = if (mp < 10) mp + 3 else mp - 9;
-    if (m <= 2) y += 1;
-    const h = @divFloor(secs, 3600);
-    secs -= h * 3600;
-    const mi = @divFloor(secs, 60);
-    const s = secs - mi * 60;
+    const c = cron.civilFromEpoch(epoch);
     const put2 = struct {
         fn f(out: []u8, v: i64) void {
             out[0] = '0' + @as(u8, @intCast(@divTrunc(v, 10)));
             out[1] = '0' + @as(u8, @intCast(@mod(v, 10)));
         }
     }.f;
-    put2(buf[0..2], @divTrunc(y, 100));
-    put2(buf[2..4], @mod(y, 100));
-    put2(buf[4..6], m);
-    put2(buf[6..8], d);
+    put2(buf[0..2], @divTrunc(@as(i64, c.year), 100));
+    put2(buf[2..4], @mod(@as(i64, c.year), 100));
+    put2(buf[4..6], c.month);
+    put2(buf[6..8], c.day);
     buf[8] = 'T';
-    put2(buf[9..11], h);
-    put2(buf[11..13], mi);
-    put2(buf[13..15], s);
+    put2(buf[9..11], c.hour);
+    put2(buf[11..13], c.minute);
+    put2(buf[13..15], c.second);
     buf[15] = 'Z';
     return buf[0..16];
 }
@@ -966,6 +962,9 @@ test "snapshot stamps convert to and from unix seconds" {
     try std.testing.expectEqualStrings("19700101T000000Z", writeStamp(&buf, 0));
     try std.testing.expectEqualStrings("20010909T014640Z", writeStamp(&buf, 1_000_000_000));
     try std.testing.expectEqualStrings("20231114T221320Z", writeStamp(&buf, 1_700_000_000));
+    // A leap day round-trips rather than landing on 1 March.
+    const leap = snapshotEpoch("20240229T000000Z").?;
+    try std.testing.expectEqualStrings("20240229T000000Z", writeStamp(&buf, leap));
 }
 
 test "snapshot stamps reject impossible dates and foreign names" {
@@ -979,6 +978,17 @@ test "snapshot stamps reject impossible dates and foreign names" {
     // shape check must not mistake its tail for a timestamp.
     try std.testing.expect(!isSnapshotName(".not-a-snapshot"));
     try std.testing.expect(isSnapshotName("20260826T095913Z"));
+    // Civil overflow, not just field range: these used to convert into a
+    // later real day (1 March, 1 May) and win the newest-name scan.
+    try std.testing.expect(snapshotEpoch("20250229T000000Z") == null); // 2025 is not a leap year
+    try std.testing.expect(snapshotEpoch("21000229T000000Z") == null); // 2100 is not (century rule)
+    try std.testing.expect(snapshotEpoch("20250431T000000Z") == null); // April has 30 days
+    try std.testing.expect(snapshotEpoch("20260231T000000Z") == null); // February has 28
+    try std.testing.expect(!isSnapshotName("20250229T000000Z"));
+    // Real leap days still count, including the 400-year exception.
+    try std.testing.expect(snapshotEpoch("20240229T000000Z") != null);
+    try std.testing.expect(snapshotEpoch("20000229T120000Z") != null);
+    try std.testing.expect(isSnapshotName("20240229T000000Z"));
 }
 
 // The layout scripts/backup-state.sh maintains: `state` links into an

@@ -24,8 +24,8 @@ const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 // Local-calendar yesterday at midnight: the day-bucket boundaries under test
 // are local midnights, so a fixed "30h before NOW" instant lands on either
 // side of yesterday depending on the machine's timezone (CI pins TZ=UTC).
-// Yesterday 00:00 local is on yesterday's calendar day and ≥24h before NOW in
-// every timezone, which is exactly the "yesterday" contract both labels use.
+// Yesterday 00:00 local is on yesterday's calendar day, which is the
+// "yesterday" contract both labels use — not a 24-hour elapsed cutoff.
 const yesterdayMidnight = new Date(NOW);
 yesterdayMidnight.setDate(yesterdayMidnight.getDate() - 1);
 yesterdayMidnight.setHours(0, 0, 0, 0);
@@ -59,6 +59,23 @@ test("fmtWhen says how long ago, then falls back to a date", function () {
   assert.match(fmtWhen(NOW - 6 * 86400 * 1000, NOW), /\d/);
   // An id with no timestamp gets no invented one.
   assert.equal(fmtWhen(0, NOW), "");
+});
+
+test("fmtWhen says yesterday on calendar day, not after 24 wall hours", function () {
+  // Spring-forward shrinks the previous local day to 23 hours, so Monday
+  // 00:30 is only 23.5h after Sunday 00:00. A 86400000 ms cutoff would still
+  // emit "23 hours ago". Derive both instants from the local calendar so the
+  // assertion holds in every TZ, including CI's UTC.
+  const todayTen = new Date(NOW);
+  todayTen.setHours(10, 0, 0, 0);
+  const yesterdayNoon = new Date(todayTen);
+  yesterdayNoon.setDate(yesterdayNoon.getDate() - 1);
+  yesterdayNoon.setHours(12, 0, 0, 0);
+  assert.equal(fmtWhen(yesterdayNoon.getTime(), todayTen.getTime()), RELATIVE.format(-1, "day"));
+  // Same calendar day stays an hour count, even many hours later.
+  const todayTwentyTwo = new Date(todayTen);
+  todayTwentyTwo.setHours(22, 0, 0, 0);
+  assert.equal(fmtWhen(todayTen.getTime(), todayTwentyTwo.getTime()), RELATIVE.format(-12, "hour"));
 });
 
 test("dayBucket names today and yesterday before it names a date", function () {
