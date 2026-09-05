@@ -373,7 +373,7 @@ pub const Agent = struct {
     current_messages: ?*std.ArrayList(types.Message) = null,
     /// When set, tool calls run strictly sequentially (no worker threads).
     /// Used by sub-agent runs to avoid spawning threads from within threads.
-    no_parallel_tools: bool = false,
+    serial_tools: bool = false,
     /// Optional hook fired right before a batch of tool calls executes (e.g.
     /// the REPL prints a "running: ..." status line to cover the otherwise
     /// silent gap between tool dispatch and the next streamed token).
@@ -2314,37 +2314,37 @@ pub const Agent = struct {
 
     fn sandboxFor(self: *Agent, tool: *const registry.Tool) !host.Sandbox {
         var sb = try host.sandboxFor(self.ctx.gpa, self.ctx.io, self.arena, self.ctx.environ_map, self.cfg, tool, self.ctx);
-        // Agent-only extras: nested sub-agents and the state dir are meaningless
-        // for the CLI and MCP callers of the shared builder.
-        sb.subagent_runner = self.subagent_runner;
-        sb.private_todos = self.private_todos;
-        sb.ask_fn = self.ask_fn;
-        sb.parent_ask = self.parent_ask;
-        sb.tool_policy = self.toolPolicy();
-        // Offer this agent as an answerer only where a sub-agent could exist
-        // to ask: ckSubagent hands own_ask down as the nested run's
-        // parent_ask.
-        if (self.subagent_runner != null) sb.own_ask = .{ .ctx = self, .call = &parentAskTrampoline };
-        sb.parent_task = self.current_task;
-        sb.parent_run_id = self.current_run_id;
-        sb.state_dir = self.cfg.agent.state_dir;
-        sb.session_id = if (self.session_id.len > 0) self.session_id else "default";
-        // Do not instantiate the process-global registry for every ordinary
-        // WASM tool. ck_kernel/ck_dap resolve it on demand; most runs never
-        // touch either privileged channel.
-        sb.subprocs = self.subprocs;
-        // ck_tool support: let chain (tool_call:true) resolve names against the live registry.
-        if (sb.tool_call) {
-            sb.tool_registry = self.reg;
-        }
+        applySandboxExtras(&sb, self.snapshotSandboxExtras());
         // A tool that named no provider of its own follows the agent, which may
         // itself be running under a --provider override rather than the default.
+        // Parallel workers never run llm tools, so this stays on the sequential
+        // path only.
         if (sb.llm) |*access| {
             if (json_util.pluginStr(tool.config, "provider") == null and json_util.pluginStr(tool.config, "model") == null) {
                 access.provider = self.provider;
             }
         }
         return sb;
+    }
+
+    /// Agent-only sandbox fields host.sandboxFor does not know about. One
+    /// snapshot, applied by both the sequential path and ToolWorker, so a
+    /// new extra cannot land on one path and silently miss the other.
+    fn snapshotSandboxExtras(self: *Agent) SandboxExtras {
+        return .{
+            .subagent_runner = self.subagent_runner,
+            .private_todos = self.private_todos,
+            .ask_fn = self.ask_fn,
+            .parent_ask = self.parent_ask,
+            .tool_policy = self.toolPolicy(),
+            .own_ask = if (self.subagent_runner != null) .{ .ctx = self, .call = &parentAskTrampoline } else null,
+            .parent_task = self.current_task,
+            .parent_run_id = self.current_run_id,
+            .state_dir = self.cfg.agent.state_dir,
+            .session_id = if (self.session_id.len > 0) self.session_id else "default",
+            .subprocs = self.subprocs,
+            .tool_registry = self.reg,
+        };
     }
 
     /// Passes `payload` through every enabled transform plugin registered for
@@ -2547,7 +2547,7 @@ pub const Agent = struct {
             // redundant recompilation on that path. Every tool module is
             // pre-compiled unconditionally (see precompileModule): even
             // parallel-eligible tools benefit when the same tool name appears
-            // in a later iteration's batch, or when no_parallel_tools flips
+            // in a later iteration's batch, or when serial_tools flips
             // mid-session, and the wasm bytes are warmed for the worker path
             // whether or not the module was already compiled.
             self.precompileModule(tc.name, tool);
@@ -3242,7 +3242,7 @@ pub const Agent = struct {
             // shared transform module cache is not thread-safe) and their
             // after-transforms run on the main thread after the join.
             if (tool.llm or tool.sequential or tool.live_publish or !tool.enabled) continue;
-            if (self.no_parallel_tools) continue;
+            if (self.serial_tools) continue;
             const wasm_bytes = self.wasmBytes(tool) catch |err| {
                 log.log(.error_, "tool '{s}': cannot load {s}: {s}", .{ tc.name, tool.wasm, @errorName(err) });
                 results[i] = try toolErrorJson(self.arena, "tool wasm missing: {s} ({s})", .{ tc.name, @errorName(err) });
@@ -3269,7 +3269,7 @@ pub const Agent = struct {
                 .tool = p.tool,
                 .arguments = p.eff_args,
                 .wasm_bytes = p.wasm_bytes,
-                .subagent_runner = self.subagent_runner,
+                .extras = self.snapshotSandboxExtras(),
             };
             const thread = std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker}) catch |err| {
                 self.ctx.gpa.destroy(worker);
@@ -3327,9 +3327,9 @@ pub const Agent = struct {
             // which a deep tool call blows outright, a segfault, not a
             // catchable trap. A worker gets the explicit reservation. When
             // this agent is *already* inside such a worker (a sub-agent, with
-            // no_parallel_tools set) the stack is big enough, so run inline
+            // serial_tools set) the stack is big enough, so run inline
             // and do not nest threads.
-            results[i] = if (self.no_parallel_tools)
+            results[i] = if (self.serial_tools)
                 try self.executeTool(tc)
             else
                 try self.executeToolOnWorker(tc);
@@ -3382,8 +3382,7 @@ pub const Agent = struct {
             .tool = tool,
             .arguments = eff_args,
             .wasm_bytes = wasm_bytes,
-            .subagent_runner = self.subagent_runner,
-            .tool_policy = self.toolPolicy(),
+            .extras = self.snapshotSandboxExtras(),
         };
         const thread = try std.Thread.spawn(.{ .stack_size = parallel_tool_stack_bytes }, ToolWorker.run, .{worker});
         thread.join();
@@ -3805,14 +3804,46 @@ const WorkerHandle = struct {
     wasm_bytes: []const u8,
 };
 
+/// Agent-only fields copied onto a Sandbox after `host.sandboxFor`. Sequential
+/// `Agent.sandboxFor` and `ToolWorker.sandboxFor` both apply this snapshot;
+/// listing a field here once is what stops the worker path from dropping it.
+const SandboxExtras = struct {
+    subagent_runner: ?host.SubagentRunner = null,
+    private_todos: ?*private_todos.List = null,
+    ask_fn: ?host.AskFn = null,
+    parent_ask: ?host.ParentAsk = null,
+    tool_policy: ?host.ToolPolicy = null,
+    own_ask: ?host.ParentAsk = null,
+    parent_task: []const u8 = "",
+    parent_run_id: []const u8 = "",
+    state_dir: []const u8 = "",
+    session_id: []const u8 = "",
+    subprocs: ?*@import("subprocess.zig").Registry = null,
+    tool_registry: ?*const registry.Registry = null,
+};
+
+fn applySandboxExtras(sb: *host.Sandbox, e: SandboxExtras) void {
+    sb.subagent_runner = e.subagent_runner;
+    sb.private_todos = e.private_todos;
+    sb.ask_fn = e.ask_fn;
+    sb.parent_ask = e.parent_ask;
+    sb.tool_policy = e.tool_policy;
+    sb.own_ask = e.own_ask;
+    sb.parent_task = e.parent_task;
+    sb.parent_run_id = e.parent_run_id;
+    sb.state_dir = e.state_dir;
+    sb.session_id = e.session_id;
+    sb.subprocs = e.subprocs;
+    if (sb.tool_call) sb.tool_registry = e.tool_registry;
+}
+
 const ToolWorker = struct {
     ctx: *client.Ctx,
     cfg: *const config.Config,
     tool: *const registry.Tool,
     arguments: []const u8,
     wasm_bytes: []const u8,
-    subagent_runner: ?host.SubagentRunner = null,
-    tool_policy: ?host.ToolPolicy = null,
+    extras: SandboxExtras = .{},
     out: ?[]u8 = null,
     err: ?anyerror = null,
 
@@ -3856,8 +3887,8 @@ const ToolWorker = struct {
     }
 
     /// Builds the worker's sandbox by delegating the whole descriptor policy
-    /// to `host.sandboxFor`, the documented single source of truth, then adds
-    /// the agent-level extras sandboxFor does not know about. A hand-rolled
+    /// to `host.sandboxFor`, the documented single source of truth, then applies
+    /// the same `SandboxExtras` snapshot the sequential path uses. A hand-rolled
     /// Sandbox literal here drifted four times — `exec_allow`/`env_allow`,
     /// `tool_self_name`, and `session` — each time silently denying a
     /// parallel-run tool a capability (or silently relaxing a restriction) the
@@ -3868,9 +3899,7 @@ const ToolWorker = struct {
     /// llm_ctx stays the caller's.
     fn sandboxFor(self: *const ToolWorker, arena: std.mem.Allocator, io: std.Io) !host.Sandbox {
         var sb = try host.sandboxFor(self.ctx.gpa, io, arena, self.ctx.environ_map, self.cfg, self.tool, self.ctx);
-        sb.subagent_runner = self.subagent_runner;
-        sb.state_dir = self.cfg.agent.state_dir;
-        sb.tool_policy = self.tool_policy;
+        applySandboxExtras(&sb, self.extras);
         return sb;
     }
 };
@@ -4348,13 +4377,20 @@ test "worker sandbox delegates the descriptor's session grant through host.sandb
         .tool = &tool,
         .arguments = "",
         .wasm_bytes = "",
+        .extras = .{
+            .state_dir = cfg.agent.state_dir,
+            .session_id = "sess-1",
+        },
     };
 
     const sb = try worker.sandboxFor(arena, io);
     try std.testing.expect(sb.session);
-    // The named channels and the state dir survive the delegation too.
+    // The named channels, the state dir, and the conversation id survive
+    // the extras snapshot too. session_id used to stay empty on the worker
+    // path, so a parallel kernel/debug/jobs call landed under "default".
     try std.testing.expectEqualStrings(tool.name, sb.tool_self_name);
     try std.testing.expectEqualStrings(cfg.agent.state_dir, sb.state_dir);
+    try std.testing.expectEqualStrings("sess-1", sb.session_id);
 
     // A tool that did not declare the grant stays closed on the worker too.
     tool.session = false;

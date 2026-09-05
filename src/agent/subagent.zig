@@ -86,7 +86,7 @@ pub fn runNested(
     a.subagent_runner = null;
     // Run tools sequentially: the nested run happens on a tool-call thread
     // already, so spawning worker threads from within would explode threads.
-    a.no_parallel_tools = true;
+    a.serial_tools = true;
     // The parent as answerer: ask_user {"parent": true} in this run reaches
     // the agent that spawned it (see host.ParentAsk for the concurrency
     // story).

@@ -26,6 +26,10 @@ const writeSanitized = sanitize.writeSanitized;
 /// buffer-sized pieces rather than truncated, and the fence-line tests size
 /// their fixtures off this cap so they track the buffer if it ever moves.
 const fence_line_cap = 4096;
+/// Scratch for highlighting one fenced line. A fence_line_cap-byte line
+/// produces at most ~200 tokens (~24 bytes each); twice the line cap covers
+/// that plus ArrayList header without going to the page allocator per line.
+const fence_highlight_scratch_bytes = fence_line_cap * 2;
 
 /// Renders markdown (bold, italic, inline code, fenced blocks, "- " bullets)
 /// straight into ANSI as content streams in, one delta at a time. A marker
@@ -128,7 +132,7 @@ pub const MdStream = struct {
         // A fence_line_cap-byte line produces at most ~200 tokens (24 bytes each).
         // A stack-backed fixed buffer avoids the mmap/munmap syscalls that
         // page_allocator would do on every line of every fenced block.
-        var fba_buf: [8192]u8 = undefined;
+        var fba_buf: [fence_highlight_scratch_bytes]u8 = undefined;
         var fba = std.heap.FixedBufferAllocator.init(&fba_buf);
         var toks: std.ArrayList(syntax.Token) = .empty;
         defer toks.deinit(fba.allocator());

@@ -23,6 +23,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   with an unlimited read) and then fail to trim, so the file kept growing.
 - Session search no longer opens every conversation database when the FTS
   index already named the matching ids.
+- Parallel tool workers now receive the same agent sandbox extras as the
+  sequential path, including the conversation `session_id`. A parallel
+  kernel, debug, or jobs call used to land under `"default"` instead of the
+  run's session.
 
 ## [0.2.1] - 2026-08-31
 

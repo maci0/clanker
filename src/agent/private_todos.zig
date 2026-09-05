@@ -38,8 +38,9 @@ pub const Item = struct {
 /// One run's list. Created by Agent.run or subagent.runNested on their arena
 /// and handed to every tool sandbox of that run via Sandbox.private_todos;
 /// no other run ever sees the pointer. Unsynchronized on purpose: runs
-/// execute tools strictly sequentially (Agent.no_parallel_tools), so two
-/// tool calls of the same run never touch the list concurrently.
+/// execute tools strictly sequentially (Agent.serial_tools on nested runs;
+/// todo_* tools are sequential on every run), so two tool calls of the
+/// same run never touch the list concurrently.
 pub const List = struct {
     alloc: std.mem.Allocator,
     items: std.ArrayList(Item) = .empty,

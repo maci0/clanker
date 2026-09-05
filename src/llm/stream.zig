@@ -16,6 +16,10 @@
 
 const std = @import("std");
 
+/// Stack buffer for one `--stream` usage line. A name long enough to overflow
+/// is not worth a line.
+const usage_line_buf_bytes: usize = 1024;
+
 /// Whether `--stream` was given. Set once during argument parsing, read from
 /// the model call path; a plain global because the alternative is threading a
 /// display concern through every call site between the two.
@@ -40,7 +44,7 @@ pub const Usage = struct {
 /// the first time a model or provider name contains a quote.
 pub fn emitUsage(io: std.Io, u: Usage) void {
     if (!enabled) return;
-    var buf: [1024]u8 = undefined;
+    var buf: [usage_line_buf_bytes]u8 = undefined;
     const line = render(&buf, u) catch return; // a name long enough to overflow is not worth a line
     std.Io.File.stdout().writeStreamingAll(io, line) catch {};
 }
@@ -86,7 +90,7 @@ test "emitUsage stays silent unless enabled" {
 }
 
 test "a usage line is one object on one line" {
-    var buf: [1024]u8 = undefined;
+    var buf: [usage_line_buf_bytes]u8 = undefined;
     const line = try render(&buf, .{
         // A quote in a name must not break the object, which is the whole
         // reason this goes through Stringify rather than a print.

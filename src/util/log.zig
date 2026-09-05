@@ -71,6 +71,10 @@ var sink_storage: Sink = undefined;
 /// observe a torn pair.
 var sink_ptr = std.atomic.Value(usize).init(0);
 
+/// One log record's stack buffer. A longer message is truncated to this and
+/// still written as a single newline-terminated line.
+const record_buf_bytes: usize = 4096;
+
 pub fn setSink(s: ?Sink) void {
     if (s) |v| {
         sink_storage = v;
@@ -121,7 +125,7 @@ pub fn log(level: Level, comptime fmt: []const u8, args: anytype) void {
     // One write per line: tools run on worker threads and the model's tokens
     // stream to stdout at the same time, so a line split across several prints
     // interleaves with them mid-word.
-    var buf: [4096]u8 = undefined;
+    var buf: [record_buf_bytes]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.print("[{s}] ts_ms={d}", .{ prefix, unixMilliseconds() }) catch {};
     if (context.len > 0) w.print(" request_id={s}", .{context}) catch {};
@@ -177,7 +181,7 @@ pub fn logPanic(msg: []const u8) void {
 /// bytes off a pipe and prove they came from the raw write rather than from
 /// `std.Io`.
 pub fn writePanicLine(fd: std.posix.fd_t, msg: []const u8) void {
-    var buf: [4096]u8 = undefined;
+    var buf: [record_buf_bytes]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     w.print("[ERROR] ts_ms={d}", .{unixMilliseconds()}) catch {};
     if (context.len > 0) w.print(" request_id={s}", .{context}) catch {};
@@ -208,7 +212,7 @@ test "writePanicLine reaches the fd without going through std.Io" {
     writePanicLine(fds[1], "reached unreachable code");
     // Closed before the read so the read cannot block waiting for more.
     _ = std.c.close(fds[1]);
-    var buf: [4096]u8 = undefined;
+    var buf: [record_buf_bytes]u8 = undefined;
     const n = try std.posix.read(fds[0], &buf);
     const got = buf[0..n];
     try std.testing.expect(std.mem.find(u8, got, "[ERROR] ts_ms=") != null);
@@ -222,7 +226,7 @@ test "writePanicLine keeps a panic message on one physical line" {
     defer _ = std.c.close(fds[0]);
     writePanicLine(fds[1], "first\nsecond\rthird");
     _ = std.c.close(fds[1]);
-    var buf: [4096]u8 = undefined;
+    var buf: [record_buf_bytes]u8 = undefined;
     const n = try std.posix.read(fds[0], &buf);
     const got = buf[0..n];
     try std.testing.expect(std.mem.find(u8, got, "panic: first second third") != null);

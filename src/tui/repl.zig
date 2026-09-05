@@ -3317,7 +3317,7 @@ const Model = struct {
             0;
         return .{
             .turns = self.session_turns,
-            .steps = self.session_steps +| bridge_live_steps +| if (live) @as(u64, 1) else 0,
+            .steps = self.session_steps +| bridge_live_steps +| @as(u64, @intFromBool(live)),
             .llm_ms = self.session_llm_ms +| (if (live) live_ms -| bridge_live_tool_ms else 0),
             .tool_ms = self.session_tool_ms +| bridge_live_tool_ms,
             .ttft_ms_total = self.session_ttft_ms +| bridge_live_ttft_total,

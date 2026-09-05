@@ -28,6 +28,13 @@ pub const Step = enum {
     done,
 };
 
+/// sqlite3_errmsg / sqlite3_exec err_msg are NUL-terminated C strings.
+/// translate-c types them `[*c]const u8` (nullable); after a null check
+/// the same address is a sentinel-terminated string.
+fn cSpan(p: [*c]const u8) []const u8 {
+    return std.mem.span(@as([*:0]const u8, @ptrCast(p)));
+}
+
 pub const Connection = struct {
     db: ?*c.sqlite3 = null,
     /// Human-readable diagnostics from the last failure, for the store to
@@ -54,7 +61,7 @@ pub const Connection = struct {
             if (out) |db| {
                 // Copy before close: the message lives in the handle being
                 // freed on the next line.
-                self.setErr(std.mem.span(@as([*:0]const u8, @ptrCast(c.sqlite3_errmsg(db)))));
+                self.setErr(cSpan(c.sqlite3_errmsg(db)));
                 _ = c.sqlite3_close_v2(db);
             } else {
                 self.last_error = "sqlite3_open_v2 returned no handle";
@@ -85,6 +92,8 @@ pub const Connection = struct {
     pub fn exec(self: *Connection, sql: [:0]const u8) Error!void {
         const db = self.db orelse return Error.NotOpen;
         var err_msg: [*c]u8 = null;
+        // sqlite3_free takes `?*anyopaque`; err_msg is the same heap pointer
+        // typed as `[*c]u8` by translate-c.
         defer if (err_msg != null) c.sqlite3_free(@ptrCast(err_msg));
         const rc = c.sqlite3_exec(db, sql.ptr, null, null, &err_msg);
         if (rc != c.SQLITE_OK) {
@@ -95,7 +104,7 @@ pub const Connection = struct {
             // the migration ALTER re-adds — was matching against freed
             // memory and turning the expected "duplicate column name" into
             // a fatal open error.
-            if (err_msg != null) self.setErr(std.mem.span(@as([*:0]const u8, @ptrCast(err_msg)))) else self.last_error = "sqlite3_exec failed";
+            if (err_msg != null) self.setErr(cSpan(err_msg)) else self.last_error = "sqlite3_exec failed";
             return Error.ExecFailed;
         }
     }
@@ -108,7 +117,7 @@ pub const Connection = struct {
         if (rc != c.SQLITE_OK) {
             // Same copy as exec: sqlite3_errmsg's buffer is only good until
             // the next call on this handle.
-            self.setErr(std.mem.span(@as([*:0]const u8, @ptrCast(c.sqlite3_errmsg(db)))));
+            self.setErr(cSpan(c.sqlite3_errmsg(db)));
             return Error.PrepareFailed;
         }
         return .{ .stmt = out };
@@ -176,6 +185,7 @@ pub const Statement = struct {
         const ptr = c.sqlite3_column_text(s, index);
         if (ptr == null) return null;
         const len = c.sqlite3_column_bytes(s, index);
+        // Non-null after the check; length is sqlite3_column_bytes, not a sentinel.
         return @as([*]const u8, @ptrCast(ptr))[0..@intCast(len)];
     }
 

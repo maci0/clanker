@@ -218,7 +218,7 @@ pub fn saveSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator,
         try ins.bindText(3, try encodeImages(arena, m.images));
         try ins.bindText(4, try encodeToolCalls(arena, m.tool_calls));
         try ins.bindText(5, try utf8.sanitize(arena, m.tool_call_id orelse ""));
-        try ins.bindInt(6, if (m.steered) 1 else 0);
+        try ins.bindInt(6, @intFromBool(m.steered));
         _ = try ins.step();
         // The listing's per-session byte total (LENGTH of the stored
         // content), computed from what is actually bound so the cached
