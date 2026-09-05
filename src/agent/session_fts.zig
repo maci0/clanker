@@ -183,6 +183,13 @@ pub fn removeSession(arena: std.mem.Allocator, session_id: []const u8) void {
     tx.commit() catch return;
 }
 
+/// Safety bound on one FTS candidate page. Without it a common substring
+/// matching every conversation allocates an id per session and the caller
+/// then opens that many databases. Newest-first order is applied after this
+/// list is loaded (the index does not store `updated`), so this is a ceiling,
+/// not a "first N newest" page.
+const candidate_cap: usize = 4096;
+
 /// Session ids whose content matches `query` (3+ chars, substring semantics
 /// via the trigram tokenizer). Returns null when the index is unavailable,
 /// signalling the caller to fall back to the linear scan.
@@ -194,11 +201,12 @@ pub fn candidates(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, 
     defer conn.close();
     var quoted: std.ArrayList(u8) = .empty;
     quotePhrase(&quoted, arena, query) catch return null;
-    var stmt = conn.prepare("SELECT DISTINCT session_id FROM session_fts WHERE session_fts MATCH ?1;") catch return null;
+    var stmt = conn.prepare("SELECT DISTINCT session_id FROM session_fts WHERE session_fts MATCH ?1 LIMIT ?2;") catch return null;
     defer stmt.finalize();
     stmt.bindText(1, quoted.items) catch return null;
+    stmt.bindInt(2, @intCast(candidate_cap)) catch return null;
     var out: std.ArrayList([]const u8) = .empty;
-    while (true) {
+    while (out.items.len < candidate_cap) {
         if ((stmt.step() catch return null) != .row) break;
         out.append(arena, arena.dupe(u8, stmt.columnText(0) orelse "") catch return null) catch return null;
     }

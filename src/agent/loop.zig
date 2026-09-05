@@ -24,6 +24,7 @@ const log = @import("../util/log.zig");
 const json_util = @import("../util/json.zig");
 const tool_out = @import("../util/tool_out.zig");
 const utf8 = @import("../util/utf8.zig");
+const file_tail = @import("../util/file_tail.zig");
 const advisor = @import("advisor.zig");
 const prune = @import("prune.zig");
 const spill_mod = @import("spill.zig");
@@ -1573,30 +1574,15 @@ pub const Agent = struct {
     /// Rewrites state/reasoning.jsonl keeping only the newest
     /// `reasoning_keep_lines` lines.
     fn trimReasoningLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator) !void {
-        // A limit reached or exceeded answers StreamTooLong, so size the read
-        // from the stat: the kept tail can legally outgrow any fixed cap
-        // (2,000 lines of ~20 KB escaped reasoning clears 16 MiB), and a cap
-        // the file has grown past turns every trim into a failure and the log
-        // grows without bound — the cap's own failure mode.
-        const st = base.statFile(io, reasoning_path, .{}) catch |err| return err;
-        const raw = try base.readFileAlloc(io, reasoning_path, gpa, .limited(st.size + 1));
+        // A failed earlier trim can leave the file far past the cap. Reading
+        // from the end keeps the newest lines in a bounded buffer; sizing the
+        // read from `st.size` allocated without bound and then failed, so the
+        // log kept growing.
+        const raw = try file_tail.readTail(base, io, gpa, reasoning_path, reasoning_max_log_bytes);
         defer gpa.free(raw);
-        var lines: std.ArrayList([]const u8) = .empty;
-        defer lines.deinit(gpa);
-        var it = std.mem.splitScalar(u8, raw, '\n');
-        while (it.next()) |ln| {
-            if (ln.len == 0) continue;
-            try lines.append(gpa, ln);
-        }
-        const keep = if (lines.items.len > reasoning_keep_lines) lines.items.len - reasoning_keep_lines else 0;
-        var out: std.ArrayList(u8) = .empty;
-        defer out.deinit(gpa);
-        try out.ensureTotalCapacity(gpa, raw.len);
-        for (lines.items[keep..]) |ln| {
-            try out.appendSlice(gpa, ln);
-            try out.append(gpa, '\n');
-        }
-        try base.writeFile(io, .{ .sub_path = reasoning_path, .data = out.items });
+        const out = try file_tail.joinNewestLines(gpa, raw, reasoning_keep_lines);
+        defer gpa.free(out);
+        try base.writeFile(io, .{ .sub_path = reasoning_path, .data = out });
     }
 
     /// Estimates the total token count across all messages in the conversation.

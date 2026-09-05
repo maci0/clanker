@@ -711,12 +711,16 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const 
         if (sessionMetaFromDb(arena, sessions_dir, id)) |meta| try out.append(arena, meta);
     }
 
-    std.mem.sort(SessionMeta, out.items, {}, struct {
+    sortNewestFirst(out.items);
+    return out.toOwnedSlice(arena);
+}
+
+fn sortNewestFirst(metas: []SessionMeta) void {
+    std.mem.sort(SessionMeta, metas, {}, struct {
         fn lt(_: void, a: SessionMeta, b: SessionMeta) bool {
             return a.updated > b.updated;
         }
     }.lt);
-    return out.toOwnedSlice(arena);
 }
 
 pub const SessionMeta = struct {
@@ -833,28 +837,25 @@ pub fn searchSessions(
     max_hits: usize,
 ) ![]SearchHit {
     var out: std.ArrayList(SearchHit) = .empty;
-    const metas = try listSessions(io, arena, sessions_dir);
     // Fast path: the FTS index names candidate sessions (substring
     // semantics via the trigram tokenizer); each candidate is then scanned
-    // exactly for the turn/role/snippet the caller expects. No index ->
+    // exactly for the turn/role/snippet the caller expects. Opening every
+    // conversation database just to throw most of them away was an N+1 on
+    // the listing: load meta only for the ids the index named. No index ->
     // full linear scan.
-    const fts_ids = session_fts.candidates(io, gpa, arena, query);
-    // Membership test per session against the candidate list; a hash set
-    // keeps this O(1) instead of rescanning the list per session.
-    var indexed: ?std.StringHashMap(void) = null;
-    if (fts_ids) |ids| {
-        var set: std.StringHashMap(void) = .init(arena);
-        for (ids) |cid| try set.put(cid, {});
-        indexed = set;
+    var metas: []SessionMeta = &.{};
+    if (session_fts.candidates(io, gpa, arena, query)) |ids| {
+        var listed: std.ArrayList(SessionMeta) = .empty;
+        for (ids) |id| {
+            if (sessionMetaFromDb(arena, sessions_dir, id)) |meta| try listed.append(arena, meta);
+        }
+        sortNewestFirst(listed.items);
+        metas = listed.items;
+    } else {
+        metas = try listSessions(io, arena, sessions_dir);
     }
     for (metas) |meta| {
         if (out.items.len >= max_hits) break;
-        // Indexed: only candidate sessions are scanned. No index: every
-        // session is scanned (the title is never a pre-filter, a query may
-        // match only inside messages).
-        if (indexed) |*set| {
-            if (!set.contains(meta.id)) continue;
-        }
         var conn = openDb(arena, sessions_dir, meta.id) catch continue;
         defer conn.close();
         var stmt = conn.prepare("SELECT role, content FROM messages ORDER BY seq;") catch continue;

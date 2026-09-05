@@ -17,6 +17,7 @@ const append_line = @import("../util/append_line.zig");
 const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
+const file_tail = @import("../util/file_tail.zig");
 const test_env = @import("../util/test_env.zig");
 
 pub const stat_path = "token_stats.jsonl";
@@ -165,25 +166,15 @@ pub fn append(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
 /// Rewrites the log keeping only the newest lines (used when it hits the cap).
 fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, path: []const u8) !void {
     _ = arena;
-    const raw = try base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + read_slack_bytes));
+    // A failed earlier trim can leave the file far past the cap. Reading from
+    // the end keeps the newest lines in a bounded buffer; a whole-file read
+    // limited to the cap plus slack failed with StreamTooLong on exactly the
+    // file that needed trimming, so the log kept growing.
+    const raw = try file_tail.readTail(base, io, gpa, path, max_log_bytes);
     defer gpa.free(raw);
-    // Keep the last 1000 lines.
-    var lines: std.ArrayList([]const u8) = .empty;
-    defer lines.deinit(gpa);
-    var it = std.mem.splitScalar(u8, raw, '\n');
-    while (it.next()) |ln| {
-        if (ln.len == 0) continue;
-        try lines.append(gpa, ln);
-    }
-    const keep = if (lines.items.len > 1000) lines.items.len - 1000 else 0;
-    var out = std.ArrayList(u8).empty;
-    defer out.deinit(gpa);
-    try out.ensureTotalCapacity(gpa, raw.len);
-    for (lines.items[keep..]) |ln| {
-        try out.appendSlice(gpa, ln);
-        try out.append(gpa, '\n');
-    }
-    try atomic_write.writeFilePerms(io, base, path, out.items, atomic_write.private_file);
+    const out = try file_tail.joinNewestLines(gpa, raw, 1000);
+    defer gpa.free(out);
+    try atomic_write.writeFilePerms(io, base, path, out, atomic_write.private_file);
 }
 
 // -------------------------------------------------------------- aggregation --

@@ -17,6 +17,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   to pin a longer-lived key.
 - `note_write` of a sentence already in `state/learnings.md` returns
   `duplicate` and does not append a second bullet.
+- Trimming `state/autolearn.jsonl`, `state/reasoning.jsonl`, and
+  `state/token_stats.jsonl` reads a bounded tail instead of the whole file.
+  A log that had grown past its cap used to allocate without bound (autolearn
+  with an unlimited read) and then fail to trim, so the file kept growing.
+- Session search no longer opens every conversation database when the FTS
+  index already named the matching ids.
 
 ## [0.2.1] - 2026-08-31
 

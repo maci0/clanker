@@ -20,6 +20,7 @@ const log = @import("../util/log.zig");
 const file_lock = @import("../util/file_lock.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const utf8 = @import("../util/utf8.zig");
+const file_tail = @import("../util/file_tail.zig");
 const test_env = @import("../util/test_env.zig");
 
 const event_path = "state/autolearn.jsonl";
@@ -130,32 +131,16 @@ fn appendLine(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.m
 /// Rewrites the log keeping only the newest `keep_lines` lines.
 fn trimLog(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator) !void {
     _ = arena;
-    // The file can be just over max_log_bytes when the trim is triggered: it
-    // is trimmed the moment it crosses the cap, then one line is appended, so
-    // it never exceeds the cap by more than a single line. Reading with the
-    // same limit as the cap would fail with StreamTooLong on exactly the file
-    // that needs trimming, the trim would silently never run once the log
-    // crossed the cap, and it would keep growing forever. A fixed slack does
-    // not help either: a single oversized detail/tool label can exceed any
-    // budget, so the read is uncapped and the rewrite below brings the file
-    // back under max_log_bytes.
-    const raw = try base.readFileAlloc(io, event_path, gpa, .unlimited);
+    // The file can be just over max_log_bytes when the trim is triggered, and
+    // a failed earlier trim can leave it far larger. Reading from the end
+    // keeps the newest lines in a bounded buffer; a whole-file read (this
+    // used `.unlimited`) allocated without bound and then failed, so the log
+    // kept growing.
+    const raw = try file_tail.readTail(base, io, gpa, event_path, max_log_bytes);
     defer gpa.free(raw);
-    var lines: std.ArrayList([]const u8) = .empty;
-    defer lines.deinit(gpa);
-    var it = std.mem.splitScalar(u8, raw, '\n');
-    while (it.next()) |ln| {
-        if (ln.len == 0) continue;
-        try lines.append(gpa, ln);
-    }
-    const keep = if (lines.items.len > keep_lines) lines.items.len - keep_lines else 0;
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(gpa);
-    for (lines.items[keep..]) |ln| {
-        try out.appendSlice(gpa, ln);
-        try out.append(gpa, '\n');
-    }
-    try atomic_write.writeFilePerms(io, base, event_path, out.items, atomic_write.private_file);
+    const out = try file_tail.joinNewestLines(gpa, raw, keep_lines);
+    defer gpa.free(out);
+    try atomic_write.writeFilePerms(io, base, event_path, out, atomic_write.private_file);
 }
 
 /// Records a completed run (from agent stats + used tool names).
