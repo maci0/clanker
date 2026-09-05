@@ -12,6 +12,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `mcp`, and `ponytail` descriptions name the phrases that should load them.
   `clanker gate` skills-inventory now fails a frontmatter description longer
   than the 220-byte prompt clip, instead of listing a truncated trigger.
+- `GET /api/sessions/search` and `clanker session search` go through the
+  `sessions` guest, so the Search page, the CLI, and the `session_search`
+  tool share one hit shape (`id`, `title`, `updated`, `archived`, `turn`,
+  `role`, `snippet`, `more`, `truncated`). The guest used to drop `turn`
+  and `archived`, which is what the Search page jumps on.
 
 ### Fixed
 

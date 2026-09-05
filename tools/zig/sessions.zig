@@ -2,7 +2,7 @@
 //! (ck_session, SQLite). Input: {} | {"format":"json"} | {"q":"..."}
 //! Output: {"ok": true, "text": "<id>  <title>  <age>  per line, newest last>"}
 //!         {"ok": true, "sessions": [...]} (format=json)
-//!         {"ok": true, "query": ..., "hits": [...]} (search)
+//!         {"ok": true, "query": ..., "truncated": bool, "hits": [...]} (search)
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -25,11 +25,19 @@ const SearchHit = struct {
     id: []const u8 = "",
     title: []const u8 = "",
     updated: i64 = 0,
+    archived: bool = false,
+    turn: usize = 0,
+    role: []const u8 = "",
     snippet: []const u8 = "",
     more: usize = 0,
 };
 
-const SearchResponse = struct { ok: bool = true, query: []const u8 = "", hits: []const SearchHit = &.{} };
+const SearchResponse = struct {
+    ok: bool = true,
+    query: []const u8 = "",
+    truncated: bool = false,
+    hits: []const SearchHit = &.{},
+};
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -43,7 +51,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         break :blk if (trimmed.len == 0) null else trimmed;
     };
     if (q) |query| {
-        if (query.len < 3) return lib.fail(out, "query must be at least 3 characters");
+        if (query.len < logic.search_min_len) return lib.fail(out, "query must be at least 3 characters");
         return searchSessions(out, query);
     }
     const as_json = if (lib.optStr(req, "format")) |fmt| std.mem.eql(u8, fmt, "json") else false;
@@ -104,24 +112,21 @@ fn searchSessions(out: *lib.Out, query: []const u8) !void {
     };
     const parsed = std.json.parseFromSliceLeaky(SearchResponse, lib.alloc, raw orelse "{\"hits\":[]}", .{ .ignore_unknown_fields = true }) catch
         return lib.fail(out, "host search unreadable");
-    var w2 = lib.writer(out);
-    try w2.writeAll("{\"ok\":true,\"query\":");
-    try std.json.Stringify.value(query, .{}, &w2);
-    try w2.writeAll(",\"hits\":[");
-    for (parsed.hits, 0..) |hit, i| {
-        if (i > 0) try w2.writeAll(",");
-        try w2.writeAll("{\"id\":");
-        try std.json.Stringify.value(hit.id, .{}, &w2);
-        try w2.writeAll(",\"title\":");
-        try std.json.Stringify.value(hit.title, .{}, &w2);
-        try w2.writeAll(",\"updated\":");
-        try std.json.Stringify.value(hit.updated, .{}, &w2);
-        try w2.writeAll(",\"snippet\":");
-        try std.json.Stringify.value(hit.snippet, .{}, &w2);
-        try w2.writeAll(",\"more\":");
-        try std.json.Stringify.value(hit.more, .{}, &w2);
-        try w2.writeAll("}");
+    var hits: std.ArrayList(logic.SearchHit) = .empty;
+    defer hits.deinit(lib.alloc);
+    for (parsed.hits) |hit| {
+        try hits.append(lib.alloc, .{
+            .id = hit.id,
+            .title = hit.title,
+            .updated = hit.updated,
+            .archived = hit.archived,
+            .turn = hit.turn,
+            .role = hit.role,
+            .snippet = hit.snippet,
+            .more = hit.more,
+        });
     }
-    try w2.writeAll("]}");
+    var w2 = lib.writer(out);
+    try logic.writeSearchJson(&w2, query, hits.items, parsed.truncated);
     lib.commit(out, &w2);
 }

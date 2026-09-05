@@ -871,7 +871,7 @@ fn emptyCompletionCause(content: []const u8, finish_reason: ?[]const u8, reasoni
 /// set `session: true`. Requests:
 ///   {"op":"list"}                       -> {"sessions":[{id,title,created,updated,workspace,archived,messages,bytes}]}
 ///   {"op":"get","id":"<sid>"}         -> the full session (meta + messages)
-///   {"op":"search","q":"<query>"}     -> {"ok":true,"query":...,"hits":[...]}
+///   {"op":"search","q":"<query>"}     -> {"ok":true,"query":...,"truncated":bool,"hits":[{id,title,updated,archived,turn,role,snippet,more}]}
 pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const h = getHost(caller);
     const bytes = memBytes(caller) orelse return Err.invalid;
@@ -1000,15 +1000,22 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 
     if (std.mem.eql(u8, op, "search")) {
         const q = json_util.strFieldOrNull(req.object, "q") orelse return Err.invalid;
-        const hits = session_mod.searchSessions(h.sandbox.io, h.sandbox.gpa, arena, sessions_dir, q, 50) catch return Err.invalid;
+        // Cap plus one: the extra row is how `truncated` is decided, matching
+        // the HTTP search surface. The guest then answers with at most 50.
+        const search_limit: usize = 50;
+        const hits = session_mod.searchSessions(h.sandbox.io, h.sandbox.gpa, arena, sessions_dir, q, search_limit + 1) catch return Err.invalid;
+        const truncated = hits.len > search_limit;
+        const shown = if (truncated) hits[0..search_limit] else hits;
         w.beginObject() catch return Err.invalid;
         w.objectField("ok") catch return Err.invalid;
         w.write(true) catch return Err.invalid;
         w.objectField("query") catch return Err.invalid;
         w.write(q) catch return Err.invalid;
+        w.objectField("truncated") catch return Err.invalid;
+        w.write(truncated) catch return Err.invalid;
         w.objectField("hits") catch return Err.invalid;
         w.beginArray() catch return Err.invalid;
-        for (hits) |hit| {
+        for (shown) |hit| {
             w.beginObject() catch return Err.invalid;
             w.objectField("id") catch return Err.invalid;
             w.write(hit.id) catch return Err.invalid;
@@ -1016,6 +1023,12 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             w.write(hit.title) catch return Err.invalid;
             w.objectField("updated") catch return Err.invalid;
             w.write(hit.updated) catch return Err.invalid;
+            w.objectField("archived") catch return Err.invalid;
+            w.write(hit.archived) catch return Err.invalid;
+            w.objectField("turn") catch return Err.invalid;
+            w.write(hit.turn) catch return Err.invalid;
+            w.objectField("role") catch return Err.invalid;
+            w.write(hit.role) catch return Err.invalid;
             w.objectField("snippet") catch return Err.invalid;
             w.write(hit.snippet) catch return Err.invalid;
             w.objectField("more") catch return Err.invalid;

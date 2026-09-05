@@ -1,7 +1,9 @@
-//! Pure session-listing helpers for tools/zig/sessions.zig.
+//! Pure session-listing and search-JSON helpers for tools/zig/sessions.zig.
 //! Host-tested; the guest imports this rather than reimplementing the header
 //! parse or the HTTP JSON shape. `GET /api/sessions` relays the guest's
-//! `format=json` answer, so the picker and the catalog share one listing.
+//! `format=json` answer and `GET /api/sessions/search` relays its `q` answer,
+//! so the picker, the Search page, and the catalog share one listing and one
+//! hit shape.
 
 const std = @import("std");
 const utf8 = @import("utf8");
@@ -80,6 +82,64 @@ pub fn sortOldestFirst(items: []Listing) void {
 
 /// The object `GET /api/sessions` answers with: one entry per conversation,
 /// the shape the web picker reads.
+/// Shortest query the search surfaces will run. One or two characters match
+/// nearly every transcript, which is the same as matching none.
+pub const search_min_len: usize = 3;
+/// Cap on conversations returned for one query. A search surface is for
+/// finding the conversation, not paging the archive.
+pub const search_limit: usize = 50;
+
+/// One conversation that held the query, the shape `GET /api/sessions/search`
+/// and the `session_search` catalog tool both answer with. `turn` is the
+/// message index the Search view jumps to.
+pub const SearchHit = struct {
+    id: []const u8,
+    title: []const u8 = "",
+    updated: i64 = 0,
+    archived: bool = false,
+    turn: usize = 0,
+    role: []const u8 = "",
+    snippet: []const u8 = "",
+    more: usize = 0,
+};
+
+/// The object `GET /api/sessions/search` answers with. `truncated` is set
+/// when more than `search_limit` conversations matched.
+pub fn writeSearchJson(w: *std.Io.Writer, query: []const u8, hits: []const SearchHit, truncated: bool) !void {
+    var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
+    try s.beginObject();
+    try s.objectField("ok");
+    try s.write(true);
+    try s.objectField("query");
+    try s.write(query);
+    try s.objectField("truncated");
+    try s.write(truncated);
+    try s.objectField("hits");
+    try s.beginArray();
+    for (hits) |h| {
+        try s.beginObject();
+        try s.objectField("id");
+        try s.write(h.id);
+        try s.objectField("title");
+        try s.write(h.title);
+        try s.objectField("updated");
+        try s.write(h.updated);
+        try s.objectField("archived");
+        try s.write(h.archived);
+        try s.objectField("turn");
+        try s.write(h.turn);
+        try s.objectField("role");
+        try s.write(h.role);
+        try s.objectField("snippet");
+        try s.write(h.snippet);
+        try s.objectField("more");
+        try s.write(h.more);
+        try s.endObject();
+    }
+    try s.endArray();
+    try s.endObject();
+}
+
 pub fn writeJson(w: *std.Io.Writer, items: []const Listing) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
@@ -185,6 +245,36 @@ test "listingFromPrefix skips a prefix with no id" {
     const arena = arena_state.allocator();
     try std.testing.expect(listingFromPrefix(arena, "{\"title\":\"x\",\"messages\":[]}") == null);
     try std.testing.expect(listingFromPrefix(arena, "not json") == null);
+}
+
+test "writeSearchJson matches the Search page contract" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var out: std.Io.Writer.Allocating = .init(arena);
+    const hits = [_]SearchHit{
+        .{
+            .id = "s1",
+            .title = "cron spec",
+            .updated = 9,
+            .archived = true,
+            .turn = 4,
+            .role = "user",
+            .snippet = "the cron spec refused",
+            .more = 2,
+        },
+    };
+    try writeSearchJson(&out.writer, "cron spec", &hits, true);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.written(), .{});
+    try std.testing.expect(parsed.object.get("ok").?.bool);
+    try std.testing.expectEqualStrings("cron spec", parsed.object.get("query").?.string);
+    try std.testing.expect(parsed.object.get("truncated").?.bool);
+    const first = parsed.object.get("hits").?.array.items[0];
+    try std.testing.expectEqualStrings("s1", first.object.get("id").?.string);
+    try std.testing.expect(first.object.get("archived").?.bool);
+    try std.testing.expectEqual(@as(i64, 4), first.object.get("turn").?.integer);
+    try std.testing.expectEqualStrings("user", first.object.get("role").?.string);
+    try std.testing.expectEqual(@as(i64, 2), first.object.get("more").?.integer);
 }
 
 test "writeJson matches the picker contract" {

@@ -222,7 +222,9 @@ remove/enable/disable/log and `/api/schedule` both call it.
 **Resolved 2026-08-16 (sessions listing):** `GET /api/sessions` relays to
 the `sessions` guest (`format=json`). Header parse and picker JSON live
 in `sessions_logic.zig` (host-tested). Mutations and a full transcript
-stay native.
+stay native. Search followed: `GET /api/sessions/search` and
+`clanker session search` now call the same guest (`q`), so the Search
+page, the CLI, and `session_search` share one hit shape.
 
 **Resolved 2026-08-16 (proxy vtable):** `src/serve/proxy.zig` reads
 `Provider.proxy` instead of switching on `provider.kind`. Vertex quota
@@ -280,6 +282,8 @@ recorder splits (native writer at the choke point, guest reader:
 - `/api/workflows` — done (`toolJson` to the `workflows` guest).
 - `GET /api/stats` — done (`toolJson` to `model_stats`).
 - `/api/sessions` listing — done (guest `format=json`; mutations stay native).
+  Search (`GET /api/sessions/search`, `clanker session search`) is the same
+  guest with `q`.
 - `/api/providers` listing — done (guest `action:list` emits the picker
   contract; live `/models` fill for an empty map stays native).
 - `/api/goals` GET — done (`goal_update` `action:list`; `running` overlay stays native).

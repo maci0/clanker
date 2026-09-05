@@ -5361,16 +5361,29 @@ fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
     if (q.len < session_search_min_len) {
         usageExitFor(io, "session", "session search needs at least {d} characters: clanker session search \"<query>\"", .{session_search_min_len});
     }
-    const hits = session.searchSessions(io, init.gpa, arena, "state/sessions", q, session_search_limit) catch {
-        return error.ToolFailed;
+    var ibuf: std.Io.Writer.Allocating = .init(arena);
+    var is = std.json.Stringify{ .writer = &ibuf.writer };
+    is.beginObject() catch return error.ToolFailed;
+    is.objectField("q") catch return error.ToolFailed;
+    is.write(q) catch return error.ToolFailed;
+    is.endObject() catch return error.ToolFailed;
+    const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "sessions", ibuf.written());
+    if (toolResultFailed(raw)) return error.ToolFailed;
+    const Hit = struct {
+        id: []const u8 = "",
+        title: []const u8 = "",
+        turn: usize = 0,
+        snippet: []const u8 = "",
     };
-    if (hits.len == 0) {
+    const Result = struct { hits: []const Hit = &.{} };
+    const result = std.json.parseFromSliceLeaky(Result, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
+    if (result.hits.len == 0) {
         const line = try std.fmt.allocPrint(arena, "no conversations matched '{s}'; run `clanker sessions` for the full list\n", .{q});
         try writeStdOut(io, line);
         return;
     }
     var buf: std.Io.Writer.Allocating = .init(arena);
-    for (hits) |h| {
+    for (result.hits) |h| {
         try buf.writer.print("{s}\t{s}\tturn {d}\t{s}\n", .{ h.id, h.title, h.turn, h.snippet });
     }
     try buf.writer.print("resume: clanker repl --session <id>\n", .{});
@@ -11077,24 +11090,32 @@ fn handleRuns(
 /// as no result and costs a full read of every session to produce.
 const session_search_min_len = 3;
 
-/// Most conversations reported for one query. A search surface is for finding
-/// the conversation, not for paging the archive; past this the answer is to
-/// type more, which is what `truncated` tells the page to say.
-const session_search_limit = 50;
-
 /// `GET /api/sessions/search?q=<text>` — every saved conversation with a
 /// message containing `q`, newest first, one row each with the first match in
-/// context and a count of the rest.
+/// context and a count of the rest. The `sessions` guest owns the scan and
+/// the hit JSON (the same shape the Search page and `session_search` share);
+/// this handler maps the query string onto that call.
 ///
 /// Case-insensitive substring, not the fuzzy match the rail filter uses on
 /// titles: fuzzy over whole transcripts hits almost every conversation, so it
 /// would answer every query with the whole archive.
-fn handleSessionSearch(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, target: []const u8, stream: std.Io.net.Stream) void {
+fn handleSessionSearch(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    cfg: *const config.Config,
+    environ_map: *std.process.Environ.Map,
+    target: []const u8,
+    accepts_gzip: bool,
+    stream: std.Io.net.Stream,
+) void {
     const raw_q = queryParam(arena, target, "q") orelse "";
     const q = std.mem.trim(u8, raw_q, " \t\r\n");
     if (q.len < session_search_min_len) {
         // Not an error: an empty box is the normal state of a search view, and
-        // the page shows this as a prompt rather than as a failure.
+        // the page shows this as a prompt rather than as a failure. Kept here
+        // rather than in the guest, because a too-short catalog call is a
+        // refusal and a too-short HTTP box is an empty result.
         var buf: [128]u8 = undefined;
         const body = std.fmt.bufPrint(
             &buf,
@@ -11105,54 +11126,28 @@ fn handleSessionSearch(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         return;
     }
 
-    const hits = session.searchSessions(io, gpa, arena, "state/sessions", q, session_search_limit + 1) catch {
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not read the sessions\"}");
+    var ibuf: std.Io.Writer.Allocating = .init(arena);
+    var is = std.json.Stringify{ .writer = &ibuf.writer };
+    is.beginObject() catch return;
+    is.objectField("q") catch return;
+    is.write(q) catch return;
+    is.endObject() catch return;
+    const raw = toolJson(io, gpa, arena, cfg, environ_map, "sessions", ibuf.written()) catch {
+        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"sessions tool unavailable\"}");
         return;
     };
-    const truncated = hits.len > session_search_limit;
-    const shown = if (truncated) hits[0..session_search_limit] else hits;
-
-    var out: std.Io.Writer.Allocating = .init(arena);
-    var s = std.json.Stringify{ .writer = &out.writer, .options = .{} };
-    s.beginObject() catch return;
-    s.objectField("ok") catch return;
-    s.write(true) catch return;
-    s.objectField("query") catch return;
-    s.write(q) catch return;
-    s.objectField("truncated") catch return;
-    s.write(truncated) catch return;
-    s.objectField("hits") catch return;
-    s.beginArray() catch return;
-    for (shown) |h| {
-        s.beginObject() catch return;
-        s.objectField("id") catch return;
-        s.write(h.id) catch return;
-        s.objectField("title") catch return;
-        s.write(h.title) catch return;
-        s.objectField("updated") catch return;
-        s.write(h.updated) catch return;
-        s.objectField("archived") catch return;
-        s.write(h.archived) catch return;
-        s.objectField("turn") catch return;
-        s.write(h.turn) catch return;
-        s.objectField("role") catch return;
-        s.write(h.role) catch return;
-        s.objectField("snippet") catch return;
-        s.write(h.snippet) catch return;
-        s.objectField("more") catch return;
-        s.write(h.more) catch return;
-        s.endObject() catch return;
+    if (toolResultFailed(raw)) {
+        respondTool(stream, raw);
+        return;
     }
-    s.endArray() catch return;
-    s.endObject() catch return;
-    respond(stream, 200, "OK", out.written());
+    respondCompressible(arena, stream, accepts_gzip, raw);
 }
 
-/// `GET /api/sessions` lists saved conversations through the `sessions`
-/// guest; `GET /api/sessions/<id>` still returns one whole transcript
-/// natively, because a long conversation exceeds the 1 MiB host arena a
-/// WASM tool reads through. Mutations (fork/branch/rename/delete) stay
-/// native: they write the session store.
+/// `GET /api/sessions` lists, and `GET /api/sessions/search` searches,
+/// through the `sessions` guest. `GET /api/sessions/<id>` still returns one
+/// whole transcript natively, because a long conversation exceeds the 1 MiB
+/// host arena a WASM tool reads through. Mutations (fork/branch/rename/delete)
+/// stay native: they write the session store.
 /// Byte weight of a transcript.
 ///
 /// Must match what `session.listSessions` reports, because that is the number
@@ -13118,7 +13113,7 @@ fn handleSessions(
     // `GET /api/sessions/search?q=` — full-text over saved conversations.
     // Answered before the id branch below, because "search" is not an id.
     if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, rest, "/search")) {
-        handleSessionSearch(io, gpa, arena, target, stream);
+        handleSessionSearch(io, gpa, arena, cfg, environ_map, target, accepts_gzip, stream);
         return;
     }
 
