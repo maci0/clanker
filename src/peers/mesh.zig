@@ -366,6 +366,65 @@ test "header parse binds version and known kinds" {
     try std.testing.expect(!compatibleVersion("0.9"));
 }
 
+test "fuzz: no byte sequence crashes mesh frame decode or header parse" {
+    // decodeFrame and parseHeader see whatever a peer writes on the mesh
+    // socket. Liveness alone is not the contract: a decoded frame's payload
+    // is exactly the declared slice, FrameTooLarge is the only error and
+    // only when the length prefix exceeds the cap, a parsed header is a
+    // compatible v1 kind, and encode/decode is a round trip.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const input = buf[0..len];
+
+            // Cap below the buffer so both a complete frame and FrameTooLarge
+            // are reachable from the same 4 KiB of Smith bytes.
+            const max: u32 = 1024;
+            if (decodeFrame(input, max)) |maybe| {
+                if (maybe) |d| {
+                    try std.testing.expect(d.consumed >= 4);
+                    try std.testing.expectEqual(@as(usize, 4 + d.payload.len), d.consumed);
+                    try std.testing.expect(d.consumed <= input.len);
+                    try std.testing.expect(d.payload.len <= max);
+                    try std.testing.expectEqualSlices(u8, input[4..d.consumed], d.payload);
+                }
+            } else |err| {
+                try std.testing.expectEqual(error.FrameTooLarge, err);
+                try std.testing.expect(input.len >= 4);
+                try std.testing.expect(std.mem.readInt(u32, input[0..4], .big) > max);
+            }
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            if (parseHeader(arena_state.allocator(), input)) |h| {
+                try std.testing.expect(compatibleVersion(h.version));
+                try std.testing.expectEqual(h.kind, Kind.fromStr(h.kind.asStr()).?);
+            } else |_| {}
+
+            const payload = input[0..@min(input.len, 512)];
+            const frame = encodeFrame(std.testing.allocator, payload) catch return;
+            defer std.testing.allocator.free(frame);
+            const dec = (try decodeFrame(frame, default_max_frame_bytes)).?;
+            try std.testing.expectEqualSlices(u8, payload, dec.payload);
+            try std.testing.expectEqual(frame.len, dec.consumed);
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{
+        .corpus = &.{
+            "{\"version\":\"1.0\",\"kind\":\"PING\",\"id\":\"a\",\"from\":\"b\"}",
+            "{\"version\":\"1.0\",\"kind\":\"JOIN\",\"id\":\"f1\",\"from\":\"aaa\",\"to\":\"bbb\"}",
+            "{\"version\":\"1.0\",\"kind\":\"CHAT\",\"id\":\"c\",\"from\":\"a\"}",
+            "{\"version\":\"2.0\",\"kind\":\"PING\",\"id\":\"x\",\"from\":\"a\"}",
+            "{\"version\":\"1.0\",\"kind\":\"FILE_OFFER\",\"id\":\"x\",\"from\":\"a\"}",
+            "\x00\x00\x00\x05hello",
+            "\xff\xff\xff\xff",
+            "{",
+            "",
+        },
+    });
+}
+
 test "admission: allowlist / prompt / open / self / empty" {
     const seeds = [_]PeerSeed{
         .{ .name = "alice", .id = "aaa" },

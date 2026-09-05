@@ -450,3 +450,59 @@ test "ACP session/prompt rejects a concurrent in-flight prompt" {
     defer std.testing.allocator.free(concurrent);
     try std.testing.expect(std.mem.find(u8, concurrent, "\"code\":-32603") != null);
 }
+
+test "fuzz: no ACP JSON-RPC line crashes handleLine or grows past the session cap" {
+    // handleLine sees whatever an ACP client writes to stdin, unauthenticated
+    // and outside any sandbox. The property is not just liveness: a response
+    // is either silent (notification) or JSON-RPC 2.0 with result or error,
+    // and the session table never outgrows max_sessions or desyncs from the
+    // busy map. Each iteration starts from a fresh Connection so a prior
+    // line cannot leak into the next.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var conn = Connection{};
+            defer conn.deinit(std.testing.allocator);
+
+            const init = conn.handleLine(std.testing.allocator,
+                \\{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}
+            ) catch return;
+            defer std.testing.allocator.free(init);
+
+            var n: u8 = smith.valueRangeAtMost(u8, 1, 4);
+            while (n > 0) : (n -= 1) {
+                var buf: [2048]u8 = undefined;
+                const len = smith.slice(&buf);
+                const out = conn.handleLine(std.testing.allocator, buf[0..len]) catch continue;
+                defer std.testing.allocator.free(out);
+
+                try std.testing.expect(conn.sessions.count() <= max_sessions);
+                try std.testing.expectEqual(conn.sessions.count(), conn.prompt_busy.count());
+                if (out.len == 0) continue;
+
+                var check = std.heap.ArenaAllocator.init(std.testing.allocator);
+                defer check.deinit();
+                const parsed = json.parseFromSliceLeaky(json.Value, check.allocator(), out, .{}) catch
+                    return error.ResponseNotJson;
+                try std.testing.expect(parsed == .object);
+                const rpc = parsed.object.get("jsonrpc") orelse return error.MissingJsonRpc;
+                try std.testing.expect(rpc == .string);
+                try std.testing.expectEqualStrings("2.0", rpc.string);
+                try std.testing.expect(parsed.object.get("result") != null or parsed.object.get("error") != null);
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{
+        .corpus = &.{
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/new\",\"params\":{\"cwd\":\"/tmp\"}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"acp-1\",\"prompt\":\"hi\"}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"acp-1\",\"prompt\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"text\",\"text\":\"b\"}]}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"authenticate\",\"params\":{}}",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{\"sessionId\":\"acp-1\"}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"nope\",\"params\":{}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"session/new\",\"params\":{\"cwd\":\"relative\"}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"session/new\",\"params\":{\"cwd\":\"/\\u0000\"}}",
+            "{",
+            "",
+        },
+    });
+}
