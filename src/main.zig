@@ -319,6 +319,7 @@ pub fn main(init: std.process.Init) !void {
         // real spelling.
         var shown_buf: [128]u8 = undefined;
         const shown = cli.elideArg(&shown_buf, diag);
+        var missing_buf: [256]u8 = undefined;
         switch (err) {
             error.MissingTask => cli.printUsageError(init.io, "`clanker run` needs a task: clanker run \"fix the build\" (or just clanker \"fix the build\")", .{}),
             error.ExtraTask => cli.printUsageError(init.io, "`clanker run` takes one task but got a second argument: '{s}'. If that is part of the same task, the shell split it: a `\"` inside the task ends the quoted string, so quote the whole task and escape any inner ones as \\\"", .{shown}),
@@ -327,30 +328,7 @@ pub fn main(init: std.process.Init) !void {
                 cli.printUsageError(init.io, "unrecognized argument '{s}'; did you mean `{s}`?", .{ shown, suggestion })
             else
                 cli.printUsageError(init.io, "unrecognized argument '{s}'", .{shown}),
-            error.MissingArg => if (std.mem.eql(u8, diag, "export"))
-                cli.printUsageError(init.io, "clanker session needs a subcommand: `export <id>` or `search <query>`; to list conversations run `clanker sessions`", .{})
-            else if (std.mem.eql(u8, diag, "conversation id"))
-                cli.printUsageError(init.io, "clanker session export needs a conversation id; run `clanker sessions` for the list", .{})
-            else if (std.mem.eql(u8, diag, "improvement id"))
-                cli.printUsageError(init.io, "clanker revert needs an improvement id", .{})
-            else if (std.mem.eql(u8, diag, "<intent>"))
-                cli.printUsageError(init.io, "`clanker goal` needs an intent: clanker goal \"improve the REPL\"", .{})
-            else if (std.mem.eql(u8, diag, "<write-goal intent>"))
-                cli.printUsageError(init.io, "`clanker write-goal` needs an intent: clanker write-goal \"improve the REPL\"", .{})
-            else if (std.mem.eql(u8, diag, "<instructions>"))
-                cli.printUsageError(init.io, "`clanker improve-self` needs instructions", .{})
-            else if (std.mem.eql(u8, diag, "<peer>"))
-                cli.printUsageError(init.io, "`clanker notify` needs a peer name", .{})
-            else if (std.mem.eql(u8, diag, "<host:port>"))
-                cli.printUsageError(init.io, "`clanker mesh join` needs a host:port: clanker mesh join 127.0.0.1:7420", .{})
-            else if (std.mem.eql(u8, diag, "<peer-id>"))
-                cli.printUsageError(init.io, "`clanker mesh admit`/`deny` needs a peer id", .{})
-            else if (std.mem.eql(u8, diag, "<message>"))
-                cli.printUsageError(init.io, "`clanker notify` needs a message", .{})
-            else if (std.mem.eql(u8, diag, "<question>"))
-                cli.printUsageError(init.io, "`clanker arena` needs a question", .{})
-            else
-                cli.printUsageError(init.io, "'{s}' needs a value", .{shown}),
+            error.MissingArg => cli.printUsageError(init.io, "{s}", .{cli.formatMissingArg(&missing_buf, diag, shown)}),
             error.BadSeed => cli.printUsageError(init.io, "--seed wants a non-negative integer, got '{s}'", .{shown}),
             error.BadIters => cli.printUsageError(init.io, "--iters wants a non-negative integer, got '{s}'", .{shown}),
             error.BadReasoningEffort => cli.printUsageError(init.io, "--reasoning-effort wants none, low, medium, high, or max, got '{s}'", .{shown}),

@@ -306,7 +306,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `mcp` | Serve tools over MCP (stdio) |
 | `acp` | Serve clanker as an ACP coding agent (stdio) |
 | `write-goal "<intent>"` | Draft a structured goal without saving or running it |
-| `add-goal "<objective>" "<completion criterion>"` | Save a structured goal without running it |
+| `add-goal "<objective>" ["<completion criterion>"]` | Save a structured goal without running it |
 | `goal "<condition>"` | Start a goal loop that keeps working until the condition is met |
 | `arena "<question>" --for X --against Y` | Judged debate between two positions, or a battle royale |
 | `compare "<prompt>" [--with <provider[@model]>]...` | One prompt to several models at once, answers shown unlabeled |
@@ -334,7 +334,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `worktree [prepare [<path>]\|add <path> [<base>]]` | Give a hand-made `git worktree add` worktree the gitignored files it does not inherit (`.env`, `config.local.toml`), which every verb there needs to resolve the provider you configured |
 | `setup` | Guided first run: check config, keys and tools |
 | `doctor` | Diagnose config, credentials, build outputs, and a worktree's links |
-| `config [get <key>\|set <key> <value>]` | Read or pin one key of the merged config (`set` writes `config.local.toml`) |
+| `config [dump\|get <key>\|set <key> <value>]` | Read or pin one key of the merged config (`set` writes `config.local.toml`; bare `config` dumps) |
 | `janitor [--yes]` | Sweep up what old runs left behind: staging copies, old run graphs and improve logs, compare-and-swap lock files unused for 12h, and spilled tool results (also `clanker prune`) |
 
 For full documentation, see [docs/README.md](docs/README.md).

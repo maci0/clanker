@@ -204,9 +204,10 @@ pub const Command = enum {
     /// `src/improve/worktree.zig` owns the linking, shared with the worktrees
     /// clanker makes for itself so the two cannot drift.
     worktree_cmd,
-    /// `config [get <key>|set <key> <value>]`: read or pin one dotted key of
-    /// the merged config, through the same `config` tool the agent uses.
-    /// `set` writes config.local.toml only. Bare `config` dumps both files.
+    /// `config [dump|get <key>|set <key> <value>]`: read or pin one dotted key
+    /// of the merged config, through the same `config` tool the agent uses.
+    /// `set` writes config.local.toml only. Bare `config` (and `config dump`)
+    /// dumps both files.
     config,
     /// A CLI plugin subcommand (PRD 0012): `clanker <name> [args...]` where
     /// <name> is neither a built-in Command nor a bare prompt. Tier 1
@@ -1387,7 +1388,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
         return error.MissingArg;
     }
     if (opts.command == .add_goal and opts.task == null) {
-        setDiag(diag, "<objective> <completion criterion>");
+        setDiag(diag, "<objective>");
         return error.MissingArg;
     }
     if (opts.command == .improve_self and opts.task == null) {
@@ -1544,7 +1545,7 @@ pub fn parseWithCommand(args: []const []const u8, diag: ?*[]const u8, cmd_out: ?
             return error.MissingArg;
         }
         if (std.mem.eql(u8, opts.chat_sub, "send") and opts.message == null) {
-            setDiag(diag, "<message>");
+            setDiag(diag, "<text>");
             return error.MissingArg;
         }
     }
@@ -1732,6 +1733,38 @@ pub fn printUnknownCommand(io: std.Io, name: []const u8) void {
     const rendered = formatUnknownCommand(&buf, name);
     printUsageError(io, "{s}", .{rendered.line});
     if (rendered.hint) printUsageHint(io);
+}
+
+/// Worded once so a missing positional names the command that needed it.
+/// Chat send and notify used to share `<message>`, so `clanker chat send
+/// general` said `clanker notify` needed a message.
+const missing_arg_lines = std.StaticStringMap([]const u8).initComptime(.{
+    .{ "export", "clanker session needs a subcommand: `export <id>` or `search <query>`; to list conversations run `clanker sessions`" },
+    .{ "conversation id", "clanker session export needs a conversation id; run `clanker sessions` for the list" },
+    .{ "improvement id", "clanker revert needs an improvement id" },
+    .{ "<intent>", "`clanker goal` needs an intent: clanker goal \"improve the REPL\"" },
+    .{ "<write-goal intent>", "`clanker write-goal` needs an intent: clanker write-goal \"improve the REPL\"" },
+    .{ "<objective>", "`clanker add-goal` needs an objective: clanker add-goal \"improve the REPL\"" },
+    .{ "<instructions>", "`clanker improve-self` needs instructions" },
+    .{ "<peer>", "`clanker notify` needs a peer name" },
+    .{ "<message>", "`clanker notify` needs a message" },
+    .{ "<text>", "`clanker chat send` needs a message: clanker chat send <room> \"hello\"" },
+    .{ "<room>", "`clanker chat send`/`history`/`subscribe` needs a room name" },
+    .{ "<host:port>", "`clanker mesh join` needs a host:port: clanker mesh join 127.0.0.1:7420" },
+    .{ "<peer-id>", "`clanker mesh admit`/`deny` needs a peer id" },
+    .{ "<question>", "`clanker arena` needs a question" },
+    .{ "<prompt>", "`clanker compare` needs a prompt: clanker compare \"which model is clearer?\"" },
+    .{ "query", "clanker session search needs a query; run `clanker sessions` for the list" },
+    .{ "<cron>", "`clanker schedule add` needs a cron spec: clanker schedule add \"0 * * * *\" \"the task\"" },
+    .{ "<id>", "`clanker schedule` needs an entry id; run `clanker schedule list`" },
+    .{ "<task>", "`clanker schedule add` needs a task: clanker schedule add \"<cron>\" \"the task\"" },
+});
+
+/// `diag` is the token parse stashed; `shown` is the elided form used when
+/// the token is a flag that needed a value rather than a named placeholder.
+pub fn formatMissingArg(buf: []u8, diag: []const u8, shown: []const u8) []const u8 {
+    if (missing_arg_lines.get(diag)) |line| return line;
+    return std.fmt.bufPrint(buf, "'{s}' needs a value", .{shown}) catch shown;
 }
 
 /// Closest public flag spelling for a mistyped `--flag`.
@@ -2196,7 +2229,7 @@ const Spec = struct {
 /// `--verbose`/`-v`, `--quiet`/`-q`, `--help`/`-h` and `--version` are accepted
 /// everywhere and so are not listed per command.
 const specs = [_]Spec{
-    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop; [agent] backend is the\n                   same key. Unset keeps today's in-process loop\n--stream           also print one JSON usage line per model response, so a\n                   monitor can show live tokens per second\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
+    .{ .command = .run, .usage = "run \"<task>\"", .blurb = "run the agent on one task", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .stream, .session, .continue_last, .goal, .worktree, .preset }, .detail = "A bare prompt works too: clanker \"fix the failing eval\".\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model> (--model zai/glm-5.2)\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop; [agent] backend is the\n                   same key. Unset keeps today's in-process loop\n--stream           also print one JSON usage line per model response, so a\n                   monitor can show live tokens per second\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--goal <id>        start the saved goal's continuing loop; no task is required\n--preset <name>    run with a preset from presets/<name>.toml\n--worktree         work in a private git worktree and branch, so the run cannot\n                   touch the shared checkout. The worktree and its commits are\n                   kept when the run ends, and retire when the goal they belong\n                   to is archived. Already the default for --goal runs and for\n                   scheduled runs, since nobody is watching a working tree there\n--no-worktree      work in the checkout even where --worktree is the default" },
     .{ .command = .repl, .usage = "repl", .blurb = "interactive multi-turn chat, streaming", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend, .session, .continue_last, .preset, .theme, .mascot, .mascot_size, .mascot_facing, .mascot_speed }, .detail = "--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop\n--session <id>     resume a saved conversation\n--continue, -c     pick up the most recently touched session\n--preset <name>    start with a preset from presets/<name>.toml\n--theme <name>     initial color theme; /theme lists available names\n--mascot[=<mode>]  run the mascot (tui.mascot in config):\n                   loop   runs across and wraps around, the bare default\n                   type   runs along as you type, still when you stop, and\n                          turns upside down while you backspace\n                   place  runs on the spot, bottom right above the box\n                   input  runs on the spot inside the input box, which keeps\n                          its usual height unless a bigger size is asked for\n                   off    no mascot\n--mascot-size <s>  mini, xsmall, small, medium (default) or large.\n                   tui.mascot_size. `input` defaults to mini instead: it is\n                   the one size that fits the ordinary three-row box, so any\n                   larger size grows the box to hold it\n--mascot-facing <d>  default or inverted: which way the mascot faces.\n                   tui.mascot_facing. Applies to loop and place; place\n                   faces left unless told otherwise\n--mascot-speed <n>  0..10, 5 is regular. tui.mascot_speed. 0 holds it still\n\nThe mascot needs a terminal at least 12x13 at medium, 10x12 at small,\n9x10 at xsmall, 8x9 at mini and 23x18 at large; it is skipped, not\nclipped, below that." },
     .{ .command = .goal, .usage = "goal \"<completion condition>\"", .blurb = "start a goal loop until achieved or blocked", .group = .work, .flags = &.{ .provider, .model, .reasoning_effort, .backend }, .detail = "Starts work immediately, then evaluates every completed agent turn\nagainst the supplied condition and continues until achieved, blocked,\nor the goal-turn budget ends. It does not require a write-goal draft\nor an added goal. Use `add-goal` when you want to persist a goal for a\nlater `run --goal <id>`, and `write-goal` when you only want a\nstructured draft.\n\n--provider <name>  use this provider instead of the configured default\n--model, -m        <model>, or <provider>/<model>\n--reasoning-effort <e>  pin reasoning effort for every turn: none, low,\n                   medium, high or max; beats config and auto-thinking\n--backend <name>   drive a local coding-agent CLI (grok, claude, or codex)\n                   instead of the in-process LLM loop" },
     .{ .command = .write_goal, .usage = "write-goal \"<intent>\"", .blurb = "draft a structured goal without saving it", .group = .work, .detail = "Uses the goal_write tool directly and prints a reviewable draft. It\nnever writes state/goals.json or starts an agent run." },
@@ -2226,7 +2259,7 @@ const specs = [_]Spec{
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
     .{ .command = .auth, .usage = "auth [status|login|logout] [codex|grok|claude]", .blurb = "manage clanker's native provider OAuth credentials", .group = .maintain, .detail = "status [provider]  show OAuth and API-key availability without\n                   revealing secrets (default)\nlogin <provider>   authorize clanker directly using the provider's\n                   native OAuth flow\nlogout <provider>  remove clanker's saved OAuth tokens; API keys are untouched\n\nOAuth tokens live under agent.state_dir/oauth with owner-only permissions.\nLogin and refresh are implemented by native provider plugins; no ACP backend,\nvendor CLI, or external credential store is involved." },
 
-    .{ .command = .chat, .usage = "chat <subcommand> ...", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "chat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
+    .{ .command = .chat, .usage = "chat [rooms|send|history|subscribe]", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "Bare `chat` is `chat rooms`.\n\nchat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
     .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
     .{ .command = .mesh, .usage = "mesh [status|join|leave|pending|admit|deny]", .blurb = "join or leave the clanker mesh, or inspect it", .group = .peers, .flags = &.{.webui_port}, .detail = "Talks to the local `clanker serve` over loopback HTTP. It never opens a\nmesh socket; serve owns those. `--webui-port` selects which serve when\nseveral run on one host (same protocol as two machines).\n\nstatus                 members, listen address, admission (default)\njoin <host:port>       dial that member\nleave [<peer-id>]      drop one peer, or leave the mesh yourself\npending                JOIN requests waiting for admit/deny\nadmit <peer-id>        accept a pending JOIN\ndeny <peer-id>         refuse a pending JOIN\n\n--webui-port <port>    local serve port (default 17921, or [serve].webui_port)\n\nRefuses if serve is not up, naming `clanker serve` and `modules.mesh`.\nSharing a workspace is a later verb (`workspace_share`); this command is\ninstance membership only." },
@@ -2237,7 +2270,7 @@ const specs = [_]Spec{
     .{ .command = .init, .usage = "init", .blurb = "create config.local.toml and state/", .group = .maintain, .detail = "Writes config.local.toml if it is missing, creates state/, and stops.\nDoes not check keys or tools; `clanker setup` is the guided first run." },
     .{ .command = .gate, .usage = "gate", .blurb = "run the build, test, tools, fmt, lint gates", .group = .maintain, .detail = "Runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,\njs-suite-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, the release\ncontract (CHANGELOG/RELEASES.md), reports-inventory (record ## Status vs README\nrow), skills-inventory (every skill file has a prompt-visible trigger) and\ndep-patches (patches/ applied to zig-pkg/) gates against the current checkout.\nExits non-zero on the first failure, so it can guard a script or CI step." },
     .{ .command = .worktree_cmd, .usage = "worktree [prepare [<path>]|add <path> [<base>]]", .blurb = "give a hand-made git worktree the files it does not inherit", .group = .maintain, .detail = "`git worktree add` checks out TRACKED files only, and .env and\nconfig.local.toml are both gitignored. A worktree made by hand therefore\nresolves the committed config.toml default_provider with no key behind it,\nand every model-calling verb fails there -- clanker commit falls back to a\ndegraded one-commit plan that --yes refuses. The worktrees clanker makes for\nitself never had this problem: they link both files already.\n\n  prepare [<path>]     link .env and config.local.toml from the main checkout\n                       into an existing worktree (default: the current one)\n  add <path> [<base>]  fetch origin, create the worktree and a branch named\n                       after its directory, then prepare it. <base> defaults\n                       to the current branch\'s tip on origin\n\nThe links are leaves, the same shape src/improve/worktree.zig uses: both\nfiles are read by the host, and an atomic write resolves a leaf link before\nrenaming, so an edit made in the worktree lands in the main checkout\'s file\ninstead of detaching from it. Both names are gitignored, so a link can never\nenter a commit. An existing file of either name is never overwritten.\n\nSet [agent] worktree_link_local_config = false to refuse the link; prepare\nthen reports both names as skipped. The key is read from the MAIN CHECKOUT\'s\nconfig, since the worktree cannot see config.local.toml yet.\n\nGuest wasm is NOT linked: a build writes into zig-out, so a shared one would\nclobber the binaries the main tree is running. Run zig build tools in the\nworktree instead; prepare reports whether they are there and prints it.\n\nEXAMPLES\n  clanker worktree add .local/worktrees/fix-alarm   create it and prepare it\n  clanker worktree prepare                          prepare the one you are in\n  clanker worktree prepare /tmp/wt-probe            prepare another one" },
-    .{ .command = .config, .usage = "config [get <key>|set <key> <value>]", .blurb = "read or pin one key of the merged config", .group = .maintain, .detail = "Reads and writes through the same `config` tool the agent uses. Every\nCLI flag with a persistent twin in config (say --reasoning-effort and\n[agent] reasoning_effort) can be pinned here instead of hand-editing\nconfig.local.toml.\n\n  (no subcommand)      dump config.toml + config.local.toml raw, local last\n  get <key>            print one dotted key of the merged config\n  set <key> <value>    pin the key in config.local.toml -- never config.toml\n\nset refuses a key the loader does not know (a typo'd TOML key would be\nsilently ignored; this is the checked path), refuses a value that does not\nparse as the key's merged type, refuses the table sections (providers,\nmodels, mcp_servers), whose quoted-key disk shape a line edit does not\nspeak, and refuses sandbox or safety-policy keys (the symlink, git-verb,\nconfirm, exec-pattern, web-allowlist and self-improvement-gate switches),\nwhich only the operator may pin: edit config.local.toml by hand there.\nThe write replaces one line\nand leaves the rest of the file byte-identical, comments included. A\nchange applies from the next command, not to processes already running.\n\nEXAMPLES\n  clanker config get agent.reasoning_effort\n  clanker config set agent.reasoning_effort high\n  clanker config set default_provider deepseek\n  clanker config set tui.mascot_size mini" },
+    .{ .command = .config, .usage = "config [dump|get <key>|set <key> <value>]", .blurb = "read or pin one key of the merged config", .group = .maintain, .detail = "Reads and writes through the same `config` tool the agent uses. Every\nCLI flag with a persistent twin in config (say --reasoning-effort and\n[agent] reasoning_effort) can be pinned here instead of hand-editing\nconfig.local.toml.\n\n  dump                 config.toml + config.local.toml raw, local last.\n                       Default when no subcommand is given\n  get <key>            print one dotted key of the merged config\n  set <key> <value>    pin the key in config.local.toml -- never config.toml\n\nset refuses a key the loader does not know (a typo'd TOML key would be\nsilently ignored; this is the checked path), refuses a value that does not\nparse as the key's merged type, refuses the table sections (providers,\nmodels, mcp_servers), whose quoted-key disk shape a line edit does not\nspeak, and refuses sandbox or safety-policy keys (the symlink, git-verb,\nconfirm, exec-pattern, web-allowlist and self-improvement-gate switches),\nwhich only the operator may pin: edit config.local.toml by hand there.\nThe write replaces one line\nand leaves the rest of the file byte-identical, comments included. A\nchange applies from the next command, not to processes already running.\n\nEXAMPLES\n  clanker config dump\n  clanker config get agent.reasoning_effort\n  clanker config set agent.reasoning_effort high\n  clanker config set default_provider deepseek\n  clanker config set tui.mascot_size mini" },
     .{ .command = .eval, .usage = "eval [name]", .blurb = "run evals: all, or one by name", .group = .maintain, .flags = &.{ .tasks, .provider, .model, .seed }, .detail = "--tasks             run only agent-driven evals; skip self-host build gates\n--provider <name>   run agent-driven evals with this provider\n--model <name>      run agent-driven evals with this model\n--seed <n>          pin the tool-RNG seed (agent.seed) so the evals draw the\n                    identical ck_random stream and a failure can be re-run\n                    byte-identically" },
     .{ .command = .revert, .usage = "revert <id>", .blurb = "undo a previously applied improvement", .group = .maintain, .detail = "Ids look like imp-... and live in state/improvements.jsonl (the same list the\nimprove loop records). A missing id is refused; nothing is written." },
     .{ .command = .autolearn, .usage = "autolearn [reset] [--model <model>]", .blurb = "fold recent runs into the ROADMAP's Autolearn section", .group = .maintain, .flags = &.{ .provider, .model }, .detail = "Aggregates the last 7 days of state/autolearn.jsonl into actionable items.\n\nreset    archive the event log to state/autolearn.old.jsonl (overwriting any\n         previous archive) and start observations from a clean slate. Use it\n         after addressing the reported items, so they stop resurfacing.\n\n--provider <name>  run the item synthesis with this provider instead of the\n                   configured default\n--model, -m        run the item synthesis with this model, or\n                   <provider>/<model>. Default is the deterministic local\n                   aggregation; passing a model instead has the chosen model\n                   review the raw observations and write the Autolearn section." },
@@ -2278,6 +2311,22 @@ fn documentsFlagSpelling(text: []const u8, spelling: []const u8) bool {
     return false;
 }
 
+/// True when a help line presents `spelling` as an option of this command,
+/// not as an example of another command (`clanker run --session` in
+/// `sessions` help). The listing form is a line whose first token is the
+/// spelling.
+fn documentsFlagAsOwnOption(text: []const u8, spelling: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trimStart(u8, line, " ");
+        if (!std.mem.startsWith(u8, trimmed, spelling)) continue;
+        const after = trimmed[spelling.len..];
+        const next: u8 = if (after.len == 0) ' ' else after[0];
+        if (!std.ascii.isAlphanumeric(next) and next != '-') return true;
+    }
+    return false;
+}
+
 test "every flag a command accepts is named in that command's --help" {
     // `commandAccepts` reads `spec.flags`, but `clanker <cmd> --help` prints
     // the hand-written `spec.detail`, so the two drift silently: a flag added
@@ -2300,6 +2349,35 @@ test "every flag a command accepts is named in that command's --help" {
             return error.UndocumentedFlag;
         }
     }
+}
+
+test "a flag named as its own option in a command's help is accepted there" {
+    // The inverse of the test above. `run` documented --stream in its detail
+    // and the parser consumed it, then commandAccepts refused it because
+    // spec.flags never listed it. A flag mentioned only inside an example
+    // (`clanker run --session` in `sessions` help) is not this: the listing
+    // form is a line whose first token is the spelling. `--judge` is two
+    // Flag tags (arena vs compare); the spelling is what the operator types.
+    for (&specs) |*s| {
+        for (std.enums.values(Flag)) |f| {
+            if (f.global()) continue;
+            const spelling = primaryFlagName(f);
+            if (!documentsFlagAsOwnOption(s.detail, spelling) and !documentsFlagAsOwnOption(s.usage, spelling)) continue;
+            if (commandAcceptsSpelling(s.command, spelling)) continue;
+            std.debug.print(
+                "`clanker {s}` help lists {s} but the command does not accept it\n",
+                .{ commandName(s.command), spelling },
+            );
+            return error.ListedFlagNotAccepted;
+        }
+    }
+}
+
+fn commandAcceptsSpelling(cmd: Command, spelling: []const u8) bool {
+    for (std.enums.values(Flag)) |f| {
+        if (std.mem.eql(u8, primaryFlagName(f), spelling) and commandAccepts(cmd, f)) return true;
+    }
+    return false;
 }
 
 pub fn run(init: std.process.Init, opts: Options) !void {
@@ -5764,7 +5842,7 @@ fn cmdPlugins(init: std.process.Init, opts: Options) !void {
 /// reimplementing the store beside it. Printing lives in
 /// `src/records/reports.zig`; what stays here is the tool call, which needs
 /// the config, the registry and the sandbox this file owns.
-/// `clanker config [get <key>|set <key> <value>]`: the operator surface over
+/// `clanker config [dump|get <key>|set <key> <value>]`: the operator surface over
 /// the sandboxed `config` tool, the way `cmdReports` fronts `reports`. The
 /// tool owns the semantics (schema check, type check, the surgical
 /// config.local.toml edit); this relays and prints.
@@ -18205,6 +18283,26 @@ test "unknown-command diagnostic wording is shared by both refusal paths" {
     try std.testing.expect(miss.hint);
 }
 
+test "missing-arg diagnostics name the command that needed the argument" {
+    var buf: [256]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "`clanker notify` needs a message",
+        formatMissingArg(&buf, "<message>", "<message>"),
+    );
+    try std.testing.expectEqualStrings(
+        "`clanker chat send` needs a message: clanker chat send <room> \"hello\"",
+        formatMissingArg(&buf, "<text>", "<text>"),
+    );
+    try std.testing.expectEqualStrings(
+        "`clanker add-goal` needs an objective: clanker add-goal \"improve the REPL\"",
+        formatMissingArg(&buf, "<objective>", "<objective>"),
+    );
+    try std.testing.expectEqualStrings(
+        "'--provider' needs a value",
+        formatMissingArg(&buf, "--provider", "--provider"),
+    );
+}
+
 test "mistyped flags get a one-edit suggestion" {
     try std.testing.expectEqualStrings("--session", suggestFlag("--sesion").?);
     try std.testing.expectEqualStrings("--model", suggestFlag("--modell").?);
@@ -18246,6 +18344,10 @@ test "add-goal accepts an optional criterion and goal slash tasks route delibera
     try std.testing.expectEqualStrings("fix the web UI", opts.task.?);
     try std.testing.expectEqualStrings("zig build test passes", opts.goal_completion_criterion.?);
     try std.testing.expectEqual(Command.add_goal, commandForHelp("add-goal").?);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "add-goal" }, &diag));
+    try std.testing.expectEqualStrings("<objective>", diag);
 
     // The criterion is optional: a goal with only an objective is valid and
     // the loop drafts its criterion on the first turn.
@@ -18625,6 +18727,34 @@ test "config takes a subcommand, a key and a value positionally" {
     var diag: []const u8 = "";
     try std.testing.expectError(error.UnknownArg, parse(&.{ "clanker", "config", "set", "a.b", "c", "d" }, &diag));
     try std.testing.expectEqualStrings("d", diag);
+}
+
+test "chat send names its own missing arguments, not notify's" {
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "chat", "send" }, &diag));
+    try std.testing.expectEqualStrings("<room>", diag);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "chat", "send", "general" }, &diag));
+    try std.testing.expectEqualStrings("<text>", diag);
+    try std.testing.expectError(error.MissingArg, parse(&.{ "clanker", "notify", "alice" }, &diag));
+    try std.testing.expectEqualStrings("<message>", diag);
+}
+
+test "--stream is accepted by run and refused elsewhere" {
+    const streamed = try parse(&.{ "clanker", "run", "--stream", "do the thing" }, null);
+    try std.testing.expect(streamed.stream);
+    try std.testing.expectEqual(Command.run, streamed.command);
+
+    const before = try parse(&.{ "clanker", "--stream", "run", "do the thing" }, null);
+    try std.testing.expect(before.stream);
+
+    var diag: []const u8 = "";
+    try std.testing.expectError(error.FlagNotForCommand, parse(&.{ "clanker", "stats", "--stream" }, &diag));
+    try std.testing.expectEqualStrings("--stream", diag);
+
+    var buf: [8192]u8 = undefined;
+    const help = renderFlagHelp(&buf, .stream);
+    try std.testing.expect(std.mem.find(u8, help, "clanker run") != null);
+    try std.testing.expect(std.mem.find(u8, help, "clanker stats") == null);
 }
 
 test "--worktree is accepted by run and refused elsewhere" {

@@ -902,7 +902,7 @@ iter 2
 | `adr [list\|search\|open\|create\|append\|update\|status\|rename]` | Decisions already made under `docs/adrs/`; see [Decisions already made](#decisions-already-made-adrs) |
 | `prd [list\|search\|open\|checklist\|create\|append\|update\|status\|rename]` | Product requirement docs under `docs/prds/`; see [Feature specifications](#feature-specifications-prds) |
 | `preset [list\|show <name>\|new <name>]` | List, inspect, or scaffold tool presets (`presets/<name>.toml`) |
-| `config [get <key>\|set <key> <value>]` | Read or pin one key of the merged config; `set` writes `config.local.toml` |
+| `config [dump\|get <key>\|set <key> <value>]` | Read or pin one key of the merged config; `set` writes `config.local.toml`; bare `config` dumps |
 | `auth [status\|login\|logout] [codex\|grok\|claude]` | Manage clanker's native provider OAuth credentials (no ACP backend or vendor CLI involved) |
 | `acp` | Serve clanker as an ACP coding agent over stdio |
 | `commit [--all] [--yes] [--dry-run]` | Group the working tree into conventional commits via `smart_commit`; asks before committing, so a script must pass `--yes` |

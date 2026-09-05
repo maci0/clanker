@@ -27,6 +27,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   sequential path, including the conversation `session_id`. A parallel
   kernel, debug, or jobs call used to land under `"default"` instead of the
   run's session.
+- `clanker run --stream` was documented and parsed, then refused as not an
+  option for the command, so a monitor could not get the live usage lines
+  the flag exists to print.
+- `clanker chat send <room>` with no message said `clanker notify` needed
+  one. The two commands shared the same missing-argument token.
+
+### Changed
+
+- `clanker chat --help` names the subcommands (`rooms`, `send`, `history`,
+  `subscribe`) on the usage line. Bare `chat` is still `chat rooms`.
+- `clanker config --help` names `dump` on the usage line. Bare `config` is
+  still a dump.
 
 ## [0.2.1] - 2026-08-31
 
