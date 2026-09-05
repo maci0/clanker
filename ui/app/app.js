@@ -2267,10 +2267,8 @@ function handleSlashDocFile(task){
   if (!m) return null;
   var path = m[1].trim();
   if (!path) return null;
-  // Create a Knowledge collection on-the-fly if needed and add the file as a doc via a hint
-  // We can't read the file client-side (sandbox), so we inject a task header that tells
-  // the agent to read that path via read_file/file_ops and treat it as RAG.
-  // #file / @doc convention — here it's /doc <path> as an alias for #knowledge.
+  // The page cannot read the file; the header tells the agent to via read_file.
+  // /doc <path> is an alias for #knowledge / @doc.
   return "[File: " + path + "]\n\n" + task;
 }
 

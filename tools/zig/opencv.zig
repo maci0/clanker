@@ -58,11 +58,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "exec returned no JSON");
     if (parsed != .object) return lib.fail(out, "exec returned no JSON");
 
-    const stdout = if (parsed.object.get("stdout")) |v| (if (v == .string) v.string else "") else "";
+    const stdout = lib.jsonStrField(parsed.object, "stdout");
     const trimmed = std.mem.trim(u8, stdout, " \t\r\n");
     if (trimmed.len > 0) return out.writeAll(trimmed);
 
-    const stderr = if (parsed.object.get("stderr")) |v| (if (v == .string) v.string else "") else "";
+    const stderr = lib.jsonStrField(parsed.object, "stderr");
     const tail = if (stderr.len > 400) stderr[stderr.len - 400 ..] else stderr;
     var ebuf: [640]u8 = undefined;
     var ew: std.Io.Writer = .fixed(&ebuf);

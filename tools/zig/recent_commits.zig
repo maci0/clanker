@@ -42,16 +42,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else => 1,
     } else 1;
     if (code != 0) {
-        const stderr_str = if (exec_obj.get("stderr")) |sv| switch (sv) {
-            .string => |s| s,
-            else => "",
-        } else "";
+        const stderr_str = lib.jsonStrField(exec_obj, "stderr");
         return lib.fail(out, if (stderr_str.len > 0) stderr_str else "git log failed");
     }
-    const stdout_str = if (exec_obj.get("stdout")) |sv| switch (sv) {
-        .string => |s| s,
-        else => "",
-    } else "";
+    const stdout_str = lib.jsonStrField(exec_obj, "stdout");
     const trimmed = std.mem.trim(u8, stdout_str, " \t\r\n");
     if (trimmed.len == 0) return lib.fail(out, "no commits");
     return lib.okText(out, trimmed);

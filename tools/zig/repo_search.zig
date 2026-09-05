@@ -7,6 +7,8 @@ const lib = @import("lib.zig");
 const utf8 = @import("utf8");
 const grep_outline = @import("grep_outline.zig");
 
+const match_cap: usize = 200;
+
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
@@ -91,7 +93,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.failErr(out, err, "running the search");
     };
 
-    // For ast-grep, parse the exec result into structured matches.
     if (std.mem.eql(u8, engine, "ast-grep")) {
         const ag_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, result, .{ .ignore_unknown_fields = true }) catch
             return lib.fail(out, "search ran but its result was not readable JSON; narrow the query or the path");
@@ -101,14 +102,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             .integer => |i| i,
             else => 1,
         } else 1;
-        const ag_stdout = if (ag_parsed.object.get("stdout")) |sv| switch (sv) {
-            .string => |ss| ss,
-            else => "",
-        } else "";
-        const ag_stderr = if (ag_parsed.object.get("stderr")) |sv| switch (sv) {
-            .string => |ss| ss,
-            else => "",
-        } else "";
+        const ag_stdout = lib.jsonStrField(ag_parsed.object, "stdout");
+        const ag_stderr = lib.jsonStrField(ag_parsed.object, "stderr");
 
         // Exit code 1 with no stderr is the grep convention for "no
         // matches" (same as rg). Only treat it as an error when stderr
@@ -116,8 +111,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         if (ag_code == 1 and std.mem.trim(u8, ag_stderr, " \t\r\n").len == 0) {
             return lib.okText(out, "no matches");
         }
-        // Non-zero exit: return a structured error with a hint when the
-        // grammar or config is missing.
         if (ag_code != 0) {
             var w = lib.writer(out);
             var s = lib.json(&w);
@@ -133,7 +126,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             } else {
                 try s.write("ast-grep exited with non-zero status");
             }
-            // Detect grammar/config issues and add an actionable hint.
             if (std.mem.find(u8, ag_stderr, "language") != null or
                 std.mem.find(u8, ag_stderr, "config") != null or
                 std.mem.find(u8, ag_stderr, "sgconfig") != null or
@@ -151,7 +143,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             return lib.okText(out, "no matches");
         }
 
-        // Parse ast-grep output lines into compact {file, line, text} matches.
         // ast-grep prints one match per line: "file:line:col:text" or just text.
         var w = lib.writer(out);
         var s = lib.json(&w);
@@ -162,9 +153,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.beginArray();
 
         var match_count: usize = 0;
-        const max_matches: usize = 200;
         var ag_rest: []const u8 = ag_stdout;
-        while (ag_rest.len > 0 and match_count < max_matches) {
+        while (ag_rest.len > 0 and match_count < match_cap) {
             const ag_nl = std.mem.findScalar(u8, ag_rest, '\n');
             const ag_line = if (ag_nl) |n| ag_rest[0..n] else ag_rest;
             ag_rest = if (ag_nl) |n| ag_rest[n + 1 ..] else &[_]u8{};
@@ -172,37 +162,23 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const trimmed = std.mem.trim(u8, ag_line, " \t\r\n");
             if (trimmed.len == 0) continue;
 
-            // ast-grep default output: "path/file.zig:LINE:COL:matched text"
             var file_path: []const u8 = "";
             var line_num: []const u8 = "";
+            var line_n: u32 = 0;
             var text: []const u8 = trimmed;
 
-            // Try to split "file:line:col:text" — at least 3 colons for a
-            // well-formed match. The file path may itself contain colons on
-            // non-Unix systems, but Zig paths in this project do not.
+            // Split "file:line:col:text". Zig paths in this project do not
+            // themselves contain colons, so the first numeric field is the line.
             if (std.mem.findScalar(u8, trimmed, ':')) |c1| {
                 const after1 = trimmed[c1 + 1 ..];
                 if (std.mem.findScalar(u8, after1, ':')) |c2| {
                     const after2 = after1[c2 + 1 ..];
-                    // Verify the segment between c1 and c2 looks numeric (line number).
-                    const num_candidate = after1[0..c2];
-                    var is_num = num_candidate.len > 0;
-                    for (num_candidate) |ch| {
-                        if (ch < '0' or ch > '9') {
-                            is_num = false;
-                            break;
-                        }
-                    }
-                    if (is_num) {
+                    if (std.fmt.parseInt(u32, after1[0..c2], 10)) |n| {
                         file_path = trimmed[0..c1];
-                        line_num = num_candidate;
-                        // Skip col field if present.
-                        if (std.mem.findScalar(u8, after2, ':')) |c3| {
-                            text = after2[c3 + 1 ..];
-                        } else {
-                            text = after2;
-                        }
-                    }
+                        line_num = after1[0..c2];
+                        line_n = n;
+                        text = if (std.mem.findScalar(u8, after2, ':')) |c3| after2[c3 + 1 ..] else after2;
+                    } else |_| {}
                 }
             }
 
@@ -215,14 +191,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.write(line_num);
             try s.objectField("text");
             try s.write(display);
-            const ag_line_n = std.fmt.parseInt(u32, line_num, 10) catch 0;
-            try writeOutline(&s, file_path, ag_line_n);
+            try writeOutline(&s, file_path, line_n);
             try s.endObject();
             match_count += 1;
         }
 
         try s.endArray();
-        if (match_count >= max_matches) {
+        if (match_count >= match_cap) {
             var omitted: usize = 0;
             while (ag_rest.len > 0) {
                 const snl = std.mem.findScalar(u8, ag_rest, '\n');
@@ -240,9 +215,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return;
     }
 
-    // For rg --json, parse the JSON-lines output into compact matches.
     if (std.mem.eql(u8, engine, "rg")) {
-        // Extract stdout from the exec result.
         const exec_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, result, .{ .ignore_unknown_fields = true }) catch
             return lib.fail(out, "search ran but its result was not readable JSON; narrow the query or the path");
         if (exec_parsed != .object) return lib.fail(out, "search ran but its result was not a JSON object; narrow the query or the path");
@@ -261,10 +234,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.beginArray();
 
         var match_count: usize = 0;
-        const max_matches: usize = 200;
         var rest: []const u8 = stdout;
-        while (rest.len > 0 and match_count < max_matches) {
-            // Find the end of this line.
+        while (rest.len > 0 and match_count < match_cap) {
             const nl = std.mem.findScalar(u8, rest, '\n');
             const line = if (nl) |n| rest[0..n] else rest;
             rest = if (nl) |n| rest[n + 1 ..] else &[_]u8{};
@@ -274,7 +245,6 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const line_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, line, .{ .ignore_unknown_fields = true }) catch continue;
             if (line_parsed != .object) continue;
 
-            // Only process "match" type lines.
             const type_val = line_parsed.object.get("type") orelse continue;
             if (type_val != .string) continue;
             if (!std.mem.eql(u8, type_val.string, "match")) continue;
@@ -282,36 +252,22 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const data = line_parsed.object.get("data") orelse continue;
             if (data != .object) continue;
 
-            // Extract file path.
             var file_path: []const u8 = "";
             if (data.object.get("path")) |p2| {
-                if (p2 == .object) {
-                    if (p2.object.get("text")) |t| {
-                        if (t == .string) file_path = t.string;
-                    }
-                }
+                if (p2 == .object) file_path = lib.jsonStrField(p2.object, "text");
             }
 
-            // Extract line number.
             var line_number: i64 = 0;
             if (data.object.get("line_number")) |ln| {
                 if (ln == .integer) line_number = ln.integer;
             }
 
-            // Extract matched text.
             var line_text: []const u8 = "";
             if (data.object.get("lines")) |lines| {
-                if (lines == .object) {
-                    if (lines.object.get("text")) |t| {
-                        if (t == .string) line_text = t.string;
-                    }
-                }
+                if (lines == .object) line_text = lib.jsonStrField(lines.object, "text");
             }
 
-            // Trim trailing newlines/carriage returns from the matched text.
-            const trimmed = std.mem.trimEnd(u8, line_text, "\r\n");
-            // Cap individual line length to keep output compact.
-            const display = utf8.cap(trimmed, 500);
+            const display = utf8.cap(std.mem.trimEnd(u8, line_text, "\r\n"), 500);
 
             try s.beginObject();
             try s.objectField("file");
@@ -327,7 +283,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
 
         try s.endArray();
-        if (match_count >= max_matches) {
+        if (match_count >= match_cap) {
             // Count remaining match-type lines so the agent knows how many were omitted.
             var omitted: usize = 0;
             var scan = rest;

@@ -1187,7 +1187,6 @@ function showCardDetail(id) {
   inListName.setAttribute("role", "button");
   inListName.tabIndex = 0;
   function openColMoveMenu() {
-    // Open column picker
     var existing = headerTextWrap.querySelector(".col-move-menu");
     if (existing) { existing.remove(); return; }
     var menu = menuPopup();
@@ -1268,13 +1267,11 @@ function showCardDetail(id) {
   addLabelBtn.appendChild(icon("plus", 12));
   addLabelBtn.appendChild(document.createTextNode(" Add"));
   addLabelBtn.addEventListener("click", function() {
-    // Toggle label picker visibility
     labelPicker.hidden = !labelPicker.hidden;
   });
   labelsRow.appendChild(addLabelBtn);
   mainCol.appendChild(labelsRow);
 
-  // Label picker (hidden by default)
   var labelPicker = document.createElement("div");
   labelPicker.className = "label-picker";
   labelPicker.hidden = true;
@@ -1291,7 +1288,6 @@ function showCardDetail(id) {
         var newLabels = currentLabels.filter(function(l) { return l.color !== color; });
         postBoard({ op: "update", id: c.id, labels: newLabels }, "Labels updated.");
       } else {
-        // Show inline text input for label name
         var existing = labelPicker.querySelector(".label-text-input-wrap");
         if (existing) existing.remove();
         var wrap = document.createElement("div");
@@ -1513,7 +1509,6 @@ function showCardDetail(id) {
   moveBtn.appendChild(document.createTextNode(" Move"));
   moveBtn.addEventListener("click", function() {
     if (!board || !board.columns) return;
-    // Build a small dropdown
     var existing = moveBtn.parentNode.querySelector(".card-detail-move-menu");
     if (existing) { existing.remove(); return; }
     var menu = document.createElement("div");

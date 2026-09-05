@@ -36,12 +36,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try argv.append(alloc, path);
     const raw = lib.exec("rg", argv.items) catch |err| return lib.failErr(out, err, "running rg");
 
-    // Parse the exec result to extract stdout.
     const exec_result = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .ignore_unknown_fields = true }) catch return lib.fail(out, "could not parse exec result");
     if (exec_result != .object) return lib.fail(out, "unexpected exec result");
-    const stdout = if (exec_result.object.get("stdout")) |v| (if (v == .string) v.string else "") else "";
+    const stdout = lib.jsonStrField(exec_result.object, "stdout");
 
-    // Parse ripgrep lines (file:line:text) into structured matches.
     var matches: std.ArrayList(struct { file: []const u8, line_no: u32, text: []const u8 }) = .empty;
     defer matches.deinit(alloc);
     var lines = std.mem.splitScalar(u8, stdout, '\n');

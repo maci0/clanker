@@ -71,10 +71,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const reply = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{ .ignore_unknown_fields = true }) catch
         return lib.fail(out, "could not read the exec result");
-    const stdout = if (reply == .object) blk: {
-        const v = reply.object.get("stdout") orelse break :blk "";
-        break :blk if (v == .string) v.string else "";
-    } else "";
+    const stdout = if (reply == .object) lib.jsonStrField(reply.object, "stdout") else "";
     if (stdout.len == 0) return lib.fail(out, "zls produced no output; is it the right version for this Zig?");
 
     if (std.mem.eql(u8, action, "diagnose")) {

@@ -28,9 +28,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     const raw = lib.exec("zig", argv.items) catch |err| return lib.failErr(out, err, "running zig test");
 
-    // Parse the exec result to build a structured response with ok/error.
     const exec_parsed = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch {
-        // Cannot parse exec output; pass through as-is.
         return out.writeAll(raw);
     };
     if (exec_parsed != .object) return out.writeAll(raw);
@@ -42,14 +40,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else 1;
     const ok = code == 0;
 
-    const stdout_str = if (exec_obj.get("stdout")) |sv| switch (sv) {
-        .string => |s| s,
-        else => "",
-    } else "";
-    const stderr_str = if (exec_obj.get("stderr")) |sv| switch (sv) {
-        .string => |s| s,
-        else => "",
-    } else "";
+    const stdout_str = lib.jsonStrField(exec_obj, "stdout");
+    const stderr_str = lib.jsonStrField(exec_obj, "stderr");
 
     const tail_cap: usize = 6 * 1024;
     const summary_cap: usize = 2 * 1024;
