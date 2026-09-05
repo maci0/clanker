@@ -566,11 +566,11 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `skills/` | — | Markdown skills folded into the system prompt |
 | `workflows/` | `src/agent/workflows.zig` | Reusable prompt workflows (`agent.workflows_dir`) |
 | `chains/` | — | Transform chains (`agent.chains_dir`) |
-| `presets/` | — | Tool-preset bundles (`presets/<name>.toml`, `clanker preset`) |
+| `presets/` | `src/preset/preset.zig` | Tool-preset bundles (`presets/<name>.toml`, `clanker preset`) |
 | `profiles/` | — | Config overlays (`--profile <name>` applies `profiles/<name>.toml`, then `profiles/<name>.local.toml` when present) |
 | `themes/` | `src/tui/theme.zig` | Color palettes as JSON, shared by the REPL themes and web tokens |
 | `commands/` | — | Drop-in JSON catalogs served to the web UI (`/webui/commands/*`; slash commands today) |
-| `tui-plugins/`, `cli-plugins/` | — | Slash-command / subcommand plugin manifests (PRD 0012) |
+| `tui-plugins/`, `cli-plugins/` | `src/tui/slash_plugins.zig`, `src/cli/cli_plugins.zig` | Slash-command / subcommand plugin manifests (PRD 0012) |
 | `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
 | `rules/` | — | Rule files |
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |
@@ -592,7 +592,7 @@ dependency cache location is controlled by the Zig installation/environment.
 - `tools/ts/` — AssemblyScript tool sources.
 - `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
 - `tools/grammars/` — grammars used by tools that parse.
-- `tools/examples/manifests/` — descriptors parked until their sources exist; nothing loads them and `zig build tools` does not build them.
+- `tools/examples/manifests/` — descriptors the registry does not load. The matching sources already exist (`tools/c/`, `tools/cpp/`, `tools/ts/calc_ts.ts`); `zig build tools` compiles the C and C++ guests into `zig-out/tools/`. They stay parked so a language-showcase tool is not offered to the model until it is shipped.
 - `patches/` — patches applied on top of vendored dependencies (`scripts/apply-patches.sh`).
 - `ui/plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
 - `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
@@ -693,7 +693,7 @@ Internal tools, never offered to the model:
 | `turn_hook_echo` | none | Demo turn-hook plugin: prints a line into the transcript after every turn |
 | `advisor` | none (`llm:true`) | Fail-open post-turn critique via `ck_llm`. Internal; parse/summarize/inject live in `advisor_logic.zig` |
 
-`tools/examples/manifests/` holds descriptors that are not loaded, such as `calc_ts.tool.json` (the AssemblyScript build of the calculator).
+`tools/examples/manifests/` holds descriptors the registry does not load. `calc_ts.tool.json` is the AssemblyScript calculator; `base64`, `crc32`, `hexdump`, `levenshtein`, `roman_numeral`, and `run_length` are the C/C++ guests `zig build tools` already compiles.
 
 ## Plugins
 
