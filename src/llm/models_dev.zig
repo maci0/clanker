@@ -4,9 +4,11 @@
 //! (context window, pricing, capabilities) maintained outside this repo, so a
 //! model's metadata need not be hand-typed into config.toml and kept in sync.
 //! The snapshot is downloaded once (first catalog use, or `providers refresh`
-//! / `POST /api/catalog/refresh`) and then read forever: serve start and
-//! catalog search never touch the network while it is present. The older 24h
-//! cache path is still read so an existing download survives an upgrade.
+//! / `POST /api/catalog/refresh`) and then read from disk: serve start and
+//! catalog search never touch the network while it is present. The in-process
+//! copy in `cli.zig` is stamp-validated against this file so a refresh from
+//! another process is visible without a restart. The older 24h cache path is
+//! still read so an existing download survives an upgrade.
 //!
 //! The file lives at `state/models-dev.json` (legacy `state/cache/`). Where it
 //! lives and how it is read and written is this module's, so no caller spells
@@ -49,6 +51,35 @@ pub fn readLocal(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ?[]const
 pub fn writeLocal(io: std.Io, dir: std.Io.Dir, body: []const u8) !void {
     try ensure_dir.ensureDir(dir, io, "state");
     try atomic_write.writeFile(io, dir, store_path, body);
+}
+
+/// Fingerprint of the on-disk snapshot: size and mtime of `store_path`, or
+/// of the legacy path if that is all that is present. Zero when neither
+/// exists (or a stat fails). The in-process catalog cache compares this
+/// against the stamp it stored, so a `clanker providers refresh` from
+/// another process is visible without a restart.
+pub fn snapshotStamp(io: std.Io, dir: std.Io.Dir) u64 {
+    if (stampOf(io, dir, store_path)) |s| return s;
+    if (stampOf(io, dir, legacy_path)) |s| return s;
+    return 0;
+}
+
+fn stampOf(io: std.Io, dir: std.Io.Dir, path: []const u8) ?u64 {
+    const st = dir.statFile(io, path, .{}) catch return null;
+    if (st.size == 0) return null;
+    var h = std.hash.Wyhash.init(0xC0A1E0CA7A10C000);
+    h.update(path);
+    h.update(std.mem.asBytes(&st.size));
+    const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+    h.update(std.mem.asBytes(&mtime_ns));
+    return h.final();
+}
+
+/// True when an in-process catalog copy still matches the file it was
+/// loaded from. A zero stamp is never fresh: that is "no file", and a
+/// cache filled while the write failed must not hide a later populate.
+pub fn cacheFresh(cached_stamp: u64, disk_stamp: u64) bool {
+    return cached_stamp != 0 and cached_stamp == disk_stamp;
 }
 
 fn hostOf(url: []const u8) ?[]const u8 {
@@ -744,4 +775,29 @@ test "writeLocal creates state/ on the first populate and replaces the snapshot"
     try std.testing.expectEqualStrings("first", readLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult);
     try writeLocal(io, tmp.dir, "second");
     try std.testing.expectEqualStrings("second", readLocal(io, tmp.dir, arena) orelse return error.TestUnexpectedResult);
+}
+
+test "snapshotStamp is stable for an untouched file and changes on rewrite" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try std.testing.expectEqual(@as(u64, 0), snapshotStamp(io, tmp.dir));
+    try writeLocal(io, tmp.dir, "first");
+    const a = snapshotStamp(io, tmp.dir);
+    const b = snapshotStamp(io, tmp.dir);
+    try std.testing.expect(a != 0);
+    try std.testing.expectEqual(a, b);
+    try writeLocal(io, tmp.dir, "second");
+    const c = snapshotStamp(io, tmp.dir);
+    try std.testing.expect(c != 0);
+    try std.testing.expect(c != a);
+}
+
+test "cacheFresh is never true with a zero stamp" {
+    try std.testing.expect(!cacheFresh(0, 0));
+    try std.testing.expect(!cacheFresh(0, 1));
+    try std.testing.expect(!cacheFresh(1, 0));
+    try std.testing.expect(cacheFresh(1, 1));
+    try std.testing.expect(!cacheFresh(1, 2));
 }

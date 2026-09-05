@@ -278,19 +278,29 @@ const WasmCache = struct {
     }
 };
 
+/// Fingerprint of a tool's wasm file: size and mtime. A stat failure (file
+/// vanished) is a miss at the call site, not a hit on whatever is cached.
+/// Nanoseconds as i64, not `asBytes(&st.mtime)`: `i96` occupies 16 bytes
+/// whose top 4 are unspecified, so the struct form hashed uninitialized
+/// stack memory and the stamp changed between calls.
+pub fn wasmStamp(io: std.Io, path: []const u8) !u64 {
+    const st = try std.Io.Dir.cwd().statFile(io, path, .{});
+    return wasmStampFromStat(st);
+}
+
+fn wasmStampFromStat(st: std.Io.File.Stat) u64 {
+    var h = std.hash.Wyhash.init(0x1F83D9ABFB41BD6B);
+    h.update(std.mem.asBytes(&st.size));
+    const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+    h.update(std.mem.asBytes(&mtime_ns));
+    return h.final();
+}
+
 /// The wasm at `path`, read once per (path, mtime, size).
 fn cachedWasm(io: std.Io, path: []const u8) ![]const u8 {
     const base = std.Io.Dir.cwd();
     const st = try base.statFile(io, path, .{});
-    var h = std.hash.Wyhash.init(0x1F83D9ABFB41BD6B);
-    h.update(std.mem.asBytes(&st.size));
-    // The mtime's nanoseconds, not the Timestamp struct: `i96` is stored in
-    // 16 bytes and the top 4 are unspecified, so hashing `asBytes(&st.mtime)`
-    // folded uninitialized stack memory into every stamp, which changed
-    // between calls and made the cache miss on every lookup.
-    const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
-    h.update(std.mem.asBytes(&mtime_ns));
-    const stamp = h.final();
+    const stamp = wasmStampFromStat(st);
 
     WasmCache.lock();
     defer WasmCache.mutex.unlock();

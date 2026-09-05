@@ -2468,20 +2468,12 @@ pub const Agent = struct {
         return bytes;
     }
 
-    /// Fingerprint of a tool's wasm file: size and mtime, the same shape
+    /// Fingerprint of a tool's wasm file: size and mtime, the same function
     /// `runtime.cachedWasm` uses, so both caches agree on what "changed"
     /// means. A stat failure (file vanished) folds in as a fresh miss rather
     /// than a hit on whatever is cached.
     fn wasmStamp(io: std.Io, path: []const u8) !u64 {
-        const st = try std.Io.Dir.cwd().statFile(io, path, .{});
-        var h = std.hash.Wyhash.init(0x1F83D9ABFB41BD6B);
-        h.update(std.mem.asBytes(&st.size));
-        // Nanoseconds as i64, not `asBytes(&st.mtime)`: `i96` is stored in 16
-        // bytes whose top 4 are unspecified, so the struct form hashes
-        // uninitialized stack memory and the stamp changes between calls.
-        const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
-        h.update(std.mem.asBytes(&mtime_ns));
-        return h.final();
+        return runtime.wasmStamp(io, path);
     }
 
     /// The compiled module for `tool` under `cache_key` (the tool name, or a

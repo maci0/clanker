@@ -7,6 +7,7 @@ with an allowlisted `GITHUB_TOKEN`, and caches responses under
 `state/gh_cache/` for 300s. `read_file` is unchanged. sqlite/ETag
 refresh is still open. Sources of truth: `tools/zig/gh_read.zig`,
 `tools/zig/gh_url.zig`, `tools/zig/gh_format.zig`,
+`tools/zig/gh_cache.zig`,
 `tools/manifests/gh_read.tool.json`.
 
 ## Problem
@@ -63,11 +64,13 @@ exists via `gh`.
      one per line: `#<number> <state> <title>`. *(Not shipped: `gh.max_list`
      cap — the tool formats every item the API returns.)*
 3. Responses are cached on disk in `state/gh_cache/` as `<hex>.json` files,
-   where `<hex>` is the lowercase-hex Wyhash of the request URL. Each file
-   holds `{"url", "fetched", "body"}` and is re-fetched when
-   `now - fetched > 300` (a fixed 300s TTL). *(Not shipped: a sqlite
-   `state/gh_cache.db`, a soft/hard TTL split, and ETag revalidation — see Open
-   questions.)*
+   where `<hex>` is the lowercase-hex Wyhash of the request URL, a NUL, and
+   `GITHUB_TOKEN`. Each file holds `{"url", "token_fp", "fetched", "body"}`
+   (`token_fp` is hex, not the token) and is re-fetched when
+   `now - fetched > 300` (a fixed 300s TTL) or when the fingerprint does not
+   match the current token. A write also deletes expired files it can see.
+   *(Not shipped: a sqlite `state/gh_cache.db`, a soft/hard TTL split, and
+   ETag revalidation — see Open questions.)*
 4. `GITHUB_TOKEN` is read through the allowlisted `env_allow: ["GITHUB_TOKEN"]`
    grant (`ck_getenv`), not a general env read that can reach arbitrary
    variables. If absent, `gh_read` returns a clear error.
@@ -166,12 +169,16 @@ moment a PR touched more than one. A file the API returns with no `patch` at all
 
 **Cache (shipped).** On a cache miss, `gh_read` fetches via `ck_http` and writes
 the raw response body to `state/gh_cache/<hex>.json`, where `<hex>` is the
-lowercase-hex Wyhash of the request URL. The JSON object is
-`{"url", "fetched", "body"}` with `fetched` as Unix seconds. On a later call the
-guest reads that file and returns the cached `body` while `now - fetched <= 300`;
-after that it re-fetches and overwrites the file. There is no sqlite, no ETag,
-and no soft/hard TTL split — the TTL is a fixed 300s. The sqlite/ETag/soft-hard
-idea is future work (see Open questions).
+lowercase-hex Wyhash of the request URL, a NUL byte, and `GITHUB_TOKEN`. The
+JSON object is `{"url", "token_fp", "fetched", "body"}` with `fetched` as Unix
+seconds and `token_fp` the hex Wyhash of the token (the token itself is never
+stored). On a later call the guest reads that file and returns the cached
+`body` only when the URL and fingerprint both match and `now - fetched <= 300`;
+a mismatch or expiry deletes the file rather than serving it. A put also
+sweeps other expired files in the directory (ADR 0008: nothing else fires).
+A record written before `token_fp` existed is treated as expired. There is no
+sqlite, no ETag, and no soft/hard TTL split — the TTL is a fixed 300s. The
+sqlite/ETag/soft-hard idea is future work (see Open questions).
 
 **GitHub token (decided: allowlisted env).** Read `GITHUB_TOKEN` through
 `ck_getenv`, allowlisted by the manifest's `env_allow: ["GITHUB_TOKEN"]`. If
@@ -234,15 +241,18 @@ than silently returning less than was asked for.
 2. **Auth**: allowlisted `ck_getenv` for `GITHUB_TOKEN`; clear error if missing.
 3. **`ck_http` mapping** for the five resource shapes; rate-limit error path.
 4. **Cache**: fixed-300s on-disk cache in `tools/zig/gh_read.zig`
-   (`cacheGet` / `cachePut` writing `state/gh_cache/<hex>.json`).
+   (`cacheGet` / `cachePut` writing `state/gh_cache/<hex>.json`). Key
+   and record logic live in `tools/zig/gh_cache.zig` (host-tested): the
+   filename mixes the token, the record stores a fingerprint, and a
+   write sweeps expired files.
 5. **Manifest**: `network_allow: ["api.github.com"]`, `env_allow:
    ["GITHUB_TOKEN"]`, `fs_prefixes: ["state/gh_cache/"]` on `gh_read` only.
 6. **Tests**: URL parsing and endpoint mapping in `gh_url.zig`; rendering and
    status classification in `gh_format.zig` (a host-tested helper, so the
    response shapes the API really returns are pinned without a network); the
    status envelope in `src/sandbox/host.zig`, against a loopback server that
-   answers 404 with a body. Token-missing and TTL logic still have no dedicated
-   unit tests.
+   answers 404 with a body. Cache key, fingerprint, TTL, and legacy-record
+   refusal are pinned in `tools/zig/gh_cache.zig`.
 7. **Deferred:** GraphQL endpoint; GitHub writes (separate future PRD, not
    0021); Enterprise `api_base_url`; sqlite/ETag/soft-hard-TTL cache (see Open
    questions).

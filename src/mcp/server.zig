@@ -32,11 +32,17 @@ const methods = std.StaticStringMap(Method).initComptime(.{
 /// re-parsed/re-linked/re-instantiated it from scratch, the agent loop
 /// avoids exactly this cost with its own `wasm_cache`/`self.modules`, and an
 /// MCP client issuing many calls in a session deserves the same reuse.
-const ModuleCache = std.StringHashMapUnmanaged(*runtime.ToolModule);
+///
+/// Each entry is stamped with the wasm file it was compiled from. A
+/// `zig build tools` mid-session used to keep executing the first build for
+/// the rest of the stdio connection: `runtime.cachedWasm` picked up the new
+/// bytes, but a hit here never consulted them. Same shape as `Agent.moduleFor`.
+const ModuleCacheEntry = struct { stamp: u64, mod: *runtime.ToolModule };
+const ModuleCache = std.StringHashMapUnmanaged(ModuleCacheEntry);
 
 fn deinitModuleCache(gpa: std.mem.Allocator, cache: *ModuleCache) void {
     var it = cache.valueIterator();
-    while (it.next()) |m| m.*.deinit();
+    while (it.next()) |e| e.mod.deinit();
     cache.deinit(gpa);
 }
 
@@ -313,12 +319,26 @@ fn extractToolCall(params: ?json.Value, arg_buf: []u8) struct { name: []const u8
 /// `cache_arena` never resets for the life of the session, matching the
 /// module's lifetime: its sandbox must outlive every later call that reuses
 /// the module from the cache.
+///
+/// The old module is freed only after the new one compiled successfully, so
+/// a failed recompile leaves the previous entry in place (retried on the
+/// next call) rather than a dangling pointer. MCP is single-threaded stdio,
+/// so freeing a superseded module cannot race an in-flight use.
 fn getOrLoadModule(gpa: std.mem.Allocator, io: std.Io, cache_arena: std.mem.Allocator, environ_map: *std.process.Environ.Map, cfg: *const config.Config, reg: *const registry.Registry, module_cache: *ModuleCache, llm_ctx: *client.Ctx, name: []const u8) !*runtime.ToolModule {
-    if (module_cache.get(name)) |m| return m;
+    const tool = reg.get(name) orelse return error.UnknownTool;
+    const stamp = runtime.wasmStamp(io, tool.wasm) catch 0;
+    if (module_cache.get(name)) |e| {
+        if (e.stamp == stamp) return e.mod;
+    }
     const mod = try runtime.loadNamedTool(gpa, io, cache_arena, environ_map, cfg, reg, name, llm_ctx);
     errdefer mod.deinit();
+    if (module_cache.getPtr(name)) |e| {
+        if (e.mod != mod) e.mod.deinit();
+        e.* = .{ .stamp = stamp, .mod = mod };
+        return mod;
+    }
     const key = try cache_arena.dupe(u8, name);
-    try module_cache.put(gpa, key, mod);
+    try module_cache.put(gpa, key, .{ .stamp = stamp, .mod = mod });
     return mod;
 }
 

@@ -3353,11 +3353,13 @@ fn renderConfiguredProviderModels(arena: std.mem.Allocator, provider: *const con
 /// is declared and never referenced -- see `llm/client.zig`'s `Abort`), so a
 /// host that resolves, accepts the connection and then says nothing blocks the
 /// calling thread forever. Two of this fetch's callers are `clanker serve`
-/// request handlers, and `handleCatalog` reaches it while holding
-/// `catalog_cache_mutex`: unbounded there, one wedged CDN connection takes the
+/// request handlers. `handleCatalog` used to reach it while holding
+/// `catalog_cache_mutex`: unbounded there, one wedged CDN connection took the
 /// catalog away from every later request in the process, not just its own.
-/// The snapshot is a few MiB over a public CDN, so 30s is well past a healthy
-/// fetch and well short of "never".
+/// The fill now runs with the lock released; the 30s ceiling is still what
+/// stops a silent CDN from parking the filling thread itself. The snapshot
+/// is a few MiB over a public CDN, so 30s is well past a healthy fetch and
+/// well short of "never".
 const models_dev_timeout_ms: i64 = 30_000;
 
 /// The models.dev catalog body. Disk when present; the network only when the
@@ -11218,12 +11220,15 @@ test "transcriptBytes counts tool call arguments, like the session listing" {
 
 /// The on-disk catalog body and its parsed tree, held in process so a
 /// search keystroke does not re-read or re-parse several MB. Filled on first
-/// /api/catalog in this process, replaced by POST /api/catalog/refresh.
-/// Guarded because catalog searches arrive on connection threads; the tree
-/// points into `catalog_cache`, so both are swapped under the same lock.
+/// /api/catalog in this process, replaced by POST /api/catalog/refresh or
+/// when `state/models-dev.json` changes underfoot (a CLI `providers refresh`
+/// from another process). Guarded because catalog searches arrive on
+/// connection threads; the tree points into `catalog_cache`, so both are
+/// swapped under the same lock.
 var catalog_cache_mutex: std.c.pthread_mutex_t = .{};
 var catalog_cache: ?[]const u8 = null;
 var catalog_parsed: ?std.json.Parsed(std.json.Value) = null;
+var catalog_cache_stamp: u64 = 0;
 
 fn dropCatalogCacheLocked(gpa: std.mem.Allocator) void {
     if (catalog_parsed) |*p| {
@@ -11234,6 +11239,7 @@ fn dropCatalogCacheLocked(gpa: std.mem.Allocator) void {
         gpa.free(c);
         catalog_cache = null;
     }
+    catalog_cache_stamp = 0;
 }
 
 fn installCatalogCacheLocked(gpa: std.mem.Allocator, owned: []const u8) void {
@@ -11266,6 +11272,7 @@ fn handleCatalogRefresh(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.S
     };
     _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
     installCatalogCacheLocked(gpa, owned);
+    catalog_cache_stamp = models_dev.snapshotStamp(io, std.Io.Dir.cwd());
     _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
 
     var out: std.Io.Writer.Allocating = .init(arena);
@@ -11305,26 +11312,46 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
     // length of its own transfer. The response body is arena memory copied
     // out of the tree by `writeSearch`, so it survives the unlock even if a
     // concurrent `/api/catalog/refresh` swaps the snapshot underneath.
+    //
+    // Filling is the other half: `loadModelsDev` may hit the network when
+    // the snapshot is missing, and holding the lock across that used to
+    // stall every other catalog search for the length of a wedged CDN
+    // connection (capped at `models_dev_timeout_ms`, but still every
+    // search, not just the filler). The fill now runs with the lock
+    // released; two concurrent misses both read the file, which is
+    // wasteful and never wrong. A later store for the same stamp is
+    // dropped so the first fill's buffer is not freed under a search
+    // still walking it.
     var out: std.Io.Writer.Allocating = .init(arena);
+    const disk_stamp = models_dev.snapshotStamp(io, std.Io.Dir.cwd());
     _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
     var unlocked = false;
     defer if (!unlocked) {
         _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
     };
 
-    if (catalog_parsed == null) {
-        if (catalog_cache == null) {
-            const fetched = loadModelsDev(io, gpa, arena, false) catch {
-                respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"no local catalog; run clanker providers refresh\"}");
-                return;
-            };
-            const owned = gpa.dupe(u8, fetched) catch {
-                respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
-                return;
-            };
-            installCatalogCacheLocked(gpa, owned);
+    const warm = catalog_parsed != null and models_dev.cacheFresh(catalog_cache_stamp, disk_stamp);
+    if (!warm) {
+        unlocked = true;
+        _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
+
+        const fetched = loadModelsDev(io, gpa, arena, false) catch {
+            respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"no local catalog; run clanker providers refresh\"}");
+            return;
+        };
+        const owned = gpa.dupe(u8, fetched) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        const filled_stamp = models_dev.snapshotStamp(io, std.Io.Dir.cwd());
+
+        _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
+        unlocked = false;
+        if (catalog_parsed != null and models_dev.cacheFresh(catalog_cache_stamp, filled_stamp)) {
+            gpa.free(owned);
         } else {
-            catalog_parsed = std.json.parseFromSlice(std.json.Value, gpa, catalog_cache.?, .{ .ignore_unknown_fields = true }) catch null;
+            installCatalogCacheLocked(gpa, owned);
+            catalog_cache_stamp = filled_stamp;
         }
     }
     const catalog = if (catalog_parsed) |*p| p.value else {
@@ -18924,10 +18951,12 @@ test "httpGetDeadline gives up on a silent host and names the timeout" {
     // accepts from, so the handshake and the request write both succeed and the
     // read then blocks forever. `loadModelsDev` and `GET /api/providers/models`
     // reach the network through this call from `clanker serve` worker threads,
-    // and `handleCatalog` does so holding `catalog_cache_mutex`: without
-    // the ceiling one wedged connection keeps that lock for the life of the
-    // process. `error.Timeout` rather than a collapsed null is what puts the
-    // cause in the operator's log.
+    // and `handleCatalog` used to do so holding `catalog_cache_mutex`: without
+    // the ceiling one wedged connection kept that lock for the life of the
+    // process. The fill now runs with the lock released; the ceiling still
+    // stops the filling thread itself from parking forever. `error.Timeout`
+    // rather than a collapsed null is what puts the cause in the operator's
+    // log.
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();

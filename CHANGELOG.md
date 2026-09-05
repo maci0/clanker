@@ -20,6 +20,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `gh_read` caches GitHub responses under `(url, token)`, not the URL
+  alone, so a rotated `GITHUB_TOKEN` is not served another identity's
+  body. Expired files in `state/gh_cache/` are deleted on the next write.
+- `GET /api/catalog` no longer holds the catalog lock across a models.dev
+  fetch, and the in-process snapshot is dropped when
+  `state/models-dev.json` changes, so a `clanker providers refresh` from
+  another process is visible without a restart.
+- `clanker mcp` recompiles a cached tool when its `.wasm` file changes,
+  matching the agent loop.
 - Creating a board card that names a goal already mirrored by a live card
   returns that card instead of posting a second add. A retried HTTP POST or
   two browsers mirroring the same goal used to leave two cards; the fold
