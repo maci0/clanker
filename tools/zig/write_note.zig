@@ -1,7 +1,7 @@
 //! note_write: append a line to the persistent learnings file
 //! (state/learnings.md via sandbox fs prefix "state/").
 //! Input:  {"note": "..."}
-//! Output: {"ok": true}
+//! Output: {"ok": true} | {"ok": true, "duplicate": true}
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -20,6 +20,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     const path = "state/learnings.md";
 
+    // A retried note_write of the same sentence (tool error after the append
+    // landed, the model calling it twice) used to grow a second bullet. The
+    // file is the set of notes, so an exact existing line is a no-op.
+    const existing = lib.fsRead(path) catch |err| switch (err) {
+        error.NotFound => "",
+        else => return lib.failErr(out, err, "reading the notes"),
+    };
+    if (noteLinePresent(existing, note)) {
+        try out.writeAll("{\"ok\":true,\"duplicate\":true}");
+        return;
+    }
+
     // Appending, not rewriting. This used to read the whole file, add a line
     // and write the whole file back, so two notes written in the same turn -
     // tools here run in parallel - both started from the same contents and one
@@ -28,9 +40,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     defer line.deinit(lib.alloc);
 
     // A file that does not already end in a newline would otherwise get this
-    // note glued onto its last line. One byte answers that without reading the
-    // file back in.
-    if (endsWithoutNewline(path)) try line.append(lib.alloc, '\n');
+    // note glued onto its last line.
+    if (existing.len > 0 and existing[existing.len - 1] != '\n') try line.append(lib.alloc, '\n');
     try line.appendSlice(lib.alloc, "- ");
     try line.appendSlice(lib.alloc, note);
     try line.append(lib.alloc, '\n');
@@ -42,17 +53,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try out.writeAll("{\"ok\":true}");
 }
 
-/// True when the file exists, is not empty, and its last byte is not a
-/// newline. Reads that one byte rather than the whole file.
-fn endsWithoutNewline(path: []const u8) bool {
-    const raw = lib.fsStat(path) catch return false;
-    const st = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw, .{}) catch return false;
-    if (st != .object) return false;
-    const size_v = st.object.get("size") orelse return false;
-    const size: u64 = switch (size_v) {
-        .integer => |i| if (i <= 0) return false else @intCast(i),
-        else => return false,
-    };
-    const last = lib.fsReadRange(path, @intCast(size - 1), 1) catch return false;
-    return last.len == 1 and last[0] != '\n';
+/// True when `existing` already has a `- {note}` line. Compared as a whole
+/// line so a shorter note cannot match inside a longer one.
+fn noteLinePresent(existing: []const u8, note: []const u8) bool {
+    var it = std.mem.splitScalar(u8, existing, '\n');
+    while (it.next()) |line| {
+        const t = std.mem.trimEnd(u8, line, "\r");
+        if (t.len >= 2 and t[0] == '-' and t[1] == ' ' and std.mem.eql(u8, t[2..], note)) return true;
+    }
+    return false;
 }

@@ -23,6 +23,9 @@
 //!         add/create also returns "card_id": "<id>" for the card it just
 //!         created (the chat message id, per `apply`), so a caller such as
 //!         bugreport can hand the caller the new card without re-deriving it.
+//!         A create that names a `goal` already mirrored by a live card
+//!         returns that card instead of posting a second add: a retried
+//!         POST and the web UI's goal mirror both converge on one card.
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -345,6 +348,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             const raw = req.assignee orelse req.who;
             break :blk if (raw) |a| (if (a.len > 0) a else null) else null;
         };
+        // One live card per goal. The fold drops a second add with the same
+        // goal, but posting it still fans a duplicate message to every peer;
+        // returning the existing card here is the same answer without the
+        // write. Two racing creates can both miss this check; the fold is
+        // what makes them converge.
+        if (req.goal) |gid| {
+            if (gid.len > 0) {
+                if (cards.liveByGoal(list, gid)) |existing| {
+                    return respond(out, room, list, "", existing.id);
+                }
+            }
+        }
         const sent = apply(alloc, room, .{
             .action = "add",
             .title = title,

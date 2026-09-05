@@ -21,7 +21,7 @@
 //!
 //! The log has no locking and peers may append the same messages in different
 //! orders, so the fold must converge on every replica regardless of order.
-//! Three rules, picked per field by what the field is for:
+//! Four rules, picked per field by what the field is for:
 //!   - claim races: lowest (ts, id) wins. A claim is a mutex, so the first one
 //!     takes it and a later claimant is told it lost.
 //!   - edits (title, body, column, priority, deadline, assign, subtask ticks,
@@ -31,6 +31,10 @@
 //!   - log entries and cost: grow-only. Entries union on the (ts, who, what)
 //!     triple; tokens and dollars sum. Re-folding the same log twice cannot
 //!     double-count because each contribution is one message.
+//!   - goal-linked adds: one live card per goal. A second add carrying the
+//!     same goal (a retried create, two browsers mirroring at once) is
+//!     dropped; the first (lowest ts, id) stays. An add after that card is
+//!     deleted is a fresh card, because the tombstone has already latched.
 //! `closed` is gone: `column` is the only status, and close folds as
 //! `column := "done"`. A board has to be able to move work back out of done,
 //! which the old latch made unrepresentable.
@@ -631,6 +635,32 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
         }
     }
 
+    // One live card per goal. The add itself always creates a new message id,
+    // so a retried POST (timeout after the write, two UIs mirroring the same
+    // goal) would otherwise stay as two cards. First created wins; a later
+    // add after that winner was deleted is not a duplicate, because the
+    // tombstone already marked it removed above.
+    {
+        var keep_by_goal: std.StringHashMapUnmanaged(*State) = .empty;
+        var fold_it = by_id.iterator();
+        while (fold_it.next()) |kv| {
+            const c = kv.value_ptr;
+            if (c.removed or c.goal.len == 0) continue;
+            const gop = try keep_by_goal.getOrPut(arena, c.goal);
+            if (!gop.found_existing) {
+                gop.value_ptr.* = c;
+                continue;
+            }
+            const keep = gop.value_ptr.*;
+            if (wins(c.ts, c.id, keep.ts, keep.id)) {
+                keep.removed = true;
+                gop.value_ptr.* = c;
+            } else {
+                c.removed = true;
+            }
+        }
+    }
+
     var live: usize = 0;
     {
         var count_it = by_id.iterator();
@@ -736,6 +766,17 @@ pub fn derive(arena: std.mem.Allocator, msgs: []const Message) ![]Card {
 pub fn get(cards: []Card, id: []const u8) ?*Card {
     for (cards) |*c| {
         if (std.mem.eql(u8, c.id, id)) return c;
+    }
+    return null;
+}
+
+/// The live card that already mirrors `goal`, if any. Empty goal never
+/// matches: unlinked cards are not interchangeable, and two creates without
+/// a goal are two cards. The derived list has already dropped tombstones.
+pub fn liveByGoal(list: []const Card, goal: []const u8) ?*const Card {
+    if (goal.len == 0) return null;
+    for (list) |*c| {
+        if (std.mem.eql(u8, c.goal, goal)) return c;
     }
     return null;
 }
@@ -1092,6 +1133,60 @@ test "goal link folds like an edit, in either order" {
     const plain = [_]Message{msg("m1", "x", 100, try encodeAdd(arena, "task"))};
     const cp = try derive(arena, &plain);
     try std.testing.expectEqualStrings("", cp[0].goal);
+}
+
+test "two adds with the same goal fold to the first card" {
+    var arena_state = std.heap.ArenaAllocator.init(t_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // A retried create (or two browsers mirroring one goal) posts a second
+    // add with a new message id. The first add is the card; the later one
+    // is dropped even when it arrives first in this replica's log.
+    const first = try encode(arena, .{ .action = "add", .title = "original", .goal = "g1" });
+    const retry = try encode(arena, .{ .action = "add", .title = "duplicate", .goal = "g1" });
+    const order_a = [_]Message{ msg("m1", "x", 100, first), msg("m2", "y", 200, retry) };
+    const order_b = [_]Message{ msg("m2", "y", 200, retry), msg("m1", "x", 100, first) };
+    const ca = try derive(arena, &order_a);
+    const cb = try derive(arena, &order_b);
+    try std.testing.expectEqual(@as(usize, 1), ca.len);
+    try std.testing.expectEqual(@as(usize, 1), cb.len);
+    try std.testing.expectEqualStrings("m1", ca[0].id);
+    try std.testing.expectEqualStrings("m1", cb[0].id);
+    try std.testing.expectEqualStrings("original", ca[0].title);
+    try std.testing.expectEqualStrings("original", cb[0].title);
+    try std.testing.expectEqualStrings("g1", ca[0].goal);
+
+    // Unlinked cards with the same title stay two cards: title is not a key.
+    const plain = [_]Message{
+        msg("a", "x", 100, try encodeAdd(arena, "same")),
+        msg("b", "x", 101, try encodeAdd(arena, "same")),
+    };
+    const two = try derive(arena, &plain);
+    try std.testing.expectEqual(@as(usize, 2), two.len);
+
+    // Distinct goals stay distinct.
+    const other = try encode(arena, .{ .action = "add", .title = "other", .goal = "g2" });
+    const distinct = [_]Message{ msg("m1", "x", 100, first), msg("m3", "x", 150, other) };
+    const both = try derive(arena, &distinct);
+    try std.testing.expectEqual(@as(usize, 2), both.len);
+
+    // A new add after the first card is deleted is a fresh card, not a
+    // duplicate of the tombstone.
+    const deleted = [_]Message{
+        msg("m1", "x", 100, first),
+        msg("d1", "x", 150, try encode(arena, .{ .action = "delete", .todo = "m1" })),
+        msg("m2", "x", 200, retry),
+    };
+    const after = try derive(arena, &deleted);
+    try std.testing.expectEqual(@as(usize, 1), after.len);
+    try std.testing.expectEqualStrings("m2", after[0].id);
+    try std.testing.expectEqualStrings("duplicate", after[0].title);
+
+    try std.testing.expect(liveByGoal(ca, "g1") != null);
+    try std.testing.expectEqualStrings("m1", liveByGoal(ca, "g1").?.id);
+    try std.testing.expect(liveByGoal(ca, "") == null);
+    try std.testing.expect(liveByGoal(ca, "nope") == null);
 }
 
 test "goal-as-card fields fold with add and update" {

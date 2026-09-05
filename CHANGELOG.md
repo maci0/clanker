@@ -5,6 +5,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- Creating a board card that names a goal already mirrored by a live card
+  returns that card instead of posting a second add. A retried HTTP POST or
+  two browsers mirroring the same goal used to leave two cards; the fold
+  now keeps the first.
+- `clanker notify` (and the peers notify tool) stamps a delivery id that is
+  stable for a given message within a 60-second window, so a retry after a
+  lost response is dropped by the inbox instead of stored twice. Pass `id`
+  to pin a longer-lived key.
+- `note_write` of a sentence already in `state/learnings.md` returns
+  `duplicate` and does not append a second bullet.
+
 ## [0.2.1] - 2026-08-31
 
 ### Fixed

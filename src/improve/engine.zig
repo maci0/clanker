@@ -1400,7 +1400,7 @@ pub const Engine = struct {
                 self.invalidateLiveGate();
             }
         }
-        self.notifyPeers("improve", proposal.summary);
+        self.notifyPeers("improve", proposal.summary, id);
 
         log.log(.info, "✓ promoted improvement {s} (gate {d:.2}/{d})", .{ id, live.score, live.total });
         // Clean up the staging directory now that promotion is done.
@@ -1941,7 +1941,7 @@ pub const Engine = struct {
     /// Fans a promotion event out to every configured peer through the
     /// sandboxed `peers` WASM tool, the same path `clanker notify` and the
     /// model itself use, instead of a second hand-rolled HTTP client.
-    fn notifyPeers(self: *Engine, kind: []const u8, payload: []const u8) void {
+    fn notifyPeers(self: *Engine, kind: []const u8, payload: []const u8, id: []const u8) void {
         if (!self.cfg.modules.peers) return;
         if (!self.cfg.notify.on) return;
         if (self.cfg.peers.len == 0) return;
@@ -1968,6 +1968,10 @@ pub const Engine = struct {
         is.write(kind) catch return;
         is.objectField("topic") catch return;
         is.write(self.cfg.notify.topic) catch return;
+        if (id.len > 0) {
+            is.objectField("id") catch return;
+            is.write(id) catch return;
+        }
         is.endObject() catch return;
 
         const raw = mod.executeTool(ibuf[0..iw.end]) catch |err| {

@@ -187,9 +187,14 @@ fn notify(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req: Req
 
     var delivery = req;
     if (delivery.id.len == 0) {
-        const now_bits: u64 = @trunc(lib.nowSeconds());
-        const content_hash = std.hash.Wyhash.hash(0, req.message);
-        delivery.id = try std.fmt.allocPrint(alloc, "{x}-{x}", .{ now_bits, content_hash });
+        // Stable across a retry of the same send: the previous id mixed in
+        // wall-clock seconds, so a lost response followed by a re-run of
+        // `clanker notify` (or the agent calling notify again) looked like a
+        // new delivery and landed twice. A 60s bucket covers the retry
+        // horizon; a deliberate re-send after that is a new notification.
+        // The inbox already drops a redelivery of a known id and trims at
+        // 1 MiB, so this does not grow unbounded.
+        delivery.id = try generatedDeliveryId(alloc, req);
     }
 
     // No peer named: fan out to every configured peer instead of one. The
@@ -267,6 +272,16 @@ fn failWithId(out: *lib.Out, err: anyerror, what: []const u8, id: []const u8) !v
     try s.write(id);
     try s.endObject();
     lib.commit(out, &w);
+}
+
+fn generatedDeliveryId(alloc: std.mem.Allocator, req: Request) ![]const u8 {
+    const now_s: u64 = @trunc(lib.nowSeconds());
+    const bucket = now_s / 60;
+    var h = std.hash.Wyhash.init(bucket);
+    h.update(req.kind);
+    h.update(req.topic);
+    h.update(req.message);
+    return std.fmt.allocPrint(alloc, "{x}-{x}", .{ bucket, h.final() });
 }
 
 fn sendNotify(alloc: std.mem.Allocator, peer: Peer, req: Request) !void {
