@@ -22,6 +22,11 @@ const max_frame_bytes: usize = 16 << 20;
 /// growing the list without bound.
 const max_parked_responses: usize = 32;
 
+/// How many adapter events are kept until the next `takeEvents`. Output
+/// events can arrive in a flood; without a cap a silent-except-for-output
+/// adapter grows the list for the life of the live session.
+const max_parked_events: usize = 64;
+
 pub const Decoded = struct {
     payload: []const u8,
     consumed: usize,
@@ -225,9 +230,16 @@ pub const Session = struct {
         }
     }
 
+    fn queueEvent(self: *Session, payload: []const u8) !void {
+        if (self.events.items.len >= max_parked_events) {
+            self.gpa.free(self.events.orderedRemove(0));
+        }
+        try self.events.append(self.gpa, try self.gpa.dupe(u8, payload));
+    }
+
     fn noteFrame(self: *Session, payload: []const u8) !void {
         if (frameIs(payload, "type", "event")) {
-            try self.events.append(self.gpa, try self.gpa.dupe(u8, payload));
+            try self.queueEvent(payload);
             return;
         }
         // Not an event, so not the model's business — but it may be the
@@ -271,7 +283,7 @@ pub const Session = struct {
         while (spins < 256) : (spins += 1) {
             const frame = try self.readFrame(arena);
             if (frameIs(frame, "type", "event")) {
-                try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
+                try self.queueEvent(frame);
                 continue;
             }
             if (frameRequestSeq(frame) == id) return frame;
@@ -354,7 +366,7 @@ pub const Session = struct {
         while (spins < 64 and (resp == null or !saw_init)) : (spins += 1) {
             const frame = self.readFrame(arena) catch break;
             if (frameIs(frame, "event", "initialized") or frameIs(frame, "type", "event")) {
-                try self.events.append(self.gpa, try self.gpa.dupe(u8, frame));
+                try self.queueEvent(frame);
                 if (frameIs(frame, "event", "initialized")) saw_init = true;
                 continue;
             }
@@ -923,12 +935,14 @@ pub fn liveSession(gpa: std.mem.Allocator, io: std.Io, reg: *subprocess.Registry
     }
     if (live.map.get(session_id)) |s| return s;
     const s = try gpa.create(Session);
+    errdefer gpa.destroy(s);
     s.* = .{
         .io = io,
         .gpa = gpa,
         .reg = reg,
         .session_id = try gpa.dupe(u8, session_id),
     };
+    errdefer gpa.free(s.session_id);
     try live.map.put(gpa, s.session_id, s);
     return s;
 }
@@ -941,6 +955,26 @@ pub fn dropLive(session_id: []const u8) void {
         live.gpa.free(kv.value.session_id);
         live.gpa.destroy(kv.value);
     }
+}
+
+/// Frees every live DAP session and the hash map they sit in. Call once at
+/// process exit: `dropLive` removes a row but leaves the map's table
+/// allocated, which is the DebugAllocator leak a debug-tool run reports
+/// after a timed-out launch (the row is dropped at session end; the table
+/// is not).
+pub fn deinitLive() void {
+    live.lock();
+    defer live.mu.unlock();
+    if (!live.ready) return;
+    var it = live.map.iterator();
+    while (it.next()) |kv| {
+        kv.value_ptr.*.deinit();
+        live.gpa.free(kv.value_ptr.*.session_id);
+        live.gpa.destroy(kv.value_ptr.*);
+    }
+    live.map.deinit(live.gpa);
+    live.map = .empty;
+    live.ready = false;
 }
 
 pub const fake_adapter_src =
@@ -1009,6 +1043,55 @@ pub const fake_adapter_src =
 
 fn testIo() std.Io.Threaded {
     return std.Io.Threaded.init(std.testing.allocator, .{});
+}
+
+test "deinitLive frees the live session map after dropLive" {
+    // dropLive removes the row; the hash map's table stays allocated until
+    // deinitLive. That table is the DebugAllocator leak a debug-tool run
+    // reports at process exit after a timed-out launch.
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = subprocess.Registry.init(std.testing.allocator, threaded.io());
+    defer reg.deinit();
+    defer deinitLive();
+    const s = try liveSession(std.testing.allocator, threaded.io(), &reg, "dbg-live-free");
+    try std.testing.expectEqualStrings("dbg-live-free", s.session_id);
+    dropLive("dbg-live-free");
+    deinitLive();
+    // A second pass over an already-cleared map is a no-op.
+    deinitLive();
+}
+
+test "deinitLive frees a live session that was never dropLive'd" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = subprocess.Registry.init(std.testing.allocator, threaded.io());
+    defer reg.deinit();
+    defer deinitLive();
+    const s = try liveSession(std.testing.allocator, threaded.io(), &reg, "dbg-live-keep");
+    try std.testing.expect(s.seq == 1);
+    deinitLive();
+}
+
+test "adapter events past the cap drop the oldest" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    var reg = subprocess.Registry.init(std.testing.allocator, threaded.io());
+    defer reg.deinit();
+    var sess = Session{
+        .io = threaded.io(),
+        .gpa = std.testing.allocator,
+        .reg = &reg,
+        .session_id = "dbg-ev-cap",
+    };
+    defer sess.deinit();
+    var i: usize = 0;
+    while (i < max_parked_events + 3) : (i += 1) {
+        var buf: [96]u8 = undefined;
+        const payload = std.fmt.bufPrint(&buf, "{{\"type\":\"event\",\"event\":\"output\",\"seq\":{d}}}", .{i}) catch unreachable;
+        try sess.noteFrame(payload);
+    }
+    try std.testing.expectEqual(@as(usize, max_parked_events), sess.events.items.len);
 }
 
 test "DAP framing encodes Content-Length and decodes it back" {

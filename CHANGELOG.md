@@ -38,6 +38,9 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Trimming `state/reasoning.jsonl` keeps the owner-only mode; the rewrite
   used to drop it to the process umask.
 - A failed scheduled entry logs the task's length, not the task text.
+- Process-global DAP session and background-job tables are released at
+  exit, so a debug-tool run that timed out no longer leaves a hash-map
+  allocation in the DebugAllocator leak report.
 
 ### Changed
 

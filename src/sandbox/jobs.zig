@@ -723,6 +723,23 @@ pub fn kill(reg: ?*subprocess.Registry, session_id: []const u8, id: []const u8) 
     return false;
 }
 
+/// SIGTERM still-running exec children, join leftover waiter threads, and
+/// free the tables. Call once at process exit: completed rows stay
+/// retrievable until `max_retained_done`, and those copies plus the
+/// ArrayList backings would otherwise leak into the DebugAllocator report.
+pub fn deinit(gpa: std.mem.Allocator) void {
+    {
+        mu.lock();
+        defer mu.unlock();
+        for (execs.items) |j| {
+            if (!j.done.load(.acquire) and j.pid > 0) {
+                std.posix.kill(j.pid, std.posix.SIG.TERM) catch {};
+            }
+        }
+    }
+    testingClear(gpa);
+}
+
 /// Test-only: join leftover waiter threads and free the tables so a
 /// testing allocator does not see the process-global lists as leaks.
 pub fn testingClear(gpa: std.mem.Allocator) void {
@@ -751,6 +768,11 @@ pub fn testingClear(gpa: std.mem.Allocator) void {
     for (late_subs.items) |rec| freeLate(rec, gpa);
     late_subs.deinit(gpa);
     late_subs = .empty;
+}
+
+test "deinit on empty job tables is a no-op" {
+    deinit(std.testing.allocator);
+    deinit(std.testing.allocator);
 }
 
 test "makeId is 16 hex and unique at the same timestamp" {

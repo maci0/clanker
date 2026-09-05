@@ -371,6 +371,11 @@ const steer_message_cap = 16;
 /// separate lock keeps a log record emitted from inside a bridge-mutex
 /// section from deadlocking on a non-recursive mutex.
 var bridge_log_lines: std.ArrayListUnmanaged([]const u8) = .empty;
+/// Bound on undrained log records. The draw loop and finishTurn drain this
+/// every frame, so the list is usually empty; a hung draw or a log flood
+/// between frames would otherwise grow it without limit for the life of the
+/// REPL process.
+const max_bridge_log_lines: usize = 256;
 var bridge_log_mutex: std.c.pthread_mutex_t = .{};
 var bridge_stop_flag: std.atomic.Value(bool) = .init(false);
 /// Published only after runThreadMain has finished all deferred Agent cleanup.
@@ -502,6 +507,9 @@ fn logSinkWrite(ctx: *const anyopaque, line: []const u8) void {
     const owned = if (safe.ptr == body.ptr) (bridge_gpa.dupe(u8, safe) catch return) else safe;
     _ = std.c.pthread_mutex_lock(&bridge_log_mutex);
     defer _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
+    if (bridge_log_lines.items.len >= max_bridge_log_lines) {
+        bridge_gpa.free(bridge_log_lines.orderedRemove(0));
+    }
     bridge_log_lines.append(bridge_gpa, owned) catch bridge_gpa.free(owned);
 }
 
@@ -608,6 +616,28 @@ test "logSinkWrite owns every record it buffers, including one sanitizeAlloc han
     }
     try std.testing.expectEqualStrings(record[0 .. record.len - 1], stored);
     try std.testing.expect(!aliases_stack);
+}
+
+test "logSinkWrite drops the oldest record past the undrained cap" {
+    const saved_gpa = bridge_gpa;
+    bridge_gpa = std.testing.allocator;
+    defer {
+        _ = std.c.pthread_mutex_lock(&bridge_log_mutex);
+        for (bridge_log_lines.items) |l| bridge_gpa.free(l);
+        bridge_log_lines.clearAndFree(bridge_gpa);
+        _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
+        bridge_gpa = saved_gpa;
+    }
+    var i: usize = 0;
+    while (i < max_bridge_log_lines + 3) : (i += 1) {
+        var buf: [32]u8 = undefined;
+        const line = std.fmt.bufPrint(&buf, "log-{d}\n", .{i}) catch unreachable;
+        logSinkWrite(@ptrCast(&buf), line);
+    }
+    _ = std.c.pthread_mutex_lock(&bridge_log_mutex);
+    defer _ = std.c.pthread_mutex_unlock(&bridge_log_mutex);
+    try std.testing.expectEqual(@as(usize, max_bridge_log_lines), bridge_log_lines.items.len);
+    try std.testing.expectEqualStrings("log-3", bridge_log_lines.items[0]);
 }
 
 /// Agent.steer_fn for the REPL: pops the next steering message the user typed

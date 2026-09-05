@@ -7,6 +7,8 @@ const log = @import("util/log.zig");
 const dotenv = @import("util/dotenv.zig");
 const auto_learn = @import("agent/auto_learn.zig");
 const subprocess = @import("agent/subprocess.zig");
+const dap = @import("debug/dap.zig");
+const jobs = @import("sandbox/jobs.zig");
 const host = @import("sandbox/host.zig");
 const vertex_token = @import("llm/vertex_token.zig");
 const rate_limit = @import("llm/rate_limit.zig");
@@ -290,6 +292,8 @@ pub fn main(init: std.process.Init) !void {
     // allocator's leak report meaningful: a real leak should not hide behind a
     // known one.
     defer subprocess.deinitProcessRegistry();
+    defer dap.deinitLive();
+    defer jobs.deinit(gpa);
     defer vertex_token.deinit(init.io, gpa);
     defer rate_limit.deinit(init.io, gpa);
     // Residual posix: process rlimits have no std.Io equivalent; go lower.
