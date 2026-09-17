@@ -2896,8 +2896,13 @@ pub fn ckPublish(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
 }
 
 test "sandbox host does not import the serve layer" {
+    // The needle is split so this test's own source does not contain it:
+    // @embedFile("host.zig") includes these lines, and the literal spelling
+    // matched itself, so the check failed on every run. Same trick lintGate
+    // uses for its own forbidden markers.
     const src = @embedFile("host.zig");
-    try std.testing.expect(std.mem.indexOf(u8, src, "../serve/") == null);
+    const serve_prefix = "../" ++ "serve/";
+    try std.testing.expect(std.mem.indexOf(u8, src, serve_prefix) == null);
 }
 
 test "ck_publish payload cap is half a live-bus event" {
