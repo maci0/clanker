@@ -6732,6 +6732,7 @@ const Model = struct {
     fn drawModelPicker(self: *Model, surface: vxfw.Surface, rule_style: vaxis.Style, sel_style: vaxis.Style) void {
         const is_theme = self.picker_kind == .theme;
         const is_command = self.picker_kind == .command;
+        const models_unavailable = self.picker_kind == .model and self.model_candidates.len == 0;
         // Row count for whichever list is open; theme labels come from a
         // static names list, model and command labels from their candidates.
         const theme_matches = if (is_theme) self.filteredThemes() else &[_][]const u8{};
@@ -6780,7 +6781,7 @@ const Model = struct {
         if (count == 0) {
             writeRow(surface, y + 2, switch (self.picker_kind) {
                 .theme => "  no matching theme",
-                .model => "  no matching provider/model",
+                .model => if (models_unavailable) "  no usable models" else "  no matching provider/model",
                 .command => "  no matching command",
                 .effort => "  no matching effort level",
                 .preset => "  no matching preset",
@@ -6861,7 +6862,12 @@ const Model = struct {
         else
             "";
         const guide_width = surface.size.width -| @as(u16, @intCast(if (pos.len > 0) pos.len + 3 else 0));
-        const guide = pickerGuide(self.picker_kind, count == 0, guide_width);
+        const model_recovery = "  Esc cancel · run `clanker doctor` in your terminal";
+        const cancel = "  Esc cancel";
+        const guide = if (models_unavailable) recovery: {
+            if (width_mod.displayWidth(model_recovery) <= guide_width) break :recovery model_recovery;
+            break :recovery if (width_mod.displayWidth(cancel) <= guide_width) cancel else "";
+        } else pickerGuide(self.picker_kind, count == 0, guide_width);
         writeRow(surface, y + h - 2, guide, .{ .dim = true });
         // Position within the list, right-aligned on the guide row: with a
         // scrolling window the eight visible rows no longer say how much list
@@ -7410,6 +7416,55 @@ test "modal query Backspace removes one UTF-8 codepoint" {
     try std.testing.expectEqualSlices(u8, "ok\x80", text.items);
     try std.testing.expect(popUtf8Codepoint(&text));
     try std.testing.expectEqualStrings("ok", text.items);
+}
+
+test "model picker distinguishes unavailable models from a query miss" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var model: Model = .{
+        .gpa = arena,
+        .arena = arena,
+        .io = undefined,
+        .ctx = undefined,
+        .cfg = .{},
+        .provider = undefined,
+        .reg = undefined,
+        .tool_defs = &.{},
+        .text_field = undefined,
+        .transcript_bottom = 12,
+    };
+    for ([_]bool{ false, true }) |has_models| {
+        model.model_candidates = if (has_models) &.{.{
+            .provider = "local",
+            .model = "small",
+            .display = "small",
+            .label = "local/small",
+            .context_window = 4096,
+            .cost_in = null,
+            .cost_out = null,
+            .category = "",
+        }} else &.{};
+        for ([_][]const u8{ "", "absent" }) |query| {
+            if (has_models and query.len == 0) continue;
+            model.picker_query.clearRetainingCapacity();
+            try model.picker_query.appendSlice(arena, query);
+            for ([_]u16{ 24, 80 }) |width| {
+                const surface = try vxfw.Surface.init(arena, model.widget(), .{ .width = width, .height = 12 });
+                model.drawModelPicker(surface, .{}, .{});
+                const text = try extractSelectionText(arena, surface, .{ .row = 7, .col = 0 }, .{ .row = 11, .col = width - 1 });
+                try std.testing.expect(std.mem.find(u8, text, "Esc cancel") != null);
+                if (has_models) {
+                    try std.testing.expect(std.mem.find(u8, text, "no matching") != null);
+                    try std.testing.expect(std.mem.find(u8, text, "doctor") == null);
+                } else {
+                    try std.testing.expect(std.mem.find(u8, text, "no usable models") != null);
+                    try std.testing.expect(std.mem.find(u8, text, "edit query") == null);
+                    if (width == 80) try std.testing.expect(std.mem.find(u8, text, "clanker doctor") != null);
+                }
+            }
+        }
+    }
 }
 
 test "empty picker reserves separate result and guide rows" {
