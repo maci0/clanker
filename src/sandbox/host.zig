@@ -717,10 +717,6 @@ pub const Host = struct {
     result_ptr: u32 = 0,
     result_len: u32 = 0,
     rng: std.Random.DefaultPrng,
-    /// Set by `ToolModule.load` when `agent.seed` was time-mixed: the
-    /// effective value is announced on the first `ck_random` draw, not at
-    /// load, so read-only guest verbs (`stats`, `sessions`, HTTP relays)
-    /// never print a replay line for randomness they never consume.
     seed_notice: ?u64 = null,
 
     pub fn reset(self: *Host) void {
@@ -785,7 +781,7 @@ pub fn ckRandom(caller: *zwasm.Caller) u64 {
         // First real draw: this is the moment the effective seed becomes
         // worth recording for replay (same module bytes ⇒ same ck_random
         // stream). Sandboxes that never draw stay silent.
-        log.log(.info, "sandbox rng: agent.seed=0 was time-seeded, effective seed 0x{x}; replay with agent.seed=0x{x}", .{ seed, seed });
+        log.log(.info, "sandbox rng: agent.seed=0 was time-seeded; replay this tool's random stream with agent.seed=0x{x}", .{seed});
         h.seed_notice = null;
     }
     return h.rng.random().int(u64);

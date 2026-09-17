@@ -121,21 +121,17 @@ pub const ToolModule = struct {
         errdefer self.deinit();
 
         self.h = try gpa.create(host.Host);
-        const rng_seed = seedRng(sb.seed, wasm_bytes, io);
-        if (sb.seed == 0) {
-            // The default seed is time-mixed (see seedRng), and the effective
-            // value is the only record of what this run drew. Stash it for the
-            // first `ck_random` call (see Host.seed_notice): logging here put
-            // a replay line above every read-only verb (`clanker stats`,
-            // `clanker sessions`) whose guest never draws.
-            self.h.seed_notice = rng_seed;
-        } else {
-            log.log(.debug, "sandbox rng: effective seed 0x{x} (agent.seed=0x{x})", .{ rng_seed, sb.seed });
-        }
+        const replay_seed = if (sb.seed == 0) @max(1, seedRng(0, wasm_bytes, io)) else sb.seed;
+        const rng_seed = seedRng(replay_seed, wasm_bytes, io);
         self.h.* = .{
             .sandbox = sb,
             .rng = std.Random.DefaultPrng.init(rng_seed),
         };
+        if (sb.seed == 0) {
+            self.h.seed_notice = replay_seed;
+        } else {
+            log.log(.debug, "sandbox rng: effective seed 0x{x} (agent.seed=0x{x})", .{ rng_seed, sb.seed });
+        }
 
         self.engine = try zwasm.Engine.init(gpa, .{});
         self.linker = self.engine.linker();
@@ -2386,6 +2382,39 @@ test "assemblyscript json_tool validates, pretty-prints and minifies" {
     defer std.testing.allocator.free(invalid);
     try std.testing.expect(std.mem.find(u8, invalid, "\"ok\":false") != null);
     try std.testing.expect(std.mem.find(u8, invalid, "line 1") != null);
+}
+
+test "sandbox seed notice survives loading and replays the guest random stream" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer env_map.deinit();
+    var sb = host.Sandbox{ .gpa = std.testing.allocator, .io = io, .root_dir = ".", .network_allow = &.{}, .environ_map = &env_map };
+    const mod = try loadAsTool(std.testing.allocator, io, &sb, "id_gen");
+    defer mod.deinit();
+
+    try std.testing.expect(mod.h.seed_notice != null);
+    const replay_seed = mod.h.seed_notice.?;
+    try std.testing.expect(replay_seed != 0);
+    const input = "{\"kind\":\"uuid4\",\"count\":3}";
+    const first = try mod.executeTool(input);
+    defer std.testing.allocator.free(first);
+    try std.testing.expect(mod.h.seed_notice == null);
+    const second = try mod.executeTool(input);
+    defer std.testing.allocator.free(second);
+    try std.testing.expect(!std.mem.eql(u8, first, second));
+
+    sb.seed = replay_seed;
+    const replay = try loadAsTool(std.testing.allocator, io, &sb, "id_gen");
+    defer replay.deinit();
+    try std.testing.expect(replay.h.seed_notice == null);
+    const replay_first = try replay.executeTool(input);
+    defer std.testing.allocator.free(replay_first);
+    try std.testing.expectEqualStrings(first, replay_first);
+    const replay_second = try replay.executeTool(input);
+    defer std.testing.allocator.free(replay_second);
+    try std.testing.expectEqualStrings(second, replay_second);
 }
 
 test "assemblyscript id_gen produces well-formed uuid4, ulid and short ids" {
