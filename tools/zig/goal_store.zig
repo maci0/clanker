@@ -216,6 +216,10 @@ fn applyTaskPatch(alloc: std.mem.Allocator, tasks: []const GoalTask, patch: Task
     switch (patch) {
         .add => |add| {
             if (add.text.len == 0) return error.BadTask;
+            if (add.id.len == 0) return error.BadTaskId;
+            for (tasks) |task| {
+                if (std.mem.eql(u8, task.id, add.id)) return error.TaskExists;
+            }
             var out: std.ArrayList(GoalTask) = .empty;
             errdefer out.deinit(alloc);
             try out.appendSlice(alloc, tasks);
@@ -450,6 +454,45 @@ test "apply task add toggle and remove" {
     try std.testing.expectEqual(@as(usize, 0), removed[0].tasks.len);
 
     try std.testing.expectError(error.NoSuchTask, apply(gpa, added, .{ .id = "g1", .task = .{ .toggle = .{ .id = "missing", .done = true } } }, 5));
+}
+
+test "apply refuses duplicate task identities without changing the goal" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+    const goals = [_]Goal{
+        .{ .id = "g1", .objective = "a", .tasks = &.{
+            .{ .id = "t1", .text = "original", .done = true, .visible_to = &.{"main"}, .created = 1, .updated = 2 },
+        } },
+        .{ .id = "g2", .objective = "b" },
+    };
+
+    try std.testing.expectError(error.TaskExists, apply(alloc, &goals, .{
+        .id = "g1",
+        .task = .{ .add = .{ .id = "t1", .text = "replacement" } },
+    }, 3));
+    try std.testing.expectEqual(@as(usize, 1), goals[0].tasks.len);
+    try std.testing.expectEqualStrings("original", goals[0].tasks[0].text);
+    try std.testing.expect(goals[0].tasks[0].done);
+    try std.testing.expectEqualStrings("main", goals[0].tasks[0].visible_to[0]);
+    try std.testing.expectEqual(@as(i64, 2), goals[0].tasks[0].updated);
+
+    const other_goal = try apply(alloc, &goals, .{
+        .id = "g2",
+        .task = .{ .add = .{ .id = "t1", .text = "independent" } },
+    }, 3);
+    try std.testing.expectEqual(@as(usize, 1), other_goal[1].tasks.len);
+    try std.testing.expectEqualStrings("independent", other_goal[1].tasks[0].text);
+}
+
+test "apply refuses empty task identities" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const goals = [_]Goal{.{ .id = "g1", .objective = "a" }};
+    try std.testing.expectError(error.BadTaskId, apply(arena_state.allocator(), &goals, .{
+        .id = "g1",
+        .task = .{ .add = .{ .id = "", .text = "unaddressable task" } },
+    }, 3));
 }
 
 test "apply removes a goal and clears a worktree flag" {

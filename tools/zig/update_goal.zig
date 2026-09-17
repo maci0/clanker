@@ -107,6 +107,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             error.NoSuchGoal => return lib.fail(out, "no such goal"),
             error.NoSuchTask => return lib.fail(out, "no such task on that goal"),
             error.BadTask => return lib.fail(out, "task text must not be empty"),
+            error.BadTaskId => return lib.fail(out, "task id must not be empty"),
+            error.TaskExists => return lib.fail(out, "task id already exists on that goal"),
             error.BadStatus => return lib.fail(out, "status must be active, review, done, archived, abandoned or blocked"),
             error.BadBudget => return lib.fail(out, "max_iterations must be an integer from 1 to 1000"),
             // A finished run must not overwrite a hand move. Same body as a
