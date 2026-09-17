@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import vm from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // app.css and views.css are one stylesheet split for the critical path; these
@@ -209,6 +210,92 @@ test("board filter empty offers to clear the filters", function () {
   const src = readFileSync(join(here, "../features/board.js"), "utf8");
   assert.match(src, /function clearBoardFilters/);
   assert.match(src, /No cards in this lane match the filters/);
+});
+
+function knowledgeSearchPage() {
+  function element() {
+    return {
+      value: "", children: [], handlers: {},
+      get textContent() { return this.children.map((child) => child.textContent).join(""); },
+      set textContent(text) { this.children = text ? [{ textContent: text }] : []; },
+      appendChild(child) { this.children.push(child); return child; },
+      setAttribute(name, value) { this[name] = value; },
+      addEventListener(type, handler) { this.handlers[type] = handler; },
+      focus() { this.focused = true; }
+    };
+  }
+  const nodes = Object.fromEntries([
+    "knowledge-search", "knowledge-search-btn", "knowledge-search-out", "knowledge-status"
+  ].map((id) => [id, element()]));
+  const requests = [];
+  const context = vm.createContext({
+    document: {
+      getElementById: (id) => nodes[id] || null,
+      createElement: element,
+      createTextNode: (text) => ({ textContent: text })
+    },
+    window: { localStorage: { getItem: () => null } },
+    fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
+    readJson: (response) => response,
+    wireRefresh: (button) => assert.equal(button, null)
+  });
+  const source = readFileSync(join(here, "../features/knowledge.js"), "utf8")
+    .replace(/^import .*;$/gm, "").replace(/^export /gm, "");
+  vm.runInContext(source, context);
+  context.bindKnowledge();
+  return {
+    nodes, requests,
+    search(query) {
+      nodes["knowledge-search"].value = query;
+      nodes["knowledge-search-btn"].handlers.click();
+    },
+    async settle(index, failure) {
+      if (failure) requests[index].reject(new Error("Unavailable"));
+      else requests[index].resolve({ hits: [] });
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+}
+
+for (const failure of [false, true]) {
+  test("knowledge search ignores an older " + (failure ? "failure" : "result"), async function () {
+    const page = knowledgeSearchPage();
+    page.search("older");
+    page.search("current");
+    await page.settle(1);
+    assert.match(page.nodes["knowledge-search-out"].textContent, /current/);
+    await page.settle(0, failure);
+    assert.match(page.nodes["knowledge-search-out"].textContent, /current/);
+    assert.match(page.nodes["knowledge-status"].textContent, /current/);
+  });
+}
+
+test("editing a knowledge query clears results and invalidates the pending search", async function () {
+  const page = knowledgeSearchPage();
+  page.search("older");
+  const input = page.nodes["knowledge-search"];
+  input.value = "";
+  input.handlers.input?.();
+  await page.settle(0);
+  assert.equal(page.nodes["knowledge-search-out"].textContent, "");
+  assert.equal(page.nodes["knowledge-status"].textContent, "");
+});
+
+test("knowledge search failure still offers a working retry", async function () {
+  const page = knowledgeSearchPage();
+  page.search("notes");
+  await page.settle(0, true);
+  const output = page.nodes["knowledge-search-out"];
+  assert.match(output.textContent, /Search failed: Unavailable/);
+  const retry = output.children[0].children.find((child) => child.textContent === "Try again");
+  retry.handlers.click();
+  assert.equal(page.requests[1].url, "/api/knowledge/search?q=notes");
+  await page.settle(1);
+  const clear = output.children[0].children.find((child) => child.textContent === "Clear search");
+  clear.handlers.click();
+  assert.equal(page.nodes["knowledge-search"].value, "");
+  assert.equal(output.textContent, "");
+  assert.equal(page.nodes["knowledge-status"].textContent, "");
 });
 
 test("knowledge search empty offers to clear the query", function () {

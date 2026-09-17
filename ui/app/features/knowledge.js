@@ -295,13 +295,22 @@ export function bindKnowledge(){
       .catch(function(err){ toast(err.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
   wireRefresh(refreshBtn, loadKnowledge);
+  var searchSequence = 0;
+  function clearSearch(){
+    searchSequence++;
+    if(searchOut) searchOut.textContent="";
+    var status=document.getElementById("knowledge-status");
+    if(status) status.textContent="";
+  }
   function doSearch(){
+    var sequence = ++searchSequence;
     var q=searchInput?searchInput.value.trim():"";
     var status=document.getElementById("knowledge-status");
     if(!q){ if(searchOut) searchOut.textContent=""; if(status) status.textContent=""; return; }
     if(searchOut) searchOut.textContent="Searching…";
     if(status) status.textContent="Searching…";
     fetch("/api/knowledge/search?q="+encodeURIComponent(q)).then(readJson).then(function(data){
+      if(sequence !== searchSequence) return;
       var hits=(data&&data.hits)||[]; if(!searchOut) return; searchOut.textContent="";
       if(!hits.length){
         searchOut.textContent="";
@@ -314,8 +323,7 @@ export function bindKnowledge(){
         clear.textContent="Clear search";
         clear.addEventListener("click",function(){
           if(searchInput){ searchInput.value=""; searchInput.focus(); }
-          searchOut.textContent="";
-          if(status) status.textContent="";
+          clearSearch();
         });
         none.appendChild(clear);
         searchOut.appendChild(none);
@@ -340,6 +348,7 @@ export function bindKnowledge(){
       });
       if(status) status.textContent=hits.length+(hits.length===1?" document.":" documents.");
     }).catch(function(err){
+      if(sequence !== searchSequence) return;
       var msg="Search failed: "+err.message;
       if(searchOut){
         searchOut.textContent="";
@@ -356,5 +365,8 @@ export function bindKnowledge(){
     });
   }
   if(searchBtn) searchBtn.addEventListener("click",doSearch);
-  if(searchInput) searchInput.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); doSearch(); } });
+  if(searchInput){
+    searchInput.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); doSearch(); } });
+    searchInput.addEventListener("input",clearSearch);
+  }
 }
