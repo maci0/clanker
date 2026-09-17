@@ -639,7 +639,7 @@ pub fn build(b: *std.Build) void {
 
     var names: std.ArrayList([]const u8) = .empty;
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (it.next(io) catch |err| std.debug.panic("cannot enumerate {s}: {s}", .{ tools_src_path, @errorName(err) })) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
         // Shared guest libraries, imported by other guests rather than shipped
@@ -735,7 +735,7 @@ pub fn build(b: *std.Build) void {
 
         var lang_names: std.ArrayList([]const u8) = .empty;
         var lang_it = lang_dir.iterate();
-        while (lang_it.next(io) catch null) |entry| {
+        while (lang_it.next(io) catch |err| std.debug.panic("cannot enumerate {s}: {s}", .{ lang_src_path, @errorName(err) })) |entry| {
             if (entry.kind != .file) continue;
             if (!std.mem.endsWith(u8, entry.name, lang.ext)) continue;
             lang_names.append(b.allocator, b.dupe(entry.name[0 .. entry.name.len - lang.ext.len])) catch @panic("OOM");
