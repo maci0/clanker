@@ -10,6 +10,10 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Security hardening changes compatibility for symlinked web UI assets and
   browser requests with mismatched Origin and Host. See Security below for
   the previous behavior and required upgrade steps.
+- Numeric config validation now rejects previously accepted fractional integer
+  settings and non-finite numbers. SBOM consumers using the old
+  `relationships` field or base64 hashes must adapt to the corrected fields.
+  See Fixed below for migrations for both changes.
 
 ### Security
 
@@ -33,6 +37,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   Previously the loader ignored the setting and kept the default `true`.
   Existing boolean settings need no migration; string values such as
   `backlog = "false"` must become `backlog = false`.
+- Numeric configuration is validated instead of misparsed: a fractional
+  integer setting (`request_timeout_ms = 0.5`) is refused rather than
+  truncated to `0`, and `nan`, `inf`, and overflowing float literals
+  (`1e9999`) are refused where a number was expected. A config that loaded
+  before with one of these values now fails at startup with a diagnostic
+  naming the setting and a corrected example. Upgrade action: replace
+  `request_timeout_ms = 10.9` with `request_timeout_ms = 10` to preserve its
+  former truncated value, or choose the intended whole-millisecond deadline.
+  Integral floats such as `60.0` remain accepted. Replace non-finite values
+  with a finite value valid for the setting, or remove the override to use its
+  default; see [Configuration errors](docs/configuration.md#configuration-errors).
 - Session replication reports the last committed cursor after rolling back a
   batch containing a sequence gap. Retrying from that cursor now includes the
   rolled-back events instead of skipping them.
@@ -40,8 +55,30 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   forwarding them to the tool, so spaces, Unicode, and escaped punctuation
   search for the intended text. The web UI also discards stale search replies
   after the query changes.
+- The generated SBOM (`scripts/sbom.py`, attached to GitHub releases as
+  `sbom.cdx.json`) corrects its CycloneDX hash and dependency fields: hash
+  entries carry algorithm names such as `SHA-256` instead of `sha256`, with
+  hex digests instead of base64, and the component graph is published under
+  `dependencies` rather than the unrecognized `relationships` key. Consumers
+  of the old fields must read `dependencies`, decode `hashes[].content` as hex,
+  and accept the hyphenated uppercase algorithm names.
 - The web UI configuration editor keeps edits made during an in-flight save
   marked unsaved, rather than treating text that was never submitted as saved.
+- `goal_update` rejects `task_add` with an empty id or an id already present
+  on that goal, instead of appending an unaddressable or duplicate task.
+  Omit `task_add.id` to generate an id, or supply a non-empty id unique within
+  the goal. Existing tasks are left unchanged when an add is refused.
+- A goal-loop evaluator verdict without a usable `reason` no longer ends
+  the loop: it is treated as `continue` and the loop keeps working. Only
+  verdicts naming why they finished are accepted as `achieved`/`blocked`.
+- An invalid `chat subscribe <room> <value>` is a usage error (exit 2) that
+  changes nothing, instead of silently turning the subscription off. The
+  accepted spellings are `on`/`true`/`1`/`yes` and `off`/`false`/`0`/`no`.
+  Replace any other value previously used to unsubscribe with `off`; omitting
+  the value still subscribes.
+- Command and flag help, and `--dump-config`, now exit 1 when stdout cannot
+  be written instead of reporting success after losing the requested output.
+  A broken pipe still exits 0, preserving early-closing pipeline behavior.
 
 ## [0.4.0] - 2026-09-17
 
