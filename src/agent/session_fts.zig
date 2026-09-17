@@ -61,17 +61,17 @@ fn readIndexState(conn: *sqlite.Connection, arena: std.mem.Allocator, key: []con
     return .{ .count = count, .hash = hash };
 }
 
-fn writeIndexState(conn: *sqlite.Connection, key: []const u8, st: IndexState) void {
+fn writeIndexState(conn: *sqlite.Connection, key: []const u8, st: IndexState) !void {
     var buf: [48]u8 = undefined;
-    const value = std.fmt.bufPrint(&buf, "{d} {d}", .{ st.count, st.hash }) catch return;
-    var stmt = conn.prepare(
+    const value = try std.fmt.bufPrint(&buf, "{d} {d}", .{ st.count, st.hash });
+    var stmt = try conn.prepare(
         \\INSERT INTO fts_meta (key, value) VALUES (?1, ?2)
         \\ON CONFLICT(key) DO UPDATE SET value = excluded.value;
-    ) catch return;
+    );
     defer stmt.finalize();
-    stmt.bindText(1, key) catch return;
-    stmt.bindText(2, value) catch return;
-    _ = stmt.step() catch return;
+    try stmt.bindText(1, key);
+    try stmt.bindText(2, value);
+    _ = try stmt.step();
 }
 
 /// Wyhash over message contents, length-delimited so boundaries cannot alias:
@@ -155,7 +155,7 @@ pub fn replaceSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocat
         ins.bindText(3, content) catch return;
         _ = ins.step() catch return;
     }
-    writeIndexState(&conn, key, .{ .count = messages.len, .hash = hashContents(messages) });
+    writeIndexState(&conn, key, .{ .count = messages.len, .hash = hashContents(messages) }) catch return;
     tx.commit() catch return;
 }
 
@@ -346,6 +346,39 @@ test "an appended turn indexes incrementally without duplicating earlier rows" {
     removeSession(arena, "sess-inc");
     replaceSession(io, std.testing.allocator, arena, "sess-inc", &first);
     try std.testing.expectEqual(@as(usize, 1), try indexedRowCount(arena, "sess-inc"));
+}
+
+test "failed FTS progress write rolls back appended rows before retry" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const saved_index_path = index_path;
+    index_path = try testIndexPath(arena, &env);
+    defer index_path = saved_index_path;
+
+    const first = [_]types.Message{.{ .role = .user, .content = "original lighthouse" }};
+    replaceSession(env.io(), std.testing.allocator, arena, "sess-failure", &first);
+    var conn = try open(arena);
+    defer conn.close();
+    try conn.exec(
+        \\CREATE TRIGGER refuse_progress BEFORE INSERT ON fts_meta
+        \\BEGIN SELECT RAISE(ABORT, 'progress write failed'); END;
+    );
+    const second = first ++ [_]types.Message{.{ .role = .assistant, .content = "new giraffe" }};
+    replaceSession(env.io(), std.testing.allocator, arena, "sess-failure", &second);
+    try std.testing.expectEqual(@as(usize, 1), try indexedRowCount(arena, "sess-failure"));
+    const state = readIndexState(&conn, arena, "idx:sess-failure").?;
+    try std.testing.expectEqual(@as(usize, 1), state.count);
+    try std.testing.expectEqual(hashContents(&first), state.hash);
+    const absent = candidates(env.io(), std.testing.allocator, arena, "giraffe").?;
+    try std.testing.expectEqual(@as(usize, 0), absent.len);
+
+    try conn.exec("DROP TRIGGER refuse_progress;");
+    replaceSession(env.io(), std.testing.allocator, arena, "sess-failure", &second);
+    try std.testing.expectEqual(@as(usize, 2), try indexedRowCount(arena, "sess-failure"));
+    const hits = candidates(env.io(), std.testing.allocator, arena, "giraffe").?;
+    try std.testing.expectEqual(@as(usize, 1), hits.len);
+    try std.testing.expectEqualStrings("sess-failure", hits[0]);
 }
 
 test "same-count edited content fails the prefix check and rebuilds" {
