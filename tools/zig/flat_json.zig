@@ -52,16 +52,7 @@ pub fn jsonBool(input: []const u8, name: []const u8) bool {
 }
 
 pub fn jsonUint(input: []const u8, name: []const u8, fallback: usize) usize {
-    var rest = fieldValue(input, name) orelse return fallback;
-    if (rest.len > 0 and rest[0] == '"') rest = rest[1..];
-    var n: usize = 0;
-    var digits: usize = 0;
-    for (rest) |c| {
-        if (c < '0' or c > '9') break;
-        n = n *| 10 +| (c - '0');
-        digits += 1;
-    }
-    return if (digits == 0) fallback else n;
+    return jsonUintOpt(input, name) orelse fallback;
 }
 
 test "jsonUintOpt reads a bare number and a quoted one alike" {
