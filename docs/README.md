@@ -1637,7 +1637,7 @@ With `agent.confirm_writes` set to `"browser"` or `"always"`, a streaming run al
 
 A streaming run also reports its own checklist. Whenever a `todo_*` call changes the run's private todo list, a `{"type":"todos","todos":[{"todo":"p1","title":"...","status":"open|claimed|closed"}]}` event goes down the stream and the web UI renders it as a checklist in the turn card. It is the whole list every time, not a delta, so a client that missed an event is never out of step. Nothing is persisted and there is no endpoint to fetch it from: the list lives in memory for the duration of the run (see [prds/0003-run-todos.md](prds/0003-run-todos.md)), and reading it with `todo_list` is not a change, so a run that polls its own list does not emit an event per poll. Shared, durable work is the board (`/api/board`), not this.
 
-`error` events (`{"type":"error","message":"..."}`) can appear instead of `done` if the run fails mid-stream. A client must buffer on `\n` and only treat a *complete* line starting with `0x01` as an event — a naive per-chunk check can split an event across two reads. The web UI's line splitter (`ui/app/index.html`) is the reference implementation.
+`error` events (`{"type":"error","message":"..."}`) can appear instead of `done` if the run fails mid-stream. A client must buffer on `\n` and only treat a *complete* line starting with `0x01` as an event; a naive per-chunk check can split an event across two reads. The web UI's `makeLineSplitter` in [`ui/app/core/stream.js`](../ui/app/core/stream.js) is the reference implementation.
 
 With `"stream": false`, the response is `{"ok": true, "content": "..."}` (or `{"ok": false, "error": "..."}`) once the run finishes.
 
