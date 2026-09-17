@@ -647,6 +647,94 @@ test("Knowledge add-document is a primary CTA", function () {
   assert.match(src, /start\.textContent="Add collection"/);
 });
 
+function configEditorHarness() {
+  const source = readFileSync(join(here, "../features/system.js"), "utf8");
+  const nodes = new Map();
+  const events = {};
+  const requests = [];
+  const confirmations = [];
+  for (const name of ["file", "text", "code", "note", "save", "reload"]) {
+    nodes.set("config-editor-" + name, {
+      value: name === "file" ? "config.local.toml" : "",
+      textContent: "",
+      disabled: false,
+      parentElement: {},
+      handlers: {},
+      addEventListener(type, handler) { this.handlers[type] = handler; },
+    });
+  }
+  const context = vm.createContext({
+    document: { getElementById: (id) => nodes.get(id) },
+    window: { addEventListener: (type, handler) => { events[type] = handler; } },
+    fetch(url, options) {
+      return new Promise((resolve, reject) => { requests.push({ url, options, resolve, reject }); });
+    },
+    readJson: (data) => data,
+    paintTomlInto: (text, code) => { code.textContent = text.value; },
+    uiConfirm(message) { confirmations.push(message); return Promise.resolve(false); },
+  });
+  const start = source.indexOf("function bindConfigEditor() {");
+  const end = source.indexOf("\n}\n", start) + 2;
+  vm.runInContext(source.slice(start, end) + "\nbindConfigEditor();", context);
+  return {
+    node: (name) => nodes.get("config-editor-" + name),
+    requests,
+    confirmations,
+    dirty() {
+      let prevented = false;
+      events.beforeunload({ preventDefault() { prevented = true; } });
+      return prevented;
+    },
+    settle: () => new Promise((resolve) => setImmediate(resolve)),
+  };
+}
+
+test("config save keeps edits typed during the request unsaved", async function () {
+  const h = configEditorHarness();
+  h.requests.shift().resolve({ content: "original" });
+  await h.settle();
+  h.node("text").value = "submitted";
+  h.node("save").handlers.click();
+  assert.equal(h.node("file").disabled, true);
+  assert.equal(h.node("reload").disabled, true);
+  h.node("save").handlers.click();
+  assert.equal(h.requests.length, 1, "saving twice must not start competing writes");
+  const save = h.requests.shift();
+  assert.deepEqual(JSON.parse(save.options.body), { file: "config.local.toml", content: "submitted" });
+  h.node("text").value = "newer edits";
+  h.node("text").handlers.input();
+  save.resolve({ ok: true });
+  await h.settle();
+  assert.equal(h.node("text").value, "newer edits");
+  assert.equal(h.dirty(), true, "newer text must retain the unload warning");
+  assert.match(h.node("note").textContent, /unsaved/i);
+  h.node("reload").handlers.click();
+  await h.settle();
+  assert.equal(h.confirmations.length, 1, "reload must still ask before discarding newer edits");
+  assert.equal(h.requests.length, 0);
+  h.node("save").handlers.click();
+  h.requests.shift().resolve({ ok: true });
+  await h.settle();
+  assert.equal(h.dirty(), false);
+  assert.match(h.node("note").textContent, /^Saved\./);
+});
+
+test("config save failures retain edits and allow retry", async function () {
+  const h = configEditorHarness();
+  h.requests.shift().resolve({ content: "original" });
+  await h.settle();
+  h.node("text").value = "submitted";
+  h.node("save").handlers.click();
+  h.requests.shift().reject(new Error("connection lost"));
+  await h.settle();
+  assert.equal(h.node("text").value, "submitted");
+  assert.equal(h.dirty(), true);
+  assert.equal(h.node("save").disabled, false);
+  assert.equal(h.node("file").disabled, false);
+  assert.equal(h.node("reload").disabled, false);
+  assert.match(h.node("note").textContent, /connection lost/);
+});
+
 test("rooms own-message actions are labeled and report a failed write", function () {
   const app = readFileSync(join(here, "../app.js"), "utf8");
   assert.match(app, /editBtn\.textContent = "Edit"/);

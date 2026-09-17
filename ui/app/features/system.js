@@ -59,23 +59,33 @@ function bindConfigEditor() {
   }
 
   function save() {
+    if (saveBtn.disabled) return;
+    var submittedText = text.value;
     saveBtn.disabled = true;
+    fileSel.disabled = true;
+    if (reloadBtn) reloadBtn.disabled = true;
     setNote("Validating…");
     fetch("/api/config/raw", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file: fileSel.value, content: text.value }),
+      body: JSON.stringify({ file: fileSel.value, content: submittedText }),
     })
       .then(readJson)
       .then(function (d) {
-        markClean();
-        setNote("Saved. " + (d.applied || "Hot reload applies it."));
+        savedText = submittedText;
+        setNote(isDirty()
+          ? "Saved the submitted version. Newer edits are still unsaved."
+          : "Saved. " + (d.applied || "Hot reload applies it."));
       })
       .catch(function (err) {
         // readJson surfaces the server's {error} message on a 400.
         setNote("Refused: " + err.message + " — the running config is unchanged.");
       })
-      .finally(function () { saveBtn.disabled = false; });
+      .finally(function () {
+        saveBtn.disabled = false;
+        fileSel.disabled = false;
+        if (reloadBtn) reloadBtn.disabled = false;
+      });
   }
 
   text.addEventListener("input", function () {
