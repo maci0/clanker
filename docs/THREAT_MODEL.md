@@ -65,7 +65,7 @@ below), then R3 abuse cases, then R4-R6.
 ### Inputs that cross the trust boundary as untrusted data
 
 - HTTP request bodies (JSON), headers (`Host`, `Origin`, `Content-Type`), query strings,
-  resource ids (`requestPath` strips query first, `src/cli.zig:5384`).
+  resource ids (`requestPath` strips query first, `src/serve/http.zig:24`).
 - `/api/run` `images` (base64, capped 4 MB × 4, requires `modules.multimodal`,
   `docs/README.md:1604`).
 - Chatroom messages fanned in from peers (`POST /api/chat/message`, `src/peers/chatrooms.zig`).
@@ -92,7 +92,7 @@ below), then R3 abuse cases, then R4-R6.
 
 | # | Boundary | Direction | Validation / authn point |
 |---|----------|-----------|--------------------------|
-| T1 | **Client → HTTP control plane** | Browser/SDK/curl → `/api/*`, `/proxy/v1` | No authn. Host header checked on *every* request (`unexpectedHost`, `src/cli.zig:17008`, enforced `src/cli.zig:8002`); `Origin` checked on non-GET as CSRF (`crossOriginRequest`, `src/cli.zig:16988`, enforced `src/cli.zig:8029`) and on the SSE stream (`src/cli.zig:8221`); body capped (`src/cli.zig:7959`). HEAD is rewritten to GET once, after the proxy dispatch and the Origin check, so POST-only routes stay unreachable via HEAD (`request_head`, set `src/cli.zig:7988`, rewrite `:8081`). Loopback bind is the real control |
+| T1 | **Client → HTTP control plane** | Browser/SDK/curl → `/api/*`, `/proxy/v1` | No authn. Host header checked on *every* request (`unexpectedHost`, `src/serve/http.zig:202`, enforced `src/cli.zig:8137`); `Origin` checked on non-GET as CSRF (`crossOriginRequest`, `src/serve/http.zig:179`, enforced `src/cli.zig:8164`) and on the SSE stream (`src/cli.zig:8356`); body capped (`src/cli.zig:7959`). HEAD is rewritten to GET once, after the proxy dispatch and the Origin check, so POST-only routes stay unreachable via HEAD (`request_head`, set `src/cli.zig:8123`, rewrite `:8205`). Loopback bind is the real control |
 | T2 | **HTTP control plane → agent/tools** | `/api/run` task text → agent loop → sandboxed tools | Descriptor policy: `fs_prefixes`, `env_allow`, `network_allow`, `exec_allow` (`src/sandbox/host.zig:249-326`); privileged `ck_*` channels check `tool_self_name` (`src/sandbox/host.zig`, `rg -c tool_self_name` ≈ 33 sites) |
 | T3 | **Peer/mesh → local state** | `POST /api/chat/message`, mesh CHAT frames → `state/chatrooms.jsonl`, `state/notifications.jsonl` | Chat fan-out via sandboxed `peers` tool (`chat_fanout`, `network_from_config`); mesh admission handshake (`mesh_net.zig:392-421`); no wire crypto |
 | T4 | **Provider API → agent loop** | LLM response stream → conversation → next model request | Prompts treat provider output and retrieved text as untrusted (R3); sandbox is the enforcement point. History sent to model is append-only; request-only copies for compaction (`docs/README.md` agent section) |
@@ -130,10 +130,10 @@ Privilege transitions not explicitly documented anywhere as a list:
 
 - **Spoofing**: none, no authn. Any process on the host (or LAN once `--host` widened) is the
   operator. Accepted by design (`docs/README.md:1552`).
-- **Tampering**: cross-site POST refused by Origin check (`src/cli.zig:8029`), but only for
+- **Tampering**: cross-site POST refused by Origin check (`src/cli.zig:8164`), but only for
   browsers; curl/raw clients carry no `Origin` and pass. CSRF strength = Origin trust. HEAD is
   rewritten to GET once after the check, so a HEAD cannot reach a POST-only route
-  (`src/cli.zig:8081`).
+  (`src/cli.zig:8205`).
 - **Information disclosure**: GET endpoints expose logs (`/api/logs`), sessions
   (`/api/sessions`), transcripts, knowledge, stats, all unauthenticated (route table
   `docs/README.md:1457+`).
@@ -220,8 +220,8 @@ Privilege transitions not explicitly documented anywhere as a list:
 | # | Control | Code reference | Covers |
 |---|---------|----------------|--------|
 | M1 | Loopback bind by default; exactly one socket; `--host` opt-in widening | `default_serve_host` `src/cli.zig:7443`, resolve layers `resolveListen` `src/cli.zig:7516`, binding trust model `docs/README.md:1552-1557` | R1, R2, R6 (network reach) |
-| M2 | Host allowlist (DNS-rebinding defense) on every request, incl. GET | `unexpectedHost` `src/cli.zig:17008`, enforced `src/cli.zig:8002`; tests `src/cli.zig:17064` | R1 (rebinding) |
-| M3 | Origin check on non-GET (CSRF) and on the SSE stream; HEAD rewritten once, after the check | `crossOriginRequest` `src/cli.zig:16988`, enforced `src/cli.zig:8029` (SSE `8221`, HEAD rewrite `8081`); tests `src/cli.zig:17119` | R1 (cross-site) |
+| M2 | Host allowlist (DNS-rebinding defense) on every request, incl. GET | `unexpectedHost` `src/serve/http.zig:202`, enforced `src/cli.zig:8137`; tests `src/serve/http.zig:324` | R1 (rebinding) |
+| M3 | Origin check on non-GET (CSRF) and on the SSE stream; HEAD rewritten once, after the check | `crossOriginRequest` `src/serve/http.zig:179`, enforced `src/cli.zig:8164` (SSE `8356`, HEAD rewrite `8205`); tests `src/serve/http.zig:379` | R1 (cross-site) |
 | M4 | Optional proxy token, constant-time hashed comparison; warn when unset on non-loopback | `proxy.authorize` `src/serve/proxy.zig:53`; wiring `src/cli.zig:7629`, `src/proxy_main.zig:125-126` | R2 (partial, off by default) |
 | M5 | WASM sandbox: descriptor policy (`fs_prefixes`/`env_allow`/`network_allow`/`exec_allow`), size caps | `src/sandbox/host.zig:249-326`, `:3` | R3, R5, T2, T3 |
 | M6 | Privileged channels gated by `tool_self_name` (import ≠ grant) | `src/sandbox/host.zig` (`rg -c tool_self_name` there) | T2 elevation |
@@ -249,7 +249,7 @@ Privilege transitions not explicitly documented anywhere as a list:
 
 - The **sandbox** (M5/M7/M8) is the load-bearing control for R3/R5 and the whole guest surface;
   a sandbox escape is the one event that turns prompt injection into host compromise.
-- The **Host/Origin guard** (`src/cli.zig:8002-8029`) is the entire CSRF/rebinding defense
+- The **Host/Origin guard** (`src/serve/http.zig:179-213`, enforced in `src/cli.zig:8137-8164`) is the entire CSRF/rebinding defense
   for an unauthenticated surface; a bypass (header parsing edge) removes the only per-request
   check.
 
