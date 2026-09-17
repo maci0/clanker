@@ -67,6 +67,7 @@ pub const Workspace = struct {
 /// workspace wrap this.
 pub fn validName(name: []const u8) bool {
     if (name.len == 0 or name.len > max_name_len) return false;
+    if (!std.unicode.utf8ValidateSlice(name)) return false;
     for (name) |c| {
         if (c < 0x20 or c == 0x7f) return false;
         if (c == '/' or c == '\\' or c == ':') return false;
@@ -79,6 +80,7 @@ pub fn validName(name: []const u8) bool {
 pub fn validRootName(name: []const u8) bool {
     if (name.len == 0) return true;
     if (name.len > max_name_len) return false;
+    if (!std.unicode.utf8ValidateSlice(name)) return false;
     for (name) |c| {
         if (c < 0x20 or c == 0x7f) return false;
         if (c == '/' or c == '\\' or c == ':') return false;
@@ -188,6 +190,7 @@ pub fn save(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, list: []cons
 pub fn resolveDir(io: std.Io, arena: std.mem.Allocator, path: []const u8) ![]const u8 {
     if (!validPath(path)) return Error.BadPath;
     const abs = std.Io.Dir.cwd().realPathFileAlloc(io, path, arena) catch return Error.NotADirectory;
+    if (!std.unicode.utf8ValidateSlice(abs)) return Error.BadPath;
     const st = std.Io.Dir.cwd().statFile(io, abs, .{}) catch return Error.NotADirectory;
     if (st.kind != .directory) return Error.NotADirectory;
     return abs;
@@ -401,6 +404,61 @@ test "validRootName allows the unnamed root and rejects separators" {
     try std.testing.expect(!validRootName("a\\b"));
     try std.testing.expect(!validRootName("a:b"));
     try std.testing.expect(!validRootName("a\nb"));
+}
+
+test "workspace registry rejects malformed UTF-8 without changing stored text" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "café");
+    const root = try tmp.dir.realPathFileAlloc(io, "café", arena);
+    _ = try add(io, gpa, arena, tmp.dir, "cafe\u{301}😀", root, "é", 1);
+    const before = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(max_store_bytes));
+    const stored = try load(io, arena, tmp.dir);
+    try std.testing.expectEqualStrings("cafe\u{301}😀", stored[0].name);
+    try std.testing.expectEqualStrings(root, stored[0].roots[0].path);
+    try std.testing.expectEqualStrings("é", stored[0].members[0]);
+
+    try std.testing.expectError(error.BadName, add(io, gpa, arena, tmp.dir, "caf\xe9", root, "", 2));
+    try std.testing.expectError(error.BadName, update(io, gpa, arena, tmp.dir, stored[0].id, "\xed\xa0\x80", null));
+    try std.testing.expectError(error.BadRootName, updateRoots(io, gpa, arena, tmp.dir, stored[0].id, null, &.{.{ .name = "\xf0\x9f", .path = root }}));
+    const after = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(max_store_bytes));
+    try std.testing.expectEqualStrings(before, after);
+}
+
+test "workspace registry refuses a root resolving to malformed UTF-8" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try tmp.dir.createDirPath(io, "root");
+    const root = try tmp.dir.realPathFileAlloc(io, "root", arena);
+    _ = try add(io, gpa, arena, tmp.dir, "keep", root, "", 1);
+    const before = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(max_store_bytes));
+
+    try tmp.dir.createDirPath(io, "caf\xe9");
+    try tmp.dir.symLink(io, "caf\xe9", "alias", .{ .is_directory = true });
+    const base = try tmp.dir.realPathFileAlloc(io, ".", arena);
+    const alias = try std.fs.path.join(arena, &.{ base, "alias" });
+    try std.testing.expectError(error.BadPath, add(io, gpa, arena, tmp.dir, "new", alias, "", 2));
+    try std.testing.expectError(error.BadPath, update(io, gpa, arena, tmp.dir, "keep", null, alias));
+    const after = try tmp.dir.readFileAlloc(io, store_path, arena, .limited(max_store_bytes));
+    try std.testing.expectEqualStrings(before, after);
+    try std.testing.expectEqualStrings(root, (try load(io, arena, tmp.dir))[0].roots[0].path);
 }
 
 test "workspace registry create list update remove" {
