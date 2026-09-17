@@ -71,7 +71,8 @@ Before creating a tag:
 
 | Version | Supported until |
 |---|---|
-| 0.2.x | Next `0.MINOR.0` release |
+| 0.3.x | Next `0.MINOR.0` release |
+| 0.2.x | Ended at 0.3.0 |
 | 0.1.x | Ended at 0.2.0 |
 
 `v0.2.0` was tagged but never published: its tag build failed, so no release

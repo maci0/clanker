@@ -5,6 +5,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-17
+
 ### Added
 
 - `themes/win2k.json`, the Windows 2000 "Windows Standard" scheme as a web
@@ -33,6 +35,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   tool share one hit shape (`id`, `title`, `updated`, `archived`, `turn`,
   `role`, `snippet`, `more`, `truncated`). The guest used to drop `turn`
   and `archived`, which is what the Search page jumps on.
+- `clanker chat --help` names the subcommands (`rooms`, `send`, `history`,
+  `subscribe`) on the usage line. Bare `chat` is still `chat rooms`.
+- `clanker config --help` names `dump` on the usage line. Bare `config` is
+  still a dump.
+- Web UI PatternFly radius and glass tokens follow the cabinet 2–4px plate
+  scale instead of PatternFly's 16px/24px cards and blur. Engraved labels
+  share `--track-label`; titles are untracked.
 
 ### Fixed
 
@@ -86,16 +95,6 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - The Runs list labels a run "yesterday" on calendar day, not after 24 wall
   hours. The morning after a spring-forward a Sunday run was still "23 hours
   ago".
-
-### Changed
-
-- `clanker chat --help` names the subcommands (`rooms`, `send`, `history`,
-  `subscribe`) on the usage line. Bare `chat` is still `chat rooms`.
-- `clanker config --help` names `dump` on the usage line. Bare `config` is
-  still a dump.
-- Web UI PatternFly radius and glass tokens follow the cabinet 2–4px plate
-  scale instead of PatternFly's 16px/24px cards and blur. Engraved labels
-  share `--track-label`; titles are untracked.
 
 ## [0.2.1] - 2026-08-31
 
@@ -3387,7 +3386,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-[unreleased]: https://github.com/maci0/clanker/compare/v0.2.1...HEAD
+[unreleased]: https://github.com/maci0/clanker/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/maci0/clanker/releases/tag/v0.3.0
 [0.2.1]: https://github.com/maci0/clanker/releases/tag/v0.2.1
 [0.2.0]: https://github.com/maci0/clanker/releases/tag/v0.2.0
 [0.1.0]: https://github.com/maci0/clanker/releases/tag/v0.1.0
