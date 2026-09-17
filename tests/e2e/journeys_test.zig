@@ -5,6 +5,52 @@
 const std = @import("std");
 const harness = @import("harness.zig");
 
+test "operator journey: help reports stdout write failures" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const full = try std.Io.Dir.cwd().openFile(io, "/dev/full", .{ .mode = .write_only });
+    defer full.close(io);
+    const cases = [_][]const []const u8{
+        &.{"--help"},
+        &.{ "run", "--help" },
+        &.{ "--model", "--help" },
+        &.{ "help", "--help" },
+        &.{"--version"},
+    };
+    for (cases) |args| {
+        var normal = try harness.run(gpa, io, tmp.dir, args);
+        defer normal.deinit(gpa);
+        try std.testing.expect(normal.ok());
+        try std.testing.expect(std.mem.find(u8, normal.stdout, "clanker") != null);
+        try std.testing.expectEqualStrings("", normal.stderr);
+
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(gpa);
+        try argv.append(gpa, @import("e2e_options").clanker_bin);
+        try argv.appendSlice(gpa, args);
+        const diagnostic = try tmp.dir.createFile(io, "stderr", .{});
+        defer diagnostic.close(io);
+        var child = try std.process.spawn(io, .{
+            .argv = argv.items,
+            .cwd = .{ .dir = tmp.dir },
+            .stdin = .ignore,
+            .stdout = .{ .file = full },
+            .stderr = .{ .file = diagnostic },
+        });
+        defer child.kill(io);
+        const term = try child.wait(io);
+        try std.testing.expectEqual(std.process.Child.Term{ .exited = 1 }, term);
+        const stderr = try tmp.dir.readFileAlloc(io, "stderr", gpa, .limited(4096));
+        defer gpa.free(stderr);
+        try std.testing.expect(std.mem.find(u8, stderr, "error: NoSpaceLeft") != null);
+    }
+}
+
 test "operator journey: add-goal persists the objective without starting a run" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});

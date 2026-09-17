@@ -1616,9 +1616,9 @@ pub fn commandName(c: Command) []const u8 {
 /// spec of its own, i.e. `clanker help --help`), so this is requested output:
 /// stdout, the same stream `clanker --help` uses. It used to go to stderr,
 /// which made that one spelling of --help the only one a pipe could not read.
-fn printUsage(io: std.Io) void {
+fn printUsage(io: std.Io) !void {
     var buf: [8192]u8 = undefined;
-    writeStdOut(io, renderUsage(&buf)) catch {};
+    try writeStdOut(io, renderUsage(&buf));
 }
 
 pub fn printUsageHint(io: std.Io) void {
@@ -1980,15 +1980,18 @@ fn writeWrappedFlagDescription(w: *std.Io.Writer, description: []const u8) !void
     try w.writeByte('\n');
 }
 
-fn printCommandHelp(io: std.Io, cmd: Command) void {
-    if (specFor(cmd) == null) return printUsage(io);
+fn printCommandHelp(io: std.Io, cmd: Command) !void {
+    if (specFor(cmd) == null) {
+        try printUsage(io);
+        return;
+    }
     var buf: [8192]u8 = undefined;
-    writeStdOut(io, renderCommandHelp(&buf, cmd)) catch {};
+    try writeStdOut(io, renderCommandHelp(&buf, cmd));
 }
 
-fn printFlagHelp(io: std.Io, flag: Flag) void {
+fn printFlagHelp(io: std.Io, flag: Flag) !void {
     var buf: [8192]u8 = undefined;
-    writeStdOut(io, renderFlagHelp(&buf, flag)) catch {};
+    try writeStdOut(io, renderFlagHelp(&buf, flag));
 }
 
 /// Every flag the parser knows. A command declares the ones it accepts, so
@@ -2408,9 +2411,9 @@ pub fn run(init: std.process.Init, opts: Options) !void {
         // Requested output (--help, --version), not an error: stdout, exit 0.
         .help => {
             if (opts.help_for_flag) |f| {
-                printFlagHelp(init.io, f);
+                try printFlagHelp(init.io, f);
             } else if (opts.help_for) |c| {
-                printCommandHelp(init.io, c);
+                try printCommandHelp(init.io, c);
             } else {
                 var buf: [8192]u8 = undefined;
                 try writeStdOut(init.io, renderUsage(&buf));
