@@ -128,6 +128,7 @@ pub const min_needle_len: usize = 6;
 /// than leaving "[model]-reasoner" behind.
 pub fn identityNeedles(alloc: std.mem.Allocator, provider: []const u8, model: []const u8) ![]const []const u8 {
     var list: std.ArrayList([]const u8) = .empty;
+    errdefer list.deinit(alloc);
     for ([_][]const u8{ provider, model }) |whole| {
         try addNeedle(alloc, &list, whole);
         var it = std.mem.splitAny(u8, whole, "-_/.:");
@@ -157,6 +158,7 @@ fn addNeedle(alloc: std.mem.Allocator, list: *std.ArrayList([]const u8), candida
 pub fn redactIdentity(alloc: std.mem.Allocator, text: []const u8, needles: []const []const u8) ![]const u8 {
     var current = text;
     var owned = false;
+    errdefer if (owned) alloc.free(current);
     for (needles) |needle| {
         const next = try strikeAll(alloc, current, needle);
         if (next.ptr == current.ptr and next.len == current.len) continue;
@@ -374,6 +376,27 @@ test "identityNeedles keeps the long fragments and drops the ordinary words" {
     // "chat" is four characters: an ordinary word, left alone.
     const chat = try identityNeedles(a, "deepseek", "deepseek-chat");
     for (chat) |n| try std.testing.expect(!std.ascii.eqlIgnoreCase(n, "chat"));
+}
+
+test "identityNeedles releases storage on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(gpa: std.mem.Allocator) !void {
+            const needles = try identityNeedles(gpa, "provider", "aaaaaa-bbbbbb-cccccc-dddddd-eeeeee-ffffff-gggggg-hhhhhh-iiiiii-jjjjjj");
+            defer gpa.free(needles);
+            try std.testing.expectEqual(@as(usize, 12), needles.len);
+            try std.testing.expectEqualStrings("aaaaaa-bbbbbb-cccccc-dddddd-eeeeee-ffffff-gggggg-hhhhhh-iiiiii-jjjjjj", needles[0]);
+        }
+    }.run, .{});
+}
+
+test "redactIdentity releases intermediate answers on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, struct {
+        fn run(gpa: std.mem.Allocator) !void {
+            const answer = try redactIdentity(gpa, "provider and reasoner", &.{ "provider", "absent", "reasoner" });
+            defer gpa.free(answer);
+            try std.testing.expectEqualStrings("[model] and [model]", answer);
+        }
+    }.run, .{});
 }
 
 test "redactIdentity strikes a model naming itself, whatever the case" {
