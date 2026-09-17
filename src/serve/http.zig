@@ -187,7 +187,10 @@ pub fn crossOriginRequest(headers_raw: []const u8, port: u16, serve_as_hosts: []
     // An origin is a scheme and an authority and nothing else, so a path (or
     // "null", handled by the scheme check above) is malformed, not same-site.
     if (std.mem.findScalar(u8, authority, '/') != null) return true;
-    return !allowedAuthority(authority, port, serve_as_hosts);
+    const host = headerValue(headers_raw, "host") orelse return true;
+    return unexpectedHost(headers_raw, port, serve_as_hosts) or
+        !std.ascii.eqlIgnoreCase(authority, host) or
+        !allowedAuthority(authority, port, serve_as_hosts);
 }
 
 /// Refuse requests addressed through any authority this `clanker serve` does
@@ -377,19 +380,19 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
     const none: []const []const u8 = &.{};
     const allow: []const []const u8 = &.{"clanker.lan"};
     try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: x\r\n", 4173, none));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:4173\r\n", 4173, none));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: 127.0.0.1:4173\r\nOrigin: http://127.0.0.1:4173\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: localhost:4173\r\nOrigin: http://localhost:4173\r\n", 4173, none));
     try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://evil.example:4173\r\n", 4173, none));
     try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://127.0.0.1:9999\r\n", 4173, none));
     try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: null\r\n", 4173, none));
     // The web UI a LAN client actually loaded posts back from that origin, so
     // refusing it made --host 0.0.0.0 serve a page that could not do anything.
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://192.168.1.5:4173\r\n", 4173, none));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://[fe80::1]:4173\r\n", 4173, none));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://clanker.lan:4173\r\n", 4173, none));
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://clanker.lan:4173\r\n", 4173, allow));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: 192.168.1.5:4173\r\nOrigin: http://192.168.1.5:4173\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: [fe80::1]:4173\r\nOrigin: http://[fe80::1]:4173\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: clanker.lan:4173\r\nOrigin: http://clanker.lan:4173\r\n", 4173, none));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: clanker.lan:4173\r\nOrigin: http://clanker.lan:4173\r\n", 4173, allow));
     // A proxy terminating TLS in front of an allowlisted name.
-    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: https://clanker.lan\r\n", 4173, allow));
+    try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: clanker.lan\r\nOrigin: https://clanker.lan\r\n", 4173, allow));
     // A scheme that is not http(s), or an origin carrying a path, is not one
     // of ours however its authority reads.
     try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: file://localhost:4173\r\n", 4173, none));

@@ -105,16 +105,18 @@ pub fn jsonNum(obj: std.json.ObjectMap, key: []const u8) ?f64 {
     const v = obj.get(key) orelse return null;
     return switch (v) {
         .integer => |i| @floatFromInt(i),
-        .float => |f| f,
-        .number_string => |s| std.fmt.parseFloat(f64, s) catch null,
-        .string => |s| std.fmt.parseFloat(f64, s) catch null,
+        .float => |f| if (std.math.isFinite(f)) f else null,
+        .number_string, .string => |s| blk: {
+            const n = std.fmt.parseFloat(f64, s) catch break :blk null;
+            break :blk if (std.math.isFinite(n)) n else null;
+        },
         else => null,
     };
 }
 
 fn jsonU32(obj: std.json.ObjectMap, key: []const u8) ?u32 {
     const n = jsonNum(obj, key) orelse return null;
-    if (n <= 0 or n > @as(f64, @floatFromInt(std.math.maxInt(u32)))) return null;
+    if (n <= 0 or n > @as(f64, @floatFromInt(std.math.maxInt(u32))) or n != @trunc(n)) return null;
     return @as(u32, @trunc(n));
 }
 
@@ -706,6 +708,44 @@ test "specs reads context, output, cost, display, and capabilities" {
     try std.testing.expectEqualStrings("thinking", s.capabilities[0]);
     try std.testing.expectEqualStrings("tool_use", s.capabilities[1]);
     try std.testing.expectEqualStrings("image_in", s.capabilities[2]);
+}
+
+test "jsonNum rejects non-finite catalog numbers" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const obj = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"nan":"NaN","inf":"Infinity","negative_inf":"-inf","overflow":1e9999,"price":"0.125","zero":0,"integer":42}
+    , .{});
+    for ([_][]const u8{ "nan", "inf", "negative_inf", "overflow" }) |key| {
+        try std.testing.expect(jsonNum(obj.object, key) == null);
+    }
+    try std.testing.expectEqual(@as(f64, 0.125), jsonNum(obj.object, "price").?);
+    try std.testing.expectEqual(@as(f64, 0), jsonNum(obj.object, "zero").?);
+    try std.testing.expectEqual(@as(f64, 42), jsonNum(obj.object, "integer").?);
+}
+
+test "specs ignores non-finite prices and invalid token limits" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    for ([_][]const u8{ "\"NaN\"", "\"Infinity\"", "1e9999", "-1", "0", "0.5", "1.5", "4294967296" }) |value| {
+        const body = try std.fmt.allocPrint(arena, "{{\"limit\":{{\"context\":{s},\"output\":{s}}},\"cost\":{{\"input\":\"NaN\",\"output\":\"Infinity\"}}}}", .{ value, value });
+        const m = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
+        const s = try specs(arena, m);
+        try std.testing.expect(s.context_window == null);
+        try std.testing.expect(s.max_tokens == null);
+        try std.testing.expect(s.cost_per_1m_input == null);
+        try std.testing.expect(s.cost_per_1m_output == null);
+    }
+    const m = try std.json.parseFromSliceLeaky(std.json.Value, arena,
+        \\{"limit":{"context":"4294967295","output":1.0},"cost":{"input":0,"output":"0.125"}}
+    , .{});
+    const s = try specs(arena, m);
+    try std.testing.expectEqual(@as(u32, 4294967295), s.context_window.?);
+    try std.testing.expectEqual(@as(u32, 1), s.max_tokens.?);
+    try std.testing.expectEqual(@as(f64, 0), s.cost_per_1m_input.?);
+    try std.testing.expectEqual(@as(f64, 0.125), s.cost_per_1m_output.?);
 }
 
 test "specs skips a zero context or output rather than treating it as a cap" {
