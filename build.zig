@@ -319,6 +319,7 @@ pub fn build(b: *std.Build) void {
     // `exe_target`: a `-Dtarget=` cross-compile would produce a test binary the
     // build runner cannot execute.
     const test_target = b.resolveTargetQuery(native_query);
+    const zwasm_test_dep = b.dependency("zwasm", .{ .target = test_target, .optimize = optimize });
     const vaxis_test_dep = b.dependency("vaxis", .{ .target = test_target, .optimize = optimize });
     const toml_test_mod = b.createModule(.{
         .root_source_file = b.path("vendor/toml/src/root.zig"),
@@ -335,7 +336,7 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
         .imports = linkedHelperImports(b, test_target, optimize, &.{
-            .{ .name = "zwasm", .module = zwasm_mod },
+            .{ .name = "zwasm", .module = zwasm_test_dep.module("zwasm") },
             .{ .name = "build_options", .module = build_options.createModule() },
             .{ .name = "vaxis", .module = vaxis_test_dep.module("vaxis") },
             .{ .name = "toml", .module = toml_test_mod },
