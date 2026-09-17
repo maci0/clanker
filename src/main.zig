@@ -417,7 +417,11 @@ pub fn main(init: std.process.Init) !void {
         // config dump that silently stops halfway is worse than none.
         var out: std.Io.Writer.Allocating = .init(arena);
         if (merged.writeJson(&out.writer)) {
-            cli.writeStdOut(init.io, out.written()) catch {};
+            cli.writeStdOut(init.io, out.written()) catch |err| {
+                if (err == error.BrokenPipe) std.process.exit(0);
+                cli.printUsageError(init.io, "{s}: could not write config JSON to stdout", .{@errorName(err)});
+                std.process.exit(1);
+            };
         } else |err| {
             cli.printUsageError(init.io, "could not render the config as JSON ({s})", .{@errorName(err)});
             std.process.exit(1);

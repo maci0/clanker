@@ -5,7 +5,7 @@
 const std = @import("std");
 const harness = @import("harness.zig");
 
-test "operator journey: help reports stdout write failures" {
+test "operator journey: help and config dump report stdout write failures" {
     if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
@@ -21,12 +21,20 @@ test "operator journey: help reports stdout write failures" {
         &.{ "--model", "--help" },
         &.{ "help", "--help" },
         &.{"--version"},
+        &.{"--dump-config"},
     };
+    try harness.writeMockConfig(io, tmp.dir, gpa, 9);
     for (cases) |args| {
         var normal = try harness.run(gpa, io, tmp.dir, args);
         defer normal.deinit(gpa);
         try std.testing.expect(normal.ok());
-        try std.testing.expect(std.mem.find(u8, normal.stdout, "clanker") != null);
+        if (std.mem.eql(u8, args[0], "--dump-config")) {
+            const parsed = try std.json.parseFromSlice(std.json.Value, gpa, normal.stdout, .{});
+            defer parsed.deinit();
+            try std.testing.expectEqualStrings("e2e-mock", parsed.value.object.get("default_provider").?.string);
+        } else {
+            try std.testing.expect(std.mem.find(u8, normal.stdout, "clanker") != null);
+        }
         try std.testing.expectEqualStrings("", normal.stderr);
 
         var argv: std.ArrayList([]const u8) = .empty;
