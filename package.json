@@ -9,6 +9,6 @@
     "lint:fix": "oxlint --fix"
   },
   "devDependencies": {
-    "oxlint": "1.79.0"
+    "oxlint": "1.80.0"
   }
 }
