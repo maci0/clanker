@@ -9210,9 +9210,7 @@ fn completionLogLevel(path: []const u8, status: u16) ?log.Level {
     if (!(std.mem.startsWith(u8, path, "/api/") or status >= 400 or status == 0)) return null;
     if (status >= 500 or status == 0) return .error_;
     if (status >= 400) return .warn;
-    // Successful requests are not logged: only errors and warnings are worth a
-    // line in the serve output.
-    return null;
+    return .debug;
 }
 
 fn recordHttpRequest(io: std.Io, status: u16, duration_ms: u64) void {
@@ -17244,8 +17242,10 @@ test "only requests worth reading about are logged, at a level matching the stat
     try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/health/live", 200));
     try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/", 304));
 
-    // Successful API traffic is not logged; only errors and warnings are.
-    try std.testing.expectEqual(@as(?log.Level, null), completionLogLevel("/api/status", 200));
+    try std.testing.expectEqual(@as(?log.Level, .debug), completionLogLevel("/api/status", 200));
+    try std.testing.expectEqual(@as(?log.Level, .debug), completionLogLevel("/api/run", 200));
+    try std.testing.expectEqual(@as(?log.Level, .debug), completionLogLevel("/api/goals", 201));
+    try std.testing.expectEqual(@as(?log.Level, .debug), completionLogLevel("/api/sessions", 304));
 
     // Failures are logged wherever they happen, API or not.
     try std.testing.expectEqual(@as(?log.Level, .warn), completionLogLevel("/webui/nope.js", 404));
@@ -19992,6 +19992,41 @@ fn routeCapture(buf: []u8, request: []const u8) ![]const u8 {
 
 fn testRequest(buf: []u8, method: []const u8, target: []const u8) ![]const u8 {
     return std.fmt.bufPrint(buf, "{s} {s} HTTP/1.1\r\nHost: 127.0.0.1:{d}\r\n\r\n", .{ method, target, test_route_port });
+}
+
+test "successful API completion logs require debug and retain request correlation" {
+    const Capture = struct {
+        writer: std.Io.Writer,
+
+        fn write(ctx: *const anyopaque, line: []const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(ctx)));
+            self.writer.writeAll(line) catch {};
+        }
+    };
+    var logs: [8192]u8 = undefined;
+    var capture = Capture{ .writer = .fixed(&logs) };
+    const saved_level = log.getLevel();
+    const saved_context = log.getContext();
+    defer log.setLevel(saved_level);
+    defer log.setContext(saved_context);
+    log.setSink(.{ .ctx = &capture, .write = Capture.write });
+    defer log.setSink(null);
+
+    const request = "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1:17921\r\nX-Request-ID: completion-test\r\n\r\n";
+    var response: [1 << 16]u8 = undefined;
+    log.setLevel(.info);
+    const quiet = try routeCapture(&response, request);
+    try std.testing.expect(std.mem.startsWith(u8, quiet, "HTTP/1.1 200 OK\r\n"));
+    try std.testing.expectEqual(@as(usize, 0), capture.writer.end);
+
+    log.setLevel(.debug);
+    const verbose = try routeCapture(&response, request);
+    try std.testing.expect(std.mem.startsWith(u8, verbose, "HTTP/1.1 200 OK\r\n"));
+    try std.testing.expect(std.mem.find(u8, verbose, "X-Request-ID: completion-test\r\n") != null);
+    const line = logs[0..capture.writer.end];
+    try std.testing.expect(std.mem.startsWith(u8, line, "[DEBUG] ts_ms="));
+    try std.testing.expect(std.mem.find(u8, line, "request_id=completion-test http request complete method=GET path=/api/status status=200 duration_ms=") != null);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, line, "\n"));
 }
 
 test "HEAD reaches an /api route and answers what the GET would, minus the body" {
