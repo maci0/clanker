@@ -596,7 +596,10 @@ const DeadlineWatch = struct {
     done: std.Io.Event = .unset,
     fired: std.atomic.Value(bool) = .init(false),
 
-    fn watch(self: *DeadlineWatch) void {
+    fn watch(self: *DeadlineWatch, caller_context: []const u8) void {
+        const previous_context = log.getContext();
+        log.setContext(caller_context);
+        defer log.setContext(previous_context);
         var seen: u64 = 0;
         var since = std.Io.Timestamp.now(self.io, .awake);
         while (!self.done.isSet()) {
@@ -780,7 +783,8 @@ fn underDeadline(
         .provider_name = spec.provider_name,
         .streaming = spec.streaming,
     };
-    var future = ctx.io.concurrent(DeadlineWatch.watch, .{&watch}) catch return error.SystemResources;
+    const caller_context = log.getContext();
+    var future = ctx.io.concurrent(DeadlineWatch.watch, .{ &watch, caller_context }) catch return error.SystemResources;
 
     const result = @call(.auto, request, args);
 
@@ -1954,6 +1958,27 @@ test "bounded chat aborts a provider that never sends a response" {
 }
 
 test "bounded stream aborts a provider that sends nothing at all" {
+    const Capture = struct {
+        timeout_logged: std.atomic.Value(bool) = .init(false),
+        correlated: std.atomic.Value(bool) = .init(false),
+
+        fn write(ptr: *const anyopaque, line: []const u8) void {
+            const self: *@This() = @ptrCast(@alignCast(@constCast(ptr)));
+            if (std.mem.find(u8, line, "abandoning the stream") == null) return;
+            self.timeout_logged.store(true, .release);
+            self.correlated.store(std.mem.find(u8, line, " request_id=http-timeout-test ") != null, .release);
+        }
+    };
+    var capture: Capture = .{};
+    const previous_level = log.getLevel();
+    log.setLevel(.error_);
+    defer log.setLevel(previous_level);
+    log.setSink(.{ .ctx = &capture, .write = Capture.write });
+    defer log.setSink(null);
+    const previous_context = log.getContext();
+    log.setContext("http-timeout-test");
+    defer log.setContext(previous_context);
+
     const mock_server = @import("mock_server.zig");
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
@@ -1987,6 +2012,9 @@ test "bounded stream aborts a provider that sends nothing at all" {
         .messages = &messages,
         .max_tokens = 1,
     }, &err_detail, Noop.cb, null, 300, 0));
+    try std.testing.expect(capture.timeout_logged.load(.acquire));
+    try std.testing.expect(capture.correlated.load(.acquire));
+    try std.testing.expectEqualStrings("http-timeout-test", log.getContext());
     try std.testing.expect(ctx.abort == null);
     try std.testing.expect(ctx.stream_progress == null);
 }
