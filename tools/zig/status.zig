@@ -27,8 +27,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
-    _ = parsed;
+    _ = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
 
     const cfg = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch StatusInfo{};
     const inst = cfg.instance orelse InstanceInfo{};

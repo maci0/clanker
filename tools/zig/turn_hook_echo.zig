@@ -17,7 +17,6 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 }
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
-    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
-    _ = parsed;
+    _ = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
     return lib.okText(out, "↳ turn_hook_echo: a turn just finished");
 }
