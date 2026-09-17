@@ -396,6 +396,25 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
     try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173/evil\r\n", 4173, none));
 }
 
+test "crossOriginRequest binds browser origins to the request authority" {
+    const allow: []const []const u8 = &.{"clanker.lan"};
+    const cases = .{
+        .{ "http://192.0.2.10:4173", "192.0.2.10:4173", false },
+        .{ "http://192.0.2.11:4173", "192.0.2.10:4173", true },
+        .{ "http://[::1]:4173", "[::1]:4173", false },
+        .{ "http://[2001:db8::1]:4173", "[::1]:4173", true },
+        .{ "http://localhost:4173", "localhost:4173", false },
+        .{ "http://localhost:4173", "127.0.0.1:4173", true },
+        .{ "https://clanker.lan", "CLANKER.LAN", false },
+        .{ "http://192.0.2.10:4173", "clanker.lan", true },
+    };
+    inline for (cases) |case| {
+        const headers = "POST /api/run HTTP/1.1\r\nHost: " ++ case[1] ++ "\r\nOrigin: " ++ case[0] ++ "\r\n";
+        try std.testing.expectEqual(case[2], crossOriginRequest(headers, 4173, allow));
+    }
+    try std.testing.expect(crossOriginRequest("Origin: http://localhost:4173\r\n", 4173, allow));
+}
+
 test "acceptsGzip only matches the header's own line" {
     try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\nAccept-Encoding: gzip, deflate\r\n"));
     try std.testing.expect(acceptsGzip("GET / HTTP/1.1\r\naccept-encoding:gzip\r\n"));
