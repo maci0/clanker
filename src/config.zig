@@ -3505,7 +3505,9 @@ pub const Config = struct {
     fn jsonInt(v: json.Value, key: []const u8) !i64 {
         return switch (v) {
             .integer => |i| i,
-            .float => |f| intFromFloatChecked(f) orelse
+            .float => |f| if (@trunc(f) == f)
+                intFromFloatChecked(f) orelse invalid(key, "an integer", v, "setting = 1", error.FieldNotInt)
+            else
                 invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
             .number_string => |s| std.fmt.parseInt(i64, s, 10) catch return invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
             else => invalid(key, "an integer", v, "setting = 1", error.FieldNotInt),
@@ -3524,12 +3526,14 @@ pub const Config = struct {
     }
 
     fn jsonFloat(v: json.Value, key: []const u8) !f64 {
-        return switch (v) {
+        const value: f64 = switch (v) {
             .integer => |i| @floatFromInt(i),
             .float => |f| f,
-            .number_string => |s| std.fmt.parseFloat(f64, s) catch return invalid(key, "a number", v, "setting = 0.5", error.FieldNotNumber),
-            else => invalid(key, "a number", v, "setting = 0.5", error.FieldNotNumber),
+            .number_string => |s| std.fmt.parseFloat(f64, s) catch return invalid(key, "a finite number", v, "setting = 0.5", error.FieldNotNumber),
+            else => return invalid(key, "a finite number", v, "setting = 0.5", error.FieldNotNumber),
         };
+        if (!std.math.isFinite(value)) return invalid(key, "a finite number", v, "setting = 0.5", error.FieldNotNumber);
+        return value;
     }
 };
 
@@ -3611,6 +3615,46 @@ test "tui mascot speed is an integer from zero through ten" {
         \\{"tui":{"mascot_speed":11}}
     , .{});
     try std.testing.expectError(error.MascotSpeedOutOfRange, Config.parseConfig(io, arena, out_of_range));
+}
+
+test "numeric config rejects fractional integer settings at load" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = env.tmp.dir;
+
+    for ([_][]const u8{ "0.5", "-0.5", "10.9" }) |value| {
+        const setting = try std.fmt.allocPrint(arena, "request_timeout_ms = {s}", .{value});
+        try writeAgentConfig(io, dir, "config.toml", setting);
+        try std.testing.expectError(error.FieldNotInt, Config.load(io, arena, dir, "config.toml", "config.local.toml"));
+        try std.testing.expect(Config.takeLoadDiagnostic());
+    }
+
+    try writeAgentConfig(io, dir, "config.toml", "request_timeout_ms = 60.0");
+    const cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(u32, 60), cfg.agent.request_timeout_ms);
+}
+
+test "numeric config rejects non-finite model settings at load" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = env.tmp.dir;
+    try writeAgentConfig(io, dir, "config.toml", "");
+
+    for ([_][]const u8{ "temperature", "top_p", "cost_per_1m_input", "cost_per_1m_output" }) |key| {
+        for ([_][]const u8{ "nan", "+nan", "-nan", "inf", "+inf", "-inf", "1e999" }) |value| {
+            const data = try std.fmt.allocPrint(
+                arena,
+                "[models.\"ollama/llama3.1\"]\nprovider = \"ollama\"\n{s} = {s}\n",
+                .{ key, value },
+            );
+            try dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = data });
+            try std.testing.expectError(error.FieldNotNumber, Config.load(io, arena, dir, "config.toml", "config.local.toml"));
+        }
+    }
 }
 
 test "an integer setting given as a float is range-checked, not trapped" {

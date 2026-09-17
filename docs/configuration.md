@@ -22,6 +22,11 @@ takes its default; an unknown key logs a warning and is ignored (so a typo like
 
 ## Configuration errors
 
+Numeric settings must be finite: `nan`, `inf`, and overflowing float literals
+are rejected. Integer settings accept integral floats such as `60.0`, but reject
+fractional values rather than truncating them; `request_timeout_ms = 0.5` is an
+error, not an instruction to disable the deadline.
+
 Configuration validation stops at the first bad setting. Its error names the
 file and one-based TOML line, the fully qualified setting, what that setting
 accepts, the TOML value type (and a non-sensitive value), and a corrected TOML
