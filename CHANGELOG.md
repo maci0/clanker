@@ -5,6 +5,44 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Breaking
+
+- Security hardening changes compatibility for symlinked web UI assets and
+  browser requests with mismatched Origin and Host. See Security below for
+  the previous behavior and required upgrade steps.
+
+### Security
+
+- Disk-backed web UI plugin assets, themes, and command catalogs no longer
+  follow symlinks in files or parent directories. Previously those links could
+  serve files outside the asset directory. Upgrade action: replace linked
+  assets and linked directories with regular files and directories in their
+  expected locations; refused assets return 404, and a linked `themes/`
+  directory produces an empty theme catalog.
+- Browser requests carrying `Origin` now require its authority to match the
+  request's `Host` (case-insensitively), not merely another allowed address.
+  For example, an Origin of `http://localhost:4173` with Host
+  `127.0.0.1:4173` is now refused. Upgrade action: use the same hostname and
+  port for the page and its API requests; reverse proxies must preserve the
+  browser-facing Host and keep that hostname in the configured host allowlist.
+  Requests without Origin retain their existing behavior.
+
+### Fixed
+
+- `[improve] backlog = false` now disables backlog seeding as documented.
+  Previously the loader ignored the setting and kept the default `true`.
+  Existing boolean settings need no migration; string values such as
+  `backlog = "false"` must become `backlog = false`.
+- Session replication reports the last committed cursor after rolling back a
+  batch containing a sequence gap. Retrying from that cursor now includes the
+  rolled-back events instead of skipping them.
+- Knowledge search decodes URL-encoded queries and collection filters before
+  forwarding them to the tool, so spaces, Unicode, and escaped punctuation
+  search for the intended text. The web UI also discards stale search replies
+  after the query changes.
+- The web UI configuration editor keeps edits made during an in-flight save
+  marked unsaved, rather than treating text that was never submitted as saved.
+
 ## [0.4.0] - 2026-09-17
 
 Developer tooling only: no public surface changes.
