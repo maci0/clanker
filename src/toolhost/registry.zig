@@ -1265,6 +1265,25 @@ test "a missing tools_dir list entry does not empty the rest" {
     try std.testing.expect(reg.get("keep") != null);
 }
 
+test "schedule manifest grants only its store and ledger" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+
+    const raw = try std.Io.Dir.cwd().readFileAlloc(
+        threaded.io(),
+        "tools/manifests/schedule.tool.json",
+        arena,
+        .limited(1 << 20),
+    );
+    const tool = try Registry.parseDescriptor(arena, raw);
+    try std.testing.expectEqual(@as(usize, 2), tool.fs_prefixes.len);
+    try std.testing.expectEqualStrings("state/schedule.json", tool.fs_prefixes[0]);
+    try std.testing.expectEqualStrings("state/schedule/log.jsonl", tool.fs_prefixes[1]);
+}
+
 test "every shipped manifest carries a schema the provider accepts" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();

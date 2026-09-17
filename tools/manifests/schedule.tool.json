@@ -19,7 +19,7 @@
       "tz_offset_minutes": { "type": "integer" }
     }
   },
-  "fs_prefixes": ["state/schedule.json", "state/schedule/"],
+  "fs_prefixes": ["state/schedule.json", "state/schedule/log.jsonl"],
   "network_allow": [],
   "category": "agent"
 }
