@@ -12,8 +12,10 @@
 #   ./scripts/verify-backup.sh                # verify the newest snapshot
 #   ./scripts/verify-backup.sh <snapshot_dir> # verify a specific snapshot
 #
-# Exit 0: every entry restored and matches the snapshot.
-# Exit 1: no snapshot to verify, or a restore/compare mismatch.
+# Exit 0: every entry restored, matches the snapshot, and the restored
+# SQLite databases load.
+# Exit 1: no snapshot to verify, a restore/compare mismatch, or a database
+# that copies over intact but does not load.
 #
 # Restore time is measured so RTO stops being an unknown: a snapshot that
 # takes N seconds to copy out is the lower bound on a real restore of the
