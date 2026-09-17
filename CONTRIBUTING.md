@@ -10,16 +10,18 @@ Follow the quick start in [README.md](README.md): `zig build --fetch=all`,
 `scripts/apply-patches.sh` (re-applies `patches/*.patch` to the fetched
 dependencies — the SIGWINCH patch is load-bearing for `clanker repl` and the
 pty e2e journeys, and `build.zig` refuses to compile against an unpatched
-tree), `zig build`, `zig build tools`, `zig build test`, `clanker init`,
-`clanker gate`, and enable the repository hooks with:
+tree), `zig build`, `zig build tools`, `zig build test`,
+`./zig-out/bin/clanker init`, `./zig-out/bin/clanker gate`, and enable the
+repository hooks with:
 
 ```sh
 git config core.hooksPath .githooks
 ```
 
 Requirements are Zig 0.16.x (pinned in `build.zig.zon`, enforced by
-`build.zig` with a named error on any other version) and bun for the JS test
-suites.
+`build.zig`), Git, Bash, and patch. Tests also need Bun for the JS suites
+and Python 3 for the process fixtures. Full verification additionally needs
+shellcheck; `scripts/verify.sh` installs the declared JS dependencies locally.
 
 ## The edit-test loop
 
@@ -33,7 +35,7 @@ suites.
   directory itself).
 - The e2e journeys (`zig build e2e`) spawn the real `clanker repl` on a pty,
   so they need the dependency patches applied: run `scripts/apply-patches.sh`
-  once after the first `zig build` (idempotent; `scripts/verify.sh` does it
+  once after `zig build --fetch=all` (idempotent; `scripts/verify.sh` does it
   for you).
 - Before pushing: `scripts/verify.sh` — mirrors everything CI's verify job
   runs (shellcheck, oxlint, Python syntax check, SBOM generation,
@@ -47,8 +49,9 @@ suites.
   sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory,
   skills-inventory, dep-patches). This is what the self-improvement loop
   demands of its own proposals, so a human change must clear the same bar.
-  `dep-patches` is about your checkout rather than your diff: run `zig build`
-  and then `scripts/apply-patches.sh` once per worktree.
+  `dep-patches` is about your checkout rather than your diff: run
+  `zig build --fetch=all` and then `scripts/apply-patches.sh` before compiling
+  in each new worktree.
 - CI — the workflow in `.github/workflows/ci.yml` additionally checks shell
   scripts with shellcheck, `ui/` and `tools/ts` with oxlint, every tracked
   `.py` with a syntax parse, the SBOM generation, and that

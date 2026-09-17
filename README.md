@@ -48,9 +48,9 @@ policy.
 
 ## Quick start
 
-Requirements: **Zig 0.16.x** and, for `zig build test`, **Bun**. The Zig
-release is pinned in `build.zig.zon`'s `minimum_zig_version` (CI installs
-exactly that release from it). `zig build` and `zig build tools` need no bun
+Requirements: **Zig 0.16.x**, **Git**, **Bash**, and **patch**; the test
+suite also requires **Bun** and **Python 3**. The Zig release is pinned in
+`build.zig.zon`'s `minimum_zig_version` (CI installs exactly that release from it). `zig build` and `zig build tools` need no bun
 — `tools/ts/dist/` is committed so a checkout without a JS toolchain still
 builds and runs every tool — but the test step drives its JS suites with
 `bun test`.
@@ -59,9 +59,9 @@ Build the binary, compile the WASM tools, run the test suite, create local
 state, run the complete gate, and enable the repository hooks:
 
 ```sh
+zig build --fetch=all
+scripts/apply-patches.sh
 zig build
-scripts/apply-patches.sh   # re-apply patches/*.patch to the fetched dependencies
-zig build                  # rebuild against the patched dependencies
 zig build tools
 zig build test
 ./zig-out/bin/clanker init
@@ -70,11 +70,11 @@ git config core.hooksPath .githooks
 ```
 
 `patches/*.patch` are local fixes to pinned upstream dependencies (see
-[patches/README.md](patches/README.md)); the first `zig build` fetches the
-pristine upstream trees and refuses to configure until they are patched
-(the failure names `scripts/apply-patches.sh`), and `scripts/apply-patches.sh`
-re-applies the
-patches to them (idempotent, skips what is already applied). The SIGWINCH
+[patches/README.md](patches/README.md)). `zig build --fetch=all` extracts the
+pristine upstream trees without configuring the build, then
+`scripts/apply-patches.sh` patches them (idempotent, skips what is already
+applied). Run both before the first compile: `zig build` refuses unpatched
+dependencies. The SIGWINCH
 patch is load-bearing: without it, resizing the terminal in `clanker repl`
 aborts the process, and the e2e pty journeys fail. Run it again whenever a
 fresh dependency fetch replaced the trees.
