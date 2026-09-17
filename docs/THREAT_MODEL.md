@@ -1,7 +1,7 @@
 # clanker Threat Model
 
-Last reviewed: 2026-09-18 (HTTP authentication, native configuration/backend transitions,
-and release controls). Evidence is static code inspection, not attack testing.
+Last reviewed: 2026-09-18 (HTTP Host/Origin guards and native configuration/backend
+transitions). Evidence is static code inspection, not attack testing.
 Other sections retain the 2026-08-26 inventory; their line references and coverage need
 re-verification before being used as control assurances. Owner and cadence remain unset.
 
@@ -12,7 +12,7 @@ Owner: unassigned. Review cadence: not set. Vulnerability disclosure process: no
 
 | # | Risk | Impact | Likelihood | Notes |
 |---|------|--------|------------|-------|
-| R1 | **Unauthenticated control includes native configuration and backend execution, not just sandboxed tools.** The HTTP handler has Host/Origin checks but no caller authentication (`src/cli.zig:8134-8164`). Raw config reads disclose file contents; validated writes change the operator's policy (`src/cli.zig:11543-11638`). `/api/run` can select a native backend (`src/cli.zig:16355-16360`, `:16752`). | Critical: configuration, credentials stored there, and operator-level execution | High for a reachable local client; remote exposure depends on bind/network policy | Loopback/Host/Origin are not user identity. WASM grants do not contain the native paths; see T7/T8. |
+| R1 | **Unauthenticated control includes native configuration and backend execution, not just sandboxed tools.** The HTTP handler has Host/Origin checks but no caller authentication (`src/cli.zig:8134-8164`). Raw config reads disclose file contents; validated writes change the operator's policy (`src/cli.zig:11543-11638`). `/api/run` can select a native backend (`src/cli.zig:16398-16403`, `src/cli.zig:16795-16803`). | Critical: configuration, credentials stored there, and operator-level execution | High for a reachable local client; remote exposure depends on bind/network policy | Loopback/Host/Origin are not user identity. WASM grants do not contain the native paths; see T7. |
 | R2 | **Proxy credential spending.** Proxy authentication is optional; naming a token environment variable that is absent also skips authentication (`src/cli.zig:8140-8152`, `src/proxy_main.zig:311-321`). The standalone proxy does not run the full server's Host/Origin guards (`src/proxy_main.zig:280-334`). | High: provider spend and submitted prompt data | High when reachable without a token | A proxy token protects only proxy paths, never `/api/*`. Startup warnings are not access controls (`src/cli.zig:7696-7703`). |
 | R3 | **Prompt injection through LLM responses.** Provider output is untrusted input to the agent loop; retrieved documents, memory hits, and web results are untrusted text the model is told never to execute (`src/agent/system_prompt.zig:669-683`, test `:719`). Containment is the sandbox, not the prompt. | High (tool misuse within sandbox policy) | Certain (inherent to an agent harness) | The sandbox is the trust boundary that makes this survivable; see M5. |
 | R4 | **Mesh join without credential.** Mesh admission is allowlist-by-name, prompt, or open (`Admission`, `src/peers/mesh.zig:114`; `admit` `:123`); the wire carries no authentication beyond the admission handshake and no encryption (plain TCP). Default bind is loopback `127.0.0.1:7420` (`src/config.zig:938`). | Medium (chat/fan-out spoofing, membership) | Medium (needs LAN reach or misconfig) | Off by default (`modules.mesh`). |
@@ -98,8 +98,15 @@ below), then R3 abuse cases, then R4-R6.
 | T4 | **Provider API → agent loop** | LLM response stream → conversation → next model request | Prompts treat provider output and retrieved text as untrusted (R3); sandbox is the enforcement point. History sent to model is append-only; request-only copies for compaction (`docs/README.md` agent section) |
 | T5 | **Disk state → process** | `state/sessions/<id>.db`, `state/goals.json`, `state/models-dev.json`, `state/board*.json`, `state/plugins.json` + `plugin_config.json` | JSON state parsed with explicit bounds (1 MiB arena reads via `ck_fs_read_range`); sessions are read by tools through the `ck_session` channel rather than as files; `.env` refused by `safeJoin`; symlinked components refused by `safeJoinSecure` (ADR 0017) |
 | T6 | **Secrets → code** | Provider keys via `api_key_env` (`src/config.zig` provider tables), `[serve] proxy_token_env` (`src/config.zig:992`), Vertex service-account JWT minting (`src/llm/vertex_token.zig`) | Keys live in `config.toml`/`config.local.toml`/env; guest access gated by `env_allow` + named `ck_getenv`; proxy forwards creds only on `/v1/*` paths (`src/serve/proxy.zig:40-47`); token comparison is constant-time over digests (`src/serve/proxy.zig:53`) |
+| T7 | **HTTP caller → native configuration and backends** | Raw config reads/writes (`src/cli.zig:11546-11638`); backend selection (`src/cli.zig:16398-16403`) and native dispatch (`src/cli.zig:16795-16803`, `src/cli.zig:16898-16903`) | File-name restriction and config validation protect format, not caller authority. Backend-name validation selects supported adapters, not a WASM sandbox. No caller authentication precedes these routes (`src/cli.zig:8137-8167`). |
 
-Privilege transitions not explicitly documented anywhere as a list:
+Privilege transitions:
+- HTTP caller → policy author: native config writes validate and persist the config pair
+  (`src/cli.zig:11578-11638`), outside guest descriptor enforcement.
+- HTTP caller → native backend process: `runCodingBackendCtx` passes configured ACP argv
+  to the driver (`src/cli.zig:4170-4196`); the driver spawns an ACP transport or falls back
+  to a headless subprocess (`src/acp/driver.zig:142-150`, `src/acp/driver.zig:189-204`).
+  Any backend-specific permission system is separate from clanker's WASM policy.
 - guest (WASM) → host function (`ck_exec` allowlist: git/zig/uv verbs, no host-absolute or `..`
   args, deny tokens for config-injection and alternate-git-dir flags), the sandbox's only
   escape ladder.
@@ -116,7 +123,7 @@ Privilege transitions not explicitly documented anywhere as a list:
 | Asset | Held where | Blast radius if compromised |
 |-------|-----------|-----------------------------|
 | Provider credentials (LLM keys, Vertex service account) | `config.toml`, `config.local.toml`, env (`api_key_env`); read via `src/llm/auth.zig` | Financial (token spend), impersonation of the operator's provider identity |
-| Full agent control (read/write/exec on the checkout + state) | `/api/run`, `/api/ask`, `/api/steer` | Machine compromise up to sandbox policy; with kernel/docker on, host compromise |
+| Native configuration and execution authority | `/api/config/raw` (`src/cli.zig:11546-11638`), `/api/run` backend dispatch (`src/cli.zig:16795-16803`) | Policy tampering and execution as the server's OS user; guest sandbox policy does not constrain these native paths (T7). No implication of OS root privileges. |
 | Conversation transcripts (sessions) | `state/sessions/<id>.db` (WAL SQLite, `src/agent/session.zig:32`; + `state/spills/<session>/`, `state/exports/<id>.html`) | Data disclosure (conversations contain task context, possibly secrets pasted in). With the backup timers installed, twice-hourly snapshot copies of all of it live under `<storage_root>/backups/` (`scripts/backup-state.sh:8-11`) — anyone who can read the storage root reads every conversation, including ones since deleted from `state/` |
 | Source code + git history | working tree, `.git` | Integrity; the improve loop can *self-modify* the repo through gated promotion (`src/improve/engine.zig`) |
 | LLM spend | `state/token_stats.jsonl` (32 MiB cap, `docs/README.md:436`) | Financial; also an availability signal |
@@ -201,6 +208,21 @@ Privilege transitions not explicitly documented anywhere as a list:
   (`src/serve/proxy.zig:40-47`).
 - **Rotation**: not documented (organizational).
 
+### T7 (HTTP → native policy and execution)
+
+- **Information disclosure**: raw config reads return the complete selected file, without
+  credential redaction (`src/cli.zig:11546-11570`). Any inline secrets there share the
+  control plane's reachability, regardless of guest environment restrictions.
+- **Tampering / Elevation**: native config writes change operator policy after parsing
+  (`src/cli.zig:11578-11638`); supported backend selection reaches native process spawning
+  (`src/cli.zig:4170-4196`, `src/acp/driver.zig:189-204`). Host/Origin checks reduce browser
+  abuse but do not establish who may administer policy. Rank: critical impact, high
+  likelihood for a reachable hostile client (R1). Missing control: caller authentication
+  and authorization for administrative operations; implementation belongs to sec-review.
+- **Availability**: config writes advertise restart-on-reload
+  (`src/cli.zig:11637`); repeated accepted policy changes can disrupt service. Config
+  validity is not an availability quota or an authorization check.
+
 ### Threats the history already demonstrates (recurring classes)
 
 1. Sandbox path handling: symlinks (ADR 0017), lock-path resolution
@@ -261,9 +283,11 @@ Privilege transitions not explicitly documented anywhere as a list:
   configured provider keys; with no `proxy_token_env` there is no per-request gate
   (`src/serve/proxy.zig:53`, wiring `src/cli.zig`). Enabling `--host 0.0.0.0` without a token
   makes this LAN-wide (the warning at `src/cli.zig:7629` fires, nothing stops it).
-- **Full agent drive**: `POST /api/run` with an arbitrary task; the model then calls sandboxed
-  tools under descriptor policy (read/write/exec). Scope is bounded by the sandbox, not by the
-  caller.
+- **Full agent drive and policy tampering**: `POST /api/run` dispatches agent work
+  (`src/cli.zig:8488`), but guest descriptor policy is not a boundary around the HTTP caller.
+  The same caller can read and replace native configuration through `/api/config/raw`
+  (`src/cli.zig:11546-11638`). Config parsing validates values, not permission to change
+  policy. See T7.
 - **Write confirmation bypass**: `/api/ask` answers `confirm` events with a byte-exact option
   check (`docs/README.md:1617-1619`); a client that already reaches the port can answer "allow"
   itself; the confirmation protects against *accidental* writes, not a hostile caller.
