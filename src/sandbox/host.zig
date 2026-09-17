@@ -473,6 +473,7 @@ fn fsPrefixesFor(
             }
             if (!seen) try out.append(arena, skills_dir);
         }
+        return try out.toOwnedSlice(arena);
     }
     for (cfg.agent.tools_dir) |dir| {
         if (dir.len == 0) continue;
@@ -8432,9 +8433,32 @@ test "harness config access is scoped to each tool's consumed fields" {
         .fs_prefixes = &.{ "skills", "state/skills.json" },
     };
     const skills_prefixes = try fsPrefixesFor(arena, &skills_tool, &cfg);
+    try std.testing.expectEqual(@as(usize, 3), skills_prefixes.len);
     try std.testing.expect(std.mem.eql(u8, skills_prefixes[0], "skills"));
     try std.testing.expect(std.mem.eql(u8, skills_prefixes[1], "state/skills.json"));
     try std.testing.expect(std.mem.eql(u8, skills_prefixes[2], "custom-skills"));
+    for ([_][]const u8{ "skills", "" }) |skills_dir| {
+        cfg.agent.skills_dir = skills_dir;
+        const prefixes = try fsPrefixesFor(arena, &skills_tool, &cfg);
+        try std.testing.expectEqual(@as(usize, 2), prefixes.len);
+        try std.testing.expectEqualStrings("skills", prefixes[0]);
+        try std.testing.expectEqualStrings("state/skills.json", prefixes[1]);
+    }
+    cfg.agent.skills_dir = "custom-skills";
+    for ([_][]const u8{ "plugins", "tools" }) |name| {
+        const tool = registry.Tool{
+            .name = name,
+            .description = "",
+            .wasm = "unused.wasm",
+            .input_schema = .{ .object = .empty },
+            .fs_prefixes = &.{"tools/manifests"},
+        };
+        const prefixes = try fsPrefixesFor(arena, &tool, &cfg);
+        try std.testing.expectEqual(@as(usize, 3), prefixes.len);
+        try std.testing.expectEqualStrings("tools/manifests", prefixes[0]);
+        try std.testing.expectEqualStrings("vendor/my-tools", prefixes[1]);
+        try std.testing.expectEqualStrings("vendor/overrides", prefixes[2]);
+    }
     // A tool that does not consume tools_dir/skills_dir keeps its prefixes.
     const other_tool = registry.Tool{
         .name = "edit_file",
