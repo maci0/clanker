@@ -2460,9 +2460,9 @@ pub const Agent = struct {
             return bytes;
         }
         const key = try self.ctx.gpa.dupe(u8, path);
+        errdefer self.ctx.gpa.free(key);
         self.wasm_cache.put(self.ctx.gpa, key, .{ .stamp = stamp, .bytes = bytes }) catch |err| {
             self.ctx.gpa.free(bytes);
-            self.ctx.gpa.free(key);
             return err;
         };
         return bytes;

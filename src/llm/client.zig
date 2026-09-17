@@ -1471,44 +1471,6 @@ const StreamAccumulator = struct {
         self.call_args.deinit(self.gpa);
     }
 
-    fn apply(self: *StreamAccumulator, ev: providers.StreamEvent, on_delta: *const fn ([]const u8) void) !void {
-        if (ev.text) |text| {
-            if (text.len > 0) {
-                try appendStreamBytes(&self.content, self.gpa, text, &self.bytes);
-                on_delta(text);
-            }
-        }
-        for (ev.tool_calls) |frag| try self.applyFragment(frag);
-        if (ev.usage) |u| {
-            var totals = self.usage orelse types.Usage{};
-            u.apply(&totals);
-            self.usage = totals;
-        }
-        if (ev.finish_reason) |fr| self.finish_reason = try self.arena.dupe(u8, fr);
-    }
-
-    fn applyFragment(self: *StreamAccumulator, frag: providers.ToolCallFragment) !void {
-        const idx = frag.index;
-        if (idx >= max_tool_call_slots) return;
-        while (self.call_args.items.len <= idx) {
-            try self.call_args.append(self.gpa, .empty);
-            try self.call_ids.append(self.gpa, "");
-            try self.call_names.append(self.gpa, "");
-        }
-        // First non-empty wins: OpenAI sends the id and name on the opening
-        // fragment and argument-only fragments after it, and a later empty
-        // string must not blank what the first one established.
-        if (frag.id) |id| {
-            if (id.len > 0 and self.call_ids.items[idx].len == 0) self.call_ids.items[idx] = try self.arena.dupe(u8, id);
-        }
-        if (frag.name) |name| {
-            if (name.len > 0 and self.call_names.items[idx].len == 0) self.call_names.items[idx] = try self.arena.dupe(u8, name);
-        }
-        if (frag.arguments) |args| {
-            if (args.len > 0) try appendStreamBytes(&self.call_args.items[idx], self.gpa, args, &self.bytes);
-        }
-    }
-
     /// Turns the per-block-index accumulators into a ChatResponse.
     ///
     /// A tool that takes no arguments streams a name but never an argument
@@ -1538,6 +1500,48 @@ const StreamAccumulator = struct {
             if (u.total_tokens > 0) usage_out = u;
         }
         return .{ .message = msg, .usage = usage_out, .finish_reason = self.finish_reason };
+    }
+
+    fn apply(self: *StreamAccumulator, ev: providers.StreamEvent, on_delta: *const fn ([]const u8) void) !void {
+        if (ev.text) |text| {
+            if (text.len > 0) {
+                try appendStreamBytes(&self.content, self.gpa, text, &self.bytes);
+                on_delta(text);
+            }
+        }
+        for (ev.tool_calls) |frag| try self.applyFragment(frag);
+        if (ev.usage) |u| {
+            var totals = self.usage orelse types.Usage{};
+            u.apply(&totals);
+            self.usage = totals;
+        }
+        if (ev.finish_reason) |fr| {
+            // Providers repeat the finish reason on every frame near the end
+            // of the stream, so only the first non-empty value allocates.
+            if (self.finish_reason == null and fr.len > 0) self.finish_reason = try self.arena.dupe(u8, fr);
+        }
+    }
+
+    fn applyFragment(self: *StreamAccumulator, frag: providers.ToolCallFragment) !void {
+        const idx = frag.index;
+        if (idx >= max_tool_call_slots) return;
+        while (self.call_args.items.len <= idx) {
+            try self.call_args.append(self.gpa, .empty);
+            try self.call_ids.append(self.gpa, "");
+            try self.call_names.append(self.gpa, "");
+        }
+        // First non-empty wins: OpenAI sends the id and name on the opening
+        // fragment and argument-only fragments after it, and a later empty
+        // string must not blank what the first one established.
+        if (frag.id) |id| {
+            if (id.len > 0 and self.call_ids.items[idx].len == 0) self.call_ids.items[idx] = try self.arena.dupe(u8, id);
+        }
+        if (frag.name) |name| {
+            if (name.len > 0 and self.call_names.items[idx].len == 0) self.call_names.items[idx] = try self.arena.dupe(u8, name);
+        }
+        if (frag.arguments) |args| {
+            if (args.len > 0) try appendStreamBytes(&self.call_args.items[idx], self.gpa, args, &self.bytes);
+        }
     }
 };
 
@@ -1823,6 +1827,33 @@ test "openai stream fragments fold through the same accumulator" {
     try std.testing.expectEqual(@as(u32, 120), u.total_tokens);
     try std.testing.expectEqual(@as(u32, 40), u.prompt_cache_hit_tokens);
     try std.testing.expectEqual(@as(u32, 60), u.prompt_cache_miss_tokens);
+}
+
+test "a finish_reason repeated across frames allocates once" {
+    // OpenAI-compatible providers send the finish reason on the last few
+    // frames, and each repeat used to allocate a fresh copy in the arena the
+    // same way the argument and id fragments do, so a long stream kept one
+    // duplicate per frame for the whole call.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+
+    var acc = StreamAccumulator{ .gpa = std.testing.allocator, .arena = arena_state.allocator() };
+    defer acc.deinit();
+    const repeat = [_][]const u8{
+        "stop",
+        "stop",
+        "tool_calls",
+        "stop",
+        "",
+    };
+    for (repeat) |fr| {
+        try acc.apply(.{ .finish_reason = fr }, NoopDelta.cb);
+    }
+    try std.testing.expectEqualStrings("stop", acc.finish_reason.?);
+    const before = arena_state.queryCapacity();
+    try acc.apply(.{ .finish_reason = "stop" }, NoopDelta.cb);
+    try std.testing.expectEqual(before, arena_state.queryCapacity());
+    try std.testing.expectEqualStrings("stop", acc.finish_reason.?);
 }
 
 test "a tool-call slot index beyond the cap is dropped, not allocated" {

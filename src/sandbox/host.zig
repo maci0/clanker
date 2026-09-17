@@ -5784,7 +5784,12 @@ fn subagentBgWorker(c: *SubagentCall, job_id: []const u8) void {
 fn dupedStringArray(gpa: std.mem.Allocator, items: []const []const u8) ![]const []const u8 {
     const arr = try gpa.alloc([]const u8, items.len);
     errdefer gpa.free(arr);
-    for (items, 0..) |s, i| arr[i] = try gpa.dupe(u8, s);
+    var made: usize = 0;
+    errdefer for (arr[0..made]) |s| gpa.free(s);
+    for (items, 0..) |s, i| {
+        arr[i] = try gpa.dupe(u8, s);
+        made = i + 1;
+    }
     return arr;
 }
 
