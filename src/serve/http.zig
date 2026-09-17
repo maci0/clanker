@@ -395,8 +395,8 @@ test "crossOriginRequest allows same-origin and no-Origin requests, refuses othe
     try std.testing.expect(!crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: clanker.lan\r\nOrigin: https://clanker.lan\r\n", 4173, allow));
     // A scheme that is not http(s), or an origin carrying a path, is not one
     // of ours however its authority reads.
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: file://localhost:4173\r\n", 4173, none));
-    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nOrigin: http://localhost:4173/evil\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: localhost:4173\r\nOrigin: file://localhost:4173\r\n", 4173, none));
+    try std.testing.expect(crossOriginRequest("POST /api/run HTTP/1.1\r\nHost: localhost:4173\r\nOrigin: http://localhost:4173/evil\r\n", 4173, none));
 }
 
 test "crossOriginRequest binds browser origins to the request authority" {

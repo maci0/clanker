@@ -655,19 +655,38 @@ pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocato
 fn sessionMetaFromDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) ?SessionMeta {
     var conn = openDb(arena, sessions_dir, id) catch return null;
     defer conn.close();
-    const title = metaGet(&conn, arena, "title") orelse return null;
-    const created = std.fmt.parseInt(i64, metaGet(&conn, arena, "created") orelse "0", 10) catch 0;
-    const updated = std.fmt.parseInt(i64, metaGet(&conn, arena, "updated") orelse "0", 10) catch 0;
-    const workspace = metaGet(&conn, arena, "workspace") orelse "";
-    const archived = std.mem.eql(u8, metaGet(&conn, arena, "archived") orelse "", "true");
+    return sessionMetaFromConnection(arena, &conn, id);
+}
+
+fn sessionMetaFromConnection(arena: std.mem.Allocator, conn: *sqlite.Connection, id: []const u8) ?SessionMeta {
+    var metadata = conn.prepare(
+        \\SELECT key, value FROM meta
+        \\WHERE key IN ('title', 'created', 'updated', 'workspace', 'archived', 'message_count', 'message_bytes');
+    ) catch return null;
+    defer metadata.finalize();
+    const keys = .{ "title", "created", "updated", "workspace", "archived", "message_count", "message_bytes" };
+    var values: [keys.len]?[]const u8 = @splat(null);
+    while ((metadata.step() catch return null) == .row) {
+        const key = metadata.columnText(0) orelse continue;
+        inline for (keys, 0..) |name, i| {
+            if (std.mem.eql(u8, key, name)) {
+                values[i] = arena.dupe(u8, metadata.columnText(1) orelse "") catch return null;
+            }
+        }
+    }
+    const title = values[0] orelse return null;
+    const created = std.fmt.parseInt(i64, values[1] orelse "0", 10) catch 0;
+    const updated = std.fmt.parseInt(i64, values[2] orelse "0", 10) catch 0;
+    const workspace = values[3] orelse "";
+    const archived = std.mem.eql(u8, values[4] orelse "", "true");
 
     var count: i64 = 0;
     var bytes: i64 = 0;
     // `saveSession` stamps the counts beside the rows it writes; reading
     // them is O(1) where the aggregate below re-reads every message body.
     // Databases written before the keys existed fall back to the scan.
-    const cached_count = metaGet(&conn, arena, "message_count");
-    const cached_bytes = metaGet(&conn, arena, "message_bytes");
+    const cached_count = values[5];
+    const cached_bytes = values[6];
     if (cached_count != null and cached_bytes != null) {
         count = std.fmt.parseInt(i64, cached_count.?, 10) catch 0;
         bytes = std.fmt.parseInt(i64, cached_bytes.?, 10) catch 0;
@@ -1180,6 +1199,43 @@ test "a session written before the steered column still opens and saves" {
     });
     const after = try loadSession(io, std.testing.allocator, arena, dir, "legacy");
     try std.testing.expect(after.messages[1].steered);
+}
+
+test "listing batches metadata into one query" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+    var conn = try openDb(arena, dir, "batched");
+    defer conn.close();
+    try metaSet(&conn, "workspace", "work");
+    try metaSet(&conn, "message_bytes", "13");
+    try metaSet(&conn, "title", "conversation");
+    try metaSet(&conn, "archived", "true");
+    try metaSet(&conn, "updated", "20");
+    try metaSet(&conn, "message_count", "2");
+    try metaSet(&conn, "created", "10");
+    try metaSet(&conn, "system_prompt", "not listing metadata");
+    const c = @import("sqlite3_h");
+    const Trace = struct {
+        fn count(_: c_uint, context: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque) callconv(.c) c_int {
+            const queries: *usize = @ptrCast(@alignCast(context.?));
+            queries.* += 1;
+            return 0;
+        }
+    };
+    var queries: usize = 0;
+    try std.testing.expectEqual(c.SQLITE_OK, c.sqlite3_trace_v2(conn.db, c.SQLITE_TRACE_STMT, Trace.count, &queries));
+    const meta = sessionMetaFromConnection(arena, &conn, "batched") orelse return error.MissingSession;
+    try std.testing.expectEqualStrings("batched", meta.id);
+    try std.testing.expectEqualStrings("conversation", meta.title);
+    try std.testing.expectEqualStrings("work", meta.workspace);
+    try std.testing.expectEqual(@as(i64, 10), meta.created);
+    try std.testing.expectEqual(@as(i64, 20), meta.updated);
+    try std.testing.expect(meta.archived);
+    try std.testing.expectEqual(@as(usize, 2), meta.messages);
+    try std.testing.expectEqual(@as(usize, 13), meta.bytes);
+    try std.testing.expectEqual(@as(usize, 1), queries);
 }
 
 test "listing reads counts stamped at save and scans a database without them" {
