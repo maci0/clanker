@@ -178,9 +178,15 @@ export function bindPrompts(){
     }
     if(title.length>200||content.length>20000){ toast("Title must be 1-200 characters and content 1-20000."); return; }
     if(createBtn) createBtn.disabled=true;
+    var savedTitle=titleEl.value, savedContent=contentEl.value;
     fetch("/api/prompts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,content:content})})
       .then(readJson)
-      .then(function(){ if(titleEl) titleEl.value=""; if(contentEl) contentEl.value=""; loadPromptsView(); refreshLocalPrompts(); })
+      .then(function(){
+        if(titleEl.value===savedTitle && contentEl.value===savedContent){
+          titleEl.value=""; contentEl.value="";
+        }
+        loadPromptsView(); refreshLocalPrompts();
+      })
       .catch(function(e){ toast(e.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
   wireRefresh(refreshBtn, loadPromptsView);

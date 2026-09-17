@@ -212,6 +212,81 @@ test("board filter empty offers to clear the filters", function () {
   assert.match(src, /No cards in this lane match the filters/);
 });
 
+function creationFormPage(feature) {
+  const prefix = feature === "prompts" ? "prompts" : "knowledge";
+  const bodyId = prefix + (feature === "prompts" ? "-content" : "-desc");
+  const nodes = Object.fromEntries([
+    prefix + "-create-form", prefix + "-create", prefix + "-title", bodyId
+  ].map((id) => [id, {
+    value: "", disabled: false, handlers: {},
+    addEventListener(type, handler) { this.handlers[type] = handler; }
+  }]));
+  const requests = [];
+  const messages = [];
+  const context = vm.createContext({
+    document: { getElementById: (id) => nodes[id] || null },
+    window: { localStorage: { getItem: () => null } },
+    fetch: (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject })),
+    readJson: (response) => response,
+    wireRefresh: (button) => assert.equal(button, null),
+    toast: (message) => messages.push(message)
+  });
+  const source = readFileSync(join(here, "../features/" + feature + ".js"), "utf8")
+    .replace(/^import .*;$/gm, "").replace(/^export /gm, "");
+  vm.runInContext(source, context);
+  context[feature === "prompts" ? "bindPrompts" : "bindKnowledge"]();
+  return {
+    title: nodes[prefix + "-title"], body: nodes[bodyId], button: nodes[prefix + "-create"],
+    requests, messages,
+    submit() {
+      let prevented = false;
+      nodes[prefix + "-create-form"].handlers.submit({ preventDefault() { prevented = true; } });
+      assert.equal(prevented, true);
+    },
+    settle: () => new Promise((resolve) => setImmediate(resolve))
+  };
+}
+
+for (const feature of ["prompts", "knowledge"]) {
+  for (const changed of ["title", "body", "neither"]) {
+    test(feature + " creation preserves the whole draft when " + changed + " changes during save", async function () {
+      const page = creationFormPage(feature);
+      page.title.value = "  Original title  ";
+      page.body.value = "  Original body\n";
+      page.submit();
+      assert.equal(page.button.disabled, true);
+      const request = page.requests[0];
+      assert.equal(request.options.method, "POST");
+      assert.deepEqual(JSON.parse(request.options.body), feature === "prompts"
+        ? { title: "Original title", content: "Original body" }
+        : { title: "Original title", description: "Original body" });
+      if (changed !== "neither") page[changed].value = "New draft";
+      const expected = changed === "neither" ? ["", ""] : [page.title.value, page.body.value];
+      request.resolve({ ok: true });
+      await page.settle();
+      assert.deepEqual([page.title.value, page.body.value], expected);
+      assert.equal(page.button.disabled, false);
+    });
+  }
+
+  test(feature + " creation failure retains the draft and permits retry", async function () {
+    const page = creationFormPage(feature);
+    page.title.value = "Original title";
+    page.body.value = "Original body";
+    page.submit();
+    page.requests[0].reject(new Error("Unavailable"));
+    await page.settle();
+    assert.deepEqual([page.title.value, page.body.value], ["Original title", "Original body"]);
+    assert.equal(page.button.disabled, false);
+    assert.match(page.messages[0], /Unavailable/);
+    page.submit();
+    assert.equal(page.requests.length, 2);
+    page.requests[1].resolve({ ok: true });
+    await page.settle();
+    assert.deepEqual([page.title.value, page.body.value], ["", ""]);
+  });
+}
+
 function knowledgeSearchPage() {
   function element() {
     return {

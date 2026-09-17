@@ -289,9 +289,15 @@ export function bindKnowledge(){
       return;
     }
     if(createBtn) createBtn.disabled=true;
+    var savedTitle=titleInput.value, savedDesc=descInput?descInput.value:"";
     fetch("/api/knowledge",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:title,description:desc})})
       .then(readJson)
-      .then(function(){ if(titleInput) titleInput.value=""; if(descInput) descInput.value=""; loadKnowledge(); })
+      .then(function(){
+        if(titleInput.value===savedTitle && (!descInput || descInput.value===savedDesc)){
+          titleInput.value=""; if(descInput) descInput.value="";
+        }
+        loadKnowledge();
+      })
       .catch(function(err){ toast(err.message); }).finally(function(){ if(createBtn) createBtn.disabled=false; });
   });
   wireRefresh(refreshBtn, loadKnowledge);
