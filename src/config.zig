@@ -3196,7 +3196,7 @@ pub const Config = struct {
             else => return error.ImproveNotObject,
         };
         var im = Improve{};
-        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "arena_advisory", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider", "plan_phase" }, "improve");
+        warnUnknownKeys(obj, &.{ "max_context_bytes", "capability_gate", "arena_advisory", "max_cache_bytes", "max_context_requests", "inert_gate", "max_consecutive_test_only", "eval_provider", "plan_phase", "backlog" }, "improve");
         if (obj.get("max_context_bytes")) |k| {
             const n = try jsonUnsigned(usize, k, "max_context_bytes");
             im.max_context_bytes = if (n == 0) null else n;
@@ -3217,6 +3217,7 @@ pub const Config = struct {
         if (obj.get("max_consecutive_test_only")) |k| {
             im.max_consecutive_test_only = try jsonUnsigned(u32, k, "max_consecutive_test_only");
         }
+        if (obj.get("backlog")) |k| im.backlog = try jsonBool(k, "backlog");
         if (obj.get("eval_provider")) |k| im.eval_provider = try jsonStr(k, "eval_provider");
         if (obj.get("plan_phase")) |k| im.plan_phase = switch (k) {
             .bool => |b| b,
@@ -3716,6 +3717,32 @@ test "hooks default off and parse explicit lifecycle settings" {
     try std.testing.expect(cfg.hooks.enabled);
     try std.testing.expectEqualStrings(".claude/settings.json", cfg.hooks.config_path);
     try std.testing.expectEqual(@as(u32, 2500), cfg.hooks.default_timeout_ms);
+}
+
+test "improve backlog loads explicit booleans through local overrides" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+    const dir = env.tmp.dir;
+
+    try writeAgentConfig(io, dir, "config.toml", "");
+    const default_cfg = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expect(default_cfg.improve.backlog);
+
+    try dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = "[improve]\nbacklog = false\n" });
+    const disabled = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expect(!disabled.improve.backlog);
+    try std.testing.expect(disabled.improve.plan_phase);
+    try std.testing.expect(disabled.improve.capability_gate);
+
+    try dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = "[improve]\nbacklog = true\n" });
+    const enabled = try Config.load(io, arena, dir, "config.toml", "config.local.toml");
+    try std.testing.expect(enabled.improve.backlog);
+
+    try dir.writeFile(io, .{ .sub_path = "config.local.toml", .data = "[improve]\nbacklog = \"false\"\n" });
+    try std.testing.expectError(error.FieldNotBool, Config.load(io, arena, dir, "config.toml", "config.local.toml"));
+    try std.testing.expect(Config.takeLoadDiagnostic());
 }
 
 test "config load and merge" {
