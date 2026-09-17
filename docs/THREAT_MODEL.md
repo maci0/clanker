@@ -1,14 +1,9 @@
 # clanker Threat Model
 
-Living document owned by the threat-model review pass. Every entry point, boundary, and
-mitigation below carries a file reference so the next pass can re-verify it against the code.
-Last reviewed: 2026-08-26. This pass renumbered references that drifted behind ~20 commits of
-08-26 (`src/cli.zig`, `src/serve/proxy.zig`, `src/stats/tokens.zig`, `docs/README.md` HTTP
-section); corrected the session store from `state/sessions/*.json` to WAL-mode SQLite
-(`state/sessions/<id>.db`, `src/agent/session.zig:32`); and added one new scheduled surface:
-the opt-in user-level systemd backup timers (`scripts/install-state-backup.sh`,
-`scripts/systemd/clanker-state-backup.timer`, `clanker-state-verify.timer`) that snapshot
-`state/` off-checkout. No listener, route, or boundary changed shape.
+Last reviewed: 2026-09-18 (HTTP authentication, native configuration/backend transitions,
+and release controls). Evidence is static code inspection, not attack testing.
+Other sections retain the 2026-08-26 inventory; their line references and coverage need
+re-verification before being used as control assurances. Owner and cadence remain unset.
 
 Owner: unassigned. Review cadence: not set. Vulnerability disclosure process: none documented
 (no `SECURITY.md`; see [Response readiness](#8-response-readiness-note-only)).
@@ -17,8 +12,8 @@ Owner: unassigned. Review cadence: not set. Vulnerability disclosure process: no
 
 | # | Risk | Impact | Likelihood | Notes |
 |---|------|--------|------------|-------|
-| R1 | **Control plane has no authentication.** `clanker serve` exposes the full agent (`/api/run` runs tasks, tools exec and write, `/api/ask` answers write confirmations) to *anyone who can reach the port*, stated plainly in the docs: `docs/README.md:1552`. Mitigated only by loopback bind default, the Host/Origin guards, and a firewall. | Critical | High (any local process, any LAN client once `--host` widened) | The single biggest exposure; everything else hangs off it. |
-| R2 | **Proxy credential spending.** `/proxy/v1` (OpenAI/Anthropic compat) lets a caller spend any configured provider's credentials, incl. Vertex. `proxy_token_env` is **optional** and absent by default; only a stderr warning fires when it is unset on a non-loopback bind (`src/cli.zig:7629`, `src/proxy_main.zig:125-126`). | High (financial: token spend, data exfil via prompt) | High when exposed | Same socket as the control plane by default (`docs/README.md:1557`). |
+| R1 | **Unauthenticated control includes native configuration and backend execution, not just sandboxed tools.** The HTTP handler has Host/Origin checks but no caller authentication (`src/cli.zig:8134-8164`). Raw config reads disclose file contents; validated writes change the operator's policy (`src/cli.zig:11543-11638`). `/api/run` can select a native backend (`src/cli.zig:16355-16360`, `:16752`). | Critical: configuration, credentials stored there, and operator-level execution | High for a reachable local client; remote exposure depends on bind/network policy | Loopback/Host/Origin are not user identity. WASM grants do not contain the native paths; see T7/T8. |
+| R2 | **Proxy credential spending.** Proxy authentication is optional; naming a token environment variable that is absent also skips authentication (`src/cli.zig:8140-8152`, `src/proxy_main.zig:311-321`). The standalone proxy does not run the full server's Host/Origin guards (`src/proxy_main.zig:280-334`). | High: provider spend and submitted prompt data | High when reachable without a token | A proxy token protects only proxy paths, never `/api/*`. Startup warnings are not access controls (`src/cli.zig:7696-7703`). |
 | R3 | **Prompt injection through LLM responses.** Provider output is untrusted input to the agent loop; retrieved documents, memory hits, and web results are untrusted text the model is told never to execute (`src/agent/system_prompt.zig:669-683`, test `:719`). Containment is the sandbox, not the prompt. | High (tool misuse within sandbox policy) | Certain (inherent to an agent harness) | The sandbox is the trust boundary that makes this survivable; see M5. |
 | R4 | **Mesh join without credential.** Mesh admission is allowlist-by-name, prompt, or open (`Admission`, `src/peers/mesh.zig:114`; `admit` `:123`); the wire carries no authentication beyond the admission handshake and no encryption (plain TCP). Default bind is loopback `127.0.0.1:7420` (`src/config.zig:938`). | Medium (chat/fan-out spoofing, membership) | Medium (needs LAN reach or misconfig) | Off by default (`modules.mesh`). |
 | R5 | **Sandbox escape via symlinks was a real class** (ADR 0017); `safeJoinSecure` now refuses symlinked components on granted paths. Anything that broadens the sandbox (kernel, docker, exec allowlist, `agent.sandbox_follow_symlinks`) re-opens it. | High | Low (fixed, recurring class) | See [history](#threats-the-history-already-demonstrates). |
