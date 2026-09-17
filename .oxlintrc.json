@@ -33,6 +33,7 @@
     // groups; these individuals cannot regress without failing CI.
     "array-callback-return": "error",
     "no-alert": "error",
+    "no-caller": "error",
     "no-constructor-return": "error",
     "no-eval": "error",
     "no-extend-native": "error",
