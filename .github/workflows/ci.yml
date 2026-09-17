@@ -93,7 +93,9 @@ jobs:
       # format change in build.zig.zon, the lockfile, or a vendored README
       # surfaces here instead of at release time.
       - name: Check SBOM generation
-        run: python3 scripts/sbom.py -o /tmp/sbom.cdx.json
+        run: |
+          python3 -B -m unittest scripts.test_sbom
+          python3 scripts/sbom.py -o /tmp/sbom.cdx.json
 
       # Python is a secondary language here (sbom.py, gen_frames.py, ...),
       # and nothing in CI executes most of it, so a syntax error would merge

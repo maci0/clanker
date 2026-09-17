@@ -46,6 +46,7 @@ fi
 
 step "SBOM generation (CI: Check SBOM generation)"
 if command -v python3 >/dev/null 2>&1; then
+    python3 -B -m unittest scripts.test_sbom || status=1
     python3 scripts/sbom.py -o "${TMPDIR:-/tmp}/sbom.cdx.json" || status=1
 else
     echo "python3 not installed; skipping SBOM check (CI will run it)"

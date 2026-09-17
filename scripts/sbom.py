@@ -23,6 +23,7 @@ document — same idea as the fixed SOURCE_DATE_EPOCH in CI.
 Usage: scripts/sbom.py [-o out.cdx.json]   (default: stdout)
 """
 
+import base64
 import json
 import os
 import re
@@ -296,11 +297,13 @@ def build() -> dict:
 
     # AssemblyScript toolchain (dev-scope; not shipped in the binary)
     npm = npm_components()
-    as_index = next((i for i, c in enumerate(npm) if c["name"] == "assemblyscript"), None)
-    for i, n in enumerate(npm):
+    for n in npm:
         if n.get("integrity"):
             alg, _, digest = n["integrity"].partition("-")
-            hashes = [{"alg": alg, "content": digest}]
+            hashes = [{
+                "alg": {"sha1": "SHA-1", "sha256": "SHA-256", "sha384": "SHA-384", "sha512": "SHA-512"}[alg],
+                "content": base64.b64decode(digest, validate=True).hex(),
+            }]
         else:
             hashes = []
         comps.append(component({
@@ -311,8 +314,6 @@ def build() -> dict:
             "scope": "optional" if n["dev"] else "required",
             "hashes": hashes,
         }))
-        if as_index is not None and i != as_index:
-            pass  # relationship recorded below
 
     # Vendored web UI files; several rows share one upstream package (the two
     # patternfly files, the two three.js files), so group rows per package and
@@ -439,7 +440,7 @@ def build() -> dict:
         "version": 1,
         "metadata": metadata,
         "components": comps,
-        "relationships": rels,
+        "dependencies": rels,
     }
 
 
