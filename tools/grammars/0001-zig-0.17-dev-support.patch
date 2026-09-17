@@ -1,0 +1,142 @@
+diff --git a/grammar.js b/grammar.js
+index e167748..eeda729 100644
+--- a/grammar.js
++++ b/grammar.js
+@@ -63,6 +63,10 @@ module.exports = grammar({
+ 
+     [$.comptime_type_expression, $.expression],
+     [$.comptime_type_expression, $.parameter],
++
++    // Zig 0.17: bare keyword enum tags (`async,`) vs keyword-as-ident in expressions.
++    [$.container_field, $.primary_type_expression],
++    // Zig 0.17: `async` / `await` are identifiers (unary forms were removed).
+   ],
+ 
+   extras: $ => [
+@@ -118,15 +122,26 @@ module.exports = grammar({
+       $.block,
+     )),
+ 
+-    container_field: $ => prec.right(prec.dynamic(1, seq(
++    container_field: $ => prec.right(prec.dynamic(2, seq(
+       optional('comptime'),
+       choice(
+         seq(
+-          field('name', choice($.identifier, $._reserved_identifier, alias($.builtin_type, $.identifier))),
++          field('name', choice(
++            $.identifier,
++            $._reserved_identifier,
++            alias($._keyword_identifier, $.identifier),
++            alias($.builtin_type, $.identifier),
++          )),
+           ':',
+           field('type', choice($.primary_type_expression, $.if_type_expression, $.comptime_type_expression)),
+         ),
+-        field('name', choice($.primary_type_expression, $.if_type_expression, $.comptime_type_expression)),
++        // Bare enum / union tags. Keyword idents (async/await) only — not true/false.
++        field('name', choice(
++          $.primary_type_expression,
++          $.if_type_expression,
++          $.comptime_type_expression,
++          alias($._keyword_identifier, $.identifier),
++        )),
+       ),
+       optional($.byte_alignment),
+       optional(seq('=', $.expression)),
+@@ -202,7 +217,7 @@ module.exports = grammar({
+ 
+     _function_prototype: $ => seq(
+       'fn',
+-      optional(field('name', $.identifier)),
++      optional(field('name', choice($.identifier, alias($._keyword_identifier, $.identifier)))),
+       $.parameters,
+       optional($.byte_alignment),
+       optional($.address_space),
+@@ -217,7 +232,7 @@ module.exports = grammar({
+       seq(
+         optional(choice('noalias', 'comptime')),
+         optional(seq(
+-          field('name', choice($.identifier, alias($.builtin_type, $.identifier))),
++          field('name', choice($.identifier, alias($._keyword_identifier, $.identifier), alias($.builtin_type, $.identifier))),
+           ':',
+         )),
+         field('type', choice($.type_expression, $.if_type_expression, $.comptime_type_expression)),
+@@ -413,8 +428,6 @@ module.exports = grammar({
+       $.unary_expression,
+       $.binary_expression,
+       $.comptime_expression,
+-      $.async_expression,
+-      $.await_expression,
+       $.nosuspend_expression,
+       $.continue_expression,
+       $.resume_expression,
+@@ -454,7 +467,15 @@ module.exports = grammar({
+       $.expression,
+       ')',
+     ),
+-    asm_clobbers: $ => seq(':', optionalCommaSep(choice($.string, $.multiline_string))),
++    // Zig 0.14+ accepts either classic string clobbers or a struct-init
++    // clobber set: `::: .{ .memory = true }` / `::: .{ .x16 = true }`.
++    asm_clobbers: $ => seq(
++      ':',
++      choice(
++        $.anonymous_struct_initializer,
++        optionalCommaSep(choice($.string, $.multiline_string)),
++      ),
++    ),
+ 
+     if_expression: $ => prec.right(seq(
+       $._if_prefix,
+@@ -538,10 +559,6 @@ module.exports = grammar({
+ 
+     comptime_expression: $ => prec.right(seq('comptime', $.expression)),
+ 
+-    async_expression: $ => prec.right(seq('async', $.expression)),
+-
+-    await_expression: $ => prec.right(seq('await', $.expression)),
+-
+     nosuspend_expression: $ => prec.right(seq('nosuspend', $.expression)),
+ 
+     continue_expression: $ => prec.right(seq(
+@@ -617,6 +634,9 @@ module.exports = grammar({
+       $.call_expression,
+       prec.right(alias($._function_prototype, $.function_signature)),
+       $.identifier,
++      // Zig 0.17: `async` / `await` as identifiers (enum tags via container_field conflict,
++      // RHS `.async = async`, fn names). Not true/false — those stay boolean/null literals.
++      alias($._keyword_identifier, $.identifier),
+       $.float,
+       $.integer,
+       $.boolean,
+@@ -747,7 +767,7 @@ module.exports = grammar({
+ 
+     field_initializer: $ => seq(
+       '.',
+-      $.identifier,
++      choice($.identifier, alias($._keyword_identifier, $.identifier)),
+       '=',
+       $.expression,
+     ),
+@@ -851,6 +871,7 @@ module.exports = grammar({
+ 
+     identifier: $ => choice($._identifier, seq('@', $.string)),
+     _identifier: _ => /[A-Za-z_][A-Za-z0-9_]*/,
++    // Literals that may appear as typed container field names (`null: T`).
+     _reserved_identifier: _ => choice(
+       'undefined',
+       'null',
+@@ -858,6 +879,14 @@ module.exports = grammar({
+       'false',
+     ),
+ 
++    // Keywords that Zig 0.17 also allows as identifiers (enum tags, field names,
++    // fn names, RHS). Kept separate from _reserved_identifier so bare `true,`
++    // still parses as boolean, not container_field.
++    _keyword_identifier: _ => choice(
++      'async',
++      'await',
++    ),
++
+     comment: _ => token(seq('//', /.*/)),
+   },
+ });
