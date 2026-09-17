@@ -22,7 +22,7 @@ pub fn waitNs(now_ns: i64, stamps: []const i64, rpm: u32) u64 {
     if (rpm == 0) return 0;
     const cutoff = now_ns - window_ns;
     var first: usize = 0;
-    while (first < stamps.len and stamps[first] < cutoff) first += 1;
+    while (first < stamps.len and stamps[first] <= cutoff) first += 1;
     const live = stamps[first..];
     if (live.len < rpm) return 0;
     const ready = live[0] + window_ns;
@@ -54,7 +54,7 @@ fn waitKey(io: std.Io, gpa: std.mem.Allocator, key: []const u8, rpm: u32) !void 
         var list = gop.value_ptr;
         const cutoff = now - window_ns;
         var keep: usize = 0;
-        while (keep < list.items.len and list.items[keep] < cutoff) keep += 1;
+        while (keep < list.items.len and list.items[keep] <= cutoff) keep += 1;
         if (keep > 0) {
             const rest = list.items.len - keep;
             std.mem.copyForwards(i64, list.items[0..rest], list.items[keep..]);
@@ -134,6 +134,15 @@ test "waitNs is zero under the cap and after stamps age out" {
     // Oldest is already outside the window: the remaining stamp is under cap.
     try std.testing.expectEqual(@as(u64, 0), waitNs(t0 + window_ns, &.{ t0, t0 + 1 }, rpm));
     try std.testing.expectEqual(@as(u64, 0), waitNs(t0, &.{t0}, 0));
+}
+
+test "waitNs expires the boundary stamp without ignoring newer requests" {
+    const t0: i64 = 2 * window_ns;
+    try std.testing.expectEqual(@as(u64, 1), waitNs(t0 + window_ns - 1, &.{t0}, 1));
+    try std.testing.expectEqual(@as(u64, 0), waitNs(t0 + window_ns, &.{t0}, 1));
+    try std.testing.expectEqual(@as(u64, window_ns), waitNs(t0 + window_ns, &.{ t0, t0 + window_ns }, 1));
+    try std.testing.expectEqual(@as(u64, window_ns - 1), waitNs(t0 + window_ns + 1, &.{ t0, t0 + window_ns }, 1));
+    try std.testing.expectEqual(@as(u64, window_ns / 2), waitNs(t0 + window_ns, &.{ t0, t0, t0 + window_ns / 2, t0 + window_ns }, 2));
 }
 
 test "waitNs ignores stamps older than the window when counting" {
