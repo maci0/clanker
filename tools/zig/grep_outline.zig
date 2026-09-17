@@ -20,12 +20,10 @@ pub fn enclosingSymbol(source: []const u8, line_no: u32) ?Symbol {
     var current_line: u32 = 1;
     var start: usize = 0;
     var i: usize = 0;
-    var saw_target = false;
     while (i <= source.len) : (i += 1) {
         if (i != source.len and source[i] != '\n') continue;
         var line = source[start..i];
         if (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
-        if (current_line == line_no) saw_target = true;
         if (current_line > line_no) break;
         if (parseDecl(line)) |d| {
             const ind = leadingIndent(line);
@@ -36,7 +34,6 @@ pub fn enclosingSymbol(source: []const u8, line_no: u32) ?Symbol {
         current_line += 1;
         start = i + 1;
     }
-    if (!saw_target) return null;
     return last;
 }
 
@@ -211,11 +208,7 @@ test "enclosingSymbol on the fn line is the fn itself" {
 }
 
 test "enclosingSymbol is null when no declaration exists" {
-    const src = "const x = 1;\n";
-    // line 1 is itself a const; a hit with no prior decl besides that is fine.
-    // A file of only comments has none:
     try std.testing.expect(enclosingSymbol("// hi\n// there\n", 2) == null);
-    _ = src;
 }
 
 test "enclosingSymbol recognizes a Python def fallback" {
@@ -232,6 +225,18 @@ test "enclosingSymbol recognizes a Python def fallback" {
 
 test "enclosingSymbol line 0 is null" {
     try std.testing.expect(enclosingSymbol("fn foo() void {}\n", 0) == null);
+}
+
+test "enclosingSymbol handles final lines and missing targets" {
+    try std.testing.expect(enclosingSymbol("", 1) == null);
+    for ([_][]const u8{ "\n", "\r\n" }) |newline| {
+        const source = try std.fmt.allocPrint(std.testing.allocator, "fn foo() void {{{s}    return;{s}", .{ newline, newline });
+        defer std.testing.allocator.free(source);
+        const sym = enclosingSymbol(source, 2) orelse return error.MissingSymbol;
+        try std.testing.expectEqualStrings("foo", sym.name);
+        try std.testing.expect(enclosingSymbol(source, 3) == null);
+        try std.testing.expect(enclosingSymbol(source, 4) == null);
+    }
 }
 
 test "writeNativeMatches attaches enclosing outline to host-fallback hits" {
