@@ -5601,7 +5601,7 @@ const Model = struct {
                     return ctx.consumeAndRedraw();
                 }
                 if (key.matches(vaxis.Key.enter, .{})) {
-                    if (composerEnterAction(self.in_paste, self.paste_window_until_ms, monotonicMs()) == .newline) {
+                    if (composerEnterAction(self.in_paste, self.paste_window_until_ms, monotonicMs(self.io)) == .newline) {
                         // A paste delivers its newlines as raw Enter
                         // presses; fold each to a ⏎ marker so the pasted
                         // structure survives to submit.
@@ -5800,7 +5800,7 @@ const Model = struct {
     /// Opens the bounded Shift+Insert paste window (see
     /// `paste_window_until_ms`). Re-arming while one is open just extends it.
     fn openPasteWindow(self: *Model) void {
-        self.paste_window_until_ms = monotonicMs() + paste_window_ms;
+        self.paste_window_until_ms = monotonicMs(self.io) + paste_window_ms;
     }
 
     /// Ends the paste window. When the terminal never answered at all — no
@@ -9054,13 +9054,8 @@ const newline_marker = "\u{23CE}"; // ⏎
 /// Milliseconds on a monotonic clock. Monotonic rather than wall time: an
 /// ntp step or a suspend must not be able to hold the composer in paste mode
 /// (the bug this bounds) or end the window early mid-paste.
-///
-/// Residual std.c clock: vxfw event handlers carry no `std.Io` handle.
-fn monotonicMs() i64 {
-    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
-    _ = std.c.clock_gettime(.MONOTONIC, &ts);
-    return @as(i64, @intCast(ts.sec)) * std.time.ms_per_s +
-        @divTrunc(@as(i64, @intCast(ts.nsec)), std.time.ns_per_ms);
+fn monotonicMs(io: std.Io) i64 {
+    return @intCast(@divTrunc(std.Io.Timestamp.now(io, .awake).nanoseconds, std.time.ns_per_ms));
 }
 
 /// How long Shift+Insert keeps folding Enter into a ⏎ marker while it waits
@@ -9082,6 +9077,41 @@ fn composerEnterAction(bracketed: bool, paste_window_until_ms: i64, now_ms: i64)
     if (bracketed) return .newline;
     if (paste_window_until_ms != 0 and now_ms < paste_window_until_ms) return .newline;
     return .submit;
+}
+
+test "paste window uses the model's injected clock" {
+    const Clock = struct {
+        ns: i96 = 123_456_789,
+        reads: usize = 0,
+
+        fn now(userdata: ?*anyopaque, clock: std.Io.Clock) std.Io.Timestamp {
+            const self: *@This() = @ptrCast(@alignCast(userdata.?));
+            std.debug.assert(clock == .awake);
+            self.reads += 1;
+            return .{ .nanoseconds = self.ns };
+        }
+    };
+    var clock: Clock = .{};
+    var vtable = std.Io.failing.vtable.*;
+    vtable.now = Clock.now;
+    var model: Model = undefined;
+    model.io = .{ .userdata = &clock, .vtable = &vtable };
+    model.paste_window_until_ms = 0;
+
+    model.openPasteWindow();
+    try std.testing.expectEqual(@as(usize, 1), clock.reads);
+    try std.testing.expectEqual(@as(i64, 123 + paste_window_ms), model.paste_window_until_ms);
+
+    clock.ns += 500 * std.time.ns_per_ms;
+    model.openPasteWindow();
+    try std.testing.expectEqual(@as(usize, 2), clock.reads);
+    try std.testing.expectEqual(@as(i64, 623 + paste_window_ms), model.paste_window_until_ms);
+
+    clock.ns = @as(i96, model.paste_window_until_ms) * std.time.ns_per_ms - 1;
+    try std.testing.expectEqual(ComposerEnterAction.newline, composerEnterAction(false, model.paste_window_until_ms, monotonicMs(model.io)));
+    clock.ns += 1;
+    try std.testing.expectEqual(ComposerEnterAction.submit, composerEnterAction(false, model.paste_window_until_ms, monotonicMs(model.io)));
+    try std.testing.expectEqual(@as(usize, 4), clock.reads);
 }
 
 test "composerEnterAction submits once an unanswered paste window expires" {
