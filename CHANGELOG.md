@@ -5,6 +5,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-17
+
+Developer tooling only: no public surface changes.
+
+### Changed
+
+- The zig grammar build (`tools/grammars/build.sh`) now fetches the
+  tree-sitter-zig master tip that understands Zig 0.17 and applies
+  `tools/grammars/0001-zig-0.17-dev-support.patch` before generating, so the
+  built grammar matches the language this checkout targets instead of the
+  tag that predates it. The cached clone is reset and cleaned first so a
+  patch cannot stack on a dirty tree, and the tree-sitter CLI is required:
+  once a patch touches `grammar.js`, regeneration is not optional.
+- Development dependency `oxlint` 1.79.0 to 1.80.0, with `bun.lock`
+  refreshed to match, since CI lints under `bun install --frozen-lockfile`.
+
 ## [0.3.0] - 2026-09-17
 
 ### Added
@@ -3386,7 +3402,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-[unreleased]: https://github.com/maci0/clanker/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/maci0/clanker/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/maci0/clanker/releases/tag/v0.4.0
 [0.3.0]: https://github.com/maci0/clanker/releases/tag/v0.3.0
 [0.2.1]: https://github.com/maci0/clanker/releases/tag/v0.2.1
 [0.2.0]: https://github.com/maci0/clanker/releases/tag/v0.2.0

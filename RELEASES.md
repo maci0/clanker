@@ -71,7 +71,8 @@ Before creating a tag:
 
 | Version | Supported until |
 |---|---|
-| 0.3.x | Next `0.MINOR.0` release |
+| 0.4.x | Next `0.MINOR.0` release |
+| 0.3.x | Ended at 0.4.0 |
 | 0.2.x | Ended at 0.3.0 |
 | 0.1.x | Ended at 0.2.0 |
 
