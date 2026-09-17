@@ -15099,14 +15099,14 @@ fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest:
         return arena.dupe(u8, w.written()) catch null;
     }
     if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
-        const q = extractQueryParam(target, "q") orelse return null;
+        const q = queryParam(arena, target, "q") orelse return null;
         if (q.len == 0) return null;
         s.beginObject() catch return null;
         s.objectField("action") catch return null;
         s.write("search") catch return null;
         s.objectField("query") catch return null;
         s.write(q) catch return null;
-        const cols_param = extractQueryParam(target, "collections") orelse "";
+        const cols_param = queryParam(arena, target, "collections") orelse "";
         if (cols_param.len > 0) {
             s.objectField("collections") catch return null;
             s.beginArray() catch return null;
@@ -15172,6 +15172,35 @@ fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest:
         return arena.dupe(u8, w.written()) catch null;
     }
     return null;
+}
+
+test "knowledge search decodes query values once before forwarding" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const cases = .{
+        .{ "release%20notes", "release notes" },
+        .{ "release+notes", "release notes" },
+        .{ "caf%C3%A9", "café" },
+        .{ "C%2B%2B%20%26%20%22notes%22", "C++ & \"notes\"" },
+        .{ "%2520", "%20" },
+    };
+    inline for (cases) |case| {
+        const target = "/api/knowledge/search?q=" ++ case[0] ++ "&collections=col-1%2C%20col-2";
+        const input = knowledgeRouteToToolInput(arena, "GET", "/search", target, "").?;
+        const parsed = try std.json.parseFromSliceLeaky(struct {
+            action: []const u8,
+            query: []const u8,
+            collections: []const []const u8,
+        }, arena, input, .{});
+        try std.testing.expectEqualStrings("search", parsed.action);
+        try std.testing.expectEqualStrings(case[1], parsed.query);
+        try std.testing.expectEqual(@as(usize, 2), parsed.collections.len);
+        try std.testing.expectEqualStrings("col-1", parsed.collections[0]);
+        try std.testing.expectEqualStrings("col-2", parsed.collections[1]);
+    }
+    try std.testing.expect(knowledgeRouteToToolInput(arena, "GET", "/search", "/api/knowledge/search", "") == null);
+    try std.testing.expect(knowledgeRouteToToolInput(arena, "GET", "/search", "/api/knowledge/search?q=", "") == null);
 }
 
 fn extractQueryParam(target: []const u8, key: []const u8) ?[]const u8 {
