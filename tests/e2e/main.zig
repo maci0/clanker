@@ -13,6 +13,7 @@ comptime {
     _ = @import("live_sse_test.zig");
     _ = @import("webui_assets_test.zig");
     _ = @import("commit_apply_test.zig");
+    _ = @import("release_contract_test.zig");
     _ = @import("fallback_graph_test.zig");
     _ = @import("run_stream_llm_start_test.zig");
     _ = @import("steer_nonstreaming_test.zig");

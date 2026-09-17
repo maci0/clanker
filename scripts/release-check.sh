@@ -55,7 +55,7 @@ heading_count=$(grep -Ec "^## \[$release_version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$
     echo "release check: release binary '$release_binary' is missing or not executable" >&2
     exit 1
 }
-binary_version=$($release_binary --version)
+binary_version=$("$release_binary" --version)
 [ "$binary_version" = "clanker $release_version" ] || {
     echo "release check: binary reports '$binary_version', expected 'clanker $release_version'" >&2
     exit 1

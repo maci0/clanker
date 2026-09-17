@@ -51,21 +51,33 @@ pub fn readTail(
 pub fn joinNewestLines(gpa: std.mem.Allocator, raw: []const u8, keep_lines: usize) ![]u8 {
     if (keep_lines == 0 or raw.len == 0) return try gpa.alloc(u8, 0);
 
-    var lines: std.ArrayList([]const u8) = .empty;
-    defer lines.deinit(gpa);
+    // The first pass counts the non-empty lines so the second can keep only
+    // the last `keep_lines` of them. Buffering slices of every line instead
+    // allocated for the whole window, which can be far larger than the
+    // newest lines the caller keeps (a log left untrimmed for a while).
+    var total: usize = 0;
     var it = std.mem.splitScalar(u8, raw, '\n');
-    while (it.next()) |ln| {
-        if (ln.len == 0) continue;
-        try lines.append(gpa, ln);
+    while (it.next()) |line| {
+        if (line.len != 0) total += 1;
     }
-    const keep = if (lines.items.len > keep_lines) lines.items.len - keep_lines else 0;
+    if (total == 0) return try gpa.alloc(u8, 0);
+    const skip = total - @min(total, keep_lines);
+
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
-    try out.ensureTotalCapacity(gpa, raw.len);
-    for (lines.items[keep..]) |ln| {
-        try out.appendSlice(gpa, ln);
-        try out.append(gpa, '\n');
+    var index: usize = 0;
+    it = std.mem.splitScalar(u8, raw, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        if (index < skip) {
+            index += 1;
+            continue;
+        }
+        if (out.items.len != 0) try out.append(gpa, '\n');
+        try out.appendSlice(gpa, line);
+        index += 1;
     }
+    try out.append(gpa, '\n');
     return out.toOwnedSlice(gpa);
 }
 
@@ -106,6 +118,37 @@ test "joinNewestLines keeps only the last N lines" {
     const out = try joinNewestLines(std.testing.allocator, raw, 2);
     defer std.testing.allocator.free(out);
     try std.testing.expectEqualStrings("c\nd\n", out);
+}
+
+test "joinNewestLines allocates only the retained output" {
+    // 4096 discarded lines against 256 bytes of buffer: output proportional
+    // to the dropped history (40 KiB of line slices plus a full copy) would
+    // OOM here. The 256 covers the retained 12 bytes plus the allocator's
+    // growth-factor rounding.
+    const raw = "discarded\n" ** 4096 ++ "\nnewest\n\nlast";
+    var storage: [256]u8 = undefined;
+    var allocator = std.heap.FixedBufferAllocator.init(&storage);
+    const out = try joinNewestLines(allocator.allocator(), raw, 2);
+    defer allocator.allocator().free(out);
+    try std.testing.expectEqualStrings("newest\nlast\n", out);
+}
+
+test "joinNewestLines handles empty and unterminated input" {
+    const cases = .{
+        .{ "", 5, "" },
+        .{ "a\nb\n", 0, "" },
+        .{ "\n\n", 5, "" },
+        .{ "a", 1, "a\n" },
+        .{ "a\nb", 1, "b\n" },
+        .{ "\na\n\nb\n\n", 2, "a\nb\n" },
+        .{ "a\nb", std.math.maxInt(usize), "a\nb\n" },
+        .{ " \n\t\n", 2, " \n\t\n" },
+    };
+    inline for (cases) |case| {
+        const out = try joinNewestLines(std.testing.allocator, case[0], case[1]);
+        defer std.testing.allocator.free(out);
+        try std.testing.expectEqualStrings(case[2], out);
+    }
 }
 
 test "joinNewestLines skips blank lines" {
