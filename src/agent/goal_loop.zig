@@ -179,10 +179,12 @@ pub fn parseDecision(alloc: std.mem.Allocator, text: []const u8) Decision {
     const Parsed = struct { status: []const u8 = "", reason: []const u8 = "" };
     const parsed = std.json.parseFromSliceLeaky(Parsed, alloc, text, .{ .ignore_unknown_fields = true }) catch
         return .{ .verdict = .continue_, .reason = "the evaluator returned unreadable output; verify the condition directly and continue working" };
-    const reason = if (parsed.reason.len > 0) parsed.reason else "the evaluator did not provide a reason";
     const verdict = verdict_names.get(parsed.status) orelse
         return .{ .verdict = .continue_, .reason = "the evaluator returned an unknown status; verify the condition directly and continue working" };
-    return .{ .verdict = verdict, .reason = reason };
+    const trimmed = std.mem.trim(u8, parsed.reason, &std.ascii.whitespace);
+    if (trimmed.len == 0)
+        return .{ .verdict = .continue_, .reason = "the evaluator returned no usable reason; verify the condition directly and continue working" };
+    return .{ .verdict = verdict, .reason = parsed.reason };
 }
 
 test "goal loop survives a failed turn and continues to achieved" {
@@ -311,6 +313,52 @@ test "evaluator parser is conservative for malformed output" {
     try std.testing.expectEqual(Verdict.achieved, done.verdict);
     const cont = parseDecision(std.testing.allocator, "{\"status\":\"continue\",\"reason\":\"more work\"}");
     try std.testing.expectEqual(Verdict.continue_, cont.verdict);
+}
+
+test "evaluator parser requires a reason before accepting a terminal verdict" {
+    const no_reason = parseDecision(std.testing.allocator, "{\"status\":\"achieved\"}");
+    try std.testing.expectEqual(Verdict.continue_, no_reason.verdict);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    for ([_][]const u8{ "achieved", "blocked", "continue" }) |status| {
+        for ([_][]const u8{ "", ",\"reason\":\"\"", ",\"reason\":\" \\t\\r\\n\"", ",\"reason\":null", ",\"reason\":7" }) |field| {
+            const raw = try std.fmt.allocPrint(arena.allocator(), "{{\"status\":\"{s}\"{s}}}", .{ status, field });
+            const decision = parseDecision(arena.allocator(), raw);
+            try std.testing.expectEqual(Verdict.continue_, decision.verdict);
+            try std.testing.expect(decision.reason.len > 0);
+        }
+    }
+    const complete = parseDecision(std.testing.allocator, "{\"status\":\"blocked\",\"reason\":\"waiting on credentials\"}");
+    try std.testing.expectEqual(Verdict.blocked, complete.verdict);
+    const achieved_complete = parseDecision(std.testing.allocator, "{\"status\":\"achieved\",\"reason\":\"all checks green\"}");
+    try std.testing.expectEqual(Verdict.achieved, achieved_complete.verdict);
+}
+
+test "goal loop continues after an incomplete evaluator verdict" {
+    const State = struct {
+        alloc: std.mem.Allocator,
+        fn runTurn(_: *anyopaque, _: u32, _: []const u8) ![]const u8 {
+            return "turn answer";
+        }
+        fn evaluate(ctx: *anyopaque, turn: u32, _: []const u8) !Decision {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return parseDecision(self.alloc, if (turn == 1)
+                "{\"status\":\"achieved\"}"
+            else
+                "{\"status\":\"achieved\",\"reason\":\"verification passed\"}");
+        }
+    };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var state = State{ .alloc = arena.allocator() };
+    const outcome = try run(state.alloc, "tests pass", "start", 3, .{
+        .context = &state,
+        .run_turn = State.runTurn,
+        .evaluate = State.evaluate,
+    });
+    try std.testing.expectEqual(Verdict.achieved, outcome.verdict);
+    try std.testing.expectEqual(@as(u32, 2), outcome.turns);
+    try std.testing.expectEqualStrings("verification passed", outcome.reason);
 }
 
 test "evaluatorTask caps a long answer and says when it clipped" {
