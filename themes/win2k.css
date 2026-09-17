@@ -1,0 +1,669 @@
+/*
+ * Windows 2000 — chrome for the win2k theme.
+ *
+ * themes/win2k.json carries the palette (the registry's HKCU\Control
+ * Panel\Colors set) and the edge model; this sheet is the part a token cannot
+ * express: caption gradients, the two-tone 3D border (outer ButtonHilight /
+ * ButtonDkShadow, inner ButtonLight / ButtonShadow), sunken wells, the pixel
+ * cursors, and the scrollbar / checkbox / select chrome the browser draws
+ * itself. Every colour is a var(--sys-*) token, so the palette still lives in
+ * one file; the sheet is inert unless the win2k theme is applied.
+ *
+ * Loaded on demand: webui serves it as /webui/themes/win2k.css because
+ * win2k.css sits next to win2k.json, and core/theme.js links the companion
+ * sheet of whichever theme the catalog says ships one. Every other theme pays
+ * nothing for it.
+ *
+ * Deliberately not carried over from the zine's win2k.css: its taskbar,
+ * Start-menu, games, calculator and common-dialog layouts, which style markup
+ * this page does not have, and the 16px touch targets — the caption-button
+ * and push-button metrics land on the app's own minimums instead of 1999's.
+ * Focus rings stay the app's: a 1px dotted rect is period-correct and too
+ * faint to be the only keyboard affordance here.
+ */
+
+html[data-theme="win2k"] {
+  /* ---- Faces and metrics the token set cannot spell ----
+     11px MS Sans Serif is the win2k UI face; the type scale is pulled down to
+     it rather than each rule restating a size. Radii go square. */
+  --sans: "MS Sans Serif", "Microsoft Sans Serif", Tahoma, Verdana, sans-serif;
+  --mono: "Lucida Console", "Courier New", monospace;
+  --radius-sm: 0;
+  --radius: 0;
+  --radius-lg: 0;
+  --radius-pill: 0;
+  --step--2: 0.625rem;
+  --step--1: 0.6875rem;
+  --step-0: 0.75rem;
+  --step-1: 0.8125rem;
+  --step-2: 0.9375rem;
+  --step-3: 1.125rem;
+  --track-label: 0;
+
+  /* The lamp was the one signature the cabinet spent; win2k has no glowing
+     domes, only flat LED blocks, so the dome token goes and the shape is
+     squared up at each call site below. */
+  --lamp-dome: none;
+  --lamp-ring: 0 0 0 1px var(--sys-dk-shadow);
+  --lamp-glow: none;
+
+  color-scheme: light;
+
+  /* ===================================================================
+   * Cursors (Win2K %SystemRoot%\cursors, hotspot coordinates included)
+   * =================================================================== */
+
+  /* Arrow, hotspot (0,0). */
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M0,0 L0,18 L4,14 L7,20 L10,19 L7,13 L12,13 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter'/%3E%3C/svg%3E") 0 0, default;
+
+  /* Hand, hotspot (6,0) — links only; win2k points with the arrow at buttons. */
+  :any-link {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M8,1 L8,8 L5,8 L5,9 L4,9 L4,11 L3,11 L3,13 L4,13 L4,14 L5,14 L5,15 L4,15 L4,21 L14,21 L14,15 L15,15 L15,13 L16,13 L16,11 L14,11 L14,8 L11,8 L11,6 L10,6 L10,1 Z' fill='black'/%3E%3Cpath d='M9,2 L9,9 L6,9 L6,10 L5,10 L5,12 L4,12 L4,13 L5,13 L5,14 L6,14 L6,15 L5,15 L5,20 L13,20 L13,15 L14,15 L14,13 L15,13 L15,12 L13,12 L13,9 L11,9 L11,6 L10,6 L10,9 L9,9 Z' fill='white'/%3E%3C/svg%3E") 9 1, pointer;
+  }
+
+  /* Controls keep the arrow: the period did not have a pointing hand here. */
+  button,
+  summary,
+  select,
+  .chip-btn,
+  .menu-popup-item,
+  .palette-item,
+  .model-picker__option,
+  [role="button"] {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M0,0 L0,18 L4,14 L7,20 L10,19 L7,13 L12,13 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter'/%3E%3C/svg%3E") 0 0, default;
+  }
+
+  /* I-beam over text fields, hotspot (8,10). */
+  input[type="text"],
+  input[type="search"],
+  input[type="date"],
+  input[type="number"],
+  input[type="url"],
+  input[type="password"],
+  input[type="email"],
+  input[type="tel"],
+  textarea,
+  [contenteditable="true"] {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect x='3' y='3' width='11' height='1' fill='black'/%3E%3Crect x='8' y='4' width='1' height='16' fill='black'/%3E%3Crect x='3' y='20' width='11' height='1' fill='black'/%3E%3Crect x='3' y='4' width='1' height='2' fill='black'/%3E%3Crect x='13' y='4' width='1' height='2' fill='black'/%3E%3Crect x='3' y='19' width='1' height='2' fill='black'/%3E%3Crect x='13' y='19' width='1' height='2' fill='black'/%3E%3C/svg%3E") 8 12, text;
+  }
+
+  /* Move, hotspot (11,11) — board cards while they are being dragged. */
+  [data-dragging="true"],
+  .board-drag-ghost,
+  .board-card-item[data-dragging="true"] {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M10,2 L10,7 L6,7 L6,8 L1,8 L1,14 L6,14 L6,15 L10,15 L10,20 L12,20 L12,15 L16,15 L16,14 L21,14 L21,8 L16,8 L16,7 L12,7 L12,2 Z' fill='white'/%3E%3Cpath d='M11,0 L11,7 L7,7 L7,8 L0,8 L0,14 L7,14 L7,15 L11,15 L11,22 L11,20 L13,20 L13,15 L17,15 L17,14 L22,14 L22,8 L17,8 L17,7 L13,7 L13,0 Z' fill='black'/%3E%3Cpath d='M10,2 L10,7 L6,7 L6,8 L1,8 L1,14 L6,14 L6,15 L10,15 L10,20 L12,20 L12,15 L16,15 L16,14 L21,14 L21,8 L16,8 L16,7 L12,7 L12,2 Z' fill='white'/%3E%3C/svg%3E") 11 11, move;
+  }
+
+  /* Wait, hotspot (8,8). */
+  [aria-busy="true"],
+  .busy,
+  .wait-cursor {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M3,2 L13,2 L13,3 L3,3 Z M4,3 L12,3 L12,7 L10,9 L12,11 L12,16 L4,16 L4,11 L6,9 L4,7 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter' transform='translate(4,4)'/%3E%3Crect x='9' y='8' width='6' height='1' fill='%23808080'/%3E%3Crect x='10' y='9' width='4' height='1' fill='%23808080'/%3E%3Crect x='11' y='10' width='2' height='1' fill='%23808080'/%3E%3Crect x='10' y='13' width='4' height='1' fill='%23808080'/%3E%3Crect x='9' y='14' width='6' height='1' fill='%23808080'/%3E%3Crect x='8' y='15' width='8' height='1' fill='%23808080'/%3E%3C/svg%3E") 12 12, wait;
+  }
+
+  /* Resize arrows, kept under the win2k class names they shipped with. */
+  .resize-n,
+  .resize-s {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M5,0 L11,6 L8,6 L8,14 L11,14 L5,20 L-1,14 L2,14 L2,6 L-1,6 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter' transform='translate(6,2)'/%3E%3C/svg%3E") 11 12, ns-resize;
+  }
+
+  .resize-w,
+  .resize-e {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M0,5 L6,11 L6,8 L14,8 L14,11 L20,5 L14,-1 L14,2 L6,2 L6,-1 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter' transform='translate(2,6)'/%3E%3C/svg%3E") 12 11, ew-resize;
+  }
+
+  .resize-nw,
+  .resize-se {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M0,0 L8,0 L8,2 L4,2 L13,11 L15,11 L15,7 L17,7 L17,15 L15,15 L9,15 L9,13 L13,13 L4,4 L2,4 L2,8 L0,8 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter' transform='translate(4,4)'/%3E%3C/svg%3E") 12 12, nwse-resize;
+  }
+
+  .resize-ne,
+  .resize-sw {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M9,0 L17,0 L17,8 L15,8 L15,4 L6,13 L4,13 L4,9 L2,9 L2,15 L0,15 L8,15 L8,13 L4,13 L13,4 L13,2 L9,2 Z' fill='white' stroke='black' stroke-width='1' stroke-linejoin='miter' transform='translate(4,4)'/%3E%3C/svg%3E") 12 12, nesw-resize;
+  }
+
+  /* Crosshair, hotspot (15,15). */
+  .colordlg-gradient {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='15' y1='0' x2='15' y2='12' stroke='black' stroke-width='1'/%3E%3Cline x1='15' y1='18' x2='15' y2='30' stroke='black' stroke-width='1'/%3E%3Cline x1='0' y1='15' x2='12' y2='15' stroke='black' stroke-width='1'/%3E%3Cline x1='18' y1='15' x2='30' y2='15' stroke='black' stroke-width='1'/%3E%3C/svg%3E") 15 15, crosshair;
+  }
+
+  /* ===================================================================
+   * Title bar — the masthead, with the caption's own gradient
+   * =================================================================== */
+
+  #app-masthead.pf-v6-c-masthead {
+    background: linear-gradient(to right, var(--sys-title), var(--sys-title-grad));
+    color: var(--sys-title-text);
+    border: 0;
+    border-bottom: 1px solid var(--sys-dk-shadow);
+    padding-block: 0.1rem;
+    min-height: 20px;
+  }
+
+  #app-masthead .pf-v6-c-masthead__logo h1 {
+    color: var(--sys-title-text);
+    font-weight: 700;
+    font-family: var(--sans);
+  }
+
+  /* The inactive caption: grey gradient, dark text, the way a win2k window
+     behind the focused one painted itself. The title text is black rather
+     than --sys-ititle-text, which the period drew too faint to read. */
+  body:not(:focus-within) #app-masthead.pf-v6-c-masthead {
+    background: linear-gradient(to right, var(--sys-ititle), var(--sys-ititle-grad));
+    color: var(--sys-text);
+  }
+
+  body:not(:focus-within) #app-masthead .pf-v6-c-masthead__logo h1 {
+    color: var(--sys-text);
+  }
+
+  /* Everything on the caption bar is a caption button: face grey, 2px bevel.
+     win2k's caption buttons were 16x14; 24 keeps them on the WCAG 2.5.8 floor
+     instead of shrinking the app's targets to period size. */
+  #app-masthead .chip,
+  #app-masthead .chip-btn,
+  #app-masthead button.pf-v6-c-button {
+    background-color: var(--sys-face) !important;
+    color: var(--sys-text) !important;
+    border: 1px solid;
+    border-color: var(--sys-hilight) var(--sys-dk-shadow) var(--sys-dk-shadow) var(--sys-hilight);
+    box-shadow: inset -1px -1px 0 var(--sys-shadow), inset 1px 1px 0 var(--sys-light);
+    padding: 0 4px;
+    min-height: 24px;
+  }
+
+  /* ===================================================================
+   * Window: rail pane and sunken client area
+   * =================================================================== */
+
+  .rail,
+  .pf-v6-c-page__sidebar.rail {
+    background: var(--sys-face);
+    border-right: 1px solid var(--sys-shadow);
+  }
+
+  /* Client area: the white MDI well the panel's controls sit in. */
+  .pf-v6-c-page__main-container.shell,
+  .shell {
+    background: var(--sys-window);
+    color: var(--sys-window-text);
+    border: 1px solid;
+    border-color: var(--sys-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-dk-shadow), inset -1px -1px 0 var(--sys-light);
+  }
+
+  /* Group headings wear the inactive caption gradient, as a toolbox divider. */
+  .rail-group,
+  .rail-fold > summary.rail-group,
+  .pf-v6-c-nav__section-title.rail-group {
+    background: linear-gradient(to right, var(--sys-ititle), var(--sys-ititle-grad));
+    color: var(--sys-text);
+    font-weight: 700;
+    border: 0;
+  }
+
+  /* ===================================================================
+   * Buttons (push button; the primary one carries the default ring)
+   * =================================================================== */
+
+  button.pf-v6-c-button,
+  button.chip-btn,
+  button:not(.pf-v6-c-button),
+  input[type="file"]::file-selector-button {
+    background-color: var(--sys-face) !important;
+    background-image: none !important;
+    color: var(--sys-text) !important;
+    font-family: var(--sans);
+    border: 1px solid;
+    border-color: var(--sys-hilight) var(--sys-dk-shadow) var(--sys-dk-shadow) var(--sys-hilight);
+    box-shadow: inset -1px -1px 0 var(--sys-shadow), inset 1px 1px 0 var(--sys-light);
+    padding: 1px 10px;
+  }
+
+  /* win2k drew a 23px push button; 24 is the smallest target WCAG 2.5.8
+     accepts. Only where the pointer is precise: app.css's 44px coarse-pointer
+     targets are for fingers and this sheet must not shrink them. */
+  @media (pointer: fine) {
+    button.pf-v6-c-button,
+    button.chip-btn,
+    button:not(.pf-v6-c-button),
+    input[type="file"]::file-selector-button,
+    summary,
+    select,
+    input[type="text"],
+    input[type="search"],
+    input[type="date"],
+    input[type="number"],
+    input[type="url"],
+    input[type="password"],
+    input[type="email"],
+    input[type="tel"] {
+      min-height: 24px;
+    }
+  }
+
+  button:active:not(:disabled) {
+    border-color: var(--sys-dk-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-dk-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-shadow);
+    padding: 2px 9px 0 11px;
+  }
+
+  /* The default button: same face, black ring inside the edge. */
+  button.pf-v6-c-button.pf-m-primary,
+  button.pf-v6-c-button:not(.pf-m-secondary):not(.pf-m-plain):not(.pf-m-danger):not(.pf-m-link) {
+    background-color: var(--sys-face) !important;
+    color: var(--sys-text) !important;
+    outline: 1px solid var(--sys-frame);
+    outline-offset: -1px;
+  }
+
+  /* Destructive actions keep the fault colour as ink on the grey face. */
+  button.pf-v6-c-button.pf-m-danger,
+  button.danger:where(:not(.pf-v6-c-button)),
+  button.secondary.danger:where(:not(.pf-v6-c-button)) {
+    color: var(--danger) !important;
+  }
+
+  .menu-popup .menu-popup-item,
+  .model-picker__panel .model-picker__option,
+  .palette-box .palette-item,
+  .board-col-menu .board-col-menu-item,
+  .card-detail-move-menu .card-detail-move-opt {
+    background: none;
+    border: 0;
+    box-shadow: none;
+    color: var(--sys-menu-text);
+    font-family: var(--sans);
+  }
+
+  /* ===================================================================
+   * Menus, pickers and popups (SysMenu): black frame, hilight/shadow bevel
+   * =================================================================== */
+
+  .menu-popup,
+  .model-picker__panel,
+  .board-col-menu,
+  .palette-box,
+  .slack-emoji-picker,
+  .card-detail-move-menu,
+  .card-members-overlay .menu-popup {
+    background: var(--sys-menu);
+    color: var(--sys-menu-text);
+    border: 1px solid var(--sys-frame);
+    box-shadow: inset 1px 1px 0 var(--sys-hilight), inset -1px -1px 0 var(--sys-shadow), var(--lift);
+    padding: 2px;
+  }
+
+  .menu-popup-item:hover,
+  .menu-popup-item.is-current,
+  .model-picker__panel .model-picker__option:hover,
+  .model-picker__panel .model-picker__option.is-active,
+  .model-picker__panel .model-picker__option.is-current,
+  .palette-box .palette-item:hover,
+  .palette-box .palette-item[aria-selected="true"],
+  .board-col-menu .board-col-menu-item:hover:not(:disabled),
+  .card-detail-move-menu .card-detail-move-opt:hover {
+    background: var(--sys-sel);
+    color: var(--sys-sel-text);
+  }
+
+  .menu-popup-title,
+  .model-picker__group-title {
+    background: none;
+    border: 0;
+    font-weight: 700;
+  }
+
+  /* Etched separator: ButtonShadow over ButtonHilight, the period's rule. */
+  hr,
+  .menu-popup-title,
+  .model-picker__group + .model-picker__group,
+  .board-header-sep,
+  .menu-popup-sep {
+    border: 0;
+    border-top: 1px solid var(--sys-shadow);
+    border-bottom: 1px solid var(--sys-hilight);
+    margin: 3px 2px;
+  }
+
+  /* ===================================================================
+   * Dialogs and modal windows
+   * =================================================================== */
+
+  dialog.slack-dialog,
+  .pf-v6-c-modal-box,
+  .overlay-box,
+  .card-detail-panel {
+    background: var(--sys-face);
+    color: var(--sys-text);
+    border: 1px solid var(--sys-frame);
+    box-shadow: inset 1px 1px 0 var(--sys-hilight), inset -1px -1px 0 var(--sys-shadow), var(--lift-high);
+    padding: 2px;
+  }
+
+  .pf-v6-c-modal__header,
+  .run-detail-head,
+  .card-detail-header {
+    background: linear-gradient(to right, var(--sys-title), var(--sys-title-grad));
+    color: var(--sys-title-text);
+    font-weight: 700;
+    border: 0;
+    padding: 1px 4px;
+  }
+
+  .pf-v6-c-modal__title,
+  .run-detail-title,
+  .card-detail-header h3 {
+    color: var(--sys-title-text);
+  }
+
+  /* ===================================================================
+   * Text fields, lists and dropdowns (sunken 2px well)
+   * =================================================================== */
+
+  input[type="text"],
+  input[type="search"],
+  input[type="date"],
+  input[type="number"],
+  input[type="url"],
+  input[type="password"],
+  input[type="email"],
+  input[type="tel"],
+  input:not([type]),
+  textarea,
+  .pf-v6-c-form-control,
+  .label-name-input,
+  .chat-edit-input,
+  .card-desc-edit,
+  .card-detail-desc-area,
+  .slack-search-box input,
+  .slack-search-bar input,
+  .slack-composer-row input[type="text"],
+  .slack-dialog-form input,
+  .slack-dialog-form textarea,
+  #palette-input {
+    background-color: var(--sys-window);
+    color: var(--sys-window-text);
+    border: 1px solid;
+    border-color: var(--sys-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-dk-shadow), inset -1px -1px 0 var(--sys-light);
+    padding: 1px 2px;
+    border-radius: 0;
+  }
+
+  textarea,
+  .composer textarea,
+  .card-detail-desc-area {
+    padding: 4px;
+  }
+
+  /* Dropdown: the arrow is the period's own 16px button glyph. */
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: var(--sys-face);
+    color: var(--sys-text);
+    border: 1px solid;
+    border-color: var(--sys-hilight) var(--sys-dk-shadow) var(--sys-dk-shadow) var(--sys-hilight);
+    box-shadow: inset -1px -1px 0 var(--sys-shadow), inset 1px 1px 0 var(--sys-light);
+    padding: 1px 18px 1px 2px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Crect x='0' y='0' width='15' height='15' fill='none' stroke='%23ffffff' stroke-width='1'/%3E%3Crect x='0' y='0' width='16' height='16' fill='none' stroke='%23404040' stroke-width='1'/%3E%3Cpath d='M4 6 L12 6 L8 11 Z' fill='black'/%3E%3C/svg%3E");
+    background-position: right 1px center;
+    background-repeat: no-repeat;
+  }
+
+  /* Checkbox, radio and the win2k tick. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 13px;
+    height: 13px;
+    padding: 0;
+    background-color: var(--sys-window);
+    border: 1px solid;
+    border-color: var(--sys-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-dk-shadow), inset -1px -1px 0 var(--sys-light);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  input[type="checkbox"]:checked::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='7' height='7' viewBox='0 0 7 7'%3E%3Cpath d='M2 3 L3 4 L6 1 L7 2 L3 6 L1 4 Z' fill='black'/%3E%3C/svg%3E");
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  input[type="radio"]:checked::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    background-color: var(--sys-text);
+    border-radius: 50%;
+  }
+
+  /* Disabled: GrayText with the period's one-pixel emboss. */
+  :disabled {
+    color: var(--sys-gray-text);
+    text-shadow: 1px 1px 0 var(--sys-hilight);
+  }
+
+  /* ===================================================================
+   * Scrollbars (16px, arrow buttons, beveled thumb)
+   * =================================================================== */
+
+  scrollbar-color: var(--sys-face) var(--sys-scrollbar);
+
+  &::-webkit-scrollbar,
+  & ::-webkit-scrollbar {
+    width: 16px;
+    height: 16px;
+    background-color: var(--sys-scrollbar);
+  }
+
+  &::-webkit-scrollbar-track,
+  & ::-webkit-scrollbar-track {
+    background-color: var(--sys-scrollbar);
+  }
+
+  &::-webkit-scrollbar-thumb,
+  &::-webkit-scrollbar-button,
+  & ::-webkit-scrollbar-thumb,
+  & ::-webkit-scrollbar-button {
+    background-color: var(--sys-face);
+    border: 1px solid;
+    border-color: var(--sys-hilight) var(--sys-dk-shadow) var(--sys-dk-shadow) var(--sys-hilight);
+    box-shadow: inset -1px -1px 0 var(--sys-shadow), inset 1px 1px 0 var(--sys-light);
+  }
+
+  &::-webkit-scrollbar-button,
+  & ::-webkit-scrollbar-button {
+    display: block;
+    width: 16px;
+    height: 16px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  &::-webkit-scrollbar-button:active,
+  & ::-webkit-scrollbar-button:active {
+    border-color: var(--sys-dk-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-dk-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-shadow);
+  }
+
+  &::-webkit-scrollbar-button:vertical:decrement,
+  & ::-webkit-scrollbar-button:vertical:decrement {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cpath d='M4 9 L8 5 L12 9 Z' fill='black'/%3E%3C/svg%3E");
+  }
+
+  &::-webkit-scrollbar-button:vertical:increment,
+  & ::-webkit-scrollbar-button:vertical:increment {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cpath d='M4 7 L8 11 L12 7 Z' fill='black'/%3E%3C/svg%3E");
+  }
+
+  &::-webkit-scrollbar-button:horizontal:decrement,
+  & ::-webkit-scrollbar-button:horizontal:decrement {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cpath d='M9 4 L5 8 L9 12 Z' fill='black'/%3E%3C/svg%3E");
+  }
+
+  &::-webkit-scrollbar-button:horizontal:increment,
+  & ::-webkit-scrollbar-button:horizontal:increment {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cpath d='M7 4 L11 8 L7 12 Z' fill='black'/%3E%3C/svg%3E");
+  }
+
+  &::-webkit-scrollbar-corner,
+  & ::-webkit-scrollbar-corner {
+    background-color: var(--sys-face);
+  }
+
+  /* ===================================================================
+   * Plates: the app's panels as raised win2k controls
+   * =================================================================== */
+
+  .card,
+  .fleet-card,
+  .board-col,
+  .composer,
+  .settings-panel,
+  .run-detail,
+  .run-canvas,
+  .run-list,
+  .goal,
+  .goal-run,
+  .prompt-list,
+  .slack-layout,
+  .models-snippet,
+  .fleet-a2a,
+  .fleet-stage,
+  .fleet-detail-simple,
+  .mesh-map,
+  .arena-pick,
+  .compare-row,
+  .search-hit,
+  .turn-thinking,
+  .turn-todos,
+  .transcript-tools,
+  .card-detail-meta-value {
+    background: var(--sys-face);
+    color: var(--sys-text);
+    border: 1px solid;
+    border-color: var(--sys-hilight) var(--sys-dk-shadow) var(--sys-dk-shadow) var(--sys-hilight);
+    box-shadow: inset -1px -1px 0 var(--sys-shadow), inset 1px 1px 0 var(--sys-light);
+  }
+
+  /* Code wells and logs are sunken white, like a read-only edit control. */
+  .code-block,
+  .md pre,
+  .log-view,
+  .progress-log,
+  .pixel-canvas {
+    background: var(--sys-window);
+    color: var(--sys-window-text);
+    border: 1px solid;
+    border-color: var(--sys-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-dk-shadow), inset -1px -1px 0 var(--sys-light);
+  }
+
+  .code-head {
+    background: var(--sys-face);
+    color: var(--sys-text);
+    border-bottom: 1px solid var(--sys-shadow);
+  }
+
+  .md :not(pre) > code {
+    background: var(--sys-window);
+    color: var(--sys-window-text);
+    border: 1px solid var(--sys-shadow);
+  }
+
+  /* ===================================================================
+   * List selection, status panes and LEDs
+   * =================================================================== */
+
+  .rail-tab,
+  .rail-item {
+    color: var(--sys-text);
+    border: 1px solid transparent;
+  }
+
+  .rail-tab:hover,
+  .rail-item:hover {
+    background: var(--sys-sel);
+    color: var(--sys-sel-text);
+  }
+
+  /* The current channel is a selected list row: solid Selection navy. */
+  .rail-tab[aria-selected="true"],
+  .rail-tab.pf-m-current,
+  .rail-item[aria-current="true"] {
+    background: var(--sys-sel) !important;
+    color: var(--sys-sel-text) !important;
+  }
+
+  /* Status panes carry the inset bevel of a status bar cell. */
+  .chip {
+    background: var(--sys-face);
+    color: var(--sys-text);
+    border: 1px solid;
+    border-color: var(--sys-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-dk-shadow), inset -1px -1px 0 var(--sys-light);
+  }
+
+  /* The cabinet's glowing domes become flat LED blocks. */
+  .chip::before,
+  .rail-tab[aria-selected="true"]::before,
+  .fleet-card--accent::before,
+  .fleet-card--parent::before,
+  .turn-held::before {
+    background: currentColor;
+    box-shadow: inset 0 0 0 1px var(--sys-dk-shadow);
+    border-radius: 0;
+  }
+
+  /* ===================================================================
+   * Tooltips, progress and selection
+   * =================================================================== */
+
+  /* Toasts take the info window's pale yellow, the period's tooltip. */
+  .toast,
+  .toast.pf-v6-c-alert {
+    background: var(--sys-info);
+    color: var(--sys-info-text);
+    border: 1px solid var(--sys-frame);
+    box-shadow: var(--lift);
+  }
+
+  .toast[data-kind="bad"],
+  .toast.pf-v6-c-alert.pf-m-danger,
+  .toast.pf-v6-c-alert[data-kind="bad"] {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .toast-dismiss {
+    color: var(--sys-info-text);
+  }
+
+  .card-progress-bar {
+    background: var(--sys-window);
+    border: 1px solid;
+    border-color: var(--sys-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-shadow);
+    box-shadow: inset 1px 1px 0 var(--sys-dk-shadow);
+    border-radius: 0;
+  }
+
+  .card-progress-bar > span {
+    background: var(--sys-title);
+    border-radius: 0;
+  }
+
+  ::selection {
+    background: var(--sys-sel);
+    color: var(--sys-sel-text);
+  }
+}

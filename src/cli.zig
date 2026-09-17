@@ -12520,6 +12520,15 @@ fn themeRestName(rest: []const u8) ?[]const u8 {
     return if (validThemeName(name)) name else null;
 }
 
+/// A theme's companion chrome sheet: `/webui/themes/<name>.css`, the file the
+/// catalog names in an entry's `css` field. Same name alphabet as the palette,
+/// so `..` and a nested path are rejected before any read.
+fn themeCssRestName(rest: []const u8) ?[]const u8 {
+    if (!std.mem.endsWith(u8, rest, ".css")) return null;
+    const name = rest[0 .. rest.len - ".css".len];
+    return if (validThemeName(name)) name else null;
+}
+
 test themeRestName {
     try std.testing.expect(themeRestName("catalog.json") == null);
     try std.testing.expect(themeRestName("") == null);
@@ -12529,11 +12538,25 @@ test themeRestName {
     try std.testing.expect(themeRestName("../x.json") == null);
 }
 
+test themeCssRestName {
+    try std.testing.expect(themeCssRestName("win2k.json") == null);
+    try std.testing.expect(themeCssRestName("") == null);
+    try std.testing.expectEqualStrings("win2k", themeCssRestName("win2k.css").?);
+    try std.testing.expect(themeCssRestName("../x.css") == null);
+    try std.testing.expect(themeCssRestName("a/b.css") == null);
+    try std.testing.expect(themeCssRestName("catalog.css") == null);
+}
+
 const ThemeEntry = struct {
     id: []const u8,
     scheme: []const u8,
     order: i64,
     tokens: std.json.Value,
+    /// Companion stylesheet (`themes/<id>.css`) when the theme ships one. The
+    /// catalog names it so the page can fetch a theme's chrome only for the
+    /// theme that has any: a palette with no sheet costs nothing, and the
+    /// sheet itself stays a drop-in file next to the JSON.
+    css: ?[]const u8,
 };
 
 fn themeEntryLessThan(_: void, a: ThemeEntry, b: ThemeEntry) bool {
@@ -12565,11 +12588,14 @@ fn collectThemeEntries(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ![
         const tokens = parsed.object.get("tokens") orelse continue;
         if (tokens != .object) continue;
         const scheme = if (parsed.object.get("scheme")) |s| (if (s == .string) s.string else "dark") else "dark";
+        const css_file = std.fmt.allocPrint(arena, "{s}.css", .{stem}) catch continue;
+        const ships_css = if (opened.statFile(io, css_file, .{})) |_| true else |_| false;
         try list.append(arena, .{
             .id = try arena.dupe(u8, stem),
             .scheme = scheme,
             .order = jsonOrder(parsed.object),
             .tokens = tokens,
+            .css = if (ships_css) css_file else null,
         });
     }
     std.mem.sort(ThemeEntry, list.items, {}, themeEntryLessThan);
@@ -12590,6 +12616,8 @@ test "collectThemeEntries orders by order then name and skips junk" {
     try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/notes.md", .data = "nope" });
     try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/catalog.json", .data = "{\"tokens\":{}}" });
     try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/bad.json", .data = "not json" });
+    // A companion sheet for one palette only: the catalog names it there.
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "themes/alpha.css", .data = "html[data-theme=\"alpha\"] { color: red }" });
 
     const entries = try collectThemeEntries(io, env.tmp.dir, arena);
     try std.testing.expectEqual(@as(usize, 3), entries.len);
@@ -12597,6 +12625,13 @@ test "collectThemeEntries orders by order then name and skips junk" {
     try std.testing.expectEqualStrings("alpha", entries[1].id);
     try std.testing.expectEqualStrings("zeta", entries[2].id);
     try std.testing.expectEqualStrings("light", entries[1].scheme);
+    try std.testing.expectEqualStrings("alpha.css", entries[1].css.?);
+    try std.testing.expect(entries[0].css == null);
+    try std.testing.expect(entries[2].css == null);
+
+    const catalog = try writeThemeCatalog(arena, entries);
+    try std.testing.expect(std.mem.find(u8, catalog, "\"css\":\"alpha.css\"") != null);
+    try std.testing.expect(std.mem.find(u8, catalog, "\"css\":null") == null);
 }
 
 fn writeThemeCatalog(arena: std.mem.Allocator, entries: []const ThemeEntry) ![]const u8 {
@@ -12615,6 +12650,10 @@ fn writeThemeCatalog(arena: std.mem.Allocator, entries: []const ThemeEntry) ![]c
         try s.write(e.scheme);
         try s.objectField("order");
         try s.write(e.order);
+        if (e.css) |css| {
+            try s.objectField("css");
+            try s.write(css);
+        }
         try s.objectField("tokens");
         try s.write(e.tokens);
         try s.endObject();
@@ -12624,16 +12663,29 @@ fn writeThemeCatalog(arena: std.mem.Allocator, entries: []const ThemeEntry) ![]c
     return out.written();
 }
 
-/// `GET /webui/themes/catalog.json` and `GET /webui/themes/<name>.json`.
-/// Served from disk like plugins: drop a file in `themes/` and the picker
-/// sees it, no host rebuild. `catalog.json` is assembled from the directory
-/// so a drop-in cannot shadow the listing.
+/// `GET /webui/themes/catalog.json`, `GET /webui/themes/<name>.json` and
+/// `GET /webui/themes/<name>.css`. Served from disk like plugins: drop a file
+/// in `themes/` and the picker sees it, no host rebuild. `catalog.json` is
+/// assembled from the directory so a drop-in cannot shadow the listing, and it
+/// carries the `css` name for a palette that ships a companion sheet.
 fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8, headers_raw: []const u8, stream: std.Io.net.Stream) void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     const rest = target["/webui/themes/".len..];
+    if (themeCssRestName(rest)) |name| {
+        const path = std.fmt.allocPrint(arena, "{s}/{s}.css", .{ webui_themes_dir, name }) catch {
+            respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
+            return;
+        };
+        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(128 * 1024)) catch {
+            respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such theme stylesheet\"}");
+            return;
+        };
+        respondRevalidatable(arena, stream, headers_raw, bytes, "text/css; charset=utf-8");
+        return;
+    }
     if (themeRestName(rest)) |name| {
         const path = std.fmt.allocPrint(arena, "{s}/{s}.json", .{ webui_themes_dir, name }) catch {
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
@@ -17030,15 +17082,22 @@ fn respondCompressible(arena: std.mem.Allocator, stream: std.Io.net.Stream, acce
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }
 
-/// Serves a drop-in JSON asset (`/webui/themes/*`, `/webui/commands/*`) with
-/// the same revalidation contract as plugin assets: `no-cache` plus an ETag
-/// hashed from the served body. These files change without a rebuild, so they
-/// can never carry a freshness lifetime, but an unchanged one costs a bodyless
-/// 304 instead of its full bytes on every visit. Without the explicit
+/// Serves a drop-in JSON asset (`/webui/themes/*.json`, `/webui/commands/*`)
+/// with the same revalidation contract as plugin assets: `no-cache` plus an
+/// ETag hashed from the served body. These files change without a rebuild, so
+/// they can never carry a freshness lifetime, but an unchanged one costs a
+/// bodyless 304 instead of its full bytes on every visit. Without the explicit
 /// `no-cache` a response with no validator and no lifetime is cached by
 /// heuristic, which for a drop-in file means "stale for as long as the browser
 /// feels like".
 fn respondRevalidatableJson(arena: std.mem.Allocator, stream: std.Io.net.Stream, headers_raw: []const u8, body: []const u8) void {
+    respondRevalidatable(arena, stream, headers_raw, body, "application/json");
+}
+
+/// The same contract for a drop-in asset that is not JSON — today only a
+/// theme's companion stylesheet, which is read off disk on every request just
+/// like the palettes are.
+fn respondRevalidatable(arena: std.mem.Allocator, stream: std.Io.net.Stream, headers_raw: []const u8, body: []const u8, content_type: []const u8) void {
     var etag_buf: [16]u8 = undefined;
     const etag = etagFor(&etag_buf, body);
     if (ifNoneMatchHits(headers_raw, etag)) {
@@ -17057,7 +17116,7 @@ fn respondRevalidatableJson(arena: std.mem.Allocator, stream: std.Io.net.Stream,
     const encoding: []const u8 = if (gzipped != null) "Content-Encoding: gzip\r\n" else "";
     var hbuf: [512]u8 = undefined;
     request_status = 200;
-    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ out.len, encoding, etag, connHeader() }) catch return;
+    const hdr = std.fmt.bufPrint(&hbuf, "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\n{s}ETag: {s}\r\nVary: Accept-Encoding\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ content_type, out.len, encoding, etag, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, out);
 }

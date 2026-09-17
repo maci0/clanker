@@ -22,6 +22,11 @@ function sheets() {
   const out = [
     ["app/app.css", readFileSync(join(here, "app.css"), "utf8")],
     ["app/views.css", readFileSync(join(here, "views.css"), "utf8")],
+    // The win2k skin is fetched only when that theme is applied, but it is
+    // still a sheet this page paints with, so it rides the same scale and edge
+    // tokens as the two above instead of escaping their pins by living outside
+    // the bundle.
+    ["themes/win2k.css", readFileSync(join(here, "..", "..", "themes", "win2k.css"), "utf8")],
   ];
   for (const name of readdirSync(pluginsDir, { withFileTypes: true })) {
     if (!name.isDirectory()) continue;

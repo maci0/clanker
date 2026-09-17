@@ -5,6 +5,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- `themes/win2k.json`, the Windows 2000 "Windows Standard" scheme as a web
+  theme: ButtonFace grey panels, a white window well, the navy title-bar blue
+  as the interactive accent, and the 1px hard-edged ButtonHilight/ButtonShadow
+  bevels the system drew instead of soft shadows.
+- `themes/win2k.css`, that theme's chrome, which tokens cannot express: win2k's
+  own pixel cursors, the caption gradient on the masthead and dialog headers,
+  pushed-button faces with the default button's black ring, sunken text wells
+  and checkboxes, 16px arrow scrollbars, menu and dialog frames, and flat LED
+  blocks where the cabinet drew glowing lamp domes. The page links it the first
+  time the win2k theme is applied and never for another theme, read from the
+  catalog's `css` name; `GET /webui/themes/<name>.css` serves a palette's
+  companion sheet from `themes/` the way the palettes themselves are served, so
+  a themed skin stays a drop-in with no host rebuild and no page weight.
+
 ### Changed
 
 - Skill triggers: `lookup` (was `research`) no longer steals the `research`

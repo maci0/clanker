@@ -569,7 +569,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `chains/` | — | Transform chains (`agent.chains_dir`) |
 | `presets/` | `src/preset/preset.zig` | Tool-preset bundles (`presets/<name>.toml`, `clanker preset`) |
 | `profiles/` | — | Config overlays (`--profile <name>` applies `profiles/<name>.toml`, then `profiles/<name>.local.toml` when present) |
-| `themes/` | `src/tui/theme.zig` | Color palettes as JSON, shared by the REPL themes and web tokens |
+| `themes/` | `src/tui/theme.zig` | Color palettes as JSON, shared by the REPL themes and web tokens. A `<name>.css` beside a palette is that theme's companion chrome sheet (`/webui/themes/<name>.css`), which the web UI links only while that theme is applied |
 | `commands/` | — | Drop-in JSON catalogs served to the web UI (`/webui/commands/*`; slash commands today) |
 | `tui-plugins/`, `cli-plugins/` | `src/tui/slash_plugins.zig`, `src/cli/cli_plugins.zig` | Slash-command / subcommand plugin manifests (PRD 0012) |
 | `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |

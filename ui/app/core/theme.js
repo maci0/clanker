@@ -1,7 +1,10 @@
 // Vanilla, no bundler. Theme list comes from themes/*.json (served at
 // /webui/themes/); apply writes those tokens onto :root. "system" is not a
 // file: it clears the inline tokens so :root + the prefers-color-scheme
-// block in app.css paint.
+// block in app.css paint. A palette whose catalog entry names a `css`
+// companion (the win2k skin) gets that sheet fetched the first time it is
+// applied — its rules are scoped to html[data-theme="win2k"], so it stays
+// inert if another theme is chosen later and costs nothing until then.
 
 export var THEMES = ["system"];
 
@@ -14,6 +17,9 @@ var _list = null;
 var _anchor = null;
 var _open = false;
 var _listeners = [];
+// Companion sheets already linked, keyed by their file name. The catalog can
+// be re-fetched, and a link must not be appended twice for one file.
+var _chromeSheets = {};
 
 function themeAsset(file) {
   return "/webui/themes/" + file;
@@ -56,6 +62,20 @@ export function loadTheme() {
   return THEMES.indexOf(t) === -1 ? "system" : t;
 }
 
+// A theme may ship chrome its tokens cannot express (gradients, 3D edges,
+// cursors): the catalog names that stylesheet in `css` and this links it. Only
+// for the theme being applied — a win2k visit is the only one that pays for the
+// win2k sheet — and never twice for the same file.
+function ensureChromeSheet(rec) {
+  if (!rec || !rec.css || _chromeSheets[rec.css]) return;
+  _chromeSheets[rec.css] = true;
+  var link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = themeAsset(rec.css);
+  link.setAttribute("data-theme-css", rec.css);
+  document.head.appendChild(link);
+}
+
 function applyTokens(tokens) {
   var root = document.documentElement;
   var i;
@@ -77,6 +97,7 @@ export function applyTheme(theme, opts) {
   } else {
     document.documentElement.setAttribute("data-theme", theme);
     var rec = CATALOG[theme];
+    ensureChromeSheet(rec);
     applyTokens(rec && rec.tokens ? rec.tokens : null);
   }
   var btn = document.getElementById(id);
