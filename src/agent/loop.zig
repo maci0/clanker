@@ -679,7 +679,7 @@ pub const Agent = struct {
             .peers = self.peer_names,
             .catalog = if (self.catalog_mode) (self.reg.catalogText(scratch, &self.revealed, self.preset) catch "") else "",
             .workflows_catalog = wf_catalog,
-            .tool_guidance = self.reg.guidanceText(self.arena, self.preset) catch "",
+            .tool_guidance = self.reg.guidanceText(scratch, self.preset) catch "",
             .global_instructions_file = global_path,
             .home = home,
             .git_remote_ops = self.cfg.agent.git_remote_ops,
@@ -5377,4 +5377,53 @@ test "a preset masks the offered tool list and cannot be reopened by load_tools"
     try std.testing.expect(std.mem.find(u8, out, "\"denied\":[\"edit_file\"]") != null);
     try std.testing.expect(agent.revealed.contains("read_file"));
     try std.testing.expect(!agent.revealed.contains("edit_file"));
+}
+
+test "refreshSystemPrompt keeps unchanged tool guidance out of the session arena" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    var cfg = config.Config{};
+    cfg.agent.system_prompt_file = "";
+    cfg.agent.skills_dir = "";
+    cfg.agent.learnings_file = "";
+    cfg.agent.workflows_dir = "";
+    var ctx = client.Ctx{ .io = std.testing.io, .gpa = gpa, .environ_map = &env, .cfg = &cfg };
+    const provider = try config.Provider.single(arena, "test", "", .openai_compat, "test", .{});
+    var reg = registry.Registry{};
+    try reg.tools.put(arena, "read_file", .{
+        .name = "read_file",
+        .description = "read",
+        .llm_description = "read a file",
+        .wasm = "unused.wasm",
+        .input_schema = .{ .object = .{} },
+        .prompt_guidance = "Read before editing.",
+    });
+    var agent = Agent{
+        .ctx = &ctx,
+        .arena = arena,
+        .provider = &provider,
+        .cfg = &cfg,
+        .reg = &reg,
+        .tool_defs = &.{},
+        .max_iterations = 1,
+        .system_prompt_text = "",
+    };
+    defer agent.deinit();
+    var messages: std.ArrayList(types.Message) = .empty;
+    try messages.append(arena, .{ .role = .system, .content = "" });
+    agent.refreshSystemPrompt(&messages);
+    const installed = agent.system_prompt_text;
+    try std.testing.expect(std.mem.find(u8, installed, "Read before editing.") != null);
+    try std.testing.expectEqualStrings(installed, messages.items[0].content.?);
+
+    var failing = std.testing.FailingAllocator.init(arena, .{ .fail_index = 0 });
+    agent.arena = failing.allocator();
+    for (0..3) |_| agent.refreshSystemPrompt(&messages);
+    try std.testing.expect(!failing.has_induced_failure);
+    try std.testing.expectEqual(installed.ptr, agent.system_prompt_text.ptr);
+    try std.testing.expectEqual(installed.ptr, messages.items[0].content.?.ptr);
 }
