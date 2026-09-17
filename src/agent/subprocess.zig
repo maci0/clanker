@@ -63,12 +63,16 @@ pub const Registry = struct {
     pub fn register(self: *Registry, session_id: []const u8, kind: []const u8, pid: std.posix.pid_t) !void {
         if (!session.validSessionId(session_id)) return error.InvalidSessionId;
         if (kind.len == 0) return error.EmptyKind;
+        const sid = try self.gpa.dupe(u8, session_id);
+        errdefer self.gpa.free(sid);
+        const kind_owned = try self.gpa.dupe(u8, kind);
+        errdefer self.gpa.free(kind_owned);
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         self.removeMatchingLocked(session_id, kind);
         try self.items.append(self.gpa, .{
-            .session_id = try self.gpa.dupe(u8, session_id),
-            .kind = try self.gpa.dupe(u8, kind),
+            .session_id = sid,
+            .kind = kind_owned,
             .pid = pid,
         });
     }
@@ -79,12 +83,16 @@ pub const Registry = struct {
         if (!session.validSessionId(session_id)) return error.InvalidSessionId;
         if (kind.len == 0) return error.EmptyKind;
         const pid = child.id orelse return error.DeadChild;
+        const sid = try self.gpa.dupe(u8, session_id);
+        errdefer self.gpa.free(sid);
+        const kind_owned = try self.gpa.dupe(u8, kind);
+        errdefer self.gpa.free(kind_owned);
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         self.removeMatchingLocked(session_id, kind);
         try self.items.append(self.gpa, .{
-            .session_id = try self.gpa.dupe(u8, session_id),
-            .kind = try self.gpa.dupe(u8, kind),
+            .session_id = sid,
+            .kind = kind_owned,
             .pid = pid,
             .child = child,
         });
@@ -603,4 +611,49 @@ test "register refuses an empty kind" {
     var reg = Registry.init(std.testing.allocator, threaded.io());
     defer reg.deinit();
     try std.testing.expectError(error.EmptyKind, reg.register("sess-1", "", 42));
+}
+
+test "register and adopt free the identity strings when an allocation fails" {
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    for ([_]bool{ false, true }) |adopt_child| {
+        for (0..4) |fail_index| {
+            var backing = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer backing.deinit();
+            var failing = std.testing.FailingAllocator.init(backing.allocator(), .{ .fail_index = fail_index });
+            var reg = Registry.init(failing.allocator(), io);
+            {
+                defer reg.deinit();
+                var child = try std.process.spawn(io, .{
+                    .argv = &.{"true"},
+                    .stdin = .pipe,
+                    .stdout = .pipe,
+                    .stderr = .ignore,
+                });
+                var adopted = false;
+                defer if (!adopted) child.kill(io);
+                if (adopt_child) {
+                    if (fail_index < 3) {
+                        try std.testing.expectError(error.OutOfMemory, reg.adopt("sess-oom", "python", child));
+                    } else {
+                        const pid = try reg.adopt("sess-oom", "python", child);
+                        adopted = true;
+                        try std.testing.expectEqual(child.id.?, pid);
+                    }
+                } else {
+                    defer reg.forget("sess-oom", "python");
+                    if (fail_index < 3) {
+                        try std.testing.expectError(error.OutOfMemory, reg.register("sess-oom", "python", child.id.?));
+                    } else {
+                        try reg.register("sess-oom", "python", child.id.?);
+                        try std.testing.expectEqual(child.id.?, reg.get("sess-oom", "python").?);
+                    }
+                }
+                try std.testing.expectEqual(@as(usize, if (adopted) 1 else 0), reg.count());
+            }
+            try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+        }
+    }
 }
