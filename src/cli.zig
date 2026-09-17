@@ -2274,7 +2274,7 @@ const specs = [_]Spec{
     .{ .command = .providers_check, .usage = "providers [check|models|catalog|fill|refresh] [name]", .blurb = "verify connectivity, list models, or query the models.dev catalog", .group = .inspect, .detail = "check [name]    ping each provider (or one) and report latency/cost (default)\n                a sweep announces each provider before contacting it, uses\n                agent.provider_check_timeout_seconds as its timeout, then ends\n                with a summary table\nmodels [name]   list a provider's models (openrouter pulls its own DB)\ncatalog <query> search the local models.dev snapshot by id/family\nfill <name>     print catalog specs for a configured provider's models\nrefresh         download models.dev into state/models-dev.json\n                catalog, fill, and the Models view then read that file" },
     .{ .command = .auth, .usage = "auth [status|login|logout] [codex|grok|claude]", .blurb = "manage clanker's native provider OAuth credentials", .group = .maintain, .detail = "status [provider]  show OAuth and API-key availability without\n                   revealing secrets (default)\nlogin <provider>   authorize clanker directly using the provider's\n                   native OAuth flow\nlogout <provider>  remove clanker's saved OAuth tokens; API keys are untouched\n\nOAuth tokens live under agent.state_dir/oauth with owner-only permissions.\nLogin and refresh are implemented by native provider plugins; no ACP backend,\nvendor CLI, or external credential store is involved." },
 
-    .{ .command = .chat, .usage = "chat [rooms|send|history|subscribe]", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "Bare `chat` is `chat rooms`.\n\nchat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]" },
+    .{ .command = .chat, .usage = "chat [rooms|send|history|subscribe]", .blurb = "chatrooms shared with other instances", .group = .peers, .detail = "Bare `chat` is `chat rooms`.\n\nchat send <room> \"<text>\"\nchat history <room> [after-ts]\nchat rooms\nchat subscribe <room> [on|off]\n\nsubscribe defaults to on. Also accepts true/1/yes for on and false/0/no\nfor off. Other values are usage errors and leave subscriptions unchanged." },
     .{ .command = .notify, .usage = "notify <peer> \"<message>\"", .blurb = "send a notification to a peer", .group = .peers },
     .{ .command = .phonebook, .usage = "phonebook", .blurb = "list peer agent cards", .group = .peers },
     .{ .command = .mesh, .usage = "mesh [status|join|leave|pending|admit|deny]", .blurb = "join or leave the clanker mesh, or inspect it", .group = .peers, .flags = &.{.webui_port}, .detail = "Talks to the local `clanker serve` over loopback HTTP. It never opens a\nmesh socket; serve owns those. `--webui-port` selects which serve when\nseveral run on one host (same protocol as two machines).\n\nstatus                 members, listen address, admission (default)\njoin <host:port>       dial that member\nleave [<peer-id>]      drop one peer, or leave the mesh yourself\npending                JOIN requests waiting for admit/deny\nadmit <peer-id>        accept a pending JOIN\ndeny <peer-id>         refuse a pending JOIN\n\n--webui-port <port>    local serve port (default 17921, or [serve].webui_port)\n\nRefuses if serve is not up, naming `clanker serve` and `modules.mesh`.\nSharing a workspace is a later verb (`workspace_share`); this command is\ninstance membership only." },
@@ -6930,12 +6930,15 @@ fn cmdAcp(init: std.process.Init, opts: Options) !void {
     try acp.serve(init.io, init.gpa);
 }
 
-/// Closed spellings of "turn subscription on". Anything else is off.
-const subscribe_on = std.StaticStringMap(void).initComptime(.{
-    .{ "true", {} },
-    .{ "on", {} },
-    .{ "1", {} },
-    .{ "yes", {} },
+const subscribe_values = std.StaticStringMap(bool).initComptime(.{
+    .{ "true", true },
+    .{ "on", true },
+    .{ "1", true },
+    .{ "yes", true },
+    .{ "false", false },
+    .{ "off", false },
+    .{ "0", false },
+    .{ "no", false },
 });
 
 fn cmdChat(init: std.process.Init, opts: Options) !void {
@@ -6981,7 +6984,10 @@ fn cmdChat(init: std.process.Init, opts: Options) !void {
         }
         if (msgs.len == 0) try out.writeStreamingAll(io, "(no messages)\n");
     } else if (std.mem.eql(u8, opts.chat_sub, "subscribe")) {
-        const on = if (opts.message) |m| subscribe_on.get(m) != null else true;
+        const on = if (opts.message) |m| subscribe_values.get(m) orelse {
+            var buf: [elide_limit + 3]u8 = undefined;
+            usageExitFor(io, "chat", "chat subscribe takes on or off, got '{s}' (true/on/1/yes, false/off/0/no)", .{elideArg(&buf, m)});
+        } else true;
         try chatrooms.subscribe(base, io, gpa, arena, state_dir, opts.room.?, on);
         const line = try std.fmt.allocPrint(arena, "{s} {s}\n", .{ if (on) "subscribed to" else "unsubscribed from", opts.room.? });
         try out.writeStreamingAll(io, line);

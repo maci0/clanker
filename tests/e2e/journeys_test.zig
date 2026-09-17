@@ -59,6 +59,42 @@ test "operator journey: help and config dump report stdout write failures" {
     }
 }
 
+test "operator journey: chat subscribe rejects invalid values without changing state" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try harness.writeMockConfig(io, tmp.dir, gpa, 9);
+
+    var joined = try harness.run(gpa, io, tmp.dir, &.{ "chat", "subscribe", "ops" });
+    defer joined.deinit(gpa);
+    try std.testing.expect(joined.ok());
+    try std.testing.expectEqualStrings("subscribed to ops\n", joined.stdout);
+    const before = try tmp.dir.readFileAlloc(io, "state/chatrooms-sub.json", gpa, .limited(4096));
+    defer gpa.free(before);
+
+    for ([_][]const u8{ "onn", "falsee", "2", "" }) |value| {
+        var rejected = try harness.run(gpa, io, tmp.dir, &.{ "chat", "subscribe", "ops", value });
+        defer rejected.deinit(gpa);
+        try std.testing.expectEqual(std.process.Child.Term{ .exited = 2 }, rejected.term);
+        try std.testing.expectEqualStrings("", rejected.stdout);
+        try std.testing.expect(std.mem.find(u8, rejected.stderr, "chat subscribe") != null);
+        try std.testing.expect(std.mem.find(u8, rejected.stderr, "on or off") != null);
+        const after = try tmp.dir.readFileAlloc(io, "state/chatrooms-sub.json", gpa, .limited(4096));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings(before, after);
+    }
+
+    for ([_][]const u8{ "off", "false", "0", "no", "on", "true", "1", "yes" }, 0..) |value, i| {
+        var accepted = try harness.run(gpa, io, tmp.dir, &.{ "chat", "subscribe", "ops", value });
+        defer accepted.deinit(gpa);
+        try std.testing.expect(accepted.ok());
+        try std.testing.expectEqualStrings(if (i < 4) "unsubscribed from ops\n" else "subscribed to ops\n", accepted.stdout);
+    }
+}
+
 test "operator journey: add-goal persists the objective without starting a run" {
     const gpa = std.testing.allocator;
     var threaded = std.Io.Threaded.init(gpa, .{});
