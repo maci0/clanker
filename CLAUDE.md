@@ -1,4 +1,9 @@
+@AGENTS.md
+
 # Use clanker's own tooling — mandatory
+
+Use these verbs only within the current task's permissions. Tool preference
+never authorizes network calls, credential linking, commits, or cleanup.
 
 **If clanker implements a verb for the task, you must use that verb.** Ad-hoc
 shell — `grep`, `find`, `rm`, hand-written markdown, a hand-rolled `git`
@@ -25,8 +30,6 @@ describing what one does, read its record: `docs/README.md` for the
 documentation taxonomy, `docs/adrs/` for decisions already made, `docs/prds/`
 for what a feature is meant to be, `docs/manifest.md` for what a descriptor
 may grant. `--help` is the surface, not the design.
-
-@AGENTS.md
 
 ## The record stores, and which is which
 
@@ -415,10 +418,9 @@ js-suite-coverage, webui-budget, sandbox-abi, tools-ts-toolchain,
 release-contract, reports-inventory, skills-inventory and dep-patches.
 `zig build e2e` is separate and is not part of it.
 
-`dep-patches` is the one that fails on a fresh worktree rather than on your
-change: `zig-pkg/` is gitignored, so `git worktree add` starts with no
-dependency cache and `zig build` extracts pristine upstream trees. Run `zig
-build` first (nothing exists to patch before that), then
-`scripts/apply-patches.sh`.
+For a fresh checkout or worktree, follow the bootstrap in AGENTS.md:
+`zig build --fetch=all`, then `scripts/apply-patches.sh`, then `zig build`.
+Fetching extracts the dependencies without compiling; an ordinary build
+refuses pristine upstream trees until the local patches are applied.
 
 Every command takes `--help`; read it before guessing at flags.
