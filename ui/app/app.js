@@ -8,7 +8,7 @@ import { dmRoom as dmRoomMod, dmSafeName as dmSafeNameMod, dmPartner as dmPartne
 import { runLabel as runLabelMod, modelLabel as modelLabelMod, chatRoomLabel as chatRoomLabelMod } from "./core/labels.js";
 import { makeLineSplitter as makeLineSplitterMod, pumpInto, onLive as liveOn, liveOk as liveIsUp } from "./core/stream.js";
 import { makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied, steerClear, steerPreview, steeredText as steeredMessageText, renderSteerList } from "./core/steer.js";
-import { INLINE_RE as mdINLINE_RE, inlineInto as mdInlineInto, paragraphInto as mdParagraphInto, tableRow as mdTableRow, renderMarkdown as mdRenderMarkdown, renderMarkdownWithFences as mdRenderMarkdownWithFences, buildCodeBlock as mdBuildCodeBlock, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
+import { renderMarkdownWithFences as mdRenderMarkdownWithFences, finalizeAnswer as mdFinalizeAnswer } from "./lib/markdown.js";
 import { boardActionLine as boardActionLineMod } from "./lib/board.js";
 import { openOverlay as overlayOpen, closeOverlay as overlayClose, focusableIn as overlayFocusableIn, trapOverlayTab as overlayTrapTab } from "./core/overlay.js";
 import { clearMarks as searchClear, markMatches as searchMark, turnForMessage } from "./core/search.js";
@@ -1691,13 +1691,7 @@ function showCaret(turn, on) {
    innerHTML, so markup a model writes lands as visible characters and is
    never parsed as markup. */
 
-var INLINE_RE = mdINLINE_RE;
-var inlineInto = mdInlineInto;
-var paragraphInto = mdParagraphInto;
-var tableRow = mdTableRow;
-var renderMarkdown = mdRenderMarkdown;
 var renderMarkdownWithFences = mdRenderMarkdownWithFences;
-var buildCodeBlock = mdBuildCodeBlock;
 var finalizeAnswer = mdFinalizeAnswer;
 /* fuzzyMatch came over in the ES-module split as utilFuzzyMatch; the palette
    and the prompt list call it bare, so it needs its alias like the markdown
