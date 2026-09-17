@@ -12457,7 +12457,7 @@ fn handleWebuiPluginAsset(io: std.Io, gpa: std.mem.Allocator, cfg: *const config
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(1 << 20)) catch {
+    const bytes = webui_assets.readDiskAsset(io, std.Io.Dir.cwd(), path, arena, .limited(1 << 20)) catch {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such plugin asset\"}");
         return;
     };
@@ -12576,7 +12576,7 @@ fn jsonOrder(obj: std.json.ObjectMap) i64 {
 }
 
 fn collectThemeEntries(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ![]ThemeEntry {
-    var opened = dir.openDir(io, webui_themes_dir, .{ .iterate = true }) catch
+    var opened = dir.openDir(io, webui_themes_dir, .{ .iterate = true, .follow_symlinks = false }) catch
         return try arena.alloc(ThemeEntry, 0);
     defer opened.close(io);
 
@@ -12585,14 +12585,14 @@ fn collectThemeEntries(io: std.Io, dir: std.Io.Dir, arena: std.mem.Allocator) ![
     while (it.next(io) catch null) |entry| {
         if (entry.kind != .file) continue;
         const stem = themeRestName(entry.name) orelse continue;
-        const raw = opened.readFileAlloc(io, entry.name, arena, .limited(64 * 1024)) catch continue;
+        const raw = webui_assets.readDiskAsset(io, opened, entry.name, arena, .limited(64 * 1024)) catch continue;
         const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch continue;
         if (parsed != .object) continue;
         const tokens = parsed.object.get("tokens") orelse continue;
         if (tokens != .object) continue;
         const scheme = if (parsed.object.get("scheme")) |s| (if (s == .string) s.string else "dark") else "dark";
         const css_file = std.fmt.allocPrint(arena, "{s}.css", .{stem}) catch continue;
-        const ships_css = if (opened.statFile(io, css_file, .{})) |_| true else |_| false;
+        const ships_css = if (opened.statFile(io, css_file, .{ .follow_symlinks = false })) |stat| stat.kind == .file else |_| false;
         try list.append(arena, .{
             .id = try arena.dupe(u8, stem),
             .scheme = scheme,
@@ -12635,6 +12635,17 @@ test "collectThemeEntries orders by order then name and skips junk" {
     const catalog = try writeThemeCatalog(arena, entries);
     try std.testing.expect(std.mem.find(u8, catalog, "\"css\":\"alpha.css\"") != null);
     try std.testing.expect(std.mem.find(u8, catalog, "\"css\":null") == null);
+}
+
+test "collectThemeEntries refuses a symlinked theme directory" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    try env.tmp.dir.createDirPath(io, "other");
+    try env.tmp.dir.writeFile(io, .{ .sub_path = "other/sample.json", .data = "{\"tokens\":{}}" });
+    try env.tmp.dir.symLink(io, "other", "themes", .{ .is_directory = true });
+    const entries = try collectThemeEntries(io, env.tmp.dir, env.arena());
+    try std.testing.expectEqual(@as(usize, 0), entries.len);
 }
 
 fn writeThemeCatalog(arena: std.mem.Allocator, entries: []const ThemeEntry) ![]const u8 {
@@ -12682,7 +12693,7 @@ fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8,
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
-        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(128 * 1024)) catch {
+        const bytes = webui_assets.readDiskAsset(io, std.Io.Dir.cwd(), path, arena, .limited(128 * 1024)) catch {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such theme stylesheet\"}");
             return;
         };
@@ -12694,7 +12705,7 @@ fn handleWebuiThemeAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u8,
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
-        const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64 * 1024)) catch {
+        const bytes = webui_assets.readDiskAsset(io, std.Io.Dir.cwd(), path, arena, .limited(64 * 1024)) catch {
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such theme\"}");
             return;
         };
@@ -12734,7 +12745,7 @@ fn handleWebuiCommandAsset(io: std.Io, gpa: std.mem.Allocator, target: []const u
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(64 * 1024)) catch {
+    const bytes = webui_assets.readDiskAsset(io, std.Io.Dir.cwd(), path, arena, .limited(64 * 1024)) catch {
         respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"no such command catalog\"}");
         return;
     };

@@ -9,6 +9,63 @@
 
 const std = @import("std");
 
+pub fn readDiskAsset(io: std.Io, root: std.Io.Dir, path: []const u8, allocator: std.mem.Allocator, limit: std.Io.Limit) ![]u8 {
+    if (path.len == 0 or std.fs.path.isAbsolute(path) or std.mem.findScalar(u8, path, '\\') != null)
+        return error.AccessDenied;
+    var components = std.mem.splitScalar(u8, path, '/');
+    while (components.next()) |component| {
+        if (component.len == 0 or std.mem.eql(u8, component, ".") or std.mem.eql(u8, component, ".."))
+            return error.AccessDenied;
+    }
+    components.reset();
+    var dir = root;
+    var owned = false;
+    defer if (owned) dir.close(io);
+    while (components.next()) |component| {
+        if (components.peek() != null) {
+            const child = try dir.openDir(io, component, .{ .follow_symlinks = false });
+            if (owned) dir.close(io);
+            dir = child;
+            owned = true;
+        } else {
+            const file = try dir.openFile(io, component, .{ .follow_symlinks = false, .allow_directory = false });
+            defer file.close(io);
+            if ((try file.stat(io)).kind != .file) return error.AccessDenied;
+            var reader = file.reader(io, &.{});
+            return reader.interface.allocRemaining(allocator, limit);
+        }
+    }
+    return error.AccessDenied;
+}
+
+test "readDiskAsset reads regular assets and preserves the size limit" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "ui/plugins/sample");
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/plugins/sample/app.js", .data = "sample" });
+    const bytes = try readDiskAsset(io, tmp.dir, "ui/plugins/sample/app.js", std.testing.allocator, .limited(7));
+    defer std.testing.allocator.free(bytes);
+    try std.testing.expectEqualStrings("sample", bytes);
+    try std.testing.expectError(error.StreamTooLong, readDiskAsset(io, tmp.dir, "ui/plugins/sample/app.js", std.testing.allocator, .limited(5)));
+}
+
+test "readDiskAsset refuses linked assets and linked parent directories" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "themes");
+    try tmp.dir.writeFile(io, .{ .sub_path = "themes/sample.json", .data = "{}" });
+    try tmp.dir.symLink(io, "sample.json", "themes/linked.json", .{});
+    try tmp.dir.symLink(io, "themes", "linked", .{ .is_directory = true });
+    for ([_][]const u8{ "themes/linked.json", "linked/sample.json", "themes", "themes/../themes/sample.json", "/themes/sample.json", "themes//sample.json", "themes\\sample.json", "" }) |path| {
+        if (readDiskAsset(io, tmp.dir, path, std.testing.allocator, .limited(64))) |bytes| {
+            std.testing.allocator.free(bytes);
+            return error.TestUnexpectedResult;
+        } else |_| {}
+    }
+}
+
 /// One cache kind per first-party webui file. `.js` is only `/webui/app.js`:
 /// any other path that lands there serves app.js at the wrong URL, and the
 /// browser then requests `/webui/core/core/utils.js` (and the rest of app.js's
