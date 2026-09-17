@@ -60,7 +60,10 @@ pub fn receive(
     defer tx.rollback();
     for (events) |e| {
         if (e.seq <= cursor) continue; // duplicate
-        if (e.seq != next + 1) return .{ .gap = next }; // hole
+        if (e.seq != next + 1) {
+            tx.rollback();
+            return .{ .gap = cursor };
+        }
         _ = try store.append(e.ts_ms, e.kind, e.payload);
         next = e.seq;
     }
@@ -252,6 +255,46 @@ test "receive accepts appends at cursor+1, drops duplicates, and reports gaps" {
     var store = try replicaStore(io, arena, "host-a", "sess-1");
     defer store.close();
     try std.testing.expectEqual(@as(i64, 2), try store.lastSeq());
+}
+
+test "receive reports the committed cursor after rolling back a gapped batch" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const owner = try std.fmt.allocPrint(arena, "rollback-{s}", .{&env.tmp.sub_path});
+    const owner_dir = try std.fmt.allocPrint(arena, "{s}/{s}", .{ replica_root, owner });
+    defer std.Io.Dir.cwd().deleteTree(io, owner_dir) catch {};
+
+    const first = [_]session_events.Event{
+        .{ .seq = 1, .ts_ms = 1000, .kind = "task", .payload = "first" },
+    };
+    try std.testing.expectEqual(@as(i64, 1), (try receive(io, arena, owner, "session", &first)).accepted);
+
+    const gapped = [_]session_events.Event{
+        .{ .seq = 2, .ts_ms = 2000, .kind = "assistant", .payload = "second" },
+        .{ .seq = 4, .ts_ms = 4000, .kind = "assistant", .payload = "fourth" },
+    };
+    const result = try receive(io, arena, owner, "session", &gapped);
+    var store = try replicaStore(io, arena, owner, "session");
+    defer store.close();
+    try std.testing.expectEqual(@as(i64, 1), try store.lastSeq());
+    try std.testing.expectEqual(@as(i64, 1), result.gap);
+
+    const repaired = [_]session_events.Event{
+        gapped[0],
+        .{ .seq = 3, .ts_ms = 3000, .kind = "task", .payload = "third" },
+        gapped[1],
+    };
+    try std.testing.expectEqual(@as(i64, 4), (try receive(io, arena, owner, "session", &repaired)).accepted);
+    const saved = try store.since(result.gap);
+    try std.testing.expectEqual(@as(usize, 3), saved.len);
+    for (saved, repaired) |actual, expected| {
+        try std.testing.expectEqual(expected.seq, actual.seq);
+        try std.testing.expectEqual(expected.ts_ms, actual.ts_ms);
+        try std.testing.expectEqualStrings(expected.kind, actual.kind);
+        try std.testing.expectEqualStrings(expected.payload, actual.payload);
+    }
 }
 
 test "the replica messages table matches the owner schema" {
