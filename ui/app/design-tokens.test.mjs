@@ -122,6 +122,16 @@ function splitLayers(value) {
   return out.concat(buf).map((s) => s.trim()).filter(Boolean);
 }
 
+test("task suggestions are flat controls without entrance choreography", () => {
+  const css = readFileSync(join(here, "app.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const suggestion = css.match(/(?:^|\n)\.suggestion\s*\{([^}]*)\}/);
+  assert.ok(suggestion, "task suggestion styles must exist");
+  assert.match(suggestion[1], /box-shadow:\s*none\s*;/);
+  for (const rule of css.matchAll(/[^{}]*\.suggestion(?:\b|:)[^{}]*\{([^}]*)\}/g)) {
+    assert.doesNotMatch(rule[1], /\banimation(?:-[\w-]+)?\s*:/);
+  }
+});
+
 test("every border-radius is a token, a full circle, or none", () => {
   // 50% is a circle (lamp domes, avatars) and 0 squares a corner off; neither
   // is a size on the scale, so neither has a token to name it.
