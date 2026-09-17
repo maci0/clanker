@@ -9,9 +9,71 @@ import test from "node:test";
 // the shipped HTML/JS as served, so they are asserted against the files as
 // embedded, not a reimplementation.
 
+import { loadVendor, vendorLoads } from "./core/vendor.js";
+
 const here = dirname(fileURLToPath(import.meta.url));
 const app = readFileSync(join(here, "app.js"), "utf8");
 const markup = readFileSync(join(here, "index.html"), "utf8");
+
+test("lazy vendors share downloads and recover from errors, missing exports and timeouts", async function () {
+  const savedDocument = globalThis.document;
+  const savedWindow = globalThis.window;
+  const scripts = [];
+  const timers = new Map();
+  let nextTimer = 0;
+  globalThis.window = {
+    setTimeout(fn, ms) {
+      assert.ok(ms > 0 && ms <= 30000);
+      timers.set(++nextTimer, fn);
+      return nextTimer;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  };
+  globalThis.document = {
+    createElement(tag) {
+      assert.equal(tag, "script");
+      return { remove() { this.removed = true; } };
+    },
+    head: { appendChild(script) { scripts.push(script); } },
+  };
+  const file = "delivery-test.js";
+  let ready = false;
+  const isReady = () => ready;
+  try {
+    for (const failure of ["error", "exports", "timeout"]) {
+      const pending = loadVendor(file, isReady);
+      assert.equal(loadVendor(file, isReady), pending);
+      const script = scripts.at(-1);
+      const rejection = assert.rejects(pending, /could not load|exported nothing|timed out/);
+      if (failure === "error") script.onerror();
+      else if (failure === "exports") script.onload();
+      else {
+        assert.equal(timers.size, 1, "a stalled request has a deadline");
+        [...timers.values()][0]();
+      }
+      await rejection;
+      assert.equal(vendorLoads[file], undefined, "failure must permit a fresh download");
+      assert.equal(script.removed, true);
+      assert.equal(timers.size, 0);
+      assert.equal(script.onload, null);
+      assert.equal(script.onerror, null);
+    }
+    const pending = loadVendor(file, isReady);
+    ready = true;
+    scripts.at(-1).onload();
+    await pending;
+    assert.equal(timers.size, 0);
+    assert.equal(loadVendor(file, isReady), pending);
+    assert.equal(scripts.length, 4, "one download per attempt, none after success");
+    await loadVendor("already-ready.js", isReady);
+    assert.equal(scripts.length, 4);
+  } finally {
+    delete vendorLoads[file];
+    delete vendorLoads["already-ready.js"];
+    globalThis.document = savedDocument;
+    globalThis.window = savedWindow;
+  }
+});
 
 test("critical-path modulepreloads name modules the page actually loads", function () {
   // A preload that points at a URL no script tag or import ever requests is

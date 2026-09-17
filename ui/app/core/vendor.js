@@ -1,23 +1,38 @@
-// Vanilla, no bundler. ES module; also mirrors to window for classic app.js fallback.
-
 export var vendorLoads = {};
 export var tomlRegistered = false;
 
 import { readJson } from "./utils.js";
 export { readJson };
 
+const vendorLoadTimeoutMs = 30000;
+
 export function loadVendor(file, ready) {
   if (vendorLoads[file]) return vendorLoads[file];
   vendorLoads[file] = ready() ? Promise.resolve() : new Promise(function (resolve, reject) {
     var s = document.createElement("script");
+    var timer = window.setTimeout(function () {
+      done();
+      reject(new Error("timed out loading " + file));
+    }, vendorLoadTimeoutMs);
+    function done() {
+      window.clearTimeout(timer);
+      s.remove();
+      s.onload = null;
+      s.onerror = null;
+    }
     s.src = new URL("../vendor/" + file, import.meta.url).href;
     s.onload = function () {
+      done();
       if (ready()) resolve();
       else reject(new Error(file + " loaded but exported nothing"));
     };
-    s.onerror = function () { reject(new Error("could not load " + file)); };
+    s.onerror = function () {
+      done();
+      reject(new Error("could not load " + file));
+    };
     document.head.appendChild(s);
   });
+  vendorLoads[file].catch(function () { delete vendorLoads[file]; });
   return vendorLoads[file];
 }
 
