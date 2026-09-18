@@ -5,6 +5,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-18
+
+Compatibility-breaking minor: symlink and Origin/Host hardening, plus numeric
+config and SBOM field corrections. Migrations are under Breaking, Security,
+and Fixed.
+
 ### Breaking
 
 - Security hardening changes compatibility for symlinked web UI assets and
@@ -30,6 +36,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   port for the page and its API requests; reverse proxies must preserve the
   browser-facing Host and keep that hostname in the configured host allowlist.
   Requests without Origin retain their existing behavior.
+- The `schedule` guest's filesystem grant is `state/schedule.json` and
+  `state/schedule/log.jsonl`, not the `state/schedule/` directory. Other files
+  under that directory are no longer reachable from the guest. No migration if
+  the tool only used those two paths.
+- The `skills` guest no longer inherits `[agent] tools_dir` prefixes. It still
+  reads `skills/`, `state/skills.json`, and `[agent] skills_dir`. Tools that
+  need the tool directories keep their own grant.
+
+### Changed
+
+- Successful `/api/*` responses log at debug, with request id, method, path,
+  status, and duration. Info-level serve output is unchanged.
 
 ### Fixed
 
@@ -79,6 +97,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - Command and flag help, and `--dump-config`, now exit 1 when stdout cannot
   be written instead of reporting success after losing the requested output.
   A broken pipe still exits 0, preserving early-closing pipeline behavior.
+- Workspace names, root names, and resolved root paths that are not valid
+  UTF-8 are refused and leave `state/workspaces.json` unchanged.
+- A failed or timed-out web UI vendor script load no longer sticks, so a
+  retry can fetch the file again.
+- Refreshing the system prompt no longer keeps temporary per-turn guidance
+  from the previous turn.
+- Rate-limit windows expire at the 60-second boundary instead of one second
+  later.
+- Goal-loop evaluator evidence is escaped and length-bounded before it is
+  interpolated into the evaluator prompt.
+- A time-seeded sandbox run records a replayable `agent.seed` value, and
+  setting that seed reproduces the guest RNG stream.
+- The TUI model picker says "no usable models" when none are configured, and
+  points at `clanker doctor`, instead of treating that the same as a filter
+  miss.
 
 ## [0.4.0] - 2026-09-17
 
@@ -3477,7 +3510,8 @@ Developer tooling only: no public surface changes.
   `*.tool.json` files load unchanged. A manifest declaring a version this build
   does not understand is refused rather than read under version 1 rules.
 
-[unreleased]: https://github.com/maci0/clanker/compare/v0.4.0...HEAD
+[unreleased]: https://github.com/maci0/clanker/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/maci0/clanker/releases/tag/v0.5.0
 [0.4.0]: https://github.com/maci0/clanker/releases/tag/v0.4.0
 [0.3.0]: https://github.com/maci0/clanker/releases/tag/v0.3.0
 [0.2.1]: https://github.com/maci0/clanker/releases/tag/v0.2.1
