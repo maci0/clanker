@@ -91,6 +91,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   inline `style.marginTop` is a `mt-2` class, so it is visible to the token
   sweep that never saw an inline style.
 
+- The knowledge collections view (`ui/app/features/knowledge.js`) is styled
+  with Tailwind utilities and its buttons come from the kit; its rules left
+  `app.css` and `views.css`. The included-collections badge shows and hides
+  through the `hidden` attribute instead of an inline `display`, a jumped-to
+  document's wash is `data-[found=true]` utilities over the accent token, and
+  the inline `marginTop`/`marginLeft` on two elements are classes. The dead
+  `knowledge-preview` and `knowledge-hit` classes are gone from the markup.
+- `ui/app/tailwind.test.mjs` gained a guard for its own ledger: a file that
+  carries a named class list or a bracketed Tailwind variant but is not on the
+  migrated list fails the suite. The ledger is written by hand, and the file it
+  was missing (the prompts view and the kit, from the previous change) was
+  ported with nothing checking its classes at all.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

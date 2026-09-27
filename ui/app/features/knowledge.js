@@ -1,5 +1,6 @@
 // Knowledge view — single-user. Collections of documents.
 import { uiConfirm, uiPrompt, toast, showLoadError } from "../core/ui.js";
+import * as kit from "../core/kit.js";
 import { readJson, fmtBytes, wireRefresh } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
@@ -9,22 +10,21 @@ function ensureBadge(){
   var composer = document.getElementById("task-form");
   var badge = document.createElement("div");
   badge.id = "knowledge-badge";
-  badge.className = "meta knowledge-badge";
+  badge.className = BADGE_CLASS;
   if (composer) composer.insertBefore(badge, composer.querySelector(".toolbar") || null);
   return badge;
 }
 function refreshBadge(){
   var badge = ensureBadge();
   if (!badge) return;
-  if (!selectedKnowledge.length){ badge.style.display="none"; badge.textContent=""; return; }
-  badge.style.display="block";
+  if (!selectedKnowledge.length){ badge.hidden = true; badge.textContent=""; return; }
+  badge.hidden = false;
   // Reuse knowledge hint text when available
   var hint = document.getElementById("knowledge-hint");
   var n = selectedKnowledge.length;
   var msg = hint ? hint.textContent : (n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt.");
   badge.textContent = msg + " ";
-  var clear = document.createElement("button");
-  clear.type="button"; clear.className="secondary knowledge-badge-clear"; clear.textContent="Don't include in next chat";
+  var clear = kit.button({variant:"secondary", class: CLEAR_CLASS}, "Don't include in next chat");
   clear.addEventListener("click", function(){ selectedKnowledge.length=0; persistKnowledge(); updateHint(); refreshBadge(); });
   badge.appendChild(clear);
 }
@@ -45,18 +45,18 @@ export function loadKnowledge(){
     if(list){
       list.textContent="";
       if(!cols.length){
-        var empty=document.createElement("div"); empty.className="knowledge-empty";
-        var heading=document.createElement("h3"); heading.textContent="No collections on file"; empty.appendChild(heading);
-        var copy=document.createElement("p"); copy.textContent="Collections hold notes and reference material for chat context."; empty.appendChild(copy);
-        var start=document.createElement("button"); start.type="button"; start.className="primary"; start.textContent="Add collection";
+        var empty=document.createElement("div"); empty.className=EMPTY_CLASS;
+        var heading=document.createElement("h3"); heading.className=EMPTY_HEAD_CLASS; heading.textContent="No collections on file"; empty.appendChild(heading);
+        var copy=document.createElement("p"); copy.className=EMPTY_COPY_CLASS; copy.textContent="Collections hold notes and reference material for chat context."; empty.appendChild(copy);
+        var start=kit.button({variant:"primary"}, "Add collection");
         start.addEventListener("click",function(){
           var title=document.getElementById("knowledge-title");
           if(title){ title.focus(); title.scrollIntoView({behavior:"smooth",block:"center"}); }
         });
         empty.appendChild(start); list.appendChild(empty);
       } else cols.forEach(function(c){
-        var card=document.createElement("div"); card.className="knowledge-card";
-        var title=document.createElement("div"); title.className="knowledge-title";
+        var card=document.createElement("div"); card.className=CARD_CLASS;
+        var title=document.createElement("div"); title.className=TITLE_CLASS;
         var cb=document.createElement("input"); cb.type="checkbox"; cb.value=c.id; cb.checked=selectedKnowledge.indexOf(c.id)!==-1;
         cb.setAttribute("aria-label","Include "+c.title+" in chat");
         cb.addEventListener("change",function(){
@@ -65,18 +65,18 @@ export function loadKnowledge(){
           persistKnowledge(); updateHint(); refreshBadge();
         });
         var include=document.createElement("label");
-        include.className="checkbox-row knowledge-include";
+        include.className="checkbox-row m-0 flex-none";
         include.appendChild(cb);
         var includeTxt=document.createElement("span"); includeTxt.textContent="Include in chat";
         include.appendChild(includeTxt);
         title.appendChild(include);
-        var name=document.createElement("span"); name.className="knowledge-name";
+        var name=document.createElement("span"); name.className="min-w-0 flex-1 basis-48 wrap-anywhere";
         name.textContent=c.title+"  ·  "+c.doc_count+" docs  ·  "+fmtBytes(c.bytes||0);
         if(c.description) name.title=c.description; title.appendChild(name);
-        var actions=document.createElement("span"); actions.className="knowledge-actions";
-        var open=document.createElement("button"); open.type="button"; open.className="secondary"; open.textContent="Open";
+        var actions=document.createElement("span"); actions.className="ml-auto flex gap-2";
+        var open=kit.button({variant:"secondary"}, "Open");
         open.addEventListener("click",function(){ openCollection(c.id); }); actions.appendChild(open);
-        var del=document.createElement("button"); del.type="button"; del.className="secondary danger"; del.textContent="Delete";
+        var del=kit.button({variant:"secondary-danger"}, "Delete");
         del.addEventListener("click",function(){ deleteCollection(c.id,c.title); }); actions.appendChild(del);
         title.appendChild(actions); card.appendChild(title); list.appendChild(card);
       });
@@ -131,7 +131,6 @@ function closeCollection(){
 function fillPreview(row, text) {
   var full = text || "";
   var pre = document.createElement("pre");
-  pre.className = "knowledge-preview";
   var cap = 800;
   if (full.length <= cap) {
     pre.textContent = full;
@@ -140,10 +139,7 @@ function fillPreview(row, text) {
   }
   pre.textContent = full.slice(0, cap);
   row.appendChild(pre);
-  var more = document.createElement("button");
-  more.type = "button";
-  more.className = "secondary";
-  more.textContent = "Show all";
+  var more = kit.button({variant:"secondary"}, "Show all");
   more.title = "Show the rest of this document (" + full.length + " characters)";
   more.addEventListener("click", function () {
     pre.textContent = full;
@@ -173,6 +169,21 @@ function runFolderSync(){
     .finally(function(){ btn.disabled = false; });
 }
 
+/* The collection list and its cards, as Tailwind utilities over the cabinet
+   tokens (ui/app/tailwind.src.css); the buttons come from the kit
+   (core/kit.js). The badge shows and hides through the `hidden` attribute
+   rather than an inline `display`, so the stylesheet and the token sweep both
+   see one state. */
+var BADGE_CLASS = "meta mt-1.5 rounded-plate-lg border border-dashed border-rule bg-surface-2 px-2 py-1.5";
+var CLEAR_CLASS = "ml-2 px-1 py-0.5 text-xs";
+var EMPTY_CLASS = "mt-6 max-w-2xl border-t border-rule py-4 text-left";
+var EMPTY_HEAD_CLASS = "mt-0 mb-2 font-mono text-xs font-semibold text-fg-muted uppercase tracking-label";
+var EMPTY_COPY_CLASS = "mt-0 mb-4 max-w-[52ch] leading-relaxed text-fg-muted";
+var CARD_CLASS = "border-b border-rule px-0.5 py-3";
+var TITLE_CLASS = "flex flex-wrap items-center gap-x-3 gap-y-2";
+/* A jumped-to document: the accent wash marks it without moving the row. */
+var DOC_CLASS = "data-[found=true]:bg-accent-dim data-[found=true]:outline-1 data-[found=true]:outline-accent/35";
+
 function openCollection(id, docId){
   fetch("/api/knowledge/"+encodeURIComponent(id)).then(readJson).then(function(data){
     var detail=document.getElementById("knowledge-detail"); if(!detail) return;
@@ -180,7 +191,7 @@ function openCollection(id, docId){
     showSyncRow(id);
     var head=document.createElement("div"); head.className="run-detail-head";
     var t=document.createElement("span"); t.className="run-detail-title"; t.textContent=data.title||id; head.appendChild(t);
-    var share=document.createElement("button"); share.type="button"; share.className="secondary"; share.textContent="Copy link"; share.style.marginLeft="var(--space-3)";
+    var share=kit.button({variant:"secondary", class:"ml-3"}, "Copy link");
     share.addEventListener("click", function(){
       var url = window.location.origin + window.location.pathname + "#knowledge/" + encodeURIComponent(id);
       if (!navigator.clipboard || !window.isSecureContext) { uiPrompt("Share link", url); return; }
@@ -188,15 +199,15 @@ function openCollection(id, docId){
         share.textContent="Copied"; setTimeout(function(){ share.textContent="Copy link"; }, 1200);
       }, function(){ uiPrompt("Share link", url); });
     }); head.appendChild(share);
-    var close=document.createElement("button"); close.type="button"; close.className="secondary"; close.textContent="Close";
+    var close=kit.button({variant:"secondary"}, "Close");
     close.addEventListener("click",closeCollection); head.appendChild(close); detail.appendChild(head);
     if(data.description){ var desc=document.createElement("p"); desc.className="meta"; desc.textContent=data.description; detail.appendChild(desc); }
     var docs=data.docs||[];
     if(!docs.length){ var empty=document.createElement("p"); empty.className="meta"; empty.textContent="No documents yet. Add one below."; detail.appendChild(empty); }
     else docs.forEach(function(d){
-      var row=document.createElement("div"); row.className="knowledge-doc";
+      var row=document.createElement("div"); row.className=DOC_CLASS;
       var dn=document.createElement("span"); dn.textContent=d.name+" ("+d.bytes+" bytes)"; row.appendChild(dn);
-      var rm=document.createElement("button"); rm.type="button"; rm.className="secondary danger"; rm.textContent="Remove";
+      var rm=kit.button({variant:"secondary-danger"}, "Remove");
       rm.addEventListener("click",function(){
         uiConfirm("Remove "+d.name+"?", { danger: true, confirmLabel: "Remove" }).then(function(yes){
           if(!yes) return;
@@ -212,7 +223,7 @@ function openCollection(id, docId){
       }
       detail.appendChild(row);
     });
-    var addForm=document.createElement("form"); addForm.className="goal-form"; addForm.style.marginTop="var(--space-4)";
+    var addForm=document.createElement("form"); addForm.className="goal-form mt-4";
     var nId="knowledge-new-doc-name";
     var nLabel=document.createElement("label"); nLabel.setAttribute("for", nId); nLabel.textContent="New document name"; addForm.appendChild(nLabel);
     var nInput=document.createElement("input"); nInput.type="text"; nInput.id=nId; nInput.placeholder="e.g. notes.md"; nInput.maxLength=200; nInput.required=true; addForm.appendChild(nInput);
@@ -228,7 +239,7 @@ function openCollection(id, docId){
       var fr=new FileReader(); fr.onload=function(){ cInput.value=String(fr.result||""); if(!nInput.value) nInput.value=f.name; }; fr.readAsText(f);
     });
     addForm.appendChild(fileInput);
-    var submit=document.createElement("button"); submit.type="submit"; submit.className="primary"; submit.textContent="Add document"; addForm.appendChild(submit);
+    var submit=kit.button({variant:"primary", type:"submit"}, "Add document"); addForm.appendChild(submit);
     addForm.addEventListener("submit",function(e){
       e.preventDefault(); var name=nInput.value.trim(); var content=cInput.value;
       if(!name||!content.trim()){ toast("Name and content are both required."); return; }
@@ -249,7 +260,7 @@ function openCollection(id, docId){
       failed.className="run-empty";
       failed.appendChild(document.createTextNode("Could not open this collection. "+err.message+" "));
       var retry=document.createElement("button");
-      retry.type="button"; retry.className="secondary"; retry.textContent="Try again";
+      var retry = kit.button({variant:"secondary"}, "Try again");
       retry.addEventListener("click",function(){ openCollection(id, docId); });
       failed.appendChild(retry);
       detail.appendChild(failed);
@@ -323,10 +334,7 @@ export function bindKnowledge(){
         var none=document.createElement("p");
         none.className="run-empty";
         none.appendChild(document.createTextNode("No documents mention “"+q+"”. "));
-        var clear=document.createElement("button");
-        clear.type="button";
-        clear.className="secondary";
-        clear.textContent="Clear search";
+        var clear = kit.button({variant:"secondary"}, "Clear search");
         clear.addEventListener("click",function(){
           if(searchInput){ searchInput.value=""; searchInput.focus(); }
           clearSearch();
@@ -339,7 +347,7 @@ export function bindKnowledge(){
       hits.forEach(function(h){
         var row=document.createElement("button");
         row.type="button";
-        row.className="secondary search-hit knowledge-hit";
+        row.className="secondary search-hit";
         var label=(h.collection_title||h.collection_id||"collection")+" / "+(h.doc_name||h.doc_id||"document");
         row.setAttribute("aria-label","Open "+label);
         var meta=document.createElement("div"); meta.className="search-hit-head";
@@ -362,7 +370,7 @@ export function bindKnowledge(){
         failed.className="run-empty";
         failed.appendChild(document.createTextNode(msg+" "));
         var retry=document.createElement("button");
-        retry.type="button"; retry.className="secondary"; retry.textContent="Try again";
+        var retry = kit.button({variant:"secondary"}, "Try again");
         retry.addEventListener("click",doSearch);
         failed.appendChild(retry);
         searchOut.appendChild(failed);

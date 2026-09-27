@@ -175,7 +175,7 @@ test("parseCssColor reads rgb and hex", async function () {
 test("knowledge search hits open the matching collection", function () {
   const src = readFileSync(join(here, "../features/knowledge.js"), "utf8");
   assert.match(src, /openCollection\(h\.collection_id,\s*h\.doc_id\)/);
-  assert.match(src, /className="secondary search-hit knowledge-hit"/);
+  assert.match(src, /className="secondary search-hit"/);
   assert.match(src, /function openCollection\(id, docId\)/);
 });
 
@@ -312,7 +312,17 @@ function knowledgeSearchPage() {
     window: { localStorage: { getItem: () => null } },
     fetch: (url) => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
     readJson: (response) => response,
-    wireRefresh: (button) => assert.equal(button, null)
+    wireRefresh: (button) => assert.equal(button, null),
+    // knowledge.js builds its controls with the component kit (core/kit.js);
+    // the module's imports are stripped below, so the stub stands in for it.
+    kit: {
+      button: (opts, text) => {
+        const b = element();
+        b.className = (opts && opts.variant) || "";
+        b.textContent = text;
+        return b;
+      }
+    }
   });
   const source = readFileSync(join(here, "../features/knowledge.js"), "utf8")
     .replace(/^import .*;$/gm, "").replace(/^export /gm, "");
@@ -732,10 +742,9 @@ test("Activity empty state offers to open the board", function () {
 
 test("Knowledge add-document is a primary CTA", function () {
   const src = readFileSync(join(here, "../features/knowledge.js"), "utf8");
-  assert.match(src, /submit\.className="primary"/);
-  assert.match(src, /submit\.textContent="Add document"/);
-  assert.match(src, /start\.className="primary"/);
-  assert.match(src, /start\.textContent="Add collection"/);
+  assert.match(src, /kit\.button\(\{variant:"primary", type:"submit"\}/);
+  assert.match(src, /kit\.button\(\{variant:"primary"\}, "Add collection"\)/);
+  assert.match(src, /"Add document"/);
 });
 
 function configEditorHarness() {

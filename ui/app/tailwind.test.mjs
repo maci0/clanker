@@ -37,12 +37,15 @@ const migrated = [
   "../plugins/health/app.js",
   "../plugins/files/app.js",
   "features/todos.js",
+  "features/prompts.js",
+  "features/knowledge.js",
+  "core/kit.js",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: a breakpoint, or
 /// a grid template the layout actually needs. A colour or a padding written
 /// this way is not on this list, and should not be.
-const arbitrary_ok = [/^max-(?:\[40rem\]|\[700px\]):/, /:?grid-cols-\[/, /^max-w-\[min\(/, /^ps-\[1\.8rem\]$/, /^max-h-\[70vh\]$/];
+const arbitrary_ok = [/^max-(?:\[40rem\]|\[700px\]):/, /:?grid-cols-\[/, /^max-w-\[min\(/, /^ps-\[1\.8rem\]$/, /^max-h-\[70vh\]$/, /^max-w-\[52ch\]$/];
 /// Variant prefixes that may carry brackets without being an arbitrary value:
 /// a breakpoint, or the element state a ported sheet reached through an
 /// attribute selector.
@@ -89,6 +92,35 @@ function classStrings(src) {
   for (const m of src.matchAll(/\.className\s*=\s*"([^"]*)"/g)) out.push(m[1]);
   return out;
 }
+
+test("every file that speaks the port's shape is on the ledger", function () {
+  // The list above is written by hand, and a file can be ported without being
+  // added to it — nothing else in this suite would notice, and the rules it
+  // replaced are already deleted from the sheets. Two shapes give it away: a
+  // named class list, or a bracketed Tailwind variant (`data-[status=…]`).
+  const missing = [];
+  for (const rel of migrated.concat([])) void rel; // keep the list referenced
+  const { readdirSync } = require("node:fs");
+  const isPorted = (src) => /^var [A-Z][A-Z0-9_]*CLASS\s*=/m.test(src) || /:\s*(?:data|group-data|aria|max|min)-?\[/.test(src);
+  const files = ["app.js", "preact-boot.js"];
+  for (const dir of ["features", "core", "lib"]) {
+    for (const entry of readdirSync(join(here, dir))) {
+      if (entry.endsWith(".js") && !entry.endsWith(".test.mjs")) files.push(`${dir}/${entry}`);
+    }
+  }
+  for (const rel of files) {
+    const src = readFileSync(join(here, rel), "utf8");
+    if (isPorted(src) && !migrated.includes(rel)) missing.push(rel);
+  }
+  for (const dir of readdirSync(join(here, "..", "plugins"))) {
+    if (dir.endsWith(".test.mjs")) continue;
+    let src = "";
+    try { src = readFileSync(join(here, "..", "plugins", dir, "app.js"), "utf8"); } catch { continue; }
+    const ported = /^var [A-Z][A-Z0-9_]*CLASS\s*=/m.test(src) || /"[^"]*\b(?:data|group-data|aria)-\[/.test(src);
+    if (ported && !migrated.includes(`../plugins/${dir}/app.js`)) missing.push(`../plugins/${dir}/app.js`);
+  }
+  assert.deepEqual(missing, [], `these files carry the port's shape but are not on the ledger: ${missing.join(", ")}`);
+});
 
 test("the compiled sheet is the build of the source beside it", function () {
   assert.match(built, /^\/\*! tailwindcss v4\./, "tailwind.css must be a Tailwind build");
