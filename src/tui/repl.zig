@@ -59,6 +59,7 @@ const goal_prompt = @import("../agent/goal_prompt.zig");
 const goal_loop = @import("../agent/goal_loop.zig");
 const research_cmd = @import("../records/research.zig");
 const rfc_cmd = @import("../records/rfc.zig");
+const records_common = @import("../records/common.zig");
 const runtime = @import("../sandbox/runtime.zig");
 const sandbox_host = @import("../sandbox/host.zig");
 const agent_loop = @import("../agent/loop.zig");
@@ -3796,8 +3797,8 @@ const Model = struct {
                     "notice: web-research mode {s} (web_search/web_fetch preferred for current facts)",
                 ) == .bad_usage) return;
             },
-            .research => self.runResearchCommand(pc.args),
-            .rfc => self.runRfcCommand(pc.args),
+            .research => self.runRecordStoreCommand(pc.args, research_cmd, &researchToolCall),
+            .rfc => self.runRecordStoreCommand(pc.args, rfc_cmd, &rfcToolCall),
             .preset => {
                 const name = std.mem.trim(u8, pc.args, " \t");
                 // Blank-session-only guard, checked before either path so a
@@ -4005,83 +4006,57 @@ const Model = struct {
         }
     }
 
-    /// Runs one internal `cmd_*` WASM tool ({"args":"<text>"} -> {"text":"..."})
-    /// and folds its output into the transcript as dim lines. Returns true so
-    /// submit treats it as handled.
-    /// `/research <sub> [args...]`: the same store, subcommands and rendering
-    /// as `clanker research`, folded into the transcript instead of stdout.
-    /// The line is tokenized into the CLI's own Options and handed to
-    /// `research_cmd.run`, so the tool input and the rendering stay one
-    /// implementation across both surfaces.
-    fn runResearchCommand(self: *Model, args_line: []const u8) void {
+    /// `/<store> <sub> [args...]`: the store, subcommands and rendering of
+    /// `clanker <store>`, folded into the transcript instead of stdout. The
+    /// line is tokenized into the CLI's own `Options` and handed to the
+    /// store's own `run`, so the tool input and the rendering stay one
+    /// implementation across both surfaces. One body for every store: the
+    /// token-to-`Options` fill is `records.common`'s, which reads the
+    /// argument count off the type.
+    fn runRecordStoreCommand(
+        self: *Model,
+        args_line: []const u8,
+        comptime Store: type,
+        comptime tool_call: *const fn (*anyopaque, []const u8) anyerror![]const u8,
+    ) void {
+        const slash = "/" ++ Store.tool_name;
         const tokens = splitCommandLine(self.arena, args_line) catch {
-            self.lines.append(self.arena, .{ .text = "error: /research: out of memory", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = "error: " ++ slash ++ ": out of memory", .dim = true }) catch {};
             return;
         };
-        var opts: research_cmd.Options = .{};
-        if (tokens.len > 0) opts.sub = tokens[0];
-        if (tokens.len > 1) opts.arg1 = tokens[1];
-        if (tokens.len > 2) opts.arg2 = tokens[2];
-        if (tokens.len > 3) opts.arg3 = tokens[3];
-        if (tokens.len > 4) opts.arg4 = tokens[4];
-        const text = research_cmd.run(self.arena, opts, .{ .ctx = self, .call = &researchToolCall }) catch |err| {
+        const opts = records_common.optionsFromTokens(Store.Options, tokens);
+        const text = Store.run(self.arena, opts, .{ .ctx = self, .call = tool_call }) catch |err| {
             const hint: []const u8 = switch (err) {
-                research_cmd.Error.BadSubcommand, research_cmd.Error.MissingArg => "; same subcommands as clanker research",
+                Store.Error.BadSubcommand, Store.Error.MissingArg => "; same subcommands as clanker " ++ Store.tool_name,
                 else => "",
             };
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: /research: {s}{s}", .{ @errorName(err), hint }) catch "error: /research failed", .dim = true }) catch {};
+            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: {s}: {s}{s}", .{ slash, @errorName(err), hint }) catch "error: " ++ slash ++ " failed", .dim = true }) catch {};
             return;
         };
         // Transcript entries hold one logical row each; never store '\n'.
         var it = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n');
         while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch break;
+    }
+
+    /// The tool call behind every record store's slash command. The callback
+    /// seam carries no name of its own, so each store supplies a trampoline
+    /// over this body rather than a second copy of it.
+    fn storeToolCall(self: *Model, tool_name: []const u8, input: []const u8) anyerror![]const u8 {
+        const mod = try runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, tool_name, null);
+        defer mod.deinit();
+        const raw = try mod.executeTool(input);
+        defer self.gpa.free(raw);
+        return try self.arena.dupe(u8, raw);
     }
 
     fn researchToolCall(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
         const self: *Model = @ptrCast(@alignCast(ctx));
-        const mod = try runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "research", null);
-        defer mod.deinit();
-        const raw = try mod.executeTool(input);
-        defer self.gpa.free(raw);
-        return try self.arena.dupe(u8, raw);
-    }
-
-    /// `/rfc <sub> [args...]`: the same store, subcommands and rendering as
-    /// `clanker rfc`, folded into the transcript instead of stdout. The line
-    /// is tokenized into the CLI's own Options and handed to `rfc_cmd.run`,
-    /// so the tool input and the rendering stay one implementation across
-    /// both surfaces.
-    fn runRfcCommand(self: *Model, args_line: []const u8) void {
-        const tokens = splitCommandLine(self.arena, args_line) catch {
-            self.lines.append(self.arena, .{ .text = "error: /rfc: out of memory", .dim = true }) catch {};
-            return;
-        };
-        var opts: rfc_cmd.Options = .{};
-        if (tokens.len > 0) opts.sub = tokens[0];
-        if (tokens.len > 1) opts.arg1 = tokens[1];
-        if (tokens.len > 2) opts.arg2 = tokens[2];
-        if (tokens.len > 3) opts.arg3 = tokens[3];
-        if (tokens.len > 4) opts.arg4 = tokens[4];
-        const text = rfc_cmd.run(self.arena, opts, .{ .ctx = self, .call = &rfcToolCall }) catch |err| {
-            const hint: []const u8 = switch (err) {
-                rfc_cmd.Error.BadSubcommand, rfc_cmd.Error.MissingArg => "; same subcommands as clanker rfc",
-                else => "",
-            };
-            self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "error: /rfc: {s}{s}", .{ @errorName(err), hint }) catch "error: /rfc failed", .dim = true }) catch {};
-            return;
-        };
-        // Transcript entries hold one logical row each; never store '\n'.
-        var it = std.mem.splitScalar(u8, std.mem.trimEnd(u8, text, "\n"), '\n');
-        while (it.next()) |line| self.lines.append(self.arena, .{ .text = line, .dim = true }) catch break;
+        return self.storeToolCall("research", input);
     }
 
     fn rfcToolCall(ctx: *anyopaque, input: []const u8) anyerror![]const u8 {
         const self: *Model = @ptrCast(@alignCast(ctx));
-        const mod = try runtime.loadNamedTool(self.gpa, self.io, self.arena, self.ctx.environ_map, &self.cfg, &self.reg, "rfc", null);
-        defer mod.deinit();
-        const raw = try mod.executeTool(input);
-        defer self.gpa.free(raw);
-        return try self.arena.dupe(u8, raw);
+        return self.storeToolCall("rfc", input);
     }
 
     fn runInternalTool(self: *Model, tool_name: []const u8, args: []const u8) bool {

@@ -41,6 +41,12 @@ pub const Options = struct {
     replace_all: bool = false,
 };
 
+/// The sandboxed tool this store is served by, and the name its REPL
+/// slash command and CLI verb share. Spelled once so a caller that
+/// addresses the store generically (the REPL's `/research` and `/rfc`)
+/// cannot name a different tool than the one it renders.
+pub const tool_name = "rfc";
+
 pub const Error = common.Error;
 
 pub const Tool = common.Tool;

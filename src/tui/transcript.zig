@@ -462,22 +462,20 @@ pub fn cardPreview(gpa: std.mem.Allocator, bytes: []const u8) ![]u8 {
         // OSC sequences are consumed whole, matching writeSanitized and
         // sanitizeAlloc: stripping only the ESC byte leaves the payload visible.
         if (c == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5D) {
-            var k = i + 2;
-            while (k < bytes.len) {
-                if (bytes[k] == 0x07) break;
-                if (bytes[k] == 0x1B and k + 1 < bytes.len and bytes[k + 1] == 0x5C) {
-                    k += 2;
-                    break;
-                }
-                k += 1;
-            }
-            i = k;
+            i = sanitize.oscEnd(bytes, i);
             continue;
         }
         // CSI sequences are consumed whole too, matching writeSanitized:
         // stripping only the ESC byte would leak the parameter bytes.
         if (c == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5B) {
             i = sanitize.csiEnd(bytes, i);
+            continue;
+        }
+        // A single-character escape (ESC M, ESC c, ESC 7) drops its argument
+        // byte with the introducer, as writeSanitized does: leaving the 'M'
+        // behind would print it as a card line.
+        if (c == 0x1B and i + 1 < bytes.len and bytes[i + 1] >= 0x20 and bytes[i + 1] <= 0x7E) {
+            i = sanitize.escEnd(bytes, i);
             continue;
         }
         if (strippedControl(c)) {
@@ -923,4 +921,17 @@ test "cardPreview strips OSC sequences (ST-terminated)" {
     const out = try cardPreview(gpa, "a\x1b]0;1\x1b\\b");
     defer gpa.free(out);
     try std.testing.expectEqualStrings("ab", out);
+}
+
+test "cardPreview drops a single-character escape with its argument byte" {
+    const gpa = std.testing.allocator;
+    // writeSanitized consumes ESC M whole; leaving the 'M' printed it as
+    // part of the tool name the model chose.
+    const out = try cardPreview(gpa, "a\x1bMb\x1b7c");
+    defer gpa.free(out);
+    try std.testing.expectEqualStrings("abc", out);
+    // A trailing ESC has no argument byte and still drops.
+    const tail = try cardPreview(gpa, "a\x1b");
+    defer gpa.free(tail);
+    try std.testing.expectEqualStrings("a", tail);
 }

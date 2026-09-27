@@ -129,6 +129,33 @@ pub fn missingCreateArg(store: []const u8, what: []const u8, usage: []const u8) 
     return Error.MissingArg;
 }
 
+/// The most positional arguments any store declares after `sub`. A store past
+/// it has the rest of its arguments dropped rather than failing to compile.
+const positional_limit = 8;
+
+/// Fill a store's `Options` from already-tokenized command-line words:
+/// `sub`, then `arg1`..`argN` positionally, leaving the rest at their
+/// defaults. A token past the last declared argument is dropped, which is the
+/// same treatment `cli.zig` gives an argument a store never asked for.
+///
+/// The argument count is read off the type rather than assumed: `adr` takes a
+/// fifth (the RFC path a decision came from), the rest stop at four.
+///
+/// One fill for the surfaces that take words rather than flags (`cli.zig`
+/// parses its own; the REPL's `/research` and `/rfc` tokenize with
+/// `splitCommandLine`), because the hand-written copies each stopped at
+/// `arg4` and would have kept taking a sixth argument one store at a time.
+pub fn optionsFromTokens(comptime Options: type, tokens: []const []const u8) Options {
+    var opts: Options = .{};
+    if (tokens.len > 0) opts.sub = tokens[0];
+    inline for (1..positional_limit + 1) |i| {
+        const name = "arg" ++ std.fmt.comptimePrint("{d}", .{i});
+        if (!@hasField(Options, name)) break;
+        if (i < tokens.len) @field(opts, name) = tokens[i];
+    }
+    return opts;
+}
+
 /// A store's `search <query>` argument. Missing is the usage mistake every
 /// store already refused; empty or whitespace-only is refused here because a
 /// blank grep pattern matches every line of every record, and that result
@@ -187,6 +214,40 @@ test "requireQuery refuses missing, empty and whitespace-only queries" {
     try testing.expectError(Error.MissingArg, requireQuery("adr", "  \t \r\n "));
     // A real query passes through unchanged, interior whitespace included.
     try testing.expectEqualStrings("provider vtable", try requireQuery("adr", "provider vtable"));
+}
+
+test "optionsFromTokens fills sub and the positionals a store declares" {
+    // A store with four arguments, and `adr`, which declares a fifth.
+    const Four = struct {
+        sub: []const u8 = "list",
+        arg1: ?[]const u8 = null,
+        arg2: ?[]const u8 = null,
+        arg3: ?[]const u8 = null,
+        arg4: ?[]const u8 = null,
+        replace_all: bool = false,
+    };
+    const Five = struct {
+        sub: []const u8 = "list",
+        arg1: ?[]const u8 = null,
+        arg2: ?[]const u8 = null,
+        arg3: ?[]const u8 = null,
+        arg4: ?[]const u8 = null,
+        arg5: ?[]const u8 = null,
+    };
+    const words = [_][]const u8{ "create", "a", "b", "c", "d", "e" };
+
+    const four = optionsFromTokens(Four, words[0..5]);
+    try testing.expectEqualStrings("create", four.sub);
+    try testing.expectEqualStrings("b", four.arg2.?);
+    try testing.expectEqualStrings("d", four.arg4.?);
+
+    const five = optionsFromTokens(Five, &words);
+    try testing.expectEqualStrings("e", five.arg5.?);
+
+    // Short input leaves the rest at the declared default.
+    const bare = optionsFromTokens(Four, &.{"search"});
+    try testing.expectEqualStrings("search", bare.sub);
+    try testing.expectEqual(@as(?[]const u8, null), bare.arg1);
 }
 
 test "englishList reads as prose for one, two and many" {

@@ -16,6 +16,37 @@ pub fn isControl(c: u8) bool {
     return (c < 0x20 and c != '\n' and c != '\t') or c == 0x7F;
 }
 
+/// End (exclusive) of the OSC sequence starting at `bytes[i]`, which must be
+/// ESC ']' (0x1B 0x5D). An OSC runs until BEL (0x07) or ST (ESC '\'), and an
+/// unterminated one runs to end of input: what is left is escape machinery or
+/// malformed input, not text worth showing.
+///
+/// One scan for the three output paths (writer, allocating, and
+/// `transcript.cardPreview`), because a stripper that consumes only the ESC
+/// byte leaves the payload visible as prose.
+pub fn oscEnd(bytes: []const u8, i: usize) usize {
+    var j = i + 2;
+    while (j < bytes.len) {
+        if (bytes[j] == 0x07) break;
+        if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5C) {
+            j += 2;
+            break;
+        }
+        j += 1;
+    }
+    return j;
+}
+
+/// End (exclusive) of the two-byte single-character escape sequence starting at
+/// `bytes[i]`, which must be ESC (0x1B). The introducer is followed by one
+/// argument byte in 0x20..0x7E (ESC M, ESC c, ESC 7, ESC (); consuming both
+/// keeps the argument from leaking as visible text. A trailing ESC with no
+/// argument advances one byte, which drops it as the control it is.
+pub fn escEnd(bytes: []const u8, i: usize) usize {
+    if (i + 1 < bytes.len and bytes[i + 1] >= 0x20 and bytes[i + 1] <= 0x7E) return i + 2;
+    return i + 1;
+}
+
 /// Writes `bytes` with C0 controls (except \n and \t), DEL, and
 /// UTF-8-encoded C1 controls (U+0080..U+009F, the two-byte sequence
 /// 0xC2 0x80..0x9F) removed. Bare continuation bytes in that range are
@@ -28,16 +59,7 @@ pub fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
         if (bytes[i] == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5D) {
             // OSC sequence: ESC ] … (BEL | ST); consume the whole thing.
             if (i > start) w.writeAll(bytes[start..i]) catch {};
-            var j = i + 2;
-            while (j < bytes.len) {
-                if (bytes[j] == 0x07) break;
-                if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5C) {
-                    j += 2;
-                    break;
-                }
-                j += 1;
-            }
-            i = j;
+            i = oscEnd(bytes, i);
             start = i;
         } else if (bytes[i] == 0x1B and i + 1 < bytes.len and bytes[i + 1] == 0x5B) {
             // CSI sequence: ESC [ params final; consume it whole so the
@@ -50,7 +72,7 @@ pub fn writeSanitized(w: *std.Io.Writer, bytes: []const u8) void {
             // consume the introducer and its argument so the argument byte does
             // not leak as visible text.
             if (i > start) w.writeAll(bytes[start..i]) catch {};
-            i += 2;
+            i = escEnd(bytes, i);
             start = i;
         } else if (isControl(bytes[i])) {
             if (i > start) w.writeAll(bytes[start..i]) catch {};
@@ -83,20 +105,11 @@ pub fn sanitizeAlloc(gpa: std.mem.Allocator, bytes: []const u8) ![]const u8 {
             var j: usize = 0;
             while (j < bytes.len) {
                 if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5D) {
-                    var k = j + 2;
-                    while (k < bytes.len) {
-                        if (bytes[k] == 0x07) break;
-                        if (bytes[k] == 0x1B and k + 1 < bytes.len and bytes[k + 1] == 0x5C) {
-                            k += 2;
-                            break;
-                        }
-                        k += 1;
-                    }
-                    j = k;
+                    j = oscEnd(bytes, j);
                 } else if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] == 0x5B) {
                     j = csiEnd(bytes, j);
                 } else if (bytes[j] == 0x1B and j + 1 < bytes.len and bytes[j + 1] >= 0x20 and bytes[j + 1] <= 0x7E) {
-                    j += 2;
+                    j = escEnd(bytes, j);
                 } else if (isControl(bytes[j])) {
                     j += 1;
                 } else if (bytes[j] == 0xC2 and j + 1 < bytes.len and bytes[j + 1] >= 0x80 and bytes[j + 1] <= 0x9F) {
