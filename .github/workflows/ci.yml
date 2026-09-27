@@ -180,11 +180,21 @@ jobs:
   # on arm64 macs; this job is the regression guard for that promise.
   # `zig build test` pulls in the wasm tools build (the sandbox tests load
   # zig-out/tools/*.wasm), so this covers native + wasm compilation and the
-  # full unit-test suite. Lint, shellcheck, bun audit and e2e stay
-  # linux-only: they check sources, not the host target.
+  # full unit-test suite. Lint, shellcheck and bun audit stay linux-only:
+  # they check sources, not the host target.
+  #
+  # `zig build e2e` runs here too, which is the exception to that rule and the
+  # reason it needs saying: the pty journeys drive the real binary through a
+  # real terminal, so they are host-target-dependent by construction, and
+  # tests/e2e/pty.zig exists mostly to make them possible off Linux (a
+  # /dev/ptmx + TIOCSPTLCK/TIOCGPTN allocation is Linux-only, and a master is
+  # not a terminal on Darwin until something opens the slave). Every macOS
+  # branch in that module was therefore unexercised by CI, on a platform
+  # every release ships a binary for. See the 0.5.0 changelog entry that
+  # replaced the Linux-only pty allocation.
   verify-macos:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -231,6 +241,9 @@ jobs:
         run: |
           zig build
           zig build test
+
+      - name: Run end-to-end tests
+        run: zig build e2e
 
   # Cross-compiles one release binary per target from a single native runner
   # (Zig's cross-compiler needs no target SDK for these), so the release

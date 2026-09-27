@@ -223,8 +223,15 @@ second sweep while you reconstruct is not, and a script makes the retry free.
 **First, copy anything you can still see to a path outside the working tree.**
 
 ```bash
-mkdir -p /tmp/rescue-$USER && cp --parents <your files> /tmp/rescue-$USER/
+mkdir -p /tmp/rescue-$USER
+rsync -aR <your files> /tmp/rescue-$USER/
 ```
+
+`-R` (relative) is what `cp --parents` does, and it is the only spelling of
+it that runs everywhere: `cp` is BSD on macOS and rejects `--parents` as an
+illegal option, which is how the first step of the rescue became the step that
+died. `rsync` ships with both claimed platforms and is what the other
+restore runbook already uses.
 
 Do this before any other step, and before deleting anything to unblock a
 rebase. Your view of the index can predate another session's commit, so a file
