@@ -13,6 +13,11 @@ function runIdOf(m) {
 /* Run references (`run-<ts>`, `sub-<ns>`, or the trailing `[subagent run:
    sub-…]` a nested run appends to its answer) become chips that open that
    run's graph, the way file:line citations open the callgraph search. */
+/* A citation chip: the number a claim's source is filed under, inline in the
+   answer. It reads as a chip, not a link, so it carries the accent's own mix
+   rather than the link colour. */
+var CITATION_CHIP_CLASS = "inline-flex cursor-pointer items-center gap-0.5 rounded-capsule border border-[color-mix(in_srgb,var(--accent)_22%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_8%,var(--surface))] px-2 py-0.5 font-mono text-xs font-semibold text-fg no-underline hover:border-accent hover:bg-[color-mix(in_srgb,var(--accent)_14%,var(--surface))] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+
 export function appendRunRefs(parent, text) {
   RUN_RE.lastIndex = 0;
   var last = 0, m;
@@ -22,7 +27,7 @@ export function appendRunRefs(parent, text) {
     var id = runIdOf(ref);
     var chip = document.createElement("button");
     chip.type = "button";
-    chip.className = "citation-chip run-chip";
+    chip.className = CITATION_CHIP_CLASS + " run-chip";
     chip.textContent = id;
     chip.setAttribute("data-run", id);
     chip.title = "Open run " + id;
@@ -56,7 +61,7 @@ export function appendCitedText(parent, text) {
     var ref = m[0];
     var chip = document.createElement("button");
     chip.type = "button";
-    chip.className = "citation-chip";
+    chip.className = CITATION_CHIP_CLASS;
     chip.textContent = ref;
     chip.setAttribute("data-ref", ref);
     chip.title = "Open in callgraph — " + ref;
@@ -412,7 +417,8 @@ export function buildCodeBlock(lang, code) {
    read `markdownSource`, never the rendered SVG. */
 export function buildMermaidBlock(code) {
   var wrap = document.createElement("div");
-  wrap.className = "code-block mermaid-block";
+  wrap.className = "code-block";
+  wrap.setAttribute("data-mermaid", "block");
   var box = document.createElement("div");
   box.className = "md-mermaid";
   box.setAttribute("data-src", code);
@@ -502,7 +508,8 @@ export function finalizeAnswer(turn) {
   var raw = turn.root.markdownSource || turn.answer.textContent;
   if (!raw) return;
   turn.answer.textContent = "";
-  turn.answer.className = "turn-answer md";
+  turn.answer.className = "md";
+  turn.answer.setAttribute("data-turn-answer", "true");
   turn.answer.appendChild(renderMarkdownWithFences(raw));
   renderMermaidBlocks(turn.answer);
 }

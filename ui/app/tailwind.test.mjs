@@ -53,6 +53,8 @@ const migrated = [
   "core/modelpicker.js",
   "core/theme.js",
   "core/palette.js",
+  "core/plugins.js",
+  "lib/markdown.js",
   "app.js",
   "index.html",
 ];
@@ -218,6 +220,10 @@ test("every class a migrated file uses resolves in a shipped sheet", function ()
         // `group` and `peer` are markers a variant names, never rules of their
         // own: Tailwind emits nothing for either.
         if (token === "group" || token === "peer") continue;
+        // A token ending in `-` is the front half of a composed name —
+        // `"language-" + lang` is highlight.js's own convention, not a class
+        // any sheet could style.
+        if (token.endsWith("-")) continue;
         if (hasSelector(plain, token) || inCabinet(token)) continue;
         missing.push(`${rel}: ${token}`);
       }

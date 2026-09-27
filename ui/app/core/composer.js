@@ -125,7 +125,7 @@ export function transcriptMarkdown(transcriptEl, currentSessionMeta, sessionId) 
   var lines = ["# " + ((meta && meta.title) || "clanker conversation"), "", "`" + sessionId + "`", ""];
   transcriptEl.querySelectorAll(".turn").forEach(function (turn) {
     var task = turn.querySelector(".turn-you");
-    var answer = turn.querySelector(".turn-answer");
+    var answer = turn.querySelector("[data-turn-answer]");
     if (task) {
       var said = task._taskSource;
       if (said == null) {

@@ -657,6 +657,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   this; the `.view` class is gone, and so are the rules that styled it. First
   paint 58.0 → 58.2K gz.
 
+- The last chrome bits are utilities: the log tail, the empty-transcript plate,
+  the plugin rows in Set up and the citation chip. The chip's two marks and the
+  plugin row's parts are class lists in `lib/markdown.js` and
+  `core/plugins.js` (both now on the ledger), the transcript answer's hook is
+  `data-turn-answer`, and a stale PatternFly list wrapper left in the plugin
+  rail-tab placement is gone with the framework.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

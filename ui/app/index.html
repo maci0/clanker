@@ -240,9 +240,9 @@ lamps carry further). The seven named palettes ride the same tokens.
 
     <div class="conversation-scroll">
     <div class="transcript" id="transcript"></div>
-    <div class="run-empty" id="transcript-empty" hidden>
+    <div class="max-w-measure flex-col items-start gap-1 border-0 bg-transparent px-0 pt-4 pb-3 text-start" id="transcript-empty" hidden>
       <p class="sr-only">New conversation</p>
-      <p>Write a task or pick one below.</p>
+      <p class="m-0 font-mono text-xs font-semibold uppercase tracking-label text-fg-muted">Write a task or pick one below.</p>
     </div>
     </div>
 
@@ -1044,7 +1044,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <!-- The tail only: the server sends the last 64 KB, cut at a line
            boundary, so a long-running improve log stays openable. -->
-      <pre class="log-view" id="log-view" tabindex="0" role="region" aria-label="Log tail"></pre>
+      <pre class="m-0 mt-4 max-h-112 overflow-auto rounded-plate-lg border border-rule bg-code-bg p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap text-code-fg wrap-anywhere" id="log-view" tabindex="0" role="region" aria-label="Log tail"></pre>
       <p class="sr-only" id="logs-status" role="status" aria-live="polite"></p>
     </section>
   </div>

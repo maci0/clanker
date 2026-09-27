@@ -191,6 +191,12 @@ function syncTablistOwns(tablist) {
    Built from name/title/group alone, which is all `/api/webui/plugins` answers
    with, so a deferred addon gets a working tab before its script exists.
    Returns the <section> the addon's `mount` is handed. */
+/* One row per plugin in the Set up list, and the row's parts. */
+var PLUGIN_ROW_CLASS = "mt-1 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-plate-sm border border-rule bg-surface-2 p-2";
+var PLUGIN_NAME_CLASS = "font-sans text-sm font-bold text-fg";
+var PLUGIN_GROUP_CLASS = "font-mono text-xs uppercase tracking-label text-fg-muted";
+var PLUGIN_DESC_CLASS = "min-w-56 flex-1 font-sans text-sm text-fg-muted";
+
 function makeViewShell(id, title, group) {
   var panel = document.createElement("div");
   panel.setAttribute("data-view", "true");
@@ -228,15 +234,7 @@ function makeViewShell(id, title, group) {
   for (var i = 0; i < headings.length; i++) {
     if ((headings[i].textContent || "").trim() !== group) continue;
     var host = headings[i].closest("details, section, nav") || headings[i].parentNode;
-    var list = host.querySelector(".pf-v6-c-nav__list");
-    if (list) {
-      var item = document.createElement("li");
-      item.className = "pf-v6-c-nav__item";
-      item.appendChild(tab);
-      list.appendChild(item);
-    } else {
-      host.appendChild(tab);
-    }
+    host.appendChild(tab);
     placed = true;
     break;
   }
@@ -447,7 +445,7 @@ export function renderWebuiPlugins(list) {
   }
   list.forEach(function (p) {
     var row = document.createElement("div");
-    row.className = "webui-plugin";
+    row.className = PLUGIN_ROW_CLASS;
     var box = document.createElement("input");
     box.type = "checkbox";
     box.id = "plugin-" + p.name;
@@ -488,14 +486,14 @@ export function renderWebuiPlugins(list) {
         .then(function () { box.disabled = false; });
     });
     var name = document.createElement("label");
-    name.className = "webui-plugin-name";
+    name.className = PLUGIN_NAME_CLASS;
     name.htmlFor = box.id;
     name.textContent = p.title || p.name;
     var desc = document.createElement("span");
-    desc.className = "webui-plugin-desc";
+    desc.className = PLUGIN_DESC_CLASS;
     desc.textContent = p.description || "";
     var group = document.createElement("span");
-    group.className = "webui-plugin-group";
+    group.className = PLUGIN_GROUP_CLASS;
     group.textContent = p.group || "";
     row.appendChild(box);
     row.appendChild(name);

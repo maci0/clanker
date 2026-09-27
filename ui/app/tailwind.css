@@ -504,6 +504,9 @@
 .max-h-80 {
   max-height: calc(var(--spacing) * 80);
 }
+.max-h-112 {
+  max-height: calc(var(--spacing) * 112);
+}
 .max-h-\[45vh\] {
   max-height: 45vh;
 }
@@ -761,6 +764,9 @@
 }
 .min-w-50 {
   min-width: calc(var(--spacing) * 50);
+}
+.min-w-56 {
+  min-width: calc(var(--spacing) * 56);
 }
 .min-w-64 {
   min-width: calc(var(--spacing) * 64);
@@ -1196,6 +1202,12 @@
     border-color: color-mix(in srgb,var(--accent) 18%,var(--rule));
   }
 }
+.border-\[color-mix\(in_srgb\,var\(--accent\)_22\%\,var\(--border\)\)\] {
+  border-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in srgb,var(--accent) 22%,var(--border));
+  }
+}
 .border-\[color-mix\(in_srgb\,var\(--accent\)_45\%\,var\(--rule\)\)\] {
   border-color: var(--accent);
   @supports (color: color-mix(in lab, red, red)) {
@@ -1258,6 +1270,12 @@
 }
 .bg-\[\#fff\] {
   background-color: #fff;
+}
+.bg-\[color-mix\(in_srgb\,var\(--accent\)_8\%\,var\(--surface\)\)\] {
+  background-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in srgb,var(--accent) 8%,var(--surface));
+  }
 }
 .bg-\[color-mix\(in_srgb\,var\(--accent\)_16\%\,transparent\)\] {
   background-color: var(--accent);
@@ -2371,6 +2389,14 @@
   @supports (color: color-mix(in lab, red, red)) {
     .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_8\%\,var\(--surface-2\)\)\]:hover {
       background-color: color-mix(in srgb,var(--accent) 8%,var(--surface-2));
+    }
+  }
+  .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_14\%\,var\(--surface\)\)\]:hover {
+    background-color: var(--accent);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_14\%\,var\(--surface\)\)\]:hover {
+      background-color: color-mix(in srgb,var(--accent) 14%,var(--surface));
     }
   }
   .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_88\%\,black\)\]:hover {
