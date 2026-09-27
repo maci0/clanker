@@ -18,6 +18,7 @@
 //!          "record":{...},"markdown":"...","questions_asked":n}
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 
 // Pure draft logic — which forks the intent answers, per-segment extraction,
 // Draft assembly, markdown rendering — lives in write_goal_logic.zig, listed
@@ -39,8 +40,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const intent = lib.str(v, "intent") catch return lib.fail(out, "missing required string field: intent");
     const max_q: usize = blk: {
         const n = lib.optNum(v, "max_questions") orelse @as(f64, max_questions);
-        const m: u32 = @trunc(n);
-        break :blk @min(m, max_questions);
+        // A negative value reaches `@trunc` to u32 here, which is undefined
+        // behaviour in the ReleaseSmall build this guest ships as; the `@min`
+        // below bounds the result but runs after the conversion.
+        const m = num.clampInt(u32, n, 0, max_questions);
+        break :blk m;
     };
     const to_parent = lib.optBool(v, "parent", false);
 

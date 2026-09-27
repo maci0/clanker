@@ -39,6 +39,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const b = @import("compare_logic.zig");
 
 const alloc = lib.alloc;
@@ -731,7 +732,10 @@ fn jsonInt(obj: std.json.ObjectMap, name: []const u8) i64 {
     const v = obj.get(name) orelse return 0;
     return switch (v) {
         .integer => |n| n,
-        .float => |f| @trunc(f),
+        // nan/inf and values past i64 read as 0: the raw narrowing conversion
+        // is undefined behaviour in the ReleaseSmall build this ships as, and
+        // this reads a stored comparison record's own fields.
+        .float => |f| num.intFromFloat(i64, f) orelse 0,
         else => 0,
     };
 }

@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const parse = @import("search_parse.zig");
 
 const default_max = 8;
@@ -70,10 +71,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         return lib.fail(out, "input must be a JSON object with a \"query\" string");
     };
     const query = lib.str(obj, "query") catch return lib.fail(out, "missing query");
-    var max_f = lib.optNum(obj, "max_results") orelse default_max;
-    if (max_f < 1) max_f = 1;
-    if (max_f > max_results_cap) max_f = max_results_cap;
-    const want: usize = @trunc(max_f);
+    // `{"max_results": null}` is not a number and optNum says so, but a
+    // non-finite one gets here: both comparisons below are false for nan, so
+    // the clamps let it through and `@trunc(nan)` to usize is garbage in the
+    // ReleaseSmall build this ships as. Clamp as an integer instead.
+    const want: usize = num.clampInt(usize, lib.optNum(obj, "max_results") orelse default_max, 1, max_results_cap);
     const region = lib.optStr(obj, "region") orelse "";
 
     var encbuf: [4096]u8 = undefined;

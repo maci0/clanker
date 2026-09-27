@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const utf8 = @import("utf8");
 const memory_embed = @import("memory_embed.zig");
 
@@ -79,12 +80,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try lib.fail(out, "chunk needs {\"text\": \"...\"}");
             return;
         }
-        const size_f: f64 = lib.optNum(obj, "size") orelse 800;
-        const overlap_f: f64 = lib.optNum(obj, "overlap") orelse 120;
-        const size: usize = @trunc(size_f);
-        const overlap: usize = @trunc(overlap_f);
-        const cap = @min(size, 800);
-        const ov = @min(overlap, 120);
+        // Both are model-supplied, and the loop below needs `cap >= 1` (it
+        // computes `cap - 1`) and `ov < cap` (it steps `off` back by it).
+        // A raw `@trunc` gave a huge usize for a negative size, and `size: 0`
+        // underflowed `cap - 1` outright.
+        const cap = num.clampInt(usize, lib.optNum(obj, "size") orelse 800, 1, 800);
+        const ov = num.clampInt(usize, lib.optNum(obj, "overlap") orelse 120, 0, cap - 1);
         var chunks: std.ArrayList([]const u8) = .empty;
         var off: usize = 0;
         var count: usize = 0;
@@ -94,7 +95,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             slice = std.mem.trim(u8, slice, " \t\r\n");
             if (slice.len > 0) try chunks.append(lib.alloc, slice);
             if (end >= text.len) break;
-            off = end - @min(ov, cap - 1);
+            off = end - ov;
         }
         var w = lib.writer(out);
         var s = lib.json(&w);
@@ -111,7 +112,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     if (std.mem.eql(u8, action, "embed")) {
         const dim_f: f64 = lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim));
-        const d: usize = @trunc(@min(@max(dim_f, 16), 1024));
+        const d: usize = num.clampInt(usize, dim_f, 16, 1024);
         var w = lib.writer(out);
         var s = lib.json(&w);
         try s.beginObject();
@@ -170,14 +171,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // rejected as the nonsense it is. The upper bound is what the ranking
         // buffer below is sized from.
         const top_k_f: f64 = lib.optNum(obj, "top_k") orelse 5;
-        const top_k: usize = @trunc(@min(@max(top_k_f, 0), @as(f64, max_top_k)));
+        const top_k: usize = num.clampInt(usize, top_k_f, 0, max_top_k);
         const threshold: f32 = @as(f32, @floatCast(lib.optNum(obj, "threshold") orelse 0));
         const mode = lib.optStr(obj, "mode") orelse "vector";
         if (!std.mem.eql(u8, mode, "vector") and !std.mem.eql(u8, mode, "keyword"))
             return lib.fail(out, "mode must be \"vector\" or \"keyword\"");
         const use_keyword = std.mem.eql(u8, mode, "keyword");
         const dim_f: f64 = lib.optNum(obj, "dim") orelse @as(f64, @floatFromInt(default_dim));
-        const d: usize = @trunc(@min(@max(dim_f, 16), 1024));
+        const d: usize = num.clampInt(usize, dim_f, 16, 1024);
         var qvec: ?[]f32 = null;
         // Scratch for the chunk being scored. Every chunk embeds to the same
         // `d` floats, so one buffer serves the whole walk; allocating and

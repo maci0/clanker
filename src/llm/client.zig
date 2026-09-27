@@ -817,9 +817,23 @@ pub fn promptCost(u: types.Usage, per_1m_input: f64) f64 {
 pub fn totalCost(provider: *const config.Provider, u: types.Usage) f64 {
     const active = provider.activeModel();
     var cost: f64 = 0;
-    if (active.cost_per_1m_input) |ci| cost += promptCost(u, ci);
-    if (active.cost_per_1m_output) |co| cost += @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co;
+    if (active.cost_per_1m_input) |ci| cost = addCost(cost, promptCost(u, ci));
+    if (active.cost_per_1m_output) |co| {
+        cost = addCost(cost, @as(f64, @floatFromInt(u.completion_tokens)) / 1_000_000.0 * co);
+    }
     return cost;
+}
+
+/// Adds two costs, saturating at the largest finite f64. A per-1M rate is
+/// operator-supplied and only checked for being non-negative, so a running
+/// total can reach +inf on an absurd rate or enough turns. Every surface that
+/// reports a cost prints it with `{d:.6}`, which writes `inf`: an invalid JSON
+/// token in `/api/stats` and in the `cost` field of the next
+/// state/token_stats.jsonl record. Saturating keeps the output parseable.
+pub fn addCost(a: f64, b: f64) f64 {
+    if (!std.math.isFinite(a) or !std.math.isFinite(b)) return std.math.floatMax(f64);
+    const sum = a + b;
+    return if (std.math.isFinite(sum)) sum else std.math.floatMax(f64);
 }
 
 fn cacheTtlMs(provider: *const config.Provider) u64 {

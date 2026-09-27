@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const logic = @import("feedback_logic.zig");
 
 const path = "state/feedback.jsonl";
@@ -29,7 +30,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const note = lib.optStr(req, "note") orelse "";
     var turn: ?usize = null;
     if (lib.optNum(req, "turn")) |n| {
-        if (n >= 0) turn = @trunc(n);
+        // `n >= 0` is false for nan, but `1e30` passes it and `@trunc` of that
+        // to usize is undefined behaviour in the ReleaseSmall build this ships
+        // as. The value is persisted, so the check belongs before the write.
+        turn = num.intFromFloat(usize, n);
     }
 
     var buf: [2048]u8 = undefined;

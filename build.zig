@@ -4,7 +4,7 @@ const build_zon = @import("build.zig.zon");
 // Pure-logic modules under tools/zig/ that don't export the tool ABI (run/scratch/host_arena).
 // They are imported by other tools, not standalone guests, so the wasm build skips them
 // and `zig build test` runs their tests on the host target instead.
-const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "calculator_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "compact_hint", "config_logic", "doc_scaffold", "feedback_logic", "flat_json", "gauntlet_logic", "gh_cache", "gh_format", "gh_url", "goal_store", "graph_listing", "grep_outline", "hashline", "kernel_magic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "mention_expand", "model_reply", "model_stats_logic", "notifications_logic", "patch_logic", "plugin_config_logic", "providers_logic", "record_rename", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic", "write_goal_logic" };
+const host_tested_helpers = [_][]const u8{ "advisor_logic", "agency_sync_logic", "alphaxiv_client", "arena_match", "autolearn_logic", "autoresearch_logic", "calculator_logic", "cards", "cas_lock_record", "commit_logic", "compare_logic", "compact_hint", "config_logic", "doc_scaffold", "feedback_logic", "flat_json", "gauntlet_logic", "gh_cache", "gh_format", "gh_url", "goal_store", "graph_listing", "grep_outline", "hashline", "kernel_magic", "llm_budget", "log_view", "manifest_scan", "memory_embed", "mention_expand", "model_reply", "model_stats_logic", "notifications_logic", "num", "patch_logic", "plugin_config_logic", "providers_logic", "record_rename", "research_queries", "rewind_logic", "run_plan_logic", "schedule_cron", "schedule_logic", "search_parse", "session_export_logic", "sessions_logic", "skills_logic", "spill_logic", "strip_xml", "symbolic_regression_logic", "thinking_logic", "webui_addon_logic", "workflows_logic", "write_goal_logic" };
 
 /// The `tools/zig` helpers the host links directly, so the CLI and the guest
 /// that shares a file run the same source rather than two copies of it.
@@ -631,6 +631,15 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // Checked narrowing from a model-supplied JSON number to a fixed-width
+    // integer, shared by every guest that reads one. `@trunc` out of range is
+    // garbage in ReleaseSmall, which is how these ship, so the range check has
+    // to live in one place rather than in each guest's clamp.
+    const tool_num_mod = b.createModule(.{
+        .root_source_file = b.path("tools/zig/num.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
 
     var threaded = std.Io.Threaded.init(b.allocator, .{});
     defer threaded.deinit();
@@ -677,6 +686,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "fs_skip", .module = tool_fs_skip_mod },
                     .{ .name = "session_id", .module = tool_session_id_mod },
                     .{ .name = "alarm_store", .module = tool_alarm_store_mod },
+                    .{ .name = "num", .module = tool_num_mod },
                 },
             }),
         });

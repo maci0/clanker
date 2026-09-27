@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const store = @import("goal_store.zig");
 
 const goals_path = "state/goals.json";
@@ -45,9 +46,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         };
     }
     if (lib.optNum(req, "max_iterations")) |n| {
-        if (n < 0 or @floor(n) != n)
+        // Range-checked before the conversion, not after: `1e30` is integral
+        // and positive, so the sign and integrality tests below both pass it
+        // and `@trunc` to u32 is undefined behaviour in the ReleaseSmall build
+        // this guest ships as. `clampBudget` is still what clamps the value.
+        const v = num.intFromFloatExact(u32, n) orelse
             return lib.fail(out, "max_iterations must be an integer from 1 to 1000");
-        patch.max_iterations = store.clampBudget(@as(u32, @trunc(n)));
+        patch.max_iterations = store.clampBudget(v);
     }
     if (req.object.get("worktree")) |w| {
         patch.worktree = switch (w) {
@@ -58,9 +63,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
     if (lib.optStr(req, "goal_loop_reason")) |r| patch.goal_loop_reason = r;
     if (lib.optNum(req, "goal_loop_turns")) |n| {
-        if (n < 0 or @floor(n) != n)
+        // Same range check as max_iterations above, and unlike it nothing
+        // clamps the result afterwards, so an out-of-range value has to be
+        // refused here rather than stored.
+        patch.goal_loop_turns = num.intFromFloatExact(u32, n) orelse
             return lib.fail(out, "goal_loop_turns must be a non-negative integer");
-        patch.goal_loop_turns = @as(u32, @trunc(n));
     }
     patch.remove = lib.optBool(req, "remove", false);
 

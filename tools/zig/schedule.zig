@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const logic = @import("schedule_logic.zig");
 
 const store_path = "state/schedule.json";
@@ -106,14 +107,15 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
         error.TaskEmpty => "the task is empty",
         error.TaskTooLong => "the task is too long to schedule",
     });
-    const tz: i32 = blk: {
-        const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
-        // `@trunc` on a non-finite float traps the guest, so `1e400` in the
-        // request would abort the tool instead of being the validation message
-        // it is. An offset is whole minutes either way.
-        if (!std.math.isFinite(n_f)) return lib.fail(out, "tz_offset_minutes must be a finite number of minutes");
-        break :blk @trunc(n_f);
-    };
+    // Range-checked before the conversion, not after: `validTzOffset` below
+    // rejects an out-of-range offset, but `@trunc` of `1e30` to i32 is
+    // undefined behaviour in the ReleaseSmall build this guest ships as, and
+    // the check that would have caught it runs too late to help. Refused, not
+    // clamped: a caller asking for 1e30 minutes did not mean a day.
+    // `intFromFloat` also refuses a non-finite request, so `1e400` gets this
+    // message rather than trapping the guest.
+    const tz: i32 = num.intFromFloat(i32, lib.optNum(req, "tz_offset_minutes") orelse 0) orelse
+        return lib.fail(out, "tz_offset_minutes out of range (-1440..+1440)");
     if (!logic.validTzOffset(tz))
         return lib.fail(out, try logic.tzOffsetRangeMessage(lib.alloc));
     const now: i64 = @trunc(lib.nowSeconds());

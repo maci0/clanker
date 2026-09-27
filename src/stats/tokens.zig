@@ -18,6 +18,7 @@ const file_lock = @import("../util/file_lock.zig");
 const log = @import("../util/log.zig");
 const atomic_write = @import("../util/atomic_write.zig");
 const file_tail = @import("../util/file_tail.zig");
+const client = @import("../llm/client.zig");
 const test_env = @import("../util/test_env.zig");
 
 pub const stat_path = "token_stats.jsonl";
@@ -194,7 +195,14 @@ fn parseRecords(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, path: []
     var lines = std.mem.splitScalar(u8, raw, '\n');
     while (lines.next()) |line| {
         if (line.len == 0) continue;
-        const rec = std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
+        var rec = std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true }) catch continue;
+        // A hand-edited or truncated line can carry a cost no arithmetic
+        // downstream can survive: `1e999` parses to +inf, and every sum this
+        // record feeds (`aggregate`, `totals`) and every surface that prints
+        // it (`{d:.6}` in statsJSON) then emits the invalid JSON token `inf`,
+        // breaking the next read of the file. A cost is never negative and
+        // never non-finite, so a record carrying one is not a cost record.
+        if (!std.math.isFinite(rec.cost) or rec.cost < 0) rec.cost = 0;
         try out.append(arena, rec);
     }
     return out.toOwnedSlice(arena);
@@ -418,7 +426,7 @@ fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []c
         gop.value_ptr.total_tokens += r.total_tokens;
         gop.value_ptr.cache_hit += r.cache_hit;
         gop.value_ptr.cache_miss += r.cache_miss;
-        gop.value_ptr.cost += r.cost;
+        gop.value_ptr.cost = client.addCost(gop.value_ptr.cost, r.cost);
         gop.value_ptr.duration_ms += r.duration_ms;
         if (r.ok) gop.value_ptr.ok_calls += 1 else gop.value_ptr.error_calls += 1;
         if (r.ok) if (r.thinking_level) |level| {
@@ -454,7 +462,7 @@ pub fn totals(stats: []const Stat) Stat {
         t.total_tokens += s.total_tokens;
         t.cache_hit += s.cache_hit;
         t.cache_miss += s.cache_miss;
-        t.cost += s.cost;
+        t.cost = client.addCost(t.cost, s.cost);
         t.duration_ms += s.duration_ms;
         t.ok_calls += s.ok_calls;
         t.error_calls += s.error_calls;
@@ -556,6 +564,40 @@ pub fn statsJSON(arena: std.mem.Allocator, stats: []const Stat, total: Stat) ![]
 }
 
 // ------------------------------------------------------------------- tests --
+
+test "a non-finite or absurd cost in the log cannot reach the JSON surfaces" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    // Hand-written lines: `1e999` parses to +inf, `-1` is not a cost, and
+    // two 1e308 records sum past the largest finite f64. Every stats surface
+    // prints cost with `{d:.6}`, which writes `inf` -- an invalid JSON token
+    // that breaks the next reader of /api/stats and of this file.
+    const lines =
+        \\{"ts":1,"provider":"p","model":"m","prompt_tokens":10,"completion_tokens":1,"total_tokens":11,"cache_hit":0,"cache_miss":0,"cost":1e999,"duration_ms":10,"ok":true}
+        \\{"ts":2,"provider":"p","model":"m","prompt_tokens":10,"completion_tokens":1,"total_tokens":11,"cache_hit":0,"cache_miss":0,"cost":-1,"duration_ms":10,"ok":true}
+        \\{"ts":3,"provider":"p","model":"m","prompt_tokens":10,"completion_tokens":1,"total_tokens":11,"cache_hit":0,"cache_miss":0,"cost":1e308,"duration_ms":10,"ok":true}
+        \\{"ts":4,"provider":"p","model":"m","prompt_tokens":10,"completion_tokens":1,"total_tokens":11,"cache_hit":0,"cache_miss":0,"cost":1e308,"duration_ms":10,"ok":true}
+        \\
+    ;
+    try env.tmp.dir.writeFile(io, .{ .sub_path = stat_path, .data = lines });
+
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 1), stats.len);
+    try std.testing.expect(std.math.isFinite(stats[0].cost));
+    try std.testing.expect(stats[0].cost >= 0);
+
+    const t = totals(stats);
+    try std.testing.expect(std.math.isFinite(t.cost));
+
+    // The whole point: the serialized row is parseable JSON again.
+    const json = try statsJSON(arena, stats, t);
+    try std.testing.expect(std.mem.indexOf(u8, json, "inf") == null);
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, json, .{});
+    try std.testing.expectEqual(@as(i64, 4), parsed.object.get("stats").?.array.items[0].object.get("calls").?.integer);
+}
 
 test "append + aggregate groups by provider/model and sums" {
     var env: test_env.Env = .init();

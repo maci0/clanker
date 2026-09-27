@@ -12,22 +12,12 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const alarm_store = @import("alarm_store");
 
 const path = "state/alarms.json";
 const max_alarms = 50;
 const max_message = 500;
-
-/// The integer part of `f`, or null when it does not fit an i64 (nan and inf
-/// never do). Model-supplied floats go through here first: the raw narrowing
-/// conversion traps the guest on those, turning a bad argument into a tool
-/// failure instead of a validation message.
-fn intFromFloatChecked(f: f64) ?i64 {
-    if (!std.math.isFinite(f)) return null;
-    const t = @trunc(f);
-    if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) return null;
-    return @trunc(t);
-}
 
 const Alarm = alarm_store.Alarm;
 
@@ -64,7 +54,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         if (obj.get("in_minutes")) |v| {
             const mins: i64 = switch (v) {
                 .integer => |i| i,
-                .float => |f| intFromFloatChecked(f) orelse
+                .float => |f| num.intFromFloat(i64, f) orelse
                     return lib.fail(out, "in_minutes must be a number"),
                 else => return lib.fail(out, "in_minutes must be a number"),
             };
@@ -96,7 +86,7 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         const v = obj.get("every_minutes") orelse break :blk 0;
         const mins: i64 = switch (v) {
             .integer => |i| i,
-            .float => |f| intFromFloatChecked(f) orelse
+            .float => |f| num.intFromFloat(i64, f) orelse
                 return lib.fail(out, "every_minutes must be a number"),
             else => return lib.fail(out, "every_minutes must be a number"),
         };
@@ -117,8 +107,8 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         var next: u64 = 0;
         for (loaded.alarms.items) |a| {
             const field = std.mem.findScalarLast(u8, a.id, '-') orelse continue;
-            const num = std.fmt.parseInt(u64, a.id[field + 1 ..], 10) catch continue;
-            if (num >= next) next = num + 1;
+            const seen = std.fmt.parseInt(u64, a.id[field + 1 ..], 10) catch continue;
+            if (seen >= next) next = seen + 1;
         }
         const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, next });
         try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now, .every = every });

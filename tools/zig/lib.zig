@@ -9,6 +9,7 @@
 //! The `scratch` and `host_arena` exports come from this file.
 
 const std = @import("std");
+const num = @import("num");
 
 // ---- host function imports (provided by the harness) ------------------------
 extern fn ck_log(level: u32, ptr: u32, len: u32) void;
@@ -1177,11 +1178,15 @@ pub fn strFieldTrimmed(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
 
 /// An unsigned integer field from an ObjectMap, accepting JSON integers and
 /// floats >= 1. Returns null when absent, wrong type, or <= 0.
+///
+/// A float outside u32 range is null, not a converted value: `{"max_tokens":
+/// 1e30}` is a thing a model emits, and `@trunc` of it is garbage in the
+/// ReleaseSmall build these guests ship as.
 pub fn uintFieldMap(obj: std.json.ObjectMap, name: []const u8) ?u32 {
     const v = obj.get(name) orelse return null;
     return switch (v) {
         .integer => |n| if (n > 0) @intCast(@min(n, std.math.maxInt(u32))) else null,
-        .float => |f| if (f >= 1.0) @trunc(f) else null,
+        .float => |f| if (f < 1.0) null else num.intFromFloat(u32, f),
         else => null,
     };
 }
@@ -1244,7 +1249,7 @@ pub fn toolsDirs() []const []const u8 {
 /// e.g. "arena-1723456789-a1b2c3d4". Two calls in the same second with
 /// different seed text produce different ids.
 pub fn prefixedId(prefix: []const u8, seed_text: []const u8) ![]const u8 {
-    const secs: u64 = @trunc(@max(0.0, nowSeconds()));
+    const secs: u64 = num.clampInt(u64, nowSeconds(), 0, std.math.maxInt(u64));
     var hasher = std.hash.Wyhash.init(secs);
     hasher.update(seed_text);
     return std.fmt.allocPrint(alloc, "{s}-{d}-{x}", .{ prefix, secs, hasher.final() & 0xffff_ffff });

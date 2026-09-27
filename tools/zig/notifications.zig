@@ -13,6 +13,7 @@
 //! id, and reports the duplicate.
 
 const lib = @import("lib.zig");
+const num = @import("num");
 const logic = @import("notifications_logic.zig");
 
 // The host arena accumulates every host result for the whole call, and the
@@ -33,6 +34,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const req = lib.object(input) catch return lib.fail(out, "input must be a JSON object");
     const body = req.object.get("store") orelse return lib.fail(out, "input needs a \"store\" object");
     if (body != .object) return lib.fail(out, "\"store\" must be a JSON object");
+    // `ts` is sender-supplied and lands in a persisted jsonl record, so it is
+    // range-checked before the conversion: `@trunc` of `1e30` (or of the nan a
+    // model can send) to i64 is undefined behaviour in the ReleaseSmall build
+    // this guest ships as, and a bad value here outlives the call.
     const ts_f: f64 = lib.optNum(body, "ts") orelse 0;
     const received_f: f64 = lib.nowSeconds();
     const record = logic.Record{
@@ -40,8 +45,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         .kind = lib.optStr(body, "kind") orelse "",
         .topic = lib.optStr(body, "topic") orelse "",
         .payload = body.object.get("payload") orelse .null,
-        .ts = @trunc(ts_f),
-        .received_at = @trunc(received_f),
+        .ts = num.intFromFloat(i64, ts_f) orelse 0,
+        .received_at = num.intFromFloat(i64, received_f) orelse 0,
         .id = lib.optStr(body, "id"),
     };
 

@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const logic = @import("run_plan_logic.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -20,7 +21,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var max_steps: usize = logic.max_steps_default;
     if (lib.optNum(req, "max_steps")) |n| {
-        if (n > 0) max_steps = @trunc(n);
+        // `clampMax` below bounds the value, but only after the conversion, and
+        // `@trunc` of an out-of-range float is undefined behaviour in the
+        // ReleaseSmall build this guest ships as. `1e30` is a plausible thing
+        // for a model to emit and passed the old `n > 0` test.
+        if (n > 0) max_steps = num.clampInt(usize, n, 1, logic.max_steps_ceiling);
     }
     max_steps = logic.clampMax(max_steps);
 

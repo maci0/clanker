@@ -94,6 +94,8 @@ Native by necessity, not by accident:
 
 Guests export `scratch(need) -> u32`, `host_arena() -> u32`, `run(ptr, len) -> u64` (packed `(out_ptr << 32)|out_len`), and import `env.ck_*` in `tools/zig/lib.zig`.
 
+A guest that reads a model-supplied number as a fixed-width integer goes through `tools/zig/num.zig` (`@import("num")`, host-tested): `intFromFloat` (range-checked, sign tested on the untruncated value), `intFromFloatExact` (also rejects a fraction), `clampInt` (saturate instead of refuse). Never `@trunc` a guest's `f64` directly: guests build `ReleaseSmall`, where an out-of-range conversion is silent garbage rather than the trap it is in a checked build, and a clamp applied *after* the conversion cannot catch what the conversion already did. `{"max_results": 1e30}` and `{"size": -5}` are ordinary things for a model to emit. The host's counterpart is `config.intFromFloatChecked`, and `client.addCost` is the saturating cost sum every cost surface shares.
+
 ## Self-improvement loop
 
 Every promoted change must pass: `zig build`, `zig build test`, `zig build tools`, `zig fmt --check` (auto-formatted), source lint. Committed as `clanker: <summary> [imp-<id>]`. Run whole gate via `clanker gate`.

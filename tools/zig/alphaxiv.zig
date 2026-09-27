@@ -12,6 +12,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const mcp = @import("alphaxiv_client.zig");
 const utf8 = @import("utf8");
 
@@ -27,7 +28,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const tool = lib.str(obj, "tool") catch return lib.fail(out, "missing tool — a server tool name, or \"list\" to enumerate them");
     var max_chars = default_max_chars;
     if (lib.optNum(obj, "max_chars")) |m| {
-        if (m >= 1) max_chars = @trunc(m);
+        // Range-checked before the conversion: `m >= 1` passes `1e30`, and
+        // `@trunc` of that to usize is undefined behaviour in the ReleaseSmall
+        // build this guest ships as.
+        max_chars = num.clampInt(usize, m, 1, default_max_chars);
     }
 
     const key = lib.getenv("ALPHAXIV_API_KEY") orelse

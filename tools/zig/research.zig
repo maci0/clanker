@@ -27,6 +27,7 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const num = @import("num");
 const utf8 = @import("utf8");
 const parse = @import("search_parse.zig");
 const rq = @import("research_queries.zig");
@@ -277,8 +278,10 @@ fn sweep(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "depth must be quick, standard, or deep");
     var per_query: usize = default_per_query;
     if (lib.optNum(obj, "max_results")) |n| {
-        if (n < 1) return lib.fail(out, "max_results must be at least 1");
-        per_query = @min(@as(usize, @trunc(n)), max_per_query);
+        // The `@min` below bounds the result, but it runs after the
+        // conversion, and `@trunc` of `1e30` to usize is undefined behaviour in
+        // the ReleaseSmall build this guest ships as.
+        per_query = num.clampInt(usize, n, 1, max_per_query);
     }
 
     const year = currentYear();
@@ -696,12 +699,7 @@ fn objInt(v: std.json.Value, name: []const u8) ?i64 {
         .integer => |n| n,
         // nan/inf and values past i64 read as absent: the raw narrowing
         // conversion traps the guest on those.
-        .float => |f| blk: {
-            if (!std.math.isFinite(f)) break :blk null;
-            const t = @trunc(f);
-            if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) break :blk null;
-            break :blk @as(i64, @trunc(t));
-        },
+        .float => |f| num.intFromFloat(i64, f),
         else => null,
     };
 }
