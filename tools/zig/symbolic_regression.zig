@@ -31,6 +31,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         error.LengthMismatch => "x and y must be the same length; every row the same width",
         error.OutOfMemory => "out of memory",
         error.BadInput => "need {x,y}, {rows} (last column is y), or {csv}",
+        error.NotFinite => "x and y must be finite numbers",
     });
 
     var gens: u16 = logic.default_generations;

@@ -69,6 +69,7 @@ pub const ParseError = error{
     TooManyRows,
     TooManyFeatures,
     LengthMismatch,
+    NotFinite,
     OutOfMemory,
 };
 
@@ -138,13 +139,25 @@ fn evalNode(t: *const Tree, idx: u8, row: []const f64) ?f64 {
     return if (finite(v)) v else null;
 }
 
+/// The score a tree gets when it cannot be evaluated on the data, and the
+/// ceiling `mseOf` reports instead of a non-finite value.
+pub const unfit_mse: f64 = 1e12;
+
 pub fn mseOf(t: *const Tree, data: Dataset) f64 {
     var acc: f64 = 0;
     var i: usize = 0;
     while (i < data.n_rows) : (i += 1) {
-        const pred = evalTree(t, data.row(i)) orelse return 1e12;
+        const pred = evalTree(t, data.row(i)) orelse return unfit_mse;
         const d = pred - data.y[i];
-        acc += d * d;
+        const sq = d * d;
+        // Squaring a residual above ~1e154 overflows, and a saturated y makes
+        // the sum overflow too. An inf here sorts as the best score (every
+        // other tree compares equal) and serializes as the invalid JSON token
+        // `inf`, so the guest output is refused whole. Saturate instead: a
+        // tree that cannot even be scored is the unfit case.
+        if (!finite(sq)) return unfit_mse;
+        acc += sq;
+        if (!finite(acc)) return unfit_mse;
     }
     return acc / @as(f64, @floatFromInt(data.n_rows));
 }
@@ -526,8 +539,20 @@ pub fn asNumber(v: std.json.Value) ?f64 {
     };
 }
 
+/// A dataset value. JSON has no `NaN`/`Infinity` literal, but a value too
+/// large for f64 (`1e999`) parses to +inf, and one such row makes every
+/// residual non-finite, so no expression can be scored and the answer is
+/// either a fabricated "best" or a non-finite number in the JSON. The
+/// `iterations`/`seed` options read through `asNumber` instead and clamp
+/// their own overflow; only a dataset row is rejected here.
+fn datum(v: std.json.Value) ParseError!f64 {
+    const n = asNumber(v) orelse return error.NotFinite;
+    if (!finite(n)) return error.NotFinite;
+    return n;
+}
+
 fn appendNum(list: *std.ArrayList(f64), alloc: std.mem.Allocator, v: std.json.Value) ParseError!void {
-    const n = asNumber(v) orelse return error.BadInput;
+    const n = try datum(v);
     list.append(alloc, n) catch return error.OutOfMemory;
 }
 
@@ -618,6 +643,7 @@ fn parseCsv(alloc: std.mem.Allocator, text: []const u8) ParseError!Owned {
         while (col_it.next()) |c| {
             const t = std.mem.trim(u8, c, " \t");
             const n = std.fmt.parseFloat(f64, t) catch return error.BadInput;
+            if (!finite(n)) return error.NotFinite;
             if (width > 0) xs.append(alloc, last) catch return error.OutOfMemory;
             last = n;
             width += 1;
@@ -715,4 +741,48 @@ test "parse refuses empty and oversize" {
     const empty = try std.json.parseFromSlice(std.json.Value, gpa, "{\"x\":[],\"y\":[]}", .{});
     defer empty.deinit();
     try std.testing.expectError(error.Empty, parseOwned(gpa, empty.value.object));
+}
+
+test "parse refuses a non-finite datum in every input shape" {
+    const gpa = std.testing.allocator;
+    // `1e999` is the only way JSON spells a value past f64, and it parses to
+    // +inf rather than erroring.
+    const cases = [_][]const u8{
+        "{\"x\":[1,2],\"y\":[1,1e999]}",
+        "{\"x\":[1e999,2],\"y\":[1,3]}",
+        "{\"x\":[[1,2],[2,1e999]],\"y\":[1,3]}",
+        "{\"rows\":[[1,10,11],[1e999,20,22]]}",
+    };
+    for (cases) |text| {
+        const v = try std.json.parseFromSlice(std.json.Value, gpa, text, .{});
+        defer v.deinit();
+        try std.testing.expectError(error.NotFinite, parseOwned(gpa, v.value.object));
+    }
+    // The csv path goes through `parseFloat`, which refuses an out-of-range
+    // literal itself; either refusal is the same answer to the caller.
+    const csv = try std.json.parseFromSlice(std.json.Value, gpa, "{\"csv\":\"x,y\\n1,3\\n1e999,5\"}", .{});
+    defer csv.deinit();
+    try std.testing.expectError(error.BadInput, parseOwned(gpa, csv.value.object));
+}
+
+test "mseOf saturates instead of reporting a non-finite score" {
+    // A dataset whose residuals square past f64: y ~ 1e200 makes d*d inf, and
+    // an unbounded sum would hand the caller a score that compares equal to
+    // every other tree's and serializes as the invalid JSON token `inf`.
+    const x = [_]f64{ 0, 1 };
+    const huge = [_]f64{ 1e200, 1e200 };
+    const data = Dataset{ .x = &x, .y = &huge, .n_rows = 2, .n_features = 1 };
+    const t = linearGuess(0, 2, 1);
+    const m = mseOf(&t, data);
+    try std.testing.expect(finite(m));
+    try std.testing.expectEqual(unfit_mse, m);
+
+    // A well-scaled dataset still gets its real score, and every search
+    // result the guest prints is finite.
+    const y = [_]f64{ 1, 3 };
+    const ok = Dataset{ .x = &x, .y = &y, .n_rows = 2, .n_features = 1 };
+    const found = search(ok, .{ .generations = 4, .seed = 1 });
+    try std.testing.expect(found.len >= 1);
+    var i: u8 = 0;
+    while (i < found.len) : (i += 1) try std.testing.expect(finite(found.items[i].mse));
 }
