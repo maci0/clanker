@@ -121,6 +121,16 @@ pub fn selectStrategy(spec: Spec, provider: *const config.Provider, raw: ?[]cons
     return spec.default;
 }
 
+/// Wall clock in milliseconds. Token expiry is a wall-clock property (the
+/// provider issues `expires_in` seconds from its own now), so this is `.real`
+/// and not the monotonic clock. Sampled at each use rather than once per
+/// `resolve`: a wait on the cross-process refresh lock makes any earlier
+/// sample stale, and a stale sample is what puts a short-lived token's
+/// recorded expiry in the past.
+fn nowMs(io: std.Io) i64 {
+    return @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
+}
+
 /// Resolves the provider's credential into a ready-to-send form. The caller
 /// owns the result and must `deinit` it.
 pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credential {
@@ -146,7 +156,7 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
             defer oauth_arena_state.deinit();
             const oauth_arena = oauth_arena_state.allocator();
             var record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
-            const now_ms: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(env.io, .real).nanoseconds, std.time.ns_per_ms));
+            const now_ms: i64 = nowMs(env.io);
             if (record.needsRefresh(now_ms, refresh_skew_ms)) {
                 // Refresh tokens commonly rotate on use. Serialize across
                 // clanker processes, then reload: another process may have
@@ -155,9 +165,18 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
                 const lock_name = try std.fmt.allocPrint(oauth_arena, "{s}.refresh", .{plugin.name});
                 var guard = file_lock.acquire(env.io, env.state_base, lock_dir, lock_name, env.gpa);
                 defer guard.release();
+                // Re-read the clock inside the lock. `now_ms` was sampled
+                // before a wait whose length is another process's network
+                // round trip, so it is that much behind. Reusing it here let
+                // a record that had gone stale read as fresh (a request sent
+                // on a token that expired while this process queued) and
+                // stamped the replacement's `expires_at_ms` that far in the
+                // past, so the next request found it stale again: one refresh
+                // per request, each rotating the refresh token.
+                const held_ms = nowMs(env.io);
                 record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
-                if (record.needsRefresh(now_ms, refresh_skew_ms)) {
-                    record = try oauth_native.refresh(env.io, env.gpa, oauth_arena, plugin.*, record, now_ms);
+                if (record.needsRefresh(held_ms, refresh_skew_ms)) {
+                    record = try oauth_native.refresh(env.io, env.gpa, oauth_arena, plugin.*, record, held_ms);
                     try oauth_store.save(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name, record);
                 }
             }
