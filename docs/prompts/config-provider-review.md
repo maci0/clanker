@@ -23,6 +23,10 @@ through P3 and then by confidence; omit findings without a concrete
 covering the checklist and explicitly state when no P0/P1 finding is
 supported.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **config loading and provider/model resolution** in

@@ -24,6 +24,10 @@ findings, ordered P0 through P3 and then by confidence; omit anything without
 a concrete "here is how a patch slips through" story. Stop after covering the
 checklist and explicitly state when no P0/P1 finding is supported.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing the **safety net around clanker's self-improvement loop**

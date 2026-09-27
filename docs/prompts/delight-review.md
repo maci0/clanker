@@ -28,6 +28,10 @@ findings, ordered by how much a real session would notice them, then by
 confidence. Stop after covering all in-scope surfaces and explicitly state
 when a section has nothing worth reporting rather than padding it.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **product feel**, not correctness, not security, not

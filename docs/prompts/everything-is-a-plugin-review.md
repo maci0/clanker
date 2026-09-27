@@ -26,6 +26,10 @@ and then by confidence; omit "could be a plugin" rows that lack a concrete
 current caller. Stop after covering both passes and explicitly state when no
 P0/P1 finding is supported.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **plugin shape** in the repository in the current working
@@ -177,3 +181,11 @@ guest)** / **bug-class leak** / **needs an RFC, not a finding here**.
 - [ ] No proposed move lands sandbox policy, credentials, grading/gating, or the agent loop in a guest
 - [ ] The "verified clean / stays core on purpose" list is present, so the review cannot be misread as "pluginize everything"
 - [ ] No em dashes / AI attribution
+
+## Optional user addenda
+
+- "Web UI plugins only; skip `/api/*` handlers."
+- "Kind-switch audit only: prove every comparison outside `src/llm/providers/` is gone."
+- "Boundary leaks only: skip candidates that would need a new manifest field."
+- "Report only; do not edit anything." (already the default — state it back
+  if the user says it anyway, to confirm scope.)

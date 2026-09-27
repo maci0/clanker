@@ -21,6 +21,10 @@ most 10 findings, ordered P0 through P3 and then by confidence; omit candidates
 without a concrete failure or maintenance cost. Stop after covering the
 checklist and explicitly state when no P0/P1 finding is supported.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **abstraction decisions** in **clanker**, the repository in
@@ -376,7 +380,7 @@ Any abstraction called from `on_token`, the agent-loop body, or per-tool-call:
 Could this be `std.Io` / `std.mem` / an existing util? If yes and the
 wrapper adds nothing, delete the wrapper.
 
-### 6. Response contents
+## Response contents
 
 Return these sections in the captured response:
 
@@ -389,14 +393,14 @@ Return these sections in the captured response:
 
 Conclude with the top findings and whether `zig build test` ran.
 
-Severity:
+## Finding severity
 
-| Sev | Meaning |
-|---|---|
-| **P0** | Wrong layer causing bugs; dual tool-dispatch/session/status path; streaming-path alloc hidden in a helper |
-| **P1** | Premature framework; a second sandbox-adjacent mechanism; facade that grew real logic it shouldn't own |
-| **P2** | Weak name; 1-call-site util file; extract candidate with 3+ sites not shared yet |
-| **P3** | Doc/import hygiene |
+| Sev | Meaning | Examples |
+|---|---|---|
+| **P0** | Wrong layer causing bugs; dual tool-dispatch/session/status path; streaming-path alloc hidden in a helper | A second `executeCalls` loop beside `Agent.run`'s; a status hook that re-derives session state instead of reading the store |
+| **P1** | Premature framework; a second sandbox-adjacent mechanism; facade that grew real logic it shouldn't own | A `Sandbox` builder that exists to configure one caller; a facade that now parses tool args itself |
+| **P2** | Weak name; 1-call-site util file; extract candidate with 3+ sites not shared yet | `helper.zig` with one importer; three sites each reimplementing the same 5-line truncation |
+| **P3** | Doc/import hygiene | Missing module `//!`; an import the file's own section already makes unnecessary |
 
 ## Worked examples (clanker-shaped)
 

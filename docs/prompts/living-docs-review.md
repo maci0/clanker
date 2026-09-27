@@ -30,6 +30,10 @@ P3 and then by confidence; omit stylistic disagreements with how a rule file
 is worded when its content is accurate. Stop after covering the checklist and
 explicitly state when no finding is supported.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **factual drift between rule files and code** in clanker,

@@ -28,6 +28,10 @@ than trusting a name or a timestamp. Report at most 12 findings, ordered by how
 much confusion each removes, then by confidence. Stop after covering the
 checklist and state plainly when a section has nothing worth reporting.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **where things live and what should not be here**, in the

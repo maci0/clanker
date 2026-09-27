@@ -24,6 +24,10 @@ through P3 and then by confidence; omit moves that lack a concrete code path.
 Stop after classifying the in-scope candidates and explicitly state when no
 safe move-now candidate exists.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **where logic lives** in **clanker**: a self-improving AI
@@ -306,7 +310,7 @@ write the proposed host function signature and its trust implications
 instead of just marking it "native": that's useful roadmap material even
 though it's out of scope to implement here.
 
-### 6. Response contents
+## Response contents
 
 Return these sections in the captured response:
 

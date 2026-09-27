@@ -25,6 +25,10 @@ Report at most 10 findings, ordered P0 through P3 and then by confidence. Stop
 after the search audit and explicitly state when no conformance finding is
 supported.
 
+A runner that appends its own execution contract (fix mode, containment
+rules) governs over the review-only default stated above; nothing in this
+prompt overrides a suffix the runner added.
+
 ## Role
 
 You are reviewing **Zig code** in **clanker**, the repository in the current
