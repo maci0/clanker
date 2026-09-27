@@ -443,13 +443,13 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
       </div>
       <div class="runs">
-        <section class="mesh-map-section" aria-labelledby="mesh-map-head">
-          <div class="section-head mesh-map-head">
-            <h3 id="mesh-map-head">Mesh</h3>
+        <section class="min-w-0" aria-labelledby="mesh-map-head">
+          <div class="section-head mb-2 flex items-center justify-between gap-2">
+            <h3 class="m-0" id="mesh-map-head">Mesh</h3>
             <button type="button" class="secondary" id="fleet-open-mesh">Manage mesh</button>
           </div>
-          <button type="button" class="mesh-pending-banner" id="mesh-pending-banner" hidden></button>
-          <div id="mesh-map" class="mesh-map" role="img" aria-label="Clanker mesh map"></div>
+          <button type="button" class="mb-2 block min-h-8 w-full cursor-pointer rounded-plate border border-accent bg-surface px-3 py-2 text-left font-sans text-sm hover:bg-surface-2" id="mesh-pending-banner" hidden></button>
+          <div id="mesh-map" class="relative min-h-[22rem] overflow-hidden rounded-plate-lg border border-rule bg-surface max-[45rem]:h-64 max-[45rem]:min-h-64" role="img" aria-label="Clanker mesh map"></div>
           <p class="meta" id="mesh-map-status" aria-live="polite"></p>
         </section>
         <section aria-labelledby="fleet-roster-head">

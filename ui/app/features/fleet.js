@@ -701,6 +701,21 @@ export function stopFleet() {
   if (_mapCoalesce) { clearTimeout(_mapCoalesce); _mapCoalesce = null; }
 }
 
+/* The mesh map's SVG, as Tailwind utilities over the cabinet tokens. The lamp
+   fills are `url(#…)` references to the gradients built beside them, the wire's
+   dash array and the text anchor are arbitrary properties (no utility carries
+   them), and the two animations are theme keys in ui/app/tailwind.src.css. */
+var MAP_SVG_CLASS = "block h-[22rem] w-full max-[45rem]:h-64";
+var WIRE_CLASS = "fill-none stroke-[1.6] stroke-[color-mix(in_srgb,var(--fg)_22%,var(--rule))] [stroke-linecap:round]";
+var WIRE_LIVE_CLASS = "animate-wire-flow stroke-[2.4] stroke-[color-mix(in_srgb,var(--accent)_70%,var(--rule))] [stroke-dasharray:5_9] motion-reduce:animate-none motion-reduce:[stroke-dasharray:none]";
+var WIRE_REV_CLASS = "[animation-direction:reverse]";
+var PULSE_CLASS = "fill-accent [filter:drop-shadow(1px_2px_5px_color-mix(in_srgb,var(--accent)_75%,transparent))] motion-reduce:hidden";
+var NODE_CLASS = "group";
+var HALO_CLASS = "pointer-events-none fill-ok-fill opacity-0 [transform-box:fill-box] [transform-origin:center] group-data-[working=1]:animate-lamp-glow motion-reduce:animate-none motion-reduce:opacity-35";
+var LAMP_CLASS = "fill-[url(#mesh-lamp-idle)] stroke-[1.2] stroke-[color-mix(in_srgb,var(--fg)_18%,var(--surface))] group-data-[self=1]:fill-[url(#mesh-lamp-self)] group-data-[working=1]:fill-[url(#mesh-lamp-live)]";
+var LABEL_CLASS = "pointer-events-none fill-fg font-mono text-xs [text-anchor:middle]";
+var META_TEXT_CLASS = "pointer-events-none fill-fg-muted font-mono text-2xs uppercase tracking-label [text-anchor:middle]";
+
 function meshPos(nodes, i, w, h) {
   if (i === 0) return { x: w / 2, y: h / 2 };
   var n = Math.max(nodes.length - 1, 1);
@@ -795,7 +810,7 @@ function renderMeshMap(el, data, statusEl) {
   var pos = {};
   nodes.forEach(function (n, i) { pos[n.id] = meshPos(nodes, i, w, h); });
   var parts = [];
-  parts.push('<svg viewBox="0 0 ' + w + " " + h + '" role="presentation">');
+  parts.push('<svg class="' + MAP_SVG_CLASS + '" viewBox="0 0 ' + w + " " + h + '" role="presentation">');
   parts.push("<defs>");
   var paper = themeToken("--paper");
   var muted = themeToken("--fg-muted");
@@ -815,23 +830,23 @@ function renderMeshMap(el, data, statusEl) {
     });
     var reverse = pulse && pulse.from === l.to;
     var id = "mesh-wire-" + i;
-    parts.push('<path id="' + id + '" class="mesh-wire' + (pulse ? " mesh-wire--live" : "") +
-      (reverse ? " mesh-wire--rev" : "") +
+    parts.push('<path id="' + id + '" class="' + WIRE_CLASS + (pulse ? " " + WIRE_LIVE_CLASS : "") +
+      (reverse ? " " + WIRE_REV_CLASS : "") +
       '" d="M' + a.x.toFixed(1) + " " + a.y.toFixed(1) + " L" + b.x.toFixed(1) + " " + b.y.toFixed(1) + '"/>');
     if (!pulse) return;
-    parts.push('<circle class="mesh-pulse" r="4.5"><animateMotion dur="1.6s" repeatCount="indefinite" rotate="auto" keyPoints="' +
+    parts.push('<circle class="' + PULSE_CLASS + '" r="4.5"><animateMotion dur="1.6s" repeatCount="indefinite" rotate="auto" keyPoints="' +
       (reverse ? "1;0" : "0;1") + '" keyTimes="0;1" calcMode="linear"><mpath href="#' + id + '"/></animateMotion></circle>');
   });
   nodes.forEach(function (n) {
     var p = pos[n.id];
     if (!p) return;
     var r = n.state === "self" ? 22 : 16;
-    var cls = "mesh-node" + (n.state === "self" ? " mesh-node--self" : "") + (n.working ? " mesh-node--working" : "");
-    parts.push('<g class="' + cls + '" data-node="' + escapeHtml(n.id) + '">');
-    parts.push('<circle class="mesh-node-halo" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + (r * 1.75).toFixed(1) + '"/>');
-    parts.push('<circle class="mesh-node-lamp" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + r + '"/>');
-    parts.push('<text class="mesh-node-label" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 16).toFixed(1) + '">' + escapeHtml(n.name || n.id) + "</text>");
-    parts.push('<text class="mesh-node-meta" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 28).toFixed(1) + '">' +
+    parts.push('<g class="' + NODE_CLASS + '" data-self="' + (n.state === "self" ? "1" : "") +
+      '" data-working="' + (n.working ? "1" : "") + '" data-node="' + escapeHtml(n.id) + '">');
+    parts.push('<circle class="' + HALO_CLASS + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + (r * 1.75).toFixed(1) + '"/>');
+    parts.push('<circle class="' + LAMP_CLASS + '" cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="' + r + '"/>');
+    parts.push('<text class="' + LABEL_CLASS + '" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 16).toFixed(1) + '">' + escapeHtml(n.name || n.id) + "</text>");
+    parts.push('<text class="' + META_TEXT_CLASS + '" x="' + p.x.toFixed(1) + '" y="' + (p.y + r + 28).toFixed(1) + '">' +
       escapeHtml(n.working ? "working" : (n.state === "self" ? "home" : (n.path || n.state))) + "</text>");
     parts.push("</g>");
   });

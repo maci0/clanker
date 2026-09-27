@@ -54,11 +54,41 @@ const migrated = [
 /// cabinet's scales are not asked to carry.
 const arbitrary_ok = [
   /^max-w-\[min\(/,
-  /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|grid-cols|grid-rows|ps|pl|pr|pt|pb)-\[/,
+  /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|grid-cols|grid-rows|ps|pl|pr|pt|pb|stroke)-\[/,
 ];
 /// A generated-content utility: `content-['…']` is the only spelling for an
 /// empty output's placeholder, and the value is a character, not a size.
 const content_ok = /^content-\[/;
+/// An arbitrary *property* (`[stroke-dasharray:5_9]`) is Tailwind's escape hatch
+/// for a property no utility carries at all.
+const property_ok = /^\[[a-z-]+:/;
+/// A value that reads a `var(--…)` is an expression over the tokens, the same
+/// thing a theme key is; a value that says `#1b1b1b` is the drift this test is
+/// for, whichever utility it rides on.
+const token_value_ok = /var\(--/;
+/// An SVG paint server reference, not a colour.
+const paint_ok = /^(?:fill|stroke)-\[url\(/;
+/// A colour written as a literal, wherever it appears: a hex value, or an
+/// `rgb()`/`hsl()` call. `url(#mesh-lamp-idle)` is a fragment reference to a
+/// paint server, not a colour, and does not match.
+const colour_literal = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
+
+/// Split a token on the colons that separate its variants — but not on a colon
+/// inside brackets, where `[stroke-dasharray:5_9]` keeps its property and value
+/// together and `drop-shadow(1px_2px_5px_…)` keeps its commas.
+function splitVariants(token) {
+  const parts = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of token) {
+    if (ch === "[") depth += 1;
+    else if (ch === "]") depth -= 1;
+    if (ch === ":" && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts;
+}
 /// Variant prefixes that may carry brackets without being an arbitrary value:
 /// a breakpoint, or the element state a ported sheet reached through an
 /// attribute selector.
@@ -209,8 +239,11 @@ test("migrated files keep padding, margin and gap on a cabinet rung", function (
 });
 
 test("migrated files use scale utilities, not arbitrary values", function () {
-  // `p-[13px]` and `bg-[#fff]` bypass every token in the theme. Breakpoints and
-  // the two documented measurements are the exception.
+  // `p-[13px]` and `bg-[#fff]` bypass every token in the theme. What is left
+  // open: a breakpoint, a grid template, a measurement with no rung (the size
+  // of a bar or a measure), a generated character, an arbitrary property, and
+  // any value that derives itself from the tokens with `var(--…)`. A literal
+  // colour is refused wherever it appears.
   const offenders = [];
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
@@ -220,7 +253,7 @@ test("migrated files use scale utilities, not arbitrary values", function () {
         // that is not an arbitrary value. The check is on what the utility
         // itself does, so only the last segment counts — and an unknown
         // bracketed variant is one more thing this list has not seen.
-        const parts = token.split(":");
+        const parts = splitVariants(token);
         for (const part of parts.slice(0, -1)) {
           if (!part.includes("[")) continue;
           if (variant_bracket_ok.test(part)) continue;
@@ -230,7 +263,14 @@ test("migrated files use scale utilities, not arbitrary values", function () {
         // a bracketed variant is the previous loop's business.
         const utility = parts[parts.length - 1];
         if (!utility.includes("[")) continue;
+        if (colour_literal.test(utility)) {
+          offenders.push(`${rel}: ${token} (colour literal)`);
+          continue;
+        }
         if (content_ok.test(utility)) continue;
+        if (property_ok.test(utility)) continue;
+        if (token_value_ok.test(utility)) continue;
+        if (paint_ok.test(utility)) continue;
         if (arbitrary_ok.some((re) => re.test(utility))) continue;
         offenders.push(`${rel}: ${token}`);
       }

@@ -253,6 +253,19 @@
 
   --container-measure: var(--measure);
 
+  /* The mesh map's two animations. A theme key rather than a rule, so the
+     utility that names it is `animate-wire-flow`, and the keyframes ship with
+     the utility that uses them. */
+  --animate-wire-flow: mesh-wire-flow 1.1s linear infinite;
+  --animate-lamp-glow: mesh-lamp-glow 1.8s ease-in-out infinite;
+  @keyframes mesh-wire-flow {
+    to { stroke-dashoffset: -14; }
+  }
+  @keyframes mesh-lamp-glow {
+    0%, 100% { opacity: 0.2; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(1.32); }
+  }
+
   --shadow-low: var(--lift-low);
   --shadow-lift: var(--lift);
   --shadow-high: var(--lift-high);

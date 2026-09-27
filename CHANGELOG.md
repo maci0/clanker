@@ -174,6 +174,26 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   JS file that form is usually a fragment of markup built by concatenation
   (`'class="mesh-wire' + …`), which the extractor was reading as class names.
 
+- The mesh map is styled with Tailwind utilities: the section, its head, the
+  pending banner and the frame in `index.html`, and the SVG itself in
+  `ui/app/features/fleet.js` (wires, the moving pulse, node lamps, halos and
+  labels). Its two animations are theme keys (`--animate-wire-flow`,
+  `--animate-lamp-glow`, keyframes included), so `animate-wire-flow` ships the
+  keyframes it names. A node's `self`/`working` state moved from
+  `mesh-node--self`/`--working` on the group to `data-self`/`data-working` read
+  by its children through `group-data-[…]`, the lamp gradients stay `url(#…)`
+  paint references, and the dash array, transform box and text anchor are
+  arbitrary properties — the one place Tailwind has no utility at all. The
+  reduced-motion rules became `motion-reduce:` variants on the three animated
+  elements, and the phone size is `max-[45rem]:`.
+- `ui/app/tailwind.test.mjs`'s arbitrary-value rule is explicit about its line:
+  a breakpoint, a grid template, a measurement with no rung, a generated
+  character, an arbitrary property, an SVG paint reference, and any value
+  derived from the tokens with `var(--…)` are all fine; a literal colour
+  (`#hex`, `rgb()`, `hsl()`) fails wherever it appears. Token splitting also
+  learned to keep a colon inside brackets, so `[stroke-dasharray:5_9]` is one
+  utility rather than a variant beside a stray word.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive
