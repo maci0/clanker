@@ -33,6 +33,19 @@ var _open = false;
 export function getProviderCache() { return _providerCache; }
 export function getModelIndex() { return _modelIndex; }
 
+/// A model's row description, shared by the flat index and the native
+/// <select> so the two surfaces cannot describe one model differently.
+function modelMeta(m, fmt) {
+  var meta = [];
+  if (m.category) meta.push(m.category);
+  if (m.context_window) meta.push(fmt(m.context_window) + " ctx");
+  if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
+    meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
+               " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
+  }
+  return meta;
+}
+
 /// Flat picker rows from a GET /api/providers payload. Coding-agent backends
 /// come first under "Local coding-agent backend"; API-key models follow,
 /// grouped by provider name. Used by loadProviders and by node tests.
@@ -52,19 +65,12 @@ export function pickerIndexFromPayload(d, fmtInt) {
   callableProviders(d.providers).forEach(function (prov) {
     var models = (prov.models || []).filter(function (m) { return m.enabled !== false; }).slice();
     models.forEach(function (m) {
-      var meta = [];
-      if (m.category) meta.push(m.category);
-      if (m.context_window) meta.push(fmt(m.context_window) + " ctx");
-      if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
-        meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
-                   " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
-      }
       index.push({
         value: prov.name + " " + m.name,
         provider: prov.name,
         model: m.name,
         label: m.display || m.name,
-        meta: meta.join("  ·  "),
+        meta: modelMeta(m, fmt).join("  ·  "),
       });
     });
   });
@@ -471,13 +477,7 @@ export function loadProviders() {
         models.forEach(function (m) {
           var value = prov.name + " " + m.name;
           var label = m.display || m.name;
-          var meta = [];
-          if (m.category) meta.push(m.category);
-          if (m.context_window) meta.push(_fmtInt(m.context_window) + " ctx");
-          if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
-            meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
-                       " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
-          }
+          var meta = modelMeta(m, _fmtInt);
           var opt = document.createElement("option");
           opt.value = value;
           opt.textContent = label + (meta.length ? "  ·  " + meta.join("  ·  ") : "");

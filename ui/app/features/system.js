@@ -4,7 +4,7 @@
    downloaded 12.5 KB raw it never ran and paid for a GET /api/config/raw
    and a GET /api/mcp/servers it never read. They load with the System view now,
    like every other feature view. */
-import { readJson, wireRefresh } from "../core/utils.js";
+import { readJson, postJson, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 import { uiConfirm, showLoadError, upgradePfButton } from "../core/ui.js";
 
@@ -221,12 +221,7 @@ function bindMcpServers() {
     }
     var btn = f("mcp-edit-save");
     btn.disabled = true;
-    fetch("/api/config/table/set", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ block: buildBlock(name) })
-    })
-      .then(readJson)
+    postJson("/api/config/table/set", { block: buildBlock(name) })
       .then(function (d) {
         if (!d.ok) throw new Error(d.error || "write failed");
         note("Saved. " + (d.applied || "The server reloads into it."));
@@ -242,12 +237,7 @@ function bindMcpServers() {
     uiConfirm("Remove MCP server " + name + " from config.local.toml?", { danger: true, confirmLabel: "Remove" }).then(function (yes) {
       if (!yes) return;
       var header = "mcp_servers." + (/^[A-Za-z0-9_-]+$/.test(name) ? name : tomlStr(name));
-      fetch("/api/config/table/remove", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ header: header })
-      })
-        .then(readJson)
+      postJson("/api/config/table/remove", { header: header })
         .then(function (d) {
           if (!d.ok) throw new Error(d.error || "remove failed");
           note(d.removed === false ? "Nothing by that name in config.local.toml (a server declared in the shared config.toml cannot be removed here)." : "Removed.");

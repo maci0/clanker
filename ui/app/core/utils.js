@@ -165,6 +165,11 @@ export function readJson(r) {
   });
 }
 
+/* The JSON POST every config write in the UI is; a missing body is `{}`. */
+export function postJson(path, body) {
+  return fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body == null ? {} : body) }).then(readJson);
+}
+
 /* A list load fails in two shapes a panel must not confuse. A module the
    operator switched off is a settled state — the route answers 404 with its
    own reason and retrying it will answer the same thing forever. Anything

@@ -1,7 +1,7 @@
 // Models view — what the configured providers offer, a provider's live
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
-import { readJson, fmtInt, fmtBytes, providerUnusableReason, wireRefresh } from "../core/utils.js";
+import { readJson, postJson, fmtInt, fmtBytes, providerUnusableReason, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 
 function askConfirm(message, opts) {
@@ -210,12 +210,7 @@ function postConfig(path, payload, btn, confirmMessage, doneLabel) {
   askConfirm(confirmMessage, { confirmLabel: "Save", title: "Write config.local.toml" }).then(function (yes) {
     if (!yes) return;
     if (btn) btn.disabled = true;
-    fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
-    })
-      .then(readJson)
+    postJson(path, payload)
       .then(function (d) {
         if (!d.ok) throw new Error(d.error || "write failed");
         if (btn) btn.textContent = doneLabel;
@@ -467,11 +462,7 @@ function modelEntryPayload(entry) {
 
 function saveModelEntry(entry, checkbox) {
   checkbox.disabled = true;
-  return fetch("/api/config/model/set", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(modelEntryPayload(entry))
-  }).then(readJson).then(function (d) {
+  return postJson("/api/config/model/set", modelEntryPayload(entry)).then(function (d) {
     if (!d.ok) throw new Error(d.error || "write failed");
     checkbox.disabled = false;
     status((entry.enabled ? "Enabled " : "Disabled ") + entry.provider + "/" + entry.model + ".");
@@ -684,12 +675,7 @@ function saveTomlEdit() {
   var btn = document.getElementById("models-edit-save");
   if (!text) return;
   if (btn) btn.disabled = true;
-  fetch("/api/config/table/set", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ block: text.value })
-  })
-    .then(readJson)
+  postJson("/api/config/table/set", { block: text.value })
     .then(function (d) {
       if (!d.ok) throw new Error(d.error || "write failed");
       setEditNote("Saved to config.local.toml. " + (d.applied || "Hot reload applies it."));
@@ -710,12 +696,7 @@ function saveEdit() {
   }
   var btn = document.getElementById("models-edit-save");
   if (btn) btn.disabled = true;
-  fetch("/api/config/model/set", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  })
-    .then(readJson)
+  postJson("/api/config/model/set", payload)
     .then(function (d) {
       if (!d.ok) throw new Error(d.error || "write failed");
       setEditNote("Saved to config.local.toml. " + (d.applied || "The server reloads into it."));
@@ -740,12 +721,7 @@ function removeEdit() {
   }).then(function (yes) {
     if (!yes) return;
     if (btn) btn.disabled = true;
-    fetch("/api/config/model/remove", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider: editEntry.provider, model: editEntry.model })
-    })
-      .then(readJson)
+    postJson("/api/config/model/remove", { provider: editEntry.provider, model: editEntry.model })
       .then(function (d) {
         if (!d.ok) throw new Error(d.error || "remove failed");
         if (btn) { btn.disabled = false; btn.textContent = "Remove"; }
