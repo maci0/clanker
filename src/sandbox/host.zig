@@ -4719,9 +4719,10 @@ fn writeLockHolder(sb: *Sandbox, file: std.Io.File, target: []const u8) void {
 /// improve worktree inherited a copy.
 ///
 /// The name is a SHA-256 of the target with its directory part resolved
-/// (`resolvedLockKey`), so every spelling of one file maps to one lock inode
-/// while distinct files still serialise independently and two checkouts
-/// sharing one `state/` do not collide.
+/// (`cas_lock.resolvedKey`, which also folds case on a case-insensitive
+/// volume), so every spelling of one file maps to one lock inode while distinct
+/// files still serialise independently and two checkouts sharing one `state/`
+/// do not collide.
 fn casLockPath(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
     const state_dir = std.mem.trimEnd(u8, if (sb.state_dir.len > 0) sb.state_dir else "state", "/");
 
@@ -4752,12 +4753,10 @@ fn casLockPath(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
     try ensure_dir.ensureDir(state_base, sb.io, dir);
     sweepAgedLocks(sb, state_base, dir);
 
-    const key = try resolvedLockKey(sb, base, full);
-    defer sb.gpa.free(key);
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update(key);
-    const name = std.fmt.bytesToHex(hasher.finalResult(), .lower);
-    return std.fmt.allocPrint(sb.gpa, "{s}/{s}.lock", .{ dir, name });
+    // cas_lock.lockPath is the one key function (ADR 0031): deriving the hash
+    // here as well is how the two spellings of this key could drift apart, and
+    // a drifted key is a lock neither writer takes.
+    return cas_lock.lockPath(sb.gpa, sb.io, base, dir, full);
 }
 
 /// Name of the file whose mtime spaces out the lock sweep. Not a lock file:
@@ -4892,25 +4891,6 @@ fn casLockName(name: []const u8) bool {
         if (!std.ascii.isHex(c)) return false;
     }
     return true;
-}
-
-/// The string a lock name is hashed from: `full` with its directory part
-/// resolved to a real absolute path.
-///
-/// It must be the *file* that names the lock, not the text that named the file.
-/// One target is spelled several ways -- `./state/goals.json` under the default
-/// `agent.sandbox_root`, `/abs/checkout/state/goals.json` under an isolated
-/// run's `shared_root`, and the guest's own path under an absolute
-/// `fs_prefixes` grant -- and hashing the spelling gave each of them a lock of
-/// its own, so two writers to one file excluded nothing and the earlier write
-/// was lost. The sidecar this replaced could not split that way: every spelling
-/// named one file, and the kernel resolved them to one inode.
-///
-/// The basename is appended rather than resolved. The target need not exist
-/// yet, and a lock keyed on a link's destination would be a different lock from
-/// the one a writer of the link's own name takes.
-fn resolvedLockKey(sb: *Sandbox, base: std.Io.Dir, full: []const u8) ![]u8 {
-    return cas_lock.resolvedKey(sb.gpa, sb.io, base, full);
 }
 
 /// ck_getenv(name), alias of ck_env, kept for modules linked against the

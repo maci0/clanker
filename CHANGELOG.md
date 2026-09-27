@@ -5,6 +5,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive
+  filesystem. `state/Goals.json` and `state/goals.json` are one file on macOS's
+  default APFS, and hashing each spelling gave every writer a lock of its own, so
+  two concurrent compare-and-swap writes to one target excluded nothing. The
+  lock key is now ASCII-folded when the volume it names proves case-insensitive
+  (probed by resolving the key's directory with its letters flipped), and
+  distinct files keep distinct locks on every platform.
+- `turn_stats` in the TUI reported the wall time of a turn through an
+  undeclared `io` identifier, which did not compile.
+
 ## [0.5.0] - 2026-09-18
 
 Compatibility-breaking minor: symlink and Origin/Host hardening, plus numeric
