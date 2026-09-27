@@ -239,6 +239,32 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/gate/checks.zig", .needle = "\"FIX\" ++ \"ME\"" },
     .{ .file = "src/gate/checks.zig", .needle = "\"HA\" ++ \"CK\"" },
     .{ .file = "src/gate/checks.zig", .needle = "\"XX\" ++ \"X\"" },
+    // checksZigShapeBroken proves each gate's counting anchor is still
+    // REACHED; it cannot see the condition that decides whether a file is
+    // counted at all. Rewriting `if (rootImports(main_src, rel)) continue;`
+    // as `if (true) continue;` keeps the anchor, its indent, the call site in
+    // cli.zig and every other needle, and turns the gate permanently green --
+    // which is the whole reason test-root-coverage exists. Pin the deciding
+    // predicate of every gate whose body only had a reachability anchor.
+    .{ .file = "src/gate/checks.zig", .needle = "if (rootImports(main_src, rel)) continue;" },
+    .{ .file = "src/gate/checks.zig", .needle = "if (buildRegistersJsSuite(build_src, rel)) continue;" },
+    .{ .file = "src/gate/checks.zig", .needle = "if (registeredInRuntime(runtime_src, name)) continue;" },
+    // The eager-URL dedup is what keeps a preload/script pair counted once;
+    // a vacuous dup flag inflates the budget by every repeated URL.
+    .{ .file = "src/gate/checks.zig", .needle = "if (std.mem.eql(u8, prev, url)) {" },
+    // dep-patches reads the pin out of build.zig.zon to find the extracted
+    // tree; without it every patch looks unapplied, and inverting the
+    // miss-counting is the cheaper direction for the loop to take.
+    .{ .file = "src/gate/checks.zig", .needle = "const hash = depHashFor(zon, pkg) orelse {" },
+    // Both inventories decide "is this record accounted for" by asking a
+    // lookup. Deleting the lookup call leaves the anchor as dead code the
+    // shape check still sees.
+    .{ .file = "src/gate/checks.zig", .needle = "const row = inventoryStatusFor(inventory, kind_dir, entry.name) orelse {" },
+    .{ .file = "src/gate/checks.zig", .needle = "if (fm.description.len > skills_logic.desc_clip) {" },
+    // provider-kind's detection table, and the duplicate tool-name shadow
+    // that toolDescriptorGate exists to catch.
+    .{ .file = "src/gate/checks.zig", .needle = "const needles = [_][]const u8{ \"provider.kind\", \"p.kind\" };" },
+    .{ .file = "src/gate/checks.zig", .needle = "} else if (names.contains(name)) {" },
     // A build.zig change can make `zig build` succeed without installing the
     // staged executable. Capability evaluation must fail closed in that case,
     // otherwise removing the binary is enough to skip the entire eval suite.
@@ -5243,6 +5269,30 @@ test "the newer clanker-gate-only checks are pinned too" {
     try expectInvariantCaught("src/cli.zig", "gate_checks.webuiBudgetGate(", "");
     try expectInvariantCaught("src/cli.zig", "gate_checks.skillsInventoryGate(", "");
     try expectInvariantCaught("src/cli.zig", "gate_checks.depPatchesGate(", "");
+}
+
+test "a patch that flips a clanker-gate-only check's own predicate is rejected" {
+    // The shape check above proves the counting anchor is reached; it does not
+    // look at the condition that decides whether a file is counted. Inverting
+    // that one condition is the smallest patch that silences a check without
+    // touching a single existing needle, the call site, or the anchor's
+    // indent, so the predicate is what has to survive. test-root-coverage is
+    // the one that matters most: its whole purpose is a failure nothing else
+    // can see, and a green return there is invisible in `zig build test`.
+    try expectInvariantCaught("src/gate/checks.zig", "if (rootImports(main_src, rel)) continue;", "if (true) continue;");
+    try expectInvariantCaught("src/gate/checks.zig", "if (registeredInRuntime(runtime_src, name)) continue;", "if (false) continue;");
+    try expectInvariantCaught("src/gate/checks.zig", "if (buildRegistersJsSuite(build_src, rel)) continue;", "if (true) continue;");
+    // An emptied lookup is the same shape on the inventory gates: the anchor
+    // survives as dead code, so only the pinned call keeps them honest.
+    try expectInvariantCaught("src/gate/checks.zig", "const row = inventoryStatusFor(inventory, kind_dir, entry.name) orelse {", "const row: []const u8 = \"Open\"; if (true) {");
+    try expectInvariantCaught("src/gate/checks.zig", "if (fm.description.len > skills_logic.desc_clip) {", "if (false) {");
+    // The detection table and the duplicate-name shadow: rewriting either to a
+    // constant leaves the gate's own counting anchor reachable and useless.
+    try expectInvariantCaught("src/gate/checks.zig", "const needles = [_][]const u8{ \"provider.kind\", \"p.kind\" };", "const needles = [_][]const u8{};");
+    try expectInvariantCaught("src/gate/checks.zig", "} else if (names.contains(name)) {", "} else if (true) {");
+    // dep-patches' budget dup and its pin lookup.
+    try expectInvariantCaught("src/gate/checks.zig", "if (std.mem.eql(u8, prev, url)) {", "if (true) {");
+    try expectInvariantCaught("src/gate/checks.zig", "const hash = depHashFor(zon, pkg) orelse {", "const hash = \"\"; if (true) {");
 }
 
 test "a patch that flips improve defaults in src/config.zig is rejected" {

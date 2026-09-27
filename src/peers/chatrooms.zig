@@ -903,7 +903,11 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
 /// mint: 1..64 ASCII alphanumerics, dashes, or underscores, the same fragment
 /// rule session ids obey. `makeId` output is inside it; a caller's own id is
 /// refused before it can reach the log or a peer's dedup check.
-fn validMessageId(id: []const u8) bool {
+///
+/// Public because `src/sandbox/host.zig` rejects the same id at the `ck_chat`
+/// boundary, naming the rule in its refusal: one rule, one place, checked
+/// before the log is written rather than only at the id the harness mints.
+pub fn validMessageId(id: []const u8) bool {
     if (id.len == 0 or id.len > 64) return false;
     for (id) |c| {
         if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
