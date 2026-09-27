@@ -1,10 +1,12 @@
 # clanker Threat Model
 
 Last reviewed: 2026-09-27. Every file:line reference below was re-resolved against the tree on
-that date and lands on the symbol or call site it names; see
-[document quality](#7-threat-model-document-quality) for how fast the previous set drifted.
-Evidence is static code inspection, not attack testing. Owner, review cadence, and disclosure
-process remain unset (organizational, not invented here).
+that date, by reading each cited line, and now lands on the symbol or call site it names; the
+previous pass recorded the same result for a set that roughly 40 of its references did not
+satisfy, so see [document quality](#7-threat-model-document-quality) for how the check was
+redone and how fast the previous set drifted. Evidence is static code inspection, not attack
+testing. Owner, review cadence, and disclosure process remain unset (organizational, not
+invented here).
 
 Owner: unassigned. Review cadence: not set. Vulnerability disclosure process: none documented
 (no `SECURITY.md`; see [Response readiness](#8-response-readiness-note-only)).
@@ -13,12 +15,12 @@ Owner: unassigned. Review cadence: not set. Vulnerability disclosure process: no
 
 | # | Risk | Impact | Likelihood | Notes |
 |---|------|--------|------------|-------|
-| R1 | **Unauthenticated control includes native configuration and backend execution, not just sandboxed tools.** The HTTP handler has Host/Origin checks but no caller authentication (`src/cli.zig:8250`, `src/cli.zig:8275`). Raw config reads disclose file contents (`src/cli.zig:11867`); validated writes change the operator's policy (`src/cli.zig:11898`). `/api/run` can select a native backend (`src/cli.zig:16813`, dispatched `src/cli.zig:17212`, `src/cli.zig:16998`). | Critical: configuration, credentials stored there, and operator-level execution | High for a reachable local client; remote exposure depends on bind/network policy | Loopback/Host/Origin are not user identity. WASM grants do not contain the native paths; see T7. The same absence governs the local IPC surfaces (T9). The docs state the absence plainly (`docs/README.md:1617`, `README.md:224`). |
-| R2 | **Proxy credential spending.** Proxy authentication is optional; a `proxy_token_env` naming an unset variable skips authentication entirely (`src/cli.zig:8255-8262`, standalone `src/proxy_main.zig:311-316`). The standalone proxy runs no Host/Origin guard: `src/proxy_main.zig` contains no `unexpectedHost` or `crossOriginRequest` call. | High: provider spend and submitted prompt data | High when reachable without a token | A proxy token protects only proxy paths, never `/api/*`. Startup warnings are not access controls (`src/cli.zig:7788-7795`, `src/proxy_main.zig:125-137`). |
-| R3 | **Prompt injection through LLM responses.** Provider output is untrusted input to the agent loop; retrieved documents, memory hits, and tool results are untrusted text the model is told never to execute (`src/agent/system_prompt.zig:693`). Containment is the sandbox, not the prompt. | High (tool misuse within sandbox policy) | Certain (inherent to an agent harness) | The sandbox is the trust boundary that makes this survivable; see M5. |
-| R4 | **Mesh join without credential.** Mesh admission is allowlist-by-name, prompt, or open (`Admission`, `src/peers/mesh.zig:116`; `admit` `src/peers/mesh.zig:125`); the wire carries no authentication beyond the admission handshake and no encryption (plain TCP). Default bind is loopback `127.0.0.1:7420` (`src/config.zig:955`). | Medium (chat/fan-out spoofing, membership) | Medium (needs LAN reach or misconfig) | Off by default (`modules.mesh`). |
+| R1 | **Unauthenticated control includes native configuration and backend execution, not just sandboxed tools.** The HTTP handler has Host/Origin checks but no caller authentication (`src/cli.zig:8240`, `src/cli.zig:8265`). Raw config reads disclose file contents (`src/cli.zig:11887`); validated writes change the operator's policy (`src/cli.zig:11918`). `/api/run` can select a native backend (`src/cli.zig:16852`, dispatched `src/cli.zig:17251`, `src/cli.zig:17354`), and `POST /api/a2a/message` (`src/cli.zig:8579`) is a second agent-invoking route that is on in a stock install (`modules.a2a` defaults true, `src/config.zig:1082`). | Critical: configuration, credentials stored there, and operator-level execution | High for a reachable local client; remote exposure depends on bind/network policy | Loopback/Host/Origin are not user identity. WASM grants do not contain the native paths; see T7. The same absence governs the local IPC surfaces (T9). The docs state the absence plainly (`docs/README.md:1617`, `README.md:224`). |
+| R2 | **Proxy credential spending.** Proxy authentication is optional; a `proxy_token_env` naming an unset variable skips authentication entirely (`src/cli.zig:8245-8249`, standalone `src/proxy_main.zig:311-316`). The standalone proxy runs no Host/Origin guard: `src/proxy_main.zig` contains no `unexpectedHost` or `crossOriginRequest` call. | High: provider spend and submitted prompt data | High when reachable without a token | A proxy token protects only proxy paths, never `/api/*`. Startup warnings are not access controls (`src/cli.zig:7778-7785`, `src/proxy_main.zig:125-137`). |
+| R3 | **Prompt injection through LLM responses.** Provider output is untrusted input to the agent loop; retrieved documents, memory hits, and tool results are untrusted text the model is told never to execute (`src/agent/system_prompt.zig:697`). Containment is the sandbox, not the prompt. | High (tool misuse within sandbox policy) | Certain (inherent to an agent harness) | The sandbox is the trust boundary that makes this survivable; see M5. |
+| R4 | **Mesh join without credential.** Mesh admission is allowlist-by-name, prompt, or open (`Admission`, `src/peers/mesh.zig:123`; `admit` `src/peers/mesh.zig:132`); the wire carries no authentication beyond the admission handshake and no encryption (plain TCP). Default bind is loopback `127.0.0.1:7420` (`src/config.zig:962`). | Medium (chat/fan-out spoofing, membership) | Medium (needs LAN reach or misconfig) | Off by default (`modules.mesh`). |
 | R5 | **Sandbox escape via symlinks was a real class** (ADR 0017); `safeJoinSecure` now refuses symlinked components on granted paths (`src/sandbox/host.zig`, path policy). Anything that broadens the sandbox (kernel, docker, exec allowlist, `agent.sandbox_follow_symlinks`) re-opens it. | High | Low (fixed, recurring class) | See [history](#threats-the-history-already-demonstrates-recurring-classes). |
-| R6 | **DoS: connection limit 64** (`max_connection_threads`, `src/cli.zig:7918`, enforced `:7812`; proxy surface keeps a web UI reserve `:7818`; `/health/ready` reports `saturated`, `src/cli.zig:9622-9625`), request bodies capped at `max_body_bytes` +64 KiB slack (`src/cli.zig:8207`), images capped 4 MB × 4 (`src/cli.zig:9856`, count `:17014`). Saturation refusals reset their own per-request state, book under `errors_total`, and log with a fresh request id (`respondSaturated`, `src/cli.zig:8018`), then FIN-then-drain so the 503 survives the close (`drainThenClose`, `src/cli.zig:8044`). The proxy's upstream deadlines default to 300 s first byte / 60 s idle (`src/serve/proxy.zig:30-31`, wiring `:426-427`, knobs `src/config.zig:1017-1020`). The mesh join handshake holds its own bounded thread pool (`max_inbound_conns`, `src/serve/mesh_net.zig:38`, enforced `:495`). Still no inbound per-route rate limit (`src/llm/rate_limit.zig` limits *outbound* provider requests, not callers), so any local process can hold all 64 slots. | Medium | Medium | Loopback-only default keeps this local. |
+| R6 | **DoS: connection limit 64** (`max_connection_threads`, `src/cli.zig:7908`, enforced `:7950`; proxy surface keeps a web UI reserve `:7956`; `/health/ready` reports `saturated`, `src/cli.zig:9597-9600`), request bodies capped at `max_body_bytes` +64 KiB slack (`src/cli.zig:8197`), images capped 4 MB × 4 (`src/cli.zig:9831`, count `:16647`). Saturation refusals reset their own per-request state, book under `errors_total`, and log with a fresh request id (`respondSaturated`, `src/cli.zig:8008`), then FIN-then-drain so the 503 survives the close (`drainThenClose`, `src/cli.zig:8034`). The proxy's upstream deadlines default to 300 s first byte / 60 s idle (`src/serve/proxy.zig:30-31`, wiring `:426-427`, knobs `src/config.zig:1025-1029`). The mesh join handshake holds its own bounded thread pool (`max_inbound_conns`, `src/serve/mesh_net.zig:38`, enforced `:495`). Still no inbound per-route rate limit (`src/llm/rate_limit.zig` limits *outbound* provider requests, not callers), so any local process can hold all 64 slots. | Medium | Medium | Loopback-only default keeps this local. |
 
 Priority order for the next pass: R1/R2 (internet-facing + authentication boundary, covered
 below), then R3 abuse cases, then R4-R6.
@@ -31,9 +33,9 @@ below), then R3 abuse cases, then R4-R6.
 
 | Entry point | Where | Default reach | AuthN/AuthZ |
 |-------------|-------|---------------|-------------|
-| HTTP server (web UI + every `/api/*` route, health, metrics, A2A, `/proxy/v1`) | `clanker serve`: `resolveListen` `src/cli.zig:7673` (default `default_serve_host` `src/cli.zig:7590`), per-connection `serveConnection` `src/cli.zig:7955`; route dispatch from `src/cli.zig:8405`; route table `docs/README.md:1536`, `:1496` | `127.0.0.1:17921` (`--host` widens; one socket, `docs/README.md:1620`) | **None**; Host allowlist + Origin check only |
-| Proxy listener (dedicated) | `--proxy-port`; serves `/v1/*` and no `/api/*` (`docs/README.md:1620`); standalone binary `src/proxy_main.zig` (default `127.0.0.1:17922`) | loopback | Optional `proxy_token_env` (`src/config.zig:1009`), compared in constant time over SHA-256 digests (`proxy.authorize`, `src/serve/proxy.zig:57-69`) |
-| Mesh TCP listener | `src/serve/mesh_net.zig` (`acceptLoop` `:466`; inbound cap `:38`, `:495`) | `127.0.0.1:7420` (`src/config.zig:955`) | Admission allowlist/prompt/open (`src/peers/mesh.zig:116`, `:125`); JOIN handshake bounded by frame cap + read timeout |
+| HTTP server (web UI + every `/api/*` route, health, metrics, A2A, `/proxy/v1`) | `clanker serve`: `resolveListen` `src/cli.zig:7663` (default `default_serve_host` `src/cli.zig:7580`), per-connection `serveConnection` `src/cli.zig:7945`; route dispatch from `src/cli.zig:8444`; route table `docs/README.md:1536` | `127.0.0.1:17921` (`--host` widens; one socket, `docs/README.md:1620`) | **None**; Host allowlist + Origin check only |
+| Proxy listener (dedicated) | `--proxy-port`; serves `/v1/*` and no `/api/*` (`docs/README.md:1620`); standalone binary `src/proxy_main.zig` (default `127.0.0.1:17922`) | loopback | Optional `proxy_token_env` (`src/config.zig:1017`), compared in constant time over SHA-256 digests (`proxy.authorize`, `src/serve/proxy.zig:57-69`) |
+| Mesh TCP listener | `src/serve/mesh_net.zig` (`acceptLoop` `:589`; inbound cap `:38`, `:495`) | `127.0.0.1:7420` (`src/config.zig:962`) | Admission allowlist/prompt/open (`Admission` `src/peers/mesh.zig:123`, `admit` `:132`); JOIN handshake bounded by frame cap + read timeout (`join_wait_ns`, `src/serve/mesh_net.zig:692`) |
 | Outbound peer HTTP (`POST /api/chat/message`, notify) | `src/peers/chatrooms.zig` fan-out; `src/peers/command.zig` | none | Peers are *outbound* URLs, never listeners (`docs/README.md:1620`) |
 
 ### IPC / local-process surfaces
@@ -71,11 +73,11 @@ command"; none carries client authentication. Enumerated as T9.
 ### Inputs that cross the trust boundary as untrusted data
 
 - HTTP request bodies (JSON), headers (`Host`, `Origin`, `Content-Type`), query strings,
-  resource ids (`requestPath` strips query first, `src/serve/http.zig:24`).
+  resource ids (`requestPath` strips query first, `src/serve/http.zig:25`).
 - `/api/run` `images` (base64, 4 MB each, at most 4, requires `modules.multimodal`;
-  `src/cli.zig:9856`, `:17014`; `docs/README.md:1669`).
+  `src/cli.zig:9831`, `:16647`; `docs/README.md:1669`).
 - Chatroom messages fanned in from peers (`POST /api/chat/message`, `src/peers/chatrooms.zig`).
-- SSE event stream `GET /api/events`, long-lived, Origin-gated (`src/cli.zig:8478`).
+- SSE event stream `GET /api/events`, long-lived, Origin-gated (`src/cli.zig:8453`).
 - Mesh wire frames (length-prefixed, `decodeFrame` against `max_frame`,
   `src/serve/mesh_net.zig:383-387`), JOIN name/id, seeds.
 - Provider API responses: SSE streams, tool-call deltas, JSON error bodies
@@ -92,26 +94,26 @@ command"; none carries client authentication. Enumerated as T9.
 - `dependabot.yml` present (`.github/`), dependency CVEs tracked by GitHub, not in the model
   (owned by deps-review).
 - No admin/debug ports beyond the ones listed; `/health/live`, `/health/ready` and
-  `/api/metrics` ride the same socket (`src/cli.zig:8405`, `:8282`).
+  `/api/metrics` ride the same socket (`src/cli.zig:8358`, `:8282`).
 
 ## 2. Trust boundaries and data flow
 
 | # | Boundary | Direction | Validation / authn point |
 |---|----------|-----------|--------------------------|
-| T1 | **Client → HTTP control plane** | Browser/SDK/curl → `/api/*`, `/proxy/v1` | No authn. Host header checked on *every* request (`unexpectedHost`, `src/serve/http.zig:210`, enforced `src/cli.zig:8250`; combined predicate `src/serve/http.zig:199`); `Origin` checked on non-GET as CSRF (`crossOriginRequest`, `src/serve/http.zig:187`, enforced `src/cli.zig:8275`) and on the SSE stream (`src/cli.zig:8478`); body capped (`src/cli.zig:8207`). HEAD is rewritten to GET once, after the proxy dispatch and the Origin check, so POST-only routes stay unreachable via HEAD (`request_head` set `src/cli.zig:8236`, rewrite `:8155`). Loopback bind is the real control |
-| T2 | **HTTP control plane → agent/tools** | `/api/run` task text (`src/cli.zig:8610`) → agent loop → sandboxed tools | Descriptor policy: `fs_prefixes`, `env_allow`, `network_allow`, `exec_allow` (`tools/manifests/*.tool.json`, honored in `src/sandbox/host.zig`); privileged `ck_*` channels check `tool_self_name` (`src/sandbox/host.zig`) |
-| T3 | **Peer/mesh → local state** | `POST /api/chat/message`, mesh CHAT frames → `state/chatrooms.jsonl`, `state/notifications.jsonl` | Chat fan-out via sandboxed `peers` tool (`chat_fanout`, `network_from_config`); mesh admission handshake (`src/serve/mesh_net.zig:403-426`); no wire crypto |
+| T1 | **Client → HTTP control plane** | Browser/SDK/curl → `/api/*`, `/proxy/v1` | No authn. Host header checked on *every* request (`unexpectedHost`, `src/serve/http.zig:211`, enforced `src/cli.zig:8240`; combined predicate `src/serve/http.zig:200`); `Origin` checked on non-GET as CSRF (`crossOriginRequest`, `src/serve/http.zig:188`, enforced `src/cli.zig:8265`) and on the SSE stream (`src/cli.zig:8453`); body capped (`src/cli.zig:8197`). HEAD is rewritten to GET once, after the proxy dispatch and the Origin check, so POST-only routes stay unreachable via HEAD (`request_head` set `src/cli.zig:8226`, rewrite `:8306`). Loopback bind is the real control |
+| T2 | **HTTP control plane → agent/tools** | `/api/run` task text (`src/cli.zig:8585`) → agent loop → sandboxed tools | Descriptor policy: `fs_prefixes`, `env_allow`, `network_allow`, `exec_allow` (`tools/manifests/*.tool.json`, honored in `src/sandbox/host.zig`); privileged `ck_*` channels check `tool_self_name` (`src/sandbox/host.zig`) |
+| T3 | **Peer/mesh → local state** | `POST /api/chat/message`, mesh CHAT frames → `state/chatrooms.jsonl`, `state/notifications.jsonl` | Chat fan-out via sandboxed `peers` tool (`chat_fanout`, `network_from_config`); mesh admission handshake (`src/serve/mesh_net.zig:530-552`); no wire crypto |
 | T4 | **Provider API → agent loop** | LLM response stream → conversation → next model request | Prompts treat provider output and retrieved text as untrusted (R3); sandbox is the enforcement point. History sent to model is append-only; request-only copies for compaction (`docs/README.md` agent section) |
 | T5 | **Disk state → process** | `state/sessions/<id>.db`, `state/goals.json`, `state/models-dev.json`, `state/board*.json`, `state/plugins.json` + `plugin_config.json` | JSON state parsed with explicit bounds (guests read through `ck_fs_read_range`, not whole-file); sessions are read by tools through the `ck_session` channel rather than as files; `.env` refused by `safeJoin`; symlinked components refused by `safeJoinSecure` (ADR 0017) |
-| T6 | **Secrets → code** | Provider keys via `api_key_env` (provider tables in `src/config.zig`), `[serve] proxy_token_env` (`src/config.zig:1009`), Vertex service-account JWT minting (`src/llm/vertex_token.zig`) | Keys live in `config.toml`/`config.local.toml`/env; guest access gated by `env_allow` + named `ck_getenv`; proxy credentials ride only `/v1/*` paths; token comparison is constant-time over SHA-256 digests (`src/serve/proxy.zig:57-69`) |
-| T7 | **HTTP caller → native configuration and backends** | Raw config reads/writes (routes `src/cli.zig:8405-8406`, handlers `:11867` GET and `:11898` POST); backend selection (`src/cli.zig:16813`) and native dispatch (`:17212`, `:16998`) | File-name restriction and config validation protect format, not caller authority. Backend-name validation (`acp_vendor.Name.parse`) selects supported adapters, not a WASM sandbox. No caller authentication precedes these routes (`src/cli.zig:8250-8275`). |
+| T6 | **Secrets → code** | Provider keys via `api_key_env` (provider tables in `src/config.zig`), `[serve] proxy_token_env` (`src/config.zig:1017`), Vertex service-account JWT minting (`src/llm/vertex_token.zig`) | Keys live in `config.toml`/`config.local.toml`/env; guest access gated by `env_allow` + named `ck_getenv`; proxy credentials ride only `/v1/*` paths; token comparison is constant-time over SHA-256 digests (`src/serve/proxy.zig:57-69`) |
+| T7 | **HTTP caller → native configuration and backends** | Raw config reads/writes (routes `src/cli.zig:8394-8395`, handlers `:11887` GET and `:11918` POST); backend selection (`src/cli.zig:16852`) and native dispatch (`:17251`, `:17354`) | File-name restriction and config validation protect format, not caller authority. Backend-name validation (`acp_vendor.Name.parse`) selects supported adapters, not a WASM sandbox. No caller authentication precedes these routes (`src/cli.zig:8240-8265`). |
 | T8 | **Local automation → host execution** | System cron `clanker schedule run-due` (`src/schedule/`), the opt-in state-backup units (`scripts/install-state-backup.sh`, `scripts/systemd/clanker-state-backup.timer`), which shell out to `scripts/backup-state.sh` | No caller input crosses a wire: the trust question is *who may write the schedule file or the timer/cron line*. Backup refuses to run when its root would land inside the checkout (`scripts/backup-state.sh:67-72`) |
-| T9 | **Local process → IPC surfaces** | MCP stdio JSON-RPC (`src/mcp/server.zig:49`), ACP stdio (`src/acp/server.zig:301`), DAP (`src/debug/dap.zig:513-536` launch/attach selects a configured adapter), lifecycle hooks (`src/hooks/runner.zig:16`), REPL `!cmd` (`src/tui/repl.zig:4240`) | Trust = whoever can spawn the process or write the config that names its command. Hooks and `!cmd` run through the same exec allowlist as `ck_exec` (`execUnderPolicyInput`, `src/sandbox/host.zig:6769`; `execUnderPolicy`, `src/tui/repl.zig:4240`); DAP `launch`/`attach` picks a *configured* adapter by name and never takes argv from the client (`src/debug/dap.zig:513-536`); `ck_debug` requires `debug.enabled` (`src/sandbox/host.zig:2097`) |
+| T9 | **Local process → IPC surfaces** | MCP stdio JSON-RPC (`src/mcp/server.zig:49`), ACP stdio (`src/acp/server.zig:302`), DAP (`src/debug/dap.zig:513-536` launch/attach selects a configured adapter), lifecycle hooks (`src/hooks/runner.zig:16`), REPL `!cmd` (`src/tui/repl.zig:4240`) | Trust = whoever can spawn the process or write the config that names its command. Hooks and `!cmd` run through the same exec allowlist as `ck_exec` (`execUnderPolicyInput`, `src/sandbox/host.zig:6865`; `execUnderPolicy`, `src/tui/repl.zig:4240`); DAP `launch`/`attach` picks a *configured* adapter by name and never takes argv from the client (`src/debug/dap.zig:513-536`); `ck_debug` requires `debug.enabled` (`src/sandbox/host.zig:2172`) |
 
 Privilege transitions:
 - HTTP caller → policy author: native config writes validate and persist the config pair
-  (`src/cli.zig:11898`), outside guest descriptor enforcement.
-- HTTP caller → native backend process: `runCodingBackendCtx` (`src/cli.zig:4273`) passes
+  (`src/cli.zig:11918`), outside guest descriptor enforcement.
+- HTTP caller → native backend process: `runCodingBackendCtx` (`src/cli.zig:4263`) passes
   configured ACP argv to the driver (`src/acp/driver.zig`); the driver spawns an ACP transport or
   falls back to a headless subprocess. Any backend-specific permission system is separate from
   clanker's WASM policy.
@@ -126,7 +128,7 @@ Privilege transitions:
   (`scripts/install-state-backup.sh`).
 - config → host process, outside any guest descriptor: a hook's `command`
   (`src/hooks/config.zig:10`), `agent.repl_exec_allow`, and a DAP adapter's `command`
-  (`src/config.zig:763`) all name a program that runs with the server's own authority. The
+  (`src/config.zig:768`) all name a program that runs with the server's own authority. The
   exec allowlist bounds the first two (M16); the DAP adapter list is a config-time trust
   decision with no allowlist, mitigated only by the operator choosing the config.
 
@@ -134,9 +136,9 @@ Privilege transitions:
 
 | Asset | Held where | Blast radius if compromised |
 |-------|-----------|-----------------------------|
-| Provider credentials (LLM keys, Vertex service account) | `config.toml`, `config.local.toml`, env (`api_key_env`); read via `src/llm/auth.zig`; also readable through `GET /api/config/raw` (`src/cli.zig:11867`) | Financial (token spend), impersonation of the operator's provider identity |
+| Provider credentials (LLM keys, Vertex service account) | `config.toml`, `config.local.toml`, env (`api_key_env`); read via `src/llm/auth.zig`; also readable through `GET /api/config/raw` (`src/cli.zig:11887`) | Financial (token spend), impersonation of the operator's provider identity |
 | Provider credentials, second copy | `<storage_root>/backups/<timestamp>/config/` once the opt-in backup timer is installed (`scripts/backup-state.sh:186-201`) | Same keys, copied off the checkout into an append-only snapshot tree; outlives deleting `config.local.toml`/`.env`, and no rotation sweep reaches it |
-| Native configuration and execution authority | `/api/config/raw` (`src/cli.zig:11867`, `:11898`), `/api/run` backend dispatch (`src/cli.zig:17212`) | Policy tampering and execution as the server's OS user; guest sandbox policy does not constrain these native paths (T7). No implication of OS root privileges. |
+| Native configuration and execution authority | `/api/config/raw` (`src/cli.zig:11887`, `:11918`), `/api/run` backend dispatch (`src/cli.zig:17251`) | Policy tampering and execution as the server's OS user; guest sandbox policy does not constrain these native paths (T7). No implication of OS root privileges. |
 | Conversation transcripts (sessions) | `state/sessions/<id>.db` (WAL SQLite, `src/agent/session.zig:35`; + `state/spills/<session>/`, `state/exports/<id>.html`) | Data disclosure (conversations contain task context, possibly secrets pasted in). With the backup timers installed, twice-hourly snapshot copies of all of it live under `<storage_root>/backups/` (`scripts/backup-state.sh:166-171`) — anyone who can read the storage root reads every conversation, including ones since deleted from `state/` |
 | Source code + git history | working tree, `.git` | Integrity; the improve loop can *self-modify* the repo through gated promotion (`src/improve/engine.zig`) |
 | LLM spend | `state/token_stats.jsonl` (hard cap, `src/stats/tokens.zig:25`; `docs/README.md:470`) | Financial; also an availability signal |
@@ -150,23 +152,30 @@ Privilege transitions:
 
 - **Spoofing**: none, no authn. Any process on the host (or LAN once `--host` widened) is the
   operator. Accepted and documented by design (`docs/README.md:1617`).
-- **Tampering**: cross-site POST refused by the Origin check (`src/cli.zig:8275`), but only for
+- **Tampering**: cross-site POST refused by the Origin check (`src/cli.zig:8265`), but only for
   browsers; curl/raw clients carry no `Origin` and pass. CSRF strength = Origin trust. HEAD is
   rewritten to GET once after the check, so a HEAD cannot reach a POST-only route
-  (`src/cli.zig:8316`).
+  (`src/cli.zig:8306`).
 - **Information disclosure**: GET endpoints expose logs (`/api/logs`), sessions
   (`/api/sessions`), transcripts, knowledge, stats, all unauthenticated (route table
   `docs/README.md:1536`).
-- **DoS**: 64 connection slots (`src/cli.zig:7918`, enforced `:7812`); body cap
-  (`:8046`); no per-route rate limit; `POST /api/run` holds a slot for the whole run; provider
+- **DoS**: 64 connection slots (`src/cli.zig:7908`, enforced `:7950`); body cap
+  (`src/cli.zig:8197`); no per-route rate limit; `POST /api/run` holds a slot for the whole run; provider
   hangups are bounded only by `agent.request_timeout_ms` / `agent.stream_idle_timeout_ms` (the
   HTTP client itself has no read timeout; defaults `src/config.zig:527`). Saturation 503s reset
   their own threadlocal request state, book under `errors_total`, carry a fresh request id, and
-  log (`respondSaturated`, `src/cli.zig:8018`); readiness reports `"saturated"`
-  (`:9622-9625`). The dedicated proxy surface keeps a web UI reserve (`:7818`); the proxy's own
+  log (`respondSaturated`, `src/cli.zig:8008`); readiness reports `"saturated"`
+  (`src/cli.zig:9597-9600`). The dedicated proxy surface keeps a web UI reserve (`src/cli.zig:7956`); the proxy's own
   upstream deadlines default to 300 s/60 s (`src/serve/proxy.zig:30-31`).
-- **Elevation**: `/api/ask` (`src/cli.zig:8606`) answers `confirm` events, so a same-origin
-  script or local client that can already reach the port can also confirm writes.
+- **Elevation**: `/api/ask` (`src/cli.zig:8581`) answers `confirm` events, so a same-origin
+  script or local client that can already reach the port can also confirm writes. Three further
+  routes reach the agent, the mesh, or the live bus with no authn in front of any of them:
+  `POST /api/a2a/message` (`src/cli.zig:8579`) runs the incoming JSON-RPC message through the
+  agent model (gated only by `modules.a2a`, on by default, `src/config.zig:1082`; otherwise 404,
+  `src/cli.zig:8423-8424`; the run itself is `handleA2AMessage`, `src/cli.zig:9653`),
+  `POST /api/mesh/join` (`src/cli.zig:16247`) admits a peer into the mesh, and
+  `POST /api/live` (`src/cli.zig:9558`) publishes onto the live bus. A caller that reaches the
+  port is the operator on all four.
 
 ### T2 (HTTP → agent/tools)
 
@@ -177,31 +186,31 @@ Privilege transitions:
 - **Tampering**: `ck_fs_write_if` compare-and-swap + lock (ADR 0031) prevents lost updates
   across concurrent sessions.
 - **Information disclosure**: guest HTTP responses expose only allowlisted headers
-  (`exposed_response_headers`, `src/sandbox/host.zig:3209`, ADR 0049), so `Set-Cookie`,
+  (`exposed_response_headers`, `src/sandbox/host.zig:3277`, ADR 0049), so `Set-Cookie`,
   `Authorization`, and `Location` do not reach a guest unless named.
 - **DoS**: guest I/O size caps (`src/sandbox/host.zig`); 200-hit cap on find/grep walks
   (`util/fs_skip.zig` consumers `ck_fs_find`/`ck_fs_grep`).
 
 ### T3 (peer/mesh)
 
-- **Spoofing**: mesh admission by self-asserted name (`matchesSeed`, `src/peers/mesh.zig:142`);
+- **Spoofing**: mesh admission by self-asserted name (`matchesSeed`, `src/peers/mesh.zig:149`);
   an allowlist is name-matching, not a credential. `open` mode admits anyone
-  (`src/peers/mesh.zig:116`).
+  (`src/peers/mesh.zig:123`).
 - **Tampering**: no integrity on the wire (plain TCP); chat messages are unauthenticated
   application data.
 - **Amplification**: a peer fans every room message out to all peers
   (`src/peers/chatrooms.zig`); a malicious or compromised peer can flood the fleet.
 - **DoS**: the JOIN handshake runs under a bounded inbound connection pool
   (`max_inbound_conns = 64`, `src/serve/mesh_net.zig:38`, enforced `:495`) with a
-  frame-size cap and read timeout (`:347-351`); joined members bounded by `mesh.max_members`
-  (32, `src/peers/mesh.zig:11`, `src/config.zig:958`); pending joins by `max_pending_joins`
-  (8, `src/config.zig:959`, clamped `src/serve/mesh_net.zig:538`).
+  frame-size cap and read timeout (`join_wait_ns`, `src/serve/mesh_net.zig:692`); joined members bounded by `mesh.max_members`
+  (32, `src/peers/mesh.zig:11`, `src/config.zig:966`); pending joins by `max_pending_joins`
+  (8, `src/config.zig:967`, clamped `src/serve/mesh_net.zig:677`).
 
 ### T4 (provider → agent)
 
 - **Tampering / Elevation (prompt injection)**: provider output and retrieved text are
   untrusted; the model is instructed never to execute directives found there
-  (`src/agent/system_prompt.zig:693`); fence markers inside retrieved text are neutralized so
+  (`src/agent/system_prompt.zig:697`); fence markers inside retrieved text are neutralized so
   docs can't close retrieval blocks. Enforcement is the sandbox, not the prompt (R3).
 
 ### T5 (disk state)
@@ -217,7 +226,7 @@ Privilege transitions:
 ### T6 (secrets)
 
 - **Disclosure**: secrets in config files on disk (plaintext keys), and the same files are
-  readable through `GET /api/config/raw` without redaction (`src/cli.zig:11867`); guests can
+  readable through `GET /api/config/raw` without redaction (`src/cli.zig:11887`); guests can
   read only named env vars via `env_allow` + `ck_getenv`; `.env` refused by `safeJoin`; no
   secrets in `env_allow` defaults. Proxy credentials ride only `/v1/*` paths.
 - **Rotation**: not documented (organizational).
@@ -225,11 +234,11 @@ Privilege transitions:
 ### T7 (HTTP → native policy and execution)
 
 - **Information disclosure**: raw config reads return the complete selected file, without
-  credential redaction (`src/cli.zig:11867`). Any inline secrets there share the control
+  credential redaction (`src/cli.zig:11887`). Any inline secrets there share the control
   plane's reachability, regardless of guest environment restrictions.
 - **Tampering / Elevation**: native config writes change operator policy after parsing
-  (`src/cli.zig:11898`); supported backend selection reaches native process spawning
-  (`src/cli.zig:16813`, `:4273`, `src/acp/driver.zig`). Host/Origin checks reduce browser
+  (`src/cli.zig:11918`); supported backend selection reaches native process spawning
+  (`src/cli.zig:16852`, `:4263`, `src/acp/driver.zig`). Host/Origin checks reduce browser
   abuse but do not establish who may administer policy. Rank: critical impact, high likelihood
   for a reachable hostile client (R1). Missing control: caller authentication and authorization
   for administrative operations; implementation belongs to sec-review.
@@ -268,12 +277,12 @@ Privilege transitions:
 
 - **Elevation**: MCP and ACP stdio expose the tool registry and the agent loop to whatever
   process spawned them; there is no client authentication on either (`src/mcp/server.zig:49`,
-  `src/acp/server.zig:301`). Anyone who can spawn the process is the operator, exactly as with
+  `src/acp/server.zig:302`). Anyone who can spawn the process is the operator, exactly as with
   the HTTP control plane (R1).
 - **Elevation (DAP)**: `launch`/`attach` names a configured adapter and spawns it
   (`src/debug/dap.zig:513-536`), so a DAP client selects among operator-chosen programs rather than
-  injecting argv. The trust is in the config (`src/config.zig:763`), which the guest `debug`
-  tool can only reach when `debug.enabled` (`src/sandbox/host.zig:2097`).
+  injecting argv. The trust is in the config (`src/config.zig:768`), which the guest `debug`
+  tool can only reach when `debug.enabled` (`src/sandbox/host.zig:2172`).
 - **Tampering**: a hook's `command` is config (`src/hooks/config.zig:10`) and its output is
   logged, not parsed as instructions, but the command itself runs with the server's authority.
   M16 is the only bound on it.
@@ -301,22 +310,22 @@ Privilege transitions:
 
 | # | Control | Code reference | Covers |
 |---|---------|----------------|--------|
-| M1 | Loopback bind by default; exactly one socket; `--host` opt-in widening | `default_serve_host` `src/cli.zig:7590`, resolve layers `resolveListen` `src/cli.zig:7673`, binding trust model `docs/README.md:1615-1620` | R1, R2, R6 (network reach) |
-| M2 | Host allowlist (DNS-rebinding defense) on every request, incl. GET | `unexpectedHost` `src/serve/http.zig:210`, combined with the Origin predicate `:199`, enforced `src/cli.zig:8250` | R1 (rebinding) |
-| M3 | Origin check on non-GET (CSRF) and on the SSE stream; HEAD rewritten once, after the check | `crossOriginRequest` `src/serve/http.zig:187`, enforced `src/cli.zig:8275` (SSE `:8320`, HEAD rewrite `:8155`) | R1 (cross-site) |
-| M4 | Optional proxy token, constant-time hashed comparison; warn when unset on non-loopback | `proxy.authorize` `src/serve/proxy.zig:57-69`; wiring `src/cli.zig:8255-8262` and `src/proxy_main.zig:311-316`; warnings `src/cli.zig:7788-7795`, `src/proxy_main.zig:125-137` | R2 (partial, off by default) |
+| M1 | Loopback bind by default; exactly one socket; `--host` opt-in widening | `default_serve_host` `src/cli.zig:7580`, resolve layers `resolveListen` `src/cli.zig:7663`, binding trust model `docs/README.md:1615-1620` | R1, R2, R6 (network reach) |
+| M2 | Host allowlist (DNS-rebinding defense) on every request, incl. GET | `unexpectedHost` `src/serve/http.zig:211`, combined with the Origin predicate `:200`, enforced `src/cli.zig:8240` | R1 (rebinding) |
+| M3 | Origin check on non-GET (CSRF) and on the SSE stream; HEAD rewritten once, after the check | `crossOriginRequest` `src/serve/http.zig:188`, enforced `src/cli.zig:8265` (SSE `:8453`, HEAD rewrite `:8306`) | R1 (cross-site) |
+| M4 | Optional proxy token, constant-time hashed comparison; warn when unset on non-loopback | `proxy.authorize` `src/serve/proxy.zig:57-69`; wiring `src/cli.zig:8245-8249` and `src/proxy_main.zig:311-316`; warnings `src/cli.zig:7778-7785`, `src/proxy_main.zig:125-137` | R2 (partial, off by default) |
 | M5 | WASM sandbox: descriptor policy (`fs_prefixes`/`env_allow`/`network_allow`/`exec_allow`), size caps | `tools/manifests/*.tool.json`, `src/sandbox/host.zig` | R3, R5, T2, T3 |
 | M6 | Privileged channels gated by `tool_self_name` (import ≠ grant) | `src/sandbox/host.zig` | T2 elevation |
 | M7 | `safeJoin`/`safeJoinSecure` refuse `.env` and symlinked components; `sandbox_follow_symlinks` opt-in (ADR 0017) | `src/sandbox/host.zig` | R5, T5 |
 | M8 | `ck_exec` allowlist (git/zig/uv verbs; no host-absolute or `..` args; git config-injection and `--git-dir` flags denied) | `src/sandbox/host.zig` exec policy | T2 elevation |
 | M9 | CAS write lock (`state/locks/<sha256-of-resolved-target>.lock`, flock, aged sweep) | ADR 0031, `ck_fs_write_if` in `src/sandbox/host.zig` | T2 tampering |
 | M10 | Improve loop gates: build/test/tools/fmt/lint + inert check + worktree isolation before promotion | `src/improve/engine.zig`, `src/improve/inert_check.zig` | self-modification integrity |
-| M11 | Prompt-injection posture: untrusted retrieved text fenced, model told never to execute it | `src/agent/system_prompt.zig:693` | R3 (advisory; sandbox enforces) |
-| M12 | Body caps: `max_body_bytes` +64 KiB slack (`src/cli.zig:8207`); images 4 MB × 4 (`src/cli.zig:9856`); connection limit 64 (`:7781`, enforced `:7812`, proxy reserve `:7818`); saturation 503 recorded, logged, FIN-then-drain (`:8018`, `:8044`); proxy upstream deadlines (`src/serve/proxy.zig:30-31`); mesh join-handshake connection cap (`src/serve/mesh_net.zig:38`, `:495`) | see left | R6, T3 DoS |
-| M13 | Mesh admission (allowlist/prompt/open) + loopback default | `src/peers/mesh.zig:116`, `:125`; `src/config.zig:955` | R4 (partial, name-match, no credential) |
+| M11 | Prompt-injection posture: untrusted retrieved text fenced, model told never to execute it | `src/agent/system_prompt.zig:697` | R3 (advisory; sandbox enforces) |
+| M12 | Body caps: `max_body_bytes` +64 KiB slack (`src/cli.zig:8197`); images 4 MB × 4 (`src/cli.zig:9831`); connection limit 64 (`:7908`, enforced `:7950`, proxy reserve `:7956`); saturation 503 recorded, logged, FIN-then-drain (`:8008`, `:8034`); proxy upstream deadlines (`src/serve/proxy.zig:30-31`); mesh join-handshake connection cap (`src/serve/mesh_net.zig:38`, `:495`) | see left | R6, T3 DoS |
+| M13 | Mesh admission (allowlist/prompt/open) + loopback default | `src/peers/mesh.zig:123`, `:132`; `src/config.zig:962` | R4 (partial, name-match, no credential) |
 | M14 | Peers are outbound-only; nothing listens for peer traffic | `docs/README.md:1620` | T3 reach |
-| M15 | Guest-visible HTTP response headers are an allowlist, lowercased, value-capped | `exposed_response_headers` `src/sandbox/host.zig:3209`, ADR 0049 | T2 information disclosure |
-| M16 | Hooks and the REPL `!cmd` escape run under the same exec allowlist and deny tokens as `ck_exec`, not through a shell | `execUnderPolicyInput` `src/sandbox/host.zig:6769` wired in `src/hooks/runner.zig:38`; `execUnderPolicy` `src/tui/repl.zig:4240` with the allowlist unioned from tool manifests plus `agent.repl_exec_allow` (`src/tui/repl.zig:4164-4170`) | T9 elevation |
+| M15 | Guest-visible HTTP response headers are an allowlist, lowercased, value-capped | `exposed_response_headers` `src/sandbox/host.zig:3277`, ADR 0049 | T2 information disclosure |
+| M16 | Hooks and the REPL `!cmd` escape run under the same exec allowlist and deny tokens as `ck_exec`, not through a shell | `execUnderPolicyInput` `src/sandbox/host.zig:6865` wired in `src/hooks/runner.zig:38`; `execUnderPolicy` `src/tui/repl.zig:4240` with the allowlist unioned from tool manifests plus `agent.repl_exec_allow` (`src/tui/repl.zig:4164-4170`) | T9 elevation |
 | M17 | Backup refuses to run when the snapshot root would land inside the checkout | `scripts/backup-state.sh:67-72` | T8 false-backup (not a confidentiality control) |
 | M18 | Snapshot root is owner-only (`chmod 700` on `$backup_root`, `700` on the `config/` subdir) and each copied file keeps its own mode, so the credential copies are not world-readable | `scripts/backup-state.sh:83`, `:186-201` | T8 credential disclosure (partial: mode, not lifetime or rotation) |
 
@@ -327,7 +336,7 @@ Privilege transitions:
    `--host`, is the operator. The docs say so (`docs/README.md:1617`), so the gap is
    documented rather than misclaimed; it is still the largest one.
 2. **Proxy token off by default** (R2): M4 exists but is opt-in, and an unset
-   `proxy_token_env` disables the check rather than the surface (`src/cli.zig:8255-8262`).
+   `proxy_token_env` disables the check rather than the surface (`src/cli.zig:8245-8249`).
    The standalone `clanker-proxy` additionally runs no Host/Origin guard.
 3. **Mesh admission is not a credential** (R4): an allowlist matches a self-asserted name.
 4. **No inbound rate limiting per route**: the DoS surface is the shared 64-slot connection
@@ -337,7 +346,7 @@ Privilege transitions:
 
 - The **sandbox** (M5/M7/M8) is the load-bearing control for R3/R5 and the whole guest surface;
   a sandbox escape is the one event that turns prompt injection into host compromise.
-- The **Host/Origin guard** (`src/serve/http.zig:187-213`, enforced `src/cli.zig:8250-8275`) is
+- The **Host/Origin guard** (`src/serve/http.zig:188-211`, enforced `src/cli.zig:8240-8265`) is
   the entire CSRF/rebinding defense for an unauthenticated surface; a bypass (header parsing
   edge) removes the only per-request check.
 
@@ -348,16 +357,22 @@ Privilege transitions:
 - **Credential spending via proxy**: `POST /v1/chat/completions` (or `/proxy/v1/...` on the
   shared socket) with any body spends the configured provider keys; with no
   `proxy_token_env` there is no per-request gate. Enabling `--host 0.0.0.0` without a token
-  makes this LAN-wide; the warning fires, nothing stops it (`src/cli.zig:7788-7795`).
-- **Full agent drive and policy tampering**: `POST /api/run` (`src/cli.zig:8610`) dispatches
+  makes this LAN-wide; the warning fires, nothing stops it (`src/cli.zig:7778-7785`).
+- **Full agent drive and policy tampering**: `POST /api/run` (`src/cli.zig:8585`) dispatches
   agent work, but guest descriptor policy is not a boundary around the HTTP caller. The same
   caller can read and replace native configuration through `/api/config/raw`
-  (`src/cli.zig:8405-8406`, handlers `:11867`, `:11898`). Config parsing validates values, not
+  (`src/cli.zig:8394-8395`, handlers `:11887`, `:11918`). Config parsing validates values, not
   permission to change policy. See T7.
-- **Backend selection**: a run body naming a supported backend (`src/cli.zig:16813`)
-  reaches native process spawning (`:17212`), where the vendor CLI's own permission model, not
+- **A second unauthenticated agent entry point**: `POST /api/a2a/message`
+  (`src/cli.zig:8579`, `handleA2AMessage` `:9653`) is a JSON-RPC-shaped route that runs a task
+  through the agent model with the same tool registry. Its only gate is `modules.a2a`, which
+  defaults **on** (`src/config.zig:1082`), so unlike `modules.acp` and `modules.mcp_client`
+  (off by default, `src/config.zig:1080` and `:1077`) this is a second agent-invoking route
+  present in a stock install, carrying no check of its own.
+- **Backend selection**: a run body naming a supported backend (`src/cli.zig:16852`)
+  reaches native process spawning (`src/cli.zig:17251`), where the vendor CLI's own permission model, not
   clanker's sandbox, governs what the task may do.
-- **Write confirmation bypass**: `/api/ask` (`src/cli.zig:8606`) answers `confirm` events with a
+- **Write confirmation bypass**: `/api/ask` (`src/cli.zig:8581`) answers `confirm` events with a
   byte-exact option check; a client that already reaches the port can answer "allow" itself;
   the confirmation protects against *accidental* writes, not a hostile caller.
 - **Transcript scraping**: `GET /api/sessions` + per-session reads and `/api/logs` are
@@ -379,14 +394,27 @@ are the only "identity"; neither is a secret.
   rows but no threat enumeration were added on 2026-08-26: T8 (local automation: cron
   schedule, backup timers) and T9 (local IPC: MCP, ACP, DAP, hooks, `!cmd`), with M16 (shared
   exec allowlist) and M17.
-- Line references drift fast in this tree: the set written on 2026-09-27 was already stale
-  within the same day, by up to ~450 lines in `src/cli.zig` (every `src/cli.zig` reference
-  re-resolved) plus smaller moves in `docs/README.md`, `src/config.zig`, `src/peers/mesh.zig`,
-  `src/debug/dap.zig`, `src/sandbox/host.zig`, `src/tui/repl.zig`, and
-  `scripts/backup-state.sh`. Every reference was re-resolved against the tree on 2026-09-27
-  and each now lands on the named symbol or the call site it describes. Prefer a symbol
-  (`respondSaturated`) over a line number when adding a new reference here.
-- The same pass found one gap the model had missed: the backup snapshot copies
+- Line references drift fast in this tree, and the previous pass overclaimed its own check:
+  it recorded that every reference "was re-resolved against the tree on 2026-09-27 and each now
+  lands on the named symbol", while roughly 40 of them did not. The 2026-09-27 verification pass
+  re-resolved all 129 references by reading each target line. The stale ones clustered in
+  `src/cli.zig` (28 of 129, most of them off by 10-30 lines, e.g. `respondSaturated` cited at
+  `:8018` and actually at `:8008`, `max_connection_threads` cited at `:7918` and actually at
+  `:7908`), with the rest spread across `src/serve/http.zig`, `src/config.zig`, `src/peers/mesh.zig`,
+  `src/serve/mesh_net.zig`, `src/sandbox/host.zig`, `src/acp/server.zig`, and
+  `src/agent/system_prompt.zig`. One reference had stopped naming what it claimed
+  (`docs/README.md:1496` was cited as a route table and now points at the `.agents` `@path`
+  import section; the route table is `:1536`). Every reference now re-resolves against the tree
+  on 2026-09-27; the check was done by printing each cited line and reading it, not by
+  pattern-matching the file name.
+- Two habits made the drift cheap to fix and are worth keeping: the bare `:NNNN` shorthand
+  inherits its file from the preceding reference in the same cell, and that is the form that
+  silently rots (a `:17212` here and a `:8018` there each needed a separate pass), and a
+  reference whose line lands inside a comment (`scripts/backup-state.sh:67-72` is the `case`
+  that opens the in-checkout refusal, which is the right span) is worth re-reading rather
+  than re-numbering. Prefer a symbol (`respondSaturated`) over a line number when adding a new
+  reference here; where a line number is kept, the symbol belongs next to it.
+- An earlier pass found one gap the model had missed: the backup snapshot copies
   `config.local.toml`/`.env`, so the provider keys get a second off-checkout copy
   (`scripts/backup-state.sh:186-201`). Added as an asset row, a T8 disclosure threat, and
   M18 (owner-only snapshot root).
@@ -406,7 +434,7 @@ are the only "identity"; neither is a secret.
   root extends how long transcripts outlive their deletion from `state/`. Structure is owned by
   o11y-review; noted here that security events (a refused proxy auth, a refused Host or Origin,
   a refused sandbox path, a saturation 503) surface in logs, and saturation also books into
-  `/api/metrics` (`src/cli.zig:8018`), but there is no dedicated security event log.
+  `/api/metrics` (`src/cli.zig:8008`), but there is no dedicated security event log.
 - No documented path from "vulnerability reported" to "fix shipped": no `SECURITY.md`, no
   disclosure contact, no security policy in `.github/`. The improve loop's gated promotion
   (M10) is the only change-shipping pipeline.
