@@ -10,6 +10,8 @@ Decisions that are still open live in [docs/rfcs/](rfcs/) ([index](rfcs/README.m
 and the evidence they rest on in [docs/research/](research/) ([index](research/README.md), [template](research/TEMPLATE.md));
 a decision that has been made is an [ADR](adrs/). The `rfc` and `research` tools maintain both,
 and neither requires the other.
+The security model of the running system — entry points, trust boundaries, assets, per-boundary
+threats, and the controls that do or do not exist — is [docs/THREAT_MODEL.md](THREAT_MODEL.md).
 
 
 ## Architecture
