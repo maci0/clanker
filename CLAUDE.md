@@ -13,7 +13,8 @@ default. Reaching for shell when a verb exists is a defect, not a shortcut.
 Before starting any task, ask: *does clanker already have a verb for this?*
 The tables below answer that; `clanker --help` and `clanker <verb> --help`
 answer the rest. Search records with `clanker reports search` / `clanker rfc
-search`, not `grep`. Clean up with `clanker janitor`, not `rm` or
+search`, not `grep`; source search is `rg` (and `ast-grep` / `sg` for
+structure), not a `grep -r` walk. Clean up with `clanker janitor`, not `rm` or
 `find -delete`. Commit with `clanker commit`, verify with `clanker gate`.
 
 The reason is the plugin boundary, not convenience. clanker is both the program
@@ -243,33 +244,22 @@ grep graph, falling back to one commit on a degenerate cycle
 ([PRD 0021](docs/prds/0021-smart-commit.md)). The writing form holds a
 non-blocking flock on `state/commit.lock` across plan, confirm and write, so
 a second `clanker commit` on the same checkout is refused with the lock named
-rather than raced
-([bug](docs/reports/bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md));
-raw `git` writers are outside it, see the concurrent-sessions runbook.
-It dry-runs, confirms, and then
-writes *that* plan: the previewed `commits` list is handed back to the write,
-so the grouping model is called once and what lands is what was shown. It used
-to group again for the write, and a truncated second reply turned a confirmed
-plan into one `chore: update working tree` commit
+rather than raced; raw `git` writers are outside it
+([bug](docs/reports/bugs/2026-08-16-concurrent-sessions-commit-each-others-work.md)).
+It dry-runs, confirms, then writes *that* plan: the previewed `commits` list
+is handed back to the write, so the grouping model is called once and what
+lands is what was shown
 ([bug](docs/reports/bugs/2026-08-17-commit-applies-an-unconfirmed-plan.md)).
-When the grouping call itself fails or truncates (a reasoning model can spend
-the whole grant on its trace), the guest's fallback plan is marked `degraded`
-and `--yes` refuses to write it — nonzero exit, diff still staged — because
-"yes" approved a model-grouped plan, not the fallback; confirm interactively
-to accept it eyes-open
+A failed or truncated grouping call marks the guest's fallback plan `degraded`
+and `--yes` refuses it (nonzero exit, diff still staged): "yes" approved a
+model-grouped plan, not the fallback, so accept it interactively
 ([bug](docs/reports/bugs/2026-08-17-commit-yes-applies-a-degraded-fallback-plan.md)).
-In the default `staged` scope each group's commit is built in the
-index, so an index narrowed to one session's hunks (the concurrent-sessions
-runbook's route) commits exactly as staged and other sessions' unstaged edits
-stay unstaged; it used to `git add` each group's files and commit them by
-pathspec, and **both of those take the worktree copy**, which widened the
-commit
-([bug](docs/reports/bugs/2026-08-17-smart-commit-readds-worktree-files.md)).
-`--all` still commits by pathspec, which is what that scope means and leaves
-anything else staged alone; a bare `git commit` there used to sweep the whole
-index into the first group and leave the later ones nothing to commit,
-reported as written anyway
-([bug](docs/reports/bugs/2026-08-17-smart-commit-sweeps-the-whole-index.md)).
+The default `staged` scope builds each group's commit in the index, so an
+index narrowed to one session's hunks commits exactly as staged and other
+sessions' unstaged edits stay unstaged; `--all` commits by pathspec, which is
+what that scope means and leaves anything else staged alone
+([bug](docs/reports/bugs/2026-08-17-smart-commit-readds-worktree-files.md),
+[bug](docs/reports/bugs/2026-08-17-smart-commit-sweeps-the-whole-index.md)).
 By hand, mind which copy each form takes: `clanker git commit -m "…" --
 <paths>` commits the **worktree** copy of those paths and leaves the rest of
 the index staged, so it lands one session's files only where index and
