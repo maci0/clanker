@@ -430,13 +430,14 @@ function diffRuns(aId, bId){
       if(m && (m.ok!==n.ok || Math.abs((m.duration_ms||0)-(n.duration_ms||0))> Math.max(80, (n.duration_ms||0)*0.25))) changed.push(k + ": " + (m.ok===false?"failed":"") + " " + fmtUnit(n.duration_ms||0, "millisecond") + " → "+fmtUnit(m.duration_ms||0, "millisecond"));
     });
     // Re-render current graph with highlights
+    if (!preCompareGraph && lastGraph) preCompareGraph = lastGraph;
     drawRun(ga);
     setTimeout(function(){
       added.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.style.outline="2px solid var(--ok)"; }); });
       removed.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.setAttribute("data-ok","false"); }); });
       changed.forEach(function(k){ var lab=k.split(": ")[0]; el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="0 0 0 2px var(--warn)"; }); });
     }, 260);
-    if(status) status.textContent = added.length+" added · "+removed.length+" removed · "+changed.length+" changed";
+    if(status) status.textContent = "Showing A in the graph · "+added.length+" added · "+removed.length+" removed · "+changed.length+" changed";
     if(clearBtn) clearBtn.hidden=false;
     el.runDetail.hidden=false; el.runDetail.textContent="";
     var pre=document.createElement("pre"); pre.style.whiteSpace="pre-wrap"; pre.style.fontSize="12px";
@@ -469,6 +470,9 @@ function metricsFor(node) { return graphModule.metricsFor(node); }
 function buildStages(nodes) { return graphModule.buildStages(nodes); }
 
 var lastGraph = null;
+// The run the user was reading before Compare redrew the pane onto run A, so
+// Clear puts that run back rather than leaving them on the comparison's A.
+var preCompareGraph = null;
 var lastBuilt = null;
 /* drawRun hangs pan/minimap handlers off window; each redraw builds a fresh
    canvas, so the previous set is aborted here or every redraw would leak five
@@ -1357,7 +1361,9 @@ export function bindRuns() {
     if(clr) clr.addEventListener("click", function(){
       var s=document.getElementById("run-compare-status"); if(s) s.textContent="";
       clr.hidden=true; el.runDetail.textContent=""; el.runDetail.hidden=true;
-      if(lastGraph) drawRun(lastGraph);
+      var back = preCompareGraph; preCompareGraph = null;
+      if(back) drawRun(back);
+      else if(lastGraph) drawRun(lastGraph);
     });
   })();
   

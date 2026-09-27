@@ -377,27 +377,47 @@ function boardColumn(col, s) {
   quickAdd.appendChild(qaForm);
 
   function openQuickAdd(){ quickAdd.classList.add("is-adding"); qaTextarea.focus(); }
-  function closeQuickAdd(){ quickAdd.classList.remove("is-adding"); qaTextarea.value = ""; }
+  function closeQuickAdd(){ quickAdd.classList.remove("is-adding"); qaTextarea.value = ""; qaTextarea.title = ""; }
   qaTrigger.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
   qaCancel.addEventListener("click", function(e){ e.stopPropagation(); closeQuickAdd(); });
+  // The trailing "@partial" in quick-add, resolved against known peers. Both
+  // the Tab accept and the create path read it, so the mention is either
+  // completed into an assignee or absent, never silently dropped.
+  function qaMention() {
+    var v = qaTextarea.value;
+    var at = v.lastIndexOf("@");
+    if (at === -1) return null;
+    var tail = v.slice(at + 1);
+    if (/[\s]/.test(tail)) return null;
+    var peers = (_getKnownPeers() || []).map(function(p){ return p.name || p; });
+    var hit = peers.find(function(n){ return n.toLowerCase().indexOf(tail.toLowerCase()) === 0; });
+    return hit ? { name: hit, at: at, end: at + 1 + tail.length } : null;
+  }
   qaTextarea.addEventListener("keydown", function(e){
     if (e.key === "Enter" && !e.shiftKey && qaTextarea.value.trim()) { e.preventDefault(); doCreate(); }
     else if (e.key === "Escape") { e.preventDefault(); closeQuickAdd(); }
+    else if (e.key === "Tab" && !e.shiftKey && qaMention()) {
+      e.preventDefault();
+      var m = qaMention();
+      var v = qaTextarea.value;
+      qaTextarea.value = v.slice(0, m.at) + "@" + m.name + " " + v.slice(m.end);
+      qaTextarea.title = "";
+    }
   });
   // Slack-like: typing @ in quick-add shows available assignees as placeholder hint
   qaTextarea.addEventListener("input", function(){
-    var v = qaTextarea.value;
-    var atIdx = v.lastIndexOf("@");
-    if (atIdx !== -1) {
-      var q = v.slice(atIdx + 1).toLowerCase();
-      var peers = (_getKnownPeers() || []).map(function(p){ return p.name || p; });
-      var hit = peers.find(function(n){ return n.toLowerCase().indexOf(q) === 0; });
-      if (hit) qaTextarea.title = "Assign to @" + hit + " — press Tab to accept";
-      else qaTextarea.title = "";
-    } else qaTextarea.title = "";
+    var m = qaMention();
+    qaTextarea.title = m ? "Assign to @" + m.name + " — press Tab to accept" : "";
   });
   function doCreate(){
-    var t = qaTextarea.value.trim(); if (!t) return;
+    var raw = qaTextarea.value;
+    // An @mention addresses the assignee, not the objective: the goal record
+    // has no assignee field, so the name is dropped from the text here and
+    // written onto the card the goal mirror files below.
+    var m = qaMention();
+    var assignee = m ? m.name : "";
+    var t = (m ? raw.slice(0, m.at) + " " + raw.slice(m.end) : raw).trim().replace(/\s+/g, " ");
+    if (!t) return;
     closeQuickAdd();
     el.boardStatus.textContent = "Creating goal card…";
     postGoal({ objective: t }, "Goal card saved. It has not started.").then(function (d) {
@@ -411,7 +431,9 @@ function boardColumn(col, s) {
       if (card && col.id && card.column !== col.id) {
         postBoard({ op: "move", id: card.id, column: col.id, goal_sync: false }, null);
       }
-      el.boardStatus.textContent = "Added to " + (col.title || "the board") + ".";
+      if (card && assignee) postBoard({ op: "update", id: card.id, assignee: assignee }, null);
+      el.boardStatus.textContent = "Added to " + (col.title || "the board") +
+        (assignee ? ", assigned to " + assignee + "." : ".");
     });
   }
   qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });

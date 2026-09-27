@@ -762,12 +762,12 @@ lamps carry further). The seven named palettes ride the same tokens.
            with the model's current values rather than left blank — an
            edit that omitted a field would silently reset it to config.Model's
            struct default the next time clanker serve restarts. -->
-      <div id="models-edit" class="models-snippet" role="region" aria-label="Edit model configuration" hidden>
+      <div id="models-edit" class="mt-4 rounded-plate-lg border border-border bg-surface-2 p-3 [hidden]:hidden" role="region" aria-label="Edit model configuration" hidden>
         <div class="mb-2 flex flex-wrap items-center gap-2">
           <code class="flex-1 font-mono text-sm text-accent-text" id="models-edit-title"></code>
           <button type="button" class="primary" id="models-edit-save">Save changes</button>
           <button type="button" class="secondary" id="models-edit-toml" aria-pressed="false" title="Edit this model's TOML table directly">TOML</button>
-          <button type="button" class="secondary danger" id="models-edit-remove">Remove</button>
+          <button type="button" class="secondary danger [hidden]:hidden" id="models-edit-remove" hidden>Remove</button>
           <button type="button" class="secondary" id="models-edit-close">Close</button>
         </div>
         <form id="models-edit-form" class="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-x-3 gap-y-2" onsubmit="return false">
@@ -972,30 +972,30 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <p class="meta">External MCP servers this clanker may consume tools from. Configuration is live and saved to <code>config.local.toml</code>; the client bridge that connects to them ships behind <code>modules.mcp_client</code> and is not active yet.</p>
       <div id="mcp-list"></div>
-      <div id="mcp-edit" class="models-snippet" role="region" aria-label="Edit MCP server" hidden>
-        <div class="models-snippet-head">
-          <code id="mcp-edit-title"></code>
+      <div id="mcp-edit" class="mt-4 rounded-plate-lg border border-border bg-surface-2 p-3" role="region" aria-label="Edit MCP server" hidden>
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <code class="flex-1 font-mono text-sm text-accent-text" id="mcp-edit-title"></code>
           <button type="button" class="primary" id="mcp-edit-save">Save</button>
           <button type="button" class="secondary danger" id="mcp-edit-remove">Remove</button>
           <button type="button" class="secondary" id="mcp-edit-close">Close</button>
         </div>
-        <form id="mcp-edit-form" class="models-edit-form" onsubmit="return false">
-          <label>Name<input type="text" id="mcp-edit-name" autocomplete="off" placeholder="e.g. github" required></label>
-          <label>Transport
+        <form id="mcp-edit-form" class="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-x-3 gap-y-2" onsubmit="return false">
+          <label class="flex flex-col gap-1 text-xs text-fg-muted">Name<input type="text" id="mcp-edit-name" autocomplete="off" placeholder="e.g. github" required></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted">Transport
             <select id="mcp-edit-transport">
               <option value="stdio">stdio (spawn a command)</option>
               <option value="http">http (streamable HTTP)</option>
             </select>
           </label>
-          <label data-mcp-for="stdio">Command<input type="text" id="mcp-edit-command" autocomplete="off" placeholder="github-mcp-server"></label>
-          <label data-mcp-for="stdio">Args (comma-separated)<input type="text" id="mcp-edit-args" autocomplete="off" placeholder="stdio"></label>
-          <label data-mcp-for="stdio">Working dir<input type="text" id="mcp-edit-cwd" autocomplete="off" placeholder="(inherit)"></label>
-          <label data-mcp-for="http">URL<input type="url" id="mcp-edit-url" autocomplete="off" placeholder="https://mcp.example.com/stream"></label>
-          <label>Timeout ms<input type="number" id="mcp-edit-timeout" min="0" step="1" placeholder="60000"></label>
-          <label class="models-edit-wide">Env (KEY=value, comma-separated)<input type="text" id="mcp-edit-env" autocomplete="off" placeholder="GITHUB_TOKEN=..."></label>
-          <label class="models-edit-wide" data-mcp-for="http">Headers (Name: value, comma-separated)<input type="text" id="mcp-edit-headers" autocomplete="off" placeholder="Authorization: Bearer ..."></label>
+          <label class="[hidden]:hidden flex flex-col gap-1 text-xs text-fg-muted" data-mcp-for="stdio">Command<input type="text" id="mcp-edit-command" autocomplete="off" placeholder="github-mcp-server"></label>
+          <label class="[hidden]:hidden flex flex-col gap-1 text-xs text-fg-muted" data-mcp-for="stdio">Args (comma-separated)<input type="text" id="mcp-edit-args" autocomplete="off" placeholder="stdio"></label>
+          <label class="[hidden]:hidden flex flex-col gap-1 text-xs text-fg-muted" data-mcp-for="stdio">Working dir<input type="text" id="mcp-edit-cwd" autocomplete="off" placeholder="(inherit)"></label>
+          <label class="[hidden]:hidden flex flex-col gap-1 text-xs text-fg-muted" data-mcp-for="http">URL<input type="url" id="mcp-edit-url" autocomplete="off" placeholder="https://mcp.example.com/stream"></label>
+          <label class="flex flex-col gap-1 text-xs text-fg-muted">Timeout ms<input type="number" id="mcp-edit-timeout" min="0" step="1" placeholder="60000"></label>
+          <label class="col-span-full flex flex-col gap-1 text-xs text-fg-muted">Env (KEY=value, comma-separated)<input type="text" id="mcp-edit-env" autocomplete="off" placeholder="GITHUB_TOKEN=..."></label>
+          <label class="[hidden]:hidden col-span-full flex flex-col gap-1 text-xs text-fg-muted" data-mcp-for="http">Headers (Name: value, comma-separated)<input type="text" id="mcp-edit-headers" autocomplete="off" placeholder="Authorization: Bearer ..."></label>
         </form>
-        <p class="models-snippet-note" id="mcp-edit-note" hidden></p>
+        <p class="mt-2 text-sm text-fg-muted" id="mcp-edit-note" hidden></p>
       </div>
       <p class="sr-only" id="mcp-status" role="status" aria-live="polite"></p>
     </section>

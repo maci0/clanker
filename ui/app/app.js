@@ -3052,8 +3052,16 @@ function openChatRoom(room) {
             el.chatChannelTopic.textContent = newTopic || "Add a topic";
             el.chatChannelTopic.title = newTopic || "Set a topic for this channel";
             el.chatChannelTopic.classList.toggle("is-placeholder", !newTopic);
+            return;
           }
-        }).catch(function () {});
+          var fail = "Could not set the topic: " + (d.error || "unknown error");
+          el.chatStatus.textContent = fail;
+          uiToast(fail);
+        }).catch(function (err) {
+          var fail = "Could not set the topic: " + err.message;
+          el.chatStatus.textContent = fail;
+          uiToast(fail);
+        });
       });
     };
   }

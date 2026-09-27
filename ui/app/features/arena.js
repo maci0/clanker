@@ -287,7 +287,7 @@ function renderTranscript(m) {
     host.appendChild(fold);
     (r.moves || []).forEach(function (mv) {
       var card = document.createElement("div");
-      card.className = "ml-4";
+      card.className = "ml-4 mt-2 rounded-plate border border-rule bg-surface-2 p-3";
       var title = document.createElement("div");
       var bits = [mv.label, mv.move];
       if (mv.target_label && mv.target_label !== mv.label) bits.push("at " + mv.target_label);
@@ -296,9 +296,11 @@ function renderTranscript(m) {
       if (mv.blocked) nums.push("blocked " + mv.blocked);
       if (mv.damage_dealt) nums.push("deals " + mv.damage_dealt);
       nums.push(mv.hp_after + " HP left");
+      title.className = "font-semibold";
       title.textContent = bits.join(" ") + " · " + nums.join(", ");
       card.appendChild(title);
       var body = document.createElement("div");
+      body.className = "mt-1 text-fg-muted";
       body.textContent = mv.forfeit ? ("forfeited the round: " + (mv.error || "no reply")) : mv.text;
       card.appendChild(body);
       var flags = [];
@@ -319,10 +321,12 @@ function renderTranscript(m) {
 
   if (m.verdict) {
     var v = document.createElement("div");
-    v.className = "border-accent";
+    v.className = "mt-3 rounded-plate border border-accent bg-surface p-3";
     var vh = document.createElement("div");
+    vh.className = "font-semibold";
     vh.textContent = "Verdict: " + m.verdict.headline;
     var vb = document.createElement("div");
+    vb.className = "text-fg-muted";
     vb.textContent = m.verdict.answer || "";
     v.appendChild(vh);
     v.appendChild(vb);
