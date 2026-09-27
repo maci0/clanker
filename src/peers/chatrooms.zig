@@ -528,7 +528,11 @@ fn hasMessageId(arena: std.mem.Allocator, raw: []const u8, id: []const u8, max: 
 }
 
 fn appendLogLine(base: std.Io.Dir, io: std.Io, path: []const u8, existing: []const u8, line: []const u8) !void {
-    const file = try base.createFile(io, path, .{ .truncate = false });
+    // Owner-only, like every other store in this module: the chat log holds
+    // room messages exchanged between peers, and the under-cap append is the
+    // path that creates the file, so the mode has to be set here rather than
+    // left to the umask (a trim that rewrites the log already does).
+    const file = try base.createFile(io, path, .{ .truncate = false, .permissions = atomic_write.private_file });
     defer file.close(io);
     const size = (try file.stat(io)).size;
     var wbuf: [512]u8 = undefined;
@@ -1353,6 +1357,12 @@ test "append + readHistory + listRooms round-trip" {
 
     const fresh = try readNew(env.tmp.dir, io, arena, "", &cfg, .{ .ts = 1000 });
     try std.testing.expectEqual(@as(usize, 1), fresh.len);
+
+    // The append path creates the log, so it is the one that has to set the
+    // mode: peer-to-peer room text must not be world-readable under a wide
+    // umask.
+    const log_stat = try env.tmp.dir.statFile(io, log_path, .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(log_stat.permissions)) & 0o777);
 }
 
 test "append dedups a redelivered id even when an older text holds the id byte pattern" {

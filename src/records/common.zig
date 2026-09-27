@@ -9,6 +9,7 @@
 //! matched line is the same problem in every store, so it is one function.
 
 const std = @import("std");
+const sanitize = @import("../tui/sanitize.zig");
 const diag = @import("../util/diag.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
@@ -300,8 +301,19 @@ pub fn ellipsize(s: []const u8, max: usize) []const u8 {
     return utf8.cap(flat, max);
 }
 
+/// The one place record text reaches the operator's terminal, so it is the
+/// one place the escape filter has to sit. Record bodies are written by the
+/// model from tool output and fetched pages (`research sweep` quotes whatever
+/// the web served), and `open`/`list`/`search` print them back verbatim; a
+/// record holding `ESC]52;c;<base64>ESC\` would otherwise rewrite the
+/// operator's clipboard. The TUI path filters through the same module
+/// (`tui/sanitize.zig` owns the predicate and both writers).
 pub fn out(io: std.Io, bytes: []const u8) !void {
-    try std.Io.File.stdout().writeStreamingAll(io, bytes);
+    const stdout = std.Io.File.stdout();
+    var buf: [4096]u8 = undefined;
+    var fw = stdout.writer(io, &buf);
+    sanitize.writeSanitized(&fw.interface, bytes);
+    try fw.interface.flush();
 }
 
 /// One heading and the matches under it, then the blank line that separates it

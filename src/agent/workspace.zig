@@ -123,17 +123,45 @@ const StoredWorkspace = struct {
     created: i64 = 0,
 };
 
-fn fromStored(arena: std.mem.Allocator, stored: []const StoredWorkspace) ![]Workspace {
+/// Builds the live list from the stored rows, dropping any workspace whose
+/// roots do not all resolve.
+///
+/// `add` and `updateRoots` run every root through `resolveDir`, so a stored
+/// root is an absolute real path to a directory -- but the file on disk is not
+/// something only the host can write: `state/` is inside the granted
+/// `fs_prefixes` of the ordinary file tools, so a guest can create or replace
+/// `state/workspaces.json` with rows the host never checked. Every root is
+/// re-resolved here for the same reason `add` resolves it: a root is a path
+/// the web UI then serves files under and a run's `sandbox_root`, so a stored
+/// string is a claim, not a fact. A row that does not resolve is dropped whole
+/// (not narrowed to the roots that do), and the drop is a warning.
+///
+/// What this does not do is confine a root to the checkout: pointing a
+/// workspace at another project is the feature, so the bound is a resolved
+/// directory and nothing narrower.
+fn fromStored(io: std.Io, arena: std.mem.Allocator, stored: []const StoredWorkspace) ![]Workspace {
     var out: std.ArrayList(Workspace) = .empty;
     for (stored) |sw| {
         var roots: std.ArrayList(Root) = .empty;
+        var usable = true;
         if (sw.roots.len > 0) {
             for (sw.roots) |r| {
-                try roots.append(arena, .{ .name = r.name, .path = r.path });
+                const abs = resolveDir(io, arena, r.path) catch {
+                    log.log(.warn, "workspaces: '{s}' root '{s}' does not resolve to a directory; dropping the workspace", .{ sw.id, r.path });
+                    usable = false;
+                    break;
+                };
+                try roots.append(arena, .{ .name = r.name, .path = abs });
             }
         } else if (sw.path.len > 0) {
-            try roots.append(arena, .{ .name = "", .path = sw.path });
+            if (resolveDir(io, arena, sw.path)) |abs| {
+                try roots.append(arena, .{ .name = "", .path = abs });
+            } else |_| {
+                log.log(.warn, "workspaces: '{s}' path '{s}' does not resolve to a directory; dropping the workspace", .{ sw.id, sw.path });
+                usable = false;
+            }
         }
+        if (!usable) continue;
         try out.append(arena, .{
             .id = sw.id,
             .name = sw.name,
@@ -169,7 +197,7 @@ pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) ![]Workspace
         log.log(.error_, "workspaces: {s} is not a readable list; fix or move it", .{store_path});
         return Error.StoreUnreadable;
     };
-    return fromStored(arena, stored);
+    return fromStored(io, arena, stored);
 }
 
 pub fn save(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir, list: []const Workspace) !void {
@@ -560,14 +588,47 @@ test "a legacy path-only row loads as one unnamed root" {
     const arena = arena_state.allocator();
 
     try tmp.dir.createDirPath(io, "state");
-    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data =
-        \\[{"id":"old","name":"old","path":"/tmp/old-folder","created":3}]
-    });
+    try tmp.dir.createDirPath(io, "old-folder");
+    const old_path = try tmp.dir.realPathFileAlloc(io, "old-folder", arena);
+    const data = try std.fmt.allocPrint(arena,
+        \\[{{"id":"old","name":"old","path":"{s}","created":3}}]
+    , .{old_path});
+    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = data });
     const loaded = try load(io, arena, tmp.dir);
     try std.testing.expectEqual(@as(usize, 1), loaded.len);
     try std.testing.expectEqual(@as(usize, 1), loaded[0].roots.len);
     try std.testing.expectEqualStrings("", loaded[0].roots[0].name);
-    try std.testing.expectEqualStrings("/tmp/old-folder", loaded[0].roots[0].path);
+    try std.testing.expectEqualStrings(old_path, loaded[0].roots[0].path);
+}
+
+test "a row whose root does not resolve to a directory is dropped" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // `state/` is inside the granted `fs_prefixes` of the ordinary file
+    // tools, so this file is writable by a guest, and a row in it never went
+    // through `add`. A root that is not a directory the host itself resolved
+    // is one `load` refuses rather than hands to `/api/files` and to a run's
+    // `sandbox_root`.
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.createDirPath(io, "real");
+    const real_path = try tmp.dir.realPathFileAlloc(io, "real", arena);
+    const data = try std.fmt.allocPrint(arena,
+        \\[{{"id":"gone","name":"gone","path":"{s}/not-a-directory","created":1}},
+        \\ {{"id":"good","name":"good","path":"{s}","created":2}}]
+    , .{ real_path, real_path });
+    try tmp.dir.writeFile(io, .{ .sub_path = store_path, .data = data });
+
+    const loaded = try load(io, arena, tmp.dir);
+    try std.testing.expectEqual(@as(usize, 1), loaded.len);
+    try std.testing.expectEqualStrings("good", loaded[0].id);
 }
 
 test "an arbitrary number of workspaces can be registered" {

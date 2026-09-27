@@ -65,6 +65,14 @@ pub const Callbacks = struct {
     on_decision: ?*const fn (context: *anyopaque, turn: u32, decision: Decision) void = null,
 };
 
+/// Ceiling on the turn budget, whatever the config asks for. `agent.max_goal_turns`
+/// parses as a `u32`, so a config of `4294967295` is a valid read: `turn += 1`
+/// then wraps to 0 at the top of the loop, `turn <= limit` stays true, and the
+/// goal loop never ends (or panics, on the Debug build that ships by default).
+/// The ceiling is a named constant rather than a clamp at the config reader
+/// because every caller of `run` passes the value through.
+const max_goal_turns_ceiling: u32 = 10_000;
+
 /// Start the first turn immediately, then keep scheduling turns until the
 /// evaluator says the condition was met or blocked. The budget is a terminal
 /// state rather than a silent return: callers can show it and persist it.
@@ -75,7 +83,7 @@ pub fn run(
     max_turns: u32,
     callbacks: Callbacks,
 ) !Outcome {
-    const limit = @max(@as(u32, 1), max_turns);
+    const limit = @min(@max(@as(u32, 1), max_turns), max_goal_turns_ceiling);
     var task = initial_task;
     var owned_task: ?[]const u8 = null;
     defer if (owned_task) |t| alloc.free(t);

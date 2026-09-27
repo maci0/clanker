@@ -140,10 +140,34 @@ fn gitOk(gpa: std.mem.Allocator, io: std.Io, argv: []const []const u8) bool {
     };
 }
 
+/// A ref name is safe to hand `git` as an argument: non-empty, no leading
+/// `-` (git would read it as a flag, so `--force` in a stored row would turn
+/// `branch -d` into something else), and no whitespace, control byte, or the
+/// ref-spellings git itself refuses (`..`, leading/trailing `/`, `@{`).
+fn validBranchName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 255) return false;
+    if (name[0] == '-' or name[0] == '/' or name[name.len - 1] == '/') return false;
+    if (std.mem.indexOf(u8, name, "..") != null) return false;
+    if (std.mem.indexOf(u8, name, "@{") != null) return false;
+    for (name) |c| {
+        if (c <= 0x20 or c == 0x7f) return false;
+    }
+    return true;
+}
+
 /// True when every commit on `branch` is already an ancestor of `base`, which
 /// is what makes removing the branch lossless. `--is-ancestor` answers exactly
 /// that and says so in its exit code.
+///
+/// The registry is `state/worktrees.json`, inside the granted `fs_prefixes`
+/// of the ordinary file tools, so both ref names are guest-writable and the
+/// check is only meaningful when the two are distinct: with `branch ==
+/// base_branch` `--is-ancestor` is trivially true for any ref that exists
+/// (including the base branch itself), which is exactly how the check that
+/// protects unmerged commits gets talked out of the room.
 fn branchMerged(gpa: std.mem.Allocator, io: std.Io, branch: []const u8, base: []const u8) bool {
+    if (!validBranchName(branch) or !validBranchName(base)) return false;
+    if (std.mem.eql(u8, branch, base)) return false;
     return gitOk(gpa, io, &.{ "git", "merge-base", "--is-ancestor", branch, base });
 }
 
@@ -292,6 +316,20 @@ test "statusRetires covers archived and abandoned, and nothing a reviewer still 
     try std.testing.expect(!statusRetires("done"));
     try std.testing.expect(!statusRetires("active"));
     try std.testing.expect(!statusRetires(""));
+}
+
+test "validBranchName refuses what git would read as a flag or a bad ref" {
+    try std.testing.expect(validBranchName("clanker/run-1"));
+    try std.testing.expect(validBranchName("main"));
+    try std.testing.expect(!validBranchName(""));
+    try std.testing.expect(!validBranchName("--force"));
+    try std.testing.expect(!validBranchName("-D"));
+    try std.testing.expect(!validBranchName("a b"));
+    try std.testing.expect(!validBranchName("a\nb"));
+    try std.testing.expect(!validBranchName("a..b"));
+    try std.testing.expect(!validBranchName("a@{0}"));
+    try std.testing.expect(!validBranchName("/a"));
+    try std.testing.expect(!validBranchName("a/"));
 }
 
 test "register replaces a row for the same path instead of appending" {
