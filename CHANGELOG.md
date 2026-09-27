@@ -503,6 +503,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   chevron) are deleted: no element, in markup or script, has ever named that
   class.
 
+- `ui/app/index.html` joins the ledger: every class the markup names now has to
+  resolve in a shipped sheet, which it does. Six dead ones it had been carrying
+  are gone — `rail-places` (the rail's tablist is reached by id), `fleet-floor`
+  (a decorative stage, now `pointer-events-none absolute inset-0` beside the
+  canvas it sits under), `board-create-note` and two `language-toml` markers
+  (no reader, in markup or script) — and the System view's jump list, whose rule
+  no longer existed, carries the utilities that say what it looked like.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

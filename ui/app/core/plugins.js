@@ -235,7 +235,7 @@ function makeViewShell(id, title, group) {
     var fallback = document.querySelector(".rail-nav");
     if (fallback) fallback.appendChild(tab);
   }
-  var tablist = document.querySelector(".rail-places[role='tablist']");
+  var tablist = document.querySelector("#rail [role='tablist']");
   if (tablist && tab.id) syncTablistOwns(tablist);
   _VIEWS.push(id);
   _wireTab(tab, _VIEWS.length - 1);

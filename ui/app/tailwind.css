@@ -3352,8 +3352,14 @@
 .\[\&_button\]\:px-3 button {
   padding-inline: var(--space-3);
 }
+.\[\&_button\]\:py-0\.5 button {
+  padding-block: calc(var(--spacing) * 0.5);
+}
 .\[\&_button\]\:py-1 button {
   padding-block: var(--space-1);
+}
+.\[\&_button\]\:font-sans button {
+  font-family: var(--sans);
 }
 .\[\&_button\]\:text-lg button {
   font-size: var(--step-2);
@@ -3363,6 +3369,10 @@
 }
 .\[\&_button\]\:text-xs button {
   font-size: var(--step--1);
+}
+.\[\&_button\]\:font-medium button {
+  --tw-font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-medium);
 }
 .\[\&_button\]\:text-fg-muted button {
   color: var(--fg-muted);

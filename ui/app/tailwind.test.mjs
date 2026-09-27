@@ -52,6 +52,7 @@ const migrated = [
   "core/tools.js",
   "core/attachments.js",
   "app.js",
+  "index.html",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: geometry (a

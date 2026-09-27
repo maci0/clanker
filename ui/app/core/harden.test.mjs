@@ -476,7 +476,7 @@ test("rooms channel rows are 44px on coarse pointers", function () {
 });
 
 test("System view has an on-page jump list", function () {
-  assert.match(html, /class="system-jump"/);
+  assert.match(html, /aria-label="On this page"/);
   assert.match(html, /data-system-jump="settings-section"/);
   assert.match(html, /data-system-jump="mcp-section"/);
   assert.match(html, /id="system-progress"/);

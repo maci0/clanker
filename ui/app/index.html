@@ -109,7 +109,7 @@ lamps carry further). The seven named palettes ride the same tokens.
   <!-- Session-first rail (DeepSeek Harness topology, cabinet tokens):
        Work destinations stay visible, conversations fill the column,
        Watch and Set up fold so they do not eat the list. -->
-  <nav class="rail-nav rail-places" role="tablist" aria-orientation="vertical" aria-label="Sections"
+  <nav class="rail-nav" role="tablist" aria-orientation="vertical" aria-label="Sections"
        aria-owns="tab-chat tab-kanban tab-runs tab-fleet tab-arena tab-rooms tab-models tab-knowledge tab-prompts tab-tools tab-system">
     <section aria-labelledby="rail-section-work">
       <h2 class="rail-group" id="rail-section-work">Work</h2>
@@ -442,7 +442,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <div id="fleet-runs"></div>
         </section>
         <div id="fleet-detail" class="run-detail" role="region" aria-label="Fleet run detail" hidden></div>
-        <div id="fleet-floor" class="fleet-floor" aria-hidden="true" hidden>
+        <div class="pointer-events-none absolute inset-0" id="fleet-floor" aria-hidden="true" hidden>
           <canvas class="pixel-canvas" id="fleet-canvas" width="640" height="180"></canvas>
           <p class="meta" id="fleet-floor-status" aria-live="polite"></p>
         </div>
@@ -472,7 +472,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <!-- The canvas is decorative; #arena-status carries the same state in
              words and is what a screen reader or a reduced-motion session gets
              instead of the animation. Same split as #fleet-floor. -->
-        <div id="arena-stage" class="fleet-floor" aria-hidden="true" hidden>
+        <div class="pointer-events-none absolute inset-0" id="arena-stage" aria-hidden="true" hidden>
           <canvas class="pixel-canvas" id="arena-canvas" width="640" height="200"></canvas>
           <!-- Arena v2: the three.js stage the 3D toggle swaps in. Same
                decorative contract as the canvas above; inherits aria-hidden
@@ -620,7 +620,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <span>Isolated worktree</span>
         </label>
         <button type="submit" class="primary" id="goal-add">Create goal card</button>
-        <p class="meta board-create-note">Saves a Ready card. It does not start a run.</p>
+        <p class="meta">Saves a Ready card. It does not start a run.</p>
       </form>
       </details>
       <!-- Kept for existing room boards and the board module's DOM contract;
@@ -776,7 +776,7 @@ lamps carry further). The seven named palettes ride the same tokens.
              raw table. Saved through /api/config/table/set, which validates
              the whole candidate config before writing anything. -->
         <div class="relative mt-2 min-h-48" id="models-edit-toml-editor" hidden>
-          <pre class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] pointer-events-none z-0 bg-code-bg text-code-fg" aria-hidden="true"><code id="models-edit-toml-code" class="language-toml"></code></pre>
+          <pre class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] pointer-events-none z-0 bg-code-bg text-code-fg" aria-hidden="true"><code id="models-edit-toml-code"></code></pre>
           <textarea class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] z-1 min-h-0 resize-none bg-transparent text-transparent caret-fg shadow-none selection:bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1" id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
         </div>
         <p class="mt-2 text-sm text-fg-muted" id="models-edit-note" hidden></p>
@@ -880,7 +880,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
   <div class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
-    <nav class="system-jump" aria-label="On this page">
+    <nav class="mb-4 flex flex-wrap gap-2 [&_button]:min-h-8 [&_button]:px-3 [&_button]:py-0.5 [&_button]:font-sans [&_button]:text-xs [&_button]:font-medium" aria-label="On this page">
       <button type="button" data-system-jump="system-progress">Progress</button>
       <button type="button" data-system-jump="system-usage">Usage</button>
       <button type="button" data-system-jump="system-status">Status</button>
@@ -995,7 +995,7 @@ lamps carry further). The seven named palettes ride the same tokens.
            the pre behind it carries the syntax colors. Same trick as every
            lightweight in-browser code editor. -->
       <div class="relative min-h-72" id="config-editor">
-        <pre class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] pointer-events-none z-0 bg-code-bg text-code-fg" aria-hidden="true"><code id="config-editor-code" class="language-toml"></code></pre>
+        <pre class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] pointer-events-none z-0 bg-code-bg text-code-fg" aria-hidden="true"><code id="config-editor-code"></code></pre>
         <textarea class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] z-1 min-h-0 resize-none bg-transparent text-transparent caret-fg shadow-none selection:bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1" id="config-editor-text" spellcheck="false" autocomplete="off" aria-label="Config file contents"></textarea>
       </div>
       <p class="meta" id="config-editor-note" role="status" aria-live="polite"></p>
