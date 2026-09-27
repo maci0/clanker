@@ -79,16 +79,23 @@ patch is load-bearing: without it, resizing the terminal in `clanker repl`
 aborts the process, and the e2e pty journeys fail. Run it again whenever a
 fresh dependency fetch replaced the trees.
 
-`zig build test` is the full suite (Zig + JS) and takes minutes, so the edit
-loop has a single-test path: `zig build test -Dtest-filter="<substring>"`
-compiles the Zig binary with only the matching tests registered (a filter
-that matches nothing passes with 0 tests; the JS suites still run). For a
+The edit loop has three speeds, slowest last:
+
+- `zig build quick-check`: format check plus a compile of every target, no
+  tests. Seconds, and enough to catch a patch that does not build.
+- `zig build test -Dtest-filter="<substring>"`: compiles the Zig binary with
+  only the matching tests registered (a filter that matches nothing passes with
+  0 tests; the JS suites still run).
+- `zig build test` — the full suite (Zig + JS), which takes minutes.
+
+`zig build fmt-fix` rewrites the formatting `quick-check` reports. For a
 JS-only loop, run one suite directly, e.g. `bun test ui/app/core/scroll.test.mjs`,
 or sweep them all with `bun test ui/app` (bun walks the directory itself).
 
 `clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
-but CI also runs shellcheck, oxlint on `ui/` and `tools/ts`, a Python syntax
-check, the SBOM generation, and the AssemblyScript rebuild-and-diff.
+but CI also runs the end-to-end pty journeys (`zig build e2e`), shellcheck,
+oxlint on `ui/` and `tools/ts`, a Python syntax check, the SBOM generation,
+and the AssemblyScript rebuild-and-diff.
 `scripts/verify.sh` mirrors every CI step locally, so the full pre-push
 verification is one command instead of a list of steps that live only in the
 CI workflow:
@@ -100,9 +107,15 @@ scripts/verify.sh
 Set the API key env var for your chosen provider (see [config.toml](config.toml)), then:
 
 ```sh
+./zig-out/bin/clanker setup              # guided first run: config, keys, tools
 ./zig-out/bin/clanker providers check
 ./zig-out/bin/clanker run "hello"
 ```
+
+`clanker setup` says which provider this environment can actually reach and
+scaffolds what is missing; `clanker doctor` is the same check after the fact,
+and names a tool `.wasm` nobody compiled, a missing key, or a worktree whose
+gitignored files never got linked.
 
 Codex, Grok, and Claude can instead use OAuth owned entirely by clanker:
 

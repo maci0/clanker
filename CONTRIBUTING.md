@@ -26,10 +26,18 @@ locally.
 
 ## The edit-test loop
 
-- Full suite: `zig build test` (Zig + JS; takes minutes).
-- One Zig test: `zig build test -Dtest-filter="<substring>"` — only tests
-  whose name contains the substring are compiled in. A filter that matches
-  nothing passes with 0 tests; the JS suites still run.
+Three speeds, slowest last:
+
+- `zig build quick-check`: `zig fmt --check` plus a compile of every target,
+  no tests. Seconds; enough to know a patch builds before spending a test run
+  on it.
+- `zig build test -Dtest-filter="<substring>"`: only tests whose name
+  contains the substring are compiled in. A filter that matches nothing passes
+  with 0 tests; the JS suites still run.
+- `zig build test` — the full suite (Zig + JS), which takes minutes.
+
+`zig build fmt-fix` fixes what `quick-check` reports. Also:
+
 - One JS suite: `bun test ui/app/core/scroll.test.mjs` (or whichever
   `.test.mjs` you changed).
 - Every JS suite, without the Zig half: `bun test ui/app` (bun walks the
