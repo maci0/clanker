@@ -641,14 +641,42 @@ function boardColumn(col, s) {
 /* ---- Trello-style label colours ---- */
 var LABEL_COLORS = ["green","yellow","orange","red","purple","blue","sky","pink","lime","black"];
 
+/* The shared board popups (member, priority, label and column pickers), the
+   label editor, the work-in-progress banner and the activity list. The avatar
+   tones pick from the chat-hue palette: eight utilities for eight hues, chosen
+   once instead of eight classes the port would have to keep numbering. */
+var POPUP_CLASS = "absolute z-[999] min-w-40 rounded-plate-lg border border-rule bg-surface-raised p-2 shadow-[var(--lift)]";
+var POPUP_ANCHORED_CLASS = POPUP_CLASS + " left-0 top-full mt-1";
+var POPUP_TITLE_CLASS = "mb-1 border-b border-rule px-2 pb-2 pt-1 text-sm font-semibold text-fg-muted data-[plain=true]:border-b-0";
+var POPUP_ITEM_CLASS = "flex w-full cursor-pointer items-center gap-2 rounded-plate-lg border-0 bg-transparent px-2 py-2 text-left text-sm text-fg hover:bg-surface-hover data-[current=true]:bg-accent-dim data-[current=true]:font-bold data-[muted=true]:text-fg-muted";
+var POPUP_AVATAR_CLASS = "flex h-6 w-6 flex-none items-center justify-center rounded-full bg-accent text-2xs font-bold text-on-accent";
+var BOARD_REL_CLASS = "relative";
+var LABELS_ROW_CLASS = "mb-3 flex flex-wrap gap-1";
+var LABEL_ADD_BTN_CLASS = "cursor-pointer rounded-capsule border border-dashed border-rule bg-transparent px-2 py-0.5 text-xs text-fg-muted";
+var LABEL_NAME_ROW_CLASS = "col-span-full flex gap-1 py-1";
+var LABEL_NAME_INPUT_CLASS = "min-w-0 flex-1 rounded-plate-lg border border-rule bg-surface px-2 py-0.5 text-sm text-fg";
+var LABEL_NAME_CONFIRM_CLASS = "flex-none cursor-pointer rounded-plate-lg border-0 bg-accent px-2 py-0.5 text-sm text-on-accent";
+var WIP_BANNER_CLASS = "mx-2 my-1 rounded-plate border border-warn bg-[color-mix(in_srgb,var(--warn)_12%,var(--surface))] px-2 py-1 text-center text-xs font-semibold text-warn-text";
+var DETAIL_META_LABEL_CLASS = "text-2xs font-semibold uppercase tracking-label text-fg-muted";
+var DETAIL_META_VALUE_CLASS = "inline-flex items-center gap-1 rounded-plate-lg bg-surface-2 px-2 py-1 text-sm text-fg";
+var DETAIL_DESC_AREA_CLASS = "max-h-[300px] min-h-20 w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-3 font-sans text-sm leading-normal transition-colors focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_20%,transparent)]";
+var ACTIVITY_CLASS = "flex flex-col gap-0";
+var ACTIVITY_ITEM_CLASS = "flex gap-3 border-b border-rule py-2 last:border-b-0";
+var ACTIVITY_AVATAR_CLASS = "mr-0 mt-px flex h-8 w-8 flex-none select-none items-center justify-center rounded-full text-xs font-bold tracking-wide";
+var ACTIVITY_CONTENT_CLASS = "min-w-0 flex-1";
+var ACTIVITY_WHO_CLASS = "mr-2 text-sm font-semibold text-fg";
+var ACTIVITY_WHEN_CLASS = "text-sm tabular-nums text-fg-muted";
+var ACTIVITY_TEXT_CLASS = "mt-1 whitespace-pre-wrap wrap-anywhere rounded-plate border border-rule bg-surface-raised px-3 py-2 text-sm leading-normal text-fg";
+
 function menuPopup(anchored) {
   var popup = document.createElement("div");
-  popup.className = anchored ? "menu-popup is-anchored" : "menu-popup";
+  popup.className = anchored ? POPUP_ANCHORED_CLASS : POPUP_CLASS;
   return popup;
 }
 function menuTitle(text, plain) {
   var t = document.createElement("div");
-  t.className = plain ? "menu-popup-title is-plain" : "menu-popup-title";
+  t.className = POPUP_TITLE_CLASS;
+  if (plain) t.setAttribute("data-plain", "true");
   t.textContent = text;
   return t;
 }
@@ -656,12 +684,14 @@ function menuItem(opts) {
   opts = opts || {};
   var btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "menu-popup-item" + (opts.muted ? " is-muted" : "") + (opts.current ? " is-current" : "");
+  btn.className = POPUP_ITEM_CLASS;
+  if (opts.muted) btn.setAttribute("data-muted", "true");
+  if (opts.current) btn.setAttribute("data-current", "true");
   return btn;
 }
 function menuAvatar(name) {
   var av = document.createElement("span");
-  av.className = "menu-popup-avatar";
+  av.className = POPUP_AVATAR_CLASS;
   av.textContent = (name || "?").slice(0, 2).toUpperCase();
   return av;
 }
@@ -1382,7 +1412,7 @@ function showCardDetail(id) {
   mainCol.appendChild(labelsHead);
 
   var labelsRow = document.createElement("div");
-  labelsRow.className = "labels-row";
+  labelsRow.className = LABELS_ROW_CLASS;
   var currentLabels = c.labels || [];
   currentLabels.forEach(function(lbl) {
     var pill = document.createElement("button");
@@ -1402,7 +1432,7 @@ function showCardDetail(id) {
   // Add label button
   var addLabelBtn = document.createElement("button");
   addLabelBtn.type = "button";
-  addLabelBtn.className = "label-add-btn";
+  addLabelBtn.className = LABEL_ADD_BTN_CLASS;
   addLabelBtn.appendChild(icon("plus", 12));
   addLabelBtn.appendChild(document.createTextNode(" Add"));
   addLabelBtn.addEventListener("click", function() {
@@ -1430,7 +1460,7 @@ function showCardDetail(id) {
         var existing = labelPicker.querySelector(".label-text-input-wrap");
         if (existing) existing.remove();
         var wrap = document.createElement("div");
-        wrap.className = "label-name-row";
+        wrap.className = LABEL_NAME_ROW_CLASS;
         var samplePill = document.createElement("span");
         samplePill.className = CARD_LABEL_CLASS;
         samplePill.dataset.sample = "true";
@@ -1441,13 +1471,13 @@ function showCardDetail(id) {
         txtIn.type = "text";
         txtIn.placeholder = "Label name…";
         txtIn.value = color;
-        txtIn.className = "label-name-input";
+        txtIn.className = LABEL_NAME_INPUT_CLASS;
         txtIn.addEventListener("input", function(){ samplePill.textContent = txtIn.value || color; });
         wrap.appendChild(txtIn);
         var addBtn = document.createElement("button");
         addBtn.type = "button";
         addBtn.textContent = "Add";
-        addBtn.className = "label-name-confirm";
+        addBtn.className = LABEL_NAME_CONFIRM_CLASS;
         addBtn.addEventListener("click", function(){
           var text = txtIn.value.trim() || color;
           var newLabels = currentLabels.concat([{ color: color, text: text }]);
@@ -1537,7 +1567,7 @@ function showCardDetail(id) {
 
   // Assignee sidebar button with member picker dropdown
   var assignWrap = document.createElement("div");
-  assignWrap.className = "board-rel";
+  assignWrap.className = BOARD_REL_CLASS;
   var assignBtn = document.createElement("button");
   assignBtn.type = "button";
   assignBtn.appendChild(icon("person", 14));
@@ -1559,7 +1589,7 @@ function showCardDetail(id) {
 
   // Priority sidebar button with dropdown
   var prioWrap = document.createElement("div");
-  prioWrap.className = "board-rel";
+  prioWrap.className = BOARD_REL_CLASS;
   var curPrio = c.priority || "normal";
   var prioIcons = { low: "arrowDown", normal: "minus", high: "arrowUp" };
   var prioBtn = document.createElement("button");
@@ -1587,7 +1617,7 @@ function showCardDetail(id) {
 
   // Deadline sidebar — native date picker
   var deadlineWrap = document.createElement("div");
-  deadlineWrap.className = "board-rel";
+  deadlineWrap.className = BOARD_REL_CLASS;
   var deadlineBtn = document.createElement("button");
   deadlineBtn.type = "button";
   deadlineBtn.appendChild(icon("calendar", 14));
@@ -2108,12 +2138,12 @@ function showCardDetail(id) {
     logBox.appendChild(empty);
   }
   var activityList = document.createElement("div");
-  activityList.className = "card-activity";
+  activityList.className = ACTIVITY_CLASS;
   entries.forEach(function (e) {
     var item = document.createElement("div");
-    item.className = "card-activity-item";
+    item.className = ACTIVITY_ITEM_CLASS;
     var avatar = document.createElement("div");
-    avatar.className = "card-activity-avatar";
+    avatar.className = ACTIVITY_AVATAR_CLASS;
     var whoName = e.who || "?";
     avatar.textContent = whoName.slice(0, 2).toUpperCase();
     var nameHash = 0;
@@ -2121,22 +2151,22 @@ function showCardDetail(id) {
     // One stable tone per name, from the theme-aware chat-hue palette (in
     // app.css), which re-saturates per theme so the initials stay legible in
     // light and dark alike. No literal hex or white-is-assumed text here.
-    avatar.classList.add("avatar-tone-" + (Math.abs(nameHash) % 8));
+    avatar.classList.add("bg-chat-hue-" + (Math.abs(nameHash) % 8), "text-on-accent");
     item.appendChild(avatar);
     var content = document.createElement("div");
-    content.className = "card-activity-content";
+    content.className = ACTIVITY_CONTENT_CLASS;
     var line1 = document.createElement("div");
     var whoSpan = document.createElement("span");
-    whoSpan.className = "card-activity-who";
+    whoSpan.className = ACTIVITY_WHO_CLASS;
     whoSpan.textContent = whoName;
     var whenSpan = document.createElement("span");
-    whenSpan.className = "card-activity-when";
+    whenSpan.className = ACTIVITY_WHEN_CLASS;
     whenSpan.textContent = e.ts ? formatChatTime(e.ts) : "";
     line1.appendChild(whoSpan);
     line1.appendChild(whenSpan);
     content.appendChild(line1);
     var whatDiv = document.createElement("div");
-    whatDiv.className = "card-activity-text";
+    whatDiv.className = ACTIVITY_TEXT_CLASS;
     whatDiv.textContent = e.what || "";
     content.appendChild(whatDiv);
     item.appendChild(content);
@@ -2147,7 +2177,7 @@ function showCardDetail(id) {
   var noteWrap = document.createElement("div");
   noteWrap.className = COMMENT_ROW_CLASS;
   var noteAvatar = document.createElement("div");
-  noteAvatar.className = "card-activity-avatar " + COMMENT_AVATAR_CLASS;
+  noteAvatar.className = ACTIVITY_AVATAR_CLASS + " " + COMMENT_AVATAR_CLASS;
   noteAvatar.textContent = "ME";
   noteWrap.appendChild(noteAvatar);
   var noteIn = input("card-f-log", "text", "", "Write a comment…");

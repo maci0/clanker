@@ -170,8 +170,10 @@ function node(tag) {
 // bubbling into the avatar's own listener is the bug, so a stubbed picker would
 // prove nothing.
 function memberHarness() {
+  // From the popup class lists: they sit above menuPopup, and a slice that
+  // started at the function would leave them undefined in the VM.
   const menus = js.slice(
-    js.indexOf("function menuPopup(anchored) {"),
+    js.indexOf("var POPUP_CLASS = "),
     js.indexOf("function cardNode(c) {")
   );
   const from = js.indexOf("function memberInitials(name) {");

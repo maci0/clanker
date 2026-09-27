@@ -2317,76 +2317,16 @@ h2#session-title {
 /* Board: Trello-style horizontal scroll — columns never wrap; the board
    scrolls sideways and each column scrolls cards internally. On narrow
    viewports the columns stack vertically. */
-.board {
-  display: flex; flex-wrap: nowrap; gap: var(--space-3); margin-top: var(--space-3);
-  overflow-x: auto; overflow-y: hidden; padding-bottom: var(--space-3); align-items: flex-start;
-  min-height: 60vh;
-  /* Trello board scroll feel */
-  scroll-behavior: smooth; -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 18%, transparent) transparent;
-  background: var(--surface-2);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius); padding: var(--space-3);
-  margin-left: calc(var(--space-3) * -1); margin-right: calc(var(--space-3) * -1);
-  padding-left: var(--space-3); padding-right: var(--space-3);
-}
-.board::-webkit-scrollbar { height: 8px; }
-.board::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 18%, transparent); border-radius: var(--radius-pill); }
-.board::-webkit-scrollbar-track { background: transparent; }
+
+
+
+
 @media (max-width: 40rem) {
   .board { flex-wrap: wrap; overflow-x: hidden; }
 }
 /* Trello-style column options "⋯" menu */
 
 /* Shared board popups (member, priority, column move, label name). */
-.menu-popup {
-  position: absolute; z-index: 999;
-  background: var(--surface-raised); border: 1px solid var(--rule);
-  border-radius: var(--radius-lg); box-shadow: var(--lift);
-  padding: 0.5rem; min-width: 160px;
-}
-.menu-popup.is-anchored { left: 0; top: 100%; margin-top: 4px; }
-.menu-popup-title {
-  font-weight: 600; font-size: var(--step-0); color: var(--fg-muted);
-  padding: 0.3rem var(--space-2) 0.5rem; border-bottom: 1px solid var(--rule);
-  margin-bottom: 0.3rem;
-}
-.menu-popup-title.is-plain { border-bottom: none; margin-bottom: 0.3rem; padding: 0.3rem var(--space-2); }
-.menu-popup-item {
-  display: flex; align-items: center; gap: 0.5rem;
-  width: 100%; text-align: left; padding: var(--space-2) 0.5rem;
-  border: none; background: none; cursor: pointer;
-  color: var(--fg); font-size: var(--step-0); border-radius: var(--radius-lg);
-}
-.menu-popup-item.is-muted { color: var(--fg-muted); }
-.menu-popup-item.is-current {
-  font-weight: 700;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.menu-popup-item:hover { background: var(--surface-hover); }
-.menu-popup-avatar {
-  flex: none; width: 24px; height: 24px; border-radius: 50%;
-  background: var(--accent); color: var(--on-accent);
-  font-size: var(--step--2); font-weight: 700;
-  display: flex; align-items: center; justify-content: center;
-}
-.board-rel { position: relative; }
-.labels-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: var(--space-3); }
-
-
-.label-add-btn {
-  font-size: var(--step--1); padding: 0.15rem 0.5rem; border-radius: var(--radius-pill);
-  border: 1px dashed var(--rule); background: none; color: var(--fg-muted); cursor: pointer;
-}
-.label-name-row { grid-column: 1 / -1; display: flex; gap: 4px; padding: 4px 0; }
-.label-name-input {
-  flex: 1; min-width: 0; font-size: var(--step-0); padding: 0.2rem var(--space-2);
-  border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); color: var(--fg);
-}
-.label-name-confirm {
-  flex: none; font-size: var(--step-0); padding: 0.2rem 0.5rem; border-radius: var(--radius-lg);
-  background: var(--accent); color: var(--on-accent); border: none; cursor: pointer;
-}
 
 
 
@@ -2406,7 +2346,24 @@ h2#session-title {
 
 
 
-.board-wip-banner { font-size: var(--step--1); font-weight: 600; color: var(--warn-text); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid var(--warn); border-radius: var(--radius); padding: var(--space-1) 0.5rem; margin: 0.3rem 0.5rem; text-align: center; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* ---- Drop indicator: thin line between cards showing where a card will land ---- */
 
 
@@ -2553,12 +2510,12 @@ h2#session-title {
 
 
 
-.card-detail-sidebar .menu-popup-item { width: 100%; transform: none; background: none; border: none; }
-.card-detail-sidebar .menu-popup-item:hover { background: var(--surface-hover); transform: none; }
-.card-detail-sidebar .menu-popup-item.is-current { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.card-detail-sidebar .card-detail-move-opt { background: var(--surface-2); color: var(--fg); transform: none; }
-.card-detail-sidebar .card-detail-move-opt.is-current { background: var(--accent); color: var(--on-accent); }
-.card-detail-sidebar .card-detail-move-opt:hover { transform: none; }
+
+
+
+
+
+
 
 /* Card detail section headers */
 
@@ -2567,30 +2524,14 @@ h2#session-title {
 /* Card detail metadata pills */
 
 
-.card-detail-meta-label {
-  font-size: var(--step--2); font-weight: 600; text-transform: uppercase;
-  letter-spacing: var(--track-label); color: var(--fg-muted);
-}
-.card-detail-meta-value {
-  font-size: var(--step-0); color: var(--fg); padding: var(--space-1) 0.5rem;
-  background: var(--surface-2); border-radius: var(--radius-lg);
-  display: inline-flex; align-items: center; gap: 0.3rem;
-}
+
+
 
 /* Description edit area in card detail */
-.card-detail-desc-area {
-  min-height: 80px; max-height: 300px; resize: vertical; width: 100%;
-  font-size: var(--step-0); font-family: var(--sans); line-height: 1.5;
-  padding: var(--space-3) 0.8rem; border-radius: var(--radius-lg);
-  border: 1px solid var(--rule); background: var(--surface);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-}
-.card-detail-desc-area:focus-visible {
-  border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
-}
 
-.card-detail-desc-preview:hover { background: color-mix(in srgb, var(--fg) 6%, var(--surface-2)); }
+
+
+
 
 
 
@@ -2616,13 +2557,7 @@ h2#session-title {
 
 
 /* Board column count badge */
-.board-col-count-badge {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 20px; height: 20px; padding: 0 0.3rem;
-  border-radius: var(--radius-pill); background: color-mix(in srgb, var(--fg) 10%, transparent);
-  font-size: var(--step--1); font-weight: 600; color: var(--fg-muted);
-  font-variant-numeric: tabular-nums;
-}
+
 .webui-plugin {
   display: flex;
   flex-wrap: wrap;
@@ -2687,44 +2622,25 @@ h2#session-title {
 .log-who { color: var(--accent-text); }
 
 /* Trello-style activity timeline */
-.card-activity { display:flex; flex-direction:column; gap:0; }
-.card-activity-item {
-  display:flex; gap:var(--space-3); padding:0.5rem 0;
-  border-bottom:1px solid var(--rule);
-}
-.card-activity-item:last-child { border-bottom:none; }
-.card-activity-avatar {
-  flex:0 0 32px; width:32px; height:32px; border-radius:50%;
-  display:flex; align-items:center; justify-content:center;
-  font-size: var(--step--1); font-weight:700; letter-spacing:.02em;
-  user-select:none; margin-top:2px;
-}
+
+
+
+
 /* Activity avatars pick a stable tone per name from the theme-aware chat-hue
    palette. Background and foreground both come from per-theme tokens, never
    literal hex, so the initials stay legible in light and dark themes. */
-.avatar-tone-0 { background: var(--chat-hue-0); color: var(--on-accent); }
-.avatar-tone-1 { background: var(--chat-hue-1); color: var(--on-accent); }
-.avatar-tone-2 { background: var(--chat-hue-2); color: var(--on-accent); }
-.avatar-tone-3 { background: var(--chat-hue-3); color: var(--on-accent); }
-.avatar-tone-4 { background: var(--chat-hue-4); color: var(--on-accent); }
-.avatar-tone-5 { background: var(--chat-hue-5); color: var(--on-accent); }
-.avatar-tone-6 { background: var(--chat-hue-6); color: var(--on-accent); }
-.avatar-tone-7 { background: var(--chat-hue-7); color: var(--on-accent); }
-.card-activity-content { flex:1; min-width:0; }
-.card-activity-who {
-  font-weight:600; font-size:var(--step-0); color:var(--fg);
-  margin-right:0.5rem;
-}
-.card-activity-when {
-  font-size: var(--step-0); color:var(--fg-muted); font-variant-numeric:tabular-nums;
-}
-.card-activity-text {
-  margin-top:2px; font-size:var(--step-0); color:var(--fg);
-  line-height:1.5; white-space:pre-wrap; word-break:break-word;
-  background:var(--surface-raised, var(--surface));
-  border:1px solid var(--rule); border-radius:var(--radius);
-  padding:var(--space-2) var(--space-3); margin-top:0.3rem;
-}
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Log tail */
 .log-view {

@@ -675,7 +675,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </details>
       <!-- Keep the DOM id distinct from the #kanban route. If both are
            "kanban", native fragment scrolling opens this view halfway down. -->
-      <div class="board" id="board-grid"></div>
+      <div class="mt-3 flex min-h-[60vh] flex-nowrap items-start gap-3 overflow-x-auto overflow-y-hidden pb-3 scroll-smooth [scrollbar-color:color-mix(in_srgb,var(--fg)_18%,transparent)_transparent] [scrollbar-width:thin]" id="board-grid"></div>
       <div class="toolbar-actions mt-3 [hidden]:hidden" id="board-list-controls">
         <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
       </div>

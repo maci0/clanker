@@ -322,6 +322,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   rule allows 1-7 for that reason, and the detail panel's 3rem top margin
   became `my-7` (3.4rem) rather than `my-12`.
 
+- The board is fully ported. The shared popups (member, priority, label and
+  column pickers), the label editor, the work-in-progress banner, the card
+  detail's meta rows and description area, and the activity list with its
+  avatar tones are utilities in `ui/app/features/board.js`; the columns row is
+  one in `ui/app/index.html`. An avatar's tone picks `bg-chat-hue-0..7` by the
+  name hash instead of eight numbered classes the port would have to keep
+  numbering, a popup's plain/muted/current states are `data-*` attributes, and
+  the board row's WebKit scrollbar rules are dropped for `scrollbar-width` /
+  `scrollbar-color` as elsewhere. First paint 59.7K gz; `app.css` 123.4K raw.
+- `flex-wrap-nowrap` was written into `index.html` by an earlier step of this
+  port. It is not a utility — the property is `flex-nowrap` — and a name
+  Tailwind does not know compiles to nothing, which is why the ledger's list
+  needs `index.html` in it before the frame's own port lands.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

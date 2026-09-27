@@ -57,7 +57,7 @@ const migrated = [
 /// cabinet's scales are not asked to carry.
 const arbitrary_ok = [
   /^max-w-\[min\(/,
-  /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|grid-cols|grid-rows|ps|pl|pr|pt|pb|stroke|border|scale|rotate|translate-x|translate-y)-\[/,
+  /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|z|grid-cols|grid-rows|ps|pl|pr|pt|pb|stroke|border|scale|rotate|translate-x|translate-y)-\[/,
   // A transition names the properties it covers; there is no token for that list.
   /^transition-\[/,
 ];
