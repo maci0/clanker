@@ -1171,8 +1171,8 @@ pub const Agent = struct {
                 const stop_hook = try self.runLifecycleHook(.Stop, "", try self.hookPayload(.Stop, "", "", resp.message.content orelse ""));
                 if (stop_hook.decision != .allow) {
                     const feedback = if (stop_hook.reason.len > 0) stop_hook.reason else "A Stop hook requested another step; continue working before answering.";
-                    _ = try appendSystemOnce(self.arena, &messages, feedback);
-                    if (stop_hook.context.len > 0) _ = try appendSystemOnce(self.arena, &messages, stop_hook.context);
+                    _ = try appendSystemOnce(self.arena, messages, feedback);
+                    if (stop_hook.context.len > 0) _ = try appendSystemOnce(self.arena, messages, stop_hook.context);
                     log.log(.info, "Stop hook forced another step at iteration {d}", .{iteration + 1});
                     continue;
                 }

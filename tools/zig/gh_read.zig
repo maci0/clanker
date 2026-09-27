@@ -126,16 +126,30 @@ fn cachePut(url: []const u8, token: []const u8, body: []const u8) void {
     sweepExpired(now);
 }
 
-/// Drop expired (and legacy, un-fingerprinted) files. The write that adds a
-/// record is what clears the ones past TTL: nothing fires on its own
-/// (ADR 0008), and janitor only deletes on `--yes`.
+/// Drop expired (and legacy, un-fingerprinted) files, then hold the live ones
+/// to `gh_cache.max_entries`. The write that adds a record is what clears the
+/// ones past TTL: nothing fires on its own (ADR 0008), and janitor only
+/// deletes on `--yes` and does not walk this directory at all.
+///
+/// The TTL does not bound the directory over a long life: every distinct
+/// (url, token) pair is a file, and a run that reads two hundred issues leaves
+/// two hundred bodies behind. So the count is bounded too, oldest first. The
+/// names come from one listing, which the sandbox truncates, so past a very
+/// large directory the sweep enforces the ceiling over the names it can see;
+/// the ceiling is two orders of magnitude below that truncation point.
 fn sweepExpired(now: i64) void {
     const listing = lib.fsList(gh_cache.dir) catch return;
     const names = std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, listing, .{}) catch return;
     if (names != .array) return;
+    // A window of the live records, sized so the count can exceed the ceiling
+    // (counted separately) while the eviction candidates stay bounded.
+    var live_names: [gh_cache.max_entries][]const u8 = undefined;
+    var live_fetched: [gh_cache.max_entries]i64 = undefined;
+    var live: usize = 0;
+    var live_seen: usize = 0;
     var deleted: usize = 0;
     for (names.array.items) |item| {
-        if (deleted >= gh_cache.max_sweep) return;
+        if (deleted >= gh_cache.max_sweep) break;
         if (item != .string) continue;
         const name = item.string;
         if (!gh_cache.isCacheFileName(name)) continue;
@@ -146,9 +160,26 @@ fn sweepExpired(now: i64) void {
             deleted += 1;
             continue;
         };
-        if (!gh_cache.shouldDelete(rec, now)) continue;
-        lib.fsDelete(path) catch continue;
-        deleted += 1;
+        if (gh_cache.shouldDelete(rec, now)) {
+            lib.fsDelete(path) catch continue;
+            deleted += 1;
+            continue;
+        }
+        live_seen += 1;
+        if (live < gh_cache.max_entries) {
+            live_names[live] = name;
+            live_fetched[live] = rec.fetched;
+            live += 1;
+        }
+    }
+    const over = gh_cache.evictionCount(live_seen);
+    if (over == 0) return;
+    var oldest: [gh_cache.max_entries]usize = undefined;
+    const n = @min(over, live);
+    gh_cache.selectOldest(live_fetched[0..live], n, oldest[0..n]);
+    for (oldest[0..n]) |i| {
+        const path = std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ gh_cache.dir, live_names[i] }) catch continue;
+        lib.fsDelete(path) catch {};
     }
 }
 

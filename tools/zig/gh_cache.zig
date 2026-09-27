@@ -18,6 +18,48 @@ pub const dir = "state/gh_cache";
 /// full drain of a huge directory.
 pub const max_sweep: usize = 64;
 
+/// Ceiling on live (unexpired) records the directory holds. The TTL alone
+/// bounds nothing over a long life: a run that reads two hundred distinct
+/// issues leaves two hundred bodies behind, and janitor does not sweep this
+/// directory, so the only thing that ever deletes a record is a put that
+/// finds it past TTL. Past this many live records the put also drops the
+/// oldest ones, so the directory is bounded by what a caller is likely to
+/// read again rather than by everything the process ever fetched.
+pub const max_entries: usize = 256;
+
+/// How many live records to drop when `live_seen` are present: the excess
+/// over `max_entries`, 0 while the directory is within budget.
+pub fn evictionCount(live_seen: usize) usize {
+    return if (live_seen > max_entries) live_seen - max_entries else 0;
+}
+
+/// Writes into `out` the indices of the `n` oldest stamps in `stamps`, oldest
+/// first. `stamps` need not be sorted. Ties break toward the lower index, so
+/// a sweep over the same directory drops the same records.
+///
+/// The guest passes at most `max_entries` stamps, so this is an O(n·k)
+/// selection over a fixed-size window rather than a sort of the directory.
+pub fn selectOldest(stamps: []const i64, n: usize, out: []usize) void {
+    std.debug.assert(out.len == n);
+    std.debug.assert(n <= stamps.len);
+    std.debug.assert(stamps.len <= max_entries);
+    var written: usize = 0;
+    var used = [_]bool{false} ** max_entries;
+    while (written < n) : (written += 1) {
+        var best: usize = 0;
+        var have: bool = false;
+        for (stamps, 0..) |s, i| {
+            if (used[i]) continue;
+            if (!have or s < stamps[best]) {
+                best = i;
+                have = true;
+            }
+        }
+        used[best] = true;
+        out[written] = best;
+    }
+}
+
 pub const Record = struct {
     url: []const u8,
     /// Null on a pre-fingerprint record (`{"url","fetched","body"}` only).
@@ -218,4 +260,44 @@ test "filePath stays under the granted prefix" {
     var buf: [80]u8 = undefined;
     const path = try filePath(&buf, 0xabc);
     try std.testing.expectEqualStrings("state/gh_cache/abc.json", path);
+}
+
+test "evictionCount is the excess over the ceiling, and zero within it" {
+    try std.testing.expectEqual(@as(usize, 0), evictionCount(0));
+    try std.testing.expectEqual(@as(usize, 0), evictionCount(max_entries));
+    try std.testing.expectEqual(@as(usize, 1), evictionCount(max_entries + 1));
+    try std.testing.expectEqual(@as(usize, 50), evictionCount(max_entries + 50));
+}
+
+test "selectOldest picks the oldest stamps of an unsorted window" {
+    const stamps = [_]i64{ 40, 10, 30, 20, 50 };
+    var out: [3]usize = undefined;
+    selectOldest(&stamps, 3, &out);
+    try std.testing.expectEqual(@as(usize, 1), out[0]); // 10
+    try std.testing.expectEqual(@as(usize, 3), out[1]); // 20
+    try std.testing.expectEqual(@as(usize, 2), out[2]); // 30
+}
+
+test "selectOldest breaks a tie toward the lower index and never repeats one" {
+    const stamps = [_]i64{ 7, 7, 7, 9 };
+    var out: [3]usize = undefined;
+    selectOldest(&stamps, 3, &out);
+    try std.testing.expectEqual(@as(usize, 0), out[0]);
+    try std.testing.expectEqual(@as(usize, 1), out[1]);
+    try std.testing.expectEqual(@as(usize, 2), out[2]);
+}
+
+test "selectOldest over a full window evicts the excess, oldest first" {
+    var stamps: [max_entries]i64 = undefined;
+    for (&stamps, 0..) |*s, i| s.* = @intCast(i);
+    // Newest first, so the oldest are the tail: the sweep must find them
+    // without the listing arriving in stamp order.
+    std.mem.reverse(i64, &stamps);
+    const over = evictionCount(max_entries + 5);
+    var out: [5]usize = undefined;
+    selectOldest(&stamps, over, &out);
+    for (out, 0..) |idx, i| {
+        try std.testing.expectEqual(@as(i64, @intCast(i)), stamps[idx]);
+        try std.testing.expectEqual(@as(usize, max_entries - 1 - i), idx);
+    }
 }
