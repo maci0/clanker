@@ -1382,7 +1382,7 @@ pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             s.objectField("tokens") catch return Err.too_large;
             s.write(c.tokens) catch return Err.too_large;
             s.objectField("text") catch return Err.too_large;
-            s.write(t) catch return Err.too_large;
+            utf8.writeJsonString(h.sandbox.gpa, &s, t) catch return Err.too_large;
         } else {
             failures += 1;
             s.objectField("ok") catch return Err.too_large;
@@ -1392,7 +1392,11 @@ pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             s.write(name) catch return Err.too_large;
             if (c.detail) |d| {
                 s.objectField("detail") catch return Err.too_large;
-                s.write(d) catch return Err.too_large;
+                // Provider error text arrives from the wire; an
+                // openai-compatible gateway answering latin-1 made this an
+                // array of byte numbers, so the guest's error detail read
+                // back empty.
+                utf8.writeJsonString(h.sandbox.gpa, &s, d) catch return Err.too_large;
             }
         }
         s.endObject() catch return Err.too_large;
@@ -3262,7 +3266,7 @@ fn writeExposedHeaders(gpa: std.mem.Allocator, out: []u8, head: std.http.Client.
         // Header values are raw network bytes: cap on a codepoint boundary and
         // write through the one JSON-string helper, so a non-UTF-8 value is a
         // string of replacement characters rather than a byte-number array.
-        utf8.writeJsonString(gpa, &s, hdr.value[0..@min(hdr.value.len, max_exposed_header_value)]) catch return null;
+        utf8.writeJsonString(gpa, &s, utf8.cap(hdr.value, max_exposed_header_value)) catch return null;
     }
     s.endObject() catch return null;
     return w.end;
@@ -3524,7 +3528,12 @@ fn writeHttpEnvelope(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, status
     w.writer.writeAll(headers_json) catch return Err.too_large;
     s.endWriteRaw();
     s.objectField("body") catch return Err.too_large;
-    s.write(body) catch return Err.too_large;
+    // The body is raw network bytes, same as the failure path's `note` two
+    // hundred lines up: a server answering `charset=iso-8859-1`, or a body
+    // truncated mid-codepoint, made `Stringify.write` emit an array of byte
+    // numbers, and a guest reading `body` as a string then saw an empty one
+    // with no error anywhere.
+    utf8.writeJsonString(arena, &s, body) catch return Err.too_large;
     s.endObject() catch return Err.too_large;
     return h.writeResult(mem_bytes, w.written());
 }
@@ -6604,7 +6613,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     const wbuf = h.sandbox.gpa.alloc(u8, 96 * 1024) catch return Err.too_large;
     defer h.sandbox.gpa.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
-    writeExecResult(&w, code, result.stdout, result.stderr) catch return Err.too_large;
+    writeExecResult(h.sandbox.gpa, &w, code, result.stdout, result.stderr) catch return Err.too_large;
     return h.writeResult(bytes, wbuf[0..w.end]);
 }
 
@@ -6622,17 +6631,22 @@ const exec_stdin_timeout_ms: u32 = 60_000;
 const exec_stdin_stdout_cap = 512 * 1024;
 const exec_timeout_exit_code: u32 = 124;
 
-fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
+fn writeExecResult(gpa: std.mem.Allocator, w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
     try s.objectField("ok");
     try s.write(code == 0);
     try s.objectField("code");
     try s.print("{d}", .{code});
+    // Subprocess output is arbitrary bytes: a latin-1 `git log` header, a
+    // binary that got onto the allowlist, a filename the filesystem spelled
+    // in a legacy encoding. `Stringify.write` serializes any of those as an
+    // array of byte numbers, so the guest's `stdout` string became `""` and
+    // the result looked like the command printed nothing at all.
     try s.objectField("stdout");
-    try s.write(clipOutput(stdout, exec_stdout_keep));
+    try utf8.writeJsonString(gpa, &s, clipOutput(stdout, exec_stdout_keep));
     try s.objectField("stderr");
-    try s.write(clipOutput(stderr, exec_stderr_keep));
+    try utf8.writeJsonString(gpa, &s, clipOutput(stderr, exec_stderr_keep));
     // Silent truncation reads as "that is all there is", which is how a search
     // that matched thousands of lines looks identical to one that matched
     // forty. Say it, and say what to do about it.
@@ -6867,10 +6881,14 @@ pub fn execUnderPolicyInput(
 }
 
 /// Keeps the head of `text`, ending on a line boundary so the last line is
-/// whole rather than a fragment that reads as corrupted output.
+/// whole rather than a fragment that reads as corrupted output. With no line
+/// boundary in the head, the cut is still moved onto a codepoint boundary:
+/// the bytes here are whatever a subprocess printed, and a legal source file
+/// with accented or CJK text put the boundary mid-character often enough that
+/// the result stopped being valid UTF-8 and became a byte-number array.
 fn clipOutput(text: []const u8, keep: usize) []const u8 {
     if (text.len <= keep) return text;
-    const head = text[0..keep];
+    const head = utf8.cap(text, keep);
     if (std.mem.findScalarLast(u8, head, '\n')) |nl| return head[0 .. nl + 1];
     return head;
 }
@@ -6945,7 +6963,7 @@ fn execWithStdin(
         const wbuf = gpa.alloc(u8, 640 * 1024) catch return Err.too_large;
         defer gpa.free(wbuf);
         var w: std.Io.Writer = .fixed(wbuf);
-        writeExecResult(&w, 0, "", "no stdout pipe") catch return Err.too_large;
+        writeExecResult(gpa, &w, 0, "", "no stdout pipe") catch return Err.too_large;
         return h.writeResult(mem_bytes, wbuf[0..w.end]);
     }});
     defer multi.deinit();
@@ -6974,7 +6992,7 @@ fn execWithStdin(
         const wbuf = gpa.alloc(u8, 640 * 1024) catch return Err.too_large;
         defer gpa.free(wbuf);
         var w: std.Io.Writer = .fixed(wbuf);
-        writeExecResult(&w, exec_timeout_exit_code, out, "timed out waiting for the process to answer; it was killed") catch return Err.too_large;
+        writeExecResult(gpa, &w, exec_timeout_exit_code, out, "timed out waiting for the process to answer; it was killed") catch return Err.too_large;
         return h.writeResult(mem_bytes, wbuf[0..w.end]);
     }
     multi.checkAnyError() catch |err| {
@@ -6989,7 +7007,7 @@ fn execWithStdin(
     const wbuf = gpa.alloc(u8, 640 * 1024) catch return Err.too_large;
     defer gpa.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
-    writeExecResult(&w, code, out, "") catch return Err.too_large;
+    writeExecResult(gpa, &w, code, out, "") catch return Err.too_large;
     return h.writeResult(mem_bytes, wbuf[0..w.end]);
 }
 
@@ -8438,7 +8456,7 @@ test "writeExecResult serializes exit code and output streams as JSON" {
 
     // Success path: code 0 -> ok=true, stdout carried through, empty stderr.
     var w: std.Io.Writer = .fixed(&buf);
-    try writeExecResult(&w, 0, "hello out", "");
+    try writeExecResult(std.testing.allocator, &w, 0, "hello out", "");
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..w.end], .{});
     defer parsed.deinit();
     const obj = parsed.value.object;
@@ -8449,7 +8467,7 @@ test "writeExecResult serializes exit code and output streams as JSON" {
 
     // Failure path: nonzero code -> ok=false, stderr carried through.
     var w2: std.Io.Writer = .fixed(&buf);
-    try writeExecResult(&w2, 3, "", "boom");
+    try writeExecResult(std.testing.allocator, &w2, 3, "", "boom");
     const parsed2 = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..w2.end], .{});
     defer parsed2.deinit();
     const obj2 = parsed2.value.object;
@@ -8466,7 +8484,7 @@ test "writeExecResult truncation note is a JSON string" {
     var buf: [80 * 1024]u8 = undefined;
     const big = "x" ** (exec_stdout_keep + 64);
     var w: std.Io.Writer = .fixed(&buf);
-    try writeExecResult(&w, 0, big, "");
+    try writeExecResult(std.testing.allocator, &w, 0, big, "");
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..w.end], .{});
     defer parsed.deinit();
     const obj = parsed.value.object;
@@ -8475,6 +8493,41 @@ test "writeExecResult truncation note is a JSON string" {
     const note = obj.get("note") orelse return error.TestUnexpectedResult;
     try std.testing.expect(note == .string);
     try std.testing.expect(std.mem.find(u8, note.string, "narrow the pattern") != null);
+}
+
+test "writeExecResult emits a string for non-UTF-8 subprocess output" {
+    // A latin-1 filename in the command's output, and a `git log` header
+    // spelled in a legacy encoding. `Stringify.write` alone emitted
+    // [99,97,102,233], so the guest's `stdout` string came back empty and
+    // the tool reported that the command had printed nothing.
+    var buf: [1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try writeExecResult(std.testing.allocator, &w, 0, "caf\xe9.txt\n", "");
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, buf[0..w.end], .{});
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("caf\u{FFFD}.txt\n", parsed.value.object.get("stdout").?.string);
+}
+
+test "clipOutput stops on a codepoint boundary when no line boundary is in range" {
+    // 60 KiB of "é" and no newline: the old cut at exactly `keep` bytes could
+    // end on the 0xA9 continuation byte of an "é" and produced invalid UTF-8.
+    // An odd `keep` is the case that bit; an even one is already a lead byte.
+    const text = "\u{E9}" ** (exec_stdout_keep + 1);
+    const head = clipOutput(text, exec_stdout_keep - 1);
+    try std.testing.expect(head.len <= exec_stdout_keep - 1);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(head));
+    try std.testing.expectEqual(@as(usize, exec_stdout_keep - 2), head.len);
+
+    // The even cut needs no walk-back and keeps its full length.
+    const head_even = clipOutput(text, exec_stdout_keep);
+    try std.testing.expectEqual(@as(usize, exec_stdout_keep), head_even.len);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(head_even));
+
+    // A newline in range still wins over the codepoint walk-back.
+    const mixed = "caf\u{E9}\n" ++ ("x" ** (exec_stdout_keep + 1));
+    const cut = clipOutput(mixed, exec_stdout_keep);
+    try std.testing.expectEqualStrings("caf\u{E9}\n", cut);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(cut));
 }
 
 test "a \".\" prefix authorizes the whole sandbox root" {

@@ -5447,7 +5447,7 @@ fn cmdSessionSearch(init: std.process.Init, opts: Options) !void {
     // A too-short query is a usage mistake, not a search that found nothing.
     // It used to print to stdout and exit 0, so a script could not tell it
     // from an empty result set and read the diagnostic as data.
-    if (q.len < session_search_min_len) {
+    if (tooShortToSearch(q)) {
         usageExitFor(io, "session", "session search needs at least {d} characters: clanker session search \"<query>\"", .{session_search_min_len});
     }
     var ibuf: std.Io.Writer.Allocating = .init(arena);
@@ -11411,10 +11411,19 @@ fn handleRuns(
     respondCompressible(arena, stream, accepts_gzip, body);
 }
 
-/// Shortest query worth running. One or two characters match nearly every
-/// transcript, so the result would be a list of everything, which is the same
-/// as no result and costs a full read of every session to produce.
+/// Shortest query worth running, in codepoints. One or two characters match
+/// nearly every transcript, so the result would be a list of everything, which
+/// is the same as no result and costs a full read of every session to produce.
+///
+/// Counted in characters, not bytes, because that is the unit the rule is
+/// about and the unit the FTS trigram tokenizer matches in. Counting bytes let
+/// a two-character CJK query (6 bytes) past this guard and into the index,
+/// where a trigram over two codepoints matches nothing.
 const session_search_min_len = 3;
+
+fn tooShortToSearch(q: []const u8) bool {
+    return (std.unicode.utf8CountCodepoints(q) catch q.len) < session_search_min_len;
+}
 
 /// `GET /api/sessions/search?q=<text>` — every saved conversation with a
 /// message containing `q`, newest first, one row each with the first match in
@@ -11437,7 +11446,7 @@ fn handleSessionSearch(
 ) void {
     const raw_q = queryParam(arena, target, "q") orelse "";
     const q = std.mem.trim(u8, raw_q, " \t\r\n");
-    if (q.len < session_search_min_len) {
+    if (tooShortToSearch(q)) {
         // Not an error: an empty box is the normal state of a search view, and
         // the page shows this as a prompt rather than as a failure. Kept here
         // rather than in the guest, because a too-short catalog call is a
@@ -11574,9 +11583,20 @@ fn installCatalogCacheLocked(gpa: std.mem.Allocator, owned: []const u8) void {
 
 /// Returns a query-string value from `target` (e.g. `q` from
 /// `/api/catalog?q=kimi`), percent-decoded, or null when absent.
+///
+/// The result is rejected unless it is valid UTF-8. `%XX` can manufacture a
+/// byte no UTF-8 string holds, and every caller feeds this straight into a
+/// JSON field: `?q=%FF` decoded to 0xFF, which `Stringify.write` emitted as
+/// `[255]`, and the guest tool's typed input then failed to parse with the
+/// route answering an error about a search term the client had sent as ASCII.
+/// Absent is the honest answer for a query that is not text. (A filesystem
+/// path is not routed here: `?path=` is decoded by the file browser, which
+/// must keep reaching names that are legal-but-not-UTF-8 on Linux.)
 fn queryParam(arena: std.mem.Allocator, target: []const u8, key: []const u8) ?[]const u8 {
     const raw = extractQueryParam(target, key) orelse return null;
-    return percentDecode(arena, raw) catch null;
+    const decoded = percentDecode(arena, raw) catch return null;
+    if (!std.unicode.utf8ValidateSlice(decoded)) return null;
+    return decoded;
 }
 
 /// `POST /api/catalog/refresh` — replace `state/models-dev.json` from
@@ -13171,7 +13191,7 @@ fn handleBoard(
         s.objectField("op") catch break :blk "{\"op\":\"list\"}";
         s.write("list") catch break :blk "{\"op\":\"list\"}";
         s.objectField("room") catch break :blk "{\"op\":\"list\"}";
-        s.write(room) catch break :blk "{\"op\":\"list\"}";
+        utf8.writeJsonString(arena, &s, room) catch break :blk "{\"op\":\"list\"}";
         s.endObject() catch break :blk "{\"op\":\"list\"}";
         break :blk w.written();
     };
@@ -13980,7 +14000,12 @@ fn handleFiles(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts_g
     s.objectField("path") catch return;
     utf8.writeJsonString(arena, &s, path) catch return;
     s.objectField("root") catch return;
-    s.write(root) catch return;
+    // `root` is a workspace label, and for the default workspace that is the
+    // basename of the real cwd: raw filesystem bytes. The listing's `name`
+    // and the preview's `content` beside it already go through the helper;
+    // a checkout in a directory spelled in a legacy encoding rendered the
+    // file browser root as an array of byte numbers until this did too.
+    utf8.writeJsonString(arena, &s, root) catch return;
     s.objectField("parent") catch return;
     utf8.writeJsonString(arena, &s, parent_buf) catch return;
     s.objectField("at_root") catch return;
@@ -14088,7 +14113,12 @@ fn handleFileContent(io: std.Io, arena: std.mem.Allocator, root_dir: std.Io.Dir,
     s.objectField("name") catch return;
     utf8.writeJsonString(arena, &s, name) catch return;
     s.objectField("root") catch return;
-    s.write(root) catch return;
+    // `root` is a workspace label, and for the default workspace that is the
+    // basename of the real cwd: raw filesystem bytes. The listing's `name`
+    // and the preview's `content` beside it already go through the helper;
+    // a checkout in a directory spelled in a legacy encoding rendered the
+    // file browser root as an array of byte numbers until this did too.
+    utf8.writeJsonString(arena, &s, root) catch return;
     s.objectField("parent") catch return;
     utf8.writeJsonString(arena, &s, parent_buf) catch return;
     s.objectField("is_file") catch return;
@@ -14427,7 +14457,11 @@ fn buildRecordGetInput(
         // schema names, passed through under that name.
         if (std.mem.eql(u8, key, "action")) continue;
         try s.objectField(key);
-        try s.write(try percentDecode(arena, pair[eq + 1 ..]));
+        // `%XX` can manufacture a byte no UTF-8 string holds, from an
+        // all-ASCII request target: `?query=%FF` decoded to the single byte
+        // 0xFF, which `Stringify.write` emitted as `[255]` and the guest's
+        // typed input struct then refused to parse.
+        try utf8.writeJsonString(arena, s, try percentDecode(arena, pair[eq + 1 ..]));
     }
     try s.endObject();
 }
@@ -15410,9 +15444,14 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
         s.objectField("collection_id") catch return;
         s.write(col_id) catch return;
         s.objectField("name") catch return;
-        s.write(name) catch return;
+        // A filename is arbitrary bytes on Linux and a file body is whatever
+        // encoding it was saved in. Written raw, either one that failed UTF-8
+        // validation became a JSON array of byte numbers, the guest's
+        // `optStr` returned null, and the document was silently counted as
+        // skipped on every sync, forever.
+        utf8.writeJsonString(arena, &s, name) catch return;
         s.objectField("content") catch return;
-        s.write(content) catch return;
+        utf8.writeJsonString(arena, &s, content) catch return;
         s.endObject() catch return;
         const add_out = kb.call(w.written()) catch {
             skipped += 1;

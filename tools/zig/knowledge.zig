@@ -17,6 +17,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("knowledge_logic.zig");
+const utf8 = @import("utf8");
 
 const store_dir = "state/knowledge";
 
@@ -478,8 +479,15 @@ fn actionSearch(obj: std.json.Value, out: *lib.Out) !void {
             // ASCII fold in place: a lowercase copy of a 500 KB document
             // was a second full allocation on every collection search.
             if (std.ascii.findIgnoreCase(doc.content, query)) |pos| {
-                const start = if (pos > 120) pos - 120 else 0;
-                const end = @min(doc.content.len, pos + query.len + 120);
+                // The 120-byte window either side is raw arithmetic over
+                // document text, and both of its ends are arbitrary bytes.
+                // The start end is the worse: it always landed on a
+                // continuation byte whenever a multi-byte character sat 120
+                // bytes before the match, so the snippet opened mid-character
+                // and the whole hit rendered as replacement characters.
+                const start = pos - @min(pos, utf8.tail(doc.content[0..pos], 120).len);
+                const raw_end = @min(doc.content.len, pos + query.len + 120);
+                const end = start + @min(raw_end - start, utf8.cap(doc.content[start..], raw_end - start).len);
                 hits.append(lib.alloc, .{
                     .col_id = col.id,
                     .col_title = col.title,
@@ -619,17 +627,27 @@ fn chunkMarkdown(doc_id: []const u8, content: []const u8, size: usize, overlap: 
         const s = std.mem.trim(u8, sec, " \t\r\n");
         if (s.len == 0) continue;
         while (off < s.len) {
-            const end = @min(s.len, off + size);
-            var slice = s[off..end];
-            slice = std.mem.trim(u8, slice, " \t\r\n");
+            // Both cuts are byte offsets, and document text is not ASCII:
+            // `off + size` landed inside a multi-byte character often enough
+            // that the chunk written to `.chunks.json` carried a half
+            // sequence, `Stringify` then emitted that chunk as an array of
+            // byte numbers, and the reader parsing the file back got an
+            // object where a string belonged. `cap` moves the cut back onto
+            // a lead byte, so the advance is the capped length, not `end`.
+            const span = @min(s.len, off + size) - off;
+            const capped = utf8.cap(s[off..], span);
+            const slice = std.mem.trim(u8, capped, " \t\r\n");
             if (slice.len > 0) {
                 const h = lib.hash(slice) catch "";
                 const owned = lib.alloc.dupe(u8, slice) catch "";
                 out.append(lib.alloc, .{ .doc_id = doc_id, .idx = idx, .text = owned, .hash_hex = h }) catch {};
                 idx += 1;
             }
-            if (end >= s.len) break;
-            off = end - eff_overlap;
+            if (off + span >= s.len) break;
+            // `capped.len` is at most `span` and at least 1 (the section is
+            // non-empty and `off < s.len`), so this always advances.
+            off += capped.len;
+            off -= @min(eff_overlap, off);
         }
     }
     return out.toOwnedSlice(lib.alloc) catch &.{};

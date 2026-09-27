@@ -14,6 +14,10 @@ const diag = @import("../util/diag.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
+/// Terminal column measurement. Not TUI state: `tui/width.zig` is a pure
+/// function over bytes, and a record's `status` is arbitrary author text, so
+/// the `clanker reports list` table needs the same answer the REPL's does.
+const width = @import("../tui/width.zig");
 
 pub const Error = error{
     BadSubcommand,
@@ -680,11 +684,16 @@ pub fn renderStatusRows(
     title_column_bytes: usize,
     titleText: ?*const fn ([]const u8) []const u8,
 ) !void {
+    // The column is measured in terminal columns, not bytes. A status is
+    // whatever text a record's author wrote, so a CJK one ("已完成", 9 bytes
+    // in 6 columns) made the pad count bytes: it got no padding at all, its
+    // path started three columns short of every ASCII row's, and everything
+    // after it was misaligned.
     var status_width = min_status_width;
     for (records) |r| {
         if (r != .object) continue;
         const s = json_util.strFieldOrEmpty(r.object, "status");
-        const n = if (s.len == 0) 1 else s.len;
+        const n = if (s.len == 0) 1 else width.displayWidth(s);
         if (n > status_width) status_width = @min(n, status_column_max);
     }
 
@@ -694,8 +703,9 @@ pub fn renderStatusRows(
         const title = json_util.strFieldOrEmpty(r.object, "title");
         const raw_status = json_util.strFieldOrEmpty(r.object, "status");
         const status = if (raw_status.len == 0) "?" else raw_status;
-        try w.print("  {s}", .{utf8.cap(status, status_column_max)});
-        try w.splatByteAll(' ', status_width -| status.len);
+        const shown = width.truncateToWidth(status, status_column_max);
+        try w.print("  {s}", .{shown});
+        try w.splatByteAll(' ', status_width -| width.displayWidth(shown));
         try w.print("  {s}\n", .{path});
         if (title.len > 0) {
             try w.splatByteAll(' ', status_width + 4);

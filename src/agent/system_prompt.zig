@@ -39,12 +39,16 @@ const max_skills_overrides_bytes: usize = 16 * 1024;
 /// every future prompt, while `note_write` kept answering `{"ok":true}`. The
 /// docstring on the cap says "keep recent notes"; this is that.
 ///
-/// Cutting on a newline keeps a half note out of the prompt, and the result
-/// is a suffix of a valid-UTF-8 file cut at an ASCII byte, so it cannot split
-/// a codepoint.
+/// Cutting on a newline keeps a half note out of the prompt. The window
+/// itself comes from `utf8.tail`, not `text[text.len - max_bytes ..]`: note
+/// text is model-written and routinely non-ASCII, and an arbitrary byte cut
+/// starts mid-codepoint, so the no-newline branch below returned a window
+/// beginning on a dangling continuation byte. That window is appended raw to
+/// the prompt, and every provider serializes it with `Stringify.write`, which
+/// turns invalid UTF-8 into a JSON array of byte numbers.
 fn learningsTail(text: []const u8, max_bytes: usize) []const u8 {
     if (text.len <= max_bytes) return text;
-    const window = text[text.len - max_bytes ..];
+    const window = utf8.tail(text, max_bytes);
     // The first newline inside the window ends the note the cut landed in;
     // everything after it is whole notes. A window with no newline at all is
     // one enormous note, and a suffix of it beats dropping the section.
@@ -1295,6 +1299,30 @@ test "the learnings section keeps the newest notes, not the oldest" {
     try std.testing.expectEqualStrings("- a\n", learningsTail("- a\n", 4096));
     const one_long = "- " ++ ("y" ** 100);
     try std.testing.expectEqual(@as(usize, 10), learningsTail(one_long, 10).len);
+}
+
+test "the learnings window never starts mid-codepoint" {
+    // One enormous note, no newline anywhere, made entirely of 2-byte
+    // characters: the byte cut lands on an odd index, which is the
+    // continuation byte of an "é" the window then begins inside.
+    const text = "\u{E9}" ** 3000;
+    const kept = learningsTail(text, 1001);
+    try std.testing.expect(kept.len <= 1001);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(kept));
+    try std.testing.expect(std.mem.startsWith(u8, kept, "\u{E9}"));
+
+    // A 3-byte character, where the cut can land on either continuation byte.
+    const cjk = "\u{4E2D}" ** 2000;
+    const kept_cjk = learningsTail(cjk, 1002);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(kept_cjk));
+    try std.testing.expect(std.mem.startsWith(u8, kept_cjk, "\u{4E2D}"));
+
+    // The newline branch is unaffected: the suffix is still whole lines.
+    const lines = ("- " ++ ("\u{E9}" ** 100) ++ "\n- newest\n") ** 100;
+    const kept_lines = learningsTail(lines, 200);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(kept_lines));
+    try std.testing.expect(std.mem.startsWith(u8, kept_lines, "- "));
+    try std.testing.expect(std.mem.endsWith(u8, kept_lines, "\n"));
 }
 
 test "reminders are labelled self-authored and their text cannot close a fence" {

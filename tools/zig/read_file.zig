@@ -16,6 +16,7 @@ const std = @import("std");
 const lib = @import("lib.zig");
 const hashline = @import("hashline.zig");
 const flat_json = @import("flat_json.zig");
+const utf8 = @import("utf8");
 
 const jsonString = flat_json.jsonString;
 const jsonUintOpt = flat_json.jsonUintOpt;
@@ -95,7 +96,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.objectField("ok");
     try s.write(true);
     try s.objectField("text");
-    try s.write(text);
+    // Whatever is on disk. A latin-1 or Shift-JIS comment made
+    // `Stringify.write` emit an array of byte numbers, so the model received
+    // an array of integers up to 768 KiB long under a field documented as a
+    // string, with the result still reporting ok.
+    try utf8.writeJsonString(lib.alloc, &s, text);
     // Byte mode reads a window and never learns how big the file is, so an
     // offset past the end came back as an empty string with nothing else at
     // all: indistinguishable from an empty file.
@@ -151,7 +156,11 @@ fn readByLine(out: *lib.Out, path: []const u8, start_line: usize, count: usize, 
     try s.objectField("ok");
     try s.write(true);
     try s.objectField("text");
-    try s.write(text);
+    // Whatever is on disk. A latin-1 or Shift-JIS comment made
+    // `Stringify.write` emit an array of byte numbers, so the model received
+    // an array of integers up to 768 KiB long under a field documented as a
+    // string, with the result still reporting ok.
+    try utf8.writeJsonString(lib.alloc, &s, text);
     try s.objectField("start_line");
     try s.write(first);
     try s.objectField("end_line");

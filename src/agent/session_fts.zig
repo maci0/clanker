@@ -222,8 +222,15 @@ const candidate_cap: usize = 4096;
 /// Session ids whose content matches `query` (3+ chars, substring semantics
 /// via the trigram tokenizer). Returns null when the index is unavailable,
 /// signalling the caller to fall back to the linear scan.
+///
+/// The length guard counts codepoints, not bytes, because that is the unit the
+/// trigram tokenizer matches in. Counting bytes let a two-character CJK query
+/// (6 bytes) take the index path, where a trigram over two codepoints matches
+/// nothing, and `session.zig` treats any non-null answer from here as
+/// authoritative, so the linear scan that would have found it never ran and
+/// the search reported zero hits.
 pub fn candidates(arena: std.mem.Allocator, query: []const u8) ?[]const []const u8 {
-    if (query.len < 3) return null;
+    if (std.unicode.utf8CountCodepoints(query) catch 0 < 3) return null;
     var conn = open(arena) catch return null;
     defer conn.close();
     var quoted: std.ArrayList(u8) = .empty;

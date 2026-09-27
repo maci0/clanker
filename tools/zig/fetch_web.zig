@@ -34,7 +34,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try s.objectField("bytes");
     try s.write(body.len);
     try s.objectField("body");
-    try s.write(truncated);
+    // The cap above fixes the boundary, not the bytes: an undeclared or
+    // latin-1 page still carried bytes no UTF-8 string holds, and the raw
+    // write turned the whole page into a number array.
+    try utf8.writeJsonString(lib.alloc, &s, truncated);
     try s.endObject();
     lib.commit(out, &w);
 }
