@@ -3373,6 +3373,17 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         // than silently skipping (an .ok = false return, allowed by shape).
         .{ .sig = "fn reportsInventoryGate(", .required = "return scanReportsInventory(gpa, io, dir, inventory);", .allow = &.{"no reports inventory"}, .indent = 4 },
         .{ .sig = "fn scanReportsInventory(", .required = "drift += 1;", .allow = &.{}, .indent = 16 },
+        // skills-inventory arrived after the two-halves pattern above was
+        // established and got only the call-site needle, so its body was the
+        // one gate a patch could rewrite to `.{ .ok = true }` with every
+        // needle still matching and this table never looking at it. The
+        // no-skills-directory early return is the honest pre-anchor exit.
+        .{ .sig = "fn skillsInventoryGate(", .required = "return scanSkillsDir(gpa, io, scope);", .allow = &.{"no skills directory"}, .indent = 4 },
+        .{ .sig = "fn scanSkillsDir(", .required = "bad += 1", .allow = &.{}, .indent = 16 },
+        // config-source weakening runs beside the private copy in this file,
+        // so gutting it is survivable, but it is a gate and gets both halves
+        // like the rest.
+        .{ .sig = "fn configSourceWeakeningGate(", .required = "return .{ .ok = true, .label = \"config-weakening\" }", .allow = &.{}, .indent = 4 },
     };
     for (gates) |g| {
         const body = fnBody(src, g.sig) orelse return g.sig;
@@ -3380,6 +3391,31 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         if (requiredIndent(body, g.required)) |indent| {
             if (indent != g.indent) return "a load-bearing gate call must not be wrapped in dead code";
         }
+    }
+    if (unguardedGate(src, gates)) |name| return name;
+    return null;
+}
+
+/// A `pub fn <name>Gate(` in checks.zig that the table above does not pin.
+/// The table is a closed list, so a new check lands with a call-site needle in
+/// gate_invariants and no shape entry unless something refuses that, and the
+/// body of an unchecked gate is exactly what a patch rewrites to green.
+fn unguardedGate(
+    src: []const u8,
+    gates: anytype,
+) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, src, '\n');
+    while (lines.next()) |line| {
+        const t = std.mem.trimStart(u8, line, " \t");
+        if (std.mem.startsWith(u8, t, "//")) continue;
+        if (!std.mem.startsWith(u8, t, "pub fn ")) continue;
+        const rest = t["pub fn ".len..];
+        const name_end = std.mem.indexOfAny(u8, rest, "( \n") orelse continue;
+        const name = rest[0..name_end];
+        if (!std.mem.endsWith(u8, name, "Gate")) continue;
+        for (gates) |g| {
+            if (std.mem.eql(u8, g.sig[3 .. g.sig.len - 1], name)) break;
+        } else return "a gate in src/gate/checks.zig has no shape check";
     }
     return null;
 }
@@ -4142,6 +4178,21 @@ const ok_cli_gates =
     \\        }
     \\    }
     \\}
+    \\pub fn skillsInventoryGate() !GateResult {
+    \\    const scope = dir.openDir(io, skills_dir, .{ .iterate = true }) catch |err| switch (err) {
+    \\        error.FileNotFound => return .{ .ok = true, .label = "skills-inventory", .detail = "no skills directory (ok on a minimal checkout)" },
+    \\        else => return .{ .ok = false, .label = "skills-inventory", .detail = "the skills directory could not be opened" },
+    \\    };
+    \\    return scanSkillsDir(gpa, io, scope);
+    \\}
+    \\fn scanSkillsDir() !GateResult {
+    \\    var bad: usize = 0;
+    \\    for (names) |name| {
+    \\        if (bad == 0) {
+    \\                bad += 1
+    \\        }
+    \\    }
+    \\}
 ;
 
 test "the live checks.zig gate functions still reach their load-bearing calls" {
@@ -4328,6 +4379,10 @@ test "a patch that guts a clanker-gate-only check implementation is rejected too
         \\fn runZigArgs() !GateResult {
         \\    std.process.run(
         \\}
+        \\pub fn configSourceWeakeningGate(src: []const u8) GateResult {
+        \\    if (missing(src)) return .{ .ok = false, .label = "config-weakening" };
+        \\    return .{ .ok = true, .label = "config-weakening" }
+        \\}
     ;
     const base = honest_zig_gates ++ "\n" ++ ok_resolver ++ "\n" ++ ok_cli_gates;
     try std.testing.expect(checksZigShapeBroken(base) == null);
@@ -4362,6 +4417,55 @@ test "a patch that guts a clanker-gate-only check implementation is rejected too
             "        if (buildRegistersJsSuite(build_src, rel)) continue;",
             "        if (buildRegistersJsSuite(build_src, rel)) continue;\n" ++
                 "        if (suites.items.len > 0) return .{ .ok = true, .label = \"js-suite-coverage\" };",
+        );
+        defer gpa.free(gutted);
+        try std.testing.expectEqualStrings(
+            "gate returns before its load-bearing call",
+            checksZigShapeBroken(gutted).?,
+        );
+    }
+}
+
+test "every gate in the live checks.zig has a shape entry, and a gutted one is refused" {
+    const gpa = std.testing.allocator;
+
+    // A gate added to checks.zig without a table entry is a gate whose body
+    // nothing inspects: its call site is pinned, so a patch that rewrites the
+    // body to `.{ .ok = true }` passes every needle. skillsInventoryGate was
+    // exactly that for as long as the table predated it.
+    const live = @embedFile("../gate/checks.zig");
+
+    // A brand-new gate with no entry is refused, even though the rest of the
+    // file is untouched.
+    {
+        const added = try std.mem.concat(gpa, u8, &.{ live, "\npub fn promptCatalogGate() GateResult {\n    return .{ .ok = true, .label = \"x\" };\n}\n" });
+        defer gpa.free(added);
+        try std.testing.expectEqualStrings(
+            "a gate in src/gate/checks.zig has no shape check",
+            checksZigShapeBroken(added).?,
+        );
+    }
+
+    // And the shape skills-inventory was missing: its outer function answers
+    // green without delegating, its scan body never counts.
+    {
+        const gutted = try std.mem.replaceOwned(u8, gpa, live,
+            \\    return scanSkillsDir(gpa, io, scope);
+        , "    return .{ .ok = true, .label = \"skills-inventory\" };\n");
+        defer gpa.free(gutted);
+        try std.testing.expectEqualStrings(
+            "return scanSkillsDir(gpa, io, scope);",
+            checksZigShapeBroken(gutted).?,
+        );
+    }
+    {
+        const gutted = try std.mem.replaceOwned(
+            u8,
+            gpa,
+            live,
+            "                bad += 1;\n                miss_w.print(\"{s}: listed with no description; \", .{entry.name}) catch {};",
+            "                if (entry.name.len > 0) return .{ .ok = true, .label = \"skills-inventory\" };\n" ++
+                "                bad += 1;\n                miss_w.print(\"{s}: listed with no description; \", .{entry.name}) catch {};",
         );
         defer gpa.free(gutted);
         try std.testing.expectEqualStrings(
