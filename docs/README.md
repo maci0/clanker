@@ -1505,13 +1505,19 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | `/api/sessions/<id>/fork` | POST | Copy a conversation to a new id |
 | `/api/sessions/<id>/branch/<n>` | POST | Fork from message `n`, dropping everything after it |
 | `/api/sessions/<id>/compact` | POST | Compact one conversation in place |
+| `/api/sessions/<id>/events` | GET, POST | The `modules.session_events` mesh event stream. GET `?after=<seq>` answers every appendable event from that sequence on, for a replica's backfill; POST `{owner,events:[]}` is a replica pushing appends, accepted only at `last_seq + 1` and answered `409 {"gap":true,"have","need"}` otherwise, so the replica backfills the missing range first |
 | `/api/skills` | GET, POST | Skills discovered under `agent.skills_dir` (JSON). Relays the `skills` guest. POST `{name,enabled}` toggles one |
 | `/api/workflows` | GET | Reusable prompt workflows (JSON) |
 | `/api/catalog` | GET | Local models.dev snapshot search (JSON). Only providers whose API+auth clanker implements. Downloads the snapshot only if `state/models-dev.json` is missing |
 | `/api/catalog/refresh` | POST | Replace `state/models-dev.json` from models.dev |
 | `/api/providers/models` | GET | Models for a configured provider (JSON) |
 | `/api/files?path=` | GET | List one directory of the current workspace (JSON), or preview a file. `?workspace=` selects a registered project (its primary root). `..` is clamped at that root; a missing directory is 404 |
-| `/api/knowledge` | GET, POST | Knowledge-graph entries |
+| `/api/knowledge` | GET, POST | Knowledge collections: GET lists, POST `{title,description}` creates one |
+| `/api/knowledge/search?q=` | GET | Search documents. `?collections=` is a comma-separated list of collection ids; a missing or empty `q` is 400, not an empty result |
+| `/api/knowledge/<id>` | GET, DELETE | One collection, or delete it |
+| `/api/knowledge/<id>/docs` | POST | Add or replace one document, `{name,content}` |
+| `/api/knowledge/<id>/docs/<doc-id>` | DELETE | Remove one document. A malformed id (empty, or over 64 bytes) is a 400 before the guest runs |
+| `/api/knowledge/<id>/sync` | POST | Mirror a folder into a collection, `{path,prune}`. Host-side, not a guest call: the knowledge guest's fs scope is `state/knowledge/` only, and the serve process is the operator's own, so it reads the folder directly and feeds each file through the same ops. Top-level `.md`/`.txt`/`.json`/`.csv`/`.log`, up to 200 files and 500 KB each, keyed by filename so a re-sync replaces rather than duplicates. `prune` deletes documents whose name looks file-synced but is gone from the folder, and only runs on a listing that came back whole: a listing cut short cannot tell a deleted file from an unseen one |
 | `/api/prompts` | GET, POST | Stored prompts |
 | `/api/reports` | GET, POST | The `docs/reports/` and `docs/runbooks/` records. Relays the `reports` guest |
 | `/api/rfc` | GET, POST | The `docs/rfcs/` open decisions. Relays the `rfc` guest |

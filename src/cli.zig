@@ -186,26 +186,27 @@ pub const Command = enum {
     /// registry. `src/toolhost/manifest.zig` is the schema it enforces.
     plugins,
     schedule,
-    /// `reports list|search|open|create|append|update|status`: the same
+    /// `reports list|search|open|create|append|update|status|rename`: the same
     /// operational reports and runbooks the agent reads through the `reports`
     /// tool, from a terminal. `src/records/reports.zig`.
     reports,
-    /// `research list|plan|sweep|search|open|create|append|update|status`: the
-    /// same research notes the agent gathers and writes through the `research`
-    /// tool, from a terminal. `src/records/research.zig`. Distinct from
-    /// `autoresearch`, which drives the experiment engine in `src/autoresearch/`.
+    /// `research list|plan|sweep|search|open|create|append|update|status|rename`:
+    /// the same research notes the agent gathers and writes through the
+    /// `research` tool, from a terminal. `src/records/research.zig`. Distinct
+    /// from `autoresearch`, which drives the experiment engine in
+    /// `src/autoresearch/`.
     research,
-    /// `rfc list|search|open|checklist|create|append|update|recommend|status`:
+    /// `rfc list|search|open|checklist|create|append|update|recommend|status|rename`:
     /// the open decisions under docs/rfcs/, through the same `rfc` tool the
     /// agent uses. `src/records/rfc.zig`.
     rfc,
-    /// `adr list|search|open|create|append|update|status`: the decisions
+    /// `adr list|search|open|create|append|update|status|rename`: the decisions
     /// already made, under docs/adrs/, through the same `adr` tool the agent
     /// uses. `src/records/adr.zig`. The RFC is the open question; this is the
     /// answer.
     adr,
-    /// `prd list|search|open|checklist|create|append|update|status`: what a
-    /// feature is meant to be, under docs/prds/, through the same `prd` tool
+    /// `prd list|search|open|checklist|create|append|update|status|rename`: what
+    /// a feature is meant to be, under docs/prds/, through the same `prd` tool
     /// the agent uses. `src/records/prd.zig`.
     prd,
     /// `preset list|show|new`: named tool + persona bundles (PRD 0033).

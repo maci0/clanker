@@ -681,7 +681,12 @@ A second process on the same host uses another `id`, `listen_port`,
   reports, PRD known issues/unchecked items and planned ROADMAP entries,
   scored in that order, before asking the model for ideas),
   `max_consecutive_test_only`, `eval_provider`, `max_cache_bytes`,
-  `arena_advisory`, and more. See `src/config.zig` `Improve` and `AGENTS.md`.
+  `arena_advisory`, `max_context_bytes` (0 or absent sizes the context from
+  the model's own window; a fixed number overrides that, so a stale one quietly
+  keeps a 1M-window model on a 64 KiB diet), `max_context_requests` (how many
+  times one run's model may ask to see files it was not shown instead of
+  proposing a patch; each request costs a call that produces no patch, 0
+  disables it), and more. See `src/config.zig` `Improve` and `AGENTS.md`.
 - **`[tui]`** — REPL appearance. Only the mascot lives here so far; the colour
   theme is still `CLANKER_THEME` plus the session-scoped `/theme`, because
   moving it would change behaviour rather than just add a key.
