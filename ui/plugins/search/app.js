@@ -62,6 +62,7 @@ clanker.registerView({
         if (!hit) break;
         if (hit.start > origFrom) parent.appendChild(document.createTextNode(text.slice(origFrom, hit.start)));
         var m = document.createElement("mark");
+        m.className = api.kit.recordRow.mark;
         m.textContent = text.slice(hit.start, hit.end);
         parent.appendChild(m);
         origFrom = hit.end;
@@ -71,21 +72,21 @@ clanker.registerView({
     }
 
     function hitRow(h) {
-      var row = api.el("button", "secondary search-hit");
+      var row = api.el("button", "secondary block mb-2 " + api.kit.recordRow.row);
       row.type = "button";
       row.setAttribute("aria-label", "Open " + (h.title || h.id) + " at turn " + (h.turn + 1));
 
-      var rowHead = api.el("div", "search-hit-head");
-      rowHead.appendChild(api.el("span", "search-hit-title", h.title || h.id));
+      var rowHead = api.el("div", api.kit.recordRow.head);
+      rowHead.appendChild(api.el("span", api.kit.recordRow.name, h.title || h.id));
       rowHead.appendChild(api.el("span", "meta", api.fmt.time(h.updated)));
       if (h.archived) rowHead.appendChild(api.el("span", "meta", "archived"));
       row.appendChild(rowHead);
 
-      var body = api.el("p", "search-hit-snippet");
+      var body = api.el("p", api.kit.recordRow.snippet);
       markInto(body, h.snippet || "", state.query);
       row.appendChild(body);
 
-      row.appendChild(api.el("div", "meta search-hit-foot",
+      row.appendChild(api.el("div", "meta " + api.kit.recordRow.foot,
         h.role + " · turn " + (h.turn + 1) +
         (h.more ? " · " + h.more + " more match" + (h.more === 1 ? "" : "es") + " here" : "")));
 

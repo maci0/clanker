@@ -100,6 +100,7 @@ tool rather than edit `ui/app/`. `music` is the shipped demo; `schedule`,
 | `api.van` | the page's tag/state factory (signals-backed, VanJS-era API): `van.tags`, `van.state`, `van.derive`, `van.add` |
 | `api.preact` / `api.html` | vendored [Preact](https://preactjs.com) `h`/`render`/`Fragment` and an [htm](https://github.com/developit/htm) template tag bound to `h`, for a view that wants a component tree |
 | `api.signals` | vendored [@preact/signals-core](https://preactjs.com/guide/v10/signals/): `signal`, `computed`, `effect`, `batch` |
+| `api.kit` | the page's component kit (`ui/app/core/kit.js`): variant tables (cva-shaped) and shared surfaces like `recordRow`. Style with the page's Tailwind utilities instead of shipping an `app.css` |
 
 All are vendored and same-origin, so using them costs no extra request and no
 policy exception. `api.van.tags` builds real DOM nodes, so the no-`innerHTML`

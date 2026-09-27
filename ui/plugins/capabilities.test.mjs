@@ -18,7 +18,7 @@ const KNOWN = [
   "get", "post", "del", "live", "emit", "confirm", "prompt", "toast",
   "workspace", "icon", "storage", "render", "session", "foldFind",
   "boardTimeline", "el", "status", "fmt", "showView", "van",
-  "preact", "html", "signals",
+  "preact", "html", "signals", "kit",
 ];
 
 // api member -> capability name. Members missing here declare under their

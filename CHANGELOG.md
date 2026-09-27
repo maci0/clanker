@@ -24,6 +24,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   file is the one place that changes. `core/kit.test.mjs` pins the merge, the
   defaults, and that every class the table names exists in a shipped sheet.
 
+- `api.kit` is a new plugin capability: the page's component kit
+  (`ui/app/core/kit.js`) is handed to an addon, so a classic-script view can
+  use the same variant tables and shared surfaces instead of shipping its own
+  stylesheet. `ui/plugins/README.md` documents it, `ui/plugins/
+  capabilities.test.mjs` and `tools/zig/webui_addon_logic.zig` know the name,
+  and Search and Compare declare it.
+
 ### Changed
 
 - The Activity plugin is styled with Tailwind utilities and ships no
@@ -142,6 +149,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `arena-graph > summary`) are deleted, not ported, and `tool-card` and its two
   child classes — which had no rule beyond Arena's own left margin — are gone
   from Arena and Compare.
+
+- The record-list family is one surface in the kit (`kit.recordRow`), used by
+  Arena, Compare and Search: the panel's compact rectangular plate, its name,
+  head, outcome, snippet, foot and highlight. It was three sets of selectors in
+  `views.css` (`.arena-pick`, `.compare-row`, `.search-hit`) that had to be kept
+  in step by hand; the two disk plug-ins reach it through `api.kit`, the two
+  core views import it. Compare's own rules went with it, so the compare view
+  ships no stylesheet and has none in either sheet, and its dead `.compare-key`
+  class is gone.
+- The eager-JS budget is 148K gz, raised from 145 on purpose: `core/kit.js` is
+  now reached from `core/plugins.js`, which every visit loads, so the kit's
+  variant tables are on the critical path.
 
 ### Fixed
 

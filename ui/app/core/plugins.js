@@ -1,5 +1,6 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
 import { T, state, add, effect, showLoadError, upgradePfButton, uiConfirm, uiPrompt, toast } from "./ui.js";
+import * as kit from "./kit.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 import { boardTimeline } from "../lib/board.js";
 import { onLive } from "./stream.js";
@@ -112,6 +113,9 @@ export function pluginApi(spec) {
       node.textContent = message;
     },
     fmt: fmt(),
+    // The component kit (core/kit.js): variant tables and shared surfaces, so
+    // an addon styles itself the way the page does instead of shipping a sheet.
+    kit: kit,
     // Kept under the old name so plugins written against the VanJS-era API
     // keep working: same tags/state/add semantics, now signals-backed.
     van: { tags: T, state: state, add: add, derive: effect },

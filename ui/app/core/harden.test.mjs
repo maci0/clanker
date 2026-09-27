@@ -175,7 +175,7 @@ test("parseCssColor reads rgb and hex", async function () {
 test("knowledge search hits open the matching collection", function () {
   const src = readFileSync(join(here, "../features/knowledge.js"), "utf8");
   assert.match(src, /openCollection\(h\.collection_id,\s*h\.doc_id\)/);
-  assert.match(src, /className="secondary search-hit"/);
+  assert.match(src, /kit\.recordRow\.row/);
   assert.match(src, /function openCollection\(id, docId\)/);
 });
 

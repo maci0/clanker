@@ -347,13 +347,13 @@ export function bindKnowledge(){
       hits.forEach(function(h){
         var row=document.createElement("button");
         row.type="button";
-        row.className="secondary search-hit";
+        row.className="secondary block mb-2 " + kit.recordRow.row;
         var label=(h.collection_title||h.collection_id||"collection")+" / "+(h.doc_name||h.doc_id||"document");
         row.setAttribute("aria-label","Open "+label);
-        var meta=document.createElement("div"); meta.className="search-hit-head";
-        var title=document.createElement("span"); title.className="search-hit-title"; title.textContent=label;
+        var meta=document.createElement("div"); meta.className=kit.recordRow.head;
+        var title=document.createElement("span"); title.className=kit.recordRow.name; title.textContent=label;
         meta.appendChild(title); row.appendChild(meta);
-        var snip=document.createElement("p"); snip.className="search-hit-snippet"; snip.textContent=h.snippet||"";
+        var snip=document.createElement("p"); snip.className=kit.recordRow.snippet; snip.textContent=h.snippet||"";
         row.appendChild(snip);
         row.addEventListener("click",function(){
           if(h.collection_id) openCollection(h.collection_id, h.doc_id);

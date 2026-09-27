@@ -10,6 +10,7 @@
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
 import { readJson, peerColor, themeToken, cssColorAlpha, wireRefresh } from "../core/utils.js";
+import * as kit from "../core/kit.js";
 import { showLoadError } from "../core/ui.js";
 import { reducedMotion } from "../core/vendor.js";
 import { onLive } from "../core/stream.js";
@@ -217,7 +218,7 @@ function renderPicker(matches) {
   matches.forEach(function (m) {
     var row = document.createElement("button");
     row.type = "button";
-    row.className = "secondary arena-pick";
+    row.className = "secondary flex items-center gap-2.5 " + kit.recordRow.row;
     row.setAttribute("aria-pressed", m.id === state.id ? "true" : "false");
     // The lamp says how it ended at a glance: green a verdict, amber still
     // running, grey a draw. Same vocabulary as the rest of the panel.
@@ -227,11 +228,11 @@ function renderPicker(matches) {
     lamp.dataset.state = running ? "running" : (m.winner === "draw" ? "draw" : "done");
     lamp.setAttribute("aria-hidden", "true");
     var q = document.createElement("span");
-    q.className = "arena-pick-q";
+    q.className = "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap " + kit.recordRow.name;
     q.textContent = m.question || m.id;
     q.title = m.question || m.id;
     var who = document.createElement("span");
-    who.className = "meta arena-pick-outcome";
+    who.className = "meta flex-none " + kit.recordRow.outcome;
     // The words follow the same test the lamp does. Reading only `winner` made
     // a finished match that named nobody, a mutual concession, read as still
     // running next to a lamp that said it was over.

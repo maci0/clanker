@@ -61,6 +61,21 @@ export var buttonVariants = variants({
   },
 });
 
+/// The record-list family: Arena, Compare and Search each open a saved record,
+/// so they share one row shape — the panel's compact rectangular plate, not the
+/// pill silhouette reserved for short actions. A plugin reaches this through
+/// `api.kit`, because a classic script cannot import a module.
+export var recordRow = {
+  list: "flex flex-col gap-2",
+  row: "w-full min-h-10 rounded-plate-sm border border-rule bg-surface px-4 py-3 text-left shadow-none hover:border-border hover:bg-surface-hover aria-pressed:border-accent aria-pressed:bg-accent-dim max-[40rem]:min-h-11 max-[40rem]:px-3",
+  name: "font-semibold text-fg",
+  head: "flex flex-wrap items-baseline gap-2.5",
+  outcome: "text-fg-muted max-[40rem]:basis-full max-[40rem]:pl-[18px]",
+  snippet: "my-1 text-sm font-normal leading-normal text-fg-muted wrap-anywhere",
+  foot: "mt-0.5",
+  mark: "rounded-plate bg-accent-dim px-0.5 text-inherit",
+};
+
 /// A `<button>`, with the variant table applied and every other prop passed
 /// through as an attribute (`type` defaults to button, since nothing in this
 /// page submits a form).

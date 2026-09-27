@@ -117,14 +117,16 @@ test("eager JS stays inside its weight budget", function () {
   // rate and token count, which cannot shrink without giving the formatting
   // back. Raised to 145 for that, the same deliberate step the 2026-08-29
   // stopgap describes.
-  // 146, raised from 145 on purpose by the Tailwind port: a ported module
+  // 148, raised from 145 on purpose by the Tailwind port: a ported module
   // states its shapes as class strings, so the bytes move out of the sheets
-  // and into the eager closure of whichever module is on the critical path
-  // (core/usage.js is preloaded, and its grid strings cost ~0.2K gz). The
+  // and into the eager closure of whichever module is on the critical path.
+  // core/usage.js is preloaded (its grid strings), and core/kit.js is reached
+  // from core/plugins.js, which every visit loads (the variant tables and the
+  // record-row surface, so a plugin styles itself the way the page does). The
   // number comes back down when the port is done and the last sheet is gone;
   // until then a raise here is a deliberate act per this test's instruction,
   // never a quiet one.
-  assert.ok(eagerJsGz <= 146, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 146K`);
+  assert.ok(eagerJsGz <= 148, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 148K`);
 });
 
 test("first paint stays inside its weight budget", function () {

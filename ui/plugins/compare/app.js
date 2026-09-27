@@ -34,13 +34,13 @@ clanker.registerView({
     pickerSec.setAttribute("aria-labelledby", "compare-list-head");
     var listHead = api.el("h3", "sr-only", "Comparisons");
     listHead.id = "compare-list-head";
-    var list = api.el("div", "compare-list");
+    var list = api.el("div", api.kit.recordRow.list);
     list.id = "compare-list";
     pickerSec.appendChild(listHead);
     pickerSec.appendChild(list);
     runs.appendChild(pickerSec);
 
-    var prompt = api.el("p", "compare-prompt");
+    var prompt = api.el("p", "mb-1 mt-3 font-semibold");
     prompt.id = "compare-prompt";
     runs.appendChild(prompt);
 
@@ -54,7 +54,7 @@ clanker.registerView({
     answersSec.setAttribute("aria-labelledby", "compare-answers-head");
     var answersHead = api.el("h3", "sr-only", "Answers, side by side");
     answersHead.id = "compare-answers-head";
-    var answers = api.el("div", "compare-answers");
+    var answers = api.el("div", "grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] items-start gap-3");
     answers.id = "compare-answers";
     answersSec.appendChild(answersHead);
     answersSec.appendChild(answers);
@@ -66,8 +66,7 @@ clanker.registerView({
 
     var key = document.createElement("section");
     key.id = "compare-key";
-    key.className = "compare-key";
-    key.hidden = true;
+      key.hidden = true;
     runs.appendChild(key);
 
     container.appendChild(runs);
@@ -94,13 +93,13 @@ clanker.registerView({
         return;
       }
       rows.forEach(function (c) {
-        var row = api.el("button", "secondary compare-row");
+        var row = api.el("button", "secondary flex items-center gap-2.5 " + api.kit.recordRow.row);
         row.type = "button";
         row.setAttribute("aria-pressed", c.id === state.id ? "true" : "false");
-        var q = api.el("span", "compare-row-q", c.prompt || c.id);
+        var q = api.el("span", "min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap " + api.kit.recordRow.name, c.prompt || c.id);
         q.title = c.prompt || c.id;
         row.appendChild(q);
-        row.appendChild(api.el("span", "meta compare-row-outcome", c.judged ? "judged" : "no verdict"));
+        row.appendChild(api.el("span", "meta flex-none " + api.kit.recordRow.outcome, c.judged ? "judged" : "no verdict"));
         row.addEventListener("click", function () { fetchComparison(c.id); });
         list.appendChild(row);
       });
@@ -108,27 +107,27 @@ clanker.registerView({
 
     function answerColumn(doc, a, picked, winner) {
       var col = document.createElement("article");
-      col.className = "compare-answer";
+      col.className = "group flex flex-col gap-1.5 rounded-plate border border-rule bg-surface-2 px-3 py-2.5 data-[picked=true]:border-accent";
       col.setAttribute("aria-labelledby", "compare-label-" + a.label);
       if (picked && picked === a.label) col.dataset.picked = "true";
       if (doc.revealed && winner && winner === a.label) col.dataset.winner = "true";
 
-      var h = api.el("h4", "compare-answer-head", "Answer " + a.label);
+      var h = api.el("h4", "m-0 text-sm group-data-[winner=true]:text-ok", "Answer " + a.label);
       h.id = "compare-label-" + a.label;
       col.appendChild(h);
 
       col.appendChild(api.el("p", "meta", a.ok ? (a.ms + "ms") : ("no answer: " + (a.error || "unknown"))));
 
-      var body = api.el("div", "compare-answer-body", a.ok ? (a.text || "") : "");
+      var body = api.el("div", "text-sm whitespace-pre-wrap wrap-anywhere", a.ok ? (a.text || "") : "");
       col.appendChild(body);
 
       if (doc.revealed) {
-        col.appendChild(api.el("p", "meta compare-answer-who",
+        col.appendChild(api.el("p", "meta m-0",
           a.model ? (a.provider + " / " + a.model) : (a.provider || "")));
       }
 
       if (a.ok) {
-        var pickBtn = api.el("button", "compare-pick",
+        var pickBtn = api.el("button", "mt-auto self-start",
           picked === a.label ? ("Picked " + a.label) : ("Pick " + a.label));
         pickBtn.type = "button";
         pickBtn.disabled = !!picked;
@@ -161,7 +160,7 @@ clanker.registerView({
         if (doc.pick && doc.pick.provider) {
           mine += " · " + doc.pick.provider + (doc.pick.model ? " / " + doc.pick.model : "");
         }
-        host.appendChild(api.el("p", "meta compare-your-pick", mine));
+        host.appendChild(api.el("p", "meta text-ok", mine));
       }
       if (doc.synthesis) {
         var card = api.el("div");
@@ -175,10 +174,10 @@ clanker.registerView({
       host.textContent = "";
       host.hidden = false;
       host.appendChild(api.el("h3", null, "Key"));
-      var dl = api.el("dl", "compare-key-list");
+      var dl = api.el("dl", "m-0 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 text-sm");
       answerList.forEach(function (a) {
-        dl.appendChild(api.el("dt", null, a.label));
-        dl.appendChild(api.el("dd", null, a.model ? (a.provider + " / " + a.model) : (a.provider || "")));
+        dl.appendChild(api.el("dt", "font-semibold", a.label));
+        dl.appendChild(api.el("dd", "m-0 text-fg-muted", a.model ? (a.provider + " / " + a.model) : (a.provider || "")));
       });
       host.appendChild(dl);
     }
