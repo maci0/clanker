@@ -5189,16 +5189,32 @@ pluginsBind({ VIEWS: VIEWS, viewLoaders: viewLoaders, wireTab: wireTab, showView
 // The log tail viewer only renders under System, so its module loads on the
 // first call rather than riding the eager import closure the weight budget
 // counts (ui/app/weight-budget.test.mjs) — same deferral as the view modules.
+// The same retryable-rejection rule the view loaders follow: the System view's
+// loader awaits `loadLogList`, so a cached rejection hands its Try again the
+// same dead promise and the panel stays broken for the life of the page.
 var logsModulePromise = null;
 function loadLogsModule() {
-  if (!logsModulePromise) logsModulePromise = import("./core/logs.js");
+  if (!logsModulePromise) {
+    logsModulePromise = import("./core/logs.js").catch(function (err) {
+      logsModulePromise = null; // a failed chunk import must be retryable
+      throw err;
+    });
+  }
   return logsModulePromise;
 }
 function loadLogList() { return loadLogsModule().then(function (m) { return m.loadLogList(el, readJson, fmtBytes); }); }
 function loadLog(name) { return loadLogsModule().then(function (m) { return m.loadLog(name, el, readJson, fmtBytes); }); }
 
-el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value); });
-wireRefresh(el.logsRefresh, loadLogList);
+/* The two call sites below sit outside the view loader, so nothing observes
+   them: a rejected import there is an unhandled rejection over an empty panel. */
+function reportLogLoadError(err) {
+  var msg = "Could not load the log viewer" + (err && err.message ? ": " + err.message : ".");
+  if (el.logsStatus) el.logsStatus.textContent = msg;
+  showLoadError(el.logView, msg, function () { return loadLogList().catch(reportLogLoadError); });
+}
+
+el.logSelect.addEventListener("change", function () { loadLog(el.logSelect.value).catch(reportLogLoadError); });
+wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLoadError); });
 
 // Progress streaming — reuses /api/run event channel shape via fetch + reader.
 // History lists recent runs from /api/runs (the same graph guest the Gate view reads);

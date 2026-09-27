@@ -141,20 +141,28 @@ test("a failed view load surfaces an error with a retry instead of a blank panel
 });
 
 test("a failed chunk import is not cached: every lazy view loader drops its promise", function () {
-  // Each of the eleven lazily imported modules (arena, fleet, todos, board,
+  // Each of the eleven lazily imported view modules (arena, fleet, todos, board,
   // goals, prompts, models, knowledge, tools, run-graph, system) caches its import()
   // promise so a second open does not re-fetch. A rejected promise must not
   // stay cached, or the view's Try again and every later open re-throw the
   // same dead promise and the view stays broken for the life of the page.
+  // The log tail viewer is the twelfth: it is not a view of its own, but the
+  // System view's loader awaits it, so a cached rejection there poisons Try
+  // again exactly the same way.
   // Pin the mechanism, not the comment: each loader resets its own
   // `...ModulePromise` variable, so copying the comment without the
   // assignment no longer satisfies the count.
   const markers = app.match(/ModulePromise = null; \/\/ a failed chunk import must be retryable/g) || [];
-  assert.equal(markers.length, 11, "all eleven lazy loaders reset their module promise on rejection");
+  assert.equal(markers.length, 12, "all twelve lazy loaders reset their module promise on rejection");
   // The failure still reaches the caller (showView surfaces it) — the reset
   // must rethrow, not swallow.
   const rethrows = app.match(/catch\(function \(err\) \{[\s\S]*?throw err;\s*\}\)|function \(err\) \{[\s\S]*?null; \/\/ a failed chunk import[\s\S]*?throw err;/g) || [];
-  assert.ok(rethrows.length >= 11, "every loader rethrows after resetting");
+  assert.ok(rethrows.length >= 12, "every loader rethrows after resetting");
+  // The two log call sites outside the view loader are unobserved, so they
+  // name the failure themselves; without a catch there the rejection is
+  // unhandled and the panel just stays empty.
+  assert.match(app, /el\.logSelect\.addEventListener\("change", function \(\) \{ loadLog\(el\.logSelect\.value\)\.catch\(reportLogLoadError\); \}\);/);
+  assert.match(app, /wireRefresh\(el\.logsRefresh, function \(\) \{ return loadLogList\(\)\.catch\(reportLogLoadError\); \}\);/);
 });
 
 test("a plugin's mount or refresh throw is contained to its own panel", function () {

@@ -36,7 +36,29 @@ window.signals = { signal: signal, computed: computed, effect: effect, batch: ba
   [document.querySelector("link[data-pf]"), document.querySelector("link[data-views]")].forEach(function (link) {
     if (!link) return;
     function arm() { link.media = "all"; }
-    if (link.sheet) arm();
-    else link.addEventListener("load", arm);
+    if (link.sheet) return arm();
+
+    /* A `load`-only path made a failed sheet permanent: it keeps media="print"
+       forever, so the stylesheet is fetched and thrown away and the frame never
+       reflows into it. A failed fetch is usually a dropped connection, so the
+       first one re-requests through a fresh element; a second arms anyway and
+       names the sheet, because an armed sheet that arrives later applies
+       without a JS turn and a sheet parked behind media="print" never does. */
+    var retried = false;
+    function watch(node) {
+      node.addEventListener("load", arm);
+      node.addEventListener("error", function () {
+        if (retried) {
+          arm();
+          if (window.console && console.warn) console.warn("clanker: stylesheet did not load:", node.getAttribute("href"));
+          return;
+        }
+        retried = true;
+        var again = node.cloneNode(false);
+        node.parentNode.replaceChild(again, node);
+        watch(again);
+      });
+    }
+    watch(link);
   });
 })();
