@@ -6,7 +6,11 @@
 // that wanted it and whichever suite loaded next inherited a document missing
 // whatever this stub does not implement (graph.test.mjs's createElement-only
 // stub, for one, is why renderMarkdown threw createDocumentFragment). The
-// returned function puts the previous globals back.
+// returned function puts the previous globals back. A suite calls it in its
+// own `before` rather than trusting what it finds ambient, and there is
+// exactly one `installDom` here: a second declaration of the same export
+// silently wins, so a one that returns anything else leaves every caller's
+// `after` hook calling a non-function.
 
 // A listener the view installs and the test never runs. focus() and
 // preventDefault() are here because app.js calls both.

@@ -76,10 +76,16 @@ fi
 # ignored, so a commit touching only the two unparsable AssemblyScript sources
 # (calc_ts.ts, lib.ts) would be rejected although CI accepts them; the flag
 # turns that no-op case into a pass.
-if [ -x node_modules/.bin/oxlint ]; then
-    if [ -n "$(staged '*.js' '*.mjs' '*.ts' | tr -d '\0')" ]; then
+if [ -n "$(staged '*.js' '*.mjs' '*.ts' | tr -d '\0')" ]; then
+    if [ -x node_modules/.bin/oxlint ]; then
         staged '*.js' '*.mjs' '*.ts' | xargs -0 ./node_modules/.bin/oxlint --report-unused-disable-directives-severity=error --no-error-on-unmatched-pattern ||
             fail "oxlint failed (fix or scope the finding; bun run lint:fix may help)"
+    else
+        # The other skips here are a missing tool off PATH and say so; this one
+        # is a declared dependency that was never installed, and CI installs it
+        # itself, so a clone that has not run `bun install` used to commit
+        # unlinted JS and meet oxlint for the first time on push.
+        echo "pre-commit: skipping JavaScript lint, node_modules/.bin/oxlint is absent (fix: bun install)" >&2
     fi
 fi
 

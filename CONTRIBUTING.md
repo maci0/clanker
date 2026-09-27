@@ -67,7 +67,9 @@ Three speeds, slowest last:
   `.py` with ruff (`ruff.toml`), the SBOM generation, and that
   `tools/ts/dist/*.wasm` matches a clean rebuild (`tools/ts/verify.sh`).
   `scripts/verify.sh` reproduces all of it locally.
-- The pre-commit hook (fast checks over staged files only). Bypass for WIP
+- The pre-commit hook (fast checks over staged files only). Its JavaScript
+  check needs `bun install` once per clone; without it the hook says it
+  skipped and CI still runs oxlint. Bypass for WIP
   with `git commit --no-verify`.
 
 ## Committing
