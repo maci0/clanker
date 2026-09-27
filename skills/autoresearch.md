@@ -1,6 +1,6 @@
 ---
 title: Autoresearch
-description: When asked to run autoresearch, optimize a scalar metric, or drive `/autoresearch` from the REPL: the measurement loop runs only through the host CLI, not WASM tools.
+description: When asked to run autoresearch, benchmark or optimize a scalar metric, or drive `/autoresearch` from the REPL: the measurement loop runs only through the host CLI, not WASM tools.
 enabled: true
 ---
 
@@ -14,7 +14,9 @@ invoke this CLI from a tool sandbox; tell the operator to run it, or use REPL `!
 only when clanker is listed in `agent.repl_exec_allow`. The `autoresearch` WASM
 tool lists prior runs and tails `ledger.jsonl`; it cannot start a run.
 
-The harness is executed as a local command for every experiment. Verify that
+The harness is executed as a local command for every experiment, and
+`--harness` is split on spaces (quoted words stay one argument) rather than
+handed to a shell, so a pipeline or a `&&` needs `sh -c "..."`. Verify that
 its dependencies are available, that it exits on its own, and that the metric
 appears in its output. Start with `--dry-run`. A real run writes each new best
 result back to the target files; use only targets the user has authorized the
@@ -22,5 +24,5 @@ agent to modify.
 
 ```sh
 clanker autoresearch --target <file> --harness "<cmd>" --metric <name> --direction min|max --pattern "<substring>" --budget <sec> --iters <n>
-clanker autoresearch --target f --harness "echo score: 1.0" --dry-run
+clanker autoresearch --target tools/zig/calculator.zig --harness "sh -c 'echo score: 1.0'" --dry-run
 ```

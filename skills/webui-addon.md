@@ -50,15 +50,15 @@ The tool rejects app.js that skips `clanker.registerView` or uses
 is `script-src 'self'`, so no CDNs. Follow in the app.js you ship: every
 control needs a visible label or `aria-label` and a 32px target.
 
-`api`: `el`, `getJSON`/`postJSON`/`del`, `onLive`, `emit`, `status`, `fmt`,
-`toast`, `confirm`/`prompt`, `workspace`, `icon`, `storage`, `showView`,
-`openSession`, `foldFind`, `boardTimeline`, `van`, `preact`, `html`, `signals`,
-`render.markdown` / `render.code`. `ui/plugins/README.md` is the canonical
-table, with one row per member; read it before using one this skill does not
-list. `create` also takes `eager` (run at page load, for a dock) or `module`
-(ES module another view imports); the two are mutually exclusive. A `module`
-addon registers no view, so it owes no `registerView` call, but the CSP
-refusals still apply to it.
+`api` is the page's own surface: build DOM with `el`, fetch with
+`getJSON`/`postJSON`/`del`, subscribe with `onLive`, and reach the rest as
+the view needs it. `ui/plugins/README.md` is the canonical table, one row
+per member, and it outlives this skill: read it before using a member this
+skill does not name, and it names ones this skill does not (`api.kit`).
+`create` also takes `eager` (run at page load, for a dock) or `module`
+(ES module another view imports); the two are mutually exclusive. A
+`module` addon registers no view, so it owes no `registerView` call, but
+the CSP refusals still apply to it.
 
 ## Music player (shipped)
 

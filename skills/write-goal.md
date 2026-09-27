@@ -49,6 +49,8 @@ genuinely unknown. Prefer a short honest goal to a padded one.
 the intent. `goal_add` only appends; it cannot update an existing entry and
 does not create the board card. If it reports a duplicate, return that id.
 
-`clanker add-goal "<objective>" ["<criterion>"]` and `/add-goal` are that
-same save as one step, for a caller who already knows the fields and does
-not want a draft; they start nothing either.
+`clanker add-goal "<objective>" ["<completion criterion>"]` and
+`/add-goal <objective> :: <completion criterion>` are that same save as one
+step (the REPL form separates the two fields with ` :: `, not quotes), for a
+caller who already knows the fields and does not want a draft; they start
+nothing either.

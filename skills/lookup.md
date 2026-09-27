@@ -1,6 +1,6 @@
 ---
 title: Lookup
-description: When asked to look up a fact, fetch a URL, or read third-party library docs. Not `clanker research` notes (use the `research` tool) and not local code (`repo_search`).
+description: When asked to look up a fact, search the web, fetch a URL, or read third-party library or API docs. Not `clanker research` notes (use the `research` tool) and not local code (`repo_search`).
 enabled: true
 ---
 

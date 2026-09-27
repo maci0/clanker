@@ -1,6 +1,6 @@
 ---
 title: Self-improvement
-description: When asked to run `clanker improve-self` or the self-improvement loop, or to fix a failing capability eval. Not ordinary code edits.
+description: When asked to run `clanker improve-self` or the self-improvement loop, to have clanker improve its own source, or to fix a failing capability eval. Not ordinary code edits.
 enabled: true
 ---
 
