@@ -6010,6 +6010,16 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     };
     if (background) {
         const gpa = h.sandbox.gpa;
+        // Admission before anything is allocated or spawned. `registerSub`
+        // holds the same cap, but it runs after the 128 MiB worker thread is
+        // live, and its refusal path cannot reclaim that thread: the row it
+        // would have carried is what `ck_job wait`, session end and the
+        // reaper all reach a job through. Refusing here means a saturated
+        // harness owes no thread and no copies.
+        if (!jobs_mod.subagentSlotAvailable()) {
+            log.log(.warn, "[subagent] background subagent refused: {d} job(s) already running at the active cap {d}", .{ jobs_mod.activeJobCount(), jobs_mod.max_active_jobs });
+            return Err.invalid;
+        }
         const heap = gpa.create(SubagentCall) catch return Err.invalid;
         heap.* = call;
         // ParentAsk is a re-entrant completion on a parked parent. A
@@ -6096,7 +6106,11 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
             return Err.invalid;
         };
         jobs_mod.registerSub(gpa, id_row, sid, task_row, th) catch {
-            // The thread may still be running; its copies are the worker's.
+            // Only a concurrent start that overshot the cap reaches this:
+            // the admission check above already refused a saturated harness
+            // before the thread existed. A live thread cannot be reclaimed
+            // from here (joining would park the caller for the subagent's
+            // whole runtime), so its copies are the worker's.
             gpa.free(task_row);
             gpa.free(id_row);
             return Err.invalid;
@@ -6538,7 +6552,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     // case spawns the child directly.
     if (obj.get("stdin")) |sv| {
         if (sv == .string and sv.string.len > 0) {
-            return execWithStdin(h, bytes, argv.items, exec_dir, &child_env, sv.string, cmd);
+            return execWithStdin(h, bytes, argv.items, exec_dir, &child_env, sv.string, cmd, exec_stdin_timeout_ms);
         }
     }
 
@@ -6598,6 +6612,14 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
 /// the process produced.
 const exec_stdout_keep = 56 * 1024;
 const exec_stderr_keep = 8 * 1024;
+
+/// Ceiling for a stdin-fed `ck_exec` child, and the point past which its
+/// stdout is dropped rather than grown: an LSP exchange is one round trip,
+/// not a long-lived session, so a peer that stops answering is a wedged child
+/// and not a slow one. `exec_timeout_exit_code` is the conventional 124.
+const exec_stdin_timeout_ms: u32 = 60_000;
+const exec_stdin_stdout_cap = 512 * 1024;
+const exec_timeout_exit_code: u32 = 124;
 
 fn writeExecResult(w: *std.Io.Writer, code: u32, stdout: []const u8, stderr: []const u8) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
@@ -6869,6 +6891,7 @@ fn execWithStdin(
     environ_map: *std.process.Environ.Map,
     input: []const u8,
     cmd: []const u8,
+    timeout_ms: u32,
 ) u32 {
     const gpa = h.sandbox.gpa;
     const io = h.sandbox.io;
@@ -6883,10 +6906,10 @@ fn execWithStdin(
         // empty stderr, so the child's diagnostic stream was always discarded.
         // A pipe nobody drains is worse than none: a server that logs more
         // than one pipe buffer (64 KiB) to stderr blocks on the write while
-        // the reader below blocks on stdout with no deadline, and the run
-        // hangs forever. The hook path (execUnderPolicyInput) drains both
-        // streams and keeps its deadline; here, dropping the stream at the
-        // source is what this path has always done, without the trap.
+        // the reader below waits on stdout, and nothing is collected. The
+        // hook path (execUnderPolicyInput) drains both streams; here,
+        // dropping the stream at the source is what this path has always
+        // done, without the trap.
         .stderr = .ignore,
     }) catch |err| {
         log.log(.warn, "[exec] {s} failed to spawn: {s}", .{ cmd, @errorName(err) });
@@ -6909,18 +6932,53 @@ fn execWithStdin(
         child.stdin = null;
     }
 
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(gpa);
-    if (child.stdout) |stdout_file| {
-        var rbuf: [8192]u8 = undefined;
-        var reader = stdout_file.reader(io, &rbuf);
-        while (true) {
-            const chunk = reader.interface.peekGreedy(1) catch break;
-            out.appendSlice(gpa, chunk) catch break;
-            reader.interface.toss(chunk.len);
-            if (out.items.len > 512 * 1024) break;
-        }
+    // The drain shares one wall-clock deadline with the wait, through
+    // `MultiReader.fill` exactly as `execUnderPolicyInput` does. A peer that
+    // holds stdout open and never exits (a wedged LSP server, a child waiting
+    // on something we did not wire) used to pin this tool worker thread, the
+    // three pipes and the child for the life of the process, because the
+    // `defer child.kill` below sits after a read with no ceiling.
+    var multi_buffer: std.Io.File.MultiReader.Buffer(1) = undefined;
+    var multi: std.Io.File.MultiReader = undefined;
+    multi.init(gpa, io, multi_buffer.toStreams(), &.{child.stdout orelse {
+        const wbuf = gpa.alloc(u8, 640 * 1024) catch return Err.too_large;
+        defer gpa.free(wbuf);
+        var w: std.Io.Writer = .fixed(wbuf);
+        writeExecResult(&w, 0, "", "no stdout pipe") catch return Err.too_large;
+        return h.writeResult(mem_bytes, wbuf[0..w.end]);
+    }});
+    defer multi.deinit();
+    const stdout_reader = multi.reader(0);
+    const timeout: std.Io.Timeout = if (timeout_ms == 0) .none else .{ .deadline = .fromNow(io, .{
+        .clock = .awake,
+        .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+    }) };
+    var timed_out = false;
+    while (multi.fill(64, timeout)) |_| {
+        if (stdout_reader.buffered().len > exec_stdin_stdout_cap) break;
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        error.Timeout => timed_out = true,
+        else => {
+            log.log(.warn, "[exec] {s} output read failed: {s}", .{ cmd, @errorName(err) });
+        },
     }
+    const out = multi.toOwnedSlice(0) catch return Err.too_large;
+    defer gpa.free(out);
+    if (timed_out) {
+        // The deferred kill is the release: the child, its pipes and the
+        // waiter are all reclaimed here, and the guest gets the output the
+        // child managed to produce rather than a bare error code.
+        log.log(.warn, "[exec] {s} produced no more output after {d}ms; killed", .{ cmd, timeout_ms });
+        const wbuf = gpa.alloc(u8, 640 * 1024) catch return Err.too_large;
+        defer gpa.free(wbuf);
+        var w: std.Io.Writer = .fixed(wbuf);
+        writeExecResult(&w, exec_timeout_exit_code, out, "timed out waiting for the process to answer; it was killed") catch return Err.too_large;
+        return h.writeResult(mem_bytes, wbuf[0..w.end]);
+    }
+    multi.checkAnyError() catch |err| {
+        log.log(.warn, "[exec] {s} output read failed: {s}", .{ cmd, @errorName(err) });
+    };
 
     const term = child.wait(io) catch return Err.invalid;
     const code: u32 = switch (term) {
@@ -6930,7 +6988,7 @@ fn execWithStdin(
     const wbuf = gpa.alloc(u8, 640 * 1024) catch return Err.too_large;
     defer gpa.free(wbuf);
     var w: std.Io.Writer = .fixed(wbuf);
-    writeExecResult(&w, code, out.items, "") catch return Err.too_large;
+    writeExecResult(&w, code, out, "") catch return Err.too_large;
     return h.writeResult(mem_bytes, wbuf[0..w.end]);
 }
 
@@ -7721,11 +7779,45 @@ test "execWithStdin survives a child that floods stderr" {
     var host = Host{ .sandbox = &sb, .rng = std.Random.DefaultPrng.init(0) };
     var mem: [host_arena_cap]u8 = undefined;
     const script = "head -c 200000 /dev/zero | tr '\\0' 'x' 1>&2; printf 'answer'";
-    const rc = execWithStdin(&host, &mem, &.{ "sh", "-c", script }, std.Io.Dir.cwd(), &env, "ping", "sh");
+    const rc = execWithStdin(&host, &mem, &.{ "sh", "-c", script }, std.Io.Dir.cwd(), &env, "ping", "sh", exec_stdin_timeout_ms);
     try std.testing.expectEqual(Err.ok, rc);
     const out = mem[host.result_ptr .. host.result_ptr + host.result_len];
     try std.testing.expect(std.mem.find(u8, out, "\"code\":0") != null);
     try std.testing.expect(std.mem.find(u8, out, "answer") != null);
+}
+
+test "execWithStdin gives up on a child that answers nothing and never exits" {
+    // The stdout drain had no ceiling, so a peer that holds the pipe open
+    // without writing (an LSP server that stops reading) pinned the tool
+    // worker thread, the child's three pipes and the child itself for the
+    // life of the process: the `defer child.kill` sat after the read. The
+    // deadline below is the same one the hook path already carried.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PATH", "/usr/bin:/bin");
+    var sb = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = io,
+        .root_dir = ".",
+        .network_allow = &.{},
+        .fs_prefixes = &.{},
+        .environ_map = &env,
+        .exec_allow = &.{},
+    };
+    var host = Host{ .sandbox = &sb, .rng = std.Random.DefaultPrng.init(0) };
+    var mem: [host_arena_cap]u8 = undefined;
+    // Writes a little, then sleeps past the deadline without exiting: the
+    // partial output has to survive, and the child has to be gone after.
+    const script = "printf 'partial'; sleep 30";
+    const rc = execWithStdin(&host, &mem, &.{ "sh", "-c", script }, std.Io.Dir.cwd(), &env, "ping", "sh", 250);
+    try std.testing.expectEqual(Err.ok, rc);
+    const out = mem[host.result_ptr .. host.result_ptr + host.result_len];
+    try std.testing.expect(std.mem.find(u8, out, "\"code\":124") != null);
+    try std.testing.expect(std.mem.find(u8, out, "partial") != null);
+    try std.testing.expect(std.mem.find(u8, out, "timed out") != null);
 }
 
 test "dupedStringArray copies every element and freeStringArray releases them" {

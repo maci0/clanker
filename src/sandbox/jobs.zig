@@ -222,10 +222,23 @@ fn activeLocked() usize {
 /// Live-job count for admission checks made before the caller has spawned
 /// anything worth unwinding (the background-subagent thread). The
 /// authoritative check runs again under `mu` in `startExec`/`registerSub`.
-fn activeJobCount() usize {
+pub fn activeJobCount() usize {
     mu.lock();
     defer mu.unlock();
     return activeLocked();
+}
+
+/// Admission check for a starter that must spawn before it can register the
+/// row it would be counted in. `startExec` does it inline; a background
+/// subagent used to reach `registerSub` with the 128 MiB worker already
+/// running, so the cap refused a job that was never charged, never
+/// registered, and never killable: `ck_job wait` had no row to find, session
+/// end had no row to terminate, and a guest looping `ck_subagent
+/// {background:true}` scaled threads past the bound it had just enforced.
+/// Returns false while the harness is at or over the cap, so the caller
+/// refuses before it spawns, and says so in its own log line.
+pub fn subagentSlotAvailable() bool {
+    return activeJobCount() < max_active_jobs;
 }
 
 /// Decrements `jobs_active` without wrapping: one failure path (the append
