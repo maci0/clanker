@@ -2933,7 +2933,19 @@ pub const Agent = struct {
     ) !void {
         const ms = elapsed.since(self.ctx.io, started);
         const why = detail orelse @errorName(err);
-        log.log(.error_, "LLM call failed at iteration {d}: {s} ({s})", .{ iteration + 1, @errorName(err), why });
+        // Provider and model name the dependency that failed. `chatWithFallbackChain`
+        // repoints `self.provider` to whoever actually served the turn, so this
+        // is the provider the failure belongs to, not the configured default --
+        // and the elapsed time is the only duration recorded for a call that
+        // never produced a token to measure.
+        log.log(.error_, "LLM call failed at iteration {d} provider={s} model={s} after {d}ms: {s} ({s})", .{
+            iteration + 1,
+            self.provider.name,
+            self.provider.activeModelName(),
+            ms,
+            @errorName(err),
+            why,
+        });
         try g.add(self.ctx.gpa, .{
             .kind = .llm,
             .iteration = iteration + 1,

@@ -12,9 +12,38 @@ const types = @import("../llm/types.zig");
 const host = @import("../sandbox/host.zig");
 const Agent = @import("loop.zig").Agent;
 const private_todos = @import("private_todos.zig");
+const elapsed = @import("../util/elapsed.zig");
+const log = @import("../util/log.zig");
 
 /// Bounded iteration budget for sub-agent runs.
 const sub_max_iterations: u32 = 6;
+
+/// Process-local counters for nested runs, surfaced in `/api/metrics` as the
+/// `subagents` group. A nested run is a second agent loop with its own LLM
+/// calls and its own unbounded wall time, and nothing else counts it: the
+/// parent's `subagent` tool line reports the call's duration, but a run whose
+/// worker thread never returns shows there as a tool call that never finished
+/// and in no counter at all. Started minus completed is the signal for that.
+/// No per-run, per-parent, or per-provider labels: those live in the correlated
+/// log lines below, which keeps cardinality bounded the way the HTTP, job, and
+/// schedule counters already do.
+var subagent_starts_total = std.atomic.Value(u64).init(0);
+var subagent_completions_total = std.atomic.Value(u64).init(0);
+var subagent_errors_total = std.atomic.Value(u64).init(0);
+
+pub const SubagentMetrics = struct {
+    starts_total: u64,
+    completions_total: u64,
+    errors_total: u64,
+};
+
+pub fn snapshotSubagentMetrics() SubagentMetrics {
+    return .{
+        .starts_total = subagent_starts_total.load(.monotonic),
+        .completions_total = subagent_completions_total.load(.monotonic),
+        .errors_total = subagent_errors_total.load(.monotonic),
+    };
+}
 
 /// The brief a parent hands down to a sub-agent; see `host.Brief`, whose
 /// shape this callback matches (`host.SubagentRunner`).
@@ -108,6 +137,30 @@ pub fn runNested(
 
     var messages: std.ArrayList(types.Message) = .empty;
     var err_detail: ?[]const u8 = null;
+    // The run's own lifecycle, which nothing outside this function records: the
+    // parent's `subagent` tool line names the call and how long it took, and
+    // `sub-<ns>.json` is the run's graph, but neither carries the other id. The
+    // lines below are what let an operator go from a slow or failed parent call
+    // to the nested run that produced it, in either direction.
+    const run_started = std.Io.Timestamp.now(io, .awake);
+    _ = subagent_starts_total.fetchAdd(1, .monotonic);
+    log.log(.debug, "subagent started run={s} parent={s} provider={s} task_bytes={d}", .{
+        sub_run_id,
+        parent_run_id,
+        provider.name,
+        task.len,
+    });
+    // Named rather than swallowed: the error itself travels back to the parent
+    // tool call, which logs it too, but without this id.
+    errdefer |err| {
+        _ = subagent_errors_total.fetchAdd(1, .monotonic);
+        log.log(.warn, "subagent failed run={s} parent={s} ms={d} err={s}", .{
+            sub_run_id,
+            parent_run_id,
+            elapsed.since(io, run_started),
+            @errorName(err),
+        });
+    }
     const resp = try a.run(&messages, try briefedTask(arena, task, brief), &err_detail);
     const content = resp.message.content orelse "";
     var answer: std.ArrayList(u8) = .empty;
@@ -130,7 +183,15 @@ pub fn runNested(
     }
     // gpa-owned so the caller (ckSubagent) can use it after this fn's arena
     // is gone; the caller frees it.
-    return gpa.dupe(u8, answer.items);
+    const out = try gpa.dupe(u8, answer.items);
+    _ = subagent_completions_total.fetchAdd(1, .monotonic);
+    log.log(.debug, "subagent finished run={s} parent={s} ms={d} bytes={d}", .{
+        sub_run_id,
+        parent_run_id,
+        elapsed.since(io, run_started),
+        out.len,
+    });
+    return out;
 }
 
 test "the brief tells a sub-agent what it cannot see" {

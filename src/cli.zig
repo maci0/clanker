@@ -9419,6 +9419,17 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
     const live_bus = live.snapshotMetrics();
     const mesh_sync = session_sync.snapshotSyncMetrics();
     const mesh_net_m = mesh_net.snapshotMetrics();
+    const nested = subagent.snapshotSubagentMetrics();
+    // Nested agent runs are counted as their own group rather than folded into
+    // `tools`, because they are not tool calls: a `subagent` tool call returns
+    // one answer, and started minus completed is the only place a run whose
+    // worker thread never came back is visible at all.
+    var sub_buf: [192]u8 = undefined;
+    const subagent_group = std.fmt.bufPrint(&sub_buf, "{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d}}}", .{
+        nested.starts_total,
+        nested.completions_total,
+        nested.errors_total,
+    }) catch return null;
     // The mesh group is rendered on its own and interpolated whole: one
     // `bufPrint` is capped at 32 arguments, and a single flat call ran out
     // as soon as the net counters joined the replication ones. Two renders
@@ -9434,7 +9445,7 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         mesh_net_m.joins_pending_total,
         mesh_net_m.inbound_refused_total,
     }) catch return null;
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"mesh\":{s}}}", .{
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"subagents\":{s},\"mesh\":{s}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -9465,6 +9476,7 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         job.completions_total,
         job.errors_total,
         job.active,
+        subagent_group,
         mesh_group,
     }) catch null;
 }
@@ -9480,7 +9492,7 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     try std.testing.expect(body.len < metrics_snapshot_bytes * 3 / 4);
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
     defer parsed.deinit();
-    for ([_][]const u8{ "http", "live", "llm", "tools", "schedule", "jobs", "mesh" }) |group| {
+    for ([_][]const u8{ "http", "live", "llm", "tools", "schedule", "jobs", "subagents", "mesh" }) |group| {
         try std.testing.expect(parsed.value.object.get(group) != null);
     }
     // A connection that dies in `read` never reaches a route, so nothing else
@@ -9501,14 +9513,20 @@ test "metricsSnapshot stays parseable and reports background job counters" {
         const v = jobs_obj.get(field) orelse return error.MissingJobField;
         try std.testing.expect(v == .integer);
     }
+    // A nested agent run happens on its own thread with its own unbounded wall
+    // time, so started minus completed is the only place a run that never came
+    // back shows up.
+    const subagents_obj = (parsed.value.object.get("subagents").?).object;
+    for ([_][]const u8{ "starts_total", "completions_total", "errors_total" }) |field| {
+        const v = subagents_obj.get(field) orelse return error.MissingSubagentField;
+        try std.testing.expect(v == .integer);
+    }
     // Mesh replication is fire-and-forget, so a failure counter is the only
-    // signal a peer going quiet produces outside the log.
-    const mesh_obj = (parsed.value.object.get("mesh").?).object;
-    // Replication is fire-and-forget, so a failure counter is the only
     // signal a peer going quiet produces outside the log. The net counters
     // cover the other way a peer stops being reachable: a socket that dies,
     // a frame it sends that never parses, a JOIN the admission turns away,
     // and an inbound connection closed at the concurrency cap.
+    const mesh_obj = (parsed.value.object.get("mesh").?).object;
     for ([_][]const u8{ "fanouts_total", "fanout_failures_total", "backfill_failures_total", "rejected_frames_total", "peer_read_errors_total", "joins_refused_total", "joins_pending_total", "inbound_refused_total" }) |field| {
         const v = mesh_obj.get(field) orelse return error.MissingMeshField;
         try std.testing.expect(v == .integer);
