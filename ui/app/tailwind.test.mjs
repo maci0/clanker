@@ -43,6 +43,7 @@ const migrated = [
   "features/models.js",
   "core/usage.js",
   "features/arena.js",
+  "features/fleet.js",
   "core/kit.js",
 ];
 
@@ -91,13 +92,16 @@ function inCabinet(token) {
   return cabinet.includes("." + token);
 }
 
-/// The class strings a file actually hands to an element: `api.el(tag, "…")`
-/// and a literal class attribute. Not every string in the file, which would
-/// read the view id and the endpoint paths as class names.
-function classStrings(src) {
+/// The class strings a file actually hands to an element: `api.el(tag, "…")`,
+/// a literal class attribute, and the named lists below. Not every string in
+/// the file, which would read the view id and the endpoint paths as class
+/// names — and a JS file's `class="…"` is usually a *fragment* of markup built
+/// by concatenation (`'class="mesh-wire' + …`), so that form is read from HTML
+/// only, where it is a whole attribute.
+function classStrings(src, isHtml) {
   const out = [];
   for (const m of src.matchAll(/api\.el\(\s*[^,]+,\s*"([^"]*)"/g)) out.push(m[1]);
-  for (const m of src.matchAll(/class="([^"]*)"/g)) out.push(m[1]);
+  if (isHtml) for (const m of src.matchAll(/class="([^"]*)"/g)) out.push(m[1]);
   // The named class lists a ported file keeps at module scope (`ROW_CLASS`,
   // `FACTS_CLASS`) are class strings too: reading only the literals beside
   // `api.el` would leave most of a ported view unchecked.
@@ -167,7 +171,7 @@ test("every class a migrated file uses resolves in a shipped sheet", function ()
   const missing = [];
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
-    for (const classes of classStrings(src)) {
+    for (const classes of classStrings(src, rel.endsWith(".html"))) {
       for (const token of classes.split(/\s+/).filter(Boolean)) {
         // `group` and `peer` are markers a variant names, never rules of their
         // own: Tailwind emits nothing for either.
@@ -190,7 +194,7 @@ test("migrated files keep padding, margin and gap on a cabinet rung", function (
   const offenders = [];
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
-    for (const classes of classStrings(src)) {
+    for (const classes of classStrings(src, rel.endsWith(".html"))) {
       for (const raw of classes.split(/\s+/).filter(Boolean)) {
         const token = raw.replace(/^[a-z-]+:/, ""); // drop a variant prefix
         const m = rung.exec(token);
@@ -210,7 +214,7 @@ test("migrated files use scale utilities, not arbitrary values", function () {
   const offenders = [];
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
-    for (const classes of classStrings(src)) {
+    for (const classes of classStrings(src, rel.endsWith(".html"))) {
       for (const token of classes.split(/\s+/).filter(Boolean)) {
         // A variant may name a breakpoint or an element state in brackets;
         // that is not an arbitrary value. The check is on what the utility

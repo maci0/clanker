@@ -162,6 +162,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   now reached from `core/plugins.js`, which every visit loads, so the kit's
   variant tables are on the critical path.
 
+- The Fleet view (`ui/app/features/fleet.js`) is styled with Tailwind
+  utilities; ~5 KB leaves `views.css`. A fleet card's state tab stays a
+  component rule in the Tailwind source: it is a `::before` lamp and a lit one
+  carries ring + glow, two shadows one shadow utility cannot compose. The
+  collapsed card's class became `opacity-95` toggled on the element, and the
+  roster's `li + li` spacing is the `[&>li+li]:mt-2` variant on the list. Three
+  rules no markup had used (`fleet-roster-head`, `fleet-run-link`,
+  `fleet-detail-simple`) are deleted rather than ported.
+- `ui/app/tailwind.test.mjs` reads a `class="…"` attribute from HTML only: in a
+  JS file that form is usually a fragment of markup built by concatenation
+  (`'class="mesh-wire' + …`), which the extractor was reading as class names.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

@@ -4,6 +4,38 @@ import { clip, peerColor, escapeHtml, themeToken, cssColorAlpha, cssColorMix, fm
 import { readJson } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
+/* The Fleet view's shapes, as Tailwind utilities over the cabinet tokens
+   (ui/app/tailwind.src.css). The card's state tab stays a class: it is a
+   pseudo-element with a two-shadow lit state, which is a component rule. */
+var SKELETON_CLASS = "my-2 h-[2.4rem] rounded-plate border border-rule bg-surface-2";
+var SKELETON_SM_CLASS = "h-[1.2rem] max-w-72";
+var ROSTER_CLASS = "min-w-0";
+var ROSTER_LIST_CLASS = "m-0 mt-2 list-none p-0 [&>li+li]:mt-2";
+var META_CLASS = "font-mono text-xs text-fg-muted tracking-wide tabular-nums wrap-anywhere";
+var ACTIONS_CLASS = "toolbar-actions flex min-w-0 flex-wrap items-center gap-3";
+var CARD_CLASS = "tool-row cursor-pointer rounded-plate transition-colors hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+var CARD_MAIN_CLASS = "min-w-0 flex-1 basis-72";
+var CHILD_GROUP_CLASS = "ml-4 mt-2 flex flex-col gap-2 border-l border-dashed border-rule pl-3";
+var CHILD_CLASS = "tool-row py-1";
+var NOTE_CLASS = "meta ml-4 mt-2 font-mono text-xs text-fg-muted";
+var EXTRA_ROW_CLASS = "tool-row ml-4";
+var DMS_CLASS = "mt-4 min-w-0";
+var DM_LIST_CLASS = "mt-2 flex flex-col gap-2";
+var DM_CARD_CLASS = "gap-3";
+var DM_TITLE_ROW_CLASS = "flex min-w-0 flex-wrap items-center gap-2";
+var DM_BADGE_CLASS = "text-xs uppercase tracking-label";
+var DM_PREVIEW_CLASS = "mt-1 max-w-full overflow-hidden text-ellipsis whitespace-nowrap";
+var A2A_CLASS = "mt-4 rounded-plate-lg border border-rule bg-surface p-3";
+var A2A_HEAD_CLASS = "mb-2 font-sans text-xs font-semibold text-fg-muted uppercase tracking-label";
+var A2A_NAME_CLASS = "font-mono text-sm font-bold text-fg wrap-anywhere";
+var A2A_ID_CLASS = "font-mono text-xs text-fg-muted wrap-anywhere";
+var A2A_SKILLS_CLASS = "mt-1 font-mono text-xs text-fg-muted wrap-anywhere";
+var STAGE_CLASS = "my-2 rounded-plate border border-rule bg-surface p-3";
+var STAGE_TOOLS_CLASS = "mb-0 ml-4 mr-0 mt-2 list-disc pl-4 [&>li+li]:mt-1";
+var CARD_TAB_PARENT = "fleet-card--parent";
+var CARD_TAB_PLAIN = "fleet-card--plain";
+
+
 var _navShowView = null;
 export function setNavShowView(fn) { _navShowView = typeof fn === "function" ? fn : null; }
 var _openRun = null;
@@ -61,8 +93,8 @@ function el(tag, cls, text) {
 function skeleton(container, count) {
   container.textContent = "";
   for (var i = 0; i < count; i++) {
-    var s = el("div", "fleet-skeleton");
-    if (i === count - 1) s.className += " fleet-skeleton--sm";
+    var s = el("div", SKELETON_CLASS);
+    if (i === count - 1) s.className += " " + SKELETON_SM_CLASS;
     container.appendChild(s);
   }
 }
@@ -81,7 +113,7 @@ function renderError(container, msg, retryFn) {
 
 function renderRoster(container, status, a2a, cards) {
   container.textContent = "";
-  container.className = "fleet-roster";
+  container.className = ROSTER_CLASS;
   if (!status || !status.instance) {
     container.appendChild(el("p", "run-empty", "No status yet."));
     // still render self card if available even when status missing
@@ -89,7 +121,7 @@ function renderRoster(container, status, a2a, cards) {
     return;
   }
   var inst = status.instance;
-  var head = el("p", "fleet-meta");
+  var head = el("p", META_CLASS);
   head.textContent = inst.name + " (" + inst.id.slice(0, 8) + ")";
   container.appendChild(head);
   // /api/peers scans each peer's A2A card server-side; merge by peer name so
@@ -107,10 +139,10 @@ function renderRoster(container, status, a2a, cards) {
     empty.appendChild(go);
     container.appendChild(empty);
   } else {
-    var ul = el("ul", "fleet-roster-list");
+    var ul = el("ul", ROSTER_LIST_CLASS);
     ul.setAttribute("role", "list");
     peers.forEach(function (p) {
-      var li = el("li", "fleet-meta");
+      var li = el("li", META_CLASS);
       li.setAttribute("role", "listitem");
       var c = byName[p.name];
       var label = p.name + " \u2014 " + p.url;
@@ -136,21 +168,21 @@ function renderRoster(container, status, a2a, cards) {
 }
 
 function renderA2ACard(container, card) {
-  var wrap = el("div", "fleet-a2a");
+  var wrap = el("div", A2A_CLASS);
   wrap.setAttribute("role", "group");
   wrap.setAttribute("aria-label", "This agent");
-  var head = el("div", "fleet-a2a-head", "This agent");
+  var head = el("div", A2A_HEAD_CLASS, "This agent");
   wrap.appendChild(head);
   if (!card) {
-    wrap.appendChild(el("p", "fleet-meta", "A2A card unavailable."));
+    wrap.appendChild(el("p", META_CLASS, "A2A card unavailable."));
     container.appendChild(wrap);
     return;
   }
   var name = card.name || card.displayName || card.id || "";
   var disp = card.displayName || card.id || "";
-  if (name) wrap.appendChild(el("div", "fleet-a2a-name", name));
-  if (disp && disp !== name) wrap.appendChild(el("div", "fleet-a2a-id", disp));
-  else if (card.id) wrap.appendChild(el("div", "fleet-a2a-id", String(card.id).slice(0, 32)));
+  if (name) wrap.appendChild(el("div", A2A_NAME_CLASS, name));
+  if (disp && disp !== name) wrap.appendChild(el("div", A2A_ID_CLASS, disp));
+  else if (card.id) wrap.appendChild(el("div", A2A_ID_CLASS, String(card.id).slice(0, 32)));
   var skills = card.skills || card.capabilities;
   var summary = "";
   if (Array.isArray(skills)) summary = skills.join(", ");
@@ -158,8 +190,8 @@ function renderA2ACard(container, card) {
     var keys = Object.keys(skills);
     summary = keys.length ? keys.join(", ") : "";
   } else if (typeof skills === "string") summary = skills;
-  if (summary) wrap.appendChild(el("div", "fleet-a2a-skills", summary));
-  else wrap.appendChild(el("div", "fleet-meta", "A2A card available"));
+  if (summary) wrap.appendChild(el("div", A2A_SKILLS_CLASS, summary));
+  else wrap.appendChild(el("div", META_CLASS, "A2A card available"));
   container.appendChild(wrap);
 }
 
@@ -217,7 +249,7 @@ function normalizeChatData(d) {
 function renderDMs(container, chatData) {
   if (!container) return;
   container.textContent = "";
-  container.className = "fleet-dms";
+  container.className = DMS_CLASS;
   if (chatData === null) {
     container.appendChild(el("p", "run-empty", "DMs unavailable. Enable the chat module to message peers from Fleet."));
     return;
@@ -238,21 +270,21 @@ function renderDMs(container, chatData) {
     empty.appendChild(goRooms);
     container.appendChild(empty);
     if (rooms.length && !dmRooms.length) {
-      var hint = el("p", "fleet-meta", rooms.length + " room(s), none are DMs.");
+      var hint = el("p", META_CLASS, rooms.length + " room(s), none are DMs.");
       container.appendChild(hint);
     }
     return;
   }
   var subSet = {};
   subs.forEach(function (s) { subSet[s] = true; });
-  var list = el("div", "fleet-dm-list");
+  var list = el("div", DM_LIST_CLASS);
   list.setAttribute("role", "list");
   dmRooms.forEach(function (r) {
-    var card = el("div", "tool-row fleet-card fleet-dm-card");
+    var card = el("div", CARD_CLASS + " " + DM_CARD_CLASS);
     card.setAttribute("role", "listitem");
-    var left = el("div", "fleet-card__main");
-    var titleRow = el("div", "fleet-dm-title-row");
-    var badge = el("span", "tool-tag fleet-dm-badge", "DM");
+    var left = el("div", CARD_MAIN_CLASS);
+    var titleRow = el("div", DM_TITLE_ROW_CLASS);
+    var badge = el("span", "tool-tag " + DM_BADGE_CLASS, "DM");
     badge.setAttribute("aria-hidden", "true");
     var title = el("span", "tool-name");
     title.textContent = dmNames(r.room);
@@ -262,9 +294,9 @@ function renderDMs(container, chatData) {
     var metaText = (r.messages != null ? r.messages + " msgs" : "");
     if (r.last_from) metaText += (metaText ? " \u00b7 " : "") + "last " + r.last_from;
     if (subSet[r.room]) metaText += (metaText ? " \u00b7 " : "") + "subscribed";
-    var meta = el("div", "fleet-meta", metaText || r.room);
+    var meta = el("div", META_CLASS, metaText || r.room);
     if (r.last_text) {
-      var preview = el("div", "fleet-meta fleet-dm-preview", clip(r.last_text, 100));
+      var preview = el("div", META_CLASS + " " + DM_PREVIEW_CLASS, clip(r.last_text, 100));
       preview.title = r.last_text;
       left.appendChild(titleRow);
       left.appendChild(meta);
@@ -273,7 +305,7 @@ function renderDMs(container, chatData) {
       left.appendChild(titleRow);
       left.appendChild(meta);
     }
-    var actions = el("div", "fleet-actions toolbar-actions");
+    var actions = el("div", ACTIONS_CLASS);
     var btn = el("button", "secondary", "Open");
     btn.type = "button";
     btn.setAttribute("aria-label", "Open DM " + dmNames(r.room));
@@ -340,30 +372,31 @@ function renderRuns(container, detailNode, runs) {
   grouped.roots.forEach(function (root) {
     var children = grouped.childrenOf[root.run_id] || [];
     var hasKids = !!children.length;
-    var card = el("div", "tool-row fleet-card " + (hasKids ? "fleet-card--parent" : "fleet-card--plain"));
+    var card = el("div", CARD_CLASS + " " + (hasKids ? CARD_TAB_PARENT : CARD_TAB_PLAIN));
     card.setAttribute("role", "listitem");
     card.addEventListener("click", function (e) {
       if (e.target.closest && e.target.closest("button")) return;
       openRun(root.run_id);
     });
-    var left = el("div", "fleet-card__main");
+    var left = el("div", CARD_MAIN_CLASS);
     var title = el("div", "tool-name", clip(root.task || root.run_id, 120));
     title.title = root.task || root.run_id;
-    var meta = el("div", "fleet-meta", root.run_id + " \u00b7 " + fmtRunMeta(root));
+    var meta = el("div", META_CLASS, root.run_id + " \u00b7 " + fmtRunMeta(root));
     left.appendChild(title);
     left.appendChild(meta);
     if (hasKids) {
-      var subMeta = el("div", "fleet-meta", children.length + " sub-run" + (children.length > 1 ? "s" : ""));
+      var subMeta = el("div", META_CLASS, children.length + " sub-run" + (children.length > 1 ? "s" : ""));
       left.appendChild(subMeta);
     }
-    var actions = el("div", "fleet-actions toolbar-actions");
+    var actions = el("div", ACTIONS_CLASS);
     var btn = el("button", "secondary", "Open");
     btn.type = "button";
     btn.setAttribute("aria-label", "Open run " + root.run_id);
     btn.addEventListener("click", function () { openRun(root.run_id); });
     actions.appendChild(btn);
     if (hasKids) {
-      var toggle = el("button", "secondary fleet-toggle", hasKids ? "Hide" : "Show");
+      var toggle = el("button", "secondary min-h-8 px-3 py-1 text-xs", hasKids ? "Hide" : "Show");
+      toggle.dataset.fleetToggle = "";
       toggle.type = "button";
       toggle.setAttribute("aria-expanded", "true");
       toggle.setAttribute("aria-label", "Toggle sub-runs for " + root.run_id);
@@ -376,19 +409,19 @@ function renderRuns(container, detailNode, runs) {
 
     var sub = null;
     if (children.length) {
-      sub = el("div", "fleet-children fleet-child-group");
+      sub = el("div", CHILD_GROUP_CLASS);
       sub.setAttribute("role", "list");
       children.forEach(function (child) {
-        var row = el("div", "tool-row fleet-card fleet-child");
+        var row = el("div", CHILD_CLASS);
         row.setAttribute("role", "listitem");
         row.addEventListener("click", function (e) {
           if (e.target.closest && e.target.closest("button")) return;
           openRun(child.run_id);
         });
-        var l2 = el("div", "fleet-child__main");
+        var l2 = el("div", CARD_MAIN_CLASS);
         l2.appendChild(el("div", "tool-name", child.run_id));
-        l2.appendChild(el("div", "fleet-meta", clip(child.task || "", 100) + (child.task ? " \u00b7 " : "") + fmtRunMeta(child)));
-        var a2 = el("div", "fleet-actions toolbar-actions");
+        l2.appendChild(el("div", META_CLASS, clip(child.task || "", 100) + (child.task ? " \u00b7 " : "") + fmtRunMeta(child)));
+        var a2 = el("div", ACTIONS_CLASS);
         var b2 = el("button", "secondary", "Open");
         b2.type = "button";
         b2.setAttribute("aria-label", "Open run " + child.run_id);
@@ -399,7 +432,7 @@ function renderRuns(container, detailNode, runs) {
         sub.appendChild(row);
       });
       container.appendChild(sub);
-      var tBtn = actions.querySelector(".fleet-toggle");
+      var tBtn = actions.querySelector("[data-fleet-toggle]");
       if (tBtn) {
         tBtn.addEventListener("click", function (e) {
           e.stopPropagation();
@@ -407,7 +440,7 @@ function renderRuns(container, detailNode, runs) {
           sub.hidden = !isHidden;
           tBtn.textContent = isHidden ? "Hide" : "Show";
           tBtn.setAttribute("aria-expanded", isHidden ? "true" : "false");
-          card.classList.toggle("fleet-card--collapsed", !isHidden);
+          card.classList.toggle("opacity-95", !isHidden);
         });
       }
     }
@@ -449,11 +482,11 @@ function renderRuns(container, detailNode, runs) {
       if (!ids.length) return;
       var extra = ids.filter(function (sid) { return !grouped.byId[sid]; });
       if (!extra.length) return;
-      var note = el("div", "meta fleet-note");
+      var note = el("div", NOTE_CLASS);
       note.textContent = "Sub-runs referenced in output: " + extra.join(", ");
       container.appendChild(note);
       extra.forEach(function (sid) {
-        var row2 = el("div", "tool-row fleet-card fleet-extra-row");
+        var row2 = el("div", EXTRA_ROW_CLASS);
         row2.addEventListener("click", function (e) {
           if (e.target.closest && e.target.closest("button")) return;
           openRun(sid);
@@ -490,16 +523,16 @@ function renderSimpleGraph(container, g) {
     else if (n.kind === "final") final = n;
   });
   stages.forEach(function (st, idx) {
-    var sec = el("div", "fleet-stage");
+    var sec = el("div", STAGE_CLASS);
     var label = el("div", "tool-name", "iter " + (st.llm.iteration || idx + 1) + " \u00b7 llm " + (st.llm.label || ""));
     var meta = el("div", "meta", (st.llm.prompt_tokens || 0) + "/" + (st.llm.completion_tokens || 0) + " tok \u00b7 " + (st.llm.duration_ms || 0) + "ms");
     sec.appendChild(label);
     sec.appendChild(meta);
     if (st.tools.length) {
-      var ul = el("ul", "fleet-stage__tools");
+      var ul = el("ul", STAGE_TOOLS_CLASS);
       st.tools.forEach(function (t) {
         var li = el("li", "meta", t.label + " \u00b7 " + (t.result_bytes || 0) + " B \u00b7 " + (t.duration_ms || 0) + "ms" + (t.ok === false ? " \u00b7 FAIL" : ""));
-        if (t.ok === false) li.className += " fleet-fail";
+        if (t.ok === false) li.className += " text-danger";
         ul.appendChild(li);
       });
       sec.appendChild(ul);
@@ -823,9 +856,9 @@ function observeFloorTheme() {
 export function initFleet() {
   var view = byId("view-fleet");
   if (!view) return;
-  var roster = byId("fleet-roster");
+  var roster = byId(ROSTER_CLASS);
   var runsEl = byId("fleet-runs");
-  var dmsEl = byId("fleet-dms");
+  var dmsEl = byId(DMS_CLASS);
   var detail = byId("fleet-detail");
   var statusEl = byId("fleet-status");
   var refresh = byId("fleet-refresh");

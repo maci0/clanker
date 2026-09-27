@@ -108,6 +108,28 @@
   }
   @keyframes lamp-pulse { 50% { opacity: 0.35; } }
 
+  /* The Fleet card's state tab: a lamp on the card's leading edge, accent for a
+     card with children and plain grey otherwise. It is a pseudo-element, and a
+     lit one carries ring + glow — two shadows one shadow utility cannot
+     compose — so the tab is a component rule while the card's own look is
+     utilities. */
+  .fleet-card--accent::before,
+  .fleet-card--parent::before,
+  .fleet-card--plain::before {
+    content: "";
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .fleet-card--accent::before,
+  .fleet-card--parent::before {
+    color: var(--accent);
+    background: var(--lamp-dome);
+    box-shadow: var(--lamp-ring), var(--lamp-glow);
+  }
+  .fleet-card--plain::before { background: var(--rule); opacity: 0.45; }
+
   /* The bar column takes the slack of the table, so the labels and numbers stay
      put and only the picture stretches. A share of the table, not a rung. */
   .health-band-barcell { width: 55%; }
