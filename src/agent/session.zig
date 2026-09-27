@@ -1099,6 +1099,32 @@ pub fn importChat(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8
     return new_id;
 }
 
+test "importChat keeps user and assistant turns and drops the rest" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    // A ChatGPT export leads with a system message; it must not survive as a
+    // user turn. The web UI's import normalizer filters to the same two roles.
+    const incoming = [_]StoredMessage{
+        .{ .role = "system", .content = "you are ChatGPT" },
+        .{ .role = "user", .content = "hello" },
+        .{ .role = "tool", .content = "{\"ok\":true}" },
+        .{ .role = "assistant", .content = "hi" },
+        .{ .role = "nonsense", .content = "dropped as an unknown role" },
+        .{ .role = "user", .content = "" },
+    };
+    const id = try importChat(io, arena, dir, "imported", &incoming);
+    const s = try loadSession(io, std.testing.allocator, arena, dir, id);
+    try std.testing.expectEqual(@as(usize, 2), s.messages.len);
+    try std.testing.expectEqual(types.Role.user, s.messages[0].role);
+    try std.testing.expectEqualStrings("hello", s.messages[0].content.?);
+    try std.testing.expectEqual(types.Role.assistant, s.messages[1].role);
+    try std.testing.expectEqualStrings("hi", s.messages[1].content.?);
+}
+
 /// Moves a conversation to a workspace. "" is the default one.
 pub fn setWorkspace(
     io: std.Io,

@@ -5257,13 +5257,15 @@ el.runCopy.addEventListener("click", function () {
         else if (parsed && Array.isArray(parsed.messages)) { msgs = parsed.messages; title = parsed.title || ""; }
         else if (parsed && Array.isArray(parsed.conversations) && parsed.conversations[0]) { var c = parsed.conversations[0]; msgs = c.messages || c.mapping && Object.values(c.mapping).map(function(v){ var m=v.message; return m?{role:m.author&&m.author.role,content:(m.content&&m.content.parts&&m.content.parts[0])||m.content} : null; }).filter(Boolean) || []; title = c.title || ""; }
         if (!msgs || !msgs.length){ uiToast("No messages found in file. Expected {messages:[{role,content}]} or an array of messages."); return; }
-        // Normalize to StoredMessage shape the server expects
+        // Normalize to StoredMessage shape the server expects. importChat
+        // keeps user and assistant turns and drops the rest, so a system or
+        // tool row is skipped here too rather than laundered into a user turn
+        // (a ChatGPT export leads with a system message).
         var norm = msgs.map(function(m){
-          var role = (m.role==="assistant" || m.role==="system") ? m.role : (m.role==="user"?"user":String(m.role||"user"));
-          var content = m.content!=null ? String(m.content) : (m.text!=null?String(m.text):"");
-          if (role!=="user" && role!=="assistant") role="user";
+          var role = (m.role === "assistant" || m.role === "user") ? m.role : "";
+          var content = String(m.content ?? m.text ?? "");
           return { role: role, content: content };
-        }).filter(function(m){ return m.content && m.content.trim(); });
+        }).filter(function(m){ return m.role && m.content.trim(); });
         if (!norm.length){ uiToast("No importable messages."); return; }
         fetch("/api/sessions", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ import_chat: true, title: title || ("imported "+new Date().toLocaleString()), messages: norm }) })
           .then(function(r){ return r.json().then(function(d){ if(!r.ok||!d.ok) throw new Error(d.error||r.status); return d; }); })

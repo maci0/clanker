@@ -528,6 +528,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- Importing a chat file in the web UI no longer turns a `system` or `tool`
+  message into a user turn. The normalizer rewrote every role that was not
+  `user` or `assistant` to `"user"` before the server filtered it, and a
+  ChatGPT export leads with a `system` message, so the model's own system
+  prompt arrived as the first thing the operator said. The client now keeps
+  the same two roles `session.importChat` keeps and drops the rest, and the
+  role's dead else branch (`String(m.role || "user")`, overwritten on the
+  next line whatever it produced) is gone with it.
 - `clanker providers check` exits non-zero when the `default_provider` row is
   not `ok`, in the sweep as well as the named form. The sweep used to print
   "Default provider 'x' is not configured" and exit 0, so
