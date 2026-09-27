@@ -30,7 +30,24 @@ fi
 
 # Zig formatting. `zig fmt --check` also fails on syntax errors, so this
 # doubles as a parse check.
+#
+# `zig` comes off PATH, so the version is checked against the one
+# build.zig.zon pins before it formats anything: build.zig refuses to
+# configure against anything but 0.16.x, and a hook that ran a different
+# compiler would rewrite files to whatever that version calls canonical.
 if [ -n "$(staged '*.zig' | tr -d '\0')" ]; then
+    if ! command -v zig >/dev/null 2>&1; then
+        fail "zig is not on PATH; this check formats with the compiler, and build.zig.zon pins which one"
+    fi
+    required_zig=$(sed -n 's/^[[:space:]]*\.minimum_zig_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' build.zig.zon | head -n1)
+    if [ -z "$required_zig" ]; then
+        fail "build.zig.zon has no .minimum_zig_version to check zig against"
+    fi
+    have_zig=$(zig version)
+    case "$have_zig" in
+        "$required_zig" | "$required_zig"*) ;;
+        *) fail "zig on PATH is $have_zig, but build.zig.zon pins $required_zig" ;;
+    esac
     staged '*.zig' | xargs -0 zig fmt --check ||
         fail "zig fmt --check failed (fix: zig fmt <files above>)"
 fi

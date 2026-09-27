@@ -21,22 +21,23 @@ trap 'rm -rf "$scratch"' EXIT
 # cannot execute code on the runner.
 bun install --frozen-lockfile --silent
 
+# The project's own build script, with its output directory pointed at the
+# scratch tree: the flags and the skip list live in package.json's build:all
+# and nowhere else, so this check cannot verify against a compiler
+# invocation the committed dist/ was not built with. DIST_OUT is the same
+# redirect ui/app/verify-css.sh uses over CSS_OUT.
+#
+# The comparison is the two whole directories rather than a hand-listed set
+# of extensions: asc emits a .js binding and a .d.ts beside every .wasm and
+# all three are committed, so a stale or hand-edited binding is drift too.
+DIST_OUT="$scratch" bun run build:all
+
 status=0
-for f in *.ts; do
-  [ -e "$f" ] || continue
-  case "$f" in env.d.ts|lib.ts|json.ts) continue;; esac
-  stem="${f%.ts}"
-  ./node_modules/.bin/asc "$f" -o "$scratch/$stem.wasm" --optimize --bindings raw --noExportMemory
-  # asc also emits a $stem.js binding and $stem.d.ts next to the wasm, and
-  # all three are committed in dist/. Only diffing the wasm left a stale or
-  # hand-edited .js/.d.ts to ship undetected, so compare the whole set.
-  for ext in wasm js d.ts; do
-    if ! cmp -s "$scratch/$stem.$ext" "dist/$stem.$ext"; then
-      printf 'drift: dist/%s.%s does not match a clean rebuild of %s\n' "$stem" "$ext" "$f" >&2
-      status=1
-    fi
-  done
-done
+if ! drift="$(diff -r dist "$scratch")"; then
+  printf '%s\n' "$drift" >&2
+  printf 'drift: dist/ does not match a clean rebuild of tools/ts/*.ts\n' >&2
+  status=1
+fi
 
 if [ "$status" -eq 0 ]; then
   printf 'ok: tools/ts/dist/ matches a clean rebuild of tools/ts/*.ts\n'

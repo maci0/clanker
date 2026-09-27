@@ -29,27 +29,51 @@ if [ -n "${ZIG_GLOBAL_CACHE_DIR:-}" ]; then roots+=("$ZIG_GLOBAL_CACHE_DIR"); fi
 if [ -n "${ZIG_LOCAL_CACHE_DIR:-}" ]; then roots+=("$ZIG_LOCAL_CACHE_DIR"); fi
 if [ -d "$HOME/.cache/zig" ]; then roots+=("$HOME/.cache/zig"); fi
 
-# patches/<name>.patch -> directory prefix to search for, answered by
-# target_for() rather than an associative array so the script also runs on
-# stock macOS, whose /bin/bash is 3.2 (associative arrays need bash 4; this
-# script is the documented bootstrap step and must not require a brew shell).
-# Order matters:
+# Apply order. Order matters:
 # vaxis-winch-self-pipe also edits src/main.zig, which the sixel patch
 # touches, so the README's listing order is the apply order. The zwasm
 # patch is independent of the vaxis set (different package), so its place
-# in the list is arbitrary; it was re-derived against zwasm 2.5.0 when the
-# build.zig.zon pin moved from 2.4.1.
+# in the list is arbitrary.
+# Kept as a list rather than a directory glob because a glob would sort
+# lexically and apply the winch patch before the sixel one. The list is
+# checked against patches/*.patch below, so a patch that lands without a
+# line here fails loudly instead of being silently skipped.
 order=(vaxis-sixel-graphics vaxis-ss3-keypad-enter vaxis-winch-self-pipe zwasm-lazy-mem-cksum)
-target_for() {
-    case "$1" in
-        vaxis-sixel-graphics)   printf '%s' 'vaxis-0.6.0-' ;;
-        vaxis-ss3-keypad-enter) printf '%s' 'vaxis-0.6.0-' ;;
-        vaxis-winch-self-pipe)  printf '%s' 'vaxis-0.6.0-' ;;
-        zwasm-lazy-mem-cksum)   printf '%s' 'zwasm-2.5.0-' ;;
-    esac
+
+# patches/<name>.patch -> the dependency it belongs to: everything before the
+# first `-` in its name, the same rule the dep-patches gate applies
+# (src/gate/checks.zig `depPackageOf`).
+package_of() { printf '%s' "${1%%-*}"; }
+
+# The directory a package is extracted into is named its build.zig.zon `.hash`
+# value verbatim, so the pin is read from there rather than repeated here as a
+# version literal. A bumped pin used to leave this script searching for a
+# `vaxis-0.6.0-*` tree that no longer existed, and the run failed with "no
+# tree under ..." naming a version the manifest no longer carried.
+dep_hash() {
+    sed -n 's/^[[:space:]]*\.hash[[:space:]]*=[[:space:]]*"\('"$1"'-[^"]*\)".*/\1/p' \
+        build.zig.zon | head -1
 }
 
-status=0
+# Every patch on disk is in the list, or say so and fail: the gate checks all of
+# patches/*.patch, so a patch this script skips by omission is a build that
+# passes here and fails the gate with nothing pointing at this file.
+missing_from_order=0
+for patch_file in patches/*.patch; do
+    [ -e "$patch_file" ] || continue
+    stem="${patch_file#patches/}"
+    stem="${stem%.patch}"
+    listed=0
+    for known in "${order[@]}"; do
+        if [ "$known" = "$stem" ]; then listed=1; break; fi
+    done
+    if [ "$listed" -eq 0 ]; then
+        echo "apply-patches: $patch_file is not in the apply order in $0" >&2
+        missing_from_order=$((missing_from_order + 1))
+    fi
+done
+
+status=$missing_from_order
 applied=0
 up_to_date=0
 skipped=0
@@ -57,11 +81,16 @@ for name in "${order[@]}"; do
     patch_file="$(pwd)/patches/$name.patch"
     [ -f "$patch_file" ] || continue
 
-    prefix=$(target_for "$name")
+    hash=$(dep_hash "$(package_of "$name")")
+    if [ -z "$hash" ]; then
+        echo "apply-patches: $name: build.zig.zon pins no dependency named $(package_of "$name")" >&2
+        status=1
+        continue
+    fi
 
     dir=""
     for root in "${roots[@]}"; do
-        found="$(find "$root" -maxdepth 2 -type d -name "${prefix}*" 2>/dev/null | head -1 || true)"
+        found="$(find "$root" -maxdepth 2 -type d -name "$hash" 2>/dev/null | head -1 || true)"
         if [ -n "$found" ]; then
             dir="$found"
             break
@@ -76,7 +105,7 @@ for name in "${order[@]}"; do
     # so `apply-patches.sh && zig build test` proceeded unpatched (the bug
     # report in docs/reports/).
     if [ -z "$dir" ]; then
-        echo "apply-patches: $name: no ${prefix}* tree under ${roots[*]}" >&2
+        echo "apply-patches: $name: no $hash tree under ${roots[*]}" >&2
         skipped=$((skipped + 1))
         continue
     fi
