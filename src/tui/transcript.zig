@@ -15,7 +15,7 @@ const std = @import("std");
 const width = @import("width.zig");
 const theme_mod = @import("theme.zig");
 const syntax = @import("syntax.zig");
-const sanitize = @import("sanitize.zig");
+const sanitize = @import("../util/sanitize.zig");
 const tool_out = @import("../util/tool_out.zig");
 pub const Theme = theme_mod.Theme;
 

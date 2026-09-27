@@ -5,8 +5,8 @@
 //! of that would otherwise print straight to the user's terminal.
 //!
 //! This module owns the single predicate and the two output paths (writer,
-//! allocating) so transcript.zig, syntax.zig and repl.zig share one
-//! definition instead of three that must stay in sync by comment.
+//! allocating) so the TUI renderer and the record-store CLI share one
+//! definition instead of several that must stay in sync by comment.
 
 const std = @import("std");
 

@@ -71,7 +71,7 @@ const utf8 = @import("../util/utf8.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
 const width_mod = @import("width.zig");
-const sanitize = @import("sanitize.zig");
+const sanitize = @import("../util/sanitize.zig");
 const preset_mod = @import("../preset/preset.zig");
 const sampling = @import("../llm/sampling_profiles.zig");
 // `_mod` because saveConversation has a local named `transcript`.

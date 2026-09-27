@@ -9,7 +9,7 @@
 //! matched line is the same problem in every store, so it is one function.
 
 const std = @import("std");
-const sanitize = @import("../tui/sanitize.zig");
+const sanitize = @import("../util/sanitize.zig");
 const diag = @import("../util/diag.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
@@ -378,7 +378,7 @@ pub fn ellipsize(s: []const u8, max: usize) []const u8 {
 /// the web served), and `open`/`list`/`search` print them back verbatim; a
 /// record holding `ESC]52;c;<base64>ESC\` would otherwise rewrite the
 /// operator's clipboard. The TUI path filters through the same module
-/// (`tui/sanitize.zig` owns the predicate and both writers).
+/// (`util/sanitize.zig` owns the predicate and both writers).
 pub fn out(io: std.Io, bytes: []const u8) !void {
     const stdout = std.Io.File.stdout();
     var buf: [4096]u8 = undefined;

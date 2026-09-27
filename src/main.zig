@@ -228,6 +228,7 @@ comptime {
     _ = @import("util/alarm_store.zig");
     _ = @import("util/http_client.zig");
     _ = @import("util/deadline.zig");
+    _ = @import("util/sanitize.zig");
     _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
     _ = @import("improve/proposal.zig");
@@ -255,7 +256,6 @@ comptime {
     _ = @import("stats/tokens.zig");
     _ = @import("llm/stream.zig");
     _ = @import("tui/width.zig");
-    _ = @import("tui/sanitize.zig");
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
     _ = @import("tui/syntax.zig");
