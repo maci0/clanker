@@ -38,14 +38,15 @@ plugin's reach.
 
 ## Release status
 
-The current line is `0.5.x`; `0.5.0` is the newest published release. A version in
-`build.zig.zon` is the version a build reports, not a published release: a
-release exists when an immutable `vMAJOR.MINOR.PATCH` tag carries binaries and
-a matching dated entry in [CHANGELOG.md](CHANGELOG.md). (`v0.2.0` was tagged but
-its build failed, so the first published 0.2 release is `0.2.1`.) Until `1.0.0`,
-minor releases may contain breaking changes, but patch releases remain backward
-compatible. See [RELEASES.md](RELEASES.md) for the compatibility, deprecation,
-and support policy.
+The line in development is `0.6.x`; `0.5.0` is the newest published release. A
+version in `build.zig.zon` is the version a build reports, not a published
+release: a release exists when an immutable `vMAJOR.MINOR.PATCH` tag carries
+binaries and a matching dated entry in [CHANGELOG.md](CHANGELOG.md). (`v0.2.0`
+was tagged but its build failed, so the first published 0.2 release is
+`0.2.1`.) Until `1.0.0`, minor releases may contain breaking changes, but patch
+releases remain backward compatible, which is why a tree carrying a break
+declares the next minor and not the current one. See [RELEASES.md](RELEASES.md)
+for the compatibility, deprecation, and support policy.
 
 ## Quick start
 
