@@ -264,12 +264,19 @@ function matchesAny(sel, el) {
 
 // ---------- the contract ----------
 test("views.css is loaded non-blocking with a no-JS fallback", function () {
-  const link = /<link rel="stylesheet" href="\/webui\/views\.css" media="print" data-views="1">/.exec(html);
-  assert.ok(link, "index.html must load views.css with media=print + data-views");
+  const link = /<link rel="stylesheet" href="\/webui\/views\.css" media="print" data-views="1" fetchpriority="low">/.exec(html);
+  assert.ok(link, "index.html must load views.css with media=print + data-views + fetchpriority=low");
   assert.ok(html.includes('<noscript><link rel="stylesheet" href="/webui/views.css"></noscript>'),
     "index.html must keep a noscript fallback for views.css");
   assert.ok(html.includes('<link rel="stylesheet" href="/webui/app.css">'),
     "app.css stays the render-blocking sheet");
+  // media="print" makes a sheet non-render-blocking, not unrequested: its fetch
+  // priority is still the stylesheet default (High), so the two deferred sheets
+  // (74 KB gz between them) queue ahead of app.css and the entry script on a
+  // constrained link. Both must carry fetchpriority="low"; the swap to
+  // media="all" is unaffected either way, so this is ordering, not delivery.
+  assert.ok(html.includes('<link rel="stylesheet" href="/webui/vendor/patternfly.min.css" media="print" data-pf="1" fetchpriority="low">'),
+    "the deferred PatternFly sheet must be fetched at low priority");
   // preact-boot.js flips the async sheets to all once they are ready (CSP
   // forbids inline onload). It has to be preact-boot and not app.js: app.js
   // evaluates only after its whole static import graph lands (~146 KB gz),
