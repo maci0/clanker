@@ -37,6 +37,11 @@ const Member = struct {
 /// once; the peer can retry.
 const max_inbound_conns: u32 = 64;
 
+/// Slots in the fixed pending-join table, and the ceiling the configured
+/// `mesh.max_pending_joins` is clamped to. One name for both, so the clamp
+/// cannot drift from the array it bounds.
+const max_pending_joins: u16 = 8;
+
 const Runtime = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -65,7 +70,7 @@ const Runtime = struct {
         }
     } = .{},
     members: [mesh.max_members]Member = @splat(.{}),
-    pending: [8]Pending = @splat(.{}),
+    pending: [max_pending_joins]Pending = @splat(.{}),
     stop: std.atomic.Value(bool) = .init(false),
     server: ?std.Io.net.Server = null,
 };
@@ -450,13 +455,36 @@ fn acceptOne(arg: *Conn) void {
     readLoop(rt, stream);
 }
 
+/// Pause between retries after a failed `accept`, so a listener the OS cannot
+/// hand connections to (fd exhaustion, a socket stuck in the kernel's own
+/// error state) does not turn the retry itself into the load.
+const accept_error_backoff_ns = 5 * std.time.ns_per_ms;
+/// How many consecutive failed accepts pass between two log lines, so a
+/// listener that stays broken is visible without one line per attempt.
+const accept_error_log_every: u32 = 1000;
+
 fn acceptLoop(rt: *Runtime) void {
     const server = if (rt.server) |*s| s else return;
+    var consecutive_errors: u32 = 0;
     while (!rt.stop.load(.monotonic)) {
-        const stream = server.accept(rt.io) catch {
+        const stream = server.accept(rt.io) catch |err| {
             if (rt.stop.load(.monotonic)) break;
+            // A client that disconnected mid-handshake is an ordinary
+            // per-connection event, but a listener that cannot accept at all
+            // fails the same way on every pass: the old bare `continue` was a
+            // hot spin at 100% of a core with nothing anywhere naming the
+            // cause. Report the first and then every accept_error_log_every,
+            // and wait before asking again.
+            consecutive_errors += 1;
+            if (consecutive_errors == 1 or consecutive_errors % accept_error_log_every == 0) {
+                log.log(.warn, "mesh accept failed ({d} in a row): {s}", .{
+                    consecutive_errors, @errorName(err),
+                });
+            }
+            std.Io.sleep(rt.io, .{ .nanoseconds = accept_error_backoff_ns }, .awake) catch continue;
             continue;
         };
+        consecutive_errors = 0;
         // Cap on concurrent inbound connection threads. The join handshake is
         // the only thing the count covers (joined members are bounded by
         // `mesh.max_members`, pending joins by `max_pending`), but a peer that
@@ -507,7 +535,7 @@ pub fn start(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, on_c
         // The pending table is a fixed array, so the configured ceiling is
         // only meaningful up to its length; anything above it was silently
         // ignored against a literal that had to be kept in step by hand.
-        .max_pending = @min(cfg.mesh.max_pending_joins, @as(u16, Runtime.pending.len)),
+        .max_pending = @min(cfg.mesh.max_pending_joins, max_pending_joins),
         .prompt_timeout_ns = @as(i64, cfg.mesh.prompt_timeout_seconds) * std.time.ns_per_s,
         .on_chat = on_chat,
         .server = server,

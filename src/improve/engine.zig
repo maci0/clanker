@@ -1917,6 +1917,20 @@ pub const Engine = struct {
         };
         defer self.ctx.gpa.free(add.stdout);
         defer self.ctx.gpa.free(add.stderr);
+        // `run` only fails to spawn; an `add` that ran and refused is the
+        // common shape (a path that no longer exists, a locked index, a
+        // pre-commit hook). Committing past it would commit whatever *was*
+        // staged, and the history entry would name files the commit does not
+        // carry -- which is exactly the record `syncReverts` reads to decide
+        // whether the work is already in the source.
+        const added = switch (add.term) {
+            .exited => |c| c == 0,
+            else => false,
+        };
+        if (!added) {
+            log.log(.warn, "git add exited nonzero; nothing is committed for this change: {s}", .{add.stderr});
+            return;
+        }
 
         const msg = std.fmt.allocPrint(self.ctx.gpa, "clanker: {s} [{s}]", .{ summary, id }) catch return;
         defer self.ctx.gpa.free(msg);

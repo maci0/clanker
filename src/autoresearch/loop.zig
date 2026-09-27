@@ -252,11 +252,27 @@ pub const Loop = struct {
             return false;
         };
         const stage_dir_opt: ?std.Io.Dir = std.Io.Dir.cwd().openDir(io, staging_path, .{}) catch null;
-        const stage_dir = stage_dir_opt orelse std.Io.Dir.cwd();
+        const stage_dir = stage_dir_opt orelse blk: {
+            // Measuring the live checkout instead of the staged copy is a
+            // different experiment than the one proposed, and the write-back
+            // below still targets the live tree, so the run can "improve" by
+            // comparing the current tree against itself. Say so rather than
+            // let the number stand unqualified.
+            log.log(.warn, "autoresearch: staging directory {s} could not be opened; this iteration is measured against the live tree", .{staging_path});
+            break :blk std.Io.Dir.cwd();
+        };
         defer if (stage_dir_opt != null) stage_dir.close(io);
         var harness_res = try harness_mod.runHarness(gpa, io, stage_dir, opts.harness_argv, opts.metric_name, opts.metric_pattern, budgetMs(opts.budget_seconds));
         defer harness_res.deinit(gpa);
-        const improved = if (harness_res.metric) |m| ledger.isBetter(m, best.*, opts.direction) else false;
+        // A harness that exited nonzero or was killed has produced no
+        // measurement, only a number its own output happened to contain
+        // (a build error quoting the previous score, a partial run). Letting
+        // that promote writes the patch into the live tree and advances
+        // `best` on the strength of a run that never succeeded.
+        const improved = if (!harness_res.ok) blk: {
+            log.log(.warn, "autoresearch: harness run did not succeed; not promoting run {s} on a metric from a failed run", .{run_id});
+            break :blk false;
+        } else if (harness_res.metric) |m| ledger.isBetter(m, best.*, opts.direction) else false;
         try self.appendLedgerEntry(run_id, .{
             .iter = iter,
             .ts = @as(i64, @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000))),

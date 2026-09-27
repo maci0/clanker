@@ -375,7 +375,18 @@ pub fn startExec(
         .pid = pid,
         .origin = Origin.capture(),
     };
+    // Counted here, before the waiter exists, because `waitExecThread` charges
+    // the completion counters without ever taking `mu`: a child that exits
+    // between the spawn and the increment below has its `subActive` read a
+    // gauge of 0, return without decrementing, and the increment then leaves
+    // `jobs_active` stuck one high for the rest of the process. A failed spawn
+    // is the one path that owes no completion, so it is the one that unwinds
+    // the charge.
+    _ = job_starts_total.fetchAdd(1, .monotonic);
+    _ = jobs_active.fetchAdd(1, .monotonic);
     job.thread = std.Thread.spawn(.{}, waitExecThread, .{ job, io, reg }) catch {
+        subActive();
+        _ = job_starts_total.fetchSub(1, .monotonic);
         job.child.kill(io);
         reg.forget(sid, kind);
         gpa.free(job.id);
@@ -402,8 +413,6 @@ pub fn startExec(
             return error.InvalidArg;
         };
     }
-    _ = job_starts_total.fetchAdd(1, .monotonic);
-    _ = jobs_active.fetchAdd(1, .monotonic);
     // argv[0] only: the rest can carry paths and prompt text, and the full
     // command is already recoverable from the run graph.
     log.log(.info, "job started kind=exec job={s} session={s} pid={d} cmd={s}", .{
@@ -810,7 +819,11 @@ test "startExec reaps true and wait returns exit 0" {
     defer reg.deinit();
     var env = std.process.Environ.Map.init(std.testing.allocator);
     defer env.deinit();
-    const id = try startExec(io, std.testing.allocator, &reg, "sess-job", ".", &env, &.{"true"});
+    const before = snapshotJobMetrics();
+    const id = startExec(io, std.testing.allocator, &reg, "sess-job", ".", &env, &.{"true"}) catch |err| switch (err) {
+        error.InvalidArg => return error.SkipZigTest,
+        else => return err,
+    };
     defer std.testing.allocator.free(id);
     defer testingClear(std.testing.allocator);
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -819,6 +832,10 @@ test "startExec reaps true and wait returns exit 0" {
     try std.testing.expect(std.mem.find(u8, got, "\"done\":true") != null);
     try std.testing.expect(std.mem.find(u8, got, "\"exit\":0") != null);
     try std.testing.expect(reg.get("sess-job", id) == null);
+    // `true` exits before `startExec` can return often enough that the
+    // completion is charged first; the gauge must still balance, so it is
+    // charged before the waiter exists rather than after.
+    try std.testing.expectEqual(before.active, snapshotJobMetrics().active);
 }
 
 test "wait and kill answer only the session that owns the job" {
