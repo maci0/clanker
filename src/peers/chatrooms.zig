@@ -1243,7 +1243,13 @@ pub fn subscribe(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 /// batch is essential: advancing a cursor after a newest-first capped batch
 /// permanently skipped every older pending message.
 pub fn readNew(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8, cfg: *const config_mod.Config, cursor: Cursor) ![]Message {
-    const raw = readLog(base, io, arena, state_dir, cfg) catch return &[_]Message{};
+    // A failed read is not an empty inbox: the cursor stays where it is, so
+    // every retained message comes back as new on the next run, and an
+    // operator sees an idle mesh rather than a read that never happened.
+    const raw = readLog(base, io, arena, state_dir, cfg) catch |err| {
+        log.log(.warn, "[chat] inbox: reading {s} in {s} failed ({s}); no peer messages are surfaced this turn", .{ log_path, state_dir, @errorName(err) });
+        return &[_]Message{};
+    };
     // Walk lines from the end and stop at the cursor id: the cursor sits at
     // the newest message the agent has read, so pending messages are always
     // in the tail, and the old forward scan parsed every record in the log on
@@ -1283,28 +1289,69 @@ pub fn readNew(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir
     return out.toOwnedSlice(arena);
 }
 
+/// The last message already injected into the inbox.
+///
+/// An absent cursor file is the ordinary first-run answer and stays silent.
+/// Every other failure (unreadable, oversized, corrupt) falls back to the
+/// empty cursor too, and that is not harmless: `readNew` keeps every message
+/// with `ts > 0`, so the whole retained log is presented as new peer inbox,
+/// silently, on this run and every run after it until the file is repaired.
+/// The fallback is right -- a bad cursor must not withhold messages -- so it
+/// is the silence that has to go.
 pub fn readCursor(base: std.Io.Dir, io: std.Io, arena: std.mem.Allocator, state_dir: []const u8) Cursor {
-    const path = subPath(arena, state_dir, cursor_path) catch return .{};
-    const raw = base.readFileAlloc(io, path, arena, .limited(4096)) catch return .{};
-    const parsed = std.json.parseFromSliceLeaky(Cursor, arena, raw, .{ .ignore_unknown_fields = true }) catch return .{};
+    const path = subPath(arena, state_dir, cursor_path) catch |err| {
+        log.log(.warn, "[chat] inbox: {s} path could not be built ({s}); every retained message is treated as unread", .{ cursor_path, @errorName(err) });
+        return .{};
+    };
+    const raw = base.readFileAlloc(io, path, arena, .limited(4096)) catch |err| switch (err) {
+        error.FileNotFound => return .{},
+        else => {
+            log.log(.warn, "[chat] inbox: reading {s} failed ({s}); every retained message is treated as unread", .{ cursor_path, @errorName(err) });
+            return .{};
+        },
+    };
+    const parsed = std.json.parseFromSliceLeaky(Cursor, arena, raw, .{ .ignore_unknown_fields = true }) catch |err| {
+        log.log(.warn, "[chat] inbox: {s} is not readable JSON ({s}); every retained message is treated as unread", .{ cursor_path, @errorName(err) });
+        return .{};
+    };
     return parsed;
 }
 
+/// Advances the inbox cursor. Best effort by design: a message already shown
+/// must not be withheld because the marker could not be persisted, and the
+/// cost of a failed write is re-injection, not loss. It is still a persisted
+/// write on a read-modify-write of a long-lived file, so every failure names
+/// itself -- an unwarned cursor write is an inbox that quietly re-reads the
+/// whole log forever.
 pub fn writeCursor(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, state_dir: []const u8, msg: Message) void {
     _ = gpa;
-    if (state_dir.len > 0) ensure_dir.ensureDir(base, io, state_dir) catch return;
+    if (state_dir.len > 0) ensure_dir.ensureDir(base, io, state_dir) catch |err| {
+        log.log(.warn, "[chat] inbox: could not create {s} to advance the cursor past {s} ({s}); that message is re-injected next run", .{ state_dir, msg.id, @errorName(err) });
+        return;
+    };
     var path_buf: [512]u8 = undefined;
     const path = if (state_dir.len == 0)
         cursor_path
     else
-        std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ state_dir, cursor_path }) catch return;
+        std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ state_dir, cursor_path }) catch {
+            log.log(.warn, "[chat] inbox: {s}/{s} does not fit a path buffer; message {s} is re-injected next run", .{ state_dir, cursor_path, msg.id });
+            return;
+        };
     var buf: [512]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     var s = std.json.Stringify{ .writer = &w, .options = .{} };
-    s.write(Cursor{ .id = msg.id, .ts = msg.ts }) catch return;
-    w.writeByte('\n') catch return;
+    s.write(Cursor{ .id = msg.id, .ts = msg.ts }) catch {
+        log.log(.warn, "[chat] inbox: encoding the cursor for {s} failed; message {s} is re-injected next run", .{ path, msg.id });
+        return;
+    };
+    w.writeByte('\n') catch {
+        log.log(.warn, "[chat] inbox: the cursor for {s} did not fit its buffer; message {s} is re-injected next run", .{ path, msg.id });
+        return;
+    };
     const body = buf[0..w.end];
-    atomic_write.writeFilePerms(io, base, path, body, atomic_write.private_file) catch return;
+    atomic_write.writeFilePerms(io, base, path, body, atomic_write.private_file) catch |err| {
+        log.log(.warn, "[chat] inbox: writing {s} failed ({s}); message {s} is re-injected next run", .{ path, @errorName(err), msg.id });
+    };
 }
 
 // ------------------------------------------------------------------ helpers --

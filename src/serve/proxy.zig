@@ -498,7 +498,14 @@ fn pipe(
                 log.log(.warn, "proxy: upstream stream from provider {s} exceeded {d} bytes and was cut short", .{ provider.name, raw_http.max_body_bytes });
                 break;
             }
-            raw_http.writeAllFd(ctx.stream.socket.handle, buf[0..nread]);
+            // A client that hung up ends this loop: continuing to read the
+            // provider's stream would spend a live upstream completion (and
+            // its tokens) for bytes with nowhere to go. The head is already
+            // on the wire, so the close is only visible here.
+            raw_http.writeAll(ctx.stream.socket.handle, buf[0..nread]) catch |err| {
+                log.log(.info, "proxy: client closed the stream from provider {s} after {d} bytes ({s}); upstream read stopped", .{ provider.name, total, @errorName(err) });
+                break;
+            };
         }
         return status;
     }
@@ -626,13 +633,19 @@ fn xcodeStream(
                     .openai => {
                         if (try openai_st.writeEvent(ctx.gpa, ev)) |line| {
                             defer ctx.gpa.free(line);
-                            raw_http.writeAllFd(ctx.stream.socket.handle, line);
+                            raw_http.writeAll(ctx.stream.socket.handle, line) catch {
+                                log.log(.info, "proxy: client closed a transcode stream from provider {s} after {d} bytes; upstream read stopped", .{ provider.name, total });
+                                return;
+                            };
                         }
                     },
                     .anthropic => {
                         if (try anth_st.writeEvent(ctx.gpa, ev)) |line| {
                             defer ctx.gpa.free(line);
-                            raw_http.writeAllFd(ctx.stream.socket.handle, line);
+                            raw_http.writeAll(ctx.stream.socket.handle, line) catch {
+                                log.log(.info, "proxy: client closed a transcode stream from provider {s} after {d} bytes; upstream read stopped", .{ provider.name, total });
+                                return;
+                            };
                         }
                     },
                 }
@@ -650,12 +663,18 @@ fn xcodeStream(
     if (family == .openai) {
         if (try openai_st.writeEvent(ctx.gpa, .{ .done = true })) |line| {
             defer ctx.gpa.free(line);
-            raw_http.writeAllFd(ctx.stream.socket.handle, line);
+            raw_http.writeAll(ctx.stream.socket.handle, line) catch {
+                log.log(.info, "proxy: client closed a transcode stream from provider {s} after {d} bytes; upstream read stopped", .{ provider.name, total });
+                return;
+            };
         }
     } else if (!anth_st.started) {
         if (try anth_st.writeEvent(ctx.gpa, .{ .done = true })) |line| {
             defer ctx.gpa.free(line);
-            raw_http.writeAllFd(ctx.stream.socket.handle, line);
+            raw_http.writeAll(ctx.stream.socket.handle, line) catch {
+                log.log(.info, "proxy: client closed a transcode stream from provider {s} after {d} bytes; upstream read stopped", .{ provider.name, total });
+                return;
+            };
         }
     }
 }

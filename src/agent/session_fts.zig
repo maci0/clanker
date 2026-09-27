@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
+const log = @import("../util/log.zig");
 const types = @import("../llm/types.zig");
 
 /// The index database path; a module var so tests can point it at a temp
@@ -162,23 +163,53 @@ pub fn replaceSession(arena: std.mem.Allocator, session_id: []const u8, messages
 /// `state/session_fts.db` forever. The progress record goes too, so a later
 /// session reusing the id rebuilds instead of appending onto nothing.
 /// Fail-open like the writer — a missing index means there is nothing to
-/// forget.
+/// forget. A *failed* forget is not that, though: the transcript `.db` is
+/// already gone by the time this runs, so every swallowed error here leaves
+/// the deleted conversation's text searchable with no other trace. Each step
+/// names itself instead, the same way `forgetReasoningForSession` does for
+/// the reasoning log.
 pub fn removeSession(arena: std.mem.Allocator, session_id: []const u8) void {
-    var conn = open(arena) catch return;
+    var conn = open(arena) catch |err| {
+        log.log(.warn, "session search: index unavailable, session {s} stays searchable in the index ({s})", .{ session_id, @errorName(err) });
+        return;
+    };
     defer conn.close();
-    var tx = sqlite.Transaction.begin(&conn) catch return;
+    var tx = sqlite.Transaction.begin(&conn) catch |err| {
+        log.log(.warn, "session search: no transaction to forget session {s} ({s}); its text stays in the index", .{ session_id, @errorName(err) });
+        return;
+    };
     defer tx.rollback();
     if (indexKey(arena, session_id)) |key| {
-        var delm = conn.prepare("DELETE FROM fts_meta WHERE key = ?1;") catch return;
+        var delm = conn.prepare("DELETE FROM fts_meta WHERE key = ?1;") catch |err| {
+            log.log(.warn, "session search: could not prepare the index-row delete for session {s} ({s})", .{ session_id, @errorName(err) });
+            return;
+        };
         defer delm.finalize();
-        delm.bindText(1, key) catch return;
-        _ = delm.step() catch return;
+        delm.bindText(1, key) catch |err| {
+            log.log(.warn, "session search: could not bind the index row for session {s} ({s})", .{ session_id, @errorName(err) });
+            return;
+        };
+        _ = delm.step() catch |err| {
+            log.log(.warn, "session search: could not delete the index row for session {s} ({s}); it rebuilds from the transcript instead", .{ session_id, @errorName(err) });
+            return;
+        };
     }
-    var del = conn.prepare("DELETE FROM session_fts WHERE session_id = ?1;") catch return;
+    var del = conn.prepare("DELETE FROM session_fts WHERE session_id = ?1;") catch |err| {
+        log.log(.warn, "session search: could not prepare the row delete for session {s} ({s}); its text stays in the index", .{ session_id, @errorName(err) });
+        return;
+    };
     defer del.finalize();
-    del.bindText(1, session_id) catch return;
-    _ = del.step() catch return;
-    tx.commit() catch return;
+    del.bindText(1, session_id) catch |err| {
+        log.log(.warn, "session search: could not bind the row delete for session {s} ({s}); its text stays in the index", .{ session_id, @errorName(err) });
+        return;
+    };
+    _ = del.step() catch |err| {
+        log.log(.warn, "session search: deleting session {s} from the index failed ({s}); its text stays in the index", .{ session_id, @errorName(err) });
+        return;
+    };
+    tx.commit() catch |err| {
+        log.log(.warn, "session search: committing the forget of session {s} failed ({s}); its text stays in the index", .{ session_id, @errorName(err) });
+    };
 }
 
 /// Safety bound on one FTS candidate page. Without it a common substring
