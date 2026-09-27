@@ -15,10 +15,17 @@ The page discovers it at request time. No host rebuild.
 
 1. `webui_addon` `action=create` with `name` (slug), `title`, `group` (`Work`,
    `Watch`, or `Set up`), and `js`. Default `enable` is true.
-2. Tell them to open System → Web UI plugins and click Refresh, or reload.
+2. `put` the manifest back with the `capabilities` the app.js uses:
+   `{"name":"<name>","file":"plugin.json","content":"{...}"}`. `create` writes
+   no `capabilities`, and `ui/plugins/capabilities.test.mjs` (a CI gate) fails
+   on a shipped addon whose app.js calls an undeclared `api` member. Names come
+   from the table in `ui/plugins/README.md`; `getJSON`, `postJSON`, `onLive`,
+   and `openSession` declare as `get`, `post`, `live`, `session`. Check it with
+   `bun test ui/plugins` before calling the addon done.
+3. Tell them to open System → Web UI plugins and click Refresh, or reload.
    The new rail tab appears once the script loads. They toggle the addon
    there, or you call `enable` / `disable`.
-3. To change it later, `put` the file or `create` again with `overwrite:true`.
+4. To change it later, `put` the file or `create` again with `overwrite:true`.
 
 ## app.js contract
 
@@ -43,10 +50,15 @@ The tool rejects app.js that skips `clanker.registerView` or uses
 is `script-src 'self'`, so no CDNs. Follow in the app.js you ship: every
 control needs a visible label or `aria-label` and a 32px target.
 
-`api`: `el`, `getJSON`/`postJSON`/`del`, `onLive`, `status`, `fmt`, `showView`,
-`van`, `preact`, `html`, `signals`, `render.markdown` / `render.code`.
-`create` also takes `eager` (run at page load, for a dock) or `module`
-(ES module another view imports); the two are mutually exclusive.
+`api`: `el`, `getJSON`/`postJSON`/`del`, `onLive`, `emit`, `status`, `fmt`,
+`toast`, `confirm`/`prompt`, `workspace`, `icon`, `storage`, `showView`,
+`openSession`, `foldFind`, `boardTimeline`, `van`, `preact`, `html`, `signals`,
+`render.markdown` / `render.code`. `ui/plugins/README.md` is the canonical
+table, with one row per member; read it before using one this skill does not
+list. `create` also takes `eager` (run at page load, for a dock) or `module`
+(ES module another view imports); the two are mutually exclusive. A `module`
+addon registers no view, so it owes no `registerView` call, but the CSP
+refusals still apply to it.
 
 ## Music player (shipped)
 

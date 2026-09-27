@@ -90,10 +90,14 @@ pub fn validFile(file: []const u8) bool {
 }
 
 /// Why this JS must not ship. Null means it passed the cheap static gates.
-pub fn jsRejected(js: []const u8) ?[]const u8 {
+/// `is_module` is the manifest's `module` flag: a module addon is an ES module
+/// another view imports, so it registers no view of its own and owes no
+/// `registerView` call (shipped `arena3d` is one). The CSP rules are the page's
+/// either way, so only the registration requirement is dropped.
+pub fn jsRejected(js: []const u8, is_module: bool) ?[]const u8 {
     if (js.len == 0) return "app.js is empty";
     if (js.len > max_js_bytes) return "app.js is too large";
-    if (std.mem.find(u8, js, "clanker.registerView") == null)
+    if (!is_module and std.mem.find(u8, js, "clanker.registerView") == null)
         return "app.js must call clanker.registerView";
     if (std.mem.find(u8, js, "innerHTML") != null)
         return "app.js must not assign innerHTML (build DOM with createElement / api.el)";
@@ -165,20 +169,28 @@ test "capabilitiesRejected names the pluginApi surface" {
 }
 
 test "jsRejected requires registerView and refuses CSP-breaking APIs" {
-    try std.testing.expectEqualStrings("app.js is empty", jsRejected("").?);
+    try std.testing.expectEqualStrings("app.js is empty", jsRejected("", false).?);
     try std.testing.expectEqualStrings(
         "app.js must call clanker.registerView",
-        jsRejected("console.log('hi')").?,
+        jsRejected("console.log('hi')", false).?,
     );
     try std.testing.expectEqualStrings(
         "app.js must not assign innerHTML (build DOM with createElement / api.el)",
-        jsRejected("clanker.registerView({}); el.innerHTML = x").?,
+        jsRejected("clanker.registerView({}); el.innerHTML = x", false).?,
     );
     try std.testing.expectEqualStrings(
         "app.js must not call eval (CSP forbids it)",
-        jsRejected("clanker.registerView({}); eval(x)").?,
+        jsRejected("clanker.registerView({}); eval(x)", false).?,
     );
-    try std.testing.expect(jsRejected("clanker.registerView({ id: 'x', mount: function(){} });") == null);
+    try std.testing.expect(jsRejected("clanker.registerView({ id: 'x', mount: function(){} });", false) == null);
+}
+
+test "jsRejected waives registerView for a module addon, not the CSP rules" {
+    try std.testing.expect(jsRejected("export function stage() {}", true) == null);
+    try std.testing.expectEqualStrings(
+        "app.js must not call eval (CSP forbids it)",
+        jsRejected("export function stage() { eval(x); }", true).?,
+    );
 }
 
 test "mergeEnabled toggles a name without duplicating it" {

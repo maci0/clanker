@@ -129,6 +129,16 @@ fn hasCss(name: []const u8) bool {
     if (lib.fsStat(css_path)) |_| return true else |_| return false;
 }
 
+/// Whether an existing addon's manifest says it is an ES module rather than a
+/// view. A manifest that is missing or will not parse reads as not-a-module,
+/// which is the stricter answer: it keeps the `registerView` requirement on.
+fn addonIsModule(name: []const u8) bool {
+    const manifest_path = std.fmt.allocPrint(lib.alloc, "{s}/{s}/plugin.json", .{ plugins_dir, name }) catch return false;
+    const raw = lib.fsRead(manifest_path) catch return false;
+    const m = std.json.parseFromSliceLeaky(Manifest, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch return false;
+    return m.module;
+}
+
 fn writeList(out: *lib.Out, addons: []const Listed, state: State) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
@@ -210,15 +220,15 @@ fn actionCreate(obj: std.json.Value, out: *lib.Out) !void {
     const js = lib.optStr(obj, "js") orelse return lib.fail(out, "create needs js (the app.js source)");
     if (js.len == 0) return lib.fail(out, "app.js must be non-empty");
     if (js.len > 1024 * 1024) return lib.fail(out, "js exceeds the 1 MiB limit for a single create call");
-    if (logic.jsRejected(js)) |why| return lib.fail(out, why);
-    const css = lib.optStr(obj, "css") orelse "";
-    if (css.len > 1024 * 1024) return lib.fail(out, "css exceeds the 1 MiB limit for a single create call");
-    if (logic.cssRejected(css)) |why| return lib.fail(out, why);
     const overwrite = lib.optBool(obj, "overwrite", false);
     const enable = lib.optBool(obj, "enable", true);
     const eager = lib.optBool(obj, "eager", false);
     const is_module = lib.optBool(obj, "module", false);
     if (eager and is_module) return lib.fail(out, "eager and module are mutually exclusive: an addon cannot both run at page load and be a non-view module");
+    if (logic.jsRejected(js, is_module)) |why| return lib.fail(out, why);
+    const css = lib.optStr(obj, "css") orelse "";
+    if (css.len > 1024 * 1024) return lib.fail(out, "css exceeds the 1 MiB limit for a single create call");
+    if (logic.cssRejected(css)) |why| return lib.fail(out, why);
 
     const dir = try std.fmt.allocPrint(lib.alloc, "{s}/{s}", .{ plugins_dir, name });
     const manifest_path = try std.fmt.allocPrint(lib.alloc, "{s}/plugin.json", .{dir});
@@ -254,7 +264,7 @@ fn actionPut(obj: std.json.Value, out: *lib.Out) !void {
     if (content.len == 0) return lib.fail(out, std.fmt.allocPrint(lib.alloc, "{s} must not be empty", .{file}) catch "content must not be empty");
     if (content.len > 1024 * 1024) return lib.fail(out, "content exceeds the 1 MiB limit for a single put call");
     if (std.mem.eql(u8, file, "app.js")) {
-        if (logic.jsRejected(content)) |why| return lib.fail(out, why);
+        if (logic.jsRejected(content, addonIsModule(name))) |why| return lib.fail(out, why);
     } else if (std.mem.eql(u8, file, "app.css")) {
         if (logic.cssRejected(content)) |why| return lib.fail(out, why);
     } else {
