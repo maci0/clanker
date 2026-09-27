@@ -5,6 +5,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-28
+
+### Fixed
+
+- `clanker --help` and `clanker --version` already say the output ran out of
+  space when stdout cannot accept another byte. The release journey now
+  expects that hint. `--dump-config` still names `NoSpaceLeft`.
+
 ## [0.6.1] - 2026-09-28
 
 ### Changed
