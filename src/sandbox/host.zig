@@ -5808,8 +5808,17 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .rng = std.Random.DefaultPrng.init(seed_rng.derive(child_seed, tool_name, h.sandbox.io)),
     };
     if (child_sb.seed == 0) {
-        child_host.seed_notice = @max(1, child_draw);
-        log.log(.debug, "sandbox rng: nested tool {s} seeded from the parent stream", .{tool_name});
+        // No `seed_notice` here, unlike a top-level load (sandbox/runtime.zig
+        // sets one to a seed that replays this guest's stream). A nested
+        // child's stream is `derive(child_draw, tool_name)`, so the value a
+        // replay needs is the *output* of that derivation; handing it back as
+        // `agent.seed` derives it a second time over the same tool name and
+        // lands on a different stream. Printing the draw as a replay seed
+        // therefore named a value that cannot reproduce the numbers it was
+        // printed for. There is no per-tool seed to print: a time-seeded
+        // nested tool replays only by re-running the whole run from the
+        // parent's seed, and the parent logs its own on its first draw.
+        log.log(.debug, "sandbox rng: nested tool {s} seeded from the parent stream, no per-tool replay seed exists", .{tool_name});
     }
     linker.defineFuncCtx("env", "ck_log", child_host, fn (*zwasm_mod.Caller, u32, u32, u32) void, &ckLog) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_now", child_host, fn (*zwasm_mod.Caller) u64, &ckNow) catch return Err.invalid;
