@@ -395,6 +395,13 @@ export var runDetail = {
   note: "mb-2 rounded-plate-sm bg-surface-2 px-3 py-1 font-mono text-sm text-fg-muted",
 };
 
+/* The jump palette's rows: a kind stamp, a label, and the empty line that
+   stands in for no match. app.js builds the prompt and action rows, palette.js
+   the view and conversation ones. */
+export var paletteItem = "flex min-h-9 cursor-pointer items-center gap-2 rounded-plate px-2 py-1 font-sans text-sm text-fg hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-selected:border aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-medium";
+export var paletteKind = "min-w-18 flex-none text-sm uppercase tracking-label text-fg-muted";
+export var paletteLabel = "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
+
 /* The gauge chip: a reading in mono behind a lamp, worn by the masthead's
    status line and by any view that reports one. The lamp itself is a component
    rule (`.chip::before`); the states are attributes, so the sheet reads what

@@ -604,6 +604,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   and a theme row is the picker's base list with its own direction and swatch.
   `core/theme.js` joins the ledger. First paint 59.4 → 59.1K gz.
 
+- The Jump palette and the shortcut sheet are utilities: the palette's input,
+  its list, its rows and their kind/label spans, the hint line, the wide
+  overlay box the card detail opens in, and the shortcut table's two columns.
+  The row lists are one surface in `core/ui.js` (app.js builds the prompt and
+  action rows, `palette.js` the view and conversation ones); `palette.js` keeps
+  its own copies with a note, because a suite imports that module directly and
+  it has no page import map to resolve `ui.js`'s vendored import through.
+  `core/palette.js` joins the ledger. First paint 59.1K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

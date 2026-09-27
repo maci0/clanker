@@ -260,7 +260,7 @@ lamps carry further). The seven named palettes ride the same tokens.
            aria-expanded="false" aria-haspopup="listbox" aria-owns="prompt-list">
         <textarea class="min-h-[2.6rem] max-h-40 w-full resize-none border-0 bg-transparent px-3 py-2 text-sm leading-normal outline-none field-sizing-content placeholder:text-sm placeholder:opacity-85 focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 max-[640px]:[font-size:16px]" id="task" name="task" placeholder="Describe the task, / for prompts, @ for files" required rows="3"
                   aria-controls="prompt-list" aria-autocomplete="list"></textarea>
-        <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
+        <ul class="m-0 mt-2 max-h-56 list-none overflow-y-auto rounded-plate border border-border bg-surface p-2 shadow-[var(--lift)] [&[hidden]]:hidden" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       </div>
       <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-rule/45 pt-2">
         <select id="model-select" class="sr-only" aria-hidden="true" tabindex="-1"
@@ -1054,13 +1054,13 @@ lamps carry further). The seven named palettes ride the same tokens.
 <!-- Overlays live outside main so the tab order reaches them last and a screen
      reader is not told they are part of the current view. -->
 <div class="overlay" id="palette" role="dialog" aria-modal="true" aria-labelledby="palette-label" hidden>
-  <div class="overlay-box palette-box">
+  <div class="overlay-box rounded-plate-lg p-2">
     <label class="sr-only" id="palette-label" for="palette-input">Jump to a view, conversation, run or tool</label>
-    <input type="text" id="palette-input" placeholder="Jump to a view, conversation, run, tool or action…" autocomplete="off"
+    <input class="box-border w-full rounded-plate border border-border bg-surface-2 px-4 py-2 font-sans text-base text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 max-[640px]:[font-size:16px]" type="text" id="palette-input" placeholder="Jump to a view, conversation, run, tool or action…" autocomplete="off"
            role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
            aria-describedby="palette-hint">
-    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Results"></ul>
-    <p class="meta palette-hint" id="palette-hint">Enter opens · arrows move · Esc closes</p>
+    <ul class="m-0 mt-2 max-h-[46vh] list-none overflow-y-auto p-0" id="palette-list" role="listbox" aria-label="Results"></ul>
+    <p class="meta mt-2 text-fg-muted" id="palette-hint">Enter opens · arrows move · Esc closes</p>
   </div>
 </div>
 
@@ -1070,7 +1070,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <span class="run-detail-title" id="help-title">Keyboard shortcuts</span>
       <button type="button" class="secondary" id="help-close">Close</button>
     </div>
-    <dl class="shortcuts" id="shortcuts"></dl>
+    <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-sm [&_dd]:m-0 [&_dd]:text-fg-muted [&_dt]:font-sans [&_dt]:font-semibold [&_dt]:whitespace-nowrap [&_dt]:text-fg" id="shortcuts"></dl>
   </div>
 </div>
 
@@ -1080,7 +1080,7 @@ lamps carry further). The seven named palettes ride the same tokens.
      of arrow keys rather than retyping it exactly and risking a near-miss
      that quietly forks a new workspace. -->
 <div class="overlay" id="card-detail" role="dialog" aria-modal="true" aria-labelledby="card-detail-title" hidden>
-  <div class="overlay-box overlay-box-wide"></div>
+  <div class="overlay-box max-h-[85vh] max-w-3xl"></div>
 </div>
 
 <div class="overlay" id="workspace-new-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-new-title" hidden>

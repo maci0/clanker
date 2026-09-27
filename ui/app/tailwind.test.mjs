@@ -52,6 +52,7 @@ const migrated = [
   "core/attachments.js",
   "core/modelpicker.js",
   "core/theme.js",
+  "core/palette.js",
   "app.js",
   "index.html",
 ];

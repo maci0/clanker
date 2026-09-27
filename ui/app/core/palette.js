@@ -16,6 +16,14 @@ var _setOpenCardId = null;
 var paletteItems = [];
 var paletteIndex = 0;
 
+/* The palette row's shapes. They are the same three lists core/ui.js exports —
+   app.js builds the prompt rows with those — but this module is imported
+   directly by a suite that has no page import map, so reaching into ui.js
+   (which imports the vendored signals module) would make it unimportable. */
+var PALETTE_ITEM_CLASS = "flex min-h-9 cursor-pointer items-center gap-2 rounded-plate px-2 py-1 font-sans text-sm text-fg hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-selected:border aria-selected:border-rule aria-selected:bg-surface-2 aria-selected:font-medium";
+var PALETTE_KIND_CLASS = "min-w-18 flex-none text-sm uppercase tracking-label text-fg-muted";
+var PALETTE_LABEL_CLASS = "min-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
+
 export function paletteEntries() {
   var out = [];
   _VIEWS.forEach(function (v, i) {
@@ -81,15 +89,15 @@ function renderPalette() {
   if (paletteIndex >= paletteItems.length) paletteIndex = 0;
   paletteItems.forEach(function (entry, i) {
     var li = document.createElement("li");
-    li.className = "palette-item";
+    li.className = PALETTE_ITEM_CLASS;
     li.id = "palette-item-" + i;
     li.setAttribute("role", "option");
     li.setAttribute("aria-selected", String(i === paletteIndex));
     var kind = document.createElement("span");
-    kind.className = "palette-kind";
+    kind.className = PALETTE_KIND_CLASS;
     kind.textContent = entry.kind;
     var label = document.createElement("span");
-    label.className = "palette-label";
+    label.className = PALETTE_LABEL_CLASS;
     label.textContent = entry.label;
     label.title = entry.label;
     li.appendChild(kind);
@@ -99,7 +107,7 @@ function renderPalette() {
   });
   if (!paletteItems.length) {
     var empty2 = document.createElement("li");
-    empty2.className = "palette-item";
+    empty2.className = PALETTE_ITEM_CLASS;
     empty2.textContent = "Nothing matches.";
     _el.paletteList.appendChild(empty2);
   }

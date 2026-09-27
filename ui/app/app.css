@@ -895,35 +895,6 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
 /* Overlays: the palette and the shortcut sheet. Both are one box on a scrim,
    positioned high rather than centred so the list grows downward into space
    the eye is already looking at. Layout lives with the PF modal bridge above. */
-.overlay-box-wide { max-width: 48rem; max-height: 85vh; }
-.palette-box { padding: var(--space-3); border-radius: var(--radius-lg); }
-#palette-input {
-  width: 100%; box-sizing: border-box;
-  font-family: var(--sans); font-size: var(--step-1);
-  padding: 0.7rem var(--space-4); border: 1px solid var(--border);
-  border-radius: var(--radius); background: var(--surface-2); color: var(--fg);
-}
-#palette-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.palette-list { list-style: none; margin: var(--space-3) 0 0; padding: 0; max-height: 46vh; overflow-y: auto; }
-.palette-item {
-  display: flex; align-items: center; gap: var(--space-3);
-  min-height: 36px; padding: var(--space-2) var(--space-3);
-  font-family: var(--sans); font-size: var(--step-0);
-  border-radius: var(--radius); cursor: pointer; color: var(--fg);
-}
-.palette-item[aria-selected="true"] { background: var(--surface-2); border: 1px solid var(--rule); font-weight: 500; color: var(--fg); }
-.palette-item:hover { background: var(--surface-2); }
-.palette-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.palette-kind {
-  flex: none; min-width: 4.5rem; color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: var(--track-label); font-size: var(--step-0);
-}
-.palette-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.palette-hint { margin: var(--space-3) 0 0; color: var(--fg-muted); font-size: var(--step-0); }
-.shortcuts { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-3); margin: 0; font-size: var(--step-0); }
-.shortcuts dt { font-family: var(--sans); font-weight: 600; color: var(--fg); white-space: nowrap; }
-.shortcuts dd { margin: 0; color: var(--fg-muted); }
-
 .more { position: relative; }
 .more > summary {
   list-style: none; cursor: pointer; user-select: none;

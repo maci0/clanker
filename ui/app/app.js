@@ -2385,7 +2385,7 @@ function renderFileMentionList() {
     el.promptList.textContent = "";
     matches.forEach(function (path, i) {
       var li = document.createElement("li");
-      li.className = "palette-item";
+      li.className = UI.paletteItem;
       li.id = "prompt-item-" + i;
       li.setAttribute("role", "option");
       li.setAttribute("aria-selected", String(i === 0));
@@ -4946,12 +4946,12 @@ function renderPromptList() {
   if (promptIndex >= matches.length) promptIndex = 0;
   matches.forEach(function (text, i) {
     var li = document.createElement("li");
-    li.className = "palette-item";
+    li.className = UI.paletteItem;
     li.id = "prompt-item-" + i;
     li.setAttribute("role", "option");
     li.setAttribute("aria-selected", String(i === promptIndex));
     var label = document.createElement("span");
-    label.className = "palette-label";
+    label.className = UI.paletteLabel;
     label.textContent = text;
     label.title = text;
     li.appendChild(label);
@@ -5026,10 +5026,10 @@ function renderSlashList(){
   promptIndex = Math.min(promptIndex, matches.length - 1);
   matches.forEach(function(c, i){
     var li = document.createElement("li");
-    li.className = "palette-item"; li.id = "prompt-item-" + i;
+    li.className = UI.paletteItem; li.id = "prompt-item-" + i;
     li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===promptIndex));
-    var k = document.createElement("span"); k.className="palette-kind"; k.textContent=c.cmd; li.appendChild(k);
-    var label = document.createElement("span"); label.className="palette-label"; label.textContent=c.desc; li.appendChild(label);
+    var k = document.createElement("span"); k.className=UI.paletteKind; k.textContent=c.cmd; li.appendChild(k);
+    var label = document.createElement("span"); label.className=UI.paletteLabel; label.textContent=c.desc; li.appendChild(label);
     li.addEventListener("mousedown", function(e){ e.preventDefault(); useSlash(c, q.rest); });
     el.promptList.appendChild(li);
   });
@@ -5597,10 +5597,10 @@ function renderKbMentionList() {
     kbMentionIndex = Math.min(kbMentionIndex, matches.length - 1);
     matches.forEach(function(c, i){
       var li = document.createElement("li");
-      li.className = "palette-item"; li.id = "prompt-item-" + i;
+      li.className = UI.paletteItem; li.id = "prompt-item-" + i;
       li.setAttribute("role","option"); li.setAttribute("aria-selected", String(i===kbMentionIndex));
-      var k = document.createElement("span"); k.className="palette-kind"; k.textContent="# " + c.title; li.appendChild(k);
-      var label = document.createElement("span"); label.className="palette-label"; label.textContent=c.doc_count + " docs"; li.appendChild(label);
+      var k = document.createElement("span"); k.className=UI.paletteKind; k.textContent="# " + c.title; li.appendChild(k);
+      var label = document.createElement("span"); label.className=UI.paletteLabel; label.textContent=c.doc_count + " docs"; li.appendChild(label);
       li.addEventListener("mousedown", function(e){
         e.preventDefault();
         if (typeof kbSelected !== "undefined" && kbSelected.indexOf(c.id) === -1) { kbSelected.push(c.id); try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(kbSelected)); } catch(_){} } 
