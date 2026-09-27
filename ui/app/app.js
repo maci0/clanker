@@ -2348,7 +2348,7 @@ function renderFileMentionList() {
   var dir = "";
   var slash = mq.q.lastIndexOf("/");
   if (slash !== -1) dir = mq.q.slice(0, slash);
-  var needle = (slash === -1 ? mq.q : mq.q.slice(slash + 1)).toLowerCase();
+  var needle = utilSearchFold(slash === -1 ? mq.q : mq.q.slice(slash + 1));
   var seq = ++fileMentionSeq;
   fetch("/api/files?path=" + encodeURIComponent(dir || ".")).then(function (r) { return r.json(); }).then(function (data) {
     if (seq !== fileMentionSeq) return;
@@ -2357,7 +2357,7 @@ function renderFileMentionList() {
     names.forEach(function (n) {
       var name = typeof n === "string" ? n : (n.name || n.path || "");
       if (!name) return;
-      if (needle && name.toLowerCase().indexOf(needle) === -1) return;
+      if (needle && utilSearchFold(name).indexOf(needle) === -1) return;
       var full = dir ? (dir + "/" + name.replace(/\/$/, "")) : name.replace(/\/$/, "");
       matches.push(full);
     });
@@ -3724,12 +3724,13 @@ Array.prototype.forEach.call(document.querySelectorAll("#chat-room-list [data-gr
 });
 
 if (el.chatRoomFilter) el.chatRoomFilter.addEventListener("input", function () {
-  var q = el.chatRoomFilter.value.trim().toLowerCase();
+  var q = el.chatRoomFilter.value.trim();
+  var qFold = utilSearchFold(q);
   var shown = 0;
   [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
     if (!list) return;
     Array.prototype.forEach.call(list.querySelectorAll("[data-room]"), function (row) {
-      var hide = q.length > 0 && row.textContent.toLowerCase().indexOf(q) === -1;
+      var hide = q.length > 0 && utilSearchFold(row.textContent).indexOf(qFold) === -1;
       row.hidden = hide;
       if (!hide) shown += 1;
     });
@@ -3847,8 +3848,8 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
     fetch("/api/chat/messages?room=" + encodeURIComponent(room) + "&after=0")
       .then(readJson)
       .then(function (data) {
-        var ql = q.toLowerCase();
-        var hits = (data.messages || []).filter(function (m) { return !m.deleted && m.text && m.text.toLowerCase().indexOf(ql) !== -1; }).slice(0, 30);
+        var ql = utilSearchFold(q);
+        var hits = (data.messages || []).filter(function (m) { return !m.deleted && m.text && utilSearchFold(m.text).indexOf(ql) !== -1; }).slice(0, 30);
         el.chatSearchResults.textContent = "";
         if (!hits.length) {
           var empty = document.createElement("p");
@@ -5559,9 +5560,9 @@ function kbMentionQuery() {
   var hashAt = v.lastIndexOf("#");
   if (hashAt === -1) return null;
   if (hashAt > 0 && v.charAt(hashAt - 1) !== " " && v.charAt(hashAt - 1) !== "\n") return null;
-  var q = v.slice(hashAt + 1).toLowerCase();
+  var q = v.slice(hashAt + 1);
   if (q.indexOf(" ") !== -1 || q.indexOf("\n") !== -1) return null;
-  return { at: hashAt, q: q };
+  return { at: hashAt, q: utilSearchFold(q) };
 }
 function renderKbMentionList() {
   var mq = kbMentionQuery();
@@ -5570,7 +5571,7 @@ function renderKbMentionList() {
   fetch("/api/knowledge").then(function(r){ return r.json(); }).then(function(data){
     if (seq !== kbMentionSeq) return;
     var cols = (data && data.collections) || [];
-    var matches = cols.filter(function(c){ return c.title.toLowerCase().indexOf(mq.q) !== -1 || c.id.toLowerCase().indexOf(mq.q) !== -1; }).slice(0, 6);
+    var matches = cols.filter(function(c){ return utilSearchFold(c.title).indexOf(mq.q) !== -1 || utilSearchFold(c.id).indexOf(mq.q) !== -1; }).slice(0, 6);
     if (!matches.length) { hidePromptList(); return; }
     el.promptList.textContent = "";
     kbMentionActive = true;

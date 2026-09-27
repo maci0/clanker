@@ -25,6 +25,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+// The lifted renderers filter through the shared folding helper, so the
+// context gets the shipped one rather than a re-implementation of it.
+import { searchFold } from "./core/utils.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const js = readFileSync(join(here, "app.js"), "utf8");
@@ -88,6 +91,7 @@ function harness(taskValue) {
   const ctx = {
     el: { task, taskCombobox, promptList },
     pendingFiles: [],
+    utilSearchFold: searchFold,
     renderFileChips() {},
     kbSelected: [],
     document: {

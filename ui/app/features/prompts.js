@@ -1,7 +1,7 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 import { uiConfirm, toast, showLoadError } from "../core/ui.js";
 import * as kit from "../core/kit.js";
-import { readJson, wireRefresh } from "../core/utils.js";
+import { readJson, wireRefresh, searchFold } from "../core/utils.js";
 import { copyText } from "../core/vendor.js";
 
 /* The prompt cards, as Tailwind utilities over the cabinet tokens
@@ -40,11 +40,11 @@ function applyPromptFilter(){
   if(!listEl) return null;
   var filterEl=document.getElementById("prompts-filter");
   var raw=filterEl?filterEl.value.trim():"";
-  var q=raw.toLowerCase();
+  var q=searchFold(raw);
   var cards=listEl.querySelectorAll(".prompt-card");
   var shown=0;
   cards.forEach(function(card){
-    var hide=!!q&&(card.textContent||"").toLowerCase().indexOf(q)===-1;
+    var hide=!!q&&searchFold(card.textContent||"").indexOf(q)===-1;
     card.hidden=hide;
     if(!hide) shown++;
   });

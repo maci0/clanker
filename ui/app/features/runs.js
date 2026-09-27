@@ -125,7 +125,7 @@ var pendingRunId = null;
    native combobox rendering, but replacing the option list outright always
    works. */
 function renderRunOptions(filterText) {
-  var q = (filterText || "").trim().toLowerCase();
+  var q = (filterText || "").trim();
   var matches = allRuns.filter(function (r) { return matchesRunQuery(r, q); });
   var previous = el.runSelect.value;
   el.runSelect.textContent = "";

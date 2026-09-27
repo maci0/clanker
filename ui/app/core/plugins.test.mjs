@@ -300,6 +300,7 @@ function loadHost(page, extras) {
     __kitLoader: () => Promise.resolve({ recordRow: { list: "", row: "", name: "", head: "", outcome: "", snippet: "", foot: "", mark: "" } }),
     icon: () => makeElement("span"),
     searchFoldFind: () => {},
+    searchFold: (s) => String(s),
     wireRefresh: () => {},
     fmtUnit: () => "",
     fmtAgo: () => "",

@@ -7,6 +7,8 @@
 // (id, task, provider, duration) is timeless, which is how a listing that had
 // gone stale still read as current. A row that says "3d ago" cannot.
 
+import { searchFold } from "../core/utils.js";
+
 /** Nanoseconds is the widest clock a run id carries; see runStartedAt. */
 const NS_DIGITS = 19;
 /** Milliseconds is 13 of those digits. */
@@ -95,12 +97,13 @@ const FAILED_WORDS = ["failed", ":failed", "⚠ failed"];
 /** The filter box: a text match over id, task and provider, except for the
     `failed` keyword, which selects on state instead. */
 export function matchesRunQuery(run, query) {
-  const q = (query || "").trim().toLowerCase();
-  if (!q) return true;
-  if (FAILED_WORDS.indexOf(q) !== -1) return runFailed(run);
+  const raw = (query || "").trim();
+  if (!raw) return true;
+  if (FAILED_WORDS.indexOf(raw.toLowerCase()) !== -1) return runFailed(run);
+  const q = searchFold(raw);
   const hay = [run.run_id, run.task, run.provider];
   for (let i = 0; i < hay.length; i++) {
-    if (typeof hay[i] === "string" && hay[i].toLowerCase().indexOf(q) !== -1) return true;
+    if (typeof hay[i] === "string" && searchFold(hay[i]).indexOf(q) !== -1) return true;
   }
   return false;
 }

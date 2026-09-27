@@ -2,7 +2,7 @@
 // row rendering, detail, toggles and config editing. Keeps the list itself as
 // a derived state (toolState) so filter and data cannot disagree.
 import { scrollTo as vendorScrollTo } from "./vendor.js";
-import { fmtBytes as utilFmtBytes, plural as utilPlural } from "./utils.js";
+import { fmtBytes as utilFmtBytes, plural as utilPlural, searchFold } from "./utils.js";
 import { showLoadError, UI } from "./ui.js";
 import { toolCategoryLabel, compareToolCategories } from "./labels.js";
 
@@ -59,7 +59,7 @@ function groupLabel(cat) { return toolCategoryLabel(cat); }
 export function renderTools(filterText) {
   _toolState.val = {
     tools: _allToolsHolder.list,
-    filter: (filterText == null ? _el.toolFilter.value : filterText).trim().toLowerCase()
+    filter: (filterText == null ? _el.toolFilter.value : filterText).trim()
   };
 }
 
@@ -512,11 +512,12 @@ export function bindTools(ctx) {
           ctx.T.button({ type: "button", class: "secondary", onclick: loadTools }, "Try again"));
       }
       var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
-        return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
-          (t.description || "").toLowerCase().indexOf(s.filter) !== -1 ||
-          (t.category || "").toLowerCase().indexOf(s.filter) !== -1 ||
-          toolCategoryLabel(t.category).toLowerCase().indexOf(s.filter) !== -1 ||
-          (t.tags || []).some(function (tagName) { return tagName.toLowerCase().indexOf(s.filter) !== -1; });
+        var f = searchFold(s.filter);
+        return searchFold(t.name).indexOf(f) !== -1 ||
+          searchFold(t.description || "").indexOf(f) !== -1 ||
+          searchFold(t.category || "").indexOf(f) !== -1 ||
+          searchFold(toolCategoryLabel(t.category)).indexOf(f) !== -1 ||
+          (t.tags || []).some(function (tagName) { return searchFold(tagName).indexOf(f) !== -1; });
       });
       _el.toolsStatus.textContent = s.filter
         ? utilPlural(shown.length, { one: "tool matches.", other: "tools match." })

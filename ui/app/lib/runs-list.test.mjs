@@ -209,3 +209,15 @@ test("the guest serves the module it now imports", function () {
   assert.match(guest, /endsWith\(u8, path, "\/features\/runs\.js"\)/);
   assert.match(app, /import\("\.\/features\/runs\.js"\)/);
 });
+
+// The filter matches through the shared fold, so a run recorded with an
+// accented task is reachable from a plain keyboard query and the `failed`
+// keyword keeps selecting on state rather than on text.
+test("the run filter matches across diacritics and case", function () {
+  const run = { run_id: "run-1786920177000000000", task: "Napraw harmonogram źródeł", provider: "openai", nodes: [] };
+  assert.equal(matchesRunQuery(run, "NAPRAW"), true);
+  assert.equal(matchesRunQuery(run, "zrodel"), true);
+  assert.equal(matchesRunQuery(run, "harmonogram"), true);
+  assert.equal(matchesRunQuery(run, "ledger"), false);
+  assert.equal(matchesRunQuery({ run_id: "run-1", task: "t", nodes: [{ ok: false }] }, "failed"), true);
+});

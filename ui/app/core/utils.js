@@ -66,6 +66,13 @@ function isCombiningMark(ch) {
   return c >= 0x0300 && c <= 0x036f;
 }
 
+/* Latin letters NFD cannot decompose: Polish "ł" is not "l" plus a mark. */
+var UNDECOMPOSED = {
+  "Æ": "ae", "æ": "ae", "Œ": "oe", "œ": "oe", "Ø": "o", "ø": "o",
+  "Đ": "d", "đ": "d", "Ð": "d", "ð": "d", "Þ": "th", "þ": "th",
+  "Ħ": "h", "ħ": "h", "ı": "i", "Ł": "l", "ł": "l", "ß": "ss"
+};
+
 export function searchFoldWithMap(str) {
   var s = String(str);
   var folded = "";
@@ -79,7 +86,11 @@ export function searchFoldWithMap(str) {
     var foldedChunk = "";
     for (var j = 0; j < decomposed.length; j++) {
       if (isCombiningMark(decomposed[j])) continue;
-      foldedChunk += decomposed[j].toLocaleLowerCase();
+      // Lowercase, then drop the marks it introduced (Turkish "İ").
+      var low = UNDECOMPOSED[decomposed[j]] || decomposed[j].toLocaleLowerCase();
+      for (var c = 0; c < low.length; c++) {
+        if (!isCombiningMark(low[c])) foldedChunk += low[c];
+      }
     }
     for (var k = 0; k < foldedChunk.length; k++) {
       folded += foldedChunk[k];
@@ -329,10 +340,10 @@ export function sessionLabel(s) {
    a fallback so a typed "12 msgs" still works. */
 export function sessionMatchesFilter(item, q) {
   if (!q) return true;
-  var needle = String(q).toLowerCase();
-  if ((item.title || "").toLowerCase().indexOf(needle) !== -1) return true;
-  if ((item.id || "").toLowerCase().indexOf(needle) !== -1) return true;
-  return sessionLabel(item).toLowerCase().indexOf(needle) !== -1;
+  var needle = searchFold(String(q));
+  if (searchFold(item.title || "").indexOf(needle) !== -1) return true;
+  if (searchFold(item.id || "").indexOf(needle) !== -1) return true;
+  return searchFold(sessionLabel(item)).indexOf(needle) !== -1;
 }
 
 /* Conversations group by when they were last touched, because that is how

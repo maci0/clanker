@@ -258,17 +258,18 @@ clanker.registerView({
 
     // ── entry rendering ──
     function visibleEntries() {
-      var ft = filterText;
+      var ft = api.fmt.fold(filterText);
       return allEntries.filter(function(e) {
         if (!showHidden && e.name.charAt(0) === ".") return false;
-        return !ft || e.name.toLowerCase().indexOf(ft) >= 0;
+        return !ft || api.fmt.fold(e.name).indexOf(ft) >= 0;
       }).sort(function(a, b) {
         if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-        var av, bv;
-        if (sortKey === "size") { av = a.size||0; bv = b.size||0; }
-        else if (sortKey === "mtime") { av = a.mtime||0; bv = b.mtime||0; }
-        else { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
-        return av < bv ? -sortDir : av > bv ? sortDir : 0;
+        if (sortKey === "size") return ((a.size||0) - (b.size||0)) * sortDir;
+        if (sortKey === "mtime") return ((a.mtime||0) - (b.mtime||0)) * sortDir;
+        // Collation, not `<`: file names carry accents and scripts whose
+        // code-point order is not the reader's alphabet ("Ärger" sorted
+        // between "Zebra" and nothing at all).
+        return api.fmt.compare(a.name, b.name) * sortDir;
       });
     }
 
@@ -298,7 +299,7 @@ clanker.registerView({
         } else if (hiddenCount) {
           var hidden = mk("p", EMPTY_CLASS);
           hidden.appendChild(document.createTextNode(
-            hiddenCount === 1 ? "This folder has 1 hidden item. " : "This folder has " + api.fmt.plural(hiddenCount, { one: "hidden item", other: "hidden items" }) + ". "
+            "This folder has " + api.fmt.plural(hiddenCount, { one: "hidden item", other: "hidden items" }) + ". "
           ));
           var show = mk("button", CLEAR_CLASS, "Show hidden");
           show.type = "button";
@@ -392,7 +393,7 @@ clanker.registerView({
 
     // ── filter + hidden toggle ──
     filterInput.addEventListener("input", function() {
-      filterText = filterInput.value.trim().toLowerCase();
+      filterText = filterInput.value.trim();
       renderEntries();
     });
 

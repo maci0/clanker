@@ -4,7 +4,7 @@
 // goal side of the card<->goal mirroring lives in ./goals.js. bindBoard()
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
-import { fmtInt, fmtCost, fmtPct, formatChatTime, fmtDeadline, readJson, clip, wireRefresh, plural } from "../core/utils.js";
+import { fmtInt, fmtCost, fmtPct, formatChatTime, fmtDeadline, readJson, clip, wireRefresh, plural, searchFold } from "../core/utils.js";
 import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
@@ -100,7 +100,7 @@ function cardMatchesBoardFilter(c, s) {
   if (s.label && !(c.labels || []).some(function (l) { return l.color === s.label; })) return false;
   var hay = c.title + " " + (c.body || "") + " " + (c.assignee || "") + " " +
     (c.labels || []).map(function (l) { return l.text || l.color || ""; }).join(" ");
-  if (s.text && hay.toLowerCase().indexOf(s.text) === -1) return false;
+  if (s.text && searchFold(hay).indexOf(s.text) === -1) return false;
   return true;
 }
 
@@ -271,7 +271,7 @@ export function renderBoard(next) {
     mine: el.boardMine.checked,
     me: (el.instanceChip.textContent || "").trim(),
     open: openCardId,
-    text: bf.text.trim().toLowerCase(),
+    text: searchFold(bf.text.trim()),
     blockedOnly: bf.blockedOnly,
     priority: bf.priority,
     assignee: bf.assignee,
@@ -418,7 +418,7 @@ function boardColumn(col, s) {
     var tail = v.slice(at + 1);
     if (/[\s]/.test(tail)) return null;
     var peers = (_getKnownPeers() || []).map(function(p){ return p.name || p; });
-    var hit = peers.find(function(n){ return n.toLowerCase().indexOf(tail.toLowerCase()) === 0; });
+    var hit = peers.find(function(n){ return searchFold(n).indexOf(searchFold(tail)) === 0; });
     return hit ? { name: hit, at: at, end: at + 1 + tail.length } : null;
   }
   qaTextarea.addEventListener("keydown", function(e){

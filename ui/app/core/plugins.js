@@ -4,7 +4,7 @@ import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from ".
 import { boardTimeline } from "../lib/board.js";
 import { onLive } from "./stream.js";
 import { icon } from "./icons.js";
-import { searchFoldFind, wireRefresh, fmtUnit, fmtAgo, plural } from "./utils.js";
+import { searchFoldFind, searchFold, wireRefresh, fmtUnit, fmtAgo, plural } from "./utils.js";
 
 export var pluginViews = {};
 
@@ -21,7 +21,16 @@ var _formatChatTime = null;
 var _openSession = null;
 var _observeStatus = null;
 
-function fmt() { return { bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime, unit: fmtUnit, ago: fmtAgo, plural: plural }; }
+/* So a plugin filter matches what the host filters match, and a plugin
+   name sort collates instead of comparing code points. */
+function fmt() {
+  return {
+    bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime,
+    unit: fmtUnit, ago: fmtAgo, plural: plural,
+    fold: searchFold,
+    compare: function (a, b) { return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }); }
+  };
+}
 
 /* The System panel's own line, for the loader's messages only. Guarded because
    the panel is not on the page in every embedding of the app. */

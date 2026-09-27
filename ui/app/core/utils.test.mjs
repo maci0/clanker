@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit, fmtMs } from "./utils.js";
+import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit, fmtMs, sessionMatchesFilter, searchFold, searchFoldFind } from "./utils.js";
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -267,4 +267,36 @@ test("fmtAgo reads as now inside the first minute and never says \"ago\"", funct
 test("fmtUnit carries the locale's unit spelling, not a glued suffix", function () {
   assert.equal(fmtUnit(1500, "millisecond"), new Intl.NumberFormat(undefined, { style: "unit", unit: "millisecond", unitDisplay: "narrow" }).format(1500));
   assert.equal(fmtUnit(0.5, "second", 1), new Intl.NumberFormat(undefined, { style: "unit", unit: "second", unitDisplay: "narrow", maximumFractionDigits: 1 }).format(0.5));
+});
+
+// The rail filter box matches through the shared folding helper, so a query
+// typed without the accents still finds the session that has them: a Polish
+// or German operator types "zazolc" for "Zażółć", and the old toLowerCase()
+// comparison found nothing. The label the rail renders is the same text, so
+// the folding has to happen on both sides of the comparison.
+test("the session filter matches across diacritics and case", function () {
+  const item = { id: "sess-1", title: "Zażółć gęślą jaźń", messages: 3, bytes: 2048 };
+  assert.equal(sessionMatchesFilter(item, "zazolc"), true);
+  assert.equal(sessionMatchesFilter(item, "GESLA"), true);
+  assert.equal(sessionMatchesFilter(item, "jazn"), true);
+  assert.equal(sessionMatchesFilter(item, ""), true);
+  assert.equal(sessionMatchesFilter(item, "ledger"), false);
+});
+
+// Folding is what every filter box now matches through, so the letters NFD
+// cannot decompose are the ones that decide whether a non-English title is
+// reachable at all: "ł" in Polish, "ø" in Danish, "ß" in German, "æ" in
+// Icelandic. Without them a reader types the plain keyboard letter and the
+// row they can see does not match.
+test("searchFold answers the letters Unicode never decomposed", function () {
+  assert.equal(searchFold("Zażółć gęślą jaźń"), "zazolc gesla jazn");
+  assert.equal(searchFold("Ørsted"), "orsted");
+  assert.equal(searchFold("Straße"), "strasse");
+  assert.equal(searchFold("Ængström"), "aengstrom");
+});
+
+test("searchFoldFind still maps a folded hit back to the original text", function () {
+  const hit = searchFoldFind("Ængström", "aeng");
+  assert.deepEqual(hit && [hit.start, hit.end], [0, 3]); // the whole "Æ", both folded letters
+  assert.equal(searchFoldFind("Ængström", "z"), null);
 });
