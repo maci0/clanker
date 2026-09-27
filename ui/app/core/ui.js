@@ -395,6 +395,11 @@ export var runDetail = {
   note: "mb-2 rounded-plate-sm bg-surface-2 px-3 py-1 font-mono text-sm text-fg-muted",
 };
 
+/* A view: the column a tab shows. Scrolling, the section rhythm and the focus
+   ring are the same in every view, and a plugin's shell is built in
+   core/plugins.js, so the list lives here rather than on eleven elements. */
+export var VIEW_CLASS = "[&:focus]:outline-none [&:focus-visible]:-outline-offset-2 [&:focus-visible]:outline-2 [&:focus-visible]:outline-accent [&:not([hidden])]:min-h-0 [&:not([hidden])]:w-full [&:not([hidden])]:flex-auto [&:not([hidden])]:overscroll-contain [&:not([hidden])]:overflow-y-auto [&>section]:w-full [&>section]:max-w-none [&>section+section]:mt-6 [&>section+section]:border-t [&>section+section]:border-rule [&>section+section]:pt-4 [&>section:first-child]:mt-0 [&>section:first-child]:border-t-0 [&>section:first-child]:pt-0";
+
 /* The jump palette's rows: a kind stamp, a label, and the empty line that
    stands in for no match. app.js builds the prompt and action rows, palette.js
    the view and conversation ones. */

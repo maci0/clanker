@@ -180,7 +180,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 
 <div class="shell min-w-0" tabindex="-1">
 <main id="main" tabindex="-1">
-  <div class="view conversation flex min-h-0 w-full flex-1 flex-col [&_.conversation-header]:w-full [&_.conversation-header]:flex-none [&_.conversation-header_.section-head]:mb-1 [&_.conversation-header_.section-head]:items-center [&_.conversation-header_.run-picker]:m-0 [&_.conversation-header_.session-status-bar]:mb-1 [&_.conversation-scroll]:flex-1 [&_.conversation-scroll]:overflow-x-hidden [&_.conversation-scroll]:overflow-y-auto [&_.conversation-scroll]:overscroll-contain [&_.conversation-scroll]:pb-1 [&_.conversation-scroll_.transcript]:max-w-none [&_.conversation-scroll_.run-empty]:max-w-none [&_.composer]:relative [&_.composer]:z-3 [&_.composer]:mt-1 [&_.composer]:flex-none [&_.suggestions]:w-full [&_.suggestions]:flex-none data-[empty=true]:[&_.conversation-scroll]:flex-none data-[empty=true]:[&_.conversation-scroll]:overflow-visible data-[empty=true]:[&_.suggestions]:mt-4" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
+  <div data-view="true" class=" conversation flex min-h-0 w-full flex-1 flex-col [&_.conversation-header]:w-full [&_.conversation-header]:flex-none [&_.conversation-header_.section-head]:mb-1 [&_.conversation-header_.section-head]:items-center [&_.conversation-header_.run-picker]:m-0 [&_.conversation-header_.session-status-bar]:mb-1 [&_.conversation-scroll]:flex-1 [&_.conversation-scroll]:overflow-x-hidden [&_.conversation-scroll]:overflow-y-auto [&_.conversation-scroll]:overscroll-contain [&_.conversation-scroll]:pb-1 [&_.conversation-scroll_.transcript]:max-w-none [&_.conversation-scroll_.run-empty]:max-w-none [&_.composer]:relative [&_.composer]:z-3 [&_.composer]:mt-1 [&_.composer]:flex-none [&_.suggestions]:w-full [&_.suggestions]:flex-none data-[empty=true]:[&_.conversation-scroll]:flex-none data-[empty=true]:[&_.conversation-scroll]:overflow-visible data-[empty=true]:[&_.suggestions]:mt-4" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
     <!-- Conversation column: header, scrolling transcript, docked composer.
          No aria-live here: each turn's answer is its own live region (see
          createTurn). Nesting one inside the other made a screen reader announce
@@ -354,7 +354,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <div class="mt-2 grid grid-cols-[repeat(2,minmax(0,18rem))] gap-2 max-[520px]:grid-cols-1" id="suggestions"></div>
 
   </div>
-  <div class="view" id="view-runs" role="tabpanel" aria-labelledby="tab-runs" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-runs" role="tabpanel" aria-labelledby="tab-runs" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Runs</h2>
@@ -398,7 +398,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
     </section>
   </div>
-  <div class="view [&_.section-head]:mb-7 [&_.section-head]:gap-x-5 [&_.section-head]:gap-y-3 [&_.runs]:mt-7 [&_.runs]:flex [&_.runs]:flex-col [&_.runs]:gap-7" id="view-fleet" role="tabpanel" aria-labelledby="tab-fleet" tabindex="-1" hidden>
+  <div data-view="true" class=" [&_.section-head]:mb-7 [&_.section-head]:gap-x-5 [&_.section-head]:gap-y-3 [&_.runs]:mt-7 [&_.runs]:flex [&_.runs]:flex-col [&_.runs]:gap-7" id="view-fleet" role="tabpanel" aria-labelledby="tab-fleet" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Fleet</h2>
@@ -437,7 +437,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
     </section>
   </div>
-  <div class="view" id="view-arena" role="tabpanel" aria-labelledby="tab-arena" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-arena" role="tabpanel" aria-labelledby="tab-arena" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Arena</h2>
@@ -482,7 +482,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
     </section>
   </div>
-  <div class="view [&:not([hidden])]:flex [&:not([hidden])]:flex-col [&:not([hidden])]:overflow-hidden" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
+  <div data-view="true" class=" [&:not([hidden])]:flex [&:not([hidden])]:flex-col [&:not([hidden])]:overflow-hidden" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
     <div class="flex min-h-0 w-full flex-1 overflow-hidden rounded-plate border border-rule bg-surface max-[768px]:relative max-[768px]:h-auto">
       <!-- Sidebar: channel list -->
       <aside max-[768px]:absolute max-[768px]:top-0 max-[768px]:left-0 max-[768px]:z-30 max-[768px]:h-full max-[768px]:w-65 max-[768px]:min-w-65 max-[768px]:max-w-65 max-[768px]:flex-none max-[768px]:shadow-[4px_0_16px_var(--scrim)] max-[768px]:data-[collapsed=true]:w-65 max-[768px]:data-[collapsed=true]:min-w-65 max-[768px]:data-[collapsed=true]:max-w-65 max-[768px]:data-[collapsed=true]:-translate-x-full max-[768px]:data-[collapsed=true]:shadow-none class="group flex w-65 max-w-80 min-w-50 flex-none basis-65 flex-col overflow-hidden border-r border-rule bg-bg translate-x-0 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none [&>*]:min-w-50 data-[collapsed=true]:pointer-events-none data-[collapsed=true]:-translate-x-full data-[collapsed=true]:border-r-transparent min-[769px]:data-[collapsed=true]:m-0 min-[769px]:data-[collapsed=true]:w-0 min-[769px]:data-[collapsed=true]:min-w-0 min-[769px]:data-[collapsed=true]:max-w-0 min-[769px]:data-[collapsed=true]:basis-0 min-[769px]:data-[collapsed=true]:translate-x-0 min-[769px]:data-[collapsed=true]:overflow-hidden min-[769px]:data-[collapsed=true]:p-0 min-[769px]:data-[collapsed=true]:transition-none" id="chat-sidebar">
@@ -580,7 +580,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </form>
     </dialog>
   </div>
-  <div class="view" id="view-kanban" role="tabpanel" aria-labelledby="tab-kanban" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-kanban" role="tabpanel" aria-labelledby="tab-kanban" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Kanban</h2>
@@ -668,7 +668,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
 
   </div>
-  <div class="view" id="view-models" role="tabpanel" aria-labelledby="tab-models" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-models" role="tabpanel" aria-labelledby="tab-models" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Models</h2>
@@ -772,7 +772,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="sr-only" id="models-status" role="status" aria-live="polite"></p>
     </section>
   </div>
-  <div class="view" id="view-knowledge" role="tabpanel" aria-labelledby="tab-knowledge" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-knowledge" role="tabpanel" aria-labelledby="tab-knowledge" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Knowledge</h2>
@@ -809,7 +809,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="sr-only" id="knowledge-status" role="status" aria-live="polite"></p>
     </section>
   </div>
-  <div class="view" id="view-prompts" role="tabpanel" aria-labelledby="tab-prompts" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-prompts" role="tabpanel" aria-labelledby="tab-prompts" tabindex="-1" hidden>
     <!-- Saved snippets: user-created, synced via /api/prompts, accessible via / in composer -->
     <section>
       <div class="section-head">
@@ -850,7 +850,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
     </section>
   </div>
-  <div class="view" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-tools" role="tabpanel" aria-labelledby="tab-tools" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Tools</h2>
@@ -867,7 +867,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
     </section>
   </div>
-  <div class="view" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
+  <div data-view="true" class="" id="view-system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1" hidden>
     <nav class="mb-4 flex flex-wrap gap-2 [&_button]:min-h-8 [&_button]:px-3 [&_button]:py-0.5 [&_button]:font-sans [&_button]:text-xs [&_button]:font-medium" aria-label="On this page">
       <button type="button" data-system-jump="system-progress">Progress</button>
       <button type="button" data-system-jump="system-usage">Usage</button>

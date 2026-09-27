@@ -650,6 +650,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   board's rows are class lists in `features/board.js`; the rest live on the
   elements. First paint 57.8 → 58.0K gz.
 
+- A view's shell is one component rule keyed by the marker a view carries:
+  the column fills the main area and scrolls, its focus ring is drawn inside
+  its edge, and its sections stack on the cabinet rhythm. Eleven views (and a
+  plugin's shell, built in `core/plugins.js`) carried nine utilities each for
+  this; the `.view` class is gone, and so are the rules that styled it. First
+  paint 58.0 → 58.2K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

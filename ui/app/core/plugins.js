@@ -193,7 +193,7 @@ function syncTablistOwns(tablist) {
    Returns the <section> the addon's `mount` is handed. */
 function makeViewShell(id, title, group) {
   var panel = document.createElement("div");
-  panel.className = "view";
+  panel.setAttribute("data-view", "true");
   panel.id = "view-" + id;
   panel.setAttribute("role", "tabpanel");
   panel.setAttribute("aria-labelledby", "tab-" + id);

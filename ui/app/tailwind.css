@@ -4140,6 +4140,20 @@
 .\[\&\:\:before\]\:hidden::before {
   display: none;
 }
+.\[\&\:focus\]\:outline-none:focus {
+  --tw-outline-style: none;
+  outline-style: none;
+}
+.\[\&\:focus-visible\]\:outline-2:focus-visible {
+  outline-style: var(--tw-outline-style);
+  outline-width: 2px;
+}
+.\[\&\:focus-visible\]\:-outline-offset-2:focus-visible {
+  outline-offset: calc(2px * -1);
+}
+.\[\&\:focus-visible\]\:outline-accent:focus-visible {
+  outline-color: var(--accent);
+}
 .\[hidden\]\:hidden:is(hidden) {
   display: none;
 }
@@ -4159,11 +4173,26 @@
 .\[\&\:not\(\[hidden\]\)\]\:grid:not([hidden]) {
   display: grid;
 }
+.\[\&\:not\(\[hidden\]\)\]\:min-h-0:not([hidden]) {
+  min-height: 0px;
+}
+.\[\&\:not\(\[hidden\]\)\]\:w-full:not([hidden]) {
+  width: 100%;
+}
+.\[\&\:not\(\[hidden\]\)\]\:flex-auto:not([hidden]) {
+  flex: auto;
+}
 .\[\&\:not\(\[hidden\]\)\]\:flex-col:not([hidden]) {
   flex-direction: column;
 }
 .\[\&\:not\(\[hidden\]\)\]\:overflow-hidden:not([hidden]) {
   overflow: hidden;
+}
+.\[\&\:not\(\[hidden\]\)\]\:overflow-y-auto:not([hidden]) {
+  overflow-y: auto;
+}
+.\[\&\:not\(\[hidden\]\)\]\:overscroll-contain:not([hidden]) {
+  overscroll-behavior: contain;
 }
 @media (width < 768px) {
   .max-\[768px\]\:\[\&\:not\(\[hidden\]\)\]\:block:not([hidden]) {
@@ -4193,6 +4222,35 @@
 }
 .\[\&\>li\+li\]\:mt-2 > li + li {
   margin-top: var(--space-2);
+}
+.\[\&\>section\]\:w-full > section {
+  width: 100%;
+}
+.\[\&\>section\]\:max-w-none > section {
+  max-width: none;
+}
+.\[\&\>section\+section\]\:mt-6 > section + section {
+  margin-top: var(--space-6);
+}
+.\[\&\>section\+section\]\:border-t > section + section {
+  border-top-style: var(--tw-border-style);
+  border-top-width: 1px;
+}
+.\[\&\>section\+section\]\:border-rule > section + section {
+  border-color: var(--rule);
+}
+.\[\&\>section\+section\]\:pt-4 > section + section {
+  padding-top: var(--space-4);
+}
+.\[\&\>section\:first-child\]\:mt-0 > section:first-child {
+  margin-top: 0px;
+}
+.\[\&\>section\:first-child\]\:border-t-0 > section:first-child {
+  border-top-style: var(--tw-border-style);
+  border-top-width: 0px;
+}
+.\[\&\>section\:first-child\]\:pt-0 > section:first-child {
+  padding-top: 0px;
 }
 .\[\&\>span\]\:block > span {
   display: block;
@@ -4764,6 +4822,34 @@
   }
   .md-task input {
     margin-inline-end: var(--space-2);
+  }
+  [data-view="true"]:not([hidden]) {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  [data-view="true"]:focus {
+    outline: none;
+  }
+  [data-view="true"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  [data-view="true"] > section {
+    width: 100%;
+    max-width: none;
+  }
+  [data-view="true"] > section + section {
+    margin-top: var(--space-5);
+    border-top: 1px solid var(--rule);
+    padding-top: var(--space-4);
+  }
+  [data-view="true"] > section:first-child {
+    margin-top: 0;
+    border-top: 0;
+    padding-top: 0;
   }
   [data-rail="sidebar"][data-collapsed="true"] [data-short] {
     font-size: 0;

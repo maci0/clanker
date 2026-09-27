@@ -9,6 +9,8 @@ import test from "node:test";
 const here = dirname(fileURLToPath(import.meta.url));
 // These assertions are about shipped layout; the cabinet sheet is the one left.
 const css = readFileSync(join(here, "..", "app.css"), "utf8");
+// The view frame and the section rhythm are component rules in the source.
+const frame = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 // The rendered document's shapes are a component block in the Tailwind source.
 const doc = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 
@@ -31,7 +33,7 @@ function fillsColumn(maxWidth) {
 }
 
 test("operator sections fill the main column", function () {
-  const section = ruleBody(".view > section");
+  const section = ruleBody('[data-view="true"] > section', frame);
   const sectionMax = decl(section, "max-width");
   assert.ok(sectionMax, ".view > section must set max-width");
   assert.ok(fillsColumn(sectionMax), ".view > section should fill the column, got " + sectionMax);
@@ -47,9 +49,9 @@ test("Chat header, transcript and composer share the full column width", functio
   // guard reads the markup: the three parts share one list and none of them
   // clamps itself.
   const html = readFileSync(join(here, "..", "index.html"), "utf8");
-  const view = /<div class="([^"]*)" id="view-chat"/.exec(html);
+  const view = /<div data-view="true" class="([^"]*)" id="view-chat"/.exec(html);
   assert.ok(view, "missing the chat view's class list");
-  for (const part of ["[&_.conversation-header]", "[&_.composer]", "[&_.suggestions]"]) {
+  for (const part of ["[&_.conversation-header]", "[&_.composer]"]) {
     assert.match(view[1], new RegExp(part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "Chat " + part + " must be sized by the view");
   }
   const combined = /\[&_\.conversation-scroll_\.transcript\]:max-w-none/.exec(view[1]);

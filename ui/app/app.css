@@ -408,17 +408,12 @@ main {
 }
 /* Operator pages and Chat fill the main column. A leftover 46rem cap on
    Chat left a stripe of text in a wide window. */
-.view > section { max-width: none; width: 100%; }
-
 /* Conversation column: header / scrollport / docked composer, full width. */
 /* Suggestions belong to the empty state only; once a turn exists the column
    is transcript over docked composer with nothing beneath it. */
 /* Idle Chat is a work-order stack, not a centered chat-product hero:
    legend plate, composer, jobs. Session verbs and find wait until a
    turn exists (they stay in the palette). */
-.view:not(#view-chat):not([hidden]) {
-  flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain;
-}
 /* ---- tabs: one view at a time ---- Everything used to be stacked in one column, so reaching Tools meant scrolling past the whole transcript, the run graph and every room. */
 /* Legend plates down the rail: engraved caps in mono, a lamp beside the channel that is engaged. */
 /* Selected channel: longhand + !important so PF . cannot leave light greys on dark rails (same class of leak as plain/primary buttons). */
@@ -428,18 +423,13 @@ main {
    outward has to swap with it or an RTL rail opens its groups sideways. */
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
-.view[hidden] { display: none; }
 /* Any flex/grid element with [hidden] would otherwise still paint: the
    author display beats the UA [hidden] rule. Patch individually would
    whack-a-mole; catch all. Must sit after component display rules.
    Keep the explicit form[hidden] selector the test looks for too. */
 form[hidden] { display: none; }
 [hidden] { display: none !important; }
-.view:focus { outline: none; }
-.view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* The first section inside a view has nothing above it to be separated from. */
-.view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
-
 /* ---- transcript: a running list of turns, chat-style ---- */
 /* A turn is a job on the panel's record: seamed off from the one above,
    its number stamped in the margin, a blue strip lit while it runs.
@@ -585,7 +575,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   opacity: 1;
 }
 section { margin-top: var(--space-3); border-top: 0; padding-top: 0; }
-.view > section + section { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
 .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); min-width: 0; }
 .subsection-head { margin-top: var(--space-5); }
 .section-output { margin-top: var(--space-3); }

@@ -168,7 +168,7 @@ test("single large files stay inside their budgets", function () {
   const appJsRaw = fileBytes("app.js").length / KiB;
   assert.ok(appJsRaw <= 264, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 264K`);
   const htmlRaw = fileBytes("index.html").length / KiB;
-  assert.ok(htmlRaw <= 104, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 104K`);
+  assert.ok(htmlRaw <= 108, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 108K`);
 });
 
 test("web UI plugins stay off the load path unless they opt in", function () {

@@ -302,6 +302,7 @@ function loadHost(page, extras) {
     // The rail tab's class list lives in core/ui.js, whose import this sandbox
     // strips; the string itself is not what these tests look at.
     RAIL_TAB_CLASS: "rail-tab",
+    VIEW_CLASS: "view-shell",
     searchFoldFind: () => {},
     searchFold: (s) => String(s),
     wireRefresh: () => {},

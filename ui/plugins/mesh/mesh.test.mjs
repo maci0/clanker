@@ -66,7 +66,7 @@ test("the visibility guard reads the panel the host hides, not the section", fun
 
   // What the host hands mount, and what the host hides.
   assert.match(loader, /spec\.mount\.call\(spec, section,/);
-  assert.match(loader, /panel\.className = "view"/);
+  assert.match(loader, /panel\.setAttribute\("data-view", "true"\)/);
   assert.match(host, /panel\.hidden = !on/);
 
   assert.doesNotMatch(
