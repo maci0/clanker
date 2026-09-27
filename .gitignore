@@ -39,11 +39,10 @@ config.local.toml
 .grok/
 
 # User-local agent coordination and machine state (task board, locks, scratch).
-# No trailing slash: this can be a symlink and must not be stageable as a
-# regular Git entry.
+# Two rules because git matches a symlink as a file: the no-trailing-slash root
+# rule catches `.local` when it is a symlink, the directory rule catches the
+# real directory a nested worktree or run stages.
 /.local
-
-# User-local agent coordination and machine state (task board, locks, scratch)
 .local/
 
 # Editor / OS junk

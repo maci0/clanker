@@ -2716,6 +2716,10 @@ fn verifyGates(gpa: std.mem.Allocator, io: std.Io, arena: std.mem.Allocator) !vo
     defer js_suites.deinit(gpa);
     try reportGate(io, "js-suite-coverage", js_suites);
 
+    var tool_helpers = try gate_checks.toolHelperCoverageGate(gpa, io, std.Io.Dir.cwd());
+    defer tool_helpers.deinit(gpa);
+    try reportGate(io, "tool-helper-coverage", tool_helpers);
+
     var webui_budget = try gate_checks.webuiBudgetGate(gpa, io, std.Io.Dir.cwd());
     defer webui_budget.deinit(gpa);
     try reportGate(io, "webui-budget", webui_budget);

@@ -408,6 +408,12 @@ Deterministic evals live in `src/evals/` (harness) with task definitions in `eva
   `build.zig` as a `bun test` step. The web UI suites are named one by one
   there rather than handed a directory, so an unregistered suite is simply
   never run and the green suite output cannot show it.
+- `tool-helper-coverage`: every `tools/zig/*.zig` holding a top-level `test`
+  block is listed in `host_tested_helpers` in `build.zig`. A wasm guest
+  cannot run its own tests, so that list is the only path a helper's tests
+  take into the test binary; a helper nobody adds a name for keeps its tests
+  unrun, and `zig build test` reports green because the missing tests are not
+  in its output.
 - `sandbox-abi`: every `pub fn ck…` in `src/sandbox/host.zig` is registered
   with the zwasm linker in `src/sandbox/runtime.zig`. An unregistered one is
   not a capability waiting to be granted, it is unreachable: no guest can
@@ -631,7 +637,7 @@ Tools are discovered by the registry (`src/toolhost/registry.zig`) from the conf
 | `zig build test` | Run the unit and integration tests |
 | `zig build test -Dtest-filter="<name>"` | Run only the Zig unit tests whose name contains the substring (compile-time filter; a filter matching nothing passes with 0 tests, and the JS suites still run). A JS-only loop runs one suite directly: `bun test ui/app/core/scroll.test.mjs`, or every suite at once: `bun test ui/app` (bun walks the directory itself) |
 | `zig build fmt` | Format-check committed Zig (`src`, `tests`, `tools`, `ui`, `vendor`, `build.zig`) |
-| `clanker gate` | Build, test, tools, fmt, lint, provider-kind, test-root-coverage, js-suite-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory, skills-inventory, dep-patches. Does not build the standalone proxy. |
+| `clanker gate` | Build, test, tools, fmt, lint, provider-kind, test-root-coverage, js-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory, skills-inventory, dep-patches. Does not build the standalone proxy. |
 | `scripts/verify.sh` | Mirror the full CI verify job locally: shellcheck, oxlint, `bun audit` of both JS toolchains, the `tools/ts` and Tailwind CSS rebuild-and-diffs, SBOM generation, ruff, the state backup and restore drills, then `zig build` + `clanker gate` + `zig build e2e`. The checks CI runs that `clanker gate` does not live only in `.github/workflows/ci.yml` otherwise |
 | `tools/ts/verify.sh` | Rebuild `tools/ts/*.ts` into a scratch dir and diff against the committed `tools/ts/dist/*.wasm`, to catch drift `clanker gate` cannot see (requires bun) |
 
@@ -897,7 +903,7 @@ iter 2
 | `eval [name] [--tasks] [--seed N]` | Run evals; `--seed` pins the tool-RNG seed so a run replays byte-identically |
 | `improve-self [--provider P] [--model M] [--iters N] [--dry-run] "<instructions>"` | Run the self-improvement loop |
 | `revert <id>` | Revert a promoted improvement |
-| `gate` | Run the deterministic gates on the current checkout: build, test, tools, fmt, lint, provider-kind, test-root-coverage, js-suite-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory, skills-inventory, dep-patches |
+| `gate` | Run the deterministic gates on the current checkout: build, test, tools, fmt, lint, provider-kind, test-root-coverage, js-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory, skills-inventory, dep-patches |
 | `autolearn` | Aggregate usage from `state/autolearn.jsonl` + `state/runs/` and update the ROADMAP's Autolearn section |
 | `git` | Git passthrough (everything after `git` is passed through) |
 | `mcp` | Serve tools over MCP (stdio) |

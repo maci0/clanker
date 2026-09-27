@@ -103,12 +103,13 @@ const gate_invariants = [_]struct { file: []const u8, needle: []const u8 }{
     .{ .file = "src/cli.zig", .needle = "@import(\"gate/checks.zig\")" },
     // cli.zig's verifyGates is how an operator runs the whole gate over a
     // promotion (`clanker gate`). The promote path calls build/test/tools/
-    // fmt/lint directly from this unwritable file, but the seven checks below
+    // fmt/lint directly from this unwritable file, but the checks below
     // run ONLY there, and their implementations sit in writable checks.zig:
     // deleting the call is the one way to stop them failing that leaves both
     // files looking intact.
     .{ .file = "src/cli.zig", .needle = "gate_checks.testRootCoverageGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.jsSuiteCoverageGate(" },
+    .{ .file = "src/cli.zig", .needle = "gate_checks.toolHelperCoverageGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.sandboxAbiGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.toolsTsToolchainGate(" },
     .{ .file = "src/cli.zig", .needle = "gate_checks.releaseContractGate(" },
@@ -3416,7 +3417,7 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         // the fixtures below fail on the gate they are about, not on this
         // one.
         .{ .sig = "fn resolveZigBin(", .required = "return gpa.dupe(u8, zig_exe) catch null;", .allow = &.{"accessAbsolute"}, .indent = 8 },
-        // The seven clanker-gate-only checks run ONLY from cli.zig's
+        // The clanker-gate-only checks run ONLY from cli.zig's
         // verifyGates (`clanker gate`, and cmdImproveSelf's post-merge
         // verification). gate_invariants pins their call sites, but a gutted
         // implementation under a kept call site passes every needle: same
@@ -3433,6 +3434,8 @@ fn checksZigShapeBroken(src: []const u8) ?[]const u8 {
         .{ .sig = "fn scanForUnrootedTests(", .required = "misses += 1;", .allow = &.{}, .indent = 8 },
         .{ .sig = "fn jsSuiteCoverageGate(", .required = "return scanUnrunJsSuites(gpa, io, dir, build_src);", .allow = &.{}, .indent = 4 },
         .{ .sig = "fn scanUnrunJsSuites(", .required = "misses += 1;", .allow = &.{"no ui/ dir"}, .indent = 8 },
+        .{ .sig = "fn toolHelperCoverageGate(", .required = "return scanUnrunToolHelpers(gpa, io, dir, build_src);", .allow = &.{}, .indent = 4 },
+        .{ .sig = "fn scanUnrunToolHelpers(", .required = "misses += 1;", .allow = &.{"no tools/zig/ dir"}, .indent = 8 },
         .{ .sig = "fn sandboxAbiGate(", .required = "return scanUnregisteredHostFns(gpa, host_src, runtime_src);", .allow = &.{}, .indent = 4 },
         .{ .sig = "fn scanUnregisteredHostFns(", .required = "misses += 1;", .allow = &.{}, .indent = 8 },
         .{ .sig = "fn toolsTsToolchainGate(", .required = "if (std.mem.find(u8, lock, \"sha512-\") == null) {", .allow = &.{}, .indent = 4 },
@@ -4179,6 +4182,22 @@ const ok_cli_gates =
     \\    };
     \\    for (suites.items) |rel| {
     \\        if (buildRegistersJsSuite(build_src, rel)) continue;
+    \\        misses += 1;
+    \\    }
+    \\}
+    \\pub fn toolHelperCoverageGate() !GateResult {
+    \\    const build_src = dir.readFileAlloc(io, "build.zig", gpa, .limited(4 << 20)) catch {
+    \\        return .{ .ok = false, .label = "tool-helper-coverage", .detail = "unreadable" };
+    \\    };
+    \\    return scanUnrunToolHelpers(gpa, io, dir, build_src);
+    \\}
+    \\fn scanUnrunToolHelpers() !GateResult {
+    \\    dir.openDir(io, "tools/zig", .{ .iterate = true }) catch |err| switch (err) {
+    \\        error.FileNotFound => return .{ .ok = true, .label = "tool-helper-coverage", .detail = "no tools/zig/ dir" },
+    \\        else => return .{ .ok = false, .label = "tool-helper-coverage", .detail = "unwalkable" },
+    \\    };
+    \\    for (helpers) |stem| {
+    \\        if (buildRegistersToolHelper(list, stem)) continue;
     \\        misses += 1;
     \\    }
     \\}
@@ -5228,7 +5247,7 @@ test "a patch that strips a clanker-gate-only check from verifyGates is rejected
 test "a patch that deletes verifyGates' post-merge caller is rejected" {
     // The promotion gates run against staging before anything lands; this
     // call is the one grading pass over the merged result everyone else
-    // works in. Deleting it leaves all seven check sites inside verifyGates
+    // works in. Deleting it leaves every check site inside verifyGates
     // intact, so the caller itself is what has to be pinned.
     try expectInvariantCaught("src/cli.zig", "if (!opts.dry_run) {\n        try verifyGates(gpa, io", "");
 }

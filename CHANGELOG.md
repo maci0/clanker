@@ -7,6 +7,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Added
 
+- `tool-helper-coverage` gate: every `tools/zig/*.zig` holding a top-level
+  `test` block must be listed in `host_tested_helpers` in `build.zig`. A
+  wasm guest cannot run its own tests and the host test build compiles one
+  module per name in that list, so a helper nobody adds a name for keeps its
+  tests unrun while `zig build test` reports green, since the missing tests
+  are not in its output. `test-root-coverage` already covers `src/` and
+  `js-suite-coverage` the UI suites; this is the same hole over the tool
+  helpers.
 - The web UI gains a Tailwind 4 sheet (`ui/app/tailwind.css`), compiled from
   `ui/app/tailwind.src.css` with `bun run css:build` and embedded by the
   `webui` guest like every other asset. It is served render-blocking after

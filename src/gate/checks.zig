@@ -1789,6 +1789,126 @@ test "scanUnrunJsSuites names a suite zig build test would never run" {
     try std.testing.expect(std.mem.find(u8, result.detail, ".test.mjs") != null);
 }
 
+// ------------------------------------------- tool-helper coverage gate --
+
+/// The body of `host_tested_helpers` in `build.zig`, or null when the array
+/// is gone or renamed. Scoped to that one literal because `linked_helpers`
+/// spells the same stems as quoted strings beside it and builds no test
+/// module: a helper listed only there has no `test` run, so a search over the
+/// whole file would pass it.
+fn hostTestedHelperList(build_src: []const u8) ?[]const u8 {
+    const opener = "host_tested_helpers = [_][]const u8{";
+    const start = std.mem.indexOf(u8, build_src, opener) orelse return null;
+    const from = start + opener.len;
+    const end = std.mem.indexOfScalarPos(u8, build_src, from, '}') orelse return null;
+    return build_src[from..end];
+}
+
+/// True when `build.zig` gives `stem` a module in the host test build. The
+/// quotes are part of the needle, so `cards` is not satisfied by
+/// `cards_extra`.
+fn buildRegistersToolHelper(list: []const u8, stem: []const u8) bool {
+    var buf: [128]u8 = undefined;
+    const needle = std.fmt.bufPrint(&buf, "\"{s}\"", .{stem}) catch return true;
+    return std.mem.find(u8, list, needle) != null;
+}
+
+/// `host_tested_helpers` is the only way a `tools/zig` helper's `test` blocks
+/// reach the test binary: a guest wasm module cannot run them, and the host
+/// test build compiles one module per name in that hand-written list. A
+/// helper with tests that nobody adds a name for compiles fine and its tests
+/// never run, which `zig build test` reports as green because the missing
+/// tests are not in its output at all. That is the same silent hole
+/// testRootCoverageGate closes for `src/`, one directory over, and it is
+/// just as invisible by construction.
+pub fn toolHelperCoverageGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
+    const build_src = dir.readFileAlloc(io, "build.zig", gpa, .limited(4 << 20)) catch {
+        return .{ .ok = false, .label = "tool-helper-coverage", .detail = "build.zig could not be read" };
+    };
+    defer gpa.free(build_src);
+    return scanUnrunToolHelpers(gpa, io, dir, build_src);
+}
+
+/// The gate's body with the build file's text passed in, so a test can pin
+/// the failing verdict against a `build.zig` that lists nothing.
+fn scanUnrunToolHelpers(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir, build_src: []const u8) !GateResult {
+    const list = hostTestedHelperList(build_src) orelse
+        return .{ .ok = false, .label = "tool-helper-coverage", .detail = "build.zig has no host_tested_helpers list" };
+
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const scope = dir.openDir(io, "tools/zig", .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return .{ .ok = true, .label = "tool-helper-coverage", .detail = "no tools/zig/ dir (ok on a minimal checkout)" },
+        else => return .{ .ok = false, .label = "tool-helper-coverage", .detail = "tools/zig/ could not be walked" },
+    };
+    defer scope.close(io);
+
+    var misses: usize = 0;
+    var miss_buf: [4096]u8 = undefined;
+    var miss_w: std.Io.Writer = .fixed(&miss_buf);
+    var it = scope.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        const rel = try std.fmt.allocPrint(arena, "tools/zig/{s}", .{entry.name});
+        const content = readWholeFile(dir, io, gpa, rel) catch |err| {
+            log.log(.warn, "tool-helper-coverage: could not read {s}: {s}", .{ rel, @errorName(err) });
+            return .{ .ok = false, .label = "tool-helper-coverage", .detail = "a tool helper could not be scanned" };
+        };
+        defer gpa.free(content);
+        if (!hasTopLevelTest(content)) continue;
+        const stem = entry.name[0 .. entry.name.len - ".zig".len];
+        if (buildRegistersToolHelper(list, stem)) continue;
+        misses += 1;
+        miss_w.print("{s}; ", .{rel}) catch {};
+    }
+    if (misses == 0) return .{ .ok = true, .label = "tool-helper-coverage" };
+    // miss_buf is this frame's stack. Same aliasing convention as lintGate,
+    // testRootCoverageGate and scanUnrunJsSuites: detail and stderr share one
+    // owned copy, freed exactly once by deinit.
+    const owned = try std.fmt.allocPrint(
+        gpa,
+        "these tools/zig helpers have test blocks that never run; add their stem to host_tested_helpers in build.zig: {s}",
+        .{miss_w.buffered()},
+    );
+    return .{ .ok = false, .label = "tool-helper-coverage", .detail = owned, .stderr = owned };
+}
+
+test "hostTestedHelperList scopes to the array beside linked_helpers" {
+    const src = "const host_tested_helpers = [_][]const u8{ \"cards\", \"num\" };\n" ++
+        "const linked_helpers = [_][]const u8{ \"skills_logic\" };\n";
+    const list = hostTestedHelperList(src).?;
+    try std.testing.expect(buildRegistersToolHelper(list, "cards"));
+    try std.testing.expect(!buildRegistersToolHelper(list, "skills_logic"));
+    try std.testing.expect(!buildRegistersToolHelper(list, "cards_extra"));
+    try std.testing.expect(hostTestedHelperList("pub fn build(b: *std.Build) void {}\n") == null);
+}
+
+test "toolHelperCoverageGate passes on the live checkout" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var result = try toolHelperCoverageGate(gpa, io, std.Io.Dir.cwd());
+    defer result.deinit(gpa);
+    try std.testing.expect(result.ok);
+}
+
+test "scanUnrunToolHelpers names a helper zig build test would never run" {
+    const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const empty_list = "const host_tested_helpers = [_][]const u8{};\n";
+    var result = try scanUnrunToolHelpers(gpa, io, std.Io.Dir.cwd(), empty_list);
+    defer result.deinit(gpa);
+    try std.testing.expect(!result.ok);
+    try std.testing.expect(std.mem.find(u8, result.detail, "tools/zig/") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "host_tested_helpers") != null);
+}
+
 // ---------------------------------------------- reports inventory gate --
 
 /// The states `reports status` writes. One vocabulary on both sides of the

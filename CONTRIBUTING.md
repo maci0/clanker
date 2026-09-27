@@ -54,7 +54,8 @@ Three speeds, slowest last:
 ## What must pass
 
 - `clanker gate` — build, test, tools, fmt, lint, and the self-integrity
-  gates (provider-kind, test-root-coverage, js-suite-coverage, webui-budget,
+  gates (provider-kind, test-root-coverage, js-suite-coverage, tool-helper-coverage,
+  webui-budget,
   sandbox-abi, tools-ts-toolchain, release-contract, reports-inventory,
   skills-inventory, dep-patches). This is what the self-improvement loop
   demands of its own proposals, so a human change must clear the same bar.
