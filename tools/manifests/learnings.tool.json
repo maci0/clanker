@@ -11,6 +11,7 @@
   "fs_prefixes": [
     "state/learnings.md"
   ],
+  "fs_read_only": true,
   "network_allow": [],
   "category": "knowledge",
   "confirm": false

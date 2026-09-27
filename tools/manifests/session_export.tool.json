@@ -12,7 +12,8 @@
         "type": "string"
       },
       "return_html": {
-        "type": "boolean"
+        "type": "boolean",
+        "description": "Return the rendered document in the \"html\" field instead of writing it to disk. Nothing is stored, so a later forget has no file to remove. The response's \"path\" is where the file would have gone, not one that exists."
       },
       "format": {
         "type": "string",

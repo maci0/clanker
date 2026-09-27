@@ -61,6 +61,7 @@
   "fs_prefixes": [
     "chains"
   ],
+  "fs_read_only": true,
   "category": "agent",
   "config": {
     "chains_dir": "chains",

@@ -356,6 +356,13 @@ fn chatFanout(out: *lib.Out, alloc: std.mem.Allocator, peers: []const Peer, req:
     try s.beginObject();
     try s.objectField("ok");
     try s.write(true);
+    // The id this broadcast went out under. `notify` echoes it (and
+    // failWithId echoes it on the failure path) because a retry only dedups
+    // on the receiving end if the caller reuses the same one; a fan-out is
+    // the same situation with more peers to get right, so the id the caller
+    // did not choose is handed back here too.
+    try s.objectField("id");
+    try s.write(generated_id);
     try s.objectField("results");
     try s.beginArray();
     for (peers) |p| {

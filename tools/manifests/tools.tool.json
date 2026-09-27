@@ -9,6 +9,7 @@
   "fs_prefixes": [
     "tools/manifests"
   ],
+  "fs_read_only": true,
   "internal": true,
   "category": "harness"
 }

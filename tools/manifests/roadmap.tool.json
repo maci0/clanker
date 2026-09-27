@@ -19,6 +19,7 @@
   "fs_prefixes": [
     "docs/ROADMAP.md"
   ],
+  "fs_read_only": true,
   "network_allow": [],
   "category": "knowledge",
   "confirm": false

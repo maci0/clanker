@@ -14,6 +14,7 @@
   "fs_prefixes": [
     "state/logs/"
   ],
+  "fs_read_only": true,
   "internal": true,
   "confirm": false,
   "category": "harness"

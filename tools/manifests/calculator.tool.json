@@ -27,7 +27,15 @@
           "^"
         ]
       }
-    }
+    },
+    "oneOf": [
+      {
+        "required": ["expr"]
+      },
+      {
+        "required": ["a", "b", "op"]
+      }
+    ]
   },
   "network_allow": [],
   "fuel": 100000000,

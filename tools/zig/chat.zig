@@ -94,11 +94,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             else if (std.mem.eql(u8, op, "subscribe"))
                 lib.fail(out, "chat subscribe needs \"room\", and optionally \"on\" (true to join, false to leave)")
             else if (std.mem.eql(u8, op, "react"))
-                lib.fail(out, "chat react needs \"room\", \"msg_id\", and \"emoji\"")
+                // react/edit/delete are keyed on msg_id alone; the host takes
+                // no room for them, so naming one here would send a caller
+                // after a field its descriptor does not declare.
+                lib.fail(out, "chat react needs \"msg_id\" and a non-empty \"emoji\" of at most 64 chars")
             else if (std.mem.eql(u8, op, "edit"))
-                lib.fail(out, "chat edit needs \"room\", \"msg_id\", and \"text\"")
+                lib.fail(out, "chat edit needs \"msg_id\" and \"text\" (at most 4096 chars)")
             else if (std.mem.eql(u8, op, "delete"))
-                lib.fail(out, "chat delete needs \"room\" and \"msg_id\"")
+                lib.fail(out, "chat delete needs \"msg_id\"")
             else if (std.mem.eql(u8, op, "topic"))
                 lib.fail(out, "chat topic needs \"room\" (and \"topic\" to set)")
             else if (std.mem.eql(u8, op, "pin"))
