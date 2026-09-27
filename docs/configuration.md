@@ -622,7 +622,9 @@ A second process on the same host uses another `id`, `listen_port`,
   itself as). `proxy` (default false) mounts an OpenAI/Anthropic compatibility
   surface at `/proxy/v1` on the same socket; `proxy_port` is an optional second
   listener with `/v1` at the root. `proxy_token_env` names an env var holding
-  a local token (never a secret in TOML); `proxy_aliases` maps client-facing
+  a local token (never a secret in TOML); a variable that is unset *or set to
+  empty* means no token, so the proxy serves unauthenticated and warns at
+  startup when bound to a non-loopback host. `proxy_aliases` maps client-facing
   model names to configured `provider/model` ids. `proxy_first_byte_timeout_s`
   and `proxy_idle_timeout_s` default to 300 and 60 seconds respectively; `0`
   disables either ceiling. The weakest of three layers —

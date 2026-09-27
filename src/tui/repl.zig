@@ -66,6 +66,7 @@ const Agent = agent_loop.Agent;
 const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
+const elapsed_mod = @import("../util/elapsed.zig");
 const syntax = @import("syntax.zig");
 const theme_mod = @import("theme.zig");
 const width_mod = @import("width.zig");
@@ -80,7 +81,6 @@ const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");
 const slash_plugins = @import("slash_plugins.zig");
 const session_sync = @import("../peers/session_sync.zig");
-const elapsed = @import("../util/elapsed.zig");
 
 /// Redraw cadence while a turn is streaming: ~30fps, so streamed tokens land
 /// smoothly instead of in visible 50ms (20fps) batches. Idle, no timer runs.

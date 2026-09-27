@@ -143,22 +143,35 @@ pub fn isLoopbackHost(addr: []const u8) bool {
     return std.mem.eql(u8, addr, "127.0.0.1") or std.mem.eql(u8, addr, "::1") or std.ascii.eqlIgnoreCase(addr, "localhost");
 }
 
-/// True when the proxy is actually token-protected: `proxy_token_env` names an
-/// environment variable that is present and non-empty.
+/// The proxy secret this configuration resolves to, or null when the proxy is
+/// not token-protected.
 ///
-/// The request-site guard only runs when the variable resolves to a value, so
-/// a config that declares `proxy_token_env` but leaves the variable unset (or
-/// empty) serves with no auth at all. `proxy_token_env == null` and "set but
-/// the variable is absent" are two spellings of the same condition — "the
-/// proxy is not token-protected" — and a startup warning must catch both. This
-/// is the check that warning needs, and it keeps the request site and the
-/// warning from drifting apart.
+/// "Not protected" has two spellings, and both have to land on null: no
+/// `proxy_token_env` at all, and a named variable that is unset *or set to
+/// empty*. The empty case is the one that bites: `.env.example` ships
+/// `CLANKER_PROXY_TOKEN=` as a placeholder, and `environ_map.get` answers a
+/// present-but-empty variable with `""`, so a request-site guard written
+/// against `get` alone sent that empty string to `authorize`, which rejects
+/// every request including ones carrying no token at all. The proxy answered
+/// 401 to everything while the startup warning, reading the same environment,
+/// reported it as serving without auth.
+///
+/// One resolver, so the request site and the warning cannot disagree about
+/// what "set" means. A variable that is set to empty means "no token", never
+/// "the empty token".
+pub fn token(serve: *const config.Serve, environ_map: *std.process.Environ.Map) ?[]const u8 {
+    const env_name = serve.proxy_token_env orelse return null;
+    if (env_name.len == 0) return null;
+    const value = environ_map.get(env_name) orelse return null;
+    return if (value.len == 0) null else value;
+}
+
+/// True when the proxy is actually token-protected: `proxy_token_env` names an
+/// environment variable that is present and non-empty. The startup warning in
+/// `cmdServe` and in `proxy_main` is the only caller, and it must agree with
+/// the request site by construction, which is what `token` above buys.
 pub fn tokenInEffect(serve: *const config.Serve, environ_map: *std.process.Environ.Map) bool {
-    if (serve.proxy_token_env) |env_name| {
-        if (env_name.len == 0) return false;
-        if (environ_map.get(env_name)) |value| return value.len > 0;
-    }
-    return false;
+    return token(serve, environ_map) != null;
 }
 
 pub fn familyOf(v1_path: []const u8, headers_raw: []const u8) Family {
@@ -1961,4 +1974,36 @@ test "tokenInEffect is true only when the named variable is present and non-empt
     empty.serve.proxy_token_env = "EMPTY_TOKEN";
     try env.put("EMPTY_TOKEN", "");
     try std.testing.expect(!tokenInEffect(&empty.serve, &env));
+}
+
+test "an empty proxy token variable resolves to no token, not the empty token" {
+    // `.env.example` ships `CLANKER_PROXY_TOKEN=` as a placeholder, so a
+    // present-but-empty variable is the shape an operator actually has. The
+    // request site must take it from the same resolver the warning reads, and
+    // must not hand "" to `authorize`: that rejected every request, including
+    // ones with no token at all, while the warning said the proxy was serving
+    // unauthenticated.
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+    try env.put("PROXY_TOKEN", "");
+
+    var empty = config.Config{};
+    empty.serve.proxy_token_env = "PROXY_TOKEN";
+    try std.testing.expectEqual(@as(?[]const u8, null), token(&empty.serve, &env));
+
+    var unset = config.Config{};
+    unset.serve.proxy_token_env = "ABSENT_TOKEN";
+    try std.testing.expectEqual(@as(?[]const u8, null), token(&unset.serve, &env));
+
+    var no_env = config.Config{};
+    try env.put("PROXY_TOKEN", "s3cret");
+    // No proxy_token_env: the variable being set is irrelevant, there is no
+    // name to read it through.
+    try std.testing.expectEqual(@as(?[]const u8, null), token(&no_env.serve, &env));
+    try std.testing.expectEqualStrings("s3cret", token(&empty.serve, &env).?);
+
+    // The empty name is a config mistake, not a lookup of "".
+    var blank_name = config.Config{};
+    blank_name.serve.proxy_token_env = "";
+    try std.testing.expectEqual(@as(?[]const u8, null), token(&blank_name.serve, &env));
 }

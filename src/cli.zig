@@ -3298,7 +3298,12 @@ fn cmdProvidersModels(init: std.process.Init, opts: Options) !void {
     }
     const url = try std.fmt.allocPrint(arena, "{s}/models", .{std.mem.trimEnd(u8, provider.base_url, "/")});
     const bearer = if (provider.api_key_env) |env_name| blk: {
+        // Empty means "no key", the same rule auth.resolve and the doctor
+        // report apply. A present-but-empty variable must not become a
+        // literal `Authorization: Bearer `, which every provider answers 401
+        // and which reads as a rejected real key rather than an unset one.
         const key = init.environ_map.get(env_name) orelse break :blk null;
+        if (key.len == 0) break :blk null;
         break :blk try std.fmt.allocPrint(arena, "Bearer {s}", .{key});
     } else null;
     // Same fetch and same budget as `GET /api/providers/models`: one provider's
@@ -8133,15 +8138,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const on_proxy = proxy.isProxyPath(path, surface);
         var proxy_authorized = false;
         if (on_proxy) {
-            if (cfg.serve.proxy_token_env) |env_name| {
-                if (environ_map.get(env_name)) |expected| {
-                    switch (proxy.authorize(headers_raw, expected)) {
-                        .ok => proxy_authorized = true,
-                        .missing, .mismatch => {
-                            request_status = proxy.writeAuthError(stream, method, proxy.stripProxyPrefix(path, surface), headers_raw);
-                            return;
-                        },
-                    }
+            if (proxy.token(&cfg.serve, environ_map)) |expected| {
+                switch (proxy.authorize(headers_raw, expected)) {
+                    .ok => proxy_authorized = true,
+                    .missing, .mismatch => {
+                        request_status = proxy.writeAuthError(stream, method, proxy.stripProxyPrefix(path, surface), headers_raw);
+                        return;
+                    },
                 }
             }
         }
@@ -12038,7 +12041,10 @@ fn handleProviderModels(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.C
     };
     const url = std.fmt.allocPrint(arena, "{s}/models", .{std.mem.trimEnd(u8, provider.base_url, "/")}) catch return;
     const bearer = if (provider.api_key_env) |env_name| blk: {
+        // Present but empty is "no key", not the empty key: see the same
+        // guard on the CLI's `clanker providers models` fetch.
         const key = environ_map.get(env_name) orelse break :blk null;
+        if (key.len == 0) break :blk null;
         break :blk std.fmt.allocPrint(arena, "Bearer {s}", .{key}) catch null;
     } else null;
     // Bounded like `writeLiveModels`, off the same knob and for the same
@@ -12295,7 +12301,10 @@ fn writeLiveModels(
     if (base.len == 0) return;
     const url = std.fmt.allocPrint(arena, "{s}/models", .{base}) catch return;
     const bearer = if (provider.api_key_env) |env_name| blk: {
+        // Present but empty is "no key", not the empty key: see the same
+        // guard on the CLI's `clanker providers models` fetch.
         const key = environ_map.get(env_name) orelse break :blk null;
+        if (key.len == 0) break :blk null;
         break :blk std.fmt.allocPrint(arena, "Bearer {s}", .{key}) catch null;
     } else null;
     const body = httpGetWithTimeout(io, gpa, arena, url, bearer, budget_ms) orelse return;
