@@ -582,14 +582,58 @@ fn themeFromId(id: ThemeId) Theme {
     };
 }
 
-/// `default` unless `NO_COLOR` is set (to any non-empty value, matching the
-/// https://no-color.org/ convention) or `name` asks for `"mono"`, an
-/// explicit `--theme mono`/config value wins even if `NO_COLOR` is unset.
+/// The palette an unconfigured terminal gets when it can show 24-bit colour.
+/// Mocha: the first of the Catppuccin flavours the picker lists, dark, and the
+/// one the REPL's own tests already draw in, so the default and the tested
+/// rendering are the same colours.
+pub const autodetected: Theme = Theme.mocha;
+
+/// Whether the terminal advertises 24-bit colour.
+///
+/// Terminals do not answer that in a query the way they answer a device
+/// attribute, so this reads the environment every modern terminal sets:
+/// `COLORTERM=truecolor`/`24bit` (kitty, ghostty, WezTerm, iTerm2, foot,
+/// contour, VTE, rio), a `-direct` `TERM` (mlterm, some BSD consoles), or a
+/// `TERM_PROGRAM` whose emulator is truecolor regardless of what it exports as
+/// `TERM` (Terminal.app and the JetBrains and VS Code terminals all say
+/// `xterm-256color`). `TERM=xterm-256color` alone is deliberately *not* enough:
+/// that names 256 indexed colours, and sending 24-bit sequences to a terminal
+/// that honours only 16 of them is how an unreadable REPL happens.
+pub fn truecolorSupported(environ_map: *const std.process.Environ.Map) bool {
+    if (environ_map.get("COLORTERM")) |v| {
+        if (std.ascii.eqlIgnoreCase(v, "truecolor") or std.ascii.eqlIgnoreCase(v, "24bit")) return true;
+    }
+    if (environ_map.get("TERM")) |v| {
+        if (std.mem.indexOf(u8, v, "direct") != null) return true;
+    }
+    if (environ_map.get("TERM_PROGRAM")) |v| {
+        for (truecolor_term_programs) |p| {
+            if (std.ascii.eqlIgnoreCase(v, p)) return true;
+        }
+    }
+    return false;
+}
+
+const truecolor_term_programs = [_][]const u8{
+    "Apple_Terminal",
+    "Hyper",
+    "MacTerm",
+    "WezTerm",
+    "ghostty",
+    "iTerm.app",
+    "rio",
+    "vscode",
+};
+
+/// The palette for a session that named no theme: the autodetected RGB one
+/// where the terminal can render it, `default` (16-colour, bold-and-dim) where
+/// it cannot. Naming a theme, `--theme mono`, or `NO_COLOR` all still win.
 pub fn select(name: ?[]const u8, environ_map: *const std.process.Environ.Map) Theme {
     if (name) |n| {
         if (theme_by_name.get(n)) |id| return themeFromId(id);
     }
     if (no_color.requested(environ_map)) return Theme.mono;
+    if (truecolorSupported(environ_map)) return autodetected;
     return Theme.default;
 }
 
@@ -785,6 +829,33 @@ test "select accepts every Catppuccin flavour by name" {
     try std.testing.expectEqualStrings(Theme.latte.syn_keyword, select("latte", &map).syn_keyword);
     try std.testing.expectEqualStrings(Theme.frappe.syn_keyword, select("frappe", &map).syn_keyword);
     try std.testing.expectEqualStrings(Theme.macchiato.syn_keyword, select("macchiato", &map).syn_keyword);
+}
+
+test "a truecolor terminal gets a palette, and the escape checks still win" {
+    var map = std.process.Environ.Map.init(std.testing.allocator);
+    defer map.deinit();
+
+    // No signal at all: the 16-colour palette, as before.
+    try std.testing.expectEqualStrings(Theme.default.reset, select(null, &map).reset);
+    // COLORTERM is how iTerm2, kitty, ghostty, WezTerm and foot all say so.
+    try map.put("COLORTERM", "truecolor");
+    try std.testing.expect(truecolorSupported(&map));
+    try std.testing.expectEqual(autodetected.rgb, select(null, &map).rgb);
+    try map.put("COLORTERM", "24bit");
+    try std.testing.expect(truecolorSupported(&map));
+    // 256 indexed colours is not 24-bit; that terminal keeps the 16-colour one.
+    try map.put("COLORTERM", "256color");
+    try map.put("TERM", "xterm-256color");
+    try std.testing.expect(!truecolorSupported(&map));
+    try std.testing.expectEqual(Theme.default.rgb, select(null, &map).rgb);
+    // A truecolor emulator that exports a 256-colour TERM still counts.
+    try map.put("TERM_PROGRAM", "ghostty");
+    try std.testing.expect(truecolorSupported(&map));
+    try std.testing.expectEqual(autodetected.rgb, select(null, &map).rgb);
+    // NO_COLOR outranks both, and a named theme outranks everything.
+    try map.put("NO_COLOR", "1");
+    try std.testing.expectEqual(Theme.mono.rgb, select(null, &map).rgb);
+    try std.testing.expectEqual(Theme.dracula.rgb, select("dracula", &map).rgb);
 }
 
 test "Tokyo Night uses tokyonight.nvim's own role assignment" {

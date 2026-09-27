@@ -339,11 +339,11 @@ Open (roughly most-noticed first; the bar is grok / kimi / opencode's CLIs):
       composer is still open (vaxis drag events not yet wired).
 - [x] **Plan mode toggle.** `/plan [on|off]` updates `Agent.plan_mode`; bare
       `/plan` toggles it, matching the web UI's propose-then-apply control.
-- [ ] **Truecolor autodetection.** `/theme` shipped (registered in
-      `command_registry`, a `PickerKind` in the same modal `/model` uses), so
-      the RGB palettes are reachable without setting `CLANKER_THEME`. What
-      remains is autodetecting truecolor support so a capable terminal gets
-      colour by default instead of the bold-only 16-colour theme.
+- [x] **Truecolor autodetection.** `theme.select` reads the terminal's own
+      advertisement (`COLORTERM`, a `-direct` `TERM`, a truecolor
+      `TERM_PROGRAM`) and gives an unnamed session the mocha RGB palette;
+      `TERM=xterm-256color` alone still gets the 16-colour one, and `NO_COLOR`,
+      `--theme mono` and a named theme each still win.
 
 ## Open questions / future work
 
