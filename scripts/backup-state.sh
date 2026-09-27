@@ -55,32 +55,41 @@ mkdir -p "$backup_root"
 trap 'rm -rf -- "$staging"' EXIT
 mkdir "$staging"
 
-# Session databases are WAL-mode SQLite (`src/util/sqlite.zig` sets
-# journal_mode=WAL; one db per conversation under `state/sessions/<id>.db`)
-# and stay open for the life of a serve/repl. A plain rsync of a hot WAL pair
-# can capture a main db plus sidecar that never existed together on disk:
-# committed turns live in `<id>.db-wal`, and a torn or mismatched pair does
-# not load on restore. Checkpointing each database immediately before the
-# copy moves every committed transaction into the main db file, so the
-# snapshot is a consistent single file even though writers continue
-# afterwards (their later commits land in a fresh wal the next run
-# checkpoints). This is maintenance, not a durability change: nothing about
-# how clanker writes is altered. Without the sqlite3 CLI the copy falls back
-# to today's crash-consistent behavior and says so instead of pretending.
-checkpoint_session_wal() {
+# Every SQLite database in the store is WAL-mode (`src/util/sqlite.zig` sets
+# journal_mode=WAL on open) and stays open for the life of a serve/repl: one
+# per conversation under `state/sessions/<id>.db`, the replicated
+# conversations of every peer under `state/mesh/<owner>/sessions/<id>.db`
+# (`src/peers/session_sync.zig`), and the derived cross-session search index
+# at `state/session_fts.db`. A plain rsync of a hot WAL pair can capture a
+# main db plus sidecar that never existed together on disk: committed turns
+# live in `<id>.db-wal`, and a torn or mismatched pair does not load on
+# restore. Checkpointing each database immediately before the copy moves
+# every committed transaction into the main db file, so the snapshot is a
+# consistent single file even though writers continue afterwards (their later
+# commits land in a fresh wal the next run checkpoints). This is
+# maintenance, not a durability change: nothing about how clanker writes is
+# altered. Without the sqlite3 CLI the copy falls back to today's
+# crash-consistent behavior and says so instead of pretending.
+state_databases() {
+    find "$state_root" -type f -name '*.db' 2>/dev/null | sort
+}
+checkpoint_state_wal() {
     command -v sqlite3 >/dev/null 2>&1 || {
-        printf 'note: sqlite3 not found; session snapshots stay crash-consistent (wal not checkpointed)\n' >&2
+        printf 'note: sqlite3 not found; state snapshots stay crash-consistent (wal not checkpointed)\n' >&2
         return 0
     }
+    # Read through a while-read loop, not `for db in $(...)`: a storage root
+    # with a space in it (a mounted volume, a macOS volume name) is one
+    # word-split path per database otherwise.
     local db
-    for db in "$state_root"/sessions/*.db; do
-        [ -e "$db" ] || return 0
+    while IFS= read -r db; do
+        [ -n "$db" ] || continue
         sqlite3 -- "$db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 ||
             printf 'warning: wal checkpoint on %s did not complete; its snapshot stays crash-consistent\n' \
-                "$(basename -- "$db")" >&2
-    done
+                "${db#"$state_root"/}" >&2
+    done < <(state_databases)
 }
-checkpoint_session_wal
+checkpoint_state_wal
 
 for entry in state:state agents:.agents local:.local; do
     name=${entry%%:*}
@@ -143,20 +152,40 @@ done
 # A snapshot is only a backup if the current system can load it. quick_check
 # runs against the *staged copy* -- what a restore would actually read -- so
 # corruption introduced by the copy itself (or by an uncheckpointable hot wal
-# pair) fails this run instead of surfacing during the incident. A failing
-# database refuses promotion: `latest` keeps pointing at the last good
-# snapshot, and the journal shows which store to look at.
+# pair) fails this run instead of surfacing during the incident. Every
+# database in the snapshot is checked, the replicated peer conversations
+# (`state/mesh/<owner>/sessions/`) included: they are conversations this
+# instance holds and no longer has a live peer to re-sync from.
+#
+# A failing conversation database refuses promotion: `latest` keeps pointing
+# at the last good snapshot, and the journal shows which store to look at. The
+# search index is the one exception, and deliberately so: it is derived from
+# the session databases, rebuilt as sessions are saved, and read fail-open
+# (a missing or corrupt index costs a linear scan, `src/agent/session_fts.zig`).
+# Blocking every backup on it would turn a rebuildable index into an outage
+# of the backup itself, so it is reported and the run continues. Deleting the
+# file restores full search.
 verify_snapshot_dbs() {
     command -v sqlite3 >/dev/null 2>&1 || return 0
-    local db result
-    for db in "$staging"/state/sessions/*.db; do
-        [ -e "$db" ] || return 0
-        if ! result=$(sqlite3 -- "$db" "PRAGMA quick_check;" 2>&1) || [ "$result" != "ok" ]; then
-            printf 'error: staged %s failed integrity check (%s); refusing to promote a corrupt snapshot\n' \
-                "$(basename -- "$db")" "${result:-sqlite3 failed}" >&2
-            return 1
+    local db rel result
+    while IFS= read -r db; do
+        [ -n "$db" ] || continue
+        rel=${db#"$staging/"}
+        if result=$(sqlite3 -- "$db" "PRAGMA quick_check;" 2>&1) && [ "$result" = "ok" ]; then
+            continue
         fi
-    done
+        case "$rel" in
+            state/session_fts.db)
+                printf 'warning: staged %s failed integrity check (%s); the search index is derived and rebuilds itself, snapshot kept\n' \
+                    "$rel" "${result:-sqlite3 failed}" >&2
+                ;;
+            *)
+                printf 'error: staged %s failed integrity check (%s); refusing to promote a corrupt snapshot\n' \
+                    "$rel" "${result:-sqlite3 failed}" >&2
+                return 1
+                ;;
+        esac
+    done < <(find "$staging/state" -type f -name '*.db' 2>/dev/null | sort)
 }
 if ! verify_snapshot_dbs; then
     exit 1

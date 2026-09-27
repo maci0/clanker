@@ -31,17 +31,26 @@ next run — they dominate snapshot size (gigabytes vs. tens of megabytes of
 real store) and would dominate restore time, so they stay out the same way
 `.clanker-worktrees/` is not covered by design.
 
-**Session databases.** Sessions are one WAL-mode SQLite database per
-conversation (`state/sessions/<id>.db`) and stay open for as long as a
-serve/repl runs, so a plain copy can catch a main db and `-wal` sidecar that
-never existed together. When the `sqlite3` CLI is available the script
-checkpoints every session database immediately before copying (committed
-turns move into the main db file; no durability setting changes), then runs
+**State databases.** Every SQLite database in the store is WAL-mode and stays
+open for as long as a serve/repl runs, so a plain copy can catch a main db and
+`-wal` sidecar that never existed together. That is one database per
+conversation (`state/sessions/<id>.db`), one per replicated peer conversation
+(`state/mesh/<owner>/sessions/<id>.db`, conversations this instance holds and
+cannot re-sync from a live peer), and the derived cross-session search index
+(`state/session_fts.db`). When the `sqlite3` CLI is available the script
+checkpoints every one of them immediately before copying (committed turns move
+into the main db file; no durability setting changes), then runs
 `PRAGMA quick_check` against each staged database and refuses to promote a
 snapshot whose copy does not load — `latest` keeps pointing at the last good
-snapshot and the journal names the store at fault. Without `sqlite3` the run
-falls back to a crash-consistent copy and says so. Text stores (`*.jsonl`)
-keep their known torn-last-line tolerance either way.
+snapshot and the journal names the store at fault. The search index is the one
+exception, and deliberately: it is derived from the session databases,
+rebuilds as sessions are saved, and is read fail-open (a missing or corrupt
+index costs a linear scan, `src/agent/session_fts.zig`), so it is reported as
+a warning and the snapshot is kept — blocking every backup on a rebuildable
+index would be an outage of the backup itself. Deleting `state/session_fts.db`
+restores full search. Without `sqlite3` the run falls back to a
+crash-consistent copy and says so. Text stores (`*.jsonl`) keep their known
+torn-last-line tolerance either way.
 
 `clanker-state-backup.timer` runs at `:00` and `:30`. Its persistent setting
 runs one catch-up backup when the user systemd manager returns after downtime.
@@ -75,7 +84,14 @@ single-failure-domain trade-off. To buy a second domain, set `CLANKER_BACKUP_OFF
 destination outside the storage root (another disk, or another machine:
 `user@host:/vol/clanker-backups`); every successful run mirrors the whole
 backup root there, and a failed mirror fails the run loudly rather than
-leaving a silently stale second copy. The mirror never gets `--delete`: local
+leaving a silently stale second copy. That variable (and the retention and
+freshness bounds) belongs in
+`${XDG_CONFIG_HOME:-~/.config}/clanker/state-backup.env`, which both units
+read through `EnvironmentFile=-` and which the installer creates with the
+options commented out. It has to be a file: a timer-run service starts with
+systemd's own environment, so exporting the variable in a shell never reached
+the timer, and the second failure domain would have silently not existed.
+The mirror never gets `--delete`: local
 retention prunes do not propagate, so one deletion path cannot destroy both
 copies (reclaim mirror space with a deliberate manual `rsync -a --delete`).
 
@@ -96,9 +112,14 @@ rather than claiming it holds anything.
 **Restore verification.** A backup that has never been restored is a
 hypothesis. `scripts/verify-backup.sh` restores a snapshot's entries into a
 scratch directory, compares them byte-for-byte against the snapshot, opens
-every restored session database with `PRAGMA quick_check`, and prints the copy
-time. A restore that copies faithfully but does not load is a failure, not a
-pass. The install wires it as `clanker-state-verify.timer`, a weekly drill
+every restored database with `PRAGMA quick_check` (the search index warned
+about, never fatal, for the reason above), and prints the copy time. A
+restore that copies faithfully but does not load is a failure, not a pass.
+Both scripts are exercised by `scripts/test_backup_state.py` and
+`scripts/test_verify_backup.py`, which CI runs: nothing else in the build
+executes them, so a regression in either reaches a machine as the first sign
+of an incident. The install wires the drill as
+`clanker-state-verify.timer`, a weekly drill
 (Saturdays 03:17, catch-up run after downtime) so restore verification does
 not depend on anyone remembering; run it by hand before every incident-time
 restore so RTO stops being an unknown:

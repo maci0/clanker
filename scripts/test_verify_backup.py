@@ -65,6 +65,43 @@ class VerifyBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("does not load", result.stderr)
 
+    def snapshot_with(self, name: str, files: dict[str, bytes]) -> Path:
+        """Build a snapshot holding arbitrary `relpath -> bytes` under state/."""
+        snap = self.backup_root / name
+        for rel, data in files.items():
+            path = snap / "state" / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+        latest = self.backup_root / "latest"
+        if latest.is_symlink() or latest.exists():
+            latest.unlink()
+        latest.symlink_to(name)
+        return snap
+
+    def test_replicated_conversation_that_does_not_load_fails_the_drill(self) -> None:
+        # A peer's conversations are held here and no longer re-syncable from
+        # a live peer, so a replica that does not open is as unrestorable as
+        # a local session database.
+        self.snapshot_with(
+            "20260901T120000Z", {"mesh/peer/sessions/s9.db": b"not a sqlite database"}
+        )
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not load", result.stderr)
+        self.assertIn("mesh/peer/sessions/s9.db", result.stderr)
+
+    @unittest.skipIf(shutil.which("sqlite3") is None, "sqlite3 CLI not installed")
+    def test_corrupt_derived_search_index_does_not_fail_the_drill(self) -> None:
+        # The search index rebuilds from the session databases and is read
+        # fail-open, so it must not declare the rest of the store unrestorable.
+        self.snapshot_with(
+            "20260901T120000Z",
+            {"session_fts.db": b"not a sqlite database", "sessions/s1.db": self.healthy_db()},
+        )
+        result = self.run_verify()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("search index is derived", result.stderr)
+
     def test_stale_newest_snapshot_fails_the_drill(self) -> None:
         snap = self.snapshot("20260901T120000Z", self.healthy_db())
         old = time.time() - 3 * DAY

@@ -33,6 +33,35 @@ ln -sfn "$script_dir/verify-backup.sh" "$user_bin/clanker-state-verify"
 # different checkout, and replace a stale link (the checkout moved) first.
 user_units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$user_units"
+
+# The unit files read their tunables (`CLANKER_BACKUP_OFFSITE_DEST`,
+# `CLANKER_BACKUP_RETENTION_DAYS`, `CLANKER_BACKUP_MAX_AGE_SECONDS`) from this
+# env file. A timer-run service inherits systemd's environment, not the
+# operator's shell, so without it those settings are unreachable from the
+# timer -- which is the same as having no second failure domain. Creating the
+# directory here is what makes the path in the unit resolve.
+backup_env_dir="${XDG_CONFIG_HOME:-$HOME/.config}/clanker"
+mkdir -p "$backup_env_dir"
+if [ ! -e "$backup_env_dir/state-backup.env" ]; then
+    cat >"$backup_env_dir/state-backup.env" <<'ENV'
+# Read by clanker-state-backup.service and clanker-state-verify.service.
+# KEY=VALUE lines; comments and blank lines are ignored.
+#
+# Second failure domain. Unset, snapshots stay on the storage root's own
+# disk and a loss of that volume takes them with the store.
+# CLANKER_BACKUP_OFFSITE_DEST=/mnt/offsite/clanker-backups
+#
+# Age after which a snapshot is deleted (0 keeps every one, and so keeps the
+# whole point-in-time restore window). Default 30.
+# CLANKER_BACKUP_RETENTION_DAYS=30
+#
+# How old the newest snapshot may be before the weekly drill fails. Four
+# missed 30-minute intervals. Default 7200.
+# CLANKER_BACKUP_MAX_AGE_SECONDS=7200
+ENV
+    printf 'wrote %s/state-backup.env (set CLANKER_BACKUP_OFFSITE_DEST there for a second failure domain)\n' \
+        "$backup_env_dir"
+fi
 link_unit() {
     local unit="$1"
     local target

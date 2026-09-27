@@ -152,7 +152,12 @@ done
 # Byte-for-byte equality with the snapshot only proves the copy was faithful.
 # What an incident needs is a database the restored tree can actually open, so
 # the restored copies (not the snapshot's) are the ones checked: a snapshot
-# whose wal was never checkpointed can diff clean and still fail to load.
+# whose wal was never checkpointed can diff clean and still fail to load. Every
+# database in the restored store is opened, the replicated peer conversations
+# (`state/mesh/<owner>/sessions/`) included. The derived search index is
+# reported rather than fatal for the reason `backup-state.sh` gives: it
+# rebuilds from the session databases and is read fail-open, so it is not a
+# reason to declare the rest of the store unrestorable.
 command -v sqlite3 >/dev/null 2>&1 || {
     printf 'note: sqlite3 not found; the restored session databases were not opened\n' >&2
     printf 'ok: %s restored %s entries (%s KiB) in %ss and matches the snapshot\n' \
@@ -160,15 +165,25 @@ command -v sqlite3 >/dev/null 2>&1 || {
     exit 0
 }
 check_restored_dbs() {
-    local db result
-    for db in "$scratch"/state/sessions/*.db; do
-        [ -e "$db" ] || return 0
-        if ! result=$(sqlite3 -- "$db" "PRAGMA quick_check;" 2>&1) || [ "$result" != "ok" ]; then
-            printf 'FAIL: restored %s does not load (%s) -- the snapshot is readable but not restorable\n' \
-                "$(basename -- "$db")" "${result:-sqlite3 failed}" >&2
-            return 1
+    local db rel result
+    while IFS= read -r db; do
+        [ -n "$db" ] || continue
+        rel=${db#"$scratch/"}
+        if result=$(sqlite3 -- "$db" "PRAGMA quick_check;" 2>&1) && [ "$result" = "ok" ]; then
+            continue
         fi
-    done
+        case "$rel" in
+            state/session_fts.db)
+                printf 'warning: restored %s does not load (%s); the search index is derived and rebuilds itself\n' \
+                    "$rel" "${result:-sqlite3 failed}" >&2
+                ;;
+            *)
+                printf 'FAIL: restored %s does not load (%s) -- the snapshot is readable but not restorable\n' \
+                    "$rel" "${result:-sqlite3 failed}" >&2
+                return 1
+                ;;
+        esac
+    done < <(find "$scratch/state" -type f -name '*.db' 2>/dev/null | sort)
 }
 check_restored_dbs || exit 1
 

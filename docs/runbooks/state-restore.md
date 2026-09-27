@@ -62,10 +62,17 @@ target size, treat RTO as unmeasured.
 Session databases are checkpointed before the copy and quick-checked after
 (when the `sqlite3` CLI is present), so what lands in a snapshot loads; if
 the checkpoint could not complete for a hot database the run says so in its
-output. The text stores (`*.jsonl`) are still copied each file as it is read,
-so a tail caught mid-append may carry a torn last line. Every later check
-reads such files leniently, but verify after restore (below) rather than
-assuming.
+output. The same holds for the replicated peer conversations under
+`state/mesh/<owner>/sessions/`, which this instance may have no live peer to
+re-sync from: a copy that does not load is as fatal to the snapshot as a local
+one. The one database a failed check does not block the backup on is
+`state/session_fts.db`, the derived search index: it rebuilds from the session
+databases and is read fail-open, so the run reports it and keeps the snapshot.
+Deleting that file restores full search; `clanker session search` falls back
+to a linear scan until it rebuilds. The text stores (`*.jsonl`) are still copied
+each file as it is read, so a tail caught mid-append may carry a torn last
+line. Every later check reads such files leniently, but verify after restore
+(below) rather than assuming.
 
 ## Diagnose
 
@@ -149,11 +156,13 @@ this runbook can manufacture a snapshot that does not exist.
   clanker-state-verify.service` prints `failed`.
 - A restore is only proven by a drill. `scripts/verify-backup.sh` is the
   drill: it restores a snapshot into a scratch directory, compares every
-  entry byte-for-byte, opens each restored session database
+  entry byte-for-byte, opens each restored database
   (`PRAGMA quick_check`), and reports the copy time. The install schedules it
   weekly (`clanker-state-verify.timer`, catch-up run after downtime), so the
   journal holds recent drill artifacts; run it once more before this
-  procedure on the exact snapshot you picked.
+  procedure on the exact snapshot you picked. The drill's own tests
+  (`scripts/test_verify_backup.py`, `scripts/test_backup_state.py`) run in CI,
+  so the check you are relying on is one that still passes.
 
 ## Escalate or follow up
 

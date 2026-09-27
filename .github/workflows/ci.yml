@@ -123,6 +123,14 @@ jobs:
           python3 -B -m unittest scripts.test_sbom
           python3 scripts/sbom.py -o /tmp/sbom.cdx.json
 
+      # `state/` is the only copy of every conversation, goal and ledger this
+      # harness keeps, and scripts/backup-state.sh + scripts/verify-backup.sh
+      # are the only things that make it recoverable. Nothing else in the
+      # build runs their tests, so a regression here would reach a machine as
+      # the first sign of an incident.
+      - name: Check state backup and restore drills
+        run: python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup
+
       # Python is a secondary language here (sbom.py, gen_frames.py, ...),
       # and nothing in CI executes most of it, so a defect would merge unseen.
       # ruff parses every tracked .py (a syntax error is a finding, so this

@@ -45,11 +45,15 @@ The script's own diagnostics are one line each and name the entry at fault:
   refuses rather than fake a backup.
 - `snapshot entry <name>/ did not materialize` — rsync copied nothing usable;
   the run refuses to promote an empty snapshot over `latest`.
-- `staged <db> failed integrity check` — a copied session database does not
-  pass `PRAGMA quick_check`; the run refuses to promote it and `latest`
+- `staged <db> failed integrity check` — a copied database (a conversation
+  under `state/sessions/` or a replicated one under `state/mesh/<owner>/`) does
+  not pass `PRAGMA quick_check`; the run refuses to promote it and `latest`
   keeps pointing at the last good snapshot. Expect this after disk trouble
   or when `sqlite3` was missing for a stretch (unccheckpointed hot wal pairs
-  can copy torn); re-run once `sqlite3` is present.
+  can copy torn); re-run once `sqlite3` is present. The same line for
+  `state/session_fts.db` is a warning, not a failure: that index is derived
+  from the session databases and rebuilds itself, and deleting the file
+  restores full search.
 - `error: mirroring to <dest> failed` — the off-site mirror named by
   `CLANKER_BACKUP_OFFSITE_DEST` did not update. The local snapshot just
   taken is complete; fix the destination and re-run so the second failure
@@ -72,6 +76,14 @@ The script's own diagnostics are one line each and name the entry at fault:
   path but has no promoted snapshot, so the second failure domain is empty or
   stale even though local runs succeed. Re-run the backup with the
   destination reachable.
+- local runs all succeed, no `mirrored backup root` line ever appears, and
+  `CLANKER_BACKUP_OFFSITE_DEST` looks set — the variable is in a shell, not
+  where the timer reads it. Both units read
+  `${XDG_CONFIG_HOME:-~/.config}/clanker/state-backup.env`, written by
+  `scripts/install-state-backup.sh`; a timer-run service inherits systemd's
+  environment, so an export in an interactive shell never reached it. Put the
+  destination there, `systemctl --user daemon-reload`, and re-run
+  `./scripts/backup-state.sh` to see the mirror line.
 
 Reproduce outside systemd, which prints the same line without the journal:
 

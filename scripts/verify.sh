@@ -53,6 +53,17 @@ else
     echo "python3 not installed; skipping SBOM check (CI will run it)"
 fi
 
+# The backup and restore-drill scripts are the only thing standing between
+# `state/` and an incident, and nothing else executes their tests, so a change
+# to either that stops checkpointing, refusing a corrupt store, or restoring
+# cleanly would otherwise merge unseen.
+step "State backup and restore drills (CI: Check state backup drills)"
+if command -v python3 >/dev/null 2>&1; then
+    python3 -B -m unittest scripts.test_backup_state scripts.test_verify_backup || status=1
+else
+    echo "python3 not installed; skipping state backup drills (CI will run them)"
+fi
+
 step "Python lint (CI: Lint Python)"
 if command -v ruff >/dev/null 2>&1; then
     if [ -n "$(git ls-files -z '*.py' | tr -d '\0')" ]; then
