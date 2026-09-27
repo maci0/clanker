@@ -139,6 +139,21 @@
   .rail-fold[open] > summary.rail-group::after { transform: rotate(45deg); }
   .rail-pin[data-on="true"] .icon path:nth-child(2) { fill: currentColor; }
 
+  /* The collapsed rail is a 3.5rem icon strip: each channel shows its
+     `data-short` stamp instead of its name, and the sections that are not
+     channels (the conversation list, the workspace picker, Set up) are gone.
+     A state rule reaching into descendants, which a utility on the sidebar
+     cannot express. */
+  [data-rail="sidebar"][data-collapsed="true"] [data-short] {
+    font-size: 0;
+    letter-spacing: 0;
+  }
+  [data-rail="sidebar"][data-collapsed="true"] [data-short]::after {
+    content: attr(data-short);
+    font-size: var(--step-0);
+  }
+  [data-rail="sidebar"][data-collapsed="true"] [data-rail-section] { display: none; }
+
   /* A dialog's backdrop is a pseudo-element the author has to style; the
      create-channel dialog and every uiConfirm/uiPrompt reuse it. */
   .slack-dialog::backdrop { background: var(--scrim); }

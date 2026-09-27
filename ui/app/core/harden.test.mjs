@@ -677,9 +677,11 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
     "the phone composer model selects must override the 12px desktop size");
   // These selectors set a smaller size after the page-wide guard. A later
   // 40rem block has to put 16px back or iOS Safari zooms the page on focus.
-  const rail = css.lastIndexOf(".rail input[type=\"search\"] { font-size: 16px; }");
-  const railDesktop = css.indexOf(".rail input[type=\"search\"] { width: 100%");
-  assert.ok(rail > railDesktop, "phone rail search must override the 12px desktop size");
+  // The rail's own search field carries its phone guard as a utility, like the
+  // other fields whose rule moved over.
+  const railField = /<input class="([^"]*)" type="search" id="session-filter"/.exec(html);
+  assert.ok(railField, "missing the rail's session filter");
+  assert.match(railField[1], /max-\[640px\]:\[font-size:16px\]/, "phone rail search must override the desktop size");
   const add = css.lastIndexOf(".board-quick-add .board-add-form textarea { font-size: 16px; }");
   const addDesktop = css.indexOf(".board-quick-add .board-add-form textarea {\n  width: 100%");
   assert.ok(add > addDesktop, "phone quick-add must override the 13px desktop size");

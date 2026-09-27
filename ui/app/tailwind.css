@@ -630,6 +630,9 @@
 .w-18 {
   width: calc(var(--spacing) * 18);
 }
+.w-60 {
+  width: calc(var(--spacing) * 60);
+}
 .w-65 {
   width: calc(var(--spacing) * 65);
 }
@@ -1135,6 +1138,10 @@
 .border-x-0 {
   border-inline-style: var(--tw-border-style);
   border-inline-width: 0px;
+}
+.border-e {
+  border-inline-end-style: var(--tw-border-style);
+  border-inline-end-width: 1px;
 }
 .border-t {
   border-top-style: var(--tw-border-style);
@@ -3346,8 +3353,32 @@
   }
 }
 @media (width < 640px) {
+  .max-\[640px\]\:fixed {
+    position: fixed;
+  }
+  .max-\[640px\]\:inset-y-0 {
+    inset-block: 0px;
+  }
+  .max-\[640px\]\:left-0 {
+    left: 0px;
+  }
+  .max-\[640px\]\:z-15 {
+    z-index: 15;
+  }
+  .max-\[640px\]\:hidden {
+    display: none;
+  }
+  .max-\[640px\]\:inline-flex {
+    display: inline-flex;
+  }
+  .max-\[640px\]\:h-auto {
+    height: auto;
+  }
   .max-\[640px\]\:min-h-11 {
     min-height: calc(var(--spacing) * 11);
+  }
+  .max-\[640px\]\:w-\[min\(20rem\,85vw\)\] {
+    width: min(20rem, 85vw);
   }
   .max-\[640px\]\:max-w-none {
     max-width: none;
@@ -3361,8 +3392,38 @@
   .max-\[640px\]\:basis-full {
     flex-basis: 100%;
   }
+  .max-\[640px\]\:bg-bg {
+    background-color: var(--bg);
+  }
   .max-\[640px\]\:\[font-size\:16px\] {
     font-size: 16px;
+  }
+  .max-\[640px\]\:shadow-\[0_0_3rem_color-mix\(in_srgb\,var\(--bg\)_70\%\,transparent\)\] {
+    --tw-shadow: 0 0 3rem var(--tw-shadow-color, var(--bg));
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .max-\[640px\]\:shadow-\[0_0_3rem_color-mix\(in_srgb\,var\(--bg\)_70\%\,transparent\)\] {
+      --tw-shadow: 0 0 3rem var(--tw-shadow-color, color-mix(in srgb,var(--bg) 70%,transparent));
+    }
+  }
+  .max-\[640px\]\:shadow-\[0_0_3rem_color-mix\(in_srgb\,var\(--bg\)_70\%\,transparent\)\] {
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+  .max-\[640px\]\:transition-transform {
+    transition-property: transform, translate, scale, rotate;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
+  .max-\[640px\]\:duration-150 {
+    --tw-duration: 150ms;
+    transition-duration: 150ms;
+  }
+  .max-\[640px\]\:data-\[open\=false\]\:invisible[data-open="false"] {
+    visibility: hidden;
+  }
+  .max-\[640px\]\:data-\[open\=false\]\:-translate-x-full[data-open="false"] {
+    --tw-translate-x: -100%;
+    translate: var(--tw-translate-x) var(--tw-translate-y);
   }
 }
 @media (width < 45rem) {
@@ -3434,8 +3495,14 @@
   .min-\[769px\]\:data-\[collapsed\=true\]\:w-0[data-collapsed="true"] {
     width: 0px;
   }
+  .min-\[769px\]\:data-\[collapsed\=true\]\:w-14[data-collapsed="true"] {
+    width: calc(var(--spacing) * 14);
+  }
   .min-\[769px\]\:data-\[collapsed\=true\]\:max-w-0[data-collapsed="true"] {
     max-width: 0px;
+  }
+  .min-\[769px\]\:data-\[collapsed\=true\]\:max-w-14[data-collapsed="true"] {
+    max-width: calc(var(--spacing) * 14);
   }
   .min-\[769px\]\:data-\[collapsed\=true\]\:min-w-0[data-collapsed="true"] {
     min-width: 0px;
@@ -3452,6 +3519,9 @@
   }
   .min-\[769px\]\:data-\[collapsed\=true\]\:p-0[data-collapsed="true"] {
     padding: 0px;
+  }
+  .min-\[769px\]\:data-\[collapsed\=true\]\:px-1[data-collapsed="true"] {
+    padding-inline: var(--space-1);
   }
   .min-\[769px\]\:data-\[collapsed\=true\]\:transition-none[data-collapsed="true"] {
     transition-property: none;
@@ -4183,6 +4253,17 @@
   }
   .rail-pin[data-on="true"] .icon path:nth-child(2) {
     fill: currentColor;
+  }
+  [data-rail="sidebar"][data-collapsed="true"] [data-short] {
+    font-size: 0;
+    letter-spacing: 0;
+  }
+  [data-rail="sidebar"][data-collapsed="true"] [data-short]::after {
+    content: attr(data-short);
+    font-size: var(--step-0);
+  }
+  [data-rail="sidebar"][data-collapsed="true"] [data-rail-section] {
+    display: none;
   }
   .slack-dialog::backdrop {
     background: var(--scrim);

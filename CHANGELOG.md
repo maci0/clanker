@@ -618,6 +618,14 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   preview. The options group and the confirm shape are `data-role` marks, so
   the sheet reads what the script writes. First paint 59.0K gz.
 
+- The rail's shell is utilities: its fixed width and its collapsed 3.5rem
+  icon strip, its scrollbar, the phone drawer with its open/closed attribute,
+  and the Menu/Collapse pair that swaps at that width. The collapsed strip
+  keeps one component rule — a state reaching into descendants to swap each
+  channel's name for its `data-short` stamp and hide the sections that are not
+  channels — which a utility on the sidebar cannot express. The rail's search
+  field carries its own phone guard. First paint 59.0 → 58.8K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

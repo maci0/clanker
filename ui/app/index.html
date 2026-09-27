@@ -54,7 +54,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <header class="basis-full border-b border-rule" id="app-masthead">
   <div class="flex min-w-0 items-center gap-3">
     <span class="flex items-center">
-      <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
+      <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg hidden max-[640px]:inline-flex" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
     </span>
     <div class="flex min-w-0 items-center">
       <!-- Same artwork as the favicon, so the tab and the panel wear one badge. -->
@@ -76,7 +76,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)]" id="instance-chip" hidden aria-hidden="true">connecting…</span>
     <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)]" id="peers-chip" hidden aria-hidden="true"></span>
     <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)]" id="session-chip" hidden aria-hidden="true">session …</span>
-    <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
+    <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg max-[640px]:hidden" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
     <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
     <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
     <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="theme-toggle" title="Choose theme" aria-haspopup="listbox" aria-expanded="false" aria-label="Theme: system">system</button>
@@ -91,7 +91,7 @@ lamps carry further). The seven named palettes ride the same tokens.
      them, so a sighted user gets the same message a screen reader is read. -->
 <div class="toasts" id="toasts"></div>
 <div class="hidden max-[640px]:[&[data-open=true]]:fixed max-[640px]:[&[data-open=true]]:inset-0 max-[640px]:[&[data-open=true]]:z-14 max-[640px]:[&[data-open=true]]:block max-[640px]:[&[data-open=true]]:bg-[color-mix(in_srgb,var(--bg)_60%,transparent)]" id="rail-scrim" data-open="false"></div>
-<aside class="rail" id="rail" aria-label="Navigation">
+<aside class="rail flex h-full w-60 max-w-none flex-none flex-col overflow-hidden overscroll-contain border-e border-rule bg-surface px-3 py-3 [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:var(--border)_transparent] max-[640px]:fixed max-[640px]:inset-y-0 max-[640px]:left-0 max-[640px]:z-15 max-[640px]:h-auto max-[640px]:w-[min(20rem,85vw)] max-[640px]:bg-bg max-[640px]:shadow-[0_0_3rem_color-mix(in_srgb,var(--bg)_70%,transparent)] max-[640px]:transition-transform max-[640px]:duration-150 max-[640px]:data-[open=false]:invisible max-[640px]:data-[open=false]:-translate-x-full min-[769px]:data-[collapsed=true]:w-14 min-[769px]:data-[collapsed=true]:max-w-14 min-[769px]:data-[collapsed=true]:px-1 motion-reduce:transition-none" data-rail="sidebar" id="rail" aria-label="Navigation">
   <div class="flex min-h-0 flex-1 flex-col">
   <!-- Session-first rail (DeepSeek Harness topology, cabinet tokens):
        Work destinations stay visible, conversations fill the column,
@@ -130,7 +130,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     </details>
   </nav>
 
-  <div class="mt-2 flex min-h-32 flex-1 flex-col border-t border-rule pt-2" id="rail-context">
+  <div class="mt-2 flex min-h-32 flex-1 flex-col border-t border-rule pt-2" data-rail-section="context" id="rail-context">
     <div class="flex flex-none flex-col gap-2">
       <div class="flex items-stretch gap-1 [&_select]:min-h-8 [&_select]:min-w-0 [&_select]:flex-1 [&_select]:font-sans [&_select]:text-sm [&_select]:max-[640px]:[font-size:16px]">
         <label class="sr-only" for="workspace-pick">Workspace</label>
@@ -140,7 +140,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <button type="button" class="min-h-9 w-full cursor-pointer rounded-capsule border border-accent bg-accent px-4 font-sans text-sm font-semibold text-on-accent hover:border-transparent hover:bg-[color-mix(in_srgb,var(--accent)_88%,black)]" id="new-chat">New chat</button>
       <label class="sr-only" for="session-filter">Filter conversations by title</label>
-      <input type="search" id="session-filter" placeholder="Filter by title…" autocomplete="off">
+      <input class="box-border min-h-8 w-full rounded-capsule border border-border bg-surface px-2 py-1 font-sans text-sm max-[640px]:[font-size:16px]" type="search" id="session-filter" placeholder="Filter by title…" autocomplete="off">
       <!-- The Archive action tells people to toggle this; without it an
            archived conversation could never be listed or unarchived again. -->
       <label class="flex cursor-pointer items-center gap-2 font-sans text-sm text-fg-muted [&_input]:m-0" for="archived-toggle">
@@ -150,7 +150,7 @@ lamps carry further). The seven named palettes ride the same tokens.
     <ul class="mt-4 flex min-h-0 flex-1 list-none flex-col gap-px overflow-y-auto overscroll-contain p-0 [scrollbar-color:transparent_transparent] [scrollbar-width:thin] hover:[scrollbar-color:var(--border)_transparent]" id="rail-list" aria-label="Conversations"></ul>
   </div>
 
-  <nav class="mt-auto flex-none border-t border-rule pt-2" aria-label="Set up">
+  <nav class="mt-auto flex-none border-t border-rule pt-2" data-rail-section="settings" aria-label="Set up">
     <details class="m-0 border-0 p-0 [&:not([open])>*:not(summary)]:hidden [&>summary]:cursor-pointer [&>summary]:list-none [&>summary::-webkit-details-marker]:hidden" id="rail-fold-setup">
       <summary class="flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-0 py-0.5 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg" id="rail-section-setup">Set up</summary>
       <section aria-labelledby="rail-section-setup">
