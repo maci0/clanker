@@ -22,6 +22,8 @@ pub const capabilities = [_][]const u8{
     "storage", "render", "session", "foldFind",  "boardTimeline",
     "el",      "status", "fmt",     "showView",  "van",
     "preact",  "html",   "signals", "kit",
+    "ui",      "overlay", "stream", "text",      "dom",
+    "color",   "goals",
 };
 
 /// Fresh `state/webui_plugins.json` is missing: Files is the Work surface
@@ -78,7 +80,7 @@ pub fn validCapability(cap: []const u8) bool {
 pub fn capabilitiesRejected(caps: []const []const u8) ?[]const u8 {
     for (caps) |c| {
         if (!validCapability(c))
-            return "unknown capability (get, post, del, live, emit, confirm, prompt, toast, workspace, icon, storage, render, session, foldFind, boardTimeline, el, status, fmt, showView, van, preact, html, signals)";
+            return "unknown capability (get, post, del, live, emit, confirm, prompt, toast, workspace, icon, storage, render, session, foldFind, boardTimeline, el, status, fmt, showView, van, preact, html, signals, kit, ui, overlay, stream, text, dom, color, goals)";
     }
     return null;
 }
@@ -165,6 +167,12 @@ test "capabilitiesRejected names the pluginApi surface" {
     // that formats bytes or switches views declares them like anything else.
     try std.testing.expect(capabilitiesRejected(
         &.{ "foldFind", "boardTimeline", "el", "status", "fmt", "showView", "van", "preact", "html", "signals" },
+    ) == null);
+    // The groups that carry the core helpers a built-in view imports, so an
+    // addon replacing one of those views can declare what it reaches for
+    // instead of shipping its own copy.
+    try std.testing.expect(capabilitiesRejected(
+        &.{ "kit", "ui", "overlay", "stream", "text", "dom", "color", "goals" },
     ) == null);
 }
 

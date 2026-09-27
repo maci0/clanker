@@ -1,10 +1,18 @@
 // Vanilla, no bundler. Web UI plugin host — view registration + asset loading.
-import { RAIL_TAB_CLASS, T, add, effect, showLoadError, state, toast, uiConfirm, uiPrompt, upgradePfButton } from "./ui.js";
+import { RAIL_TAB_CLASS, T, add, bind, effect, showLoadError, skeletonRows, state, toast, UI, uiConfirm, uiPrompt, runDetail, toolRow, upgradePfButton } from "./ui.js";
 import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from "../lib/markdown.js";
 import { boardTimeline } from "../lib/board.js";
-import { onLive } from "./stream.js";
+import { liveOk, makeLineSplitter, onLive, pumpInto } from "./stream.js";
+import { closeOverlay, openOverlay, trapOverlayTab } from "./overlay.js";
+import { copyText, loadD3, paintTomlInto, reducedMotion, scrollTo } from "./vendor.js";
+import { goalFields, goalPinnedColumn, goalSortKey, goalStatusLabel, goalWorktreeTitle } from "./goals.js";
+import { runLabel } from "./labels.js";
 import { icon } from "./icons.js";
-import { searchFoldFind, searchFold, wireRefresh, fmtUnit, fmtAgo, plural } from "./utils.js";
+import {
+  clip, cssColorAlpha, cssColorMix, escapeHtml, fmtDeadline,
+  fmtMs, fmtPct, fmtUnit, fmtAgo, fmtUsd, peerColor, plural,
+  providerUnusableReason, searchFoldFind, searchFold, themeToken, wireRefresh
+} from "./utils.js";
 
 export var pluginViews = {};
 
@@ -22,11 +30,17 @@ var _openSession = null;
 var _observeStatus = null;
 
 /* So a plugin filter matches what the host filters match, and a plugin
-   name sort collates instead of comparing code points. */
+   name sort collates instead of comparing code points. `ms`, `pct`, `usd`,
+   `deadline`, `runLabel` and `providerReason` are here for the same reason
+   the first six are: a built-in view that formats a run row, a percent, a
+   cost or a goal would otherwise carry a second copy of one of them. */
 function fmt() {
   return {
     bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime,
+    ms: fmtMs, pct: fmtPct, usd: fmtUsd, deadline: fmtDeadline,
     unit: fmtUnit, ago: fmtAgo, plural: plural,
+    runLabel: runLabel,
+    providerReason: providerUnusableReason,
     fold: searchFold,
     compare: function (a, b) { return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }); }
   };
@@ -144,7 +158,49 @@ export function pluginApi(spec) {
     kit: kitModule,
     // Kept under the old name so plugins written against the VanJS-era API
     // keep working: same tags/state/add semantics, now signals-backed.
-    van: { tags: T, state: state, add: add, derive: effect },
+    van: { tags: T, state: state, add: add, derive: effect, bind: bind },
+    // The page's own chrome (`core/ui.js`), which a built-in view imports by
+    // name: the empty/loading plate, the skeleton rows a list shows before its
+    // first answer, the run and tool rows, the button upgrade, the refresh
+    // wiring, and `UI`, the small kit of element builders. Without these an
+    // addon view that showed a run list or a settings form could not be
+    // written, only approximated.
+    ui: {
+      loadError: showLoadError,
+      skeletonRows: skeletonRows,
+      toolRow: toolRow,
+      runDetail: runDetail,
+      button: upgradePfButton,
+      refresh: wireRefresh,
+      kit: UI
+    },
+    // A modal dialog with focus handling (`core/overlay.js`). A view that
+    // confirms a destructive action or edits a record needs one, and building
+    // a second untrapped dialog in a plugin is how a page grows two
+    // incompatible modal behaviours.
+    overlay: { open: openOverlay, close: closeOverlay, trapTab: trapOverlayTab },
+    // A streaming read over `fetch`, the same three the chat composer uses
+    // (`core/stream.js`): split a body into whole lines, pump one into a
+    // container, and read whether the live bus is currently up.
+    stream: { lines: makeLineSplitter, pump: pumpInto, ok: liveOk },
+    // Text shaping shared with the transcript rows.
+    text: { clip: clip, escape: escapeHtml },
+    // Page-level DOM helpers (`core/vendor.js`) and the theme's colour
+    // helpers, so a view painting a peer or a themed chart reads the same
+    // tokens the page does instead of hardcoding a palette.
+    dom: {
+      copy: copyText, scrollTo: scrollTo, toml: paintTomlInto, d3: loadD3,
+      reducedMotion: reducedMotion
+    },
+    color: {
+      peer: peerColor, token: themeToken, alpha: cssColorAlpha, mix: cssColorMix
+    },
+    // Goal row helpers (`core/goals.js`), so a view listing goals reads one
+    // implementation of the sort key, the fields and the status label.
+    goals: {
+      sortKey: goalSortKey, fields: goalFields, statusLabel: goalStatusLabel,
+      worktreeTitle: goalWorktreeTitle, pinnedColumn: goalPinnedColumn
+    },
     // Component views: Preact + htm, vendored, put on window by preact-boot.
     preact: window.preact,
     html: window.html,

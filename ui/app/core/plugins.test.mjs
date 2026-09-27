@@ -264,7 +264,7 @@ function makePage() {
 // so it becomes a literal.
 function loadHost(page, extras) {
   const src = hostSrc
-    .replace(/^import .*;$/gm, "")
+    .replace(/^import [\s\S]*?;$/gm, "")
     .replace(/\bimport\.meta\.url\b/g, '"https://example.invalid/webui/core/plugins.js"')
     .replace(/^export /gm, "")
     // `typeof` rather than the bare name so a missing export is one failing
@@ -283,9 +283,21 @@ function loadHost(page, extras) {
     setTimeout,
     fetch: () => Promise.reject(new Error("no network in this test")),
     // The stripped imports.
-    T: {}, state: () => {}, add: () => {}, effect: () => {},
+    T: {}, state: () => {}, add: () => {}, effect: () => {}, bind: () => {},
     showLoadError: (el, msg) => { el.appendChild(makeText(msg)); },
+    skeletonRows: () => {}, runDetail: {}, toolRow: {}, UI: {},
     upgradePfButton: () => {},
+    openOverlay: () => {}, closeOverlay: () => {}, trapOverlayTab: () => {},
+    liveOk: () => false, makeLineSplitter: () => ({}), pumpInto: () => {},
+    copyText: () => {}, scrollTo: () => {}, paintTomlInto: () => {},
+    loadD3: () => Promise.resolve({}), reducedMotion: false,
+    goalSortKey: () => 0, goalFields: () => [], goalStatusLabel: () => "",
+    goalWorktreeTitle: () => "", goalPinnedColumn: () => "",
+    runLabel: (r) => String(r && r.id || ""),
+    clip: (s) => String(s), escapeHtml: (s) => String(s),
+    cssColorAlpha: () => "", cssColorMix: () => "", peerColor: () => "",
+    themeToken: (n) => String(n), providerUnusableReason: () => "",
+    fmtMs: () => "", fmtPct: () => "", fmtUsd: () => "", fmtDeadline: () => "",
     uiConfirm: () => Promise.resolve(false),
     uiPrompt: () => Promise.resolve(null),
     toast: () => {},

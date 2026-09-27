@@ -40,11 +40,25 @@ script; the System → Web UI plugins checkbox still gates its assets.
 `capabilities` names the `api` members the view actually uses. Known names:
 `get`, `post`, `del`, `live`, `emit`, `confirm`, `prompt`, `toast`, `workspace`, `icon`,
 `storage`, `render`, `session` (`openSession`), `foldFind`, `boardTimeline`, `el`,
-`status`, `fmt`, `showView`, `van`, `preact`, `html`, `signals`. An unknown name is
+`status`, `fmt`, `showView`, `van`, `preact`, `html`, `signals`, `kit`,
+`ui`, `overlay`, `stream`, `text`, `dom`, `color`, `goals`. An unknown name is
 refused on write, and `ui/plugins/capabilities.test.mjs` fails when a shipped
 plugin uses a member it does not declare. The field is a
 declaration, not a grant: the page still hands every plugin the whole
 `pluginApi()`.
+
+The last seven are the groups a built-in view needs to move here without
+reimplementing part of the page: `api.ui` (the loading plate, skeleton rows,
+the run and tool rows, the button, refresh wiring, and the `UI` element kit),
+`api.overlay` (a focus-trapped dialog), `api.stream` (line splitter, pump,
+live-bus health), `api.text` (clip, escape), `api.dom` (copy, scroll, TOML
+paint, D3, reduced motion), `api.color` (peer colour, theme token, alpha,
+mix) and `api.goals` (sort key, fields, status label, titles). `api.fmt` also
+carries `ms`, `pct`, `usd`, `deadline`, `runLabel` and `providerReason`.
+`ui/plugins/capabilities.test.mjs` pins the other direction too: every core
+module a `ui/app/features/*.js` view imports is reachable through one of
+these, so a helper a first-party view uses cannot quietly stay out of reach
+of the addon that replaces it.
 
 `app.js` runs after the page has booted and registers itself:
 

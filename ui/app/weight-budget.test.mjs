@@ -152,7 +152,16 @@ test("eager JS stays inside its weight budget", function () {
   // number comes back down when the port is done and the last sheet is gone;
   // until then a raise here is a deliberate act per this test's instruction,
   // never a quiet one.
-  assert.ok(eagerJsGz <= 156, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 156K`);
+  // 158, raised from 156 for the plugin surface core/plugins.js grew by handing
+  // a plugin the core helpers a built-in view already imports (chrome rows, the
+  // overlay, the stream splitter, the colour and goal helpers, and the rest of
+  // the formatters). Every one of those modules was already in the eager
+  // closure, so the whole cost is the 2K gz of re-exports: a built-in view
+  // migrating to ui/plugins/ no longer has to keep a second copy of any of
+  // them, which is what ui/plugins/capabilities.test.mjs now pins. Paying that
+  // on a chat-only visit is the same trade kit.js already makes, for the same
+  // reason.
+  assert.ok(eagerJsGz <= 158, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 158K`);
 });
 
 test("first paint stays inside its weight budget", function () {
