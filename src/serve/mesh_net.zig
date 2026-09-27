@@ -89,6 +89,36 @@ const Pending = struct {
 
 var runtime: ?*Runtime = null;
 
+/// Connection-level counters for `/api/metrics`. Every one of them counts a
+/// path that used to end in a bare `break` or `continue`: the mesh's only
+/// runtime signal before was the member list, so a peer that stopped
+/// delivering, a JOIN the admission refused, and a flood of half-open
+/// connections all looked alike from outside -- the peer simply was not there
+/// any more, with nothing on either side saying why.
+var rejected_frames_total = std.atomic.Value(u64).init(0);
+var peer_read_errors_total = std.atomic.Value(u64).init(0);
+var joins_refused_total = std.atomic.Value(u64).init(0);
+var joins_pending_total = std.atomic.Value(u64).init(0);
+var inbound_refused_total = std.atomic.Value(u64).init(0);
+
+pub const NetMetrics = struct {
+    rejected_frames_total: u64,
+    peer_read_errors_total: u64,
+    joins_refused_total: u64,
+    joins_pending_total: u64,
+    inbound_refused_total: u64,
+};
+
+pub fn snapshotMetrics() NetMetrics {
+    return .{
+        .rejected_frames_total = rejected_frames_total.load(.monotonic),
+        .peer_read_errors_total = peer_read_errors_total.load(.monotonic),
+        .joins_refused_total = joins_refused_total.load(.monotonic),
+        .joins_pending_total = joins_pending_total.load(.monotonic),
+        .inbound_refused_total = inbound_refused_total.load(.monotonic),
+    };
+}
+
 pub fn active() bool {
     return runtime != null;
 }
@@ -325,11 +355,13 @@ fn handleInbound(rt: *Runtime, raw: []const u8) void {
     // either side logged why. One debug line per bad frame is cheap, and the
     // payload is never logged, only its size.
     const header = mesh.parseHeader(arena, raw) catch {
+        _ = rejected_frames_total.fetchAdd(1, .monotonic);
         log.log(.debug, "mesh: dropped an undecodable frame from a peer ({d} bytes)", .{raw.len});
         return;
     };
     if (header.kind != .chat) return;
     const p = payloadObj(arena, raw) catch {
+        _ = rejected_frames_total.fetchAdd(1, .monotonic);
         log.log(.debug, "mesh: dropped a chat frame whose payload is not valid JSON ({d} bytes)", .{raw.len});
         return;
     };
@@ -348,7 +380,16 @@ fn handleInbound(rt: *Runtime, raw: []const u8) void {
 /// reading rather than let each further read grow the buffer forever.
 fn drainFrames(rt: *Runtime, acc: *std.ArrayList(u8)) bool {
     while (true) {
-        const dec = mesh.decodeFrame(acc.items, rt.max_frame) catch return false;
+        const dec = mesh.decodeFrame(acc.items, rt.max_frame) catch {
+            // The prefix that can never decode is a peer exceeding
+            // `mesh.max_frame_bytes`, which is a bug or an attack on the
+            // frame cap, not a framing accident. It ends the connection, and
+            // ending it silently is how a peer that stops being reachable
+            // looks identical to a peer that hung up.
+            _ = rejected_frames_total.fetchAdd(1, .monotonic);
+            log.log(.warn, "mesh: dropping a peer after a frame larger than max_frame_bytes ({d}); the connection is closed", .{rt.max_frame});
+            return false;
+        };
         const got = dec orelse return true;
         handleInbound(rt, got.payload);
         const rest = acc.items[got.consumed..];
@@ -371,7 +412,19 @@ fn readLoop(rt: *Runtime, stream: std.Io.net.Stream) void {
         const n = std.posix.read(fd, &tmp) catch |err| {
             switch (err) {
                 error.WouldBlock => continue,
-                else => break,
+                else => {
+                    // A member's socket failing is the one mesh failure with
+                    // no other trace: the member list simply loses the row
+                    // below and every later fan-out to that peer fails on a
+                    // stale fd. Name the peer and the errno-class once, at
+                    // warn, so a flapping member is diagnosable from the log
+                    // rather than inferred from a silent disappearance.
+                    _ = peer_read_errors_total.fetchAdd(1, .monotonic);
+                    var id_buf: [64]u8 = undefined;
+                    const id = memberIdForFd(rt, fd, &id_buf);
+                    log.log(.warn, "mesh: peer '{s}' read failed ({s}); the member is dropped", .{ id, @errorName(err) });
+                    break;
+                },
             }
         };
         if (n == 0) break;
@@ -392,6 +445,24 @@ fn unregisterFdLocked(rt: *Runtime, fd: std.posix.fd_t) void {
     for (&rt.members) |*m| {
         if (m.used and m.fd == fd) m.fd = -1;
     }
+}
+
+/// The id of the member owning `fd`, copied into `buf` because the lock is
+/// released before the caller logs. An fd with no member (the slot was
+/// already retired) reads as `unknown` rather than an empty field, so the
+/// line still parses.
+fn memberIdForFd(rt: *Runtime, fd: std.posix.fd_t, buf: []u8) []const u8 {
+    rt.mu.lock();
+    defer rt.mu.unlock();
+    for (&rt.members) |*m| {
+        if (m.used and m.fd == fd) {
+            const id = m.id[0..m.id_len];
+            const n = @min(id.len, buf.len);
+            @memcpy(buf[0..n], id[0..n]);
+            return buf[0..n];
+        }
+    }
+    return "unknown";
 }
 
 const Conn = struct { rt: *Runtime, stream: std.Io.net.Stream };
@@ -416,17 +487,41 @@ fn acceptOne(arg: *Conn) void {
         log.log(.warn, "mesh: read timeout not set on inbound peer socket, reads are unbounded: {s}", .{@errorName(err)});
     var joined = false;
     while (!joined and !rt.stop.load(.monotonic)) {
-        const n = std.posix.read(fd, &tmp) catch break;
+        // Every break out of this loop used to be bare, so a peer that
+        // connected and then sent nothing usable left no trace at all: the
+        // connection closed, the peer retried or vanished, and the log said
+        // nothing. Each stage below now names itself.
+        const n = std.posix.read(fd, &tmp) catch |err| {
+            log.log(.debug, "mesh: inbound connection gave up during the join handshake at read ({s})", .{@errorName(err)});
+            break;
+        };
         if (n == 0) break;
         acc.appendSlice(rt.gpa, tmp[0..n]) catch break;
-        const dec = mesh.decodeFrame(acc.items, rt.max_frame) catch break;
+        const dec = mesh.decodeFrame(acc.items, rt.max_frame) catch |err| {
+            // Same condition drainFrames refuses on, and equally a peer over
+            // the frame cap rather than a transient framing problem.
+            _ = rejected_frames_total.fetchAdd(1, .monotonic);
+            log.log(.warn, "mesh: inbound join frame could not be decoded ({s}) with max_frame_bytes={d}; the connection is closed", .{ @errorName(err), rt.max_frame });
+            break;
+        };
         const got = dec orelse continue;
         var arena_state = std.heap.ArenaAllocator.init(rt.gpa);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        const header = mesh.parseHeader(arena, got.payload) catch break;
-        if (header.kind != .join) break;
-        const p = payloadObj(arena, got.payload) catch break;
+        const header = mesh.parseHeader(arena, got.payload) catch {
+            _ = rejected_frames_total.fetchAdd(1, .monotonic);
+            log.log(.debug, "mesh: inbound join frame is not a valid mesh message ({d} bytes)", .{got.payload.len});
+            break;
+        };
+        if (header.kind != .join) {
+            log.log(.debug, "mesh: inbound connection sent a '{s}' frame before joining; the connection is closed", .{@tagName(header.kind)});
+            break;
+        }
+        const p = payloadObj(arena, got.payload) catch {
+            _ = rejected_frames_total.fetchAdd(1, .monotonic);
+            log.log(.debug, "mesh: inbound join frame's payload is not valid JSON ({d} bytes)", .{got.payload.len});
+            break;
+        };
         const join_id = blk: {
             const id = json_util.strFieldOrEmpty(p, "id");
             break :blk if (id.len > 0) id else header.from;
@@ -435,18 +530,32 @@ fn acceptOne(arg: *Conn) void {
         const decision = mesh.admit(rt.admission, rt.our_id, join_id, join_name, rt.seeds);
         if (decision == .pending) {
             if (enqueuePending(rt, join_id, join_name, header.id, stream)) {
+                _ = joins_pending_total.fetchAdd(1, .monotonic);
                 live.noteMesh("pending", join_id);
                 return;
             }
+            // The pending table is full, so an operator asked to approve this
+            // JOIN never sees it. The refusal has to be countable, or the
+            // pending queue looks idle while peers are being turned away.
+            _ = joins_refused_total.fetchAdd(1, .monotonic);
+            log.log(.warn, "mesh: join from '{s}' went undecided: all {d} pending slots are taken", .{ join_id, max_pending_joins });
             _ = writeJoinAck(rt, fd, header.id, false);
             break;
         }
         const ok = decision == .accept;
         _ = writeJoinAck(rt, fd, header.id, ok);
-        if (!ok) break;
+        // An admission refusal is the mesh's one security-relevant event and
+        // it was silent: nothing recorded who was turned away, so a peer
+        // retrying against a wrong allowlist looks like a network problem.
+        if (!ok) {
+            _ = joins_refused_total.fetchAdd(1, .monotonic);
+            log.log(.warn, "mesh: refused join from '{s}' (name='{s}') under {s} admission", .{ join_id, join_name, admissionMode() });
+            break;
+        }
         rt.mu.lock();
         remember(rt, join_id, join_name, fd);
         rt.mu.unlock();
+        log.log(.info, "mesh: peer '{s}' joined (name='{s}')", .{ join_id, join_name });
         live.noteMesh("join", join_id);
         joined = true;
         const rest = acc.items[got.consumed..];
@@ -480,6 +589,7 @@ const accept_error_log_every: u32 = 1000;
 fn acceptLoop(rt: *Runtime) void {
     const server = if (rt.server) |*s| s else return;
     var consecutive_errors: u32 = 0;
+    var refused_inbound: u32 = 0;
     while (!rt.stop.load(.monotonic)) {
         const stream = server.accept(rt.io) catch |err| {
             if (rt.stop.load(.monotonic)) break;
@@ -499,6 +609,7 @@ fn acceptLoop(rt: *Runtime) void {
             continue;
         };
         consecutive_errors = 0;
+        refused_inbound = 0;
         // Cap on concurrent inbound connection threads. The join handshake is
         // the only thing the count covers (joined members are bounded by
         // `mesh.max_members`, pending joins by `max_pending`), but a peer that
@@ -508,17 +619,31 @@ fn acceptLoop(rt: *Runtime) void {
         const in_flight = rt.conns.fetchAdd(1, .acq_rel);
         if (in_flight >= max_inbound_conns) {
             _ = rt.conns.fetchSub(1, .acq_rel);
+            _ = inbound_refused_total.fetchAdd(1, .monotonic);
+            // Closing over the cap without a word makes the condition
+            // invisible: the peers it hits are refused at the TCP level, see
+            // no ack, and simply never appear. Counted every time, logged on
+            // the first and then every accept_error_log_every, so a flood
+            // cannot turn the log into the load.
+            refused_inbound += 1;
+            if (refused_inbound == 1 or refused_inbound % accept_error_log_every == 0) {
+                log.log(.warn, "mesh: refused an inbound connection at the {d}-connection limit ({d} refused so far)", .{ max_inbound_conns, refused_inbound });
+            }
             stream.close(rt.io);
             continue;
         }
         const arg = rt.gpa.create(Conn) catch {
             _ = rt.conns.fetchSub(1, .acq_rel);
+            _ = inbound_refused_total.fetchAdd(1, .monotonic);
+            log.log(.error_, "mesh: cannot allocate a connection slot; the peer is dropped without a JOIN answer", .{});
             stream.close(rt.io);
             continue;
         };
         arg.* = .{ .rt = rt, .stream = stream };
-        const th = std.Thread.spawn(.{}, acceptOne, .{arg}) catch {
+        const th = std.Thread.spawn(.{}, acceptOne, .{arg}) catch |err| {
             _ = rt.conns.fetchSub(1, .acq_rel);
+            _ = inbound_refused_total.fetchAdd(1, .monotonic);
+            log.log(.error_, "mesh: cannot spawn a connection thread ({s}); the peer is dropped without a JOIN answer", .{@errorName(err)});
             stream.close(rt.io);
             rt.gpa.destroy(arg);
             continue;

@@ -316,13 +316,32 @@ fn forward(ctx: Ctx, family: Family) u16 {
     const status = pipe(ctx, family, &resolved.provider, impl, cred, url, upstream_body, streaming, need_xcode) catch |err| {
         const ms = elapsed.since(ctx.io, t0);
         recordFail(ctx, arena, &resolved.provider, 0, @errorName(err), ms);
+        // The success line below is the only proxy request record the log
+        // keeps, so a failure that skipped it left the log saying nothing at
+        // all: the client saw a 502, the operator saw nothing, and only
+        // token_stats.jsonl (behind a module flag) held the reason. Same
+        // fields, same shape, at the level the failure deserves.
+        log.log(.warn, "proxy method={s} path={s} model={s} provider={s} stream={any} status={d} duration_ms={d} err={s}", .{
+            ctx.method,
+            ctx.path,
+            resolved.wire_id,
+            resolved.provider.name,
+            streaming,
+            if (err == error.Timeout) @as(u16, 504) else @as(u16, 502),
+            ms,
+            @errorName(err),
+        });
         return switch (err) {
             error.Timeout => writeEnvelope(ctx, 504, null, "Upstream timed out"),
             else => writeEnvelope(ctx, 502, null, "Upstream connect failed"),
         };
     };
     const ms = elapsed.since(ctx.io, t0);
-    log.log(.info, "proxy method={s} path={s} model={s} provider={s} stream={any} status={d} duration_ms={d}", .{
+    // An upstream 5xx logged at info is the same blind spot as no line: the
+    // level filter operators actually run at drops it, so a provider that has
+    // been failing for ten minutes looks like a provider that has been idle.
+    const level = upstreamLogLevel(status);
+    log.log(level, "proxy method={s} path={s} model={s} provider={s} stream={any} status={d} duration_ms={d}", .{
         ctx.method,
         ctx.path,
         resolved.wire_id,
@@ -873,6 +892,24 @@ fn peekAndRecord(ctx: Ctx, provider: *const config.Provider, status: u16, body: 
         .http_status = status,
         .request_id = log.getContext(),
     });
+}
+
+/// The level a finished upstream call is logged at. One `info` line for every
+/// proxy request, including the ones the upstream rejected, buried a
+/// provider's 5xx under the level operators filter at and made an outage
+/// indistinguishable from an idle proxy in the log.
+fn upstreamLogLevel(status: u16) log.Level {
+    if (status >= 500) return .error_;
+    if (status >= 400) return .warn;
+    return .info;
+}
+
+test "upstreamLogLevel does not file an upstream 5xx as info" {
+    try std.testing.expectEqual(log.Level.info, upstreamLogLevel(200));
+    try std.testing.expectEqual(log.Level.info, upstreamLogLevel(204));
+    try std.testing.expectEqual(log.Level.warn, upstreamLogLevel(429));
+    try std.testing.expectEqual(log.Level.error_, upstreamLogLevel(500));
+    try std.testing.expectEqual(log.Level.error_, upstreamLogLevel(503));
 }
 
 fn recordFail(ctx: Ctx, arena: std.mem.Allocator, provider: *const config.Provider, status: u16, err_name: []const u8, ms: u64) void {

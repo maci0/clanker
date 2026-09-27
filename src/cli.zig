@@ -7816,6 +7816,11 @@ var http_latency_le_1s = std.atomic.Value(u64).init(0);
 var http_latency_le_10s = std.atomic.Value(u64).init(0);
 var http_latency_total_ms = std.atomic.Value(u64).init(0);
 var http_client_errors_total = std.atomic.Value(u64).init(0);
+/// Connections that died in `read` before or during a request. Not an error
+/// rate on its own: an idle keep-alive timing out is ordinary, so the line
+/// behind it is at debug and the number is for the shape of a change (a proxy
+/// resetting every stream shows up here and nowhere else).
+var http_read_errors_total = std.atomic.Value(u64).init(0);
 
 fn serveConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, environ_map: *std.process.Environ.Map, port: u16, serve_as_hosts: []const []const u8, stream: std.Io.net.Stream, surface: proxy.Surface) void {
     // A bound, so a flood of slow clients cannot make the process spawn
@@ -8048,7 +8053,20 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     }
     var tmp: [4096]u8 = undefined;
     while (true) {
-        const n = std.posix.read(stream.socket.handle, &tmp) catch return;
+        // A read error is the one way a connection can die without the
+        // request ever reaching a route, and the bare `return` said nothing
+        // about it. WouldBlock is the 5s SO_RCVTIMEO expiring on a keep-alive
+        // connection that has nothing left to send, which every idle browser
+        // tab produces, so it stays at debug and only moves a counter. Any
+        // other error on a connection that already delivered bytes is a
+        // request cut off mid-flight, and that is a warn: it is the shape a
+        // client cancelling a streaming turn takes, and the operator needs to
+        // see it move.
+        const n = std.posix.read(stream.socket.handle, &tmp) catch |err| {
+            _ = http_read_errors_total.fetchAdd(1, .monotonic);
+            log.log(readFailureLogLevel(err, received_any), "serve: connection read ended ({s}) after {d} byte(s)", .{ @errorName(err), total.items.len });
+            return;
+        };
         if (n == 0) return;
         received_any = true;
         total.appendSlice(gpa, tmp[0..n]) catch return;
@@ -9201,6 +9219,23 @@ fn completionLogLevel(path: []const u8, status: u16) ?log.Level {
     return .debug;
 }
 
+/// The level a failed connection read is reported at. `WouldBlock` is the
+/// 5s SO_RCVTIMEO expiring on a keep-alive connection with nothing left to
+/// send, which every idle browser tab and every keep-alive close produces, so
+/// it stays at debug. A connection that already delivered bytes and then
+/// failed is a request cut off mid-flight, the shape a client cancelling a
+/// streaming turn takes, and that is worth a warn.
+fn readFailureLogLevel(err: anyerror, received_any: bool) log.Level {
+    return if (err == error.WouldBlock or !received_any) .debug else .warn;
+}
+
+test "readFailureLogLevel keeps routine timeouts at debug and mid-request failures at warn" {
+    try std.testing.expectEqual(log.Level.debug, readFailureLogLevel(error.WouldBlock, true));
+    try std.testing.expectEqual(log.Level.debug, readFailureLogLevel(error.ConnectionResetByPeer, false));
+    try std.testing.expectEqual(log.Level.warn, readFailureLogLevel(error.ConnectionResetByPeer, true));
+    try std.testing.expectEqual(log.Level.warn, readFailureLogLevel(error.BrokenPipe, true));
+}
+
 fn recordHttpRequest(io: std.Io, status: u16, duration_ms: u64) void {
     _ = http_requests_total.fetchAdd(1, .monotonic);
     _ = http_latency_total_ms.fetchAdd(duration_ms, .monotonic);
@@ -9224,10 +9259,27 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
     const job = jobs.snapshotJobMetrics();
     const live_bus = live.snapshotMetrics();
     const mesh_sync = session_sync.snapshotSyncMetrics();
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"mesh\":{{\"fanouts_total\":{d},\"fanout_failures_total\":{d},\"backfill_failures_total\":{d}}}}}", .{
+    const mesh_net_m = mesh_net.snapshotMetrics();
+    // The mesh group is rendered on its own and interpolated whole: one
+    // `bufPrint` is capped at 32 arguments, and a single flat call ran out
+    // as soon as the net counters joined the replication ones. Two renders
+    // also keep each group's fields next to the snapshot that fills them.
+    var mesh_buf: [512]u8 = undefined;
+    const mesh_group = std.fmt.bufPrint(&mesh_buf, "{{\"fanouts_total\":{d},\"fanout_failures_total\":{d},\"backfill_failures_total\":{d},\"rejected_frames_total\":{d},\"peer_read_errors_total\":{d},\"joins_refused_total\":{d},\"joins_pending_total\":{d},\"inbound_refused_total\":{d}}}", .{
+        mesh_sync.fanouts_total,
+        mesh_sync.fanout_failures_total,
+        mesh_sync.backfill_failures_total,
+        mesh_net_m.rejected_frames_total,
+        mesh_net_m.peer_read_errors_total,
+        mesh_net_m.joins_refused_total,
+        mesh_net_m.joins_pending_total,
+        mesh_net_m.inbound_refused_total,
+    }) catch return null;
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"read_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"mesh\":{s}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
+        http_read_errors_total.load(.monotonic),
         connection_threads.load(.monotonic),
         max_connection_threads,
         http_latency_total_ms.load(.monotonic),
@@ -9254,21 +9306,31 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         job.completions_total,
         job.errors_total,
         job.active,
-        mesh_sync.fanouts_total,
-        mesh_sync.fanout_failures_total,
-        mesh_sync.backfill_failures_total,
+        mesh_group,
     }) catch null;
 }
 
 test "metricsSnapshot stays parseable and reports background job counters" {
-    var buf: [2048]u8 = undefined;
+    var buf: [metrics_snapshot_bytes]u8 = undefined;
     // A null here is the buffer overflowing: /api/metrics answers 500 and the
     // live bus publishes nothing, so every counter goes dark at once.
     const body = metricsSnapshot(&buf) orelse return error.SnapshotTruncated;
+    // Headroom, not just a fit: a counter that lands within a quarter of the
+    // buffer is one field away from taking the endpoint down, and the failure
+    // would only show up under load. Fail here instead.
+    try std.testing.expect(body.len < metrics_snapshot_bytes * 3 / 4);
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
     defer parsed.deinit();
     for ([_][]const u8{ "http", "live", "llm", "tools", "schedule", "jobs", "mesh" }) |group| {
         try std.testing.expect(parsed.value.object.get(group) != null);
+    }
+    // A connection that dies in `read` never reaches a route, so nothing else
+    // counts it: the field is the only trace a proxy resetting every stream
+    // leaves.
+    const http_obj = (parsed.value.object.get("http").?).object;
+    for ([_][]const u8{ "requests_total", "errors_total", "client_errors_total", "read_errors_total", "in_flight", "connection_limit" }) |field| {
+        const v = http_obj.get(field) orelse return error.MissingHttpField;
+        try std.testing.expect(v == .integer);
     }
     const live_obj = (parsed.value.object.get("live").?).object;
     for ([_][]const u8{ "subscribers", "dropped_total" }) |field| {
@@ -9283,7 +9345,12 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     // Mesh replication is fire-and-forget, so a failure counter is the only
     // signal a peer going quiet produces outside the log.
     const mesh_obj = (parsed.value.object.get("mesh").?).object;
-    for ([_][]const u8{ "fanouts_total", "fanout_failures_total", "backfill_failures_total" }) |field| {
+    // Replication is fire-and-forget, so a failure counter is the only
+    // signal a peer going quiet produces outside the log. The net counters
+    // cover the other way a peer stops being reachable: a socket that dies,
+    // a frame it sends that never parses, a JOIN the admission turns away,
+    // and an inbound connection closed at the concurrency cap.
+    for ([_][]const u8{ "fanouts_total", "fanout_failures_total", "backfill_failures_total", "rejected_frames_total", "peer_read_errors_total", "joins_refused_total", "joins_pending_total", "inbound_refused_total" }) |field| {
         const v = mesh_obj.get(field) orelse return error.MissingMeshField;
         try std.testing.expect(v == .integer);
     }
@@ -9301,12 +9368,18 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     }
 }
 
+/// Buffer for one metrics snapshot. `metricsSnapshot` renders into it and
+/// answers 500 on overflow, so a counter added without room here takes the
+/// whole endpoint dark; the test below fails first instead. The headroom
+/// check is why the number is not simply the current body's length.
+const metrics_snapshot_bytes = 4096;
+
 fn publishMetricsSnapshot(io: std.Io) void {
     const now: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .awake).nanoseconds, std.time.ns_per_ms));
     const prev = last_metrics_pub_ms.load(.monotonic);
     if (now - prev < 1000) return;
     if (last_metrics_pub_ms.cmpxchgStrong(prev, now, .monotonic, .monotonic) != null) return;
-    var buf: [2048]u8 = undefined;
+    var buf: [metrics_snapshot_bytes]u8 = undefined;
     const body = metricsSnapshot(&buf) orelse return;
     live.noteMetrics(body);
 }
@@ -9355,7 +9428,7 @@ test "livePublishFromBody requires a slug from and JSON data" {
 }
 
 fn handleHttpMetrics(stream: std.Io.net.Stream) void {
-    var buf: [2048]u8 = undefined;
+    var buf: [metrics_snapshot_bytes]u8 = undefined;
     const body = metricsSnapshot(&buf) orelse {
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"metrics unavailable\"}");
         return;
