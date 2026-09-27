@@ -1233,6 +1233,23 @@ pub const Config = struct {
     /// Which keys inside `"agent"` were set when this Config was parsed.
     agent_fields: AgentFields = .{},
     improve_present: bool = false,
+    /// Which keys inside each of the flat sections were set when this Config
+    /// was parsed, as field names of the section struct. Same bookkeeping as
+    /// `agent_fields`, kept as names rather than a bool-per-field struct so a
+    /// section with fifty keys needs no hand-written mirror of itself.
+    improve_keys: []const []const u8 = &.{},
+    instance_keys: []const []const u8 = &.{},
+    web_keys: []const []const u8 = &.{},
+    notify_keys: []const []const u8 = &.{},
+    tui_keys: []const []const u8 = &.{},
+    advisor_keys: []const []const u8 = &.{},
+    hooks_keys: []const []const u8 = &.{},
+    ttsr_keys: []const []const u8 = &.{},
+    kernel_keys: []const []const u8 = &.{},
+    debug_keys: []const []const u8 = &.{},
+    mesh_keys: []const []const u8 = &.{},
+    chatrooms_keys: []const []const u8 = &.{},
+    memory_keys: []const []const u8 = &.{},
     default_provider: []const u8 = "deepseek",
     providers: std.array_hash_map.String(Provider) = .empty,
     mcp_servers: std.array_hash_map.String(McpServer) = .empty,
@@ -1334,7 +1351,7 @@ pub const Config = struct {
     /// the merge, neither is a setting, and together they are most of the
     /// struct.
     fn isParseBookkeeping(comptime name: []const u8) bool {
-        return std.mem.endsWith(u8, name, "_present") or std.mem.endsWith(u8, name, "_fields");
+        return std.mem.endsWith(u8, name, "_present") or std.mem.endsWith(u8, name, "_fields") or std.mem.endsWith(u8, name, "_keys");
     }
 
     /// `mcp_servers.*.env` entries are `"KEY=value"` and `headers` entries
@@ -1863,7 +1880,86 @@ pub const Config = struct {
             cfg.modules_fields = parsed.fields;
             cfg.modules_present = true;
         }
+        // Which keys each flat section actually carried, recorded from the
+        // file itself so merge() can copy field by field. Read here, at one
+        // place, rather than as a bool-per-field mirror inside each parse
+        // function: a section with fifty keys would need fifty hand-written
+        // lines that silently rot when a key is added to the struct and not
+        // to the mirror.
+        inline for (.{
+            .{ "improve", Improve },
+            .{ "instance", Instance },
+            .{ "web", Web },
+            .{ "notify", Notify },
+            .{ "tui", Tui },
+            .{ "advisor", Advisor },
+            .{ "hooks", Hooks },
+            .{ "ttsr", Ttsr },
+            .{ "kernel", Kernel },
+            .{ "debug", Debug },
+            .{ "mesh", Mesh },
+            .{ "chatrooms", Chatrooms },
+        }) |section| {
+            if (obj.get(section[0])) |v| {
+                @field(cfg, section[0] ++ "_keys") = try presentSectionKeys(arena, section[1], v);
+            }
+        }
+        if (obj.get("memory")) |v| {
+            cfg.memory_keys = try presentMemoryKeys(arena, v);
+        }
         return cfg;
+    }
+
+    /// The section keys present in `v`, named as the fields of `T`. Every
+    /// flat section's TOML key is its field name, which is what makes this
+    /// one generic walk correct for all of them.
+    fn presentSectionKeys(arena: std.mem.Allocator, comptime T: type, v: json.Value) ![]const []const u8 {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.SectionNotObject,
+        };
+        var keys: std.ArrayList([]const u8) = .empty;
+        inline for (@typeInfo(T).@"struct".fields) |f| {
+            if (obj.get(f.name) != null) try keys.append(arena, f.name);
+        }
+        return keys.toOwnedSlice(arena);
+    }
+
+    /// `memory` is the one section whose key is not its field name: a
+    /// `[memory.vector]` sub-table carries `vector_top_k` and
+    /// `vector_threshold` together, so the sub-table's presence is what
+    /// decides both.
+    fn presentMemoryKeys(arena: std.mem.Allocator, v: json.Value) ![]const []const u8 {
+        const obj = switch (v) {
+            .object => |o| o,
+            else => return error.SectionNotObject,
+        };
+        var keys: std.ArrayList([]const u8) = .empty;
+        if (obj.get("backend") != null) try keys.append(arena, "backend");
+        if (obj.get("vector") != null) try keys.append(arena, "vector");
+        return keys.toOwnedSlice(arena);
+    }
+
+    /// Copy from `src` into `dst` exactly the fields `keys` names.
+    fn applySectionFields(comptime T: type, dst: *T, src: T, keys: []const []const u8) void {
+        if (keys.len == 0) return;
+        inline for (@typeInfo(T).@"struct".fields) |f| {
+            for (keys) |k| {
+                if (std.mem.eql(u8, k, f.name)) @field(dst, f.name) = @field(src, f.name);
+            }
+        }
+    }
+
+    /// `applySectionKeys` for `memory`'s `vector` sub-table, which sets two
+    /// fields under one key.
+    fn applyMemoryKeys(dst: *Memory, src: Memory, keys: []const []const u8) void {
+        for (keys) |k| {
+            if (std.mem.eql(u8, k, "backend")) dst.backend = src.backend;
+            if (std.mem.eql(u8, k, "vector")) {
+                dst.vector_top_k = src.vector_top_k;
+                dst.vector_threshold = src.vector_threshold;
+            }
+        }
     }
 
     fn parseProvider(arena: std.mem.Allocator, name: []const u8, v: json.Value) !Provider {
@@ -3246,34 +3342,38 @@ pub const Config = struct {
         // made every tool disappear when tools_dir fell back to the struct
         // default instead of config.toml's "tools/manifests".
         if (src.agent_present) applyAgentFields(&dst.agent, src.agent, src.agent_fields);
-        // Improve is still whole-section: it is small and rarely partial.
-        if (src.improve_present) dst.improve = src.improve;
+        // Every other section is field-merged, not whole-section. Replacing
+        // the struct meant a local file that moved one key (`[tui]
+        // mascot_size`) silently reset every other key in that section to its
+        // struct default, so the base file's setting vanished with no warning
+        // and the merged config still loaded clean. `config set` reaches this
+        // from the model side: it writes exactly one key into
+        // config.local.toml, so every whole-section table it touched lost the
+        // rest of the section.
+        if (src.improve_present) applySectionFields(Improve, &dst.improve, src.improve, src.improve_keys);
         if (src.peers_present) dst.peers = src.peers;
-        if (src.web_present) dst.web = src.web;
-        // Only override the instance when the local file actually named one:
-        // a bare config.local.toml must not replace a stable name with a
-        // pid-based default on every restart. The present flag is OR-ed too:
-        // load()'s persist-on-first-boot path keys off it, so a local-only
-        // [instance] must count as "named" or every boot appends a duplicate
-        // table to the local file.
+        applySectionFields(Web, &dst.web, src.web, src.web_keys);
+        // The present flag is OR-ed too: load()'s persist-on-first-boot path
+        // keys off it, so a local-only [instance] must count as "named" or
+        // every boot appends a duplicate table to the local file.
         if (src.instance_present) {
-            dst.instance = src.instance;
+            applySectionFields(Instance, &dst.instance, src.instance, src.instance_keys);
             dst.instance_present = true;
         }
         // Field-merged rather than whole-section: every field is optional, so
         // a local file that only moves the port must leave a host set by the
         // base file alone instead of resetting it to "unset".
         if (src.serve_present) applyServeFields(&dst.serve, src.serve, src.serve_fields);
-        if (src.notify_present) dst.notify = src.notify;
-        if (src.tui_present) dst.tui = src.tui;
-        if (src.chatrooms_present) dst.chatrooms = src.chatrooms;
-        if (src.memory_present) dst.memory = src.memory;
-        if (src.advisor_present) dst.advisor = src.advisor;
-        if (src.hooks_present) dst.hooks = src.hooks;
-        if (src.ttsr_present) dst.ttsr = src.ttsr;
-        if (src.kernel_present) dst.kernel = src.kernel;
-        if (src.debug_present) dst.debug = src.debug;
-        if (src.mesh_present) dst.mesh = src.mesh;
+        applySectionFields(Notify, &dst.notify, src.notify, src.notify_keys);
+        applySectionFields(Tui, &dst.tui, src.tui, src.tui_keys);
+        applySectionFields(Chatrooms, &dst.chatrooms, src.chatrooms, src.chatrooms_keys);
+        applyMemoryKeys(&dst.memory, src.memory, src.memory_keys);
+        applySectionFields(Advisor, &dst.advisor, src.advisor, src.advisor_keys);
+        applySectionFields(Hooks, &dst.hooks, src.hooks, src.hooks_keys);
+        applySectionFields(Ttsr, &dst.ttsr, src.ttsr, src.ttsr_keys);
+        applySectionFields(Kernel, &dst.kernel, src.kernel, src.kernel_keys);
+        applySectionFields(Debug, &dst.debug, src.debug, src.debug_keys);
+        applySectionFields(Mesh, &dst.mesh, src.mesh, src.mesh_keys);
         if (src.modules_present) applyModulesFields(&dst.modules, src.modules, src.modules_fields);
     }
 
@@ -6274,6 +6374,75 @@ test "a local [modules] session_events override survives the merge" {
     const merged = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "config.local.toml");
     try std.testing.expect(!merged.modules.session_events);
     try std.testing.expect(merged.modules.mesh);
+}
+
+test "a local override of one key in a flat section leaves its siblings alone" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Every section a `config set` can write one key into: a whole-section
+    // merge reset each of these to struct defaults, so the base file's value
+    // disappeared and the merged config still loaded clean.
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[tui]
+        \\mascot = "clanker"
+        \\mascot_size = "large"
+        \\[notify]
+        \\on = true
+        \\topic = "clanker"
+        \\[memory]
+        \\backend = "hybrid"
+        \\[memory.vector]
+        \\top_k = 7
+        \\[chatrooms]
+        \\on = true
+        \\max_history = 900
+        \\[mesh]
+        \\listen_port = 7420
+        \\admission = "allowlist"
+        \\
+        ,
+    });
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[tui]
+        \\mascot_size = "small"
+        \\[notify]
+        \\topic = "local-topic"
+        \\[memory]
+        \\[memory.vector]
+        \\top_k = 3
+        \\[chatrooms]
+        \\max_history = 10
+        \\[mesh]
+        \\admission = "open"
+        \\
+        ,
+    });
+    const cfg = try Config.load(io, arena_state.allocator(), tmp.dir, "config.toml", "config.local.toml");
+
+    try std.testing.expectEqualStrings("clanker", cfg.tui.mascot);
+    try std.testing.expectEqualStrings("small", cfg.tui.mascot_size);
+    try std.testing.expect(cfg.notify.on);
+    try std.testing.expectEqualStrings("local-topic", cfg.notify.topic);
+    try std.testing.expectEqualStrings("hybrid", cfg.memory.backend);
+    try std.testing.expectEqual(@as(u32, 3), cfg.memory.vector_top_k);
+    try std.testing.expectEqual(@as(f32, 0.35), cfg.memory.vector_threshold);
+    try std.testing.expect(cfg.chatrooms.on);
+    try std.testing.expectEqual(@as(u32, 10), cfg.chatrooms.max_history);
+    try std.testing.expectEqual(@as(u16, 7420), cfg.mesh.listen_port);
+    try std.testing.expectEqualStrings("open", cfg.mesh.admission);
 }
 
 test "modules flags reject non-bool values instead of silently defaulting" {

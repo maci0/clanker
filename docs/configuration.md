@@ -10,8 +10,15 @@ code wins.
 - **`config.toml`** — the committed configuration: providers, models, module
   toggles, agent settings.
 - **`config.local.toml`** — checkout-private overrides (gitignored), merged on
-  top of `config.toml` key by key. Put machine-specific endpoints, a different
-  `default_provider`, or a local vLLM URL here. See `config.local.toml.example`.
+  top of `config.toml` key by key: a section the local file touches is merged
+  field by field, so naming one key in `[tui]`, `[notify]`, `[mesh]`,
+  `[chatrooms]`, `[memory]`, `[web]`, `[advisor]`, `[hooks]`, `[ttsr]`,
+  `[kernel]`, `[debug]`, `[improve]`, `[instance]`, `[agent]`, `[serve]` or
+  `[modules]` leaves that section's other keys as the base file set them.
+  `[peers]` and `[mcp_servers.*]` are lists/tables of their own and are
+  replaced as a whole. Put machine-specific endpoints, a different
+  `default_provider`, or a local vLLM URL here. See
+  `config.local.toml.example`.
 - **`.env`** — API keys. clanker loads it at startup (the `dotenv` module) into
   the process environment; a provider names the variable to read with
   `api_key_env`. Keys never go in the TOML.
