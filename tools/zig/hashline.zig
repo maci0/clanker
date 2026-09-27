@@ -149,29 +149,59 @@ pub fn apply(
         if (r.start + r.hunk.old_count > prev.start) return error.OverlappingHunks;
     }
 
-    var text = try alloc.dupe(u8, src);
-    var applied: std.ArrayList(Applied) = .empty;
-    for (resolved.items) |r| {
+    // One pass. The ranges above are proven disjoint, so every hunk can be
+    // spliced out of the original text in a single ascending walk instead of
+    // rebuilding the whole file once per hunk, which cost an H-hunk edit H
+    // full copies of the file in the arena.
+    const Edit = struct { start: usize, end: usize, new_text: []const u8, start_line: u32, needs_sep: bool };
+    var edits: std.ArrayList(Edit) = .empty;
+    defer edits.deinit(alloc);
+    // Bytes every higher-offset edit added, minus the bytes it removed: the
+    // length the spliced text had when this hunk was applied last-to-first.
+    var higher_delta: i64 = 0;
+    // `resolved` is sorted by descending start, so walking it backwards visits
+    // the edits in ascending offset order, and `higher_delta` is already the
+    // sum over the edits that follow.
+    var idx = resolved.items.len;
+    while (idx > 0) {
+        idx -= 1;
+        const r = resolved.items[idx];
         const start_off = lineOffset(lines, r.start);
         const end_off = if (r.start + r.hunk.old_count < lines.len)
             lineOffset(lines, r.start + r.hunk.old_count)
         else
             src.len;
-        var next: std.ArrayList(u8) = .empty;
-        try next.appendSlice(alloc, text[0..start_off]);
-        try next.appendSlice(alloc, r.hunk.new_text);
-        if (r.hunk.new_text.len > 0 and r.hunk.new_text[r.hunk.new_text.len - 1] != '\n' and end_off < text.len) {
-            try next.append(alloc, '\n');
-        }
-        try next.appendSlice(alloc, text[end_off..]);
-        text = try next.toOwnedSlice(alloc);
-        const new_lines = try splitLines(alloc, r.hunk.new_text);
-        var hashes = try alloc.alloc([4]u8, new_lines.len);
-        for (new_lines, 0..) |ln, i| hashes[i] = hashHex(ln);
-        try applied.append(alloc, .{ .start_line = r.start + 1, .hashes = hashes });
+        const text_len = src.len + higher_delta;
+        const needs_sep = r.hunk.new_text.len > 0 and
+            r.hunk.new_text[r.hunk.new_text.len - 1] != '\n' and
+            end_off < text_len;
+        const inserted: i64 = @as(i64, @intCast(r.hunk.new_text.len)) + @intFromBool(needs_sep);
+        higher_delta += inserted - @as(i64, @intCast(end_off - start_off));
+        try edits.append(alloc, .{
+            .start = start_off,
+            .end = end_off,
+            .new_text = r.hunk.new_text,
+            .start_line = @intCast(r.start + 1),
+            .needs_sep = needs_sep,
+        });
     }
+
+    var text: std.ArrayList(u8) = .empty;
+    var applied: std.ArrayList(Applied) = .empty;
+    var cursor: usize = 0;
+    for (edits.items) |e| {
+        try text.appendSlice(alloc, src[cursor..e.start]);
+        try text.appendSlice(alloc, e.new_text);
+        if (e.needs_sep) try text.append(alloc, '\n');
+        cursor = e.end;
+        const new_lines = try splitLines(alloc, e.new_text);
+        const hashes = try alloc.alloc([4]u8, new_lines.len);
+        for (new_lines, 0..) |ln, i| hashes[i] = hashHex(ln);
+        try applied.append(alloc, .{ .start_line = e.start_line, .hashes = hashes });
+    }
+    try text.appendSlice(alloc, src[cursor..]);
     std.mem.sort(Applied, applied.items, {}, appliedLess);
-    return .{ .text = text, .applied = try applied.toOwnedSlice(alloc) };
+    return .{ .text = try text.toOwnedSlice(alloc), .applied = try applied.toOwnedSlice(alloc) };
 }
 
 fn splitLines(alloc: std.mem.Allocator, src: []const u8) ![][]const u8 {

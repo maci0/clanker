@@ -153,6 +153,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.beginArray();
 
         var match_count: usize = 0;
+        // One-entry source cache, same reason as the rg loop below: the hits
+        // are grouped by file, so a per-match read is a re-read of one file
+        // and a fresh arena copy of its bytes.
+        var ag_last_path: []const u8 = "";
+        var ag_last_src: []const u8 = "";
         var ag_rest: []const u8 = ag_stdout;
         while (ag_rest.len > 0 and match_count < match_cap) {
             const ag_nl = std.mem.findScalar(u8, ag_rest, '\n');
@@ -191,7 +196,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.write(line_num);
             try s.objectField("text");
             try s.write(display);
-            try writeOutline(&s, file_path, line_n);
+            try writeOutline(&s, file_path, line_n, &ag_last_path, &ag_last_src);
             try s.endObject();
             match_count += 1;
         }
@@ -234,6 +239,14 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         try s.beginArray();
 
         var match_count: usize = 0;
+        // rg emits matches grouped by file, so a one-entry cache of the last
+        // file's source turns the per-match read into one read per file. Each
+        // read also costs two whole-file scans inside writeSymbolFields, and
+        // every copy lands in the 1 MiB host arena that is never reset within
+        // a call, so 200 hits in one file used to fill it and silently drop
+        // the outline.
+        var last_path: []const u8 = "";
+        var last_src: []const u8 = "";
         var rest: []const u8 = stdout;
         while (rest.len > 0 and match_count < match_cap) {
             const nl = std.mem.findScalar(u8, rest, '\n');
@@ -277,7 +290,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try s.objectField("text");
             try s.write(display);
             const rg_line_n: u32 = if (line_number > 0) std.math.cast(u32, line_number) orelse 0 else 0;
-            try writeOutline(&s, file_path, rg_line_n);
+            try writeOutline(&s, file_path, rg_line_n, &last_path, &last_src);
             try s.endObject();
             match_count += 1;
         }
@@ -313,8 +326,12 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     try out.writeAll(result);
 }
 
-fn writeOutline(s: anytype, file_path: []const u8, line_number: u32) !void {
+fn writeOutline(s: anytype, file_path: []const u8, line_number: u32, last_path: *[]const u8, last_src: *[]const u8) !void {
     if (file_path.len == 0 or line_number == 0) return;
-    const src = lib.fsRead(file_path) catch return;
-    try grep_outline.writeSymbolFields(s, src, line_number);
+    if (!std.mem.eql(u8, last_path.*, file_path)) {
+        const src = lib.fsRead(file_path) catch return;
+        last_path.* = file_path;
+        last_src.* = src;
+    }
+    try grep_outline.writeSymbolFields(s, last_src.*, line_number);
 }

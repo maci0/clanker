@@ -1044,6 +1044,12 @@ pub const Agent = struct {
                 // the run over a buffer that only exists to match rules.
                 const buf_len = @min(self.cfg.ttsr.buffer_bytes, config.ttsr_buffer_bytes_max);
                 if (buf_len == 0) break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
+                // The window exists only to match rules against. With none
+                // configured (the default) every delta memmoves ~`buf_len`
+                // bytes to make room and then finds nothing to match, so the
+                // whole turn pays that per streamed token for a guard that
+                // cannot fire.
+                if (ttsr_rules.items.len == 0) break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
                 const guard_buf = self.arena.alloc(u8, buf_len) catch
                     break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
                 var guard = TtsrStreamGuard{
