@@ -272,19 +272,51 @@ fn lineStartBefore(text: []const u8, at: usize) usize {
 /// Placeholder written in place of a secret value.
 pub const redacted = "<redacted>";
 
-/// Assignment keys whose *value* is the secret. `api_key_env`,
-/// `proxy_token_env` and `service_account_file` name a variable or a path and
-/// are deliberately absent: naming the holder is how an operator finds it.
-const secret_keys = [_][]const u8{
-    "api_key",       "apikey",        "token",
-    "access_token",  "refresh_token", "bearer_token",
-    "auth_token",    "password",      "passwd",
-    "secret",        "client_secret", "private_key",
-    "authorization", "auth",
+/// Assignment keys whose *value* is the secret, matched whole. `apikey` is
+/// here because it is one word; everything else is a `_`-separated shape the
+/// component rule below already reaches.
+const secret_keys = [_][]const u8{"apikey"};
+
+/// A key component that makes the assignment a secret on its own. Splitting on
+/// `_` keeps `max_tokens`, `token_budget` and `api_key_env` readable while
+/// catching the spellings a closed list never enumerated: `github_token`,
+/// `secret_key`, `session_token`, `db_password`, `openai_api_key`. The list
+/// was the whole redaction rule, so every operator name outside those fourteen
+/// spellings reached the model verbatim in a `config` dump.
+const secret_components = [_][]const u8{
+    "key",           "keys",       "secret", "secrets",    "token",       "password",
+    "passwd",        "passphrase", "pwd",    "credential", "credentials", "auth",
+    "authorization", "bearer",
 };
+
+/// Key suffixes that name the holder or the budget rather than the secret, so
+/// the component rule leaves them alone: `api_key_env` says which variable to
+/// set, `token_budget` and `token_stats` are counts, `service_account_file` is
+/// a path. Every one of them is a value an operator needs to read back.
+const holder_key_suffixes = [_][]const u8{
+    "env",    "file",  "path", "dir",    "url",    "name", "names",
+    "budget", "stats", "ttl",  "limit",  "max",    "min",  "count",
+    "ms",     "bytes", "id",   "cmd",    "mode",   "kind", "type",
+    "prefix", "allow", "deny", "expose", "window",
+};
+
+fn endsWithAny(key: []const u8, suffixes: []const []const u8) bool {
+    for (suffixes) |s| {
+        if (key.len > s.len and key[key.len - s.len - 1] == '_' and
+            std.mem.eql(u8, key[key.len - s.len ..], s)) return true;
+    }
+    return false;
+}
 
 fn keyIsSecret(key: []const u8) bool {
     for (secret_keys) |k| if (std.mem.eql(u8, key, k)) return true;
+    if (endsWithAny(key, &holder_key_suffixes)) return false;
+    var it = std.mem.splitScalar(u8, key, '_');
+    while (it.next()) |part| {
+        for (secret_components) |c| {
+            if (std.mem.eql(u8, part, c)) return true;
+        }
+    }
     return false;
 }
 
@@ -686,6 +718,47 @@ test "redactSecrets masks a hand-written secret and leaves api_key_env alone" {
         \\[providers.custom]
         \\api_key = <redacted>   # operator note
         \\api_key_env = "CUSTOM_KEY"
+    , got);
+}
+
+test "keyIsSecret reaches every operator spelling of a secret and spares the counters" {
+    // Secrets, none of which a closed list of fourteen names would have caught.
+    for ([_][]const u8{
+        "api_key",     "secret_key",    "github_token",   "session_token",
+        "db_password", "passphrase",    "openai_api_key", "bearer",
+        "credentials", "client_secret", "private_key",    "authorization",
+        "apikey",      "auth",
+    }) |k| try t.expect(keyIsSecret(k));
+
+    // Values an operator reads back, and the descriptor keys that share the
+    // words "key", "token" or "allow" with them.
+    for ([_][]const u8{
+        "api_key_env",        "proxy_token_env", "service_account_file",
+        "max_tokens",         "token_budget",    "token_stats",
+        "llm_token_budget",   "cache_ttl_ms",    "context_window",
+        "exec_pattern_allow", "env_allow",       "tool_allow",
+        "fs_prefixes",        "network_allow",   "default_provider",
+    }) |k| try t.expect(!keyIsSecret(k));
+}
+
+test "redactSecrets masks a credential whose key the old closed list missed" {
+    const a = t.allocator;
+    const got = try redactSecrets(a,
+        \\[providers.personal]
+        \\github_token = "ghp_abcdef0123456789"
+        \\api_token = "sk-live-9999"
+        \\db_password = "hunter2"
+        \\token_budget = 500000
+        \\max_tokens = 8192
+    );
+    defer a.free(got);
+    try t.expectEqualStrings(
+        \\[providers.personal]
+        \\github_token = <redacted>
+        \\api_token = <redacted>
+        \\db_password = <redacted>
+        \\token_budget = 500000
+        \\max_tokens = 8192
     , got);
 }
 

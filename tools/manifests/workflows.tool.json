@@ -13,5 +13,6 @@
     }
   },
   "fs_prefixes": ["workflows", ".cursor/workflows"],
+  "fs_read_only": true,
   "category": "agent"
 }

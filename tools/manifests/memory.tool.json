@@ -71,6 +71,7 @@
   "fs_prefixes": [
     "state/knowledge"
   ],
+  "fs_read_only": true,
   "wasm": "zig-out/tools/memory.wasm",
   "category": "knowledge"
 }

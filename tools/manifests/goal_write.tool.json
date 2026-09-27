@@ -35,5 +35,6 @@
   "fs_prefixes": [
     "state/goals.json"
   ],
+  "fs_read_only": true,
   "category": "agent"
 }

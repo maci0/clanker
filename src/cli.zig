@@ -6539,6 +6539,22 @@ fn withCrossChecks(
                 ),
             });
         }
+        // The same judgment the other way: a prefix is a whole-channel grant,
+        // so a guest that only reads holds write authority over every file
+        // under it, and the next patch inherits it silently. A warning, not an
+        // error: the guest may write through a helper this file does not name,
+        // and the operator reads the warning rather than a failed build.
+        if (!manifest_mod.sourceWritesFiles(body) and tool.fs_prefixes.len > 0 and !tool.fs_read_only) {
+            try out.append(arena, .{
+                .severity = .warn,
+                .key = "fs_read_only",
+                .message = try std.fmt.allocPrint(
+                    arena,
+                    "{s} never writes, so the descriptor should set \"fs_read_only\": true (or drop the prefixes it does not read): an unused write grant is inherited silently by the next patch",
+                    .{src_path},
+                ),
+            });
+        }
         break;
     }
     return out.items;

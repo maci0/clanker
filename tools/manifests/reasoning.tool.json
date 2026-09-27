@@ -14,6 +14,7 @@
   "fs_prefixes": [
     "state/reasoning.jsonl"
   ],
+  "fs_read_only": true,
   "network_allow": [],
   "category": "harness"
 }

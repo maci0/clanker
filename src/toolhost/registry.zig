@@ -1508,18 +1508,26 @@ test "a guest that writes files does not opt out of confirmation" {
             std.debug.print("cannot read {s}: {s}\n", .{ entry.name, @errorName(err) });
             return err;
         };
-        if (!manifest.sourceWritesFiles(body)) continue;
-        writers_seen += 1;
+        const writes = manifest.sourceWritesFiles(body);
+        if (writes) writers_seen += 1;
 
         const stem = entry.name[0 .. entry.name.len - ".zig".len];
         for (manifests.items) |m| {
             const suffix = std.fmt.allocPrint(arena, "{s}.wasm", .{stem}) catch return error.OutOfMemory;
             if (!std.mem.endsWith(u8, m.wasm, suffix)) continue;
             if (m.tool.confirm) |c| {
-                if (!c) {
+                if (!c and writes) {
                     std.debug.print("{s}.zig writes files but {s} sets \"confirm\": false\n", .{ stem, m.tool.name });
                     return error.WriterOptedOutOfConfirm;
                 }
+            }
+            // The other direction: an fs_prefixes grant is a whole-channel
+            // grant, so a guest that only reads holds write authority over
+            // every file under it until the next patch inherits it. The
+            // descriptor has to say `fs_read_only`, not merely not write.
+            if (!writes and m.tool.fs_prefixes.len > 0 and !m.tool.fs_read_only) {
+                std.debug.print("{s}.zig never writes, so {s} should set \"fs_read_only\": true\n", .{ stem, m.tool.name });
+                return error.ReaderGrantedWrite;
             }
             break;
         }
