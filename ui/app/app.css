@@ -329,7 +329,6 @@
    applied as inline tokens by core/theme.js. :root and the system dark
    block above stay here so "system" has paint before any fetch. */
 
-
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -1200,144 +1199,30 @@ textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent);
 /* Primary actuators that skip upgradePfButton. A bare `button` must not
    inherit the accent pill: plugins and unmarked row controls (filenames,
    crumbs, #card-add) were painted as 40px Run buttons. */
-button.primary:where(:not(.pf-v6-c-button)),
-#submit:where(:not(.pf-v6-c-button)) {
+button.primary,
+#submit {
   min-height: 40px; padding: 0.5rem 1.05rem;
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
   color: var(--on-accent); background: var(--accent);
   border: 0; border-radius: var(--radius-pill); cursor: pointer;
   box-shadow: var(--lift-low);
 }
-button.secondary:where(:not(.pf-v6-c-button)) {
+button.secondary {
   font-size: var(--step-0); padding: var(--space-2) 0.8rem;
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border);
   font-family: var(--sans);
   border-radius: var(--radius-pill);
 }
-button.secondary:where(:not(.pf-v6-c-button)):hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
-button.danger:where(:not(.pf-v6-c-button)) { background: var(--danger); color: var(--on-danger); }
-button.secondary.danger:where(:not(.pf-v6-c-button)) { background: var(--surface); color: var(--danger); border-color: var(--border); }
-button.secondary.danger:where(:not(.pf-v6-c-button)):hover,
-button.secondary.danger:where(:not(.pf-v6-c-button)):focus-visible {
+button.secondary:hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
+button.danger { background: var(--danger); color: var(--on-danger); }
+button.secondary.danger { background: var(--surface); color: var(--danger); border-color: var(--border); }
+button.secondary.danger:hover,
+button.secondary.danger:focus-visible {
   background: var(--danger); color: var(--on-danger); border-color: var(--danger);
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-/* PatternFly buttons (step 4): cabinet actuator look on upgraded controls.
-   Set the PF component custom properties: .pf-m-primary (0,2,0) beats
-   button.pf-v6-c-button alone, and plain Color reads icon greys that stay
-   light-theme unless remapped here. */
-button.pf-v6-c-button {
-  appearance: none;
-  -webkit-appearance: none;
-  min-height: 40px; padding: 0.5rem 1.05rem;
-  font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
-  border: 0; border-radius: var(--radius-pill); cursor: pointer;
-  box-shadow: var(--lift-low);
-}
-button.pf-v6-c-button.pf-m-primary,
-button.pf-v6-c-button:not(.pf-m-secondary):not(.pf-m-plain):not(.pf-m-danger):not(.pf-m-link) {
-  --pf-v6-c-button--Color: var(--on-accent);
-  --pf-v6-c-button--BackgroundColor: var(--accent);
-  --pf-v6-c-button--hover--Color: var(--on-accent);
-  --pf-v6-c-button--hover--BackgroundColor: color-mix(in srgb, var(--accent) 88%, black);
-  --pf-v6-c-button--m-clicked--Color: var(--on-accent);
-  --pf-v6-c-button--m-clicked--BackgroundColor: color-mix(in srgb, var(--accent) 80%, black);
-  --pf-v6-c-button__icon--Color: var(--on-accent);
-  /* Longhand + !important: PF sets background-color via component vars, and
-     some UA/color-scheme paths ignore the winning custom property. */
-  color: var(--on-accent) !important;
-  background-color: var(--accent) !important;
-  background-image: none !important;
-}
-button.pf-v6-c-button.pf-m-secondary {
-  --pf-v6-c-button--Color: var(--fg);
-  --pf-v6-c-button--BackgroundColor: var(--surface);
-  --pf-v6-c-button--BorderColor: var(--border);
-  --pf-v6-c-button--hover--Color: var(--fg);
-  --pf-v6-c-button--hover--BackgroundColor: color-mix(in srgb, var(--fg) 5%, var(--surface));
-  font-size: var(--step-0); padding: var(--space-2) 0.8rem;
-  background: var(--surface); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius-pill);
-  box-shadow: none;
-}
-button.pf-v6-c-button.pf-m-secondary:hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
-button.pf-v6-c-button.pf-m-danger {
-  --pf-v6-c-button--Color: var(--on-danger);
-  --pf-v6-c-button--BackgroundColor: var(--danger);
-  background: var(--danger); color: var(--on-danger);
-}
-button.pf-v6-c-button.pf-m-secondary.pf-m-danger {
-  --pf-v6-c-button--Color: var(--danger);
-  --pf-v6-c-button--BackgroundColor: var(--surface);
-  background: var(--surface); color: var(--danger); border-color: var(--border);
-}
-button.pf-v6-c-button.pf-m-secondary.pf-m-danger:hover,
-button.pf-v6-c-button.pf-m-secondary.pf-m-danger:focus-visible {
-  background: var(--danger); color: var(--on-danger); border-color: var(--danger);
-}
-/* Plain PF buttons: icon/chrome controls, not solid actuators. Without this,
-   button.pf-v6-c-button above paints every pf-m-plain control accent blue. */
-button.pf-v6-c-button.pf-m-plain {
-  --pf-v6-c-button--Color: var(--fg-muted);
-  --pf-v6-c-button--BackgroundColor: transparent;
-  --pf-v6-c-button--hover--Color: var(--fg);
-  --pf-v6-c-button--hover--BackgroundColor: var(--surface-2);
-  --pf-v6-c-button__icon--Color: var(--fg-muted);
-  min-height: 32px; min-width: 32px; box-sizing: border-box;
-  padding: var(--space-1) 0.55rem; font-weight: 500;
-  color: var(--fg-muted) !important;
-  background-color: transparent !important;
-  background-image: none !important;
-  border: 0; box-shadow: none;
-}
-button.pf-v6-c-button.pf-m-plain:hover {
-  color: var(--fg) !important;
-  background-color: var(--surface-2) !important;
-}
-/* Keep hit area even when PF plain zeros padding; never drop below 32/44. */
-button.pf-v6-c-button.pf-m-plain.chip-btn {
-  --pf-v6-c-button--Color: var(--fg-muted);
-  --pf-v6-c-button--BackgroundColor: transparent;
-  min-height: 32px; min-width: 32px; box-sizing: border-box;
-  padding: var(--space-1) 0.55rem; font-weight: 500;
-  color: var(--fg-muted) !important;
-  background-color: transparent !important;
-  border: 0; box-shadow: none;
-}
-button.pf-v6-c-button.pf-m-plain .pf-v6-c-button__text,
-button.pf-v6-c-button.pf-m-plain.chip-btn .pf-v6-c-button__text {
-  color: inherit !important;
-}
-/* Chips that still carry pf-v6-c-button (legacy upgrade) keep the lamp look. */
-button.chip.pf-v6-c-button,
-button.header-model.pf-v6-c-button,
-button.model-pill.pf-v6-c-button {
-  font-family: var(--mono); font-size: var(--step--1); font-weight: 600;
-  min-height: 0; padding: 0.15rem 0.55rem;
-  color: var(--fg-muted); background: var(--surface-2);
-  border: 1px solid var(--rule); border-radius: var(--radius-sm);
-  box-shadow: none;
-}
-button.header-model.pf-v6-c-button,
-button.model-pill.pf-v6-c-button {
-  font-size: var(--step--1); font-weight: 500; border-radius: var(--radius-pill);
-  color: color-mix(in srgb, var(--fg-muted) 55%, var(--fg));
-}
-button.model-pill.pf-v6-c-button:hover,
-button.model-pill.pf-v6-c-button:focus-visible,
-button.header-model.pf-v6-c-button:hover {
-  color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
-}
-/* Jump-to-latest is a surface control, not a primary CTA. */
-button.scroll-bottom.pf-v6-c-button {
-  min-height: 32px; padding: 0 var(--space-4);
-  background: var(--surface); color: var(--fg);
-  border: 1px solid var(--border); box-shadow: var(--lift);
-  font-weight: 500;
-}
+/* Keep hit area even when PF plain zeros padding;
 
 /* PatternFly forms (step 5): cabinet field look on upgraded controls. */
 .pf-v6-c-form-control,
@@ -1550,10 +1435,6 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
 @media (pointer: coarse) {
   button, summary, input[type="text"], input[type="search"], input[type="number"],
   input[type="date"], select { min-height: 44px; }
-  button.chip-btn,
-  button.pf-v6-c-button.pf-m-plain.chip-btn {
-    min-height: 44px; min-width: 44px;
-  }
   .rail-tab,
   .pf-v6-c-nav__link.rail-tab,
   button.pf-v6-c-nav__link.rail-tab { min-height: 44px; }
@@ -1567,12 +1448,6 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .session-actions button,
   .composer .toolbar #voice-btn {
     min-width: 44px; min-height: 44px; height: 44px;
-  }
-  .rail-new,
-  button.rail-new,
-  button.pf-v6-c-button.rail-new {
-    min-height: 44px;
-    height: 44px;
   }
 }
 /* Narrow viewports: primary composer actions and rail channels stay hittable
@@ -1596,20 +1471,11 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   }
 .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
-button.chip-btn,
-  button.pf-v6-c-button.pf-m-plain.chip-btn { min-height: 44px; min-width: 44px; }
 .rail-tab,
   .pf-v6-c-nav__link.rail-tab,
   button.pf-v6-c-nav__link.rail-tab {
     min-height: 44px;
     padding-block: 0.55rem;
-  }
-.rail-item,
-  .rail-new,
-  button.rail-new,
-  button.pf-v6-c-button.rail-new {
-    min-height: 44px;
-    height: 44px;
   }
 .rail-pin,
   button.rail-pin {
@@ -1648,7 +1514,6 @@ button.rail-group {
   }
 }
 
-
 /* A pressed actuator travels; scale reads as shrinking, travel reads as a
    press. Harmless on pointer devices too. */
 button:active:not(:disabled) {
@@ -1666,12 +1531,11 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
      entirely — worst in the palette, where the highlighted row is the only
      clue what Enter will do. */
   .rail-tab[aria-selected="true"],
-  .pf-v6-c-nav__link.rail-tab.pf-m-current,
   .rail-item[aria-current="true"],
-  .palette-item[aria-selected="true"],
-  
+  .palette-item[aria-selected="true"] {
+  border-color: Highlight;
+  }
 }
-
 
 /* Overlays: the palette and the shortcut sheet. Both are one box on a scrim,
    positioned high rather than centred so the list grows downward into space
@@ -2318,9 +2182,6 @@ h2#session-title {
    scrolls sideways and each column scrolls cards internally. On narrow
    viewports the columns stack vertically. */
 
-
-
-
 @media (max-width: 40rem) {
   .board { flex-wrap: wrap; overflow-x: hidden; }
 }
@@ -2328,92 +2189,21 @@ h2#session-title {
 
 /* Shared board popups (member, priority, column move, label name). */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* ---- Drop indicator: thin line between cards showing where a card will land ---- */
 
-
 /* A card is a small plate mounted in its column's channel. */
-
-
-
 
 /* The card's list item is the positioning context for the hover actions, which
    are its siblings rather than its children. */
 
-
-
 /* The "in list <column>" subtitle in the card detail header. */
-
-
 
 /* Card cover: colour strip along the plate's top edge. The hue and its ink
    are the --card-* tokens in :root; nothing here spells a colour out. */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* Trello-style labels: pill chips on card face — compact bars that expand on hover */
 
-
-
 /* On card hover, expand labels to show text (Trello-style toggle) */
-
-
-
-
-
-
-
-
-
-
-
 
 /* Cover color picker in card detail */
 .cover-color-picker {
@@ -2439,122 +2229,39 @@ h2#session-title {
 
 /* Trello-style card badges row */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* The reassign button is a sibling of the card button (see cardMemberControl),
    so it is positioned against the card's list item and the avatar left inside
    the card only holds the row open. `.card-body`'s own padding is the offset,
    plus the card's 1px border, so the button lands exactly where the in-flow
    avatar sits. */
 
-
 /* The control sits at the card's bottom-right, so its picker opens upward and
    right-aligned: down and to the left it would leave the column. */
 
 /* Starred card indicator */
 
-
 /* Quick actions overlay on card hover */
 
-
-
-
-
 /* Blue marks operator action; a due date is a reading, in signal amber or red. */
-
-
 
 /* Drag ghost: a plate lifted off the backplane, so it rises straight and
    throws the high lift. It used to tilt 3deg and grow 4% behind a hand-rolled
    halo, which is the drag animation every board ships and the one thing a
    machined plate cannot do. Height is carried by --lift-high alone. */
 
-
 /* Card detail: a plate on the backplane, not a sliding Trello modal. */
 
 /* Cover image/color at the top of card detail */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* Card detail section headers */
-
-
 
 /* Card detail metadata pills */
 
-
-
-
-
 /* Description edit area in card detail */
-
-
-
-
-
-
 
 /* Label picker inside card detail */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* Card detail save button — Trello green accent */
-
-
 
 /* Board column count badge */
 
@@ -2623,24 +2330,9 @@ h2#session-title {
 
 /* Trello-style activity timeline */
 
-
-
-
 /* Activity avatars pick a stable tone per name from the theme-aware chat-hue
    palette. Background and foreground both come from per-theme tokens, never
    literal hex, so the initials stay legible in light and dark themes. */
-
-
-
-
-
-
-
-
-
-
-
-
 
 /* Log tail */
 .log-view {
@@ -2755,15 +2447,6 @@ h2#session-title {
   /* Same iOS zoom contract as the page-wide phone-field guard: this
      textarea's 13px rule is declared after that guard. */
   .board-quick-add .board-add-form textarea { font-size: 16px; }
-}@media (pointer: coarse) {
-  button:where(:not(.pf-v6-c-button)),
-  button.pf-v6-c-button,
-  .chat-composer button,
-  #view-chat .suggestion,
-  input:where([type="text"], [type="search"], [type="number"], [type="url"]),
-  select {
-    min-height: 44px;
-  }
 }@media (max-width: 40rem) {
   /* The view-scoped fields this guard used to cover (.slack-*, .run-picker
      search, .config-editor, .models-edit-toml-editor) live in views.css,

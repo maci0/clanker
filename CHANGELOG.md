@@ -346,6 +346,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   that name `pf-v6-c-button` are unreachable as of this change and go in the
   next step, with the sheet.
 
+- The rules that named PatternFly's button classes are gone from `app.css`,
+  with the `:where(:not(.pf-v6-c-button))` guards on the cabinet's own
+  `button.primary`/`button.secondary` rules: no element carries those classes
+  any more, so the guards only weakened what they wrapped. First paint 58.8K gz.
+- `ui/app/css-split.test.mjs` grows a sheet-integrity test: both shipped sheets
+  must be brace-balanced and must not end a selector list in a comma. A
+  scripted deletion took a closing brace with it, and left a dangling comma in
+  the forced-colors block — and a list ending in a comma is invalid, so the
+  parser dropped the whole rule in silence. Both are checked now rather than
+  trusted to the diff, and the forced-colors rule is repaired.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

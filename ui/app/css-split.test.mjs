@@ -353,3 +353,31 @@ test("the two sheets still cover everything the page styles", function () {
     assert.ok(combined.includes(sel.slice(0, 30)), `stylesheet split dropped ${sel}`);
   }
 });
+
+// ---------- the sheets parse ----------
+// A scripted deletion can take a closing brace with it, or leave a selector
+// list ending in a comma — and a dangling comma invalidates the whole list, so
+// the rule it belonged to is dropped by the parser with nothing said. Both
+// happened while the Tailwind port deleted rules, so this checks every shipped
+// sheet rather than trusting the diff.
+test("every shipped sheet is brace-balanced and has no dangling selector list", function () {
+  for (const [name, src] of [["app.css", appCss], ["views.css", viewsCss]]) {
+    let depth = 0;
+    let line = 1;
+    let firstNegative = 0;
+    for (const ch of src) {
+      if (ch === "\n") line += 1;
+      else if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth < 0 && !firstNegative) firstNegative = line;
+      }
+    }
+    assert.equal(firstNegative, 0, `${name}: a closing brace with nothing open, at line ${firstNegative}`);
+    assert.equal(depth, 0, `${name}: ${depth} block(s) left unclosed`);
+    // A selector list that ends in a comma: a comma followed (through
+    // whitespace and comments) by `{`.
+    const dangling = src.match(/,(?:\s|\/\*[\s\S]*?\*\/)*\{/);
+    assert.equal(dangling, null, `${name}: a selector list ends in a comma`);
+  }
+});

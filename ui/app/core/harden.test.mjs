@@ -701,11 +701,12 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
 });
 
 test("accent pill is primary/#submit only, not every unmarked button", function () {
-  assert.doesNotMatch(
-    css,
-    /button:where\(:not\(\.pf-v6-c-button\)\)\s*\{[^}]*background:\s*var\(--accent\)/,
-  );
-  const primary = ruleBody("button.primary:where(:not(.pf-v6-c-button)),\n#submit:where(:not(.pf-v6-c-button))");
+  // The guard is gone with the PatternFly button bridge: no button carries a
+  // pf-v6-c-button class, so a bare `button` rule still must not paint accent.
+  // `button.primary, #submit` is the accent pill; a selector list that only
+  // names bare `button` must not paint it.
+  assert.doesNotMatch(css, /(^|[,\s])button\s*(,[^{]*)?\{[^}]*background:\s*var\(--accent\)/m);
+  const primary = ruleBody("button.primary,\n#submit");
   assert.match(primary, /background:\s*var\(--accent\)/);
 });
 
