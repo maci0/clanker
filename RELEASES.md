@@ -30,9 +30,12 @@ descriptor schemas; and persisted files under `state/`. A signature-preserving
 change to results, errors, defaults, side effects, wire data, or persisted data
 can therefore be breaking.
 
-Anything described as experimental or internal in documentation or a tool
-descriptor is outside the stable API. An underscore, source-file location, or
-absence from the README does not by itself make a reachable surface private.
+Anything described as experimental or internal in documentation is outside the
+stable API. A tool descriptor's `"internal": true` is not such a marker: it
+removes the tool from the model's catalog, and many of those tools are reached
+by a REPL slash command, an HTTP route, or the web UI, all of which stay in the
+contract above. An underscore, source-file location, or absence from the
+README does not by itself make a reachable surface private.
 
 ## Deprecation and migration
 

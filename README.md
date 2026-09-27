@@ -38,18 +38,30 @@ plugin's reach.
 
 ## Release status
 
-clanker is unreleased development software. The `0.1.0` package version is not
-evidence of a published release; published releases are identified by an
-immutable `vMAJOR.MINOR.PATCH` Git tag and a matching entry in
-[CHANGELOG.md](CHANGELOG.md). Until `1.0.0`, minor releases may contain breaking
-changes, but patch releases remain backward compatible. See
-[RELEASES.md](RELEASES.md) for the compatibility, deprecation, and support
-policy.
+The current line is `0.5.x`; `0.5.0` is the newest published release. A version in
+`build.zig.zon` is the version a build reports, not a published release: a
+release exists when an immutable `vMAJOR.MINOR.PATCH` tag carries binaries and
+a matching dated entry in [CHANGELOG.md](CHANGELOG.md). (`v0.2.0` was tagged but
+its build failed, so the first published 0.2 release is `0.2.1`.) Until `1.0.0`,
+minor releases may contain breaking changes, but patch releases remain backward
+compatible. See [RELEASES.md](RELEASES.md) for the compatibility, deprecation,
+and support policy.
 
 ## Quick start
 
-Requirements: **Zig 0.16.x**, **Git**, **Bash**, and **patch**; the test
-suite also requires **Bun** and **Python 3**. The Zig release is pinned in
+To run a published release, download the binary for your platform from the
+[release page](https://github.com/maci0/clanker/releases) (one per tag, named
+`clanker-<tag>-<target>` for `x86_64-linux-musl`, `aarch64-linux-musl`,
+`aarch64-macos`, and `x86_64-macos`, each release also carrying a CycloneDX
+`sbom.cdx.json`) and run it:
+
+```sh
+./clanker-v0.5.0-x86_64-linux-musl --version   # clanker 0.5.0
+```
+
+To build from source, the requirements are **Zig 0.16.x**, **Git**, **Bash**,
+and **patch**; the test suite also requires **Bun** and **Python 3**. The Zig
+release is pinned in
 `build.zig.zon`'s `minimum_zig_version` (CI installs exactly that release from it). `zig build` and `zig build tools` need no bun
 — `tools/ts/dist/` is committed so a checkout without a JS toolchain still
 builds and runs every tool — but the test step drives its JS suites with

@@ -1410,10 +1410,29 @@ fn findDuplicateChangelogSection(gpa: std.mem.Allocator, changelog: []const u8) 
     return null;
 }
 
+/// The newest released version named by `CHANGELOG.md`, or null when it has no
+/// dated version section. Sections run newest-first, so the first heading of
+/// the form `## [MAJOR.MINOR.PATCH] - YYYY-MM-DD` is the newest one; `[0.2.0]`
+/// in the link-reference block at the bottom is a link, not a section, and is
+/// never at column zero with a date, so it is skipped by construction.
+fn newestReleasedVersion(changelog: []const u8) ?std.SemanticVersion {
+    var lines = std.mem.splitScalar(u8, changelog, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "## [")) continue;
+        const rest = line["## [".len..];
+        const close = std.mem.indexOfScalar(u8, rest, ']') orelse continue;
+        const version = std.SemanticVersion.parse(rest[0..close]) catch continue;
+        // A bare `## [0.5.0]` with no date is an anchor someone hand-wrote,
+        // not a published release; the date is what release-check.sh matches.
+        if (std.mem.startsWith(u8, rest[close + 1 ..], " - ")) return version;
+    }
+    return null;
+}
+
 /// Validates the consumer-facing release contract files that must stay aligned
 /// with `build.zig.zon` and the policy in RELEASES.md.
 pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) !GateResult {
-    _ = std.SemanticVersion.parse(build_options.version) catch {
+    const manifest_version = std.SemanticVersion.parse(build_options.version) catch {
         return .{ .ok = false, .label = "release-contract", .detail = "build.zig.zon .version is not valid SemVer" };
     };
 
@@ -1427,6 +1446,21 @@ pub fn releaseContractGate(gpa: std.mem.Allocator, io: std.Io, dir: std.Io.Dir) 
     }
     if (try findDuplicateChangelogSection(gpa, changelog)) |detail| {
         return .{ .ok = false, .label = "release-contract", .detail = detail };
+    }
+    // RELEASES.md allows the manifest to run ahead of the last release (that is
+    // what a development version is) but never behind it: a manifest left at or
+    // below an already published version would rebuild an artifact claiming a
+    // version whose tag and notes are immutable, so the next build would republish
+    // a release that already exists.
+    if (newestReleasedVersion(changelog)) |released| {
+        if (std.SemanticVersion.order(manifest_version, released) == .lt) {
+            const detail = try std.fmt.allocPrint(
+                gpa,
+                "build.zig.zon version {f} is older than the newest CHANGELOG.md release {f}; bump the manifest past it",
+                .{ manifest_version, released },
+            );
+            return .{ .ok = false, .label = "release-contract", .detail = detail };
+        }
     }
 
     const readme = dir.readFileAlloc(io, "README.md", gpa, .limited(1 << 20)) catch |err| {
@@ -1463,6 +1497,29 @@ test "releaseContractGate accepts the live release files" {
 test "releaseContractGate rejects a changelog without Unreleased" {
     const bad = "# Changelog\n\n## [0.1.0] - 2026-01-01\n";
     try std.testing.expect(std.mem.find(u8, bad, "## [Unreleased]") == null);
+}
+
+test "newestReleasedVersion reads the first dated section, not the link block" {
+    const text = "# Changelog\n\n## [Unreleased]\n\n## [0.6.0] - 2026-10-01\n\n### Fixed\n\n- a\n\n" ++
+        "## [0.5.0] - 2026-09-18\n\n### Fixed\n\n- b\n\n" ++
+        "[0.6.0]: https://example.invalid/releases/tag/v0.6.0\n" ++
+        "[0.5.0]: https://example.invalid/releases/tag/v0.5.0\n";
+    const newest = newestReleasedVersion(text).?;
+    try std.testing.expectEqual(@as(u64, 0), newest.major);
+    try std.testing.expectEqual(@as(u64, 6), newest.minor);
+    try std.testing.expectEqual(@as(u64, 0), newest.patch);
+}
+
+test "newestReleasedVersion ignores Unreleased, undated anchors, and a changelog with none" {
+    try std.testing.expectEqual(@as(?std.SemanticVersion, null), newestReleasedVersion("# Changelog\n\n## [Unreleased]\n\n- work in progress\n"));
+    try std.testing.expectEqual(@as(?std.SemanticVersion, null), newestReleasedVersion("## [0.5.0]\n"));
+    try std.testing.expectEqual(@as(?std.SemanticVersion, null), newestReleasedVersion(""));
+}
+
+test "newestReleasedVersion skips an unparseable heading rather than giving up" {
+    const text = "## [not-a-version] - 2026-01-01\n\n## [0.5.0] - 2026-09-18\n";
+    const newest = newestReleasedVersion(text).?;
+    try std.testing.expectEqual(@as(u64, 5), newest.minor);
 }
 
 test "findDuplicateChangelogSection flags a repeated heading in one version block" {
