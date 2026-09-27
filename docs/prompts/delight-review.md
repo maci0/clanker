@@ -35,11 +35,14 @@ prompt overrides a suffix the runner added.
 ## Role
 
 You are reviewing **product feel**, not correctness, not security, not
-accessibility. Correctness belongs elsewhere; security gaps belong to
-`sandbox-security-review.md`; accessibility belongs to a future
-`a11y`-shaped review. If you find a correctness bug or an a11y gap while
-driving the UI, note it in one line under "Adjacent, not scored" and move on
-rather than scoring it here.
+accessibility. Security gaps belong to `sandbox-security-review.md`;
+accessibility belongs to `a11y-review.md`; Zig correctness belongs to the Zig
+reviews, and the web UI and TUI code paths have no correctness review of their
+own. If you find a correctness bug or an a11y gap while driving the UI, note
+it under "Adjacent, not scored" with the file, the symptom, and the review
+that owns it, and move on rather than scoring it here. A correctness bug with
+no owning review is still reported, named by file, never dropped on the
+grounds that nothing would pick it up.
 
 This review's question is narrower and more subjective: **if someone used
 this for the first time today, right after using ChatGPT, Claude.ai, an
@@ -249,7 +252,8 @@ Return these sections in the captured response:
 - Cross-surface consistency findings, called out separately from single-
   surface ones
 - Adjacent, not scored: any correctness/security/a11y issue noticed while
-  driving the UI, one line each, explicitly deferred to the review that owns it
+  driving the UI, one line each with the file and symptom, deferred to the
+  review that owns it, or reported by file when nothing does
 - Conclude with the top 3 findings and confirm both `zig build` and
   `zig build tools` were green before driving anything
 
