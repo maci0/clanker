@@ -35,6 +35,13 @@
    `none`. Width is zeroed, so a rule that sets only a colour stays inert. */
 *, ::before, ::after { border: 0 solid; }
 
+/* One component rule, because a utility cannot carry both of these: Firefox
+   took `crisp-edges` before `pixelated` was standard, so the floor's canvas
+   needs the pair, in that order, and a second declaration is not a class name. */
+@layer components {
+  .pixelated { image-rendering: crisp-edges; image-rendering: pixelated; }
+}
+
 @theme inline {
   /* No Tailwind palette: every colour on this page is a cabinet token, so a
      stray `text-red-500` must compile to nothing rather than to Tailwind red. */

@@ -32,6 +32,7 @@ const migrated = [
   "../plugins/schedule/app.js",
   "../plugins/mesh/app.js",
   "../plugins/compare/app.js",
+  "../plugins/office/app.js",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: a breakpoint, or
@@ -79,6 +80,8 @@ function classStrings(src) {
   // `FACTS_CLASS`) are class strings too: reading only the literals beside
   // `api.el` would leave most of a ported view unchecked.
   for (const m of src.matchAll(/\b[A-Z][A-Z0-9_]*CLASS\s*=\s*"([^"]*)"/g)) out.push(m[1]);
+  // `T.ul({ class: "…" })` is the same statement spelled as an object property.
+  for (const m of src.matchAll(/class:\s*"([^"]*)"/g)) out.push(m[1]);
   for (const m of src.matchAll(/\.className\s*=\s*"([^"]*)"/g)) out.push(m[1]);
   return out;
 }

@@ -18,7 +18,6 @@ import vm from "node:vm";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const js = readFileSync(join(dir, "app.js"), "utf8");
-const css = readFileSync(join(dir, "app.css"), "utf8");
 const manifest = JSON.parse(readFileSync(join(dir, "plugin.json"), "utf8"));
 
 test("no bare localStorage read can take the whole view down", () => {
@@ -72,8 +71,16 @@ test("the frame loop and the polls idle on a hidden view", () => {
 });
 
 test("the canvas takes its colours from the page's tokens", () => {
-  // Colour is the one thing a theme owns; a literal here is the one thing on
-  // the page that would not follow it.
-  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/);
-  assert.match(css, /var\(--/);
+  // Colour is the one thing a theme owns. The plugin ships no sheet any more:
+  // its chrome is `bg-bg`/`border-rule` over the theme's var() chain, and the
+  // floor it paints is drawn from `getPropertyValue` reads of those same
+  // custom properties. The hex strings left in the file are the fallbacks an
+  // empty read needs, which is not the same as a colour chosen here.
+  const canvas = /\bCANVAS_CLASS = "([^"]*)"/.exec(js);
+  assert.ok(canvas, "the canvas still states its classes");
+  assert.match(canvas[1], /pixelated/);
+  assert.match(canvas[1], /bg-bg/);
+  assert.match(canvas[1], /border-rule/);
+  assert.match(js, /getComputedStyle\(document\.documentElement\)/);
+  assert.match(js, /cssVar\("--(border|surface-2|fg|fg-muted)"/);
 });

@@ -12,6 +12,13 @@
  * nothing is only available to someone who can see pixels.
  */
 
+/* The floor and the words that describe it. `pixelated` is a component rule in
+   ui/app/tailwind.src.css: nearest-neighbour scaling needs two values
+   (crisp-edges then pixelated) and a utility carries one. */
+var CANVAS_CLASS = "pixelated my-4 mx-0 block max-w-none rounded-plate border border-rule bg-bg motion-reduce:transition-none";
+var LOG_CLASS = "mt-4 mb-0 mx-0 max-h-64 list-none overflow-y-auto p-0 font-mono text-sm text-fg-muted";
+var LOG_ROW_CLASS = "border-b border-rule py-0.5 wrap-anywhere last:border-b-0";
+
 clanker.registerView({
   id: "office",
   title: "Office",
@@ -54,17 +61,17 @@ clanker.registerView({
     function asleep(a) { return !a.walk && nowSec() - (a.lastSeen || 0) > SLEEP_AFTER; }
 
     var canvas = document.createElement("canvas");
-    canvas.className = "office-canvas";
+    canvas.className = CANVAS_CLASS;
     // Decorative and duplicative by design: the log below says the same thing.
     canvas.setAttribute("aria-hidden", "true");
     var ctx2d = canvas.getContext("2d");
     ctx2d.imageSmoothingEnabled = false;
 
-    var logList = T.ul({ class: "office-log" });
+    var logList = T.ul({ class: LOG_CLASS });
     var head = T.div({ class: "section-head" },
       T.h2("Office"),
       T.span({ class: "meta" }, function () { return status.val; }),
-      T.label({ class: "meta office-alarm" },
+      T.label({ class: "meta" },
         T.input({
           type: "checkbox",
           checked: alarmOn.val ? "" : null,
@@ -327,6 +334,7 @@ clanker.registerView({
 
     function say(text) {
       var li = document.createElement("li");
+      li.className = LOG_ROW_CLASS;
       li.textContent = text;
       logList.insertBefore(li, logList.firstChild);
       while (logList.childNodes.length > 40) logList.removeChild(logList.lastChild);

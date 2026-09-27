@@ -36,6 +36,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   module scope (`ROW_CLASS`, `ENTRY_CLASS`), so those utilities are checked
   too, and it accepts bracketed *variants* (a breakpoint, a data state) rather
   than treating every bracket as an arbitrary value.
+- The Office plugin ships no stylesheet either (`ui/plugins/office/app.css` is
+  deleted): its floor canvas and its log are utility strings. Nearest-neighbour
+  scaling is the one rule a utility cannot carry — it needs both
+  `image-rendering: crisp-edges` and `pixelated`, in that order — so it is a
+  `.pixelated` component rule in `ui/app/tailwind.src.css`, which is what
+  Tailwind's component layer is for. The dead `office-alarm` class is gone from
+  the markup, and the log rows' 0.15rem padding rides the `py-0.5` rung.
 
 ### Fixed
 

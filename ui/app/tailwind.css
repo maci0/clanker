@@ -89,17 +89,26 @@
 .mx-0 {
   margin-inline: 0px;
 }
+.my-4 {
+  margin-block: var(--space-4);
+}
 .mt-0 {
   margin-top: 0px;
 }
 .mt-2 {
   margin-top: var(--space-2);
 }
+.mt-4 {
+  margin-top: var(--space-4);
+}
 .mt-5 {
   margin-top: var(--space-5);
 }
 .mr-auto {
   margin-right: auto;
+}
+.mb-0 {
+  margin-bottom: 0px;
 }
 .mb-2 {
   margin-bottom: var(--space-2);
@@ -159,11 +168,17 @@
 .h-120 {
   height: calc(var(--spacing) * 120);
 }
+.max-h-64 {
+  max-height: calc(var(--spacing) * 64);
+}
 .min-h-8 {
   min-height: calc(var(--spacing) * 8);
 }
 .min-h-11 {
   min-height: calc(var(--spacing) * 11);
+}
+.max-w-none {
+  max-width: none;
 }
 .min-w-48 {
   min-width: calc(var(--spacing) * 48);
@@ -257,6 +272,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.overflow-y-auto {
+  overflow-y: auto;
+}
 .rounded-capsule {
   border-radius: var(--radius-pill);
 }
@@ -273,11 +291,18 @@
   border-style: var(--tw-border-style);
   border-width: 1px;
 }
+.border-b {
+  border-bottom-style: var(--tw-border-style);
+  border-bottom-width: 1px;
+}
 .border-rule {
   border-color: var(--rule);
 }
 .bg-\[\#fff\] {
   background-color: #fff;
+}
+.bg-bg {
+  background-color: var(--bg);
 }
 .bg-surface {
   background-color: var(--surface);
@@ -463,6 +488,10 @@
 .group-data-\[paused\=true\]\:line-through:is(:where(.group)[data-paused="true"] *) {
   text-decoration-line: line-through;
 }
+.last\:border-b-0:last-child {
+  border-bottom-style: var(--tw-border-style);
+  border-bottom-width: 0px;
+}
 @media (hover: hover) {
   .hover\:border-accent:hover {
     border-color: var(--accent);
@@ -488,6 +517,11 @@
 .data-\[state\=ok\]\:text-ok[data-state="ok"] {
   color: var(--ok);
 }
+@media (prefers-reduced-motion: reduce) {
+  .motion-reduce\:transition-none {
+    transition-property: none;
+  }
+}
 @media (width < 40rem) {
   .max-\[40rem\]\:col-span-full {
     grid-column: 1 / -1;
@@ -509,6 +543,12 @@
 }
 *, ::before, ::after {
   border: 0 solid;
+}
+@layer components {
+  .pixelated {
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+  }
 }
 @property --tw-rotate-x {
   syntax: "*";
