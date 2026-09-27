@@ -196,9 +196,11 @@ Shipped:
 - [x] Tool-call/result status lines rendered as bordered left-bar cards
       (`transcript.zig` card helpers), one card per tool batch
 - [x] Status bar with an animated spinner
-- [x] First-run hint when the transcript is empty ("Start with a task...",
+- [ ] First-run hint when the transcript is empty ("Start with a task...",
       "Try /model to switch models, /help for commands, or type anything
-      to begin.")
+      to begin.") Not shipped: no first-paint hint exists in `src/tui/repl.zig`
+      (checked 2026-09-27, no `placeholder` and no empty-transcript draw
+      branch). ADR 0016 records the same gap.
 - [x] `Ctrl-C` (idle quits the REPL; mid-stream sets `stop_flag`)
 - [x] Quit commands (`/quit`, `/exit`, `/q`, bare `exit`/`quit`)
 - [x] SIGWINCH handled natively by `vxfw.App`

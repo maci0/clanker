@@ -80,5 +80,5 @@ from any agent conversation including one in the web UI, with a dedicated web
 UI page made an explicit non-goal in PRD 0004; and parallel experiments via
 swarm did not ship and were likewise settled by PRD 0004 as a non-goal, with
 iterations running strictly sequentially in one process. What remains open is
-tracked in the PRD's Known issues (an unenforced `--budget`, an empty `best/`
-directory), not here.
+tracked in the PRD's Known issues, not here (its one entry, the advisory-only
+`--budget`, is marked Fixed there since 8e3bdcfa).

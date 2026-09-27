@@ -12,7 +12,7 @@ Options in RFC 0016: A deterministic canonical chain, B advisor LLM, C status qu
 
 ## Decision
 
-Implement a pure canonical JSON-key-sorted chain in LoopGuard with configurable thresholds and excludes that injects an advisory reminder at [3,5,8] via Agent.executeCalls, never blocking a call.
+Implement a pure canonical JSON-key-sorted chain in LoopGuard with configurable thresholds and excludes that injects an advisory reminder at [3,5,8] in `Agent.run`'s per-call loop, alongside the `executeCalls` dispatch, never blocking a call.
 
 > The RFC recommended: **Recommended option:** Adopt Option A — deterministic canonical chain with thresholds [3,5,8] and excludes (advisory-only)
 

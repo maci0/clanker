@@ -10,7 +10,7 @@ Kimi ships explore (read-only), plan (no shell), coder (writes). ck_subagent is 
 
 ## Decision
 
-Ship presets/explore.toml, plan.toml, coder.toml. subagent_type names one (default coder). Enforcement is tools_allow/tools_deny (ADR 0030), not prompt prose. Built-in nested types do not recurse.
+Ship presets/explore.toml, plan.toml, coder.toml. subagent_type names one (default coder). Enforcement is the preset's `tools_allow`/`tools_deny` filter (`src/preset/preset.zig`, the registry-filter decision in ADR 0030), not prompt prose. Built-in nested types do not recurse.
 
 > The RFC recommended: **Recommended option:** Adopt Option A: shipped presets explore/plan/coder, subagent_type names one
 

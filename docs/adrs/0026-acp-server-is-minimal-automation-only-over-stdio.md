@@ -12,7 +12,7 @@ Options in RFC 0014: A minimal ACP, B reuse MCP, C shell bridge, D status quo. R
 
 ## Decision
 
-A minimal ACP server over stdio implements session/new, session/prompt, session/update streaming, and session/request_permission gated by modules.acp, mirroring deepseek-harness automation-only scope.
+A minimal ACP server over stdio implements initialize, authenticate, session/new, session/prompt and session/cancel, gated by modules.acp, mirroring deepseek-harness automation-only scope. The RFC also named session/update streaming and session/request_permission; neither ships as a server method (every other method answers -32601). Streaming updates and permission requests are the client side of the inverse direction, in `src/acp/client.zig`.
 
 > The RFC recommended: **Recommended option:** Adopt Option A — minimal automation-only ACP over stdio (session/new, prompt, update, permission)
 

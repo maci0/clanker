@@ -60,7 +60,7 @@ derived test is what did), but "the manifest is the contract and nothing
 verifies it" is the same sentence in both cases.
 
 The constraint that shaped all of it: the loader must not get stricter.
-Ninety-three manifests ship in this repo and an unknown number exist in
+One hundred twenty-one manifests ship in this repo and an unknown number exist in
 checkouts; the format had to be written down as it *is*, not as it might have
 been designed, and the strictness had to go somewhere that is opt-in to run.
 
@@ -125,7 +125,7 @@ than what the file says. Warnings are things that load and do nothing. That
 split is what makes the exit code usable — `validate` exits non-zero on errors
 only, so it can guard a script without failing over a note.
 
-The rules are derived, not invented, and the evidence is that all 93 shipped
+The rules are derived, not invented, and the evidence is that all 121 shipped
 manifests produce zero errors *and zero warnings*. A new test in `registry.zig`
 pins that.
 
@@ -185,7 +185,7 @@ existing docs:
   (`loop.zig`'s `wasmBytes`, `cli.zig`, `host.zig`). Comment corrected, and the
   bare-filename form now makes the "beside the manifest" reading true for the
   case that wanted it.
-- **`category` was undocumented.** Present in 82 of 93 manifests and read by the
+- **`category` was undocumented.** Present in all 121 manifests and read by the
   `tools` and `plugins` guests for grouping, but absent from every
   reference and from `registry.zig` entirely. Documented, including the part
   that surprises: the registry does not parse it.
@@ -234,7 +234,7 @@ existing docs:
 ## Acceptance criteria
 
 - [x] `manifest_version` parsed; absent means 1; unsupported is refused, not downgraded
-- [x] All 93 shipped manifests load unchanged and validate with zero errors and zero warnings, pinned by a test
+- [x] All 121 shipped manifests load unchanged and validate with zero errors and zero warnings, pinned by a test
 - [x] Pure validator in `src/toolhost/manifest.zig`, 11 unit tests, no I/O
 - [x] Findings carry the file and the offending key, and say what the key does or fails to do
 - [x] Fuel ceiling, `network_allow`/`fs_prefixes`/`exec_allow` shape, and the model-call declaration rule are all checked

@@ -37,7 +37,7 @@ Soft: 0017 DAP and 0032 MCP client become extra `kind` values.
 
 **Implementation.**
 
-1. Add `Registry.snapshot` that copies (session, kind, pid) under the lock.
+1. Add `Registry.snapshot` that copies (session, kind, pid) under the lock. (Landed already: `pub fn snapshot` at `src/agent/subprocess.zig`, so steps 2-3 are what remains.)
 2. `clanker doctor` prints a "session subprocesses" section when the
    list is non-empty.
 3. Guest `subprocs` with ops `list` / `kill`, gated by the same

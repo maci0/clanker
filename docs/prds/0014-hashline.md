@@ -225,8 +225,11 @@ mention `hashes: true` and the `hashline` operation.
       shifted 5 lines from `anchor_line` still resolves. v1 hardcodes ±10; an
       `edit.hashline_tolerance` key remains open if an eval later needs it
       retuned.
-- [x] System prompt and tool manifests always mention `hashes: true` /
-      `hashline` (not opt-in advertising).
+- [ ] System prompt and tool manifests always mention `hashes: true` /
+      `hashline` (not opt-in advertising). Half shipped: `read_file` and
+      `edit_file` manifests carry it in `llm_description`, but no system-prompt
+      text under `src/agent/` names it (re-checked 2026-09-27), so the pairing
+      reaches the model through the tool catalog alone.
 - [x] Unit tests cover: hash computation, read output format, single-hunk apply,
       multi-hunk apply in reverse order, mismatch rejection, tolerance-window
       search, write-back hash response.

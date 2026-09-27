@@ -18,7 +18,7 @@ A dummy cache warmer (ADR 0008). Switching on ProviderKind outside src/llm/provi
 
 ## Design
 
-**Helper.** cacheCold(last_ok_ms, now_ms, ttl_ms) returns cold when last_ok is 0 or now-last_ok >= ttl. Default ttl 300_000. Pure, host-tested.
+**Helper.** `isCold(last_ok_ms, now_ms, ttl_ms)` returns cold when last_ok is 0 or now-last_ok >= ttl; `shouldWarn` layers the extra condition that a stamp exists and ttl is non-zero. Default ttl 300_000. Pure, host-tested. (The record originally named a single `cacheCold(...)`; the shipped pair is the two of these.)
 
 **Stamp.** After a completion whose usage has cache accounting, record last_ok_ms per provider/model in process memory (and optionally a line already going to token_stats). No daemon.
 
@@ -36,7 +36,7 @@ A dummy cache warmer (ADR 0008). Switching on ProviderKind outside src/llm/provi
 
 | Condition | Behaviour |
 |---|---|
-| No prior stamp (process start) | Treat as cold; warn once, fail-open |
+| No prior stamp (process start) | Cold by `isCold`, but **silent**: `shouldWarn` requires a real stamp, because a first request cannot be a surprise (pinned by a test) |
 | Provider reports no cache accounting | Do not stamp; no warning |
 | Clock skew / now < last_ok | Treat as warm |
 | Dummy warmer requested | Out of scope; refuse in Design |

@@ -57,11 +57,15 @@ untouched.
 - **Semantic or importance-aware pruning.** Syntactic head/tail only, same
   as DSH — this does not try to keep "the interesting lines," only the
   start and end.
-- **Keeping a recoverable copy of the pruned original in memory or on disk
-  for later un-pruning.** Once pruned, the original bytes are gone from the
+- **Keeping a recoverable copy of the pruned original in memory for later
+  un-pruning.** Once pruned, the original bytes are gone from the
   in-memory request-bound message list. This does not touch the on-disk
   session store at all (see Design) — the saved transcript is
-  unaffected by this feature.
+  unaffected by this feature. The code did later add an on-disk copy for a
+  different reason: the request-only prune spills the omitted middle to
+  `state/spills/<session>/` and leaves a `[spill id=...]` locator on the
+  request copy, which is the compaction path's own contract rather than
+  un-pruning.
 - **Pruning non-tool messages.** Assistant and user text are never touched;
   only `role == .tool` content.
 
@@ -124,7 +128,8 @@ gate, no other Draft PRD required.
    in `turn_stats.zig`, which currently only recognizes the LLM-summary
    placeholder) to also report bytes reclaimed by pruning as a distinct,
    separately-labeled event — a pruning pass is not a summarization pass and
-   should not be reported as one.
+   should not be reported as one. Not shipped: `turn_stats.zig` has no pruning
+   awareness; the reclaim is logged host-side only (`src/agent/loop.zig`).
 
 ## Failure modes
 

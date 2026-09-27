@@ -115,10 +115,10 @@ one.
 ### Web UI plugins (documenting what is shipped)
 
 **Layout.** `ui/plugins/<name>/`: `plugin.json` (required),
-`app.js` (required), `app.css` (optional). Nine directories ship on disk:
-`activity`, `files`, `health`, `mesh`, `music`, `office`, `schedule`,
+`app.js` (required), `app.css` (optional). Ten directories ship on disk:
+`activity`, `arena3d`, `files`, `health`, `mesh`, `music`, `office`, `schedule`,
 `search`, `compare`. A fresh checkout seeds `files`, `music`, `schedule`,
-`search`, `compare`, `mesh` on (`webui_addon_logic.default_enabled`); the
+`search`, `compare`, `mesh`, `arena3d` on (`webui_addon_logic.default_enabled`); the
 `schedule`/`search`/`compare`/`mesh` set also inherits on from an older
 state file that listed only `files`+`music` (`inherit_on`), so migrating the
 built-in views does not silently turn them off.

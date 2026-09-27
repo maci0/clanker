@@ -24,10 +24,10 @@ function fakeElement(tag) {
 }
 
 // buildNodeBox reads the ambient document, as the browser supplies it. The
-// fake is installed per call rather than at module scope: the suites share one
-// process, so a document left behind here outlived this file and any later
-// suite that needs a fuller stub (the markdown renderer's fragment) found
-// `createDocumentFragment` missing.
+// fake is installed per call rather than at module scope, and the incoming
+// variant was no wider: the suites share one process, so a document left
+// behind here outlived this file and any later suite that needs a fuller stub
+// (the markdown renderer's fragment) found `createDocumentFragment` missing.
 function build(node, opts) {
   const saved = globalThis.document;
   globalThis.document = { createElement: fakeElement };

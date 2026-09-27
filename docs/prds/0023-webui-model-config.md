@@ -86,7 +86,10 @@ just a papercut.
    already applies to its own file-writing tool calls.
 7. The UI states plainly, after a successful write, that the change takes
    effect on the next `clanker serve` restart — not live. Text notice only;
-   no in-UI restart action in v1. `Config.load` runs once at process start;
+   no in-UI restart action in v1. The Models view builds the notice from a
+   response field the server never sends (`d.applied`); the handler answers
+   `ok`/`path`/`written`/`restart: true`, so the shipped sentence never names
+   a restart (re-checked 2026-09-27). `Config.load` runs once at process start;
    nothing about this feature adds hot-reload.
 
 ## Non-goals

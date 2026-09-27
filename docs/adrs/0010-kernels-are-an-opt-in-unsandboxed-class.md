@@ -59,7 +59,7 @@ backend actually has:
 - **Python**: *(test-only: nothing in production calls `runPythonCell`. What
   runs is the unsandboxed supervisor in `src/sandbox/kernel.zig`.)*
   `runPythonCell` (`src/sandbox/host.zig`) prefers
-  `agent.kernel.python_wasi_binary` (default
+  `kernel.python_wasi_binary` (default
   `vendor/python-wasi/bin/python-3.12.0.wasm`, not committed —
   `scripts/setup-python-wasi.sh` fetches and sha256-verifies it). Under
   zwasm/WASI the cell runs with a fuel budget, a wall-clock timeout, a memory

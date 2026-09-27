@@ -2,7 +2,10 @@
 
 ## Status
 
-Draft — opened 2026-09-27, foundation and two plugins landed. The single
+Draft — opened 2026-09-27, foundation and every plugin but `arena3d` landed,
+with all ten feature views, app.js, core/ui.js, core/kit.js, core/tools.js,
+core/usage.js and lib/graph.js on the ledger (re-counted 2026-09-27; the
+`bun test ui/app ui/plugins` suite is green at 371 pass). The single
 source of truth is `ui/app/tailwind.src.css` (the authoring sheet) compiled
 by `bun run css:build` into the committed `ui/app/tailwind.css`; the cabinet
 token block in `ui/app/app.css` stays the source of values until the last
@@ -11,9 +14,12 @@ only, no tool, HTTP or CLI surface changes.
 
 ## Problem
 
-The page carries 237 KB of hand-written CSS: app.css (frame, chat, goals) and
-views.css (every other view) over a subsetted PatternFly v6 sheet for the
-masthead, rail and nav, plus a per-plugin app.css in ui/plugins/. The
+The page carried 237 KB of CSS at the time this PRD opened: app.css (frame,
+chat, goals), views.css (every other view) and a subsetted PatternFly v6 sheet
+for the masthead, rail and nav. Both the PatternFly sheet and its subset script
+have since been deleted, no plugin ships its own app.css, and the committed
+`tailwind.css` is a build product rather than a hand-written sheet, so the
+figure no longer describes what is in the tree. The
 design-token suite pins the cabinet's radii, type steps, spacing rungs and
 lamp values against those sheets, but the class vocabulary is untyped: a
 class name reaches the browser with no check that a rule defines it, and a
@@ -109,14 +115,14 @@ kit only through the plugin API and a declared capability, gated in
    `bun run css:build`; the route registered in ui/webui.zig and
    src/serve/webui_assets.zig; the link in ui/app/index.html;
    ui/app/tailwind.test.mjs registered in build.zig.
-2. Plugins, smallest first (activity done). For each ui/plugins/<name>/:
-   re-cut its app.css rules as utilities in app.js, delete the sheet, add
-   app.js to the ledger, rebuild the sheet, run `bun test ui/app ui/plugins`.
-   Remaining: search, schedule, compare, mesh, music, health, files, office,
-   arena3d.
+2. Plugins, smallest first (done for all but `arena3d`). For each
+   ui/plugins/<name>/: re-cut its app.css rules as utilities in app.js, delete
+   the sheet, add app.js to the ledger, rebuild the sheet, run
+   `bun test ui/app ui/plugins`. Remaining: `arena3d`.
 3. Feature views under ui/app/features/: runs, models, system, board, goals,
    knowledge, prompts, todos, fleet, arena. Each deletes its views.css rules
-   in the same change.
+   in the same change. All ten are on the ledger; what remains is the
+   `views.css` deletion itself (phase 6).
 4. Chat and the frame: ui/app/index.html markup for the masthead, rail and
    nav (the PatternFly v6 classes), then app.js's chat, composer and
    transcript renderers. The kit gains a component only where a caller
@@ -126,8 +132,9 @@ kit only through the plugin API and a declared capability, gated in
    ui/plugins/capabilities.test.mjs, then drop the duplicated class strings
    in the ported plugins.
 6. Deletion: import preflight in ui/app/tailwind.src.css; delete
-   ui/app/views.css and ui/app/app.css; delete ui/vendor/patternfly.min.css
-   with scripts/subset-patternfly.py and ui/PATTERNFLY.md; drop the
+   ui/app/views.css and ui/app/app.css; (the PatternFly sheet, its subset
+   script `scripts/subset-patternfly.py` and `ui/PATTERNFLY.md` are already
+   gone, deleted with the last `pf-v6-*` class); drop the
    upgradePf* bridges in ui/app/core/ui.js and the deferred-sheet swap if
    nothing defers; drop the retired entries from
    src/serve/webui_assets.zig and ui/webui.zig and update

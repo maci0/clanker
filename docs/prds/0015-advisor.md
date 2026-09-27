@@ -245,8 +245,10 @@ The main agent loop never sees an exception from the advisor path.
       main loop.
 - [x] `advisor.enabled = false` (default) causes zero advisor calls; no
       performance impact on the main loop.
-- [x] Goal 1's advisor completion may be recorded as an optional
-      `advisor_tokens` field on the stats `Record`.
+- [ ] Goal 1's advisor completion may be recorded as an optional
+      `advisor_tokens` field on the stats `Record`. Not shipped: the field does
+      not exist (`src/stats/tokens.zig` `Record` ends at `thinking_classifier_ms`);
+      the Design section below still describes it as the decision.
 - [x] Unit tests in `src/agent/advisor.zig` cover: severity parsing, argument
       redaction, injection formatting, prior-note stripping.
 

@@ -79,7 +79,8 @@ WASM migration; nothing with those shapes exists any more. What the guest
 tool actually implements:
 
 - **Chunking** (`chunk` action): simple fixed windowing only, size clamped
-  to at most 800 and overlap to at most 120 whatever the request asks, at
+  to at most 800, overlap clamped to 120 by default but accepted up to
+  `size - 1` (`tools/zig/memory.zig`), at
   most 20 chunks, each trimmed of surrounding whitespace. No markdown-aware
   strategy exists here; the markdown-aware chunker is
   `tools/zig/knowledge.zig`'s `chunkMarkdown` (below).
@@ -153,8 +154,9 @@ Knowledge document injection (itself capped at 100,000 bytes).
    that cap (`2 * 128 + 1`) and the maximum-length pair is host-tested.
 2. **Chunking is fixed, not configurable.** `knowledge.zig`'s
    `deriveChunks` hardcodes 800/120 and always uses its own markdown-aware
-   chunker; `memory.zig`'s `chunk` action clamps to the same 800/120 and has
-   no strategy at all. Callers override per call, not per config.
+   chunker; `memory.zig`'s `chunk` action defaults to the same 800/120 and
+   clamps size to 800 while letting a larger overlap through up to `size - 1`,
+   and has no strategy at all. Callers override per call, not per config.
 3. **Post-migration consolidation.** Two chunkers remain
    (`knowledge.zig`'s markdown-aware `chunkMarkdown` and `memory.zig`'s
    fixed windower) and one hash embedder (`memory.zig`'s `hashEmbedInto`).

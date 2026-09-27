@@ -2,14 +2,16 @@
 
 ## Status
 
-Shipped — 2026-08-16. tools/zig/adr.zig, tools/zig/prd.zig and tools/zig/doc_scaffold.zig are the source of truth; src/records/adr.zig and src/records/prd.zig render for the CLI. No HTTP surface.
+Shipped — 2026-08-16. tools/zig/adr.zig, tools/zig/prd.zig and tools/zig/doc_scaffold.zig are the source of truth; src/records/adr.zig and src/records/prd.zig render for the CLI. No HTTP surface of its own; the five
+record stores gained one shared relay endpoint in PRD 0038 / ADR 0019.
 
 Sources of truth: `tools/zig/adr.zig` and `tools/zig/prd.zig` (the guests),
 `tools/manifests/adr.tool.json` and `prd.tool.json` (the sandbox policy),
 `tools/zig/doc_scaffold.zig` (the shared, host-tested scaffolding), and
 `src/records/adr.zig` / `src/records/prd.zig` (rendering only). Surfaces:
 the `adr` and `prd` tools in the agent's catalog, and `clanker adr` /
-`clanker prd` on the CLI. No HTTP or web UI surface yet.
+`clanker prd` on the CLI. No dedicated HTTP or web UI surface (the shared
+`/api/{reports,rfc,adr,prd,research}` relay added in PRD 0038 serves them).
 
 ## Problem
 
@@ -159,7 +161,7 @@ with `reports`, `research` and `rfc`, so a defect in it is never one store's.
 - [x] `prd status ... shipped` refuses without a note naming the source files (Goal 4).
 - [x] Listing reads each status from the document, and a status change writes the index too (Goal 5).
 - [x] A failed index write is reported rather than silently dropped (Goal 5).
-- [x] Every surface that exists for a record store is served by the guest (Goal 2). No record store has an HTTP surface — there is no `/api/reports`, `/api/rfc`, `/api/research`, `/api/adr` or `/api/prd` — so this is parity with the five stores around it, not a gap in this one.
+- [x] Every surface that exists for a record store is served by the guest (Goal 2). At the time this PRD shipped no record store had an HTTP surface; PRD 0038 / ADR 0019 later added the shared `GET|POST /api/{reports,rfc,adr,prd,research}` relay, which relays the same guests rather than a second implementation.
 
 ## Open questions / future work
 

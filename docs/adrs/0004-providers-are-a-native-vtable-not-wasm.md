@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-A provider today is a `config.ProviderKind` enum (`openai_compat`, `anthropic`,
+A provider was a `config.ProviderKind` enum (`openai_compat`, `anthropic`,
 `vertex_anthropic`) switched on in ~7 places across two files:
 
 - `src/llm/registry.zig` (pure): `buildRequest`, `parseResponse`,
@@ -82,7 +82,8 @@ cheaper.
 
 Landed in `src/llm/`: the vtable is `providers/api.zig`, the registry is the
 `registry` table in `registry.zig`, and `providers/{openai,anthropic,vertex}.zig`
-are the three provider files. `client.zig` is the shared core and holds no
+were the three original provider files; the directory has since grown per-vendor
+files (azure, gemini, claude, codex, grok, responses) plus a shared `common.zig`. `client.zig` is the shared core and holds no
 `switch (provider.kind)`. Three things came out differently from the sketch
 above, recorded rather than papered over:
 

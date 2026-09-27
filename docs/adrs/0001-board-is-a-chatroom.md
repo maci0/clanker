@@ -30,10 +30,10 @@ One board is now trivially consistent across the web UI and every
 tool-calling clanker, and it replicates for free over the existing peer
 mechanism. The cost: every read is a fold over the room's full history, so
 board size is bounded by the same `max_pages` cap chatroom history is
-(`docs/prds/0002-kanban-board.md` § Known issues documents that the cap
-currently fails open — a partial fold — instead of erroring, which this
-decision makes more consequential than it would be for an ordinary chat
-room, since a partial board fold can resurrect deleted cards). Deleting a
+(`docs/prds/0002-kanban-board.md` records that the cap now answers
+`error.TooLarge` rather than folding from a partial log, so the concern this
+decision raised is closed; compaction is the durable answer to a board that
+reaches it). Deleting a
 card is a tombstone, not an erasure — the log never shrinks, so archival or
 compaction is future work, not something this decision left room to skip
 forever.

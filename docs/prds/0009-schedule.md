@@ -140,7 +140,7 @@ decides. A field counts as a star when it is written `*` or `*/n` over the
 whole range — `*/2,15` is a set the writer chose and is treated as the
 restriction it is.
 
-**Next-fire arithmetic.** `cron.zig` has no allocator, no clock and no
+**Next-fire arithmetic.** `tools/zig/schedule_cron.zig` has no allocator, no clock and no
 `std.Io`: `Spec.nextAfter(after, tz_offset_minutes)` is a function of its
 arguments. It steps by field (skip to the next month, the next day, the next
 hour, the next minute) over Howard Hinnant's `days_from_civil` /

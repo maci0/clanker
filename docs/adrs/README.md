@@ -85,7 +85,7 @@ its current text.
 - [ADR 0050 — The web UI ports onto Tailwind 4 in place, with a DOM-factory component kit instead of React](0050-the-web-ui-ports-onto-tailwind-4-in-place-with-a-dom.md) — Accepted
 - [ADR 0049 — A guest reads response headers through an allowlisted envelope on a second HTTP entry point](0049-a-guest-reads-response-headers-through-an-allowlisted.md) — Accepted
 - [ADR 0048 — Preparing a hand-made worktree is an explicit verb, not a config-load fallback](0048-preparing-a-hand-made-worktree-is-an-explicit-verb-not-a.md) — Accepted
-- [ADR 0047 — REPL mid-stream inject is the existing steer queue](0047-repl-mid-stream-inject-is-the-existing-steer-queue.md) — Accepted
+- [ADR 0047 — REPL mid-stream inject is the existing steer queue](0047-repl-mid-stream-inject-is-the-existing-steer-queue.md) — Accepted; shipped as composer-as-steer-box, no `/steer` command
 - [ADR 0046 — Nested explore/plan/coder types are shipped presets named by subagent_type](0046-nested-explore-plan-coder-types-are-shipped-presets-named.md) — Accepted
 - [ADR 0045 — A goal queue starts the next objective only when the current goal completes](0045-a-goal-queue-starts-the-next-objective-only-when-the.md) — Accepted
 - [ADR 0044 — Markdown session export is a second renderer in the session_export guest](0044-markdown-session-export-is-a-second-renderer-in-the.md) — Accepted

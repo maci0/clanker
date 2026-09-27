@@ -11,7 +11,7 @@ credential acquisition.
 A provider's auth is not one-per-`ProviderKind`. The code already proves it:
 
 - **Anthropic picks the method from the token shape.** `isOauthToken` in
-  `client.zig` matches the `sk-ant-oat` prefix; an OAuth access token goes on
+  `providers/anthropic.zig` matches the `sk-ant-oat` prefix; an OAuth access token goes on
   `Authorization: Bearer` with an `anthropic-beta: oauth-...` header, a plain
   key goes on `x-api-key`. Same wire kind, two auth paths, chosen by inspecting
   the credential.
@@ -109,7 +109,11 @@ Two details differ from the sketch above:
   selects `.oauth_refresh` and mints through the `Spec.mint` hook, which calls
   `vertex_token.zig`. That file now accepts both a service-account JSON
   (RS256 JWT) and an `authorized_user` ADC file (refresh-token grant). There
-  is still no generic `clanker auth login` / refresh-token store. A provider
+  is still no generic refresh-token store. `clanker auth login <name>` has
+  since shipped, but as one native plugin per provider under
+  `src/llm/oauth_plugins/` (codex, grok, claude) rather than a generic
+  strategy-driven flow, so each carries its own token endpoint and refresh
+  rules. A provider
   asking for `oauth_refresh` with no `mint` hook is rejected rather than
   silently downgraded.
 
