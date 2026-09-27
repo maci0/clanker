@@ -326,6 +326,18 @@ var ADD_TEXTAREA_CLASS = "max-h-[140px] min-h-[54px] w-full resize-y rounded-pla
 var ADD_ACTIONS_CLASS = "flex items-center gap-2 [&_button]:min-h-8 [&_button]:rounded-plate-lg [&_button]:text-sm";
 var ADD_CANCEL_CLASS = "cursor-pointer border-0 bg-transparent px-2 text-base leading-none text-fg-muted hover:text-fg";
 var LANE_CONTROL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+/* The board's detail rows, goal row and subtask checklist: one row vocabulary
+   shared by the card detail, the goal card and the checklist tree. */
+var DETAIL_HEAD_CLASS = "mt-4 mb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted first:mt-3";
+var DETAIL_ROW_CLASS = "flex min-w-0 flex-1 basis-full items-center gap-x-3 gap-y-2 [&_input[type=date]]:min-w-0 [&_input[type=date]]:flex-1 [&_input[type=text]]:min-w-0 [&_input[type=text]]:flex-1 [&_label]:flex-none [&_label]:basis-22 [&_label]:font-sans [&_label]:text-sm [&_label]:font-medium [&_label]:text-fg-muted [&_select]:min-w-0 [&_select]:flex-1 [&_textarea]:min-w-0 [&_textarea]:flex-1";
+var GOAL_ROW_CLASS = "flex min-w-0 flex-col items-stretch gap-1 [&_.secondary]:w-full [&_input[type=number]]:box-border [&_input[type=number]]:w-full [&_input[type=number]]:min-w-0";
+var CHECKLIST_ADD_CLASS = DETAIL_ROW_CLASS + " [&_button]:flex-none [&_input]:min-w-0 [&_input]:flex-1 [&_input]:basis-auto";
+var CHECKLIST_DEPS_CLASS = "mb-1 ml-4 flex flex-wrap gap-1 [&_.card-flag]:inline-flex [&_.card-flag]:items-center [&_.card-flag]:gap-1";
+var CHECKLIST_TREE_CLASS = "w-full min-w-0 overflow-x-auto overscroll-x-contain";
+var CHECKLIST_ITEM_CLASS = "min-w-0 min-[641px]:min-w-32";
+var CHECKLIST_CHILDREN_CLASS = "ml-4 border-l border-rule pl-3 max-[640px]:ml-1 max-[640px]:pl-1";
+var CHECKLIST_DEP_ADD_CLASS = "mb-1 ml-4 flex gap-1 [&_select]:min-w-0 [&_select]:max-w-[18rem] max-[640px]:flex-wrap";
+
 var MENU_BTN_CLASS = "secondary min-w-auto rounded-plate px-1 text-base leading-none hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 var MENU_CLASS = "absolute right-0 top-full z-50 hidden min-w-[220px] rounded-plate-lg border border-border bg-surface px-0 py-1 shadow-[var(--lift)] data-[open=true]:block";
 var MENU_TITLE_CLASS = "px-3 py-2 text-sm font-bold uppercase tracking-label text-fg-muted";
@@ -1215,7 +1227,7 @@ function bindDraft(control, id, key, saved) {
 
 function detailSection(parent, title) {
   var head = document.createElement("p");
-  head.className = "detail-head";
+  head.className = DETAIL_HEAD_CLASS;
   head.textContent = title;
   parent.appendChild(head);
   var box = document.createElement("div");
@@ -1408,7 +1420,7 @@ function showCardDetail(id) {
 
   // ---- Labels section in main (Trello-style clickable label pills) ----
   var labelsHead = document.createElement("p");
-  labelsHead.className = "detail-head";
+  labelsHead.className = DETAIL_HEAD_CLASS;
   labelsHead.textContent = "Labels";
   mainCol.appendChild(labelsHead);
 
@@ -1725,7 +1737,7 @@ function showCardDetail(id) {
 
   // ---- Hidden original fields for save: title, assignee, priority ----
   var hiddenFields = document.createElement("div");
-  hiddenFields.className = "detail-row";
+  hiddenFields.className = DETAIL_ROW_CLASS;
   // The container itself, not each child: `.detail-row` is a flex row, so
   // hiding only the inputs left a second "Title" box beside the header's
   // rename and a second date box beside the sidebar's, each overwriting the
@@ -1826,7 +1838,7 @@ function showCardDetail(id) {
   // goal's stored default (or the global agent.max_iterations). Prefill the
   // placeholder with the mirrored goal's stored default, like the Goals view.
   var goalRow = document.createElement("div");
-  goalRow.className = "goal-row";
+  goalRow.className = GOAL_ROW_CLASS;
   var goalIters = input("card-f-goal-iters", "number", "", "steps (default)");
   goalIters.min = "1"; goalIters.step = "1";
   goalIters.title = "Optional per-run step limit. Leave blank to use this goal's saved default, then the configured default (usually 50).";
@@ -1896,9 +1908,9 @@ function showCardDetail(id) {
 
   function renderChecklistItem(s) {
     var item = document.createElement("div");
-    item.className = "checklist-item";
+    item.className = CHECKLIST_ITEM_CLASS;
     var row = document.createElement("div");
-    row.className = "detail-row";
+    row.className = DETAIL_ROW_CLASS;
     var tick = document.createElement("input");
     tick.type = "checkbox";
     tick.checked = !!s.done;
@@ -1949,7 +1961,7 @@ function showCardDetail(id) {
 
     if ((s.depends_on || []).length) {
       var deps = document.createElement("div");
-      deps.className = "checklist-deps";
+      deps.className = CHECKLIST_DEPS_CLASS;
       (s.depends_on || []).forEach(function (id) {
         var dep = document.createElement("span");
         dep.className = CARD_FLAG_CLASS;
@@ -1969,7 +1981,7 @@ function showCardDetail(id) {
     }
 
     var childForm = document.createElement("div");
-    childForm.className = "detail-row checklist-add";
+    childForm.className = CHECKLIST_ADD_CLASS;
     childForm.hidden = true;
     var childIn = input("child-" + s.id, "text", "", "Add a child item…");
     childIn.maxLength = 500;
@@ -1997,7 +2009,7 @@ function showCardDetail(id) {
     });
     if (candidates.length) {
       var depForm = document.createElement("div");
-      depForm.className = "checklist-dependency-add";
+      depForm.className = CHECKLIST_DEP_ADD_CLASS;
       var depSelect = document.createElement("select");
       depSelect.setAttribute("aria-label", "Dependency for " + s.text);
       candidates.forEach(function (x) {
@@ -2017,7 +2029,7 @@ function showCardDetail(id) {
     var children = childMap[s.id] || [];
     if (children.length) {
       var nested = document.createElement("div");
-      nested.className = "checklist-children";
+      nested.className = CHECKLIST_CHILDREN_CLASS;
       children.forEach(function (x) { nested.appendChild(renderChecklistItem(x)); });
       item.appendChild(nested);
     }
@@ -2025,7 +2037,7 @@ function showCardDetail(id) {
   }
 
   var tree = document.createElement("div");
-  tree.className = "checklist-tree";
+  tree.className = CHECKLIST_TREE_CLASS;
   (childMap[""] || []).forEach(function (s) { tree.appendChild(renderChecklistItem(s)); });
   subs.appendChild(tree);
   // Trello-style checklist progress bar (also on card face)
@@ -2048,7 +2060,7 @@ function showCardDetail(id) {
     pctLabel.className = CARD_PROGRESS_CLASS; pctLabel.textContent = fmtInt(dN) + "/" + fmtInt(tN) + " · " + fmtPct(pct2, 0);
     pctLabel.style.marginLeft = "var(--space-3)";
     var progRow = document.createElement("div");
-    progRow.className = "detail-row";
+    progRow.className = DETAIL_ROW_CLASS;
     progRow.style.alignItems = "center";
     progRow.appendChild(track); track.style.flex = "1";
     progRow.appendChild(pctLabel);
@@ -2067,7 +2079,7 @@ function showCardDetail(id) {
   });
   subAdd.addEventListener("click", function () { addChecklistItem(subIn, subAdd, ""); });
   var checklistAdd = document.createElement("div");
-  checklistAdd.className = "detail-row checklist-add";
+  checklistAdd.className = CHECKLIST_ADD_CLASS;
   checklistAdd.appendChild(subIn);
   checklistAdd.appendChild(subAdd);
   subs.appendChild(checklistAdd);
@@ -2077,7 +2089,7 @@ function showCardDetail(id) {
   (c.depends_on || []).forEach(function (depId) {
     var dep = cardById(depId);
     var row = document.createElement("div");
-    row.className = "detail-row";
+    row.className = DETAIL_ROW_CLASS;
     var name = document.createElement("span");
     name.textContent = dep ? dep.title + "  ·  " + dep.column : depId + " (missing)";
     if (dep && dep.column !== doneColumn() && dep.column !== "archive") name.className = "dep-open";

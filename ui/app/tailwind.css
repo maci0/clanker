@@ -943,6 +943,9 @@
 .grid-cols-\[minmax\(0\,1fr\)\] {
   grid-template-columns: minmax(0,1fr);
 }
+.grid-cols-\[minmax\(0\,1fr\)_minmax\(0\,1fr\)_9rem_auto_auto\] {
+  grid-template-columns: minmax(0,1fr) minmax(0,1fr) 9rem auto auto;
+}
 .grid-cols-\[repeat\(2\,minmax\(0\,18rem\)\)\] {
   grid-template-columns: repeat(2,minmax(0,18rem));
 }
@@ -1045,6 +1048,9 @@
 .gap-y-2 {
   row-gap: var(--space-2);
 }
+.gap-y-3 {
+  row-gap: var(--space-3);
+}
 .gap-y-px {
   row-gap: 1px;
 }
@@ -1079,6 +1085,9 @@
 }
 .overscroll-contain {
   overscroll-behavior: contain;
+}
+.overscroll-x-contain {
+  overscroll-behavior-x: contain;
 }
 .scroll-smooth {
   scroll-behavior: smooth;
@@ -2245,6 +2254,9 @@
 .first\:mt-0:first-child {
   margin-top: 0px;
 }
+.first\:mt-3:first-child {
+  margin-top: var(--space-3);
+}
 .first\:ml-0:first-child {
   margin-left: 0px;
 }
@@ -3371,6 +3383,9 @@
   .max-\[640px\]\:z-15 {
     z-index: 15;
   }
+  .max-\[640px\]\:ml-1 {
+    margin-left: var(--space-1);
+  }
   .max-\[640px\]\:hidden {
     display: none;
   }
@@ -3398,8 +3413,14 @@
   .max-\[640px\]\:basis-full {
     flex-basis: 100%;
   }
+  .max-\[640px\]\:flex-wrap {
+    flex-wrap: wrap;
+  }
   .max-\[640px\]\:bg-bg {
     background-color: var(--bg);
+  }
+  .max-\[640px\]\:pl-1 {
+    padding-left: var(--space-1);
   }
   .max-\[640px\]\:\[font-size\:16px\] {
     font-size: 16px;
@@ -3499,6 +3520,11 @@
     padding-left: 18px;
   }
 }
+@media (width >= 641px) {
+  .min-\[641px\]\:min-w-32 {
+    min-width: calc(var(--spacing) * 32);
+  }
+}
 @media (width >= 769px) {
   .min-\[769px\]\:data-\[collapsed\=true\]\:m-0[data-collapsed="true"] {
     margin: 0px;
@@ -3561,6 +3587,15 @@
   .hover-none\:opacity-100 {
     opacity: 100%;
   }
+}
+.\[\&_\.card-flag\]\:inline-flex .card-flag {
+  display: inline-flex;
+}
+.\[\&_\.card-flag\]\:items-center .card-flag {
+  align-items: center;
+}
+.\[\&_\.card-flag\]\:gap-1 .card-flag {
+  gap: var(--space-1);
 }
 .\[\&_\.composer\]\:relative .composer {
   position: relative;
@@ -3628,6 +3663,9 @@
 .\[\&_\.danger\]\:text-on-danger .danger {
   color: var(--on-danger);
 }
+.\[\&_\.detail-head\]\:m-0 .detail-head {
+  margin: 0px;
+}
 .\[\&_\.failed\]\:text-danger .failed {
   color: var(--danger);
 }
@@ -3671,6 +3709,9 @@
 .\[\&_\.runs\]\:gap-7 .runs {
   gap: var(--space-7);
 }
+.\[\&_\.secondary\]\:w-full .secondary {
+  width: 100%;
+}
 .\[\&_\.section-head\]\:mb-7 .section-head {
   margin-bottom: var(--space-7);
 }
@@ -3701,6 +3742,9 @@
 .data-\[grouped\=true\]\:\[\&_\[data-role\=meta\]\]\:hidden[data-grouped="true"] [data-role=meta] {
   display: none;
 }
+.\[\&_button\]\:row-start-2 button {
+  grid-row-start: 2;
+}
 .\[\&_button\]\:mt-2 button {
   margin-top: var(--space-2);
 }
@@ -3712,6 +3756,9 @@
 }
 .\[\&_button\]\:min-h-8 button {
   min-height: calc(var(--spacing) * 8);
+}
+.\[\&_button\]\:flex-none button {
+  flex: none;
 }
 .\[\&_button\]\:cursor-pointer button {
   cursor: pointer;
@@ -3854,6 +3901,9 @@
 .\[\&_h3\]\:text-base h3 {
   font-size: var(--step-1);
 }
+.\[\&_input\]\:row-start-2 input {
+  grid-row-start: 2;
+}
 .\[\&_input\]\:m-0 input {
   margin: 0px;
 }
@@ -3877,6 +3927,12 @@
 }
 .\[\&_input\]\:flex-1 input {
   flex: 1;
+}
+.\[\&_input\]\:basis-64 input {
+  flex-basis: calc(var(--spacing) * 64);
+}
+.\[\&_input\]\:basis-auto input {
+  flex-basis: auto;
 }
 .\[\&_input\]\:rounded-plate input {
   border-radius: var(--radius);
@@ -3937,22 +3993,64 @@
 .\[\&_input\[type\=checkbox\]\]\:mr-2 input[type=checkbox] {
   margin-right: var(--space-2);
 }
+.\[\&_input\[type\=checkbox\]\]\:flex-none input[type=checkbox] {
+  flex: none;
+}
+.\[\&_input\[type\=checkbox\]\]\:self-center input[type=checkbox] {
+  align-self: center;
+}
+.\[\&_input\[type\=checkbox\]\]\:justify-self-start input[type=checkbox] {
+  justify-self: flex-start;
+}
 .\[\&_input\[type\=checkbox\]\]\:align-middle input[type=checkbox] {
   vertical-align: middle;
 }
+.\[\&_input\[type\=date\]\]\:min-w-0 input[type=date] {
+  min-width: 0px;
+}
+.\[\&_input\[type\=date\]\]\:flex-1 input[type=date] {
+  flex: 1;
+}
+.\[\&_input\[type\=number\]\]\:box-border input[type=number] {
+  box-sizing: border-box;
+}
 .\[\&_input\[type\=number\]\]\:w-24 input[type=number] {
   width: calc(var(--spacing) * 24);
+}
+.\[\&_input\[type\=number\]\]\:w-full input[type=number] {
+  width: 100%;
+}
+.\[\&_input\[type\=number\]\]\:min-w-0 input[type=number] {
+  min-width: 0px;
 }
 @media (width < 640px) {
   .\[\&_input\[type\=search\]\]\:max-\[640px\]\:\[font-size\:16px\] input[type=search] {
     font-size: 16px;
   }
 }
+.\[\&_input\[type\=text\]\]\:min-w-0 input[type=text] {
+  min-width: 0px;
+}
+.\[\&_input\[type\=text\]\]\:flex-1 input[type=text] {
+  flex: 1;
+}
+.\[\&_label\]\:row-start-1 label {
+  grid-row-start: 1;
+}
 .\[\&_label\]\:m-0 label {
   margin: 0px;
 }
+.\[\&_label\]\:flex-none label {
+  flex: none;
+}
+.\[\&_label\]\:basis-22 label {
+  flex-basis: calc(var(--spacing) * 22);
+}
 .\[\&_label\]\:font-mono label {
   font-family: var(--mono);
+}
+.\[\&_label\]\:font-sans label {
+  font-family: var(--sans);
 }
 .\[\&_label\]\:text-sm label {
   font-size: var(--step-0);
@@ -3960,9 +4058,20 @@
 .\[\&_label\]\:text-xs label {
   font-size: var(--step--1);
 }
+.\[\&_label\]\:font-medium label {
+  --tw-font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-medium);
+}
+.\[\&_label\]\:font-semibold label {
+  --tw-font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-semibold);
+}
 .\[\&_label\]\:tracking-label label {
   --tw-tracking: var(--track-label);
   letter-spacing: var(--track-label);
+}
+.\[\&_label\]\:text-fg label {
+  color: var(--fg);
 }
 .\[\&_label\]\:text-fg-muted label {
   color: var(--fg-muted);
@@ -3972,6 +4081,9 @@
 }
 .\[\&_select\]\:min-h-8 select {
   min-height: calc(var(--spacing) * 8);
+}
+.\[\&_select\]\:max-w-\[18rem\] select {
+  max-width: 18rem;
 }
 .\[\&_select\]\:min-w-0 select {
   min-width: 0px;
@@ -4003,6 +4115,21 @@
 }
 .\[\&_strong\]\:text-fg-muted strong {
   color: var(--fg-muted);
+}
+.\[\&_textarea\]\:row-start-2 textarea {
+  grid-row-start: 2;
+}
+.\[\&_textarea\]\:min-w-0 textarea {
+  min-width: 0px;
+}
+.\[\&_textarea\]\:flex-1 textarea {
+  flex: 1;
+}
+.\[\&_textarea\]\:basis-64 textarea {
+  flex-basis: calc(var(--spacing) * 64);
+}
+.\[\&_textarea\]\:resize-y textarea {
+  resize: vertical;
 }
 .data-\[dragging\=true\]\:\[\&_textarea\]\:border-accent[data-dragging="true"] textarea {
   border-color: var(--accent);

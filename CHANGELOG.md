@@ -643,6 +643,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   moved rules now load with the blocking sheet, and the cabinet sheet that
   carried them is smaller).
 
+- The operator forms are utilities: the goal/knowledge/prompt/workspace create
+  forms and the board's own goal form, the detail rows and their labels, the
+  goal row, the subtask checklist (tree, item, children, dependencies, the
+  dependency picker), the section headings and the subsection head rows. The
+  board's rows are class lists in `features/board.js`; the rest live on the
+  elements. First paint 57.8 → 58.0K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

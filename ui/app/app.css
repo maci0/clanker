@@ -588,11 +588,6 @@ section { margin-top: var(--space-3); border-top: 0; padding-top: 0; }
 .view > section + section { margin-top: var(--space-5); border-top: 1px solid var(--rule); padding-top: var(--space-4); }
 .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); min-width: 0; }
 .subsection-head { margin-top: var(--space-5); }
-.subsection-head-row {
-  display: flex; flex-wrap: wrap; align-items: center;
-  gap: var(--space-2) var(--space-3); margin-top: var(--space-3);
-}
-.subsection-head-row .detail-head { margin: 0; }
 .section-output { margin-top: var(--space-3); }
 .section-list { margin-top: var(--space-5); }
 h2 {
@@ -830,13 +825,6 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
 @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
-.goal-form {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
-  margin-top: var(--space-4);
-}
-.goal-form label { color: var(--fg); font-family: var(--mono); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.02em; }
-.goal-form input, .goal-form textarea { flex: 1 1 16rem; min-width: 0; }
-.goal-form textarea { resize: vertical; }
 .settings-grid {
   display: grid; gap: var(--space-4);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
@@ -850,20 +838,10 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
 .settings-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .settings-actions-spaced { margin-top: var(--space-2); }
 .settings-note { margin-top: var(--space-2); }
-.board-goal-form {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 9rem auto auto;
-  align-items: end; gap: var(--space-2) var(--space-3);
-  padding: var(--space-4); background: var(--surface-raised); border-radius: var(--radius);
-}
-.board-goal-form label { grid-row: 1; }
-.board-goal-form input, .board-goal-form textarea, .board-goal-form button { grid-row: 2; }
-.board-goal-form label { flex-basis: auto; }
 /* The one checkbox among text boxes. The global `input[type="checkbox"]` rule
    already sizes it, but `.goal-form input`'s `flex: 1 1 16rem` matches at the
    same specificity and comes later, so it wins and stretches the box. Size is
    left to the global rule; only the stretch is undone here. */
-.goal-form input[type="checkbox"] { flex: none; }
-.board-goal-form input[type="checkbox"] { justify-self: start; align-self: center; }
 /* Board header — lane plate, not a Trello banner */
 .prompt-list {
   margin-top: var(--space-2); max-height: 14rem;
@@ -966,32 +944,10 @@ label:has(+ input[required])::after, label:has(+ textarea[required])::after, lab
 .webui-plugin-group { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step-0); }
 
 /* Claimed by this instance: the one thing you scan a shared list for. */
-.detail-head {
-  margin: var(--space-4) 0 var(--space-2); font-family: var(--sans); font-size: var(--step--1); font-weight: 600;
-  color: var(--fg-muted); text-transform: uppercase; letter-spacing: var(--track-label);
-}
-.detail-head:first-of-type { margin-top: var(--space-3); }
 .detail-body { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; }
-.detail-row { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex: 1 1 100%; min-width: 0; }
 /* The goal "start work" row sits in the narrow 11rem sidebar column, so it
    stacks its iterations box above the button instead of overflowing sideways. */
-.goal-row { display: flex; flex-direction: column; gap: var(--space-2); align-items: stretch; min-width: 0; }
-.goal-row input[type="number"] { width: 100%; min-width: 0; box-sizing: border-box; }
-.goal-row .secondary { width: 100%; }
-.detail-row label { flex: 0 0 5.5rem; color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0); font-weight: 500; }
-.detail-row input[type="text"], .detail-row input[type="date"], .detail-row textarea, .detail-row select { flex: 1; min-width: 0; }
 .detail-row input[type="checkbox"] { flex: none; }
-.checklist-add input { flex: 1 1 auto; min-width: 0; }
-.checklist-add button { flex: none; }
-.checklist-add[hidden] { display: none; }
-.checklist-tree { width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; }
-.checklist-item { min-width: 0; }
-@media (min-width: 40.01rem) { .checklist-item { min-width: 18rem; } }
-.checklist-children { margin-inline-start: var(--space-4); padding-inline-start: var(--space-3); border-inline-start: 1px solid var(--rule); }
-.checklist-deps { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0 0 var(--space-2) 2rem; }
-.checklist-deps .card-flag { display: inline-flex; align-items: center; gap: var(--space-1); }
-.checklist-dependency-add { display: flex; gap: var(--space-2); margin: 0 0 var(--space-2) 2rem; }
-.checklist-dependency-add select { min-width: 0; max-width: 18rem; }
 .detail-row label.subtask[data-blocked="true"] { color: var(--warn-text); }
 @media (max-width: 40rem) {
   .checklist-children { margin-inline-start: var(--space-2); padding-inline-start: var(--space-2); }

@@ -597,7 +597,7 @@ lamps carry further). The seven named palettes ride the same tokens.
            criterion travels with the card as its definition of done. -->
       <details class="mb-3 mt-0" id="board-create-fold">
         <summary class="flex min-h-10 cursor-pointer items-center font-sans text-base font-semibold text-fg">New goal</summary>
-      <form id="goal-form" class="goal-form board-goal-form">
+      <form class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem_auto_auto] items-end gap-x-3 gap-y-2 rounded-plate bg-surface-raised p-4 [&_button]:row-start-2 [&_input]:row-start-2 [&_label]:row-start-1 [&_input[type=checkbox]]:justify-self-start [&_input[type=checkbox]]:self-center [&_textarea]:row-start-2" id="goal-form">
         <label for="goal-objective">Goal</label>
         <textarea id="goal-objective" rows="2" placeholder="What should clanker achieve? (completion criterion is optional — it is drafted automatically)" maxlength="2000" autocomplete="off" required></textarea>
         <label for="goal-max-iterations">Max steps</label>
@@ -675,12 +675,12 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="models-refresh">Refresh</button>
       </div>
       <p class="meta">Manage configured models, inspect a provider’s live catalog, or add one from models.dev.</p>
-      <div class="subsection-head-row">
-        <h3 class="detail-head">Configured</h3>
+      <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 [&_.detail-head]:m-0">
+        <h3 class="mt-4 mb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted first:mt-3">Configured</h3>
         <button type="button" class="secondary" id="models-add">Add model…</button>
       </div>
       <div id="models-configured"></div>
-      <h3 class="detail-head subsection-head">Live from provider</h3>
+      <h3 class="mt-4 mb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted">Live from provider</h3>
       <div class="transcript-tools">
         <label for="models-live-provider">Provider</label>
         <select id="models-live-provider"></select>
@@ -696,7 +696,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div id="models-live-out" class="section-output"></div>
       <p class="sr-only" id="models-live-status" role="status" aria-live="polite"></p>
-      <h3 class="detail-head subsection-head">Discover (models.dev)</h3>
+      <h3 class="mt-4 mb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted">Discover (models.dev)</h3>
       <div class="transcript-tools">
         <label for="models-catalog-q">Search</label>
         <input type="search" id="models-catalog-q" placeholder="e.g. kimi, deepseek, gemma…" autocomplete="off">
@@ -779,7 +779,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="knowledge-refresh">Refresh</button>
       </div>
       <p class="meta" id="knowledge-hint">No knowledge selected. Check Include in chat on a collection to add its documents to the next chat.</p>
-      <form class="goal-form" id="knowledge-create-form">
+      <form class="flex flex-wrap items-center gap-x-4 gap-y-3 mt-4 [&_input]:min-w-0 [&_input]:flex-1 [&_input]:basis-64 [&_input[type=checkbox]]:flex-none [&_label]:font-mono [&_label]:text-xs [&_label]:font-semibold [&_label]:tracking-label [&_label]:text-fg [&_textarea]:min-w-0 [&_textarea]:flex-1 [&_textarea]:basis-64 [&_textarea]:resize-y" id="knowledge-create-form">
         <label for="knowledge-title">Collection name</label>
         <input type="text" id="knowledge-title" placeholder="e.g. Project docs" maxlength="200" required>
         <label for="knowledge-desc">Description</label>
@@ -817,7 +817,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="prompts-refresh">Refresh</button>
       </div>
       <p class="meta">Saved snippets. Insert with <code>/</code> in the composer, or click Use.</p>
-      <form class="goal-form" id="prompts-create-form">
+      <form class="flex flex-wrap items-center gap-x-4 gap-y-3 mt-4 [&_input]:min-w-0 [&_input]:flex-1 [&_input]:basis-64 [&_input[type=checkbox]]:flex-none [&_label]:font-mono [&_label]:text-xs [&_label]:font-semibold [&_label]:tracking-label [&_label]:text-fg [&_textarea]:min-w-0 [&_textarea]:flex-1 [&_textarea]:basis-64 [&_textarea]:resize-y" id="prompts-create-form">
         <label for="prompts-title">Title</label>
         <input type="text" id="prompts-title" placeholder="e.g. Explain like I'm 5" maxlength="200" required>
         <label for="prompts-content">Content</label>
@@ -890,8 +890,8 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
       <div class="mt-4 max-h-72 overflow-auto rounded-plate-lg border border-rule bg-surface p-4 font-mono text-xs whitespace-pre-wrap shadow-[var(--lift-low)]" id="progress-log" role="log" aria-label="Progress log"></div>
       <p class="sr-only" id="progress-status" role="status" aria-live="polite"></p>
-      <div class="subsection-head-row">
-        <h3 class="detail-head">History</h3>
+      <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 [&_.detail-head]:m-0">
+        <h3 class="mt-4 mb-1 font-sans text-xs font-semibold uppercase tracking-label text-fg-muted first:mt-3">History</h3>
         <button type="button" class="secondary" id="progress-history-refresh">Refresh history</button>
       </div>
       <div id="progress-history" class="section-output"></div>
@@ -1086,7 +1086,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 
 <div class="overlay" id="workspace-new-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-new-title" hidden>
   <div class="overlay-box">
-    <form id="workspace-new-form" class="goal-form">
+    <form id="workspace-new-form" class="flex flex-wrap items-center gap-x-4 gap-y-3 mt-4 [&_input]:min-w-0 [&_input]:flex-1 [&_input]:basis-64 [&_input[type=checkbox]]:flex-none [&_label]:font-mono [&_label]:text-xs [&_label]:font-semibold [&_label]:tracking-label [&_label]:text-fg [&_textarea]:min-w-0 [&_textarea]:flex-1 [&_textarea]:basis-64 [&_textarea]:resize-y">
       <div class="flex items-center justify-between gap-2">
         <span class="run-detail-title" id="workspace-new-title">New workspace</span>
       </div>
@@ -1106,7 +1106,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
   <div class="overlay-box">
-    <form id="text-prompt-form" class="goal-form">
+    <form id="text-prompt-form" class="flex flex-wrap items-center gap-x-4 gap-y-3 mt-4 [&_input]:min-w-0 [&_input]:flex-1 [&_input]:basis-64 [&_input[type=checkbox]]:flex-none [&_label]:font-mono [&_label]:text-xs [&_label]:font-semibold [&_label]:tracking-label [&_label]:text-fg [&_textarea]:min-w-0 [&_textarea]:flex-1 [&_textarea]:basis-64 [&_textarea]:resize-y">
       <div class="flex items-center justify-between gap-2">
         <span class="run-detail-title" id="text-prompt-title">Rename</span>
       </div>
