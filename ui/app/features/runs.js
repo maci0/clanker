@@ -790,8 +790,8 @@ function drawRun(g) {
       var accent = mmToken("--accent", "#1d5c9e");
       var ok = mmToken("--ok", "#117a3a");
       var danger = mmToken("--danger", "#a72920");
-      var fg = mmToken("--fg", "#111");
-      var muted = mmToken("--fg-muted", "#888");
+      var fg = mmToken("--fg", EXPORT_FALLBACK["--fg"]);
+      var muted = mmToken("--fg-muted", EXPORT_FALLBACK["--fg-muted"]);
       ctx.strokeStyle = muted;
       ctx.globalAlpha = 0.35;
       ctx.lineWidth = 0.7;
