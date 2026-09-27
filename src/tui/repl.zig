@@ -37,6 +37,7 @@
 
 const std = @import("std");
 const edit_distance = @import("../util/edit_distance.zig");
+const elapsed = @import("../util/elapsed.zig");
 const vaxis = @import("vaxis");
 const vxfw = vaxis.vxfw;
 
@@ -3241,7 +3242,6 @@ const Model = struct {
     /// call" from "nobody wrote down what this model charges". Unpriced
     /// models get null and the segment disappears.
     fn turnStats(self: *Model, a: *const Agent, started: std.Io.Timestamp, messages: []const types.Message) stats_mod.TurnStats {
-        const elapsed = started.durationTo(std.Io.Timestamp.now(self.io, .awake));
         const m = self.provider.activeModel();
         const priced = m.cost_per_1m_input != null or m.cost_per_1m_output != null;
         return .{
@@ -3249,7 +3249,7 @@ const Model = struct {
             .completion_tokens = a.stats.total_completion_tokens,
             .cache_hit_tokens = a.stats.total_cache_hit_tokens,
             .cache_miss_tokens = a.stats.total_cache_miss_tokens,
-            .wall_ms = elapsed.since(io, started),
+            .wall_ms = elapsed.since(self.io, started),
             .cost_usd = if (priced) a.stats.cost else null,
             .context_tokens = stats_mod.historyTokens(messages),
             .context_window = m.context_window,

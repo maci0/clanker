@@ -4,6 +4,9 @@ Third-party JavaScript committed here and embedded by `ui/vendor.zig` for
 offline serving from `/webui/vendor/*` (`src/cli.zig`). Do not hand-edit minified
 files; replace from upstream releases and update this table.
 
+The whole tree's third-party inventory, this directory included, is
+`THIRD_PARTY_LICENSES.md` at the repository root.
+
 | File | Upstream | Version | License | SHA-256 (committed bytes) |
 |------|----------|---------|---------|---------------------------|
 | `preact.module.js` | [preact](https://www.npmjs.com/package/preact) `dist/preact.module.js` | 10.x ESM | MIT | `a1cefabf06ec626adcb92731537e1e04fd09a7908e22551bab50540106dc950d` |

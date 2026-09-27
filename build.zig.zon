@@ -19,6 +19,7 @@
         "CHANGELOG.md",
         "README.md",
         "RELEASES.md",
+        "THIRD_PARTY_LICENSES.md",
         "build.zig",
         "build.zig.zon",
         "src",

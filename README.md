@@ -363,4 +363,7 @@ command, while `clanker <option> -h` explains that option (for example,
 | `config [dump\|get <key>\|set <key> <value>]` | Read or pin one key of the merged config (`set` writes `config.local.toml`; bare `config` dumps) |
 | `janitor [--yes]` | Sweep up what old runs left behind: staging copies, old run graphs and improve logs, compare-and-swap lock files unused for 12h, and spilled tool results (also `clanker prune`) |
 
+Every third-party dependency, its license, and the digest or commit that pins
+it: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+
 For full documentation, see [docs/README.md](docs/README.md).
