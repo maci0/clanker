@@ -71,14 +71,7 @@ fn chunksPath(id: []const u8) []const u8 {
 /// (`knowledge_logic`) so the guest and the host tests cannot drift apart.
 const StoredDoc = logic.Doc;
 
-const StoredCollection = struct {
-    id: []const u8 = "",
-    title: []const u8 = "",
-    description: []const u8 = "",
-    created: i64 = 0,
-    updated: i64 = 0,
-    docs: []const StoredDoc = &.{},
-};
+const StoredCollection = logic.Collection;
 
 fn loadCollection(id: []const u8) ?StoredCollection {
     const raw = lib.fsRead(colPath(id)) catch return null;

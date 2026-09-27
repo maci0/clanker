@@ -28,6 +28,22 @@ pub const Doc = struct {
     created: i64 = 0,
 };
 
+/// One collection file, `state/knowledge/<id>.json`. The host reads the same
+/// file directly when a run injects selected collections into its prompt
+/// (`POST /api/run`), because that read is on the request path and cannot
+/// afford a guest dispatch; a field dropped from the guest's copy would
+/// silently reach the model as an empty string there, so the record is
+/// declared once, here, for both sides. Mutable `docs` because the guest
+/// rewrites a loaded collection in place.
+pub const Collection = struct {
+    id: []const u8 = "",
+    title: []const u8 = "",
+    description: []const u8 = "",
+    created: i64 = 0,
+    updated: i64 = 0,
+    docs: []Doc = &.{},
+};
+
 /// The document `name` already has in this collection, or null when the name
 /// is new. First match wins: a collection written before this rule can hold
 /// more than one, and the oldest is the one an update should land on.
@@ -78,4 +94,23 @@ test "a second add of the same name and content is a no-op, a changed one is an 
     // A name the collection does not have is never "unchanged", however
     // plausible the content looks.
     try testing.expect(!unchangedBy(&docs, "new.md", "first"));
+}
+
+test "a collection file written by the guest parses here, title and docs included" {
+    // The `POST /api/run` knowledge inject reads this record natively
+    // (`src/cli.zig`) rather than dispatching the guest, so the field names
+    // below are the contract between the two. A field renamed in the guest
+    // without the host following fails here, where a private copy of the
+    // struct would have gone on parsing as an empty string.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const raw =
+        \\{"id":"notes","title":"Notes","description":"d","created":1,"updated":2,
+        \\ "docs":[{"id":"kb-1","name":"a.md","content":"body","bytes":4,"created":7}]}
+    ;
+    const col = try std.json.parseFromSliceLeaky(Collection, arena_state.allocator(), raw, .{ .ignore_unknown_fields = true });
+    try testing.expectEqualStrings("Notes", col.title);
+    try testing.expectEqual(@as(usize, 1), col.docs.len);
+    try testing.expectEqualStrings("body", col.docs[0].content);
+    try testing.expectEqual(@as(usize, 4), col.docs[0].bytes);
 }

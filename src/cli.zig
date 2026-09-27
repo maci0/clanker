@@ -62,6 +62,7 @@ const webui_assets = @import("serve/webui_assets.zig");
 const serve_http = @import("serve/http.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
+const knowledge_logic = @import("knowledge_logic");
 const oauth_command = @import("llm/oauth_command.zig");
 const oauth_registry = @import("llm/oauth_plugins/registry.zig");
 const doctor_mod = @import("doctor.zig");
@@ -16656,10 +16657,13 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '_')) break false;
             } else true;
             if (!slug_ok) continue;
-            const KbCol = struct { title: []const u8 = "", docs: []const struct { id: []const u8 = "", name: []const u8 = "", content: []const u8 = "", bytes: usize = 0, created: i64 = 0 } = &.{} };
             const col_path = std.fmt.allocPrint(arena, "state/knowledge/{s}.json", .{cid}) catch continue;
             const col_raw = std.Io.Dir.cwd().readFileAlloc(io, col_path, arena, .limited(4 << 20)) catch continue;
-            const col = std.json.parseFromSliceLeaky(KbCol, arena, col_raw, .{ .ignore_unknown_fields = true }) catch continue;
+            // The guest owns the store, so the record is the guest's
+            // declaration rather than a copy: a field added there has to
+            // reach the prompt here too, and a private spelling of the same
+            // shape is how the two drift.
+            const col = std.json.parseFromSliceLeaky(knowledge_logic.Collection, arena, col_raw, .{ .ignore_unknown_fields = true }) catch continue;
             for (col.docs) |d| {
                 if (kb_buf.items.len > 100_000) break;
                 if (kb_buf.items.len > knowledge_prefix_len) kb_buf.appendSlice(arena, "\n\n") catch continue;
