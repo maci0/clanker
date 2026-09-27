@@ -13,6 +13,25 @@
 // the title fallback there is what adopts cards created before the field
 // existed.
 import { readJson } from "../core/utils.js";
+
+/* The goal cards and their run panels, as Tailwind utilities over the cabinet
+   tokens (ui/app/tailwind.src.css). The status colours were four descendant
+   selectors keyed on the card's `data-status`; a utility cannot reach a child
+   from its parent's attribute, so the card carries `group` and the status word
+   and run status ask about it. */
+var OBJECTIVE_CLASS = "min-w-0 max-w-measure font-sans text-base font-semibold leading-normal text-fg wrap-anywhere";
+var BADGE_CLASS = "mt-px inline-flex h-[1.7rem] w-[1.7rem] flex-none items-center justify-center rounded-plate-sm border border-accent bg-surface-raised text-accent-text";
+var META_CLASS = "mt-1.5 flex flex-wrap gap-x-3 gap-y-1.5 font-mono text-xs text-fg-muted tracking-wide";
+var STATUS_CLASS = "group-data-[status=active]:font-bold group-data-[status=active]:text-ok group-data-[status=blocked]:text-danger group-data-[status=review]:font-bold group-data-[status=review]:text-warn-text group-data-[status=running]:font-bold group-data-[status=running]:text-accent-text";
+var TASK_LIST_CLASS = "mt-2 flex flex-col gap-1";
+var TASK_CLASS = "group flex items-baseline gap-2 text-fg-muted wrap-anywhere";
+var TASK_TEXT_CLASS = "group-data-[done=1]:text-fg-muted group-data-[done=1]:line-through";
+var RUN_CONTROLS_CLASS = "flex items-center gap-3";
+var BUDGET_CLASS = "min-w-0 flex-none basis-36 tabular-nums";
+var RUN_CLASS = "group mt-4 overflow-hidden rounded-plate border border-rule bg-surface";
+var RUN_STATUS_CLASS = "font-mono text-sm text-fg-muted group-data-[status=failed]:font-bold group-data-[status=failed]:text-danger group-data-[status=finished]:font-bold group-data-[status=finished]:text-ok group-data-[status=running]:font-bold group-data-[status=running]:text-accent-text";
+var RUN_OUTPUT_CLASS = "m-0 max-h-72 overflow-auto px-4 py-3 font-mono text-sm leading-normal text-fg whitespace-pre-wrap wrap-anywhere empty:before:content-['…'] empty:before:text-fg-muted";
+var ACTIONS_CLASS = "mt-3 flex flex-wrap gap-3 empty:hidden";
 import { T, bind, UI, state, uiConfirm, uiPrompt } from "../core/ui.js";
 import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn, goalWorktreeTitle } from "../core/goals.js";
 import { icon } from "../core/icons.js";
@@ -114,12 +133,12 @@ function syncGoalPublicTasks(g, card) {
 function goalPublicTasksBlock(g) {
   var tasks = publicTasksOf(g);
   if (!tasks.length) return null;
-  return T.details({ class: "goal-detail goal-tasks" },
+  return T.details(null,
     T.summary("Tasks (" + tasks.length + ")"),
-    T.div({ class: "goal-task-list" }, tasks.map(function (t) {
-      return T.div({ class: "goal-task" + (t.done ? " is-done" : "") },
-        T.span({ class: "goal-task-check" }, t.done ? "\u2713" : "\u25cb"),
-        T.span({ class: "goal-task-text" }, t.text));
+    T.div({ class: TASK_LIST_CLASS }, tasks.map(function (t) {
+      return T.div({ class: TASK_CLASS, "data-done": t.done ? "1" : "" },
+        T.span({ class: "flex-none font-mono text-fg-muted" }, t.done ? "\u2713" : "\u25cb"),
+        T.span({ class: TASK_TEXT_CLASS }, t.text));
     })));
 }
 
@@ -199,8 +218,9 @@ function goalCard(g) {
        sets this run's max iterations; left blank it falls back to the goal's
        stored default, then to the global agent.max_iterations. */
     if ((g.status || "active") === "active" && !running) {
-      actions.push(T.div({ class: "goal-run-controls" },
+      actions.push(T.div({ class: RUN_CONTROLS_CLASS },
         T.input({
+          class: BUDGET_CLASS,
           type: "number", min: "1", max: "1000", step: "1",
           "data-goal-budget": g.id,
           placeholder: g.max_iterations ? ("≤ " + g.max_iterations + " steps") : "steps (default)",
@@ -251,28 +271,28 @@ function goalCard(g) {
   var shown = goalStatusLabel(g, running);
   var shownKey = (g.status || "active") === "active" && running ? "running" : (g.status || "");
   var worktreeTitle = goalWorktreeTitle(g);
-  return T.div({ class: "goal", "data-status": shownKey },
-    T.div({ class: "goal-heading" },
-      T.div({ class: "goal-objective" }, g.objective || "(no objective recorded)"),
+  return T.div({ class: "group", "data-status": shownKey },
+    T.div({ class: "flex items-start gap-2" },
+      T.div({ class: OBJECTIVE_CLASS }, g.objective || "(no objective recorded)"),
       worktreeTitle
-        ? T.span({ class: "goal-worktree-badge", title: worktreeTitle, "aria-label": "This goal runs in a git worktree" }, icon("worktree", 16))
+        ? T.span({ class: BADGE_CLASS, title: worktreeTitle, "aria-label": "This goal runs in a git worktree" }, icon("worktree", 16))
         : null),
-    T.div({ class: "goal-meta" },
-      T.span({ class: "goal-status" }, shown),
+    T.div({ class: META_CLASS },
+      T.span({ class: STATUS_CLASS }, shown),
       g.max_iterations ? T.span("≤ " + g.max_iterations + " steps") : null,
       g.id ? T.span("id " + String(g.id).slice(0, 10)) : null),
     /* A well-specified goal runs to several paragraphs and there are usually
        several of them; expanded by default they push the rest of the page off
        screen, so the objective and status stay visible and the specification
        is one click away. */
-    fields.length ? T.details({ class: "goal-detail" },
+    fields.length ? T.details(null,
       T.summary("Specification"),
       T.dl(fields.map(function (pair) {
         return [T.dt(pair[0]), T.dd(pair[1])];
       }))) : null,
     goalPublicTasksBlock(g),
     g.id ? renderGoalRunPanel(g) : null,
-    actions.length ? T.div({ class: "goal-actions" }, actions) : null);
+    actions.length ? T.div({ class: ACTIONS_CLASS }, actions) : null);
 }
 
 export function loadGoals() {
@@ -380,9 +400,9 @@ function renderGoalRunPanel(g) {
   if (!run && !remote) return null;
   var status = run ? run.status : "running";
   var steerable = status === "running";
-  return T.div({ class: "goal-run", "data-status": status, "data-goal-run": gid },
-    T.div({ class: "goal-run-head" },
-      T.span({ class: "goal-run-status" }, remote ? "running (in another session)…" : goalRunStatusLabel(status)),
+  return T.div({ class: RUN_CLASS, "data-status": status, "data-goal-run": gid },
+    T.div({ class: "flex items-center justify-between gap-3 border-b border-rule px-3 py-2" },
+      T.span({ class: RUN_STATUS_CLASS }, remote ? "running (in another session)…" : goalRunStatusLabel(status)),
       // Only offered when that run actually has a session to open — a
       // goal-only `--goal` CLI run has none, and there is nowhere to jump to.
       remote && remoteSession
@@ -393,9 +413,10 @@ function renderGoalRunPanel(g) {
         ? UI.button("Stop", function () { abortGoalRun(gid); },
             { kind: "danger", icon: "strike", label: "Stop this goal run" })
         : null),
-    run ? T.pre({ class: "goal-run-output", "data-goal-output": gid }, run.text || "") : null,
-    steerable ? T.div({ class: "goal-steer" },
+    run ? T.pre({ class: RUN_OUTPUT_CLASS, "data-goal-output": gid }, run.text || "") : null,
+    steerable ? T.div({ class: "flex items-center gap-3 border-t border-rule px-3 py-2" },
       T.textarea({
+        class: "min-h-14 max-h-32 min-w-0 flex-1 resize-y leading-snug",
         "data-goal-steer": gid,
         rows: "2",
         wrap: "soft",

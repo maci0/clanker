@@ -104,6 +104,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   was missing (the prompts view and the kit, from the previous change) was
   ported with nothing checking its classes at all.
 
+- The goals view (`ui/app/features/goals.js`) is styled with Tailwind
+  utilities, which takes its rules out of `app.css` — the render-blocking
+  sheet — as well as `views.css`. The four status colours and the three run
+  statuses were descendant selectors keyed on the card's `data-status`, so the
+  card and the run panel carry `group` and the status words ask about it; a
+  task's done state is `data-done` on its row for the same reason. An empty run
+  output's placeholder is `empty:before:content-['…']`, the one place a
+  generated character is the whole rule. Two rules for a class no markup had
+  used since the goal card was rewritten (`.goal-field`) are deleted rather
+  than ported, and the two `goal-actions` rows in `index.html` move with them.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

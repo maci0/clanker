@@ -39,13 +39,17 @@ const migrated = [
   "features/todos.js",
   "features/prompts.js",
   "features/knowledge.js",
+  "features/goals.js",
   "core/kit.js",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: a breakpoint, or
 /// a grid template the layout actually needs. A colour or a padding written
 /// this way is not on this list, and should not be.
-const arbitrary_ok = [/^max-(?:\[40rem\]|\[700px\]):/, /:?grid-cols-\[/, /^max-w-\[min\(/, /^ps-\[1\.8rem\]$/, /^max-h-\[70vh\]$/, /^max-w-\[52ch\]$/];
+const arbitrary_ok = [/^max-(?:\[40rem\]|\[700px\]):/, /:?grid-cols-\[/, /^max-w-\[min\(/, /^ps-\[1\.8rem\]$/, /^max-h-\[70vh\]$/, /^max-w-\[52ch\]$/, /^h-\[1\.7rem\]$/, /^w-\[1\.7rem\]$/];
+/// A generated-content utility: `content-['…']` is the only spelling for an
+/// empty output's placeholder, and the value is a character, not a size.
+const content_ok = /^empty:before:content-\[/;
 /// Variant prefixes that may carry brackets without being an arbitrary value:
 /// a breakpoint, or the element state a ported sheet reached through an
 /// attribute selector.
@@ -209,6 +213,7 @@ test("migrated files use scale utilities, not arbitrary values", function () {
         }
         const utility = parts[parts.length - 1];
         if (!utility.includes("[")) continue;
+        if (content_ok.test(token)) continue;
         if (arbitrary_ok.some((re) => re.test(token))) continue;
         offenders.push(`${rel}: ${token}`);
       }
