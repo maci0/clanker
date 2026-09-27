@@ -41,7 +41,7 @@ test("music URL field is 16px on a phone so iOS does not zoom", () => {
   // this checks is that the field still qualifies for it.
   assert.match(js, /url\.type = "url"/);
   const host = readFileSync(join(dir, "..", "..", "app", "app.css"), "utf8");
-  assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="url"\]:not\(\.pf-v6-c-form-control\)/);
+  assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="url"\]/);
 });
 
 // Every glyph the dock draws is a key in the host's icon grid, not a character.

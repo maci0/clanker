@@ -67,7 +67,7 @@ test("Files filter is 16px on a phone so iOS does not zoom", function () {
   // guard covers (harden.test.mjs pins the guard). The plugin's own rule for
   // it was dead: the page's `input[type="search"]` selector outranked it.
   assert.match(js, /filterInput\.type = "search"/);
-  assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="search"\]:not\(\.pf-v6-c-form-control\)/);
+  assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="search"\]/);
 });
 
 test("Files empty nested folder offers to go up", function () {

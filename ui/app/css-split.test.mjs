@@ -349,7 +349,7 @@ test("the two sheets still cover everything the page styles", function () {
   // sheets: the split moves whole rules, it never edits them.
   const combined = appCss + "\n" + viewsCss;
   // Spot-check rules that the first paint depends on are in the blocking sheet.
-  for (const sel of [".rail", ".composer .toolbar #submit", "#transcript", ".chip", "input[type=\"text\"]:not(.pf-v6-c-form-control)"]) {
+  for (const sel of [".rail", ".composer .toolbar #submit", "#transcript", ".chip", "input[type=\"text\"]"]) {
     assert.ok(combined.includes(sel.slice(0, 30)), `stylesheet split dropped ${sel}`);
   }
 });
@@ -376,8 +376,26 @@ test("every shipped sheet is brace-balanced and has no dangling selector list", 
     assert.equal(firstNegative, 0, `${name}: a closing brace with nothing open, at line ${firstNegative}`);
     assert.equal(depth, 0, `${name}: ${depth} block(s) left unclosed`);
     // A selector list that ends in a comma: a comma followed (through
-    // whitespace and comments) by `{`.
-    const dangling = src.match(/,(?:\s|\/\*[\s\S]*?\*\/)*\{/);
-    assert.equal(dangling, null, `${name}: a selector list ends in a comma`);
+    // whitespace and complete comments) by `{`. Scanned rather than matched:
+    // the same regex over a 120 KB sheet backtracks for twelve seconds.
+    for (let at = src.indexOf(","); at !== -1; at = src.indexOf(",", at + 1)) {
+      let j = at + 1;
+      for (;;) {
+        if (j >= src.length) break;
+        const ch = src[j];
+        if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") { j += 1; continue; }
+        if (src.startsWith("/*", j)) {
+          const end = src.indexOf("*/", j + 2);
+          if (end === -1) break;
+          j = end + 2;
+          continue;
+        }
+        break;
+      }
+      if (src[j] === "{") {
+        const line = src.slice(0, at).split("\n").length;
+        assert.fail(`${name}: a selector list ends in a comma at line ${line}`);
+      }
+    }
   }
 });

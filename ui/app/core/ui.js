@@ -113,135 +113,19 @@ export function upgradePfButtons(root) {
   return scope;
 }
 
-export function upgradePfFormControl(el) {
-  if (!el) return el;
-  var tag = el.tagName;
-  if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return el;
-  if (tag === "INPUT" && pfControlSkip[el.type]) return el;
-  if (el.classList.contains("sr-only") || el.getAttribute("aria-hidden") === "true") return el;
-  if (el.type === "checkbox" || el.type === "radio") return upgradePfCheckInput(el);
-  if (!el.classList.contains("pf-v6-c-form-control")) el.classList.add("pf-v6-c-form-control");
-  return el;
-}
-
-export function upgradePfCheckInput(input) {
-  if (!input || (input.type !== "checkbox" && input.type !== "radio")) return input;
-  var label = input.closest("label");
-  if (!label && input.id) label = document.querySelector('label[for="' + CSS.escape(input.id) + '"]');
-  if (!label) return input;
-  label.classList.add("pf-v6-c-check");
-  input.classList.add("pf-v6-c-check__input");
-  label.querySelectorAll(":scope > span").forEach(function (s) {
-    if (!s.classList.contains("pf-v6-c-check__label")) s.classList.add("pf-v6-c-check__label");
-  });
-  Array.prototype.slice.call(label.childNodes).forEach(function (n) {
-    if (n.nodeType !== 3 || !n.textContent.trim()) return;
-    var span = document.createElement("span");
-    span.className = "pf-v6-c-check__label";
-    span.textContent = n.textContent.trim();
-    label.replaceChild(span, n);
-  });
-  return input;
-}
-
-export function upgradePfLabel(el) {
-  if (!el || el.tagName !== "LABEL" || !el.htmlFor) return el;
-  if (el.querySelector("input, textarea, select")) return el;
-  if (!el.classList.contains("pf-v6-c-form__label")) el.classList.add("pf-v6-c-form__label");
-  return el;
-}
-
-export function upgradePfForm(el) {
-  if (!el || el.tagName !== "FORM") return el;
-  if (el.hidden || el.hasAttribute("hidden")) return el;
-  if (!el.classList.contains("pf-v6-c-form")) el.classList.add("pf-v6-c-form");
-  return el;
-}
-
-export function upgradePfForms(root) {
-  var scope = root || document;
-  scope.querySelectorAll("form").forEach(upgradePfForm);
-  scope.querySelectorAll("input, textarea, select").forEach(upgradePfFormControl);
-  scope.querySelectorAll("label[for]").forEach(upgradePfLabel);
-  scope.querySelectorAll('input[type="checkbox"], input[type="radio"]').forEach(upgradePfCheckInput);
-  return scope;
-}
-
-/* PatternFly modal bridge (step 6): backdrop + modal wrapper around overlay-box. */
-export function upgradePfOverlay(el) {
-  if (!el || !el.classList.contains("overlay")) return el;
-  if (!el.classList.contains("pf-v6-c-backdrop")) el.classList.add("pf-v6-c-backdrop");
-  var box = el.querySelector(":scope > .overlay-box");
-  if (!box) return el;
-  var modal = box.parentElement;
-  if (!modal.classList.contains("pf-v6-c-modal")) {
-    var wrap = document.createElement("div");
-    wrap.className = "pf-v6-c-modal";
-    if (el.getAttribute("aria-labelledby")) {
-      wrap.setAttribute("aria-labelledby", el.getAttribute("aria-labelledby"));
-      el.removeAttribute("aria-labelledby");
-    }
-    if (el.getAttribute("role") === "dialog") {
-      wrap.setAttribute("role", "dialog");
-      wrap.setAttribute("aria-modal", "true");
-      el.removeAttribute("role");
-      el.removeAttribute("aria-modal");
-    }
-    el.insertBefore(wrap, box);
-    wrap.appendChild(box);
-  }
-  if (!box.classList.contains("pf-v6-c-modal-box")) box.classList.add("pf-v6-c-modal-box");
-  var head = box.querySelector(":scope > .run-detail-head");
-  if (head && !head.classList.contains("pf-v6-c-modal__header")) {
-    head.classList.add("pf-v6-c-modal__header");
-    var title = head.querySelector(".run-detail-title");
-    if (title) title.classList.add("pf-v6-c-modal__title");
-  }
-  box.querySelectorAll("input, textarea, select").forEach(upgradePfFormControl);
-  box.querySelectorAll("label[for]").forEach(upgradePfLabel);
-  return el;
-}
-
-export function upgradePfOverlays(root) {
-  var scope = root || document;
-  scope.querySelectorAll(".overlay").forEach(upgradePfOverlay);
-  scope.querySelectorAll("dialog.slack-dialog").forEach(function (dlg) {
-    var form = dlg.querySelector("form");
-    if (form) upgradePfForm(form);
-  });
-  return scope;
-}
-
-/* PatternFly label bridge (step 7): status chips in the masthead and elsewhere. */
-export function upgradePfChip(el) {
-  if (!el) return el;
-  /* Model controls are actuators with a chevron, not status lamps. */
-  if (el.classList.contains("model-pill") || el.id === "header-model" || el.id === "composer-model") return el;
-  if (!el.classList.contains("chip") && !el.classList.contains("header-model")) return el;
-  if (!el.classList.contains("pf-v6-c-label")) el.classList.add("pf-v6-c-label");
-  if (!el.querySelector(":scope > .pf-v6-c-label__content")) {
-    var text = (el.textContent || "").trim();
-    if (text) {
-      el.textContent = "";
-      var content = document.createElement("span");
-      content.className = "pf-v6-c-label__content";
-      content.textContent = text;
-      el.appendChild(content);
-    }
-  }
-  var state = el.getAttribute("data-state");
-  el.classList.remove("pf-m-success", "pf-m-danger", "pf-m-blue", "pf-m-orange");
-  if (state === "live") el.classList.add("pf-m-success");
-  else if (state === "down") el.classList.add("pf-m-danger");
-  else el.classList.add("pf-m-blue");
-  return el;
-}
-
-export function upgradePfChips(root) {
-  var scope = root || document;
-  scope.querySelectorAll("#instance-chip, #peers-chip, #session-chip, .chip:not(.model-pill):not(.header-model)").forEach(upgradePfChip);
-  return scope;
-}
+/* The field, label, check and chip bridges are gone: the cabinet styles a
+   control by its tag and type (`input[type="text"]`, `select`, `.checkbox-row`,
+   `.detail-row label`), so a class saying "this is a form control" only handed
+   the element to PatternFly. The names stay, because call sites across the page
+   and the plugins use them, and they do nothing now. Deleting those call sites
+   is a separate sweep. */
+export function upgradePfFormControl(el) { return el; }
+export function upgradePfCheckInput(input) { return input; }
+export function upgradePfLabel(el) { return el; }
+export function upgradePfForm(el) { return el; }
+export function upgradePfForms(root) { return root || document; }
+export function upgradePfChip(el) { return el; }
+export function upgradePfChips(root) { return root || document; }
 
 function upgradePfToastNode(node) {
   if (!node || !node.classList.contains("toast")) return node;
@@ -508,12 +392,6 @@ export var UI = {
     if (opts.title) attrs.title = opts.title;
     if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label || null);
     return T.button(attrs, label || null);
-  },
-  field: function (id, label, control) {
-    if (control && control.classList) upgradePfFormControl(control);
-    return T.div({ class: "pf-v6-c-form__group" },
-      T.label({ class: "pf-v6-c-form__label", for: id }, label),
-      T.div({ class: "pf-v6-c-form__group-control" }, control));
   },
   empty: function (text) {
     return T.p({ class: "run-empty" }, text);

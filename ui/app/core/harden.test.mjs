@@ -22,11 +22,6 @@ function ruleBody(selector) {
   return m[1];
 }
 
-function loadUpgradePfForm() {
-  const m = /export function upgradePfForm\(el\) \{([\s\S]*?)\n\}/.exec(uiSrc);
-  assert.ok(m, "upgradePfForm missing from ui.js");
-  return new Function("el", m[1]);
-}
 
 test("card-form stays in the tree as a hidden compatibility form", function () {
   assert.match(html, /id="card-form"[^>]*\bhidden\b|id="card-form" hidden/);
@@ -37,31 +32,16 @@ test("author CSS hides a hidden form so PF display cannot leak it", function () 
   assert.match(body, /display:\s*none/);
 });
 
-test("upgradePfForm does not stamp pf-v6-c-form onto a hidden form", function () {
-  const upgradePfForm = loadUpgradePfForm();
-  var added = null;
-  upgradePfForm({
-    tagName: "FORM",
-    hidden: true,
-    hasAttribute: function (n) { return n === "hidden"; },
-    classList: {
-      contains: function () { return false; },
-      add: function (c) { added = c; },
-    },
-  });
-  assert.equal(added, null);
-
-  added = null;
-  upgradePfForm({
-    tagName: "FORM",
-    hidden: false,
-    hasAttribute: function () { return false; },
-    classList: {
-      contains: function () { return false; },
-      add: function (c) { added = c; },
-    },
-  });
-  assert.equal(added, "pf-v6-c-form");
+test("the form bridge stamps nothing", function () {
+  // It used to add pf-v6-c-form to a visible form and skip a hidden one, so PF
+  // could own the field layout. The cabinet styles a control by tag and type,
+  // so the bridge is a no-op now — and it must stay one: the contract the page
+  // depends on is that a control is not given a class that names a sheet the
+  // page no longer loads.
+  const m = /export function upgradePfForm\(el\) \{ ([^}]*)\}/.exec(uiSrc);
+  assert.ok(m, "upgradePfForm missing from ui.js");
+  assert.match(m[1], /return el;/, "upgradePfForm must return the element untouched");
+  assert.doesNotMatch(uiSrc, /pf-v6-c-form["']/, "no bridge may name a PatternFly form class");
 });
 
 test("rooms log is not a live region; status is", function () {
@@ -675,7 +655,7 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*?\.composer textarea,[^}]*font-size:\s*16px/);
   // Every bare <select> on the page is 14px by the global rule, so the guard
   // has to name it, or focusing one zooms iOS and never zooms back.
-  assert.match(css, /select:not\(\.pf-v6-c-form-control\)/);
+  assert.match(css, /(^|[,\s])select\s*(,[^{]*)?\{/m);
   // The composer's selects are 12px by a later rule, and a media query adds
   // no specificity, so the 16px has to be restated after it.
   const modelSelectPhone = css.lastIndexOf(".composer .model-select { font-size: 16px; }");

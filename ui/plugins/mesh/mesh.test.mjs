@@ -44,13 +44,13 @@ test("identity facts include a copyable listen address", function () {
 
 test("join field stays 16px on a phone so iOS does not zoom", function () {
   // The plugin no longer ships a sheet: its own input rule lost every property
-  // to the page's `input[type="text"]:not(.pf-v6-c-form-control)` rule, which
+  // to the page's `input[type="text"]` rule, which
   // is also where the 16px phone guard lives. So what this pins is that the
   // field is still a plain text input, and that the page-wide guard is still
   // the one that covers it (harden.test.mjs pins the guard itself).
   assert.match(js, /addr\.type = "text"/);
   const host = readFileSync(join(dir, "..", "..", "app", "app.css"), "utf8");
-  assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="search"\]:not\(\.pf-v6-c-form-control\)/);
+  assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="search"\]/);
 });
 
 // The poll idles on a hidden view — reading the attribute the host really sets.

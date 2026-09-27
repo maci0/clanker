@@ -357,6 +357,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   parser dropped the whole rule in silence. Both are checked now rather than
   trusted to the diff, and the forced-colors rule is repaired.
 
+- The field, label, check and chip bridges are gone. Each added a PatternFly
+  class — `pf-v6-c-form-control`, `pf-v6-c-form__label`, `pf-v6-c-check`,
+  `pf-v6-c-label` — and the chip bridge also wrapped a chip's text in PF's
+  content span; the cabinet styles a control by its tag and type
+  (`input[type="text"]`, `select`, `.checkbox-row`, `.detail-row label`), so a
+  class saying "this is a form control" only handed the element to PatternFly.
+  The names stay (call sites across the page and the plugins use them) and do
+  nothing; deleting the call sites is a sweep of its own. `UI.field`, which
+  built PF form-group markup and had no callers, is gone with them.
+- The `:not(.pf-v6-c-form-control)` guards on the cabinet's field rules are
+  dropped (20 of them) and the PF form, label, check and chip rules with them.
+  Four suites pinned those guards and now pin the selector without it. First
+  paint 58.6K gz.
+- The new sheet-integrity check scanned with a regex that backtracks for twelve
+  seconds over a 120 KB sheet; it is a linear scan now.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

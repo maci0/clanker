@@ -1152,14 +1152,14 @@ label {
 }
 .composer label, .detail-row label, .tool-field label { font-family: var(--sans); letter-spacing: 0.01em; text-transform: none; font-weight: 500; }
 
-textarea:not(.pf-v6-c-form-control) {
+textarea {
   width: 100%; min-height: 5rem; padding: 0.75rem;
   font-family: var(--sans); font-size: var(--step-1); line-height: 1.55;
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius); resize: vertical;
   box-shadow: var(--bevel-inset);
 }
-textarea:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
+textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
 .composer textarea {
   min-height: 2.6rem; max-height: 10rem; padding: 0.55rem 0.75rem;
   font-size: var(--step-0); line-height: 1.5;
@@ -1228,37 +1228,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .pf-v6-c-form-control,
 input.pf-v6-c-form-control,
 textarea.pf-v6-c-form-control,
-select.pf-v6-c-form-control {
-  font-family: var(--sans);
-  font-size: var(--step-0);
-  color: var(--fg);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
 .pf-v6-c-form-control:focus-visible,
 input.pf-v6-c-form-control:focus-visible,
 textarea.pf-v6-c-form-control:focus-visible,
-select.pf-v6-c-form-control:focus-visible {
-  border-color: var(--accent);
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
 .pf-v6-c-form__label,
-label.pf-v6-c-form__label {
-  font-family: var(--sans);
-  font-weight: 500;
-  color: var(--fg-muted);
-}
 .pf-v6-c-check.checkbox-row,
-label.pf-v6-c-check.checkbox-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-family: var(--sans);
-  font-size: var(--step-0);
-  color: var(--fg);
-}
 
 /* PatternFly modals (step 6): overlay scrim + dialog box. */
 .overlay,
@@ -1320,16 +1294,8 @@ dialog.slack-dialog.pf-v6-c-modal-box {
 
 /* PatternFly labels (step 7): masthead status chips. */
 .chip.pf-v6-c-label,
-.header-model.pf-v6-c-label {
-  font-family: var(--mono);
-  font-size: var(--step--1);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
 .chip.pf-v6-c-label[data-state="live"],
-.chip.pf-v6-c-label.pf-m-success { color: var(--ok); }
 .chip.pf-v6-c-label[data-state="down"],
-.chip.pf-v6-c-label.pf-m-danger { color: var(--danger); }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -1386,21 +1352,21 @@ h2 {
   font-family: var(--sans); font-size: var(--step-0);
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius-pill);
-}#run-filter, #tool-filter, #turn-filter { flex: 1 1 24rem; min-width: 14rem; max-width: 34rem; }#board-room, #card-column { max-width: 14rem; }#model, #run-picker { flex: 1 1 16rem; min-width: 12rem; }input[type="text"]:not(.pf-v6-c-form-control),
-input[type="search"]:not(.pf-v6-c-form-control),
-input[type="date"]:not(.pf-v6-c-form-control),
-input[type="number"]:not(.pf-v6-c-form-control),
-input[type="url"]:not(.pf-v6-c-form-control) {
+}#run-filter, #tool-filter, #turn-filter { flex: 1 1 24rem; min-width: 14rem; max-width: 34rem; }#board-room, #card-column { max-width: 14rem; }#model, #run-picker { flex: 1 1 16rem; min-width: 12rem; }input[type="text"],
+input[type="search"],
+input[type="date"],
+input[type="number"],
+input[type="url"] {
   min-height: 40px; padding: var(--space-2) 0.7rem; box-sizing: border-box;
   font-family: var(--sans); font-size: var(--step-0);
   background: var(--surface); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius-pill);
-}input[type="text"]:not(.pf-v6-c-form-control):focus-visible,
-input[type="search"]:not(.pf-v6-c-form-control):focus-visible,
-input[type="date"]:not(.pf-v6-c-form-control):focus-visible,
-input[type="number"]:not(.pf-v6-c-form-control):focus-visible,
-input[type="url"]:not(.pf-v6-c-form-control):focus-visible,
-select:not(.pf-v6-c-form-control):focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }#run-filter:focus, #run-filter:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }#run-filter::-webkit-search-cancel-button { cursor: pointer; opacity: 0.9; }#run-filter::-webkit-search-cancel-button:hover { opacity: 1; filter: brightness(1.1); }.run-graph { margin-top: 1rem; }.run-head {
+}input[type="text"]:focus-visible,
+input[type="search"]:focus-visible,
+input[type="date"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="url"]:focus-visible,
+select:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }#run-filter:focus, #run-filter:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }#run-filter::-webkit-search-cancel-button { cursor: pointer; opacity: 0.9; }#run-filter::-webkit-search-cancel-button:hover { opacity: 1; filter: brightness(1.1); }.run-graph { margin-top: 1rem; }.run-head {
   max-width: var(--measure);
   font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); font-weight: 600;
   padding-bottom: var(--space-3); border-bottom: 1px dashed var(--rule); margin-bottom: var(--space-4);
@@ -1454,13 +1420,13 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
    even when the UA reports a fine pointer (phones + many tablets). */
 @media (max-width: 40rem) {
 /* iOS Safari zooms the page when a focused field is under 16px. */
-  input[type="text"]:not(.pf-v6-c-form-control),
-  input[type="search"]:not(.pf-v6-c-form-control),
-  input[type="date"]:not(.pf-v6-c-form-control),
-  input[type="number"]:not(.pf-v6-c-form-control),
-  input[type="url"]:not(.pf-v6-c-form-control),
-  textarea:not(.pf-v6-c-form-control),
-  select:not(.pf-v6-c-form-control),
+  input[type="text"],
+  input[type="search"],
+  input[type="date"],
+  input[type="number"],
+  input[type="url"],
+  textarea,
+  select,
   .pf-v6-c-form-control,
   input.pf-v6-c-form-control,
   textarea.pf-v6-c-form-control,
@@ -2044,12 +2010,6 @@ label:has(> textarea[required])::after,
 label.pf-v6-c-form__label:has(+ input[required])::after,
 label.pf-v6-c-form__label:has(+ textarea[required])::after,
 label.pf-v6-c-form__label:has(> input[required])::after,
-label.pf-v6-c-form__label:has(> textarea[required])::after {
-  content: " (required)";
-  color: var(--fg-muted);
-  font-weight: 400;
-  font-size: 0.92em;
-}
 h2#session-title {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
