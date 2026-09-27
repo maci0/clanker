@@ -87,7 +87,13 @@ def op_contours(image, path, opts):
         if area < min_area:
             continue
         x, y, w, h = cv2.boundingRect(c)
-        boxes.append({"x": int(x), "y": int(y), "w": int(w), "h": int(h), "area": round(float(area), 1)})
+        boxes.append({
+            "x": int(x),
+            "y": int(y),
+            "w": int(w),
+            "h": int(h),
+            "area": round(float(area), 1),
+        })
     boxes.sort(key=lambda b: b["area"], reverse=True)
     return {"count": len(boxes), "contours": boxes[:50], "min_area": min_area}
 
@@ -114,7 +120,11 @@ def op_resize(image, path, opts):
     if height is None:
         height = max(1, round(h * (int(width) / w)))
     resized = cv2.resize(image, (int(width), int(height)), interpolation=cv2.INTER_AREA)
-    return {"output": _write(resized, _stem(path), f"{int(width)}x{int(height)}"), "width": int(width), "height": int(height)}
+    return {
+        "output": _write(resized, _stem(path), f"{int(width)}x{int(height)}"),
+        "width": int(width),
+        "height": int(height),
+    }
 
 
 OPS = {

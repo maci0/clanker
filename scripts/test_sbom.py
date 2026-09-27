@@ -21,7 +21,11 @@ class SbomTest(unittest.TestCase):
         cls.components = {c["name"]: c for c in cls.document["components"]}
 
     def test_registry_hashes_preserve_lockfile_integrity(self) -> None:
-        algorithms = {"sha256": ("SHA-256", 32), "sha384": ("SHA-384", 48), "sha512": ("SHA-512", 64)}
+        algorithms = {
+            "sha256": ("SHA-256", 32),
+            "sha384": ("SHA-384", 48),
+            "sha512": ("SHA-512", 64),
+        }
         packages = sbom.npm_components()
         self.assertTrue(packages)
         for package in packages:

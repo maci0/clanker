@@ -301,7 +301,12 @@ def build() -> dict:
         if n.get("integrity"):
             alg, _, digest = n["integrity"].partition("-")
             hashes = [{
-                "alg": {"sha1": "SHA-1", "sha256": "SHA-256", "sha384": "SHA-384", "sha512": "SHA-512"}[alg],
+                "alg": {
+                    "sha1": "SHA-1",
+                    "sha256": "SHA-256",
+                    "sha384": "SHA-384",
+                    "sha512": "SHA-512",
+                }[alg],
                 "content": base64.b64decode(digest, validate=True).hex(),
             }]
         else:
@@ -352,7 +357,9 @@ def build() -> dict:
         if kind:
             entry["kinds"].append(kind)
 
-    for key, e in sorted(web.items()):
+    # web is keyed by (name, version); sort on the same pair so the order is
+    # the one the key tuple already implied.
+    for e in sorted(web.values(), key=lambda v: (v["name"], v["version"])):
         props = []
         for f in sorted(set(e["files"])):
             props.append({"name": "clanker:vendor-path", "value": f})

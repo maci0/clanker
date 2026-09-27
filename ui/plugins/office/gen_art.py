@@ -72,7 +72,7 @@ def from_map(rows, legend, base=None):
                 continue
             c = legend[ch]
             if len(c) == 3:
-                c = c + (255,)
+                c = (*c, 255)
             if c[3] == 255:
                 im.putpixel((x, y), c)
             else:
@@ -87,50 +87,50 @@ def tile_floor(dark=False):
     course catches the light, grain and knots dithered in."""
     t1 = WOOD1 if not dark else tuple(max(c - 13, 0) for c in WOOD1)
     t2 = WOOD2 if not dark else tuple(max(c - 13, 0) for c in WOOD2)
-    im = Image.new("RGBA", (T, T), t1 + (255,))
+    im = Image.new("RGBA", (T, T), (*t1, 255))
     px = im.load()
     for y in range(T):
         for x in range(T):
             if y % 8 == 7:
-                px[x, y] = WOOD0 + (255,)                     # course seam
+                px[x, y] = (*WOOD0, 255)                     # course seam
             elif (y // 8 == 0 and x == 5) or (y // 8 == 1 and x == 12):
-                px[x, y] = WOOD0 + (255,)                     # butt joint
+                px[x, y] = (*WOOD0, 255)                     # butt joint
             elif y % 8 == 0:
-                px[x, y] = t2 + (255,)                        # lit edge
+                px[x, y] = (*t2, 255)                        # lit edge
             elif y % 8 == 1 and x % 2 == 0:
-                px[x, y] = t2 + (255,)                        # dither below it
+                px[x, y] = (*t2, 255)                        # dither below it
             elif (x * 5 + y * 11) % 23 == 0:
-                px[x, y] = t2 + (255,)                        # grain
+                px[x, y] = (*t2, 255)                        # grain
             elif (x * 3 + y * 7) % 37 == 0:
-                px[x, y] = WOOD0 + (255,)                     # knot
-    px[3, 3] = WOOD3 + (255,)                                 # nail glints
-    px[13, 11] = WOOD3 + (255,)
+                px[x, y] = (*WOOD0, 255)                     # knot
+    px[3, 3] = (*WOOD3, 255)                                 # nail glints
+    px[13, 11] = (*WOOD3, 255)
     return im
 
 
 def tile_wall():
     """Wallpaper above a wooden wainscot: crown shadow, dotted paper
     texture, chair rail, panelled base."""
-    im = Image.new("RGBA", (T, T), WALL1 + (255,))
+    im = Image.new("RGBA", (T, T), (*WALL1, 255))
     px = im.load()
     for x in range(T):
-        px[x, 0] = K + (255,)
-        px[x, 1] = WALL0 + (255,)                             # crown shadow
-        px[x, 2] = WALL3 + (255,)                             # lit crown edge
+        px[x, 0] = (*K, 255)
+        px[x, 1] = (*WALL0, 255)                             # crown shadow
+        px[x, 2] = (*WALL3, 255)                             # lit crown edge
         for y in range(3, 9):                                 # paper texture
             if (x + y * 3) % 4 == 0:
-                px[x, y] = WALL2 + (255,)
+                px[x, y] = (*WALL2, 255)
             if (x * 3 + y) % 7 == 0:
-                px[x, y] = WALL0 + (255,)
-        px[x, 9] = WALL3 + (255,)                             # chair rail
-        px[x, 10] = WOOD2 + (255,)
+                px[x, y] = (*WALL0, 255)
+        px[x, 9] = (*WALL3, 255)                             # chair rail
+        px[x, 10] = (*WOOD2, 255)
         for y in (11, 12, 13):                                # wainscot
-            px[x, y] = WOOD1 + (255,)
+            px[x, y] = (*WOOD1, 255)
         if x % 5 == 0:
             for y in (11, 12, 13):
-                px[x, y] = WOOD0 + (255,)                     # panel seams
-        px[x, 14] = WOOD0 + (255,)                            # base shadow
-        px[x, 15] = K + (255,)
+                px[x, y] = (*WOOD0, 255)                     # panel seams
+        px[x, 14] = (*WOOD0, 255)                            # base shadow
+        px[x, 15] = (*K, 255)
     return im
 
 

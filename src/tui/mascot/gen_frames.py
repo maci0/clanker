@@ -251,7 +251,7 @@ def write_zig(path, per_size, frame_count):
     for (r, g, b), name in zip(PALETTE, [
         "outline", "body shadow", "body mid", "body highlight",
         "eye", "chest patch", "dust",
-    ]):
+    ], strict=True):
         lines.append(f"    0x{r:02X}{g:02X}{b:02X}, // {name}")
     lines += [
         "};",

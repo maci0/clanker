@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Minimal ACP v1 stdio agent for clanker backend tests. Also handles grok/claude -p and codex exec."""
+"""Minimal ACP v1 stdio agent for clanker backend tests.
+
+Also handles grok/claude -p and codex exec.
+"""
 import json
 import os
 import sys
@@ -80,7 +83,11 @@ def main_acp():
             if mid is not None:
                 send({"jsonrpc": "2.0", "id": mid, "result": {"stopReason": "cancelled"}})
         elif mid is not None:
-            send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "Method not found"}})
+            send({
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32601, "message": "Method not found"},
+            })
 
 
 def main_headless():

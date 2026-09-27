@@ -42,6 +42,15 @@ if command -v shellcheck >/dev/null 2>&1; then
     fi
 fi
 
+# Python lint, when ruff is installed (CI runs it regardless). Same config
+# (ruff.toml) and same file set as CI: every tracked .py, globbed from the
+# index by the caller.
+if command -v ruff >/dev/null 2>&1; then
+    if [ -n "$(staged '*.py' | tr -d '\0')" ]; then
+        staged '*.py' | xargs -0 ruff check || fail "ruff check failed"
+    fi
+fi
+
 # JavaScript lint, when the root toolchain is installed (`bun install`; CI runs it
 # regardless). Same config and flags as CI (`bun run lint`): correctness errors
 # fail, warn-level anti-slop findings print without failing, and a disable

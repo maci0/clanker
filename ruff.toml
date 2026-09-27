@@ -1,0 +1,30 @@
+# Python is a secondary language here (scripts/, the mascot and plugin
+# generators, the SBOM writer), and CI used to only ast.parse these files, so
+# every defect-class rule was off by omission rather than by decision. The
+# selection below is explicit for the same reason: a default set that grows
+# with a ruff upgrade would turn CI red on a tree nobody changed.
+#
+# `EXE` is deliberately absent: these scripts carry a shebang but are run as
+# `python3 scripts/sbom.py` and the `opencv` guest is exec'd by its tool
+# manifest, so a non-executable bit is not a defect here.
+line-length = 100
+target-version = "py310"
+
+[lint]
+select = [
+    "B",   # bugbear: mutable defaults, bare except shapes
+    "C4",  # comprehensions
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # import order
+    "PIE", # misc lints
+    "RUF", # ruff-specific correctness
+    "SIM", # simplifications that read as intent
+    "UP",  # pyupgrade
+    "W",   # pycodestyle warnings
+]
+
+[lint.per-file-ignores]
+# The tool's whole contract is "any failure becomes {"ok": false, ...}" for
+# the agent to read, so the top-level catch is the design, not an oversight.
+"tools/py/opencv.py" = ["BLE001"]

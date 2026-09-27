@@ -98,11 +98,18 @@ jobs:
           python3 scripts/sbom.py -o /tmp/sbom.cdx.json
 
       # Python is a secondary language here (sbom.py, gen_frames.py, ...),
-      # and nothing in CI executes most of it, so a syntax error would merge
-      # unseen. Compile-check every tracked .py with ast.parse: py_compile
-      # would litter the checkout with __pycache__ dirs (not gitignored).
-      - name: Compile-check Python scripts
-        run: git ls-files -z '*.py' | xargs -0 -r python3 -c 'import ast,pathlib,sys; [ast.parse(pathlib.Path(p).read_bytes()) for p in sys.argv[1:]]'
+      # and nothing in CI executes most of it, so a defect would merge unseen.
+      # ruff parses every tracked .py (a syntax error is a finding, so this
+      # also covers what the ast.parse compile check used to) and enforces
+      # ruff.toml, which pins the selected rules and the line cap so a ruff
+      # upgrade cannot turn CI red on a tree nobody changed. Pinned to the
+      # version the local runs were verified against; a venv because
+      # ubuntu-24.04 marks the system python externally managed.
+      - name: Lint Python
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ruff-venv"
+          "$RUNNER_TEMP/ruff-venv/bin/pip" install --disable-pip-version-check --quiet "ruff==0.16.4"
+          git ls-files -z '*.py' | xargs -0 -r "$RUNNER_TEMP/ruff-venv/bin/ruff" check
 
       - name: Run deterministic gate
         run: |

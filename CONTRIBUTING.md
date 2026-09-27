@@ -21,7 +21,8 @@ git config core.hooksPath .githooks
 Requirements are Zig 0.16.x (pinned in `build.zig.zon`, enforced by
 `build.zig`), Git, Bash, and patch. Tests also need Bun for the JS suites
 and Python 3 for the process fixtures. Full verification additionally needs
-shellcheck; `scripts/verify.sh` installs the declared JS dependencies locally.
+shellcheck and ruff; `scripts/verify.sh` installs the declared JS dependencies
+locally.
 
 ## The edit-test loop
 
@@ -38,7 +39,7 @@ shellcheck; `scripts/verify.sh` installs the declared JS dependencies locally.
   once after `zig build --fetch=all` (idempotent; `scripts/verify.sh` does it
   for you).
 - Before pushing: `scripts/verify.sh` — mirrors everything CI's verify job
-  runs (shellcheck, oxlint, Python syntax check, SBOM generation,
+  runs (shellcheck, oxlint, ruff, SBOM generation,
   AssemblyScript rebuild-and-diff, `clanker gate`, e2e), so a red CI run is
   not the first place you hear about it.
 
@@ -54,7 +55,7 @@ shellcheck; `scripts/verify.sh` installs the declared JS dependencies locally.
   in each new worktree.
 - CI — the workflow in `.github/workflows/ci.yml` additionally checks shell
   scripts with shellcheck, `ui/` and `tools/ts` with oxlint, every tracked
-  `.py` with a syntax parse, the SBOM generation, and that
+  `.py` with ruff (`ruff.toml`), the SBOM generation, and that
   `tools/ts/dist/*.wasm` matches a clean rebuild (`tools/ts/verify.sh`).
   `scripts/verify.sh` reproduces all of it locally.
 - The pre-commit hook (fast checks over staged files only). Bypass for WIP
