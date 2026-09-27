@@ -25,6 +25,7 @@ const store = @import("store.zig");
 const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const log = @import("../util/log.zig");
+const elapsed = @import("../util/elapsed.zig");
 
 /// Process-local counters for scheduled entry fires. No per-entry labels.
 var schedule_fires_total = std.atomic.Value(u64).init(0);
@@ -254,8 +255,7 @@ fn fireOne(
         // carry conversation text. The ledger already stores it owner-only.
         log.log(.warn, "schedule: entry {s} failed: {s} (trigger={s}, task {d} bytes)", .{ entry.id, err_name, trigger, entry.task.len });
     };
-    const elapsed_ns = started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
-    const duration_ms: u64 = @intCast(@max(0, @divTrunc(elapsed_ns, std.time.ns_per_ms)));
+    const duration_ms = elapsed.since(io, started);
     if (ok) log.log(.info, "schedule: entry {s} ok in {d}ms (trigger={s})", .{ entry.id, duration_ms, trigger });
     _ = schedule_fires_total.fetchAdd(1, .monotonic);
     if (!ok) _ = schedule_errors_total.fetchAdd(1, .monotonic);

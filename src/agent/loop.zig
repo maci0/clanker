@@ -33,6 +33,7 @@ const hooks_config = @import("../hooks/config.zig");
 const hooks_runner = @import("../hooks/runner.zig");
 const thinking = @import("thinking.zig");
 const ttsr = @import("ttsr.zig");
+const elapsed = @import("../util/elapsed.zig");
 const sampling = @import("../llm/sampling_profiles.zig");
 const session = @import("session.zig");
 const preset_mod = @import("../preset/preset.zig");
@@ -767,7 +768,7 @@ pub const Agent = struct {
             self.modules.clearRetainingCapacity();
             // wasm_cache is gpa-owned and survives across turns (freed once
             // in Agent.deinit at session end): do NOT clear it here.
-            const run_ms = elapsedMs(self.ctx.io, run_start);
+            const run_ms = elapsed.since(self.ctx.io, run_start);
             const tps: f64 = if (run_ms > 0) @as(f64, @floatFromInt(self.stats.total_completion_tokens)) / (@as(f64, @floatFromInt(run_ms)) / 1000.0) else 0;
             const prompt_total = self.stats.total_cache_hit_tokens + self.stats.total_cache_miss_tokens;
             const hit_rate: f64 = if (prompt_total > 0) @as(f64, @floatFromInt(self.stats.total_cache_hit_tokens)) / @as(f64, @floatFromInt(prompt_total)) * 100.0 else 0;
@@ -811,7 +812,7 @@ pub const Agent = struct {
             .started_at = started_at,
         };
         defer {
-            g.duration_ms = elapsedMs(self.ctx.io, run_start);
+            g.duration_ms = elapsed.since(self.ctx.io, run_start);
             // Stamped at exit, not only at start: `chatWithFallbackChain`
             // repoints `self.provider` to whoever actually served, and a
             // graph that kept the requested name would record a provider
@@ -1093,7 +1094,7 @@ pub const Agent = struct {
                 .detail = resp.finish_reason orelse "",
                 .prompt_tokens = if (resp.usage) |u| u.prompt_tokens else 0,
                 .completion_tokens = if (resp.usage) |u| u.completion_tokens else 0,
-                .duration_ms = elapsedMs(self.ctx.io, llm_t0),
+                .duration_ms = elapsed.since(self.ctx.io, llm_t0),
                 .ok = true,
                 // Set here as on every other node: `output` is only the first
                 // `output_preview_cap` bytes, so the full length is what tells
@@ -1151,7 +1152,7 @@ pub const Agent = struct {
                     .label = "final",
                     .detail = resp.finish_reason orelse "",
                     .result_bytes = answer_len,
-                    .duration_ms = elapsedMs(self.ctx.io, llm_t0),
+                    .duration_ms = elapsed.since(self.ctx.io, llm_t0),
                     .ok = !(cut and answer_len == 0),
                     .output = graph_mod.finalAnswerPreview(resp.message.content orelse ""),
                 });
@@ -1226,7 +1227,7 @@ pub const Agent = struct {
             // module is stateful and the cached instance is reused.
             const results = try self.executeCalls(calls);
             if (self.on_tool_result) |cb| {
-                const tool_ms = elapsedMs(self.ctx.io, tool_t0);
+                const tool_ms = elapsed.since(self.ctx.io, tool_t0);
                 cb(tool_ms);
             }
             if (self.cfg.advisor.enabled) {
@@ -2825,7 +2826,7 @@ pub const Agent = struct {
         err: anyerror,
         detail: ?[]const u8,
     ) !void {
-        const ms = elapsedMs(self.ctx.io, started);
+        const ms = elapsed.since(self.ctx.io, started);
         const why = detail orelse @errorName(err);
         log.log(.error_, "LLM call failed at iteration {d}: {s} ({s})", .{ iteration + 1, @errorName(err), why });
         try g.add(self.ctx.gpa, .{
@@ -3543,14 +3544,6 @@ fn turnCompletionBudget(provider: *const config.Provider) u32 {
 /// Monotonic elapsed milliseconds, saturating at zero. `durationTo` is a
 /// signed i96 subtraction, and `@intCast` of a negative value into u64
 /// panics in Debug / wraps in ReleaseFast.
-fn elapsedMs(io: std.Io, started: std.Io.Timestamp) u64 {
-    return durationToMs(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
-}
-
-fn durationToMs(ns: i96) u64 {
-    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
-}
-
 /// Session-event integers are i64. Token totals are u64; a wrap would
 /// record a huge negative spend.
 fn eventInt(n: u64) i64 {
@@ -4947,12 +4940,6 @@ test "nextFallbackProvider skips unknown names and already-tried ones" {
     const second = nextFallbackProvider(&cfg, &env, arena, "b", &.{ "missing", "a", "b", "c" }, &.{ "a", "b" }, &i).?;
     try std.testing.expectEqualStrings("c", second.name);
     try std.testing.expect(nextFallbackProvider(&cfg, &env, arena, "c", &.{ "missing", "a", "b", "c" }, &.{ "a", "b", "c" }, &i) == null);
-}
-
-test "durationToMs saturates a negative span at zero" {
-    try std.testing.expectEqual(@as(u64, 0), durationToMs(-1));
-    try std.testing.expectEqual(@as(u64, 0), durationToMs(-std.time.ns_per_s));
-    try std.testing.expectEqual(@as(u64, 1000), durationToMs(std.time.ns_per_s));
 }
 
 test "eventInt saturates u64 totals that do not fit in i64" {

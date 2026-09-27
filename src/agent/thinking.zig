@@ -9,6 +9,7 @@ const config = @import("../config.zig");
 const types = @import("../llm/types.zig");
 const client = @import("../llm/client.zig");
 const log = @import("../util/log.zig");
+const elapsed = @import("../util/elapsed.zig");
 const logic = @import("thinking_logic");
 
 pub const max_classify_input_bytes = logic.max_classify_input_bytes;
@@ -133,10 +134,9 @@ pub fn classify(
         log.log(.debug, "auto-thinking failed: {s}", .{@errorName(err)});
         return null;
     };
-    const elapsed = started.durationTo(std.Io.Timestamp.now(io, .awake));
     return .{
         .level = parseLevel(resp.message.content orelse ""),
-        .duration_ms = @intCast(@max(0, @divTrunc(elapsed.nanoseconds, std.time.ns_per_ms))),
+        .duration_ms = elapsed.since(io, started),
     };
 }
 

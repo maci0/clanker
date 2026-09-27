@@ -207,6 +207,7 @@ comptime {
     _ = @import("util/disk_cap.zig");
     _ = @import("util/edit_distance.zig");
     _ = @import("util/no_color.zig");
+    _ = @import("util/elapsed.zig");
     _ = @import("util/ensure_dir.zig");
     _ = @import("util/json.zig");
     _ = @import("util/raw_http.zig");

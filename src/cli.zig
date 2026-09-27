@@ -105,6 +105,7 @@ const webui_vendor_three_core = ui_vendor.three_core;
 const webui_vendor_patternfly = ui_vendor.patternfly;
 const edit_distance = @import("util/edit_distance.zig");
 const no_color = @import("util/no_color.zig");
+const elapsed = @import("util/elapsed.zig");
 const test_env = @import("util/test_env.zig");
 
 /// Sourced from build.zig.zon's `.version` field via the `build_options`
@@ -2933,14 +2934,6 @@ const PingResult = struct {
     detail: []const u8 = "",
 };
 
-fn elapsedMs(io: std.Io, t0: std.Io.Timestamp) i64 {
-    return durationToMs(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
-}
-
-fn durationToMs(ns: i96) i64 {
-    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
-}
-
 /// Which kind of not-working a failed ping was. `error.ApiError` is the client's
 /// "the endpoint answered with a status >= 400 (or an error body behind a 200)",
 /// so it is the one error that proves the host is there; everything else,
@@ -2972,13 +2965,13 @@ fn pingProvider(
     const resp = client.chat(ctx, arena, .{ .provider = p, .messages = &messages, .max_tokens = 1 }, &err_detail) catch |err| {
         return .{
             .status = classifyChatError(err),
-            .ms = elapsedMs(io, t0),
+            .ms = elapsed.sinceSigned(io, t0),
             .detail = err_detail orelse @errorName(err),
         };
     };
     return .{
         .status = .ok,
-        .ms = elapsedMs(io, t0),
+        .ms = elapsed.sinceSigned(io, t0),
         .tokens = if (resp.usage) |u| u.total_tokens else 0,
         .cost = p.activeModel().cost_per_1m_input,
     };
@@ -4634,13 +4627,12 @@ fn printTurnStats(
     // An unpriced model has an unknown price, not a free one: null drops the
     // cost segment rather than printing $0.0000 (see tui/turn_stats.zig).
     const priced = model.cost_per_1m_input != null or model.cost_per_1m_output != null;
-    const elapsed = started.durationTo(std.Io.Timestamp.now(io, .awake));
     const turn: tui_stats.TurnStats = .{
         .prompt_tokens = a.stats.total_prompt_tokens,
         .completion_tokens = a.stats.total_completion_tokens,
         .cache_hit_tokens = a.stats.total_cache_hit_tokens,
         .cache_miss_tokens = a.stats.total_cache_miss_tokens,
-        .wall_ms = @intCast(@max(0, @divTrunc(elapsed.nanoseconds, std.time.ns_per_ms))),
+        .wall_ms = elapsed.since(io, started),
         .cost_usd = if (priced) a.stats.cost else null,
         .context_tokens = tui_stats.historyTokens(messages),
         .context_window = model.context_window,
@@ -16783,7 +16775,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                 .on_decision = serverGoalLoopDecision,
             }) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, loop_ctx.last_err_detail orelse @errorName(err));
-                const failed_ms = elapsedMs(io, t0);
+                const failed_ms = elapsed.sinceSigned(io, t0);
                 // The HTTP status was already sent as 200 when the stream
                 // opened, so a stream-level failure never reaches the generic
                 // completion log (which only reports >= 400): without this line
@@ -16808,7 +16800,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         } else blk: {
             const resp = a.run(&messages, final_task, &err_detail) catch |err| {
                 const detail = enrichRunError(arena, provider.name, had_images, err_detail orelse @errorName(err));
-                const failed_ms = elapsedMs(io, t0);
+                const failed_ms = elapsed.sinceSigned(io, t0);
                 log.log(.error_, "run failed duration_ms={d} phase=agent: {s}", .{ failed_ms, detail });
                 writeStreamEvent(stream.socket.handle, "error", .{ .message = detail });
                 return;
@@ -16842,7 +16834,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             }) catch |err| log.log(.error_, "session '{s}' not saved: {s}", .{ req.session, @errorName(err) });
             if (cfg.modules.session_events) session_sync.pushTail(io, gpa, arena, cfg, req.session);
         }
-        const ms: u64 = @intCast(elapsedMs(io, t0));
+        const ms = elapsed.since(io, t0);
         // When the fallback chain replaced the requested provider mid-run,
         // say so on the stream: the run must not finish looking like the
         // provider that never answered.
@@ -16950,7 +16942,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
     s.objectField("served_by") catch return;
     s.write(a.provider.name) catch return;
     s.endObject() catch return;
-    const elapsed_ms = elapsedMs(io, t0);
+    const elapsed_ms = elapsed.sinceSigned(io, t0);
     log.log(.info, "run complete provider={s} duration_ms={d} prompt_tokens={d} completion_tokens={d}", .{ a.provider.name, elapsed_ms, a.stats.total_prompt_tokens, a.stats.total_completion_tokens });
     respond(stream, 200, "OK", rbuf[0..w.end]);
 }
@@ -19044,7 +19036,7 @@ test "a provider that never answers costs the sweep its budget, not the OS conne
 
     const t0 = std.Io.Timestamp.now(io, .awake);
     const res = pingWithTimeout(io, &ctx, arena, &provider, 1000);
-    const spent = elapsedMs(io, t0);
+    const spent = elapsed.sinceSigned(io, t0);
 
     try std.testing.expectEqual(CheckStatus.timed_out, res.status);
     try std.testing.expectEqual(@as(i64, 1000), res.ms);
@@ -19085,7 +19077,7 @@ test "httpGetDeadline gives up on a silent host and names the timeout" {
     const url = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/api.json", .{port});
     const t0 = std.Io.Timestamp.now(io, .awake);
     const res = httpGetDeadline(io, arena, arena, url, null, 1000);
-    const spent = elapsedMs(io, t0);
+    const spent = elapsed.sinceSigned(io, t0);
 
     try std.testing.expectError(error.Timeout, res);
     // Loose bounds: that the budget is what ended it, not that cancelation

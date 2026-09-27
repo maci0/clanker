@@ -13,6 +13,7 @@ const client = @import("../llm/client.zig");
 const types = @import("../llm/types.zig");
 const token_stats = @import("../stats/tokens.zig");
 const rate_limit = @import("../llm/rate_limit.zig");
+const elapsed = @import("../util/elapsed.zig");
 const log = @import("../util/log.zig");
 const raw_http = @import("../util/raw_http.zig");
 const anthropic = @import("../llm/providers/anthropic.zig");
@@ -296,14 +297,14 @@ fn forward(ctx: Ctx, family: Family) u16 {
 
     const t0 = std.Io.Timestamp.now(ctx.io, .awake);
     const status = pipe(ctx, family, &resolved.provider, impl, cred, url, upstream_body, streaming, need_xcode) catch |err| {
-        const ms = elapsedMs(ctx.io, t0);
+        const ms = elapsed.since(ctx.io, t0);
         recordFail(ctx, arena, &resolved.provider, 0, @errorName(err), ms);
         return switch (err) {
             error.Timeout => writeEnvelope(ctx, 504, null, "Upstream timed out"),
             else => writeEnvelope(ctx, 502, null, "Upstream connect failed"),
         };
     };
-    const ms = elapsedMs(ctx.io, t0);
+    const ms = elapsed.since(ctx.io, t0);
     log.log(.info, "proxy method={s} path={s} model={s} provider={s} stream={any} status={d} duration_ms={d}", .{
         ctx.method,
         ctx.path,
@@ -758,11 +759,6 @@ fn timeoutNs(configured: ?u32, default_s: u32) u64 {
     const s = configured orelse default_s;
     if (s == 0) return 0;
     return @as(u64, s) * std.time.ns_per_s;
-}
-
-pub fn elapsedMs(io: std.Io, t0: std.Io.Timestamp) u64 {
-    const ns = t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds;
-    return @intCast(@max(@divTrunc(ns, std.time.ns_per_ms), 0));
 }
 
 /// Process-local RED counters for the standalone `clanker-proxy` binary

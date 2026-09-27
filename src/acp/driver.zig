@@ -4,6 +4,7 @@
 const std = @import("std");
 const vendor = @import("vendor.zig");
 const acp_client = @import("client.zig");
+const elapsed = @import("../util/elapsed.zig");
 const fallback = @import("fallback_spawn.zig");
 const graph_mod = @import("../agent/graph.zig");
 const autolearn = @import("../agent/auto_learn.zig");
@@ -131,7 +132,7 @@ pub fn run(opts: RunOpts) !RunResult {
                 .detail = "headless cannot carry image attachments",
                 .ok = false,
             });
-            g.duration_ms = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(opts.io, .awake)).nanoseconds, std.time.ns_per_ms));
+            g.duration_ms = elapsed.since(opts.io, t0);
             if (opts.persist) persistAndRecord(opts, &g, false);
             // Every other exit from this function hands the Graph to the caller
             // inside a RunResult and the caller deinits it. This one returns an
@@ -156,7 +157,7 @@ pub fn run(opts: RunOpts) !RunResult {
                     .detail = "headless missing",
                     .ok = false,
                 });
-                g.duration_ms = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(opts.io, .awake)).nanoseconds, std.time.ns_per_ms));
+                g.duration_ms = elapsed.since(opts.io, t0);
                 if (opts.persist) persistAndRecord(opts, &g, false);
                 return .{
                     .answer = "",
@@ -174,7 +175,7 @@ pub fn run(opts: RunOpts) !RunResult {
         try nodesFromHeadless(opts.gpa, &g, answer, head.term_ok);
     }
 
-    g.duration_ms = @intCast(@divTrunc(t0.durationTo(std.Io.Timestamp.now(opts.io, .awake)).nanoseconds, std.time.ns_per_ms));
+    g.duration_ms = elapsed.since(opts.io, t0);
     if (opts.persist) persistAndRecord(opts, &g, used_acp);
     return .{
         .answer = answer,

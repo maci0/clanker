@@ -20,6 +20,7 @@ const token_stats = @import("../stats/tokens.zig");
 const stream = @import("stream.zig");
 const cache_cold = @import("cache_cold.zig");
 const rate_limit = @import("rate_limit.zig");
+const elapsed = @import("../util/elapsed.zig");
 const build_options = @import("build_options");
 
 /// Reported to providers as the `User-Agent` header. Built from
@@ -430,7 +431,7 @@ pub fn chat(
         });
         noteError();
         var stats_detail_buf: [redact.max_log_detail_len]u8 = undefined;
-        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), redact.forStats(&stats_detail_buf, err_detail.* orelse "ApiError"), elapsedMs(ctx.io, llm_t0));
+        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), redact.forStats(&stats_detail_buf, err_detail.* orelse "ApiError"), elapsed.since(ctx.io, llm_t0));
         return error.ApiError;
     }
 
@@ -449,10 +450,10 @@ pub fn chat(
         });
         noteError();
         var stats_detail_buf: [redact.max_log_detail_len]u8 = undefined;
-        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), redact.forStats(&stats_detail_buf, err_detail.* orelse @errorName(err)), elapsedMs(ctx.io, llm_t0));
+        recordFailure(ctx, arena, provider, @intFromEnum(outcome.status), redact.forStats(&stats_detail_buf, err_detail.* orelse @errorName(err)), elapsed.since(ctx.io, llm_t0));
         return err;
     };
-    const ms = elapsedMs(ctx.io, llm_t0);
+    const ms = elapsed.since(ctx.io, llm_t0);
     recordUsage(ctx, arena, provider, resp.usage, ms);
     var out = resp;
     applyReasoningFormat(provider, &out);
@@ -625,7 +626,7 @@ const DeadlineWatch = struct {
             // yet, not by how long the call has been running.
             const budget_ms: u64 = if (seen == 0) self.first_ms else self.idle_ms;
             if (budget_ms == 0) continue;
-            if (elapsedMs(self.io, since) < budget_ms) continue;
+            if (elapsed.since(self.io, since) < budget_ms) continue;
 
             if (self.streaming) {
                 log.log(.error_, "provider '{s}' {s} for {d}ms; abandoning the stream", .{
@@ -945,16 +946,6 @@ fn recordFailure(
     });
 }
 
-fn elapsedMs(io: std.Io, started: std.Io.Timestamp) u64 {
-    return durationToMs(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
-}
-
-/// `durationTo` is a signed subtraction. A negative span must not `@intCast`
-/// into u64 (Debug panic, ReleaseFast wrap).
-fn durationToMs(ns: i96) u64 {
-    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
-}
-
 /// Jitter is hashed from the attempt and the provider name, not read off the
 /// clock: the awake clock's nanosecond phase varies between runs of the same
 /// seed, so a clock-derived delay would make a retry-timing-sensitive failure
@@ -1024,7 +1015,7 @@ fn retryAfterTransportError(
         provider.name, @errorName(err), attempt, max_attempts,
     });
     noteError();
-    recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+    recordFailure(ctx, arena, provider, 0, @errorName(err), elapsed.since(ctx.io, llm_t0));
     return false;
 }
 
@@ -1324,7 +1315,7 @@ pub fn chatStream(
         log.log(.error_, "provider '{s}' stream returned {s}", .{ provider.name, redact.forLog(&log_detail_buf, err_detail.*.?) });
         noteError();
         var stats_detail_buf: [redact.max_log_detail_len]u8 = undefined;
-        recordFailure(ctx, arena, provider, @intFromEnum(response.head.status), redact.forStats(&stats_detail_buf, err_detail.*.?), elapsedMs(ctx.io, llm_t0));
+        recordFailure(ctx, arena, provider, @intFromEnum(response.head.status), redact.forStats(&stats_detail_buf, err_detail.*.?), elapsed.since(ctx.io, llm_t0));
         return error.ApiError;
     }
 
@@ -1369,7 +1360,7 @@ pub fn chatStream(
             // from a model that actually finished.
             log.log(.error_, "stream read failed from '{s}': {s}", .{ provider.name, @errorName(err) });
             noteError();
-            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsedMs(ctx.io, llm_t0));
+            recordFailure(ctx, arena, provider, 0, @errorName(err), elapsed.since(ctx.io, llm_t0));
             return err;
         };
         if (n == 0) {
@@ -1413,7 +1404,7 @@ pub fn chatStream(
                     frame_done = true;
                     break;
                 }
-                if (ttft_ms == null) ttft_ms = elapsedMs(ctx.io, llm_t0);
+                if (ttft_ms == null) ttft_ms = elapsed.since(ctx.io, llm_t0);
                 try acc.apply(ev, on_delta);
             }
             frame_start = frame_end + 2;
@@ -1436,7 +1427,7 @@ pub fn chatStream(
     }
 
     var resp = try acc.finish();
-    const ms = elapsedMs(ctx.io, llm_t0);
+    const ms = elapsed.since(ctx.io, llm_t0);
     resp.ttft_ms = ttft_ms;
     applyReasoningFormat(provider, &resp);
     recordUsage(ctx, arena, provider, resp.usage, ms);
@@ -1646,14 +1637,6 @@ test "Retry-After is integer seconds, capped, and ignores HTTP-date" {
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs(""));
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("Wed, 21 Oct 2015 07:28:00 GMT"));
     try std.testing.expectEqual(@as(?u64, null), parseRetryAfterNs("-1"));
-}
-
-test "durationToMs saturates a negative span at zero" {
-    try std.testing.expectEqual(@as(u64, 0), durationToMs(-1));
-    try std.testing.expectEqual(@as(u64, 0), durationToMs(-std.time.ns_per_s));
-    try std.testing.expectEqual(@as(u64, 0), durationToMs(0));
-    try std.testing.expectEqual(@as(u64, 1), durationToMs(std.time.ns_per_ms));
-    try std.testing.expectEqual(@as(u64, 1000), durationToMs(std.time.ns_per_s));
 }
 
 test "retry backoff jitter is a pure function of attempt and provider" {

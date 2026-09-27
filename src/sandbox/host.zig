@@ -10,6 +10,7 @@
 const std = @import("std");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
+const elapsed = @import("../util/elapsed.zig");
 const json_util = @import("../util/json.zig");
 const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
@@ -1115,7 +1116,7 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         .messages = messages,
         .max_tokens = max_tokens,
     }, &err_detail) catch |err| {
-        const failed_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
+        const failed_ms = elapsed.since(h.sandbox.io, llm_t0);
         var log_detail_buf: [redact.max_log_detail_len]u8 = undefined;
         log.log(.warn, "[llm] ✗ ck_llm … {d}ms: {s} ({s})", .{ failed_ms, @errorName(err), redact.forLog(&log_detail_buf, err_detail orelse "") });
         return Err.network;
@@ -1129,7 +1130,7 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         u.total_tokens
     else
         @intCast(@min(content.len / 4, std.math.maxInt(u32)));
-    const llm_ms = @divTrunc(llm_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
+    const llm_ms = elapsed.since(h.sandbox.io, llm_t0);
     log.log(.info, "[llm] ✓ ck_llm … {d}ms (~{d} est. tokens)", .{ llm_ms, est_tokens });
     // An empty completion still returns to the guest as an empty string, so a
     // fail-open caller degrades as before; the cause is logged because the
@@ -1188,7 +1189,7 @@ const LlmManyCall = struct {
             .messages = self.messages,
             .max_tokens = self.max_tokens,
         }, &err_detail) catch |e| {
-            self.ms = elapsedMsFrom(self.io, t0);
+            self.ms = elapsed.sinceSigned(self.io, t0);
             self.err = e;
             // The provider's own error text is what makes a failed leg
             // actionable ("model not found" vs "insufficient balance"); the
@@ -1196,7 +1197,7 @@ const LlmManyCall = struct {
             if (err_detail) |d| self.detail = self.gpa.dupe(u8, d) catch null;
             return;
         };
-        self.ms = elapsedMsFrom(self.io, t0);
+        self.ms = elapsed.sinceSigned(self.io, t0);
         const content = resp.message.content orelse "";
         self.tokens = if (resp.usage) |u| u.total_tokens else @intCast(@min(content.len / 4, std.math.maxInt(u32)));
         self.text = self.gpa.dupe(u8, content) catch |e| {
@@ -1205,14 +1206,6 @@ const LlmManyCall = struct {
         };
     }
 };
-
-fn elapsedMsFrom(io: std.Io, t0: std.Io.Timestamp) i64 {
-    return durationToMs(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
-}
-
-fn durationToMs(ns: i96) i64 {
-    return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
-}
 
 /// ck_llm_many(request) -> a JSON array of completions, one per target, in the
 /// order the targets were given.
@@ -3584,7 +3577,7 @@ test "httpWithTimeout gives up on a host that accepts and never answers" {
         .extra_headers = &.{},
         .out = &out,
     }, 300);
-    const elapsed_ms = @divTrunc(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+    const elapsed_ms = elapsed.since(io, started);
 
     // Null is the timeout, and it has to arrive on the budget rather than on
     // the OS connect timeout (~75s) that unbounded callers used to wait out.
@@ -6404,7 +6397,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         // problem that never existed.
         // Carries the ✗ and a duration like the exit-code branch below, so
         // every → has a finish line in the same shape whatever went wrong.
-        const failed_ms = @divTrunc(exec_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
+        const failed_ms = elapsed.since(h.sandbox.io, exec_t0);
         log.log(.warn, "[exec] ✗ {s} … {d}ms, failed to run: {s}", .{ cmd, failed_ms, @errorName(err) });
         return switch (err) {
             error.FileNotFound => Err.not_found,
@@ -6419,7 +6412,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
         .exited => |c| c,
         else => 1,
     };
-    const exec_ms = @divTrunc(exec_t0.durationTo(std.Io.Timestamp.now(h.sandbox.io, .awake)).nanoseconds, std.time.ns_per_ms);
+    const exec_ms = elapsed.since(h.sandbox.io, exec_t0);
     if (code == 0) {
         log.log(.info, "[exec] ✓ {s} … {d}ms", .{ cmd, exec_ms });
     } else {
@@ -8080,12 +8073,6 @@ test "parseCkLlmRequest ignores malformed and out-of-range fields" {
     // A max_tokens beyond u32 range must be ignored, not panic @intCast.
     const big = parseCkLlmRequest(arena, "{\"prompt\":\"x\",\"max_tokens\":9000000000}") orelse return error.TestUnexpectedNull;
     try std.testing.expect(big.max_tokens == null);
-}
-
-test "durationToMs saturates a negative span at zero" {
-    try std.testing.expectEqual(@as(i64, 0), durationToMs(-1));
-    try std.testing.expectEqual(@as(i64, 0), durationToMs(-std.time.ns_per_s));
-    try std.testing.expectEqual(@as(i64, 1000), durationToMs(std.time.ns_per_s));
 }
 
 test "ck_llm max_tokens cannot exceed the descriptor grant" {

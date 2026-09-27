@@ -18,6 +18,7 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+const elapsed = @import("../util/elapsed.zig");
 const gcp_jwt = @import("gcp_jwt.zig");
 const client = @import("client.zig");
 const build_options = @import("build_options");
@@ -542,7 +543,7 @@ test "postWithTimeout gives up on a token endpoint that accepts and never answer
         .body = "grant_type=refresh_token",
         .out = &out,
     }, 300);
-    const elapsed_ms = @divTrunc(started.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds, std.time.ns_per_ms);
+    const elapsed_ms = elapsed.since(io, started);
 
     // Null is the timeout, and it has to arrive on the budget rather than on
     // the OS connect timeout (~75s) an unbounded caller waits out.
