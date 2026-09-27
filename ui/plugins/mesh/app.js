@@ -6,9 +6,9 @@
 
 /* The rows and lists this view draws. Named because a member row and a pending
    row are the same plate, and the join form's field is deliberately left to the
-   page: `input[type="text"]:not(.pf-v6-c-form-control)` in app.css already
-   styles it and already carries the 16px phone guard, at a specificity this
-   plugin's own sheet never won against. */
+   page: the bare `input[type="text"]` rules in app.css already style it and
+   already carry the 16px phone guard, at a specificity this plugin's own sheet
+   never won against. */
 var FACTS_CLASS = "mt-0 mx-0 mb-3 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1 text-sm max-[40rem]:grid-cols-[5.5rem_1fr]";
 var LIST_CLASS = "mb-3 flex flex-col gap-2";
 var ROW_CLASS = "flex min-h-8 flex-wrap items-center gap-x-3 gap-y-2 rounded-plate border border-rule bg-surface px-4 py-3";

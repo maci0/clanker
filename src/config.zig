@@ -217,8 +217,10 @@ pub const AuthStrategy = enum {
     api_key,
     /// A pasted OAuth access token (env var), presented as a bearer token.
     oauth_static,
-    /// A token minted and renewed in-process. Vertex's GCP service-account
-    /// token is the one provider that does this today.
+    /// A token minted and renewed in-process. `vertex` / `vertex_anthropic`
+    /// mint a GCP token (service-account JWT or gcloud ADC); `codex`, `grok`
+    /// and `claude` run the native OAuth flow `clanker auth login` drives.
+    /// Every other kind rejects the value rather than downgrade silently.
     oauth_refresh,
 
     pub fn fromStr(s: []const u8) ?AuthStrategy {
@@ -340,10 +342,14 @@ pub const Provider = struct {
     project: []const u8 = "",
     location: []const u8 = "",
     service_account_file: []const u8 = "",
-    /// Per-model settings keyed by model name. When non-empty, `default_model`
-    /// selects the active model; the legacy flat fields below are ignored.
+    /// Per-model settings keyed by model name. `default_model` selects the
+    /// active one. The legacy flat spellings (`model`, `max_tokens`,
+    /// `context_window`, `temperature`, `top_p`, `reasoning_effort`, and a
+    /// nested `models` table) are rejected at load with
+    /// `ProviderLegacyModelFields`, not ignored.
     models: std.array_hash_map.String(Model) = .empty,
-    /// Default model name within `models` (or the legacy `model` name).
+    /// Default model name within `models`. Loading rejects a name with no
+    /// matching entry.
     default_model: []const u8 = "",
 
     /// Endpoint path override; defaults per kind (`/chat/completions`,
@@ -380,7 +386,6 @@ pub const Provider = struct {
     /// 0 disables the warning for this provider (local llama.cpp, ollama).
     cache_ttl_ms: ?u64 = null,
 
-    /// Name of the active model (sent as the API `model` field).
     /// Builds a provider with one model. JSON loading normalizes into exactly
     /// this shape, so programmatic callers (tests, ad-hoc providers) do not
     /// have to assemble the map by hand.

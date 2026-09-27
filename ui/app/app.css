@@ -245,10 +245,12 @@
   --pf-t--global--font--family--body: var(--sans);
   --pf-t--global--font--family--heading: var(--sans);
   --pf-t--global--font--family--mono: var(--mono);
-  /* PatternFly's radius scale is 4/6/16/24px plus a glass blur. Left alone
-     those values reintroduce the soft-card look the cabinet radii exist to
-     refuse, on any PF class that still reads the library tokens. Map the
-     rungs onto the plate scale; kill glass. */
+  /* The PatternFly stylesheet is unlinked, so none of these tokens are read
+     by a library rule: they are aliases kept for the handful of `pf-v6-*`
+     class names the rail still ships, and for any rule that names a token
+     directly. PatternFly's own rungs are 4/6/16/24px plus a glass blur,
+     which reintroduce the soft-card look the cabinet radii exist to refuse.
+     Map the rungs onto the plate scale; kill glass. */
   --pf-t--global--border--radius--0: 0px;
   --pf-t--global--border--radius--100: var(--radius-sm);
   --pf-t--global--border--radius--200: var(--radius);

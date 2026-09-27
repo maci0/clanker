@@ -2546,10 +2546,10 @@ pub fn ckChat(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         const text = parsed.text orelse return Err.invalid;
         if (room.len == 0 or text.len == 0 or text.len > chatrooms_mod.max_text_len) return Err.invalid;
         // An id outside the alphabet is refused by sendMessageOpts, which
-        // reaches here as Err.invalid, and every chat guest answers that with
-        // "needs room and text" (src/peers/chat.zig). The caller is told it
-        // forgot two fields it did send, so say which field was wrong and
-        // what the rule is.
+        // reaches here as Err.invalid, and the chat guest answers that with
+        // one blanket "chat_fanout needs a room and a text" (chatFanout in
+        // tools/zig/peers.zig). The caller is told it forgot two fields it
+        // did send, so say which field was wrong and what the rule is.
         if (parsed.id) |id| if (id.len != 0 and !chatrooms_mod.validMessageId(id))
             return h.writeResult(bytes, "{\"ok\":false,\"error\":\"the message id must be 1-64 characters of ASCII letters, digits, '-' or '_'; leave it out to have clanker mint one\"}");
         const sent = chatrooms_mod.sendMessageOpts(base, h.sandbox.io, h.sandbox.gpa, arena, state_dir, cfg, h.sandbox.environ_map, room, text, parsed.thread_ts, parsed.id) catch |err| {

@@ -283,6 +283,7 @@ alias can keep its own `max_tokens` while inheriting the SKU's window.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `provider` | string | required | Which provider serves this model. |
+| `enabled` | bool | `true` | Whether model pickers offer this entry. `false` keeps the entry configured, and its sampling, pricing and capabilities intact, but hides it from the pickers; set it back rather than deleting the table. |
 | `id` | string | unset | Wire SKU. Omit to send the table-key name. Set this to give one SKU two local names with different sampling (`grok4.6-coding` and `grok4.6-general` both `id = "grok-4.6"`). |
 | `context_window` | int | models.dev `limit.context`, else 131072 | Total context in tokens; sizes compaction and the improve context budget. Omit to take the snapshot; a written value wins. |
 | `max_tokens` | int | models.dev `limit.output`, else 1024 | Per-request output-token cap. Omit to take the snapshot; a written value wins. |

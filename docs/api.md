@@ -59,8 +59,10 @@ half-configured path.
 **Auth.** The web-UI and agent API have no per-request auth: whoever reaches
 the socket can call them, including `/api/run`, which executes agent tools.
 That is why the default bind is `127.0.0.1` and why `--host 0.0.0.0` is
-called out in `clanker serve --help`. The proxy is the one surface with a
-bearer token (`[proxy] auth_token`); it answers 401 on a missing or wrong one.
+called out in `clanker serve --help`. The proxy is the one surface with an
+optional bearer token (`[serve] proxy_token_env`, naming the env var that
+holds it); with that set it answers 401 on a missing or wrong one, and with
+it unset or naming an unset variable the proxy serves unauthenticated.
 
 **Body parsing.** Unknown fields are ignored, not refused. A field that is
 present but the wrong type is a 400.
@@ -269,5 +271,6 @@ Module gate: `a2a`.
 
 `/proxy/v1/*` forwards to the configured provider 1:1, in the shape of
 `src/serve/proxy.zig`. `/v1/*` on a dedicated `--proxy-port`. See
-`docs/configuration.md` for `[proxy]`. The proxy is native: it attaches
+`docs/configuration.md` for the `[serve]` proxy keys (`proxy`, `proxy_port`,
+`proxy_token_env`, `proxy_aliases`). The proxy is native: it attaches
 credentials and never routes a request through the agent loop.
