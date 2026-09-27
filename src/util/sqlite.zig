@@ -11,6 +11,12 @@ const std = @import("std");
 // (`addTranslateC` in build.zig) and linked here as a module. The amalgamation
 // itself (vendor/sqlite/sqlite3.c) is compiled into each consuming module.
 const c = @import("sqlite3_h");
+// The owner-only mode a session database and its journal sidecars are
+// tightened to. Not spelled as a literal here: `private_file` is the one
+// name for "state that holds conversation text", and sqlite3_open_v2 has no
+// std.Io handle to create the file through, so this module chmods the path
+// the C library opened for it.
+const atomic_write = @import("atomic_write.zig");
 
 pub const Error = error{
     OpenFailed,
@@ -230,12 +236,13 @@ pub const Transaction = struct {
 };
 
 fn chmodOwnerOnly(path: [*:0]const u8) void {
-    _ = std.posix.system.chmod(path, 0o600);
+    _ = std.posix.system.chmod(path, @intFromEnum(atomic_write.private_file));
 }
 
-/// Owner-only (0600) on `path` and the SQLite journal sidecars. A missing
-/// sidecar is ignored: WAL files appear only after the journal_mode pragma,
-/// and a rollback-journal file is only there after a crash.
+/// Owner-only on `path` and the SQLite journal sidecars, at
+/// `atomic_write.private_file`'s mode. A missing sidecar is ignored: WAL files
+/// appear only after the journal_mode pragma, and a rollback-journal file is
+/// only there after a crash.
 fn tightenDbFiles(path: [:0]const u8) void {
     chmodOwnerOnly(path.ptr);
     const suffixes = [_][]const u8{ "-wal", "-shm", "-journal" };
