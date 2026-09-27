@@ -9,11 +9,13 @@ import test from "node:test";
 const here = dirname(fileURLToPath(import.meta.url));
 // These assertions are about shipped layout; the cabinet sheet is the one left.
 const css = readFileSync(join(here, "..", "app.css"), "utf8");
+// The rendered document's shapes are a component block in the Tailwind source.
+const doc = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 
-function ruleBody(selector) {
+function ruleBody(selector, sheet) {
   const needle = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(needle + "\\s*\\{([^}]+)\\}");
-  const m = css.match(re);
+  const m = (sheet || css).match(re);
   assert.ok(m, "missing rule for " + selector);
   return m[1];
 }
@@ -86,10 +88,10 @@ test("every named theme owns a code well in the page luminance family", function
   const rootBg = decl(root[1], "--code-bg");
   assert.doesNotMatch(rootBg, GITHUB_DARK_WELL, ":root default well must follow the light cabinet, got " + rootBg);
 
-  const pre = ruleBody(".code-block pre");
+  const pre = ruleBody(".code-block pre", doc);
   assert.equal(decl(pre, "background"), "var(--code-bg)");
   assert.equal(decl(pre, "color"), "var(--code-fg)");
-  assert.match(ruleBody(".md pre code, .code-block pre code"), /background:\s*none/);
+  assert.match(ruleBody(".md pre code, .code-block pre code", doc), /background:\s*none/);
 });
 
 test("Rooms log fills the pane instead of a leftover 24rem box", function () {

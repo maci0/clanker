@@ -632,6 +632,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   toolbar, the progress log, the plan badge, the parameter grid and the
   checkbox rows. First paint 58.8 → 58.7K gz.
 
+- The rendered document moved out of `app.css` into the Tailwind source's
+  component layer: mermaid diagrams and their source fold, the html/svg fence
+  preview, fenced code blocks with the highlight.js token colours, and the
+  markdown body itself (paragraphs, headings, lists, tables, task boxes, code
+  wells, citations). Those shapes are the renderer's own class names —
+  `.md-p`, `.md-table`, `.code-block` — which no utility can address, so they
+  are the one component block the port keeps on purpose, beside the tokens they
+  read. `app.css` falls from 66.8K to 49K raw; first paint 58.7 → 57.8K gz (the
+  moved rules now load with the blocking sheet, and the cabinet sheet that
+  carried them is smaller).
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`
