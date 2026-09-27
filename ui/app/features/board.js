@@ -1206,6 +1206,43 @@ function input(id, type, value, placeholder) {
    has it and when it is due, what it is waiting on, what is left to do,
    what it has cost, and what has happened to it.
    Rendered as a Trello-style panel with header, main column and sidebar. */
+/* The card detail panel: the plate, its cover, header and sidebar, the
+   description editor, the deadline hit area, the column move menu and the
+   comment row. The cover and the label swatches name a hue through the same
+   `card-hue` table the card face uses, so the ten colours are spelled once. */
+var DETAIL_PANEL_CLASS = "relative mx-auto my-7 max-h-[calc(100vh-6rem)] w-[calc(100%-2rem)] max-w-3xl overflow-y-auto overflow-x-hidden rounded-plate-lg bg-surface shadow-[var(--lift-high)]";
+var DETAIL_COVER_CLASS = "card-hue relative flex max-h-40 min-h-20 items-end justify-end rounded-t-plate-lg bg-cover bg-center p-2 data-[color]:min-h-[116px]";
+var DETAIL_COVER_BTN_CLASS = "cursor-pointer rounded-plate-lg border-0 bg-[var(--scrim)] px-3 py-1 text-xs font-medium text-card-ink-on-dark transition-colors hover:bg-[color-mix(in_srgb,var(--fg)_12%,var(--scrim))]";
+var DETAIL_HEADER_CLASS = "sticky top-0 z-2 flex items-start gap-3 rounded-t-plate-lg bg-surface px-4 pt-4";
+var DETAIL_ICON_CLASS = "mt-px flex-none text-xl opacity-50";
+var DETAIL_TITLE_CLASS = "m-0 flex-1 text-xl font-semibold leading-snug";
+var DETAIL_CLOSE_CLASS = "grid min-h-9 min-w-9 flex-none cursor-pointer place-items-center rounded-capsule border-0 bg-transparent p-0 text-xl text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+var DETAIL_HEADER_TEXT_CLASS = "min-w-0 flex-1";
+var DETAIL_HEADER_COL_CLASS = "ml-2 text-sm text-fg-muted";
+var DETAIL_LAYOUT_CLASS = "grid grid-cols-[1fr_168px] gap-4 px-4 pb-4 pt-3";
+var DETAIL_MAIN_CLASS = "flex min-w-0 flex-col gap-3";
+var DETAIL_SIDEBAR_CLASS = "flex flex-col gap-2";
+var DETAIL_SIDEBAR_TITLE_CLASS = "mb-px text-xs font-semibold uppercase tracking-label text-fg-muted";
+var DETAIL_SIDEBAR_BTN_CLASS = "flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-plate-lg border border-transparent bg-surface-2 px-3 py-1 text-left text-sm text-fg transition duration-150 hover:translate-x-px hover:bg-[color-mix(in_srgb,var(--fg)_12%,var(--surface-2))] focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-accent";
+var DETAIL_SECTION_HEAD_CLASS = "mb-2 flex items-center gap-2 text-base font-semibold text-fg [&_.icon]:text-base [&_.icon]:opacity-60";
+var DETAIL_META_CLASS = "mb-2 flex flex-wrap gap-2";
+var DETAIL_META_ITEM_CLASS = "flex flex-col gap-px";
+var DETAIL_DESC_PREVIEW_CLASS = "min-h-20 cursor-pointer rounded-plate-lg border border-transparent bg-surface-2 px-3 py-3 text-sm leading-normal text-fg-muted transition-colors focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 empty:before:italic empty:before:text-fg-muted empty:before:content-['Add_a_more_detailed_description…']";
+var DESC_DISPLAY_CLASS = "min-h-10 cursor-pointer whitespace-pre-wrap wrap-anywhere rounded-plate-lg px-3 py-2 text-sm leading-normal data-[empty=true]:bg-surface-2 data-[empty=true]:italic data-[empty=true]:text-fg-muted";
+var DESC_EDIT_CLASS = "hidden w-full resize-y rounded-plate-lg border-2 border-accent bg-surface px-3 py-2 font-sans text-sm leading-normal data-[open=true]:block";
+var DESC_ACTIONS_CLASS = "mt-2 hidden items-center gap-2 data-[open=true]:flex [&_button]:min-h-7 [&_button]:text-sm";
+var DETAIL_DATE_HIT_CLASS = "absolute left-0 top-0 h-full w-full cursor-pointer opacity-0";
+var DETAIL_MOVE_MENU_CLASS = "mt-1 flex flex-col gap-0.5";
+var DETAIL_MOVE_OPT_CLASS = "min-h-7 cursor-pointer rounded-plate-lg border-0 bg-surface-2 px-2 py-1 text-left text-sm text-fg data-[current=true]:bg-accent data-[current=true]:text-on-accent";
+var DETAIL_SAVE_ROW_CLASS = "mt-3 flex flex-wrap gap-2";
+var DETAIL_SAVE_BTN_CLASS = "cursor-pointer rounded-plate-lg border-0 bg-accent px-5 py-2 text-sm font-semibold text-on-accent transition-[filter] hover:brightness-110";
+var CARD_ACTIVITY_EMPTY_CLASS = "px-0 py-2 italic text-fg-muted";
+var COMMENT_ROW_CLASS = "mt-2 flex items-center gap-2 [&_input]:min-w-0 [&_input]:flex-1";
+var COMMENT_AVATAR_CLASS = "flex-none bg-accent text-on-accent";
+var COMMENT_SEND_CLASS = "min-h-8 flex-none";
+var LABEL_PICKER_CLASS = "flex flex-wrap gap-1 py-2";
+var LABEL_PICKER_ITEM_CLASS = "card-hue relative h-8 w-12 min-w-8 cursor-pointer rounded-plate-lg border-2 border-transparent transition-colors hover:border-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 data-[selected=true]:border-fg data-[selected=true]:shadow-[inset_0_0_0_2px_var(--surface)] pointer-coarse:h-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+
 function showCardDetail(id) {
   var c = cardById(id);
   if (!c) return closeCardDetail();
@@ -1226,7 +1263,7 @@ function showCardDetail(id) {
     window.setTimeout(function () {
       if (el.cardDetail.hidden) return;
       var first = el.cardDetail.querySelector(
-        ".card-detail-close, button, input, select, textarea, a[href]");
+        "[data-detail-close], button, input, select, textarea, a[href]");
       if (first) first.focus();
     }, 0);
   }
@@ -1235,19 +1272,19 @@ function showCardDetail(id) {
 
   // ---- Trello-style panel wrapper ----
   var panel = document.createElement("div");
-  panel.className = "card-detail-panel";
+  panel.className = DETAIL_PANEL_CLASS;
 
   // ---- Header: icon + title + close ----
   var header = document.createElement("div");
-  header.className = "card-detail-header";
+  header.className = DETAIL_HEADER_CLASS;
   var headerIcon = document.createElement("span");
-  headerIcon.className = "card-detail-icon";
+  headerIcon.className = DETAIL_ICON_CLASS;
   headerIcon.appendChild(icon("copy", 18));
   var headerTitle = document.createElement("h3");
   headerTitle.id = "card-detail-title";
   headerTitle.textContent = c.title;
   var headerCol = document.createElement("span");
-  headerCol.className = "card-detail-header-col";
+  headerCol.className = DETAIL_HEADER_COL_CLASS;
   var colName = "";
   if (board && board.columns) {
     for (var ci = 0; ci < board.columns.length; ci++) {
@@ -1258,7 +1295,8 @@ function showCardDetail(id) {
   headerTitle.appendChild(headerCol);
   var close = document.createElement("button");
   close.type = "button";
-  close.className = "card-detail-close";
+  close.className = DETAIL_CLOSE_CLASS;
+  close.dataset.detailClose = "";
   close.appendChild(icon("close", 14));
   close.title = "Close";
   close.setAttribute("aria-label", "Close card detail");
@@ -1270,7 +1308,7 @@ function showCardDetail(id) {
   });
   // Header layout with title and "in list" subtitle
   var headerTextWrap = document.createElement("div");
-  headerTextWrap.className = "card-detail-header-text";
+  headerTextWrap.className = DETAIL_HEADER_TEXT_CLASS;
   headerTextWrap.appendChild(headerTitle);
   // "in list" subtitle like Trello
   var colLabel = c.column || "";
@@ -1321,7 +1359,7 @@ function showCardDetail(id) {
   var coverColor = c.cover_color || (c.labels && c.labels.length && c.labels[0].color ? c.labels[0].color : null);
   if (coverColor) {
     var coverDiv = document.createElement("div");
-    coverDiv.className = "card-detail-cover";
+    coverDiv.className = DETAIL_COVER_CLASS;
     coverDiv.setAttribute("data-color", coverColor);
     panel.appendChild(coverDiv);
   }
@@ -1329,13 +1367,13 @@ function showCardDetail(id) {
 
   // ---- Two-column layout: main + sidebar ----
   var layout = document.createElement("div");
-  layout.className = "card-detail-layout";
+  layout.className = DETAIL_LAYOUT_CLASS;
 
   var mainCol = document.createElement("div");
-  mainCol.className = "card-detail-main";
+  mainCol.className = DETAIL_MAIN_CLASS;
 
   var sidebarCol = document.createElement("div");
-  sidebarCol.className = "card-detail-sidebar";
+  sidebarCol.className = DETAIL_SIDEBAR_CLASS;
 
   // ---- Labels section in main (Trello-style clickable label pills) ----
   var labelsHead = document.createElement("p");
@@ -1374,12 +1412,12 @@ function showCardDetail(id) {
   mainCol.appendChild(labelsRow);
 
   var labelPicker = document.createElement("div");
-  labelPicker.className = "label-picker";
+  labelPicker.className = LABEL_PICKER_CLASS;
   labelPicker.hidden = true;
   LABEL_COLORS.forEach(function(color) {
     var swatch = document.createElement("button");
     swatch.type = "button";
-    swatch.className = "label-picker-item";
+    swatch.className = LABEL_PICKER_ITEM_CLASS;
     swatch.setAttribute("data-color", color);
     var isSelected = currentLabels.some(function(l) { return l.color === color; });
     swatch.setAttribute("aria-label", (isSelected ? "Remove " : "Add ") + color + " label");
@@ -1428,7 +1466,7 @@ function showCardDetail(id) {
   // ---- Description/Notes (Trello-style: click to edit, save/cancel) ----
   var fields = detailSection(mainCol, "Description");
   var descDisplay = document.createElement("div");
-  descDisplay.className = "card-desc-display";
+  descDisplay.className = DESC_DISPLAY_CLASS;
   // Click-to-edit is pointer-only; the same edit must open from the keyboard.
   descDisplay.setAttribute("role", "button");
   descDisplay.tabIndex = 0;
@@ -1436,19 +1474,19 @@ function showCardDetail(id) {
     descDisplay.textContent = c.body;
   } else {
     descDisplay.textContent = "Add a more detailed description…";
-    descDisplay.classList.add("is-empty");
+    descDisplay.dataset.empty = "true";
   }
   var bodyIn = document.createElement("textarea");
   bodyIn.id = "card-f-body";
   bodyIn.rows = 6;
   bodyIn.placeholder = "Add a more detailed description…";
-  bodyIn.className = "card-desc-edit";
+  bodyIn.className = DESC_EDIT_CLASS;
   bindDraft(bodyIn, c.id, "body", c.body);
   var descActions = document.createElement("div");
-  descActions.className = "card-desc-actions";
+  descActions.className = DESC_ACTIONS_CLASS;
   var descSave = document.createElement("button");
   descSave.type = "button";
-  descSave.className = "card-detail-save-btn";
+  descSave.className = DETAIL_SAVE_BTN_CLASS;
   descSave.textContent = "Save";
   var descCancel = document.createElement("button");
   descCancel.type = "button";
@@ -1459,7 +1497,7 @@ function showCardDetail(id) {
   function openDescEdit() {
     descDisplay.hidden = true;
     bodyIn.style.display = "block";
-    descActions.classList.add("is-open");
+    descActions.dataset.open = "true";
     bodyIn.focus();
   }
   descDisplay.addEventListener("click", openDescEdit);
@@ -1471,7 +1509,7 @@ function showCardDetail(id) {
   descCancel.addEventListener("click", function() {
     bodyIn.value = c.body || "";
     bodyIn.style.display = "none";
-    descActions.classList.remove("is-open");
+    descActions.dataset.open = "";
     descDisplay.hidden = false;
   });
   descSave.addEventListener("click", function() {
@@ -1482,9 +1520,9 @@ function showCardDetail(id) {
     postBoard({ op: "update", id: c.id, body: text }, "Description saved.");
     var filled = !!text.trim();
     descDisplay.textContent = filled ? text : "Add a more detailed description…";
-    descDisplay.classList.toggle("is-empty", !filled);
+    descDisplay.dataset.empty = filled ? "" : "true";
     bodyIn.style.display = "none";
-    descActions.classList.remove("is-open");
+    descActions.dataset.open = "";
     descDisplay.hidden = false;
   });
   fields.appendChild(descDisplay);
@@ -1493,7 +1531,7 @@ function showCardDetail(id) {
 
   // ---- Sidebar: quick actions ----
   var sideTitle1 = document.createElement("div");
-  sideTitle1.className = "card-detail-sidebar-title";
+  sideTitle1.className = DETAIL_SIDEBAR_TITLE_CLASS;
   sideTitle1.textContent = "Add to card";
   sidebarCol.appendChild(sideTitle1);
 
@@ -1556,7 +1594,7 @@ function showCardDetail(id) {
   deadlineBtn.appendChild(document.createTextNode(c.deadline ? " Due: " + fmtDeadline(c.deadline) : " Dates"));
   var deadlineInput = document.createElement("input");
   deadlineInput.type = "date";
-  deadlineInput.className = "card-detail-date-hit";
+  deadlineInput.className = DETAIL_DATE_HIT_CLASS;
   if (c.deadline) {
     // Convert deadline to YYYY-MM-DD if it's a unix timestamp. Local, not
     // UTC: toISOString() would show a local end-of-day deadline as the next
@@ -1586,7 +1624,7 @@ function showCardDetail(id) {
   // derived from what persists — the first label's colour, else priority.
 
   var sideTitle2 = document.createElement("div");
-  sideTitle2.className = "card-detail-sidebar-title";
+  sideTitle2.className = DETAIL_SIDEBAR_TITLE_CLASS;
   sideTitle2.style.marginTop = "var(--space-3)";
   sideTitle2.textContent = "Actions";
   sidebarCol.appendChild(sideTitle2);
@@ -1598,14 +1636,16 @@ function showCardDetail(id) {
   moveBtn.appendChild(document.createTextNode(" Move"));
   moveBtn.addEventListener("click", function() {
     if (!board || !board.columns) return;
-    var existing = moveBtn.parentNode.querySelector(".card-detail-move-menu");
+    var existing = moveBtn.parentNode.querySelector("[data-move-menu]");
     if (existing) { existing.remove(); return; }
     var menu = document.createElement("div");
-    menu.className = "card-detail-move-menu";
+    menu.className = DETAIL_MOVE_MENU_CLASS;
+    menu.dataset.moveMenu = "";
     board.columns.forEach(function(col) {
       var opt = document.createElement("button");
       opt.type = "button";
-      opt.className = "card-detail-move-opt" + (col.id === c.column ? " is-current" : "");
+      opt.className = DETAIL_MOVE_OPT_CLASS;
+      if (col.id === c.column) opt.dataset.current = "true";
       opt.textContent = col.title;
       if (col.id === c.column) {
         opt.appendChild(icon("held", 12));
@@ -1707,10 +1747,10 @@ function showCardDetail(id) {
 
   // ---- Save button in main column ----
   var saveRow = document.createElement("div");
-  saveRow.className = "card-detail-save-row";
+  saveRow.className = DETAIL_SAVE_ROW_CLASS;
   var save = document.createElement("button");
   save.type = "button";
-  save.className = "card-detail-save-btn";
+  save.className = DETAIL_SAVE_BTN_CLASS;
   save.textContent = "Save changes";
   save.addEventListener("click", function () {
     if (save.disabled) return;
@@ -2063,7 +2103,7 @@ function showCardDetail(id) {
   var entries = (c.log || []).slice().reverse();
   if (!entries.length) {
     var empty = document.createElement("p");
-    empty.className = "meta card-activity-empty";
+    empty.className = "meta " + CARD_ACTIVITY_EMPTY_CLASS;
     empty.textContent = "No activity yet. Moving, assigning, or commenting on this card will build its history here.";
     logBox.appendChild(empty);
   }
@@ -2105,9 +2145,9 @@ function showCardDetail(id) {
   logBox.appendChild(activityList);
   // Activity input with send button
   var noteWrap = document.createElement("div");
-  noteWrap.className = "card-comment-row";
+  noteWrap.className = COMMENT_ROW_CLASS;
   var noteAvatar = document.createElement("div");
-  noteAvatar.className = "card-activity-avatar card-comment-avatar";
+  noteAvatar.className = "card-activity-avatar " + COMMENT_AVATAR_CLASS;
   noteAvatar.textContent = "ME";
   noteWrap.appendChild(noteAvatar);
   var noteIn = input("card-f-log", "text", "", "Write a comment…");
@@ -2120,7 +2160,7 @@ function showCardDetail(id) {
   noteWrap.appendChild(noteIn);
   var noteSend = document.createElement("button");
   noteSend.type = "button";
-  noteSend.className = "card-detail-save-btn card-comment-send";
+  noteSend.className = DETAIL_SAVE_BTN_CLASS + " " + COMMENT_SEND_CLASS;
   noteSend.textContent = "Save";
   noteSend.addEventListener("click", function() {
     if (!noteIn.value.trim()) return;

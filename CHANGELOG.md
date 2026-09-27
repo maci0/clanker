@@ -304,6 +304,24 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   paint 61.2K gz; the sheet's accounting figure moves to 72K, its fifth named
   raise.
 
+- The card detail panel is Tailwind utilities: the plate, its cover and cover
+  button, the sticky header with its icon, title and close, the two-column
+  layout, the sidebar and its buttons, section heads and meta rows, the
+  description display/editor/actions, the deadline hit area, the column move
+  menu, the save row and button, the activity empty line and the comment row —
+  all in `ui/app/features/board.js`. The cover and the label swatches name their
+  hue through the same `card-hue` table the card face uses, so the ten colours
+  are spelled once rather than twice. The show/current/selected states of the
+  editor, the move options and the swatches are data attributes, and the close
+  button's hook is `[data-detail-close]` because it was a selector in a focus
+  trap. Two dead rules go with them: `.card-label.is-open`/`.is-sample`, which
+  the card's port had already replaced with data attributes. First paint 60.6K
+  gz; the sheet's accounting figure moves to 76K, its sixth named raise.
+- A note on the scale: `--spacing-1..7` maps to the cabinet's `--space-1..7`,
+  so `m-7` is `--space-7` (3.4rem), not Tailwind's 7 × 0.25rem. The guard's rung
+  rule allows 1-7 for that reason, and the detail panel's 3rem top margin
+  became `my-7` (3.4rem) rather than `my-12`.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is
