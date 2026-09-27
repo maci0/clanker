@@ -39,7 +39,7 @@ test "every webui asset path renders its own body from the shared guest" {
     // One marker per path that only that file can produce, so a guest handing
     // back a previous call's output would fail rather than look plausible.
     const cases = [_]struct { path: []const u8, needle: []const u8 }{
-        .{ .path = "/webui/tailwind.css", .needle = "tailwindcss" },
+        .{ .path = "/webui/tailwind.css", .needle = "@layer" },
         .{ .path = "/webui/app.js", .needle = "import" },
         .{ .path = "/webui/core/utils.js", .needle = "export" },
         .{ .path = "/webui/lib/markdown.js", .needle = "export" },
