@@ -92,11 +92,14 @@ clanker.registerView({
       var delta = secs - Math.floor(Date.now() / 1000);
       var ahead = delta >= 0;
       var n = Math.abs(delta);
+      // Truncate, never round: rounding put a 5m59s wait at "60 minutes" and
+      // a 59m59s one at "1 hour", which read as a longer wait than the entry
+      // actually has. Same rule as core/utils.js fmtAgo.
       var value, unit;
       if (n < 60) { value = n; unit = "second"; }
-      else if (n < 3600) { value = Math.round(n / 60); unit = "minute"; }
-      else if (n < 86400) { value = Math.round(n / 3600); unit = "hour"; }
-      else { value = Math.round(n / 86400); unit = "day"; }
+      else if (n < 3600) { value = Math.floor(n / 60); unit = "minute"; }
+      else if (n < 86400) { value = Math.floor(n / 3600); unit = "hour"; }
+      else { value = Math.floor(n / 86400); unit = "day"; }
       return RELATIVE.format(ahead ? value : -value, unit);
     }
 

@@ -257,6 +257,19 @@ test("fmtAgo names the elapsed time in the reader's language", function () {
   assert.equal(fmtAgo(now - 2 * 86400, now), rtf.format(-2, "day"));
 });
 
+test("fmtAgo truncates rather than rounds, so a unit never overruns its own name", function () {
+  const now = 1_800_000_000;
+  // 59:59 is not 60 minutes, and 23:59 is not 24 hours. Rounding printed
+  // "60 minutes ago" and "24 hours ago" beside "1 hour ago" / "yesterday".
+  assert.equal(fmtAgo(now - 3599, now), rtf.format(-59, "minute"));
+  assert.equal(fmtAgo(now - 86399, now), rtf.format(-23, "hour"));
+  // A spring-forward day is 23 hours long, so a stamp a local day old is
+  // under 86400 seconds of wall time and stays an hour count.
+  assert.equal(fmtAgo(now - 82800, now), rtf.format(-23, "hour"));
+  // Rounding the other way: 90 minutes is not 2 hours.
+  assert.equal(fmtAgo(now - 5400, now), rtf.format(-1, "hour"));
+});
+
 test("fmtAgo reads as now inside the first minute and never says \"ago\"", function () {
   const now = 1_800_000_000;
   assert.equal(fmtAgo(now - 30, now), rtf.format(0, "second"));

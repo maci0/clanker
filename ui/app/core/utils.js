@@ -152,9 +152,15 @@ export function fmtAgo(seconds, nowSeconds) {
   var delta = seconds - now;
   var abs = Math.abs(delta);
   if (abs < 60) return relative_time.format(0, "second");
-  if (abs < 3600) return relative_time.format(Math.round(delta / 60), "minute");
-  if (abs < 86400) return relative_time.format(Math.round(delta / 3600), "hour");
-  return relative_time.format(Math.round(delta / 86400), "day");
+  // Truncate toward zero, the way fmtMs truncates, so a unit never overruns
+  // its own name: rounding printed "60 minutes ago" for 59:59 and "24 hours
+  // ago" for 23:59, both a bigger age than the stamp carries. Truncating also
+  // keeps a spring-forward day (23 wall-clock hours) in the hour bucket
+  // instead of promoting it a day early. `Math.floor` is the wrong helper
+  // here: delta is negative, and flooring -59.98 is -60.
+  if (abs < 3600) return relative_time.format(Math.trunc(delta / 60), "minute");
+  if (abs < 86400) return relative_time.format(Math.trunc(delta / 3600), "hour");
+  return relative_time.format(Math.trunc(delta / 86400), "day");
 }
 
 export function fmtInt(n) {
