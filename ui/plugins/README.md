@@ -117,8 +117,9 @@ van.derive(function () {
 ```
 
 Plugins are off until turned on in System → Web UI plugins, except Files
-(the Work rail's workspace browser), Music, Schedule, Search, Compare, and Mesh,
-which are on when `state/webui_plugins.json` has never been written. Enabled ones are recorded
+(the Work rail's workspace browser), Music, Schedule, Search, Compare, Mesh,
+and arena3d, which are on when `state/webui_plugins.json` has never been
+written. Enabled ones are recorded
 in `state/webui_plugins.json`. The registry — scan, seed, and toggle — lives
 in the `webui_addon` tool; the `/api/webui/plugins` route relays to it, so
 the page and the tool always see the same enabled list.

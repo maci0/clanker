@@ -80,7 +80,7 @@ present but the wrong type is a 400.
 | POST | `/api/ask` | `{id, answer}` | answers a pending `ck_ask` question |
 | POST | `/api/steer` | `{goal?, session?, message}` | 404 when no run is working that key, 429 when the queue is full |
 | GET | `/api/status` | | server status the web UI polls |
-| GET | `/api/metrics` | | JSON counters (`http`, `live`, `llm`, `tools`, `schedule`, `jobs`) |
+| GET | `/api/metrics` | | JSON counters (`http`, `live`, `llm`, `tools`, `schedule`, `jobs`, `mesh`) |
 
 `POST /api/run` accepts `task` (or `goal` alone), `stream`, `session`,
 `goal`, `worktree`, `images`, `provider`, `model`, `fallback_provider`,

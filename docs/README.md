@@ -1455,6 +1455,21 @@ Fields:
 - `CLANKER_HOST`, `CLANKER_WEBUI_PORT`, `CLANKER_PROXY_PORT`: the interface, web UI port, and optional dedicated proxy port for `clanker serve`. They override `[serve]` in the config file and are in turn overridden by the corresponding flags. An unusable port warns and is ignored rather than aborting startup. See [Binding and the trust model](#binding-and-the-trust-model).
 - `NO_COLOR`: standard ([no-color.org](https://no-color.org)) opt-out of colored output. When set to any non-empty value, forces the `mono` theme.
 
+Optional tool keys, read by name (`ck_getenv`) through each tool's `env_allow`
+rather than by config. `research sweep` runs without any of them: web search
+works keyless on DuckDuckGo with a Bing fallback, and each key adds one more
+source or lifts a rate limit.
+
+- `BRAVE_SEARCH_KEY`: Brave Search, tried last and only for a query the other
+  sources came back empty on. A different index, not a reseller of them.
+- `GOOGLE_SEARCH_KEY` and `GOOGLE_SEARCH_CX`: Google Programmable Search, the
+  fallback after Bing. Both are needed; a key without an engine id addresses no
+  index, so neither alone enables it.
+- `GITHUB_TOKEN`: raises the (per-address) GitHub search rate limit. Also read
+  by the `gh_read` tool.
+- `ALPHAXIV_API_KEY`: the `alphaxiv` tool's only credential, so unlike the rest
+  it cannot run without one.
+
 ### Layered agent instructions
 
 At prompt construction and refresh, clanker appends these instruction files as separate sections, from broadest to narrowest:
