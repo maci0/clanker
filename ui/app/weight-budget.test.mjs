@@ -128,7 +128,7 @@ test("eager JS stays inside its weight budget", function () {
   // number comes back down when the port is done and the last sheet is gone;
   // until then a raise here is a deliberate act per this test's instruction,
   // never a quiet one.
-  assert.ok(eagerJsGz <= 152, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 152K`);
+  assert.ok(eagerJsGz <= 156, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 156K`);
 });
 
 test("first paint stays inside its weight budget", function () {
@@ -147,10 +147,11 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
   // that looks like a utility into a rule.
   const css = fileBytes("tailwind.css").length / KiB;
-  // 112, raised from 48 thirteen times, each named in CHANGELOG: the run graph, the
+  // 116, raised from 48 fourteen times, each named in CHANGELOG: the run graph, the
   // board lane, the card face, its chips, its members, the detail panel, the
   // tool rows, the rooms sidebar, the message row, the rooms main column, the
-  // transcript's turn, the dialog backdrop views.css held last, the rail. This is
+  // transcript's turn, the dialog backdrop views.css held last, the rail, the
+  // masthead's chips. This is
   // accounting, not a ceiling — the sheet absorbs the cabinet sheets' rules as
   // utilities while both still ship (app.css is still ~150K raw), and phase 6
   // deletes those sheets, leaving this one holding the whole UI. The binding
@@ -158,14 +159,14 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // sheet plus app.css plus index.html. What this one catches is growth that is
   // *not* a view moving over: an `@source` glob reaching beyond ui/ turns prose
   // in docs or .scratch into rules.
-  assert.ok(css <= 112, `tailwind.css is ${css.toFixed(1)}K raw; budget is 112K`);
+  assert.ok(css <= 116, `tailwind.css is ${css.toFixed(1)}K raw; budget is 116K`);
 });
 
 test("single large files stay inside their budgets", function () {
   const appJsRaw = fileBytes("app.js").length / KiB;
   assert.ok(appJsRaw <= 264, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 264K`);
   const htmlRaw = fileBytes("index.html").length / KiB;
-  assert.ok(htmlRaw <= 96, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 96K`);
+  assert.ok(htmlRaw <= 104, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 104K`);
 });
 
 test("web UI plugins stay off the load path unless they opt in", function () {

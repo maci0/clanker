@@ -50,6 +50,7 @@ const migrated = [
   "core/ui.js",
   "core/tools.js",
   "core/attachments.js",
+  "core/modelpicker.js",
   "app.js",
   "index.html",
 ];

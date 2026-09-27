@@ -2322,7 +2322,7 @@ function renderFileChips() {
     pendingFiles.forEach(function (path, i) {
       var chip = document.createElement("button");
       chip.type = "button";
-      chip.className = "chip";
+      chip.className = UI.chip;
       chip.textContent = "@" + path + " ×";
       chip.title = "Remove " + path;
       chip.addEventListener("click", function () {

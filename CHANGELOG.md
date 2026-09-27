@@ -574,6 +574,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   of a media block naming a hook class, and the workspace picker's 16px phone
   reset rides on the row as `[&_select]:max-[640px]:[font-size:16px]`.
 
+- The masthead's chips are utilities: the three gauge chips, the five icon
+  buttons, the model control in the header and the composer's pill, and the
+  chip's name span and chevron. The gauge lamp stays a component rule
+  (`.chip::before`, a dome with a ring), the states are attributes
+  (`data-state=live|down|pending`) with the lamp's glow on each, and a chip's
+  `hidden` attribute wins through `[&[hidden]]:hidden` since the chip's own
+  `inline-flex` would otherwise beat the UA rule. The two model controls drop
+  the lamp and carry their own coarse/narrow floor. `core/modelpicker.js` joins
+  the ledger, and the name/chevron hooks it re-finds are `data-role` attributes
+  rather than classes the sheet stopped styling. The chip's optical paddings
+  became cabinet rungs. First paint 59.7 → 59.2K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

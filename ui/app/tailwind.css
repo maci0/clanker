@@ -663,6 +663,9 @@
 .max-w-80 {
   max-width: calc(var(--spacing) * 80);
 }
+.max-w-\[22ch\] {
+  max-width: 22ch;
+}
 .max-w-\[52ch\] {
   max-width: 52ch;
 }
@@ -1700,6 +1703,9 @@
 .opacity-55 {
   opacity: 55%;
 }
+.opacity-70 {
+  opacity: 70%;
+}
 .opacity-95 {
   opacity: 95%;
 }
@@ -1950,6 +1956,12 @@
 }
 .group-focus-visible\:text-accent-text:is(:where(.group):focus-visible *) {
   color: var(--accent-text);
+}
+.group-aria-expanded\:text-accent:is(:where(.group)[aria-expanded="true"] *) {
+  color: var(--accent);
+}
+.group-aria-expanded\:opacity-100:is(:where(.group)[aria-expanded="true"] *) {
+  opacity: 100%;
 }
 .group-aria-\[current\=true\]\:text-accent-text:is(:where(.group)[aria-current="true"] *) {
   color: var(--accent-text);
@@ -2266,6 +2278,14 @@
   .hover\:rounded-plate:hover {
     border-radius: var(--radius);
   }
+  .hover\:border-\[color-mix\(in_srgb\,var\(--accent\)_55\%\,var\(--rule\)\)\]:hover {
+    border-color: var(--accent);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .hover\:border-\[color-mix\(in_srgb\,var\(--accent\)_55\%\,var\(--rule\)\)\]:hover {
+      border-color: color-mix(in srgb,var(--accent) 55%,var(--rule));
+    }
+  }
   .hover\:border-accent:hover {
     border-color: var(--accent);
   }
@@ -2286,6 +2306,14 @@
   }
   .hover\:border-l-rule:hover {
     border-left-color: var(--rule);
+  }
+  .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_8\%\,var\(--surface-2\)\)\]:hover {
+    background-color: var(--accent);
+  }
+  @supports (color: color-mix(in lab, red, red)) {
+    .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_8\%\,var\(--surface-2\)\)\]:hover {
+      background-color: color-mix(in srgb,var(--accent) 8%,var(--surface-2));
+    }
   }
   .hover\:bg-\[color-mix\(in_srgb\,var\(--accent\)_88\%\,black\)\]:hover {
     background-color: var(--accent);
@@ -2370,11 +2398,26 @@
 .focus-visible\:rounded-plate-sm:focus-visible {
   border-radius: var(--radius-sm);
 }
+.focus-visible\:border-\[color-mix\(in_srgb\,var\(--accent\)_55\%\,var\(--rule\)\)\]:focus-visible {
+  border-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in srgb,var(--accent) 55%,var(--rule));
+  }
+}
 .focus-visible\:border-accent:focus-visible {
   border-color: var(--accent);
 }
+.focus-visible\:bg-\[color-mix\(in_srgb\,var\(--accent\)_8\%\,var\(--surface-2\)\)\]:focus-visible {
+  background-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in srgb,var(--accent) 8%,var(--surface-2));
+  }
+}
 .focus-visible\:text-accent:focus-visible {
   color: var(--accent);
+}
+.focus-visible\:text-accent-text:focus-visible {
+  color: var(--accent-text);
 }
 .focus-visible\:shadow-\[0_0_0_2px_color-mix\(in_srgb\,var\(--accent\)_20\%\,transparent\)\]:focus-visible {
   --tw-shadow: 0 0 0 2px var(--tw-shadow-color, var(--accent));
@@ -3056,11 +3099,32 @@
 .data-\[state\=down\]\:text-danger[data-state="down"] {
   color: var(--danger);
 }
+.data-\[state\=down\]\:before\:shadow-\[var\(--lamp-ring\)\,var\(--lamp-glow\)\][data-state="down"]::before {
+  content: var(--tw-content);
+  --tw-shadow: var(--lamp-ring), var(--lamp-glow);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
 .data-\[state\=error\]\:text-danger[data-state="error"] {
   color: var(--danger);
 }
+.data-\[state\=live\]\:text-ok[data-state="live"] {
+  color: var(--ok);
+}
+.data-\[state\=live\]\:before\:shadow-\[var\(--lamp-ring\)\,var\(--lamp-glow\)\][data-state="live"]::before {
+  content: var(--tw-content);
+  --tw-shadow: var(--lamp-ring), var(--lamp-glow);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
 .data-\[state\=ok\]\:text-ok[data-state="ok"] {
   color: var(--ok);
+}
+.data-\[state\=pending\]\:text-warn[data-state="pending"] {
+  color: var(--warn);
+}
+.data-\[state\=pending\]\:before\:shadow-\[var\(--lamp-ring\)\,var\(--lamp-glow\)\][data-state="pending"]::before {
+  content: var(--tw-content);
+  --tw-shadow: var(--lamp-ring), var(--lamp-glow);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
 }
 .data-\[state\=saturated\]\:text-danger[data-state="saturated"] {
   color: var(--danger);
@@ -3364,6 +3428,9 @@
 }
 .\[\&_\.failed\]\:text-danger .failed {
   color: var(--danger);
+}
+.\[\&_\.icon\]\:block .icon {
+  display: block;
 }
 .\[\&_\.icon\]\:h-3\.5 .icon {
   height: calc(var(--spacing) * 3.5);
@@ -3704,6 +3771,9 @@
   border-color: var(--accent);
 }
 .\[\&\:\:-webkit-details-marker\]\:hidden::-webkit-details-marker {
+  display: none;
+}
+.\[\&\:\:before\]\:hidden::before {
   display: none;
 }
 .\[hidden\]\:hidden:is(hidden) {

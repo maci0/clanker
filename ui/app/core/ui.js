@@ -395,6 +395,12 @@ export var runDetail = {
   note: "mb-2 rounded-plate-sm bg-surface-2 px-3 py-1 font-mono text-sm text-fg-muted",
 };
 
+/* The gauge chip: a reading in mono behind a lamp, worn by the masthead's
+   status line and by any view that reports one. The lamp itself is a component
+   rule (`.chip::before`); the states are attributes, so the sheet reads what
+   the script writes. */
+export var chip = "chip inline-flex items-center gap-1 [&::before]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)]";
+
 /* The rail's channel tab: the eight static ones in the markup and every tab a
    plugin registers wear one class list, so the strip cannot drift into two
    looks. The engaged-channel lamp is a component rule in the sheet. */

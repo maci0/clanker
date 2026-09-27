@@ -156,21 +156,30 @@ export function applyChatPrefs() {
   if (_onModelChange) _onModelChange();
 }
 
+/* The chevron inside a model chip, and its name span: class lists here rather
+   than in core/ui.js because this module runs in suites that have no vendor
+   loader. The two are found again by role, since a class the sheet does not
+   style is not a hook. */
+var MODEL_CHIP_NAME_CLASS = "min-w-0 truncate";
+var MODEL_CHIP_CHEVRON_CLASS = "inline-flex flex-none items-center opacity-70 [&_.icon]:block group-aria-expanded:text-accent group-aria-expanded:opacity-100";
+
 function ensurePill(btn) {
   if (!btn) return;
-  var name = btn.querySelector(".model-chip__name");
+  var name = btn.querySelector("[data-role='name']");
   if (!name) {
     var text = (btn.textContent || "").trim() || "…";
     btn.textContent = "";
     name = document.createElement("span");
-    name.className = "model-chip__name";
+    name.className = MODEL_CHIP_NAME_CLASS;
+    name.setAttribute("data-role", "name");
     name.textContent = text;
     btn.appendChild(name);
   }
-  var chev = btn.querySelector(".model-chip__chevron");
+  var chev = btn.querySelector("[data-role='chevron']");
   if (!chev) {
     chev = document.createElement("span");
-    chev.className = "model-chip__chevron";
+    chev.className = MODEL_CHIP_CHEVRON_CLASS;
+    chev.setAttribute("data-role", "chevron");
     chev.setAttribute("aria-hidden", "true");
     chev.appendChild(icon("chevronDown", 12));
     btn.appendChild(chev);
@@ -180,7 +189,7 @@ function ensurePill(btn) {
 export function setModelChipLabel(btn, text, title) {
   if (!btn) return;
   ensurePill(btn);
-  var name = btn.querySelector(".model-chip__name");
+  var name = btn.querySelector("[data-role='name']");
   if (name) name.textContent = text;
   if (title != null) btn.title = title;
 }

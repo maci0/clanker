@@ -54,7 +54,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <header class="basis-full border-b border-rule" id="app-masthead">
   <div class="flex min-w-0 items-center gap-3">
     <span class="flex items-center">
-      <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
+      <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
     </span>
     <div class="flex min-w-0 items-center">
       <!-- Same artwork as the favicon, so the tab and the panel wear one badge. -->
@@ -70,16 +70,16 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
   </div>
   <div class="flex flex-1 items-center justify-end gap-2">
-    <button type="button" class="chip header-model" id="header-model" title="Active model (click to change)" aria-haspopup="listbox" aria-expanded="false">
-      <span class="model-chip__name">…</span>
+    <button type="button" class="group chip inline-flex [&::before]:hidden pointer-coarse:min-h-11 max-[640px]:min-h-11 max-w-[22ch] cursor-pointer items-center gap-1 overflow-hidden rounded-capsule border border-rule bg-surface-2 px-2 py-0.5 font-sans text-sm font-medium text-[color-mix(in_srgb,var(--fg-muted)_55%,var(--fg))] hover:border-border hover:text-fg" id="header-model" title="Active model (click to change)" aria-haspopup="listbox" aria-expanded="false">
+      <span class="min-w-0 truncate" data-role="name">…</span>
     </button>
-    <span class="chip" id="instance-chip" hidden aria-hidden="true">connecting…</span>
-    <span class="chip" id="peers-chip" hidden aria-hidden="true"></span>
-    <span class="chip" id="session-chip" hidden aria-hidden="true">session …</span>
-    <button type="button" class="chip-btn" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
-    <button type="button" class="chip-btn" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
-    <button type="button" class="chip-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
-    <button type="button" class="chip-btn" id="theme-toggle" title="Choose theme" aria-haspopup="listbox" aria-expanded="false" aria-label="Theme: system">system</button>
+    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)]" id="instance-chip" hidden aria-hidden="true">connecting…</span>
+    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)]" id="peers-chip" hidden aria-hidden="true"></span>
+    <span class="chip inline-flex items-center gap-1 [&[hidden]]:hidden rounded-plate-sm border border-rule bg-surface-2 px-2 py-0.5 font-mono text-sm text-fg-muted data-[state=live]:text-ok data-[state=down]:text-danger data-[state=pending]:text-warn data-[state=live]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=down]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[state=pending]:before:shadow-[var(--lamp-ring),var(--lamp-glow)]" id="session-chip" hidden aria-hidden="true">session …</span>
+    <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="rail-collapse" title="Collapse sidebar" aria-expanded="true" aria-controls="rail" aria-label="Collapse sidebar"></button>
+    <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="palette-open" title="Jump to anything (Ctrl+K)">Jump</button>
+    <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"></button>
+    <button type="button" class="inline-flex box-border min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-capsule border border-transparent bg-transparent px-2 py-1 font-sans text-sm font-medium text-fg-muted hover:border-rule hover:bg-surface-2 hover:text-fg" id="theme-toggle" title="Choose theme" aria-haspopup="listbox" aria-expanded="false" aria-label="Theme: system">system</button>
   </div>
 </header>
 
@@ -299,8 +299,8 @@ lamps carry further). The seven named palettes ride the same tokens.
         <span class="mr-auto text-xs empty:hidden" id="context-meter" title="How much of the model's context this conversation is using"></span>
         <button type="button" class="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-capsule border border-border bg-surface px-4 text-sm whitespace-nowrap text-fg shadow-[var(--lift)] hover:border-accent hover:text-accent-text focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 enabled:active:translate-y-px enabled:active:shadow-[var(--bevel-pressed)] motion-reduce:active:transform-none [&[hidden]]:hidden" id="scroll-bottom" hidden>Jump to latest</button>
         <div class="flex min-w-0 flex-wrap items-center gap-3">
-          <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)" aria-haspopup="listbox" aria-expanded="false">
-            <span class="model-chip__name">…</span>
+          <button type="button" class="group chip inline-flex [&::before]:hidden pointer-coarse:min-h-11 max-[640px]:min-h-11 max-w-[22ch] cursor-pointer items-center overflow-hidden rounded-capsule border border-rule bg-surface-2 px-2 py-0.5 font-sans text-sm font-medium text-[color-mix(in_srgb,var(--fg-muted)_55%,var(--fg))] hover:border-[color-mix(in_srgb,var(--accent)_55%,var(--rule))] hover:bg-[color-mix(in_srgb,var(--accent)_8%,var(--surface-2))] hover:text-accent-text focus-visible:border-[color-mix(in_srgb,var(--accent)_55%,var(--rule))] focus-visible:bg-[color-mix(in_srgb,var(--accent)_8%,var(--surface-2))] focus-visible:text-accent-text" id="composer-model" title="Model (click to change)" aria-haspopup="listbox" aria-expanded="false">
+            <span class="min-w-0 truncate" data-role="name">…</span>
           </button>
           <details class="group relative" id="run-shape">
             <summary class="max-w-56 min-h-8 cursor-pointer list-none truncate rounded-capsule border border-rule bg-surface px-2 py-1 font-mono text-xs font-semibold uppercase tracking-label text-fg-muted group-open:border-accent group-open:text-fg group-data-[active=true]:border-accent group-data-[active=true]:text-fg [&::-webkit-details-marker]:hidden">Run shape</summary>

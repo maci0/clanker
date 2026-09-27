@@ -384,71 +384,23 @@ h1 {
   display: inline-flex; align-items: center; gap: var(--space-2);
 }
 h1 .logo { flex: none; }
-.header-model {
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 500;
-  color: var(--fg-muted); background: var(--surface-2);
-  border: 1px solid var(--rule); border-radius: var(--radius-pill);
-  padding: 0.2rem 0.55rem 0.2rem 0.65rem; max-width: 22ch; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  overflow: hidden;
-}
-.header-model .model-chip__name {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
-}
-.header-model:hover { border-color: var(--border); color: var(--fg); }
 /* A gauge chip: reading in mono behind a lamp. The lamp is the signature —
    a lit dome when the thing is live, a dark dome when it is not. */
-.chip {
-  display: inline-flex; align-items: center; gap: 0.45em;
-  font-family: var(--mono); font-size: var(--step-0);
-  padding: 0.15rem 0.55rem; border-radius: var(--radius-sm);
-  background: var(--surface-2); color: var(--fg-muted);
-  border: 1px solid var(--rule);
-}
 .chip::before {
   content: ""; flex: none; width: 0.55em; height: 0.55em; border-radius: 50%;
   background: var(--lamp-dome);
   box-shadow: var(--lamp-ring);
 }
-.chip[hidden] { display: none; }
-.chip[data-state="down"] { color: var(--danger); }
-.chip[data-state="live"] { color: var(--ok); }
-.chip[data-state="live"]::before,
-.chip[data-state="down"]::before {
-  box-shadow: var(--lamp-ring), var(--lamp-glow);
-}
 /* The composer's model pill: the active model as a compact button beside the
    run controls. The same value the header chip carries, rendered where the
    eye already is when composing; no lamp dot — it is a control, not a state
    lamp, and it already has hover/focus to signal that. */
-button.model-pill {
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 500;
-  display: inline-flex; align-items: center;
-  padding: var(--space-1) 0.55rem var(--space-1) 0.7rem; border-radius: var(--radius-pill); cursor: pointer;
-  background: var(--surface-2); color: var(--fg-muted);
-  border: 1px solid var(--rule); max-width: 22ch;
-  overflow: hidden;
-}
 /* The model name is a control label, not ambient chrome: --fg-muted alone
    can sit near the 4.5:1 floor on a raised panel, so both the header chip
    and the composer pill pull the muted tone toward the main text colour —
    dark enough on every light palette, bright enough on every dark one,
    because both variables are per-theme. */
-#header-model, button.model-pill { color: color-mix(in srgb, var(--fg-muted) 55%, var(--fg)); }
-button.model-pill:hover,
-button.model-pill:focus-visible {
-  color: var(--accent-text);
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
-}
-button.chip-btn {
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 500;
-  min-height: 32px; min-width: 32px; box-sizing: border-box;
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: var(--space-1) 0.65rem; border-radius: var(--radius-pill); cursor: pointer;
-  background: transparent; color: var(--fg-muted); border: 1px solid transparent;
-}
-button.chip-btn:hover { color: var(--fg); background: var(--surface-2); border-color: var(--rule); }main {
+main {
   flex: 1 1 auto; min-width: 0; width: 100%; max-width: none; margin: 0;
   padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5);
   display: flex; flex-direction: column;
@@ -950,12 +902,6 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   .composer .toolbar button.secondary {
     min-height: 44px;
   }
-button.chip.header-model,
-  button.chip.model-pill,
-  #header-model,
-  #composer-model {
-    min-height: 44px;
-  }
 .composer details > summary,
   .composer details.more > summary,
   #params > summary {
@@ -1047,29 +993,6 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
 }
 
 /* Model pill: short name + chevron, opens the popover (Kimi/Unsloth-style). */
-button.model-pill,
-button.header-model {
-  gap: 0.35rem;
-}
-button.model-pill::before,
-button.header-model::before {
-  /* Status lamps belong on instance/session chips, not the model control. */
-  display: none;
-}
-button.model-pill {
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 500;
-  max-width: 22ch; padding: var(--space-1) 0.55rem var(--space-1) 0.7rem;
-}
-.model-chip__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-chip__chevron {
-  flex: none; display: inline-flex; align-items: center; opacity: 0.7;
-}
-.model-chip__chevron .icon { display: block; }
-button.model-pill[aria-expanded="true"] .model-chip__chevron,
-button.header-model[aria-expanded="true"] .model-chip__chevron {
-  opacity: 1; color: var(--accent);
-}
-
 .model-picker {
   /* PatternFly's main-container is a grid item at z-index 100, so 80
      painted the panel under Chat (suggestions hit-tested on top). */
@@ -1582,7 +1505,6 @@ label:has(+ input[required])::after, label:has(+ textarea[required])::after, lab
    The phase strip shares the live strip's geometry but carries its own
    semantics: llm is the accent's idle glow, tool is the healthy green,
    ask is the operator-action blue held at full. */
-.chip[data-state="pending"] { color: var(--warn); }
 .chip[data-state="pending"]::before {
   box-shadow: var(--lamp-ring), var(--lamp-glow);
 }
