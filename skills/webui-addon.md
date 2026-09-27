@@ -1,6 +1,6 @@
 ---
 title: Web UI addons
-description: When the operator asks to add something to the web UI (a music player, a timer, a scratch pad, a dashboard), create an addon with the webui_addon tool instead of editing ui/app/.
+description: When the operator asks to add a page, plugin, or widget to the web UI (a music player, a timer, a scratch pad, a dashboard), create an addon with the webui_addon tool instead of editing ui/app/.
 enabled: true
 ---
 

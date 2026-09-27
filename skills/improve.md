@@ -28,3 +28,9 @@ When fixing a failing eval or applying a patch in this turn:
    cause or reject the change. Operators running `clanker gate` in a shell
    also get the source lint pass. Never propose changes under `src/improve/`,
    `src/evals/`, or `src/toolhost/builder.zig`.
+
+In a worktree made by hand (`git worktree add`), ask the operator for
+`clanker worktree prepare` before the first model-calling verb: it links the
+gitignored `.env` and `config.local.toml` the checkout does not inherit, and
+without them every guest tool answers `ToolWasmMissing` and no provider key
+resolves. The `gate` tool builds that worktree's own guest wasm.

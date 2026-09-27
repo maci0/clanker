@@ -20,10 +20,10 @@ Fix root causes in the shared path after checking every caller. Prefer deletion 
 
 Non-trivial logic leaves one runnable regression check. Mark deliberate ceilings as `ponytail:` comments with the condition that would justify upgrading them.
 
-These levels arrive as chat phrases, not slash commands. `ponytail lite` builds what was asked and names the lazier option. A bare `ponytail` or `ponytail full` request uses the ladder above. `ponytail ultra` challenges requirements and tries deletion first. The selected level persists for the session; `stop ponytail`, `normal mode`, or `ponytail off` disables it.
+These levels arrive as chat phrases, not slash commands. `ponytail lite` builds what was asked and names the lazier option. A bare `ponytail` or `ponytail full` request uses the ladder above. `ponytail ultra` challenges requirements and tries deletion first. `stop ponytail`, `normal mode`, or `ponytail off` disables it. The shipped `hooks/ponytail.json` only announces level `full` at SessionStart, so a level that persists across turns needs the operator's own UserPromptSubmit hook; without one, follow whatever level the operator just named.
 
 When asked for `ponytail-audit`, scan the whole repository read-only and rank one-line findings as `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`. End with the estimated lines and dependencies removable. When asked for `ponytail-review`, apply the same review only to the current diff. When asked for `ponytail-debt`, list every `ponytail:` comment without changing files.
 
-When asked for `ponytail-help`, summarize these levels and commands. When asked for `ponytail-gain`, show the published benchmark ranges (80-94% fewer lines, 47-77% lower cost, and 3-6x faster) and clearly label them as benchmark medians, never measurements of the current repository.
+When asked for `ponytail-help`, summarize these levels and commands. When asked for `ponytail-gain`, say this repository ships no benchmark of its own and quote a figure only when the operator supplies it, labeled as their source's number and never as a measurement of this checkout.
 
 Report code first, then at most three short lines: what was skipped and when it should be added.
