@@ -280,6 +280,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   agree with the body's padding. First paint 61.7K gz; the sheet's accounting
   figure moves to 64K with the reasoning beside it.
 
+- The card's chips, covers and in-list subtitle are Tailwind utilities: the
+  label row and its pills (with the hover and focus expansion, and the open and
+  sample states as data attributes), the badge row and its due, late, done and
+  running states, the cover strip and its image, and the "in list" subtitle.
+  The ten label hues and eight cover hues would have been thirty rules for one
+  mapping, so they are a table in the Tailwind source keyed on `data-color`
+  (`.card-hue[data-color="…"]`): one place whose tokens the elements name. The
+  badges' soft pulse is a theme animation (`animate-card-pulse`,
+  `animate-card-pulse-fast`), because the cabinet's own `pulse` keyframes stay
+  in `app.css` for the turn-answer placeholder. First paint 61.5K gz; the
+  sheet's accounting figure moves to 68K, its fourth named raise.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

@@ -58,6 +58,8 @@ const migrated = [
 const arbitrary_ok = [
   /^max-w-\[min\(/,
   /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|grid-cols|grid-rows|ps|pl|pr|pt|pb|stroke|border|scale|rotate|translate-x|translate-y)-\[/,
+  // A transition names the properties it covers; there is no token for that list.
+  /^transition-\[/,
 ];
 /// A generated-content utility: `content-['…']` is the only spelling for an
 /// empty output's placeholder, and the value is a character, not a size.

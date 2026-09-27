@@ -730,12 +730,12 @@ function cardNode(c) {
   var coverColor = c.cover_color || (labels.length && labels[0].color ? labels[0].color : null);
   if (coverColor) {
     var cover = document.createElement("div");
-    cover.className = "card-cover";
+    cover.className = CARD_COVER_CLASS;
     cover.setAttribute("data-color", coverColor);
     b.appendChild(cover);
   } else if (c.priority && c.priority !== "normal") {
     var cover2 = document.createElement("div");
-    cover2.className = "card-cover";
+    cover2.className = CARD_COVER_CLASS;
     cover2.setAttribute("data-priority", c.priority);
     b.appendChild(cover2);
   }
@@ -752,10 +752,10 @@ function cardNode(c) {
   // Labels row — Trello-style compact colour pills
   if (labels.length) {
     var labelsEl = document.createElement("span");
-    labelsEl.className = "card-labels";
+    labelsEl.className = CARD_LABELS_CLASS;
     labels.forEach(function(lbl) {
       var pill = document.createElement("span");
-      pill.className = "card-label";
+      pill.className = CARD_LABEL_CLASS;
       pill.setAttribute("data-color", lbl.color || "blue");
       pill.textContent = lbl.text || lbl.color || "";
       pill.title = lbl.text || lbl.color || "";
@@ -782,13 +782,13 @@ function cardNode(c) {
 
   // Trello-style badges row (due, subtasks, blocked, goal, cost)
   var badges = document.createElement("span");
-  badges.className = "card-badges";
+  badges.className = CARD_BADGES_CLASS;
   var hasBadges = false;
 
   if (c.deadline) {
     var ds = dueState(c);
     var due = document.createElement("span");
-    due.className = "card-badge";
+    due.className = CARD_BADGE_CLASS;
     due.setAttribute("data-due", ds);
     due.appendChild(icon("calendar", 14));
     due.appendChild(document.createTextNode(" " + (ds === "late" ? "Late · " : ds === "soon" ? "Soon · " : "") + fmtDeadline(c.deadline)));
@@ -801,7 +801,7 @@ function cardNode(c) {
     var doneN = c.subtasks.filter(function (s) { return s.done; }).length;
     var totalN = c.subtasks.length;
     var subBadge = document.createElement("span");
-    subBadge.className = "card-badge";
+    subBadge.className = CARD_BADGE_CLASS;
     if (doneN === totalN && totalN > 0) subBadge.setAttribute("data-done", "true");
     subBadge.appendChild(icon("checklist", 14));
     subBadge.appendChild(document.createTextNode(" " + doneN + "/" + totalN));
@@ -813,7 +813,7 @@ function cardNode(c) {
   var blocked = blockers(c);
   if (blocked.length) {
     var bl = document.createElement("span");
-    bl.className = "card-badge";
+    bl.className = CARD_BADGE_CLASS;
     bl.style.color = "var(--warn-text)";
     bl.appendChild(icon("blocked", 14));
     bl.appendChild(document.createTextNode(" " + blocked.length));
@@ -824,7 +824,7 @@ function cardNode(c) {
 
   if (c.goal) {
     var gf = document.createElement("span");
-    gf.className = "card-badge";
+    gf.className = CARD_BADGE_CLASS;
     gf.style.color = "var(--accent-text)";
     gf.appendChild(icon("goal", 14));
     gf.title = "Mirrors a goal — kept in step with the Goals view";
@@ -834,7 +834,7 @@ function cardNode(c) {
     // a run for this goal is in flight (streaming here or on another client)
     // the actuator lights up, so the closed card shows the live run state.
     var sw = document.createElement("span");
-    sw.className = "card-badge";
+    sw.className = CARD_BADGE_CLASS;
     sw.appendChild(icon("rocket", 14));
     sw.title = "Goal — Start work (opens a run)";
     if (isGoalRunning(c.goal)) {
@@ -847,7 +847,7 @@ function cardNode(c) {
 
   if ((c.activity || []).length) {
     var actBadge = document.createElement("span");
-    actBadge.className = "card-badge";
+    actBadge.className = CARD_BADGE_CLASS;
     actBadge.appendChild(icon("activity", 14));
     actBadge.appendChild(document.createTextNode(" " + c.activity.length));
     actBadge.title = c.activity.length + " activity entries";
@@ -857,7 +857,7 @@ function cardNode(c) {
 
   if (c.usage && c.usage.cost) {
     var costBadge = document.createElement("span");
-    costBadge.className = "card-badge";
+    costBadge.className = CARD_BADGE_CLASS;
     costBadge.textContent = fmtCost(c.usage.cost);
     costBadge.title = "Cost so far";
     badges.appendChild(costBadge);
@@ -966,6 +966,19 @@ function cardNode(c) {
   });
   return b;
 }
+
+/* The card's chips, covers and in-list subtitle, as Tailwind utilities. The
+   ten label hues and the eight cover hues were one rule each keyed on
+   `data-color`, which is what the utilities still read. */
+var CARD_LABELS_CLASS = "flex flex-wrap gap-1 [&>span]:cursor-default";
+var CARD_LABEL_CLASS = "h-2 w-10 cursor-pointer overflow-hidden rounded-plate-lg p-0 font-bold leading-snug tracking-wide text-fg [font-size:0] transition-[font-size,width,height,padding] duration-150 [transition-timing-function:cubic-bezier(0.2,0.9,0.3,1)] group-hover:h-auto group-hover:w-auto group-hover:min-w-12 group-hover:px-2 group-hover:py-0.5 group-hover:text-xs group-focus-within:h-auto group-focus-within:w-auto group-focus-within:min-w-12 group-focus-within:px-2 group-focus-within:py-0.5 group-focus-within:text-xs data-[open=true]:h-auto data-[open=true]:w-auto data-[open=true]:cursor-pointer data-[open=true]:px-2 data-[open=true]:py-0.5 data-[open=true]:text-xs data-[sample=true]:h-auto data-[sample=true]:w-auto data-[sample=true]:flex-none data-[sample=true]:px-2 data-[sample=true]:py-0.5 data-[sample=true]:text-2xs card-hue";
+var CARD_BADGES_CLASS = "mt-px flex flex-wrap items-center gap-x-2 gap-y-1";
+var CARD_BADGE_CLASS = "inline-flex items-center gap-1 rounded-plate-lg px-1 py-px text-xs tabular-nums text-fg-muted [&_.icon]:h-3.5 [&_.icon]:w-3.5 [&_.icon]:opacity-65 data-[due=soon]:bg-warn data-[due=soon]:text-on-danger data-[due=late]:animate-card-pulse data-[due=late]:bg-danger data-[due=late]:text-on-danger data-[done=true]:text-ok data-[done=true]:[&_.icon]:opacity-100 data-[goal-run=true]:animate-card-pulse-fast data-[goal-run=true]:text-accent-text";
+var CARD_COVER_CLASS = "h-1 flex-none rounded-t-plate bg-rule data-[color]:h-10 data-[priority=high]:h-1 data-[priority=high]:bg-danger data-[priority=low]:h-[3px] data-[priority=low]:bg-surface-2 card-hue";
+var CARD_COVER_IMG_CLASS = "block h-35 w-full rounded-t-plate object-cover";
+var CARD_COVER_IMG_OVER_CLASS = "h-auto bg-transparent";
+var CARD_IN_LIST_CLASS = "mt-0.5 text-sm text-fg-muted";
+var CARD_IN_LIST_NAME_CLASS = "cursor-pointer text-fg underline decoration-dotted";
 
 function memberInitials(name) {
   return ((name || "").trim().substring(0, 2) || "?").toUpperCase();
@@ -1248,10 +1261,10 @@ function showCardDetail(id) {
   var colLabel = c.column || "";
   var colTitle = colLabel.replace(/_/g, " ").replace(/\b\w/g, function(l){ return l.toUpperCase(); });
   var inListEl = document.createElement("div");
-  inListEl.className = "card-in-list";
+  inListEl.className = CARD_IN_LIST_CLASS;
   inListEl.appendChild(document.createTextNode("in list "));
   var inListName = document.createElement("strong");
-  inListName.className = "card-in-list-name";
+  inListName.className = CARD_IN_LIST_NAME_CLASS;
   inListName.textContent = colTitle;
   inListEl.appendChild(inListName);
   // A <strong> with a click is unreachable by keyboard; the column picker
@@ -1321,7 +1334,8 @@ function showCardDetail(id) {
   currentLabels.forEach(function(lbl) {
     var pill = document.createElement("button");
     pill.type = "button";
-    pill.className = "card-label is-open";
+    pill.className = CARD_LABEL_CLASS;
+    pill.dataset.open = "true";
     pill.setAttribute("data-color", lbl.color || "blue");
     pill.textContent = lbl.text || lbl.color;
     pill.title = "Remove label";
@@ -1365,7 +1379,8 @@ function showCardDetail(id) {
         var wrap = document.createElement("div");
         wrap.className = "label-name-row";
         var samplePill = document.createElement("span");
-        samplePill.className = "card-label is-sample";
+        samplePill.className = CARD_LABEL_CLASS;
+        samplePill.dataset.sample = "true";
         samplePill.setAttribute("data-color", color);
         samplePill.textContent = color;
         wrap.appendChild(samplePill);

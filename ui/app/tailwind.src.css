@@ -120,6 +120,23 @@
   }
   .json-caret[open] > summary::before { transform: rotate(90deg); }
 
+  /* A card label or cover names one of the cabinet's ten card colours in
+     `data-color`. Ten utilities per element would be thirty rules for one
+     mapping, so the hue is a table keyed on the attribute; the ink is only
+     meaningful on a label, and the fallback below keeps a cover's text in the
+     page's own foreground. */
+  .card-hue[data-color] { color: var(--fg); }
+  .card-hue[data-color="green"] { background: var(--card-green); color: var(--card-green-ink); }
+  .card-hue[data-color="yellow"] { background: var(--card-yellow); color: var(--card-yellow-ink); }
+  .card-hue[data-color="orange"] { background: var(--card-orange); color: var(--card-orange-ink); }
+  .card-hue[data-color="red"] { background: var(--card-red); color: var(--card-red-ink); }
+  .card-hue[data-color="purple"] { background: var(--card-purple); color: var(--card-purple-ink); }
+  .card-hue[data-color="blue"] { background: var(--card-blue); color: var(--card-blue-ink); }
+  .card-hue[data-color="sky"] { background: var(--card-sky); color: var(--card-sky-ink); }
+  .card-hue[data-color="pink"] { background: var(--card-pink); color: var(--card-pink-ink); }
+  .card-hue[data-color="lime"] { background: var(--card-lime); color: var(--card-lime-ink); }
+  .card-hue[data-color="black"] { background: var(--card-black); color: var(--card-black-ink); }
+
   /* The Fleet card's state tab: a lamp on the card's leading edge, accent for a
      card with children and plain grey otherwise. It is a pseudo-element, and a
      lit one carries ring + glow — two shadows one shadow utility cannot
@@ -276,6 +293,16 @@
   @keyframes mesh-lamp-glow {
     0%, 100% { opacity: 0.2; transform: scale(1); }
     50% { opacity: 0.5; transform: scale(1.32); }
+  }
+
+  /* The card badges' soft pulse. The cabinet's own `pulse` keyframes stay in
+     app.css, because the turn-answer placeholder still names them; this is the
+     same shape under a name the sheet emits with the utility that uses it. */
+  --animate-card-pulse: card-pulse 2s ease-in-out infinite;
+  --animate-card-pulse-fast: card-pulse 1.2s ease-in-out infinite;
+  @keyframes card-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
   }
 
   --shadow-low: var(--lift-low);

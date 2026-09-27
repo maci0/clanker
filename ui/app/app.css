@@ -2444,64 +2444,42 @@ h2#session-title {
 
 
 /* The "in list <column>" subtitle in the card detail header. */
-.card-in-list { font-size: var(--step-0); color: var(--fg-muted); margin-top: 2px; }
-.card-in-list-name { color: var(--fg); cursor: pointer; text-decoration: underline dotted; }
+
+
 
 /* Card cover: colour strip along the plate's top edge. The hue and its ink
    are the --card-* tokens in :root; nothing here spells a colour out. */
-.card-cover { height: 4px; border-radius: var(--radius) var(--radius) 0 0; margin: 0; background: var(--rule); flex-shrink: 0; }
-.card-cover[data-priority="high"] { background: var(--danger); height: 4px; }
-.card-cover[data-priority="low"] { background: var(--surface-2); height: 3px; }
-.card-cover[data-color] { height: 40px; border-radius: var(--radius) var(--radius) 0 0; }
-.card-cover[data-color="green"] { background: var(--card-green); }
-.card-cover[data-color="yellow"] { background: var(--card-yellow); }
-.card-cover[data-color="orange"] { background: var(--card-orange); }
-.card-cover[data-color="red"] { background: var(--card-red); }
-.card-cover[data-color="purple"] { background: var(--card-purple); }
-.card-cover[data-color="blue"] { background: var(--card-blue); }
-.card-cover[data-color="sky"] { background: var(--card-sky); }
-.card-cover[data-color="pink"] { background: var(--card-pink); }
-.card-cover-img { display: block; width: 100%; height: 140px; object-fit: cover; border-radius: var(--radius) var(--radius) 0 0; }
-.card-cover--img { height: auto; background: transparent; }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /* Trello-style labels: pill chips on card face — compact bars that expand on hover */
-.card-labels { display: flex; flex-wrap: wrap; gap: 3px; }
-.card-label {
-  font-size: 0; font-weight: 700; letter-spacing: 0.02em;
-  padding: 0; width: 40px; height: 8px; border-radius: var(--radius-lg);
-  /* Fallback ink only: every known hue below sets its own measured --card-*-ink
-     alongside its background. A label whose colour is not one of the ten gets
-     no background either, so it sits on the card face and must be read in the
-     page's own ink -- a hardcoded #111 was invisible on every dark theme. */
-  color: var(--fg); line-height: 1.4; cursor: pointer;
-  /* Only the four properties the hover rule below actually changes. `all`
-     also animated the hue and its ink, so a label picking up a colour faded
-     through whatever sat between the two -- and it would silently animate
-     every property added here later. */
-  transition: font-size 140ms cubic-bezier(0.2, 0.9, 0.3, 1),
-              width 140ms cubic-bezier(0.2, 0.9, 0.3, 1),
-              height 140ms cubic-bezier(0.2, 0.9, 0.3, 1),
-              padding 140ms cubic-bezier(0.2, 0.9, 0.3, 1);
-  overflow: hidden; white-space: nowrap;
-}
-.card-labels .card-label { cursor: default; }
+
+
+
 /* On card hover, expand labels to show text (Trello-style toggle) */
-.card:hover .card-label,
-.card:focus-within .card-label {
-  font-size: var(--step--1); height: auto; width: auto; min-width: 48px;
-  padding: 0.15rem 0.55rem;
-  border-radius: var(--radius-lg);
-}
-.card-label[data-color="green"] { background: var(--card-green); color: var(--card-green-ink); }
-.card-label[data-color="yellow"] { background: var(--card-yellow); color: var(--card-yellow-ink); }
-.card-label[data-color="orange"] { background: var(--card-orange); color: var(--card-orange-ink); }
-.card-label[data-color="red"] { background: var(--card-red); color: var(--card-red-ink); }
-.card-label[data-color="purple"] { background: var(--card-purple); color: var(--card-purple-ink); }
-.card-label[data-color="blue"] { background: var(--card-blue); color: var(--card-blue-ink); }
-.card-label[data-color="sky"] { background: var(--card-sky); color: var(--card-sky-ink); }
-.card-label[data-color="pink"] { background: var(--card-pink); color: var(--card-pink-ink); }
-.card-label[data-color="lime"] { background: var(--card-lime); color: var(--card-lime-ink); }
-.card-label[data-color="black"] { background: var(--card-black); color: var(--card-black-ink); }
+
+
+
+
+
+
+
+
+
+
+
 
 /* Cover color picker in card detail */
 .cover-color-picker {
@@ -2526,18 +2504,14 @@ h2#session-title {
 .cover-color-swatch[data-color="none"] { background: var(--surface-2); border: 1px dashed var(--rule); }
 
 /* Trello-style card badges row */
-.card-badges { display: flex; flex-wrap: wrap; gap: 0.2rem 0.5rem; align-items: center; margin-top: 0.1rem; }
-.card-badge {
-  display: inline-flex; align-items: center; gap: 0.2rem;
-  font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums;
-  border-radius: var(--radius-lg); padding: 0.1rem 0.3rem;
-}
-.card-badge .icon { width: 14px; height: 14px; opacity: 0.65; }
-.card-badge[data-due="soon"] { color: var(--on-danger); background: var(--warn); }
-.card-badge[data-due="late"] { color: var(--on-danger); background: var(--danger); animation: pulse 2s ease-in-out infinite; }
-.card-badge[data-done="true"] { color: var(--ok); }
-.card-badge[data-done="true"] .icon { opacity: 1; }
-.card-badge[data-goal-run="true"] { color: var(--accent-text); animation: pulse 1.2s ease-in-out infinite; }
+
+
+
+
+
+
+
+
 
 
 .card-members { display: flex; align-items: center; margin-left: auto; }
