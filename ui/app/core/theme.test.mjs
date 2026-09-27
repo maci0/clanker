@@ -127,16 +127,13 @@ test("Tab closes the picker without trapping focus", function () {
 });
 
 test("each option carries a swatch laid out beside its label", function () {
-  assert.match(themeJs, /theme-picker__swatch/);
+  assert.match(themeJs, /THEME_SWATCH_CLASS/);
   assert.match(themeJs, /tokens\["--bg"\]/);
-  // .model-picker__option is flex-direction: column, so an unqualified swatch
-  // span renders stacked above the label with its margin doing nothing. The
-  // theme rows need their own row-direction modifier.
-  assert.match(themeJs, /theme-picker__option/);
-  assert.match(appCss, /\.theme-picker__option \{[^}]*flex-direction: row/);
-  assert.match(appCss, /\.theme-picker__swatch \{/);
-  assert.ok(
-    appCss.indexOf(".theme-picker__option {") > appCss.indexOf(".model-picker__option {"),
-    "the theme modifier must come after .model-picker__option to win the cascade"
-  );
+  // The picker's option is a column, so a theme row that did not say flex-row
+  // would stack its swatch above the label with the gap doing nothing.
+  assert.match(themeJs, /THEME_OPTION_CLASS = PICKER_OPTION_BASE \+ " flex-row items-center/);
+  // The picker's shapes are class lists in the modules now; the sheet carries
+  // no rule for either row, so there is no cascade order left to pin.
+  assert.match(themeJs, /const THEME_OPTION_CLASS|var THEME_OPTION_CLASS/);
+  assert.match(themeJs, /THEME_SWATCH_CLASS/);
 });

@@ -164,6 +164,9 @@
 .z-50 {
   z-index: 50;
 }
+.z-200 {
+  z-index: 200;
+}
 .z-\[999\] {
   z-index: 999;
 }
@@ -205,6 +208,9 @@
 }
 .m-2 {
   margin: var(--space-2);
+}
+.m-4 {
+  margin: var(--space-4);
 }
 .m-7 {
   margin: var(--space-7);
@@ -928,6 +934,9 @@
 .flex-col {
   flex-direction: column;
 }
+.flex-row {
+  flex-direction: row;
+}
 .flex-nowrap {
   flex-wrap: nowrap;
 }
@@ -1500,6 +1509,9 @@
 }
 .text-right {
   text-align: right;
+}
+.text-start {
+  text-align: start;
 }
 .align-middle {
   vertical-align: middle;
@@ -2398,6 +2410,14 @@
     filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,);
   }
 }
+.focus\:shadow-\[inset_0_0_0_2px_var\(--accent\)\]:focus {
+  --tw-shadow: inset 0 0 0 2px var(--tw-shadow-color, var(--accent));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+.focus\:outline-none:focus {
+  --tw-outline-style: none;
+  outline-style: none;
+}
 .focus-visible\:rounded-plate-sm:focus-visible {
   border-radius: var(--radius-sm);
 }
@@ -2578,6 +2598,9 @@
 .data-\[active\=1\]\:text-accent[data-active="1"] {
   color: var(--accent);
 }
+.data-\[active\=true\]\:border-rule[data-active="true"] {
+  border-color: var(--rule);
+}
 .data-\[active\=true\]\:bg-surface-2[data-active="true"] {
   background-color: var(--surface-2);
 }
@@ -2667,8 +2690,20 @@
 .data-\[color\]\:min-h-\[116px\][data-color] {
   min-height: 116px;
 }
+.data-\[current\=true\]\:border-\[color-mix\(in_srgb\,var\(--accent\)_35\%\,var\(--rule\)\)\][data-current="true"] {
+  border-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in srgb,var(--accent) 35%,var(--rule));
+  }
+}
 .data-\[current\=true\]\:border-accent[data-current="true"] {
   border-color: var(--accent);
+}
+.data-\[current\=true\]\:bg-\[color-mix\(in_srgb\,var\(--accent\)_10\%\,var\(--surface-2\)\)\][data-current="true"] {
+  background-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    background-color: color-mix(in srgb,var(--accent) 10%,var(--surface-2));
+  }
 }
 .data-\[current\=true\]\:bg-accent[data-current="true"] {
   background-color: var(--accent);

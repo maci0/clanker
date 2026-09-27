@@ -595,6 +595,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   paint 59.2 → 59.4K gz (the utilities for the view's parts cost more than the
   rules they replace, and the sheet still carries the rest of the cabinet).
 
+- The model and theme pickers are utilities, and one surface: `theme.js`
+  imports the box, panel, list, row and label lists from `modelpicker.js`
+  rather than re-typing them, since both pickers are the same box. A row's
+  active and current marks are `data-active`/`data-current` attributes, the
+  script's queries read `[data-picker]`/`[data-picker-panel]`/
+  `[data-picker-list]` hooks instead of the classes the sheet stopped styling,
+  and a theme row is the picker's base list with its own direction and swatch.
+  `core/theme.js` joins the ledger. First paint 59.4 → 59.1K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

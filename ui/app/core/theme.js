@@ -6,6 +6,8 @@
 // applied — its rules are scoped to html[data-theme="win2k"], so it stays
 // inert if another theme is chosen later and costs nothing until then.
 
+import { PICKER_CLASS, PICKER_PANEL_CLASS, PICKER_LIST_CLASS, PICKER_OPTION_BASE, PICKER_OPTION_LABEL_CLASS } from "./modelpicker.js";
+
 export var THEMES = ["system"];
 
 var CATALOG = {};
@@ -120,18 +122,24 @@ export function applyTheme(theme, opts) {
   }
 }
 
+/* A theme row is the picker's option laid out across, with a colour dot: the
+   same base class list, its own direction, and the swatch's size. */
+var THEME_OPTION_CLASS = PICKER_OPTION_BASE + " flex-row items-center gap-1";
+var THEME_SWATCH_CLASS = "h-2.5 w-2.5 flex-none rounded-full border border-rule bg-transparent";
+
 function ensurePicker() {
   if (_picker) return;
   _picker = document.createElement("div");
   _picker.id = "theme-picker";
-  _picker.className = "model-picker";
+  _picker.className = PICKER_CLASS;
+  _picker.setAttribute("data-picker", "theme");
   _picker.hidden = true;
   _picker.innerHTML =
-    '<div class="model-picker__panel" role="listbox" aria-label="Themes">' +
-      '<div class="model-picker__list" id="theme-picker-list"></div>' +
+    '<div class="' + PICKER_PANEL_CLASS + '" data-picker-panel role="listbox" aria-label="Themes">' +
+      '<div class="' + PICKER_LIST_CLASS + '" data-picker-list id="theme-picker-list"></div>' +
     "</div>";
   document.body.appendChild(_picker);
-  _list = _picker.querySelector(".model-picker__list");
+  _list = _picker.querySelector("[data-picker-list]");
   _list.addEventListener("click", function (e) {
     var row = e.target.closest("[data-theme]");
     if (!row) return;
@@ -180,7 +188,7 @@ function moveFocus(delta) {
 }
 
 function positionPicker(anchor) {
-  var panel = _picker.querySelector(".model-picker__panel");
+  var panel = _picker.querySelector("[data-picker-panel]");
   var rect = anchor.getBoundingClientRect();
   var width = Math.min(240, Math.max(180, window.innerWidth - 24));
   panel.style.width = width + "px";
@@ -204,7 +212,7 @@ function renderList(current) {
   THEMES.forEach(function (name) {
     var row = document.createElement("button");
     row.type = "button";
-    row.className = "model-picker__option theme-picker__option";
+    row.className = THEME_OPTION_CLASS;
     row.setAttribute("role", "option");
     row.setAttribute("data-theme", name);
     row.setAttribute("aria-selected", name === current ? "true" : "false");
@@ -213,13 +221,13 @@ function renderList(current) {
     // applied. "system" has no file and no fixed colour: it keeps an empty
     // ring so every label still starts at the same x.
     var swatch = document.createElement("span");
-    swatch.className = "theme-picker__swatch";
+    swatch.className = THEME_SWATCH_CLASS;
     swatch.setAttribute("aria-hidden", "true");
     var rec = CATALOG[name];
     if (rec && rec.tokens && rec.tokens["--bg"]) swatch.style.background = rec.tokens["--bg"];
     row.appendChild(swatch);
     var label = document.createElement("span");
-    label.className = "model-picker__option-label";
+    label.className = PICKER_OPTION_LABEL_CLASS;
     label.textContent = name;
     row.appendChild(label);
     _list.appendChild(row);

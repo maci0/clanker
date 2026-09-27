@@ -953,84 +953,8 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
 }
 
 /* Model pill: short name + chevron, opens the popover (Kimi/Unsloth-style). */
-.model-picker {
-  /* PatternFly's main-container is a grid item at z-index 100, so 80
-     painted the panel under Chat (suggestions hit-tested on top). */
-  position: fixed; inset: 0; z-index: 200; pointer-events: none;
-}
-.model-picker[hidden] { display: none; }
-.model-picker__panel {
-  pointer-events: auto;
-  position: fixed;
-  display: flex; flex-direction: column;
-  box-sizing: border-box;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--lift-high);
-  overflow: hidden;
-  min-height: 0;
-}
-.model-picker__search {
-  flex: none;
-  width: 100%; box-sizing: border-box;
-  margin: 0; border: 0; border-bottom: 1px solid var(--rule);
-  border-radius: 0; background: var(--surface-2);
-  padding: 0.7rem var(--space-4); font-size: var(--step-1); color: var(--fg);
-}
-.model-picker__search:focus { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
-.model-picker__list {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  padding: var(--space-2);
-}
-.model-picker__empty {
-  margin: var(--space-4); text-align: center;
-  font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-}
-.model-picker__group + .model-picker__group { margin-top: var(--space-2); }
-.model-picker__group-title {
-  font-family: var(--mono); font-size: var(--step--2); font-weight: 600;
-  letter-spacing: var(--track-label); text-transform: uppercase;
-  color: var(--fg-muted); padding: 0.35rem 0.55rem var(--space-1);
-}
-.model-picker__option {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem;
-  width: 100%; text-align: start; cursor: pointer;
-  border: 1px solid transparent; border-radius: var(--radius);
-  background: transparent; color: var(--fg);
-  padding: 0.45rem var(--space-3); margin: 0;
-  font-family: var(--sans); box-shadow: none;
-}
-.model-picker__option:hover,
-.model-picker__option.is-active {
-  background: var(--surface-2); border-color: var(--rule);
-}
-.model-picker__option.is-current {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
-  border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
-}
-.model-picker__option-label {
-  font-size: var(--step-0); font-weight: 600; color: var(--fg);
-}
-.model-picker__option-meta {
-  font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
-}
-.model-picker__option:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: -1px;
-}
 /* Theme rows carry a colour dot, so they lay out across instead of down.
    Must stay after .model-picker__option, whose flex-direction it overrides. */
-.theme-picker__option {
-  flex-direction: row; align-items: center; gap: var(--space-2);
-}
-.theme-picker__swatch {
-  flex: none; width: 10px; height: 10px; border-radius: 50%;
-  border: 1px solid var(--rule); background: transparent;
-}
-@media (prefers-reduced-motion: reduce) {
-  .model-picker__panel { transition: none; }
-}
-
 .params-grid { align-items: center; }
 .params-grid label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step--1); }
 .params-grid input[type="number"] { width: 6rem; }

@@ -194,20 +194,38 @@ export function setModelChipLabel(btn, text, title) {
   if (title != null) btn.title = title;
 }
 
+/* The picker (models and themes wear the same box): a fixed scrim-sized
+   wrapper holding a panel, a search field and a scrolling list of options.
+   The option's active and current marks are attributes, and each caller picks
+   the row's direction from the shared base. theme.js imports these, because a
+   second picker module re-typing them is how the two boxes drift apart. */
+export var PICKER_CLASS = "fixed inset-0 z-200 pointer-events-none";
+export var PICKER_PANEL_CLASS = "pointer-events-auto fixed box-border flex min-h-0 flex-col overflow-hidden rounded-plate-lg border border-border bg-surface shadow-[var(--lift-high)]";
+export var PICKER_SEARCH_CLASS = "m-0 w-full box-border flex-none rounded-none border-0 border-b border-rule bg-surface-2 px-4 py-2 text-base text-fg focus:shadow-[inset_0_0_0_2px_var(--accent)] focus:outline-none";
+export var PICKER_LIST_CLASS = "min-h-0 flex-1 overflow-y-auto overscroll-contain p-2";
+export var PICKER_EMPTY_CLASS = "m-4 text-center font-mono text-sm text-fg-muted";
+export var PICKER_GROUP_CLASS = "mt-1 first:mt-0";
+export var PICKER_GROUP_TITLE_CLASS = "px-2 pt-1 pb-1 font-mono text-2xs font-semibold uppercase tracking-label text-fg-muted";
+export var PICKER_OPTION_BASE = "m-0 flex w-full cursor-pointer gap-0.5 rounded-plate border border-transparent bg-transparent px-3 py-1 text-start font-sans text-fg shadow-none hover:border-rule hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 data-[active=true]:border-rule data-[active=true]:bg-surface-2 data-[current=true]:border-[color-mix(in_srgb,var(--accent)_35%,var(--rule))] data-[current=true]:bg-[color-mix(in_srgb,var(--accent)_10%,var(--surface-2))]";
+export var PICKER_OPTION_CLASS = PICKER_OPTION_BASE + " flex-col items-start";
+export var PICKER_OPTION_LABEL_CLASS = "text-sm font-semibold text-fg";
+export var PICKER_OPTION_META_CLASS = "font-mono text-xs text-fg-muted";
+
 function ensurePickerDom() {
   if (_picker) return;
   _picker = document.createElement("div");
   _picker.id = "model-picker";
-  _picker.className = "model-picker";
+  _picker.className = PICKER_CLASS;
+  _picker.setAttribute("data-picker", "model");
   _picker.hidden = true;
   _picker.innerHTML =
-    '<div class="model-picker__panel">' +
-      '<input type="search" class="model-picker__search" placeholder="Search models…" autocomplete="off" role="combobox" aria-expanded="true" aria-label="Search models" aria-controls="model-picker-list" aria-owns="model-picker-list" aria-autocomplete="list">' +
-      '<div class="model-picker__list" id="model-picker-list" role="listbox" tabindex="-1"></div>' +
+    '<div class="' + PICKER_PANEL_CLASS + '" data-picker-panel>' +
+      '<input type="search" class="' + PICKER_SEARCH_CLASS + '" data-picker-search placeholder="Search models…" autocomplete="off" role="combobox" aria-expanded="true" aria-label="Search models" aria-controls="model-picker-list" aria-owns="model-picker-list" aria-autocomplete="list">' +
+      '<div class="' + PICKER_LIST_CLASS + '" data-picker-list id="model-picker-list" role="listbox" tabindex="-1"></div>' +
     "</div>";
   document.body.appendChild(_picker);
-  _search = _picker.querySelector(".model-picker__search");
-  _list = _picker.querySelector(".model-picker__list");
+  _search = _picker.querySelector("[data-picker-search]") || _picker.querySelector("input");
+  _list = _picker.querySelector("[data-picker-list]");
 
   _search.addEventListener("input", function () {
     renderList(_search.value);
@@ -256,7 +274,7 @@ function focusAdjacent(from, backwards) {
   var list = [];
   for (var i = 0; i < nodes.length; i++) {
     var n = nodes[i];
-    if (n.closest && n.closest(".model-picker")) continue;
+    if (n.closest && n.closest("[data-picker]")) continue;
     if (n.offsetParent === null && n !== document.activeElement) continue;
     list.push(n);
   }
@@ -300,11 +318,11 @@ function moveActive(delta) {
 }
 
 function paintActive() {
-  var rows = _list.querySelectorAll(".model-picker__option");
+  var rows = _list.querySelectorAll("[data-index]");
   var activeId = null;
   for (var i = 0; i < rows.length; i++) {
     var on = Number(rows[i].getAttribute("data-index")) === _active;
-    rows[i].classList.toggle("is-active", on);
+    rows[i].setAttribute("data-active", on ? "true" : "false");
     rows[i].setAttribute("aria-selected", on ? "true" : "false");
     if (on) activeId = rows[i].id;
   }
@@ -335,7 +353,7 @@ function renderList(query) {
 
   if (!order.length) {
     var empty = document.createElement("p");
-    empty.className = "model-picker__empty";
+    empty.className = PICKER_EMPTY_CLASS;
     empty.textContent = q ? "No models match." : "No models configured.";
     _list.appendChild(empty);
     return;
@@ -343,9 +361,9 @@ function renderList(query) {
 
   order.forEach(function (prov) {
     var group = document.createElement("div");
-    group.className = "model-picker__group";
+    group.className = PICKER_GROUP_CLASS;
     var title = document.createElement("div");
-    title.className = "model-picker__group-title";
+    title.className = PICKER_GROUP_TITLE_CLASS;
     title.textContent = prov;
     group.appendChild(title);
     byProv[prov].forEach(function (m) {
@@ -354,23 +372,23 @@ function renderList(query) {
       var row = document.createElement("button");
       row.type = "button";
       row.id = "model-picker-option-" + idx;
-      row.className = "model-picker__option";
+      row.className = PICKER_OPTION_CLASS;
       row.setAttribute("role", "option");
       row.tabIndex = -1;
       row.setAttribute("data-value", m.value);
       row.setAttribute("data-index", String(idx));
       row.setAttribute("aria-selected", m.value === current ? "true" : "false");
       if (m.value === current) {
-        row.classList.add("is-current");
+        row.setAttribute("data-current", "true");
         if (_active < 0) _active = idx;
       }
       var label = document.createElement("span");
-      label.className = "model-picker__option-label";
+      label.className = PICKER_OPTION_LABEL_CLASS;
       label.textContent = m.label;
       row.appendChild(label);
       if (m.meta) {
         var meta = document.createElement("span");
-        meta.className = "model-picker__option-meta";
+        meta.className = PICKER_OPTION_META_CLASS;
         meta.textContent = m.meta;
         row.appendChild(meta);
       }
@@ -383,7 +401,7 @@ function renderList(query) {
 }
 
 function positionPicker(anchor) {
-  var panel = _picker.querySelector(".model-picker__panel");
+  var panel = _picker.querySelector("[data-picker-panel]");
   var rect = anchor.getBoundingClientRect();
   var gap = 6;
   var width = Math.min(360, Math.max(280, window.innerWidth - 24));
