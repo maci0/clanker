@@ -259,19 +259,19 @@ lamps carry further). The seven named palettes ride the same tokens.
     </div>
     </div>
 
-    <form id="task-form" class="composer">
+    <form id="task-form" class="sticky bottom-3 z-2 mt-4 rounded-plate-lg border border-border bg-surface px-3 pt-2 pb-1.5 shadow-[var(--lift-low)] transition-[box-shadow,border-color] duration-150 focus-within:border-[color-mix(in_srgb,var(--accent)_22%,var(--border))] focus-within:shadow-[var(--lift)] data-[dragging=true]:[&_textarea]:border-accent">
       <label for="task">Task</label>
-      <div class="attachments" id="attachments" hidden></div>
-      <div class="attachments" id="file-chips" hidden></div>
+      <div class="mb-2 hidden flex-wrap gap-2 [&:not([hidden])]:flex" id="attachments" hidden></div>
+      <div class="mb-2 hidden flex-wrap gap-2 [&:not([hidden])]:flex" id="file-chips" hidden></div>
       <!-- ARIA allows `combobox` on an input, never on a textarea: a textarea's
            implicit role is textbox with aria-multiline, and overriding it hid
            the fact that this field takes more than one line. So the composer is
            the ARIA 1.1 shape instead -- the role, the popup state and the popup
            itself belong to this wrapper, and #task stays the textbox inside it,
            keeping aria-autocomplete and aria-activedescendant. -->
-      <div class="composer-combobox" id="task-combobox" role="combobox"
+      <div class="relative" id="task-combobox" role="combobox"
            aria-expanded="false" aria-haspopup="listbox" aria-owns="prompt-list">
-        <textarea id="task" name="task" placeholder="Describe the task, / for prompts, @ for files" required rows="3"
+        <textarea class="min-h-[2.6rem] max-h-40 w-full resize-none border-0 bg-transparent px-3 py-2 text-sm leading-normal outline-none field-sizing-content placeholder:text-sm placeholder:opacity-85 focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 max-[640px]:[font-size:16px]" id="task" name="task" placeholder="Describe the task, / for prompts, @ for files" required rows="3"
                   aria-controls="prompt-list" aria-autocomplete="list"></textarea>
         <ul class="palette-list prompt-list" id="prompt-list" role="listbox" aria-label="Saved prompts" hidden></ul>
       </div>
@@ -307,11 +307,11 @@ lamps carry further). The seven named palettes ride the same tokens.
           </div>
         </details>
       </div>
-      <div class="toolbar">
-        <span class="meta" id="hint"></span>
-        <span class="meta" id="context-meter" title="How much of the model's context this conversation is using"></span>
-        <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>Jump to latest</button>
-        <div class="toolbar-actions">
+      <div class="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-rule/35 pt-2">
+        <span class="mr-auto text-xs empty:hidden" id="hint"></span>
+        <span class="mr-auto text-xs empty:hidden" id="context-meter" title="How much of the model's context this conversation is using"></span>
+        <button type="button" class="inline-flex min-h-8 cursor-pointer items-center gap-2 rounded-capsule border border-border bg-surface px-4 text-sm whitespace-nowrap text-fg shadow-[var(--lift)] hover:border-accent hover:text-accent-text focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 enabled:active:translate-y-px enabled:active:shadow-[var(--bevel-pressed)] motion-reduce:active:transform-none [&[hidden]]:hidden" id="scroll-bottom" hidden>Jump to latest</button>
+        <div class="flex min-w-0 flex-wrap items-center gap-3">
           <button type="button" class="chip model-pill" id="composer-model" title="Model (click to change)" aria-haspopup="listbox" aria-expanded="false">
             <span class="model-chip__name">…</span>
           </button>
@@ -336,10 +336,10 @@ lamps carry further). The seven named palettes ride the same tokens.
           </label>
             </div>
           </details>
-          <button type="button" class="secondary" id="voice-btn" title="Voice input (click to start)" aria-label="Voice input (click to start)"></button>
-          <button type="button" class="secondary danger" id="cancel" hidden
+          <button type="button" class="secondary min-w-11 pointer-coarse:min-h-11" id="voice-btn" title="Voice input (click to start)" aria-label="Voice input (click to start)"></button>
+          <button type="button" class="secondary danger inline-flex min-h-9 items-center justify-center gap-1 rounded-capsule px-4 pointer-coarse:min-h-11 [&[hidden]]:hidden" id="cancel" hidden
                   title="Stop the running turn" aria-label="Stop the running turn"></button>
-          <button type="submit" class="primary" id="submit" disabled
+          <button type="submit" class="primary inline-flex min-h-9 items-center justify-center gap-1 rounded-capsule px-4 text-sm pointer-coarse:min-h-11 [&[hidden]]:hidden" id="submit" disabled
                   title="Write a task first" aria-label="Write a task first">Run</button>
         </div>
       </div>

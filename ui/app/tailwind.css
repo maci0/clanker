@@ -70,6 +70,9 @@
 .inset-0 {
   inset: 0px;
 }
+.-top-1\.5 {
+  top: calc(var(--spacing) * -1.5);
+}
 .-top-2\.5 {
   top: calc(var(--spacing) * -2.5);
 }
@@ -84,6 +87,9 @@
 }
 .top-full {
   top: 100%;
+}
+.-right-1\.5 {
+  right: calc(var(--spacing) * -1.5);
 }
 .right-0 {
   right: 0px;
@@ -105,6 +111,9 @@
 }
 .bottom-2 {
   bottom: var(--space-2);
+}
+.bottom-3 {
+  bottom: var(--space-3);
 }
 .bottom-4 {
   bottom: var(--space-4);
@@ -364,6 +373,9 @@
 .table-row {
   display: table-row;
 }
+.field-sizing-content {
+  field-sizing: content;
+}
 .size-1 {
   width: var(--space-1);
   height: var(--space-1);
@@ -394,6 +406,9 @@
 }
 .h-8 {
   height: calc(var(--spacing) * 8);
+}
+.h-18 {
+  height: calc(var(--spacing) * 18);
 }
 .h-35 {
   height: calc(var(--spacing) * 35);
@@ -488,6 +503,9 @@
 .min-h-5 {
   min-height: var(--space-5);
 }
+.min-h-6 {
+  min-height: var(--space-6);
+}
 .min-h-7 {
   min-height: var(--space-7);
 }
@@ -517,6 +535,9 @@
 }
 .min-h-72 {
   min-height: calc(var(--spacing) * 72);
+}
+.min-h-\[2\.6rem\] {
+  min-height: 2.6rem;
 }
 .min-h-\[22rem\] {
   min-height: 22rem;
@@ -565,6 +586,9 @@
 }
 .w-12 {
   width: calc(var(--spacing) * 12);
+}
+.w-18 {
+  width: calc(var(--spacing) * 18);
 }
 .w-65 {
   width: calc(var(--spacing) * 65);
@@ -643,6 +667,9 @@
 }
 .min-w-10 {
   min-width: calc(var(--spacing) * 10);
+}
+.min-w-11 {
+  min-width: calc(var(--spacing) * 11);
 }
 .min-w-16 {
   min-width: calc(var(--spacing) * 16);
@@ -1086,6 +1113,12 @@
 .border-rule {
   border-color: var(--rule);
 }
+.border-rule\/35 {
+  border-color: var(--rule);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in oklab, var(--rule) 35%, transparent);
+  }
+}
 .border-rule\/45 {
   border-color: var(--rule);
   @supports (color: color-mix(in lab, red, red)) {
@@ -1352,6 +1385,9 @@
 }
 .pb-1 {
   padding-bottom: var(--space-1);
+}
+.pb-1\.5 {
+  padding-bottom: calc(var(--spacing) * 1.5);
 }
 .pb-2 {
   padding-bottom: var(--space-2);
@@ -1660,6 +1696,11 @@
 }
 .transition {
   transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to, opacity, box-shadow, transform, translate, scale, rotate, filter, -webkit-backdrop-filter, backdrop-filter, display, content-visibility, overlay, pointer-events;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
+}
+.transition-\[box-shadow\,border-color\] {
+  transition-property: box-shadow,border-color;
   transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
   transition-duration: var(--tw-duration, var(--default-transition-duration));
 }
@@ -1984,6 +2025,12 @@
 .selection\:bg-\[…\]::selection {
   background-color: …;
 }
+.placeholder\:text-sm::placeholder {
+  font-size: var(--step-0);
+}
+.placeholder\:opacity-85::placeholder {
+  opacity: 85%;
+}
 .before\:inline-block::before {
   content: var(--tw-content);
   display: inline-block;
@@ -2084,6 +2131,16 @@
   --tw-content: '…';
   content: var(--tw-content);
 }
+.focus-within\:border-\[color-mix\(in_srgb\,var\(--accent\)_22\%\,var\(--border\)\)\]:focus-within {
+  border-color: var(--accent);
+  @supports (color: color-mix(in lab, red, red)) {
+    border-color: color-mix(in srgb,var(--accent) 22%,var(--border));
+  }
+}
+.focus-within\:shadow-\[var\(--lift\)\]:focus-within {
+  --tw-shadow: var(--lift);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
 .focus-within\:outline-2:focus-within {
   outline-style: var(--tw-outline-style);
   outline-width: 2px;
@@ -2117,6 +2174,9 @@
   }
   .hover\:border-border:hover {
     border-color: var(--border);
+  }
+  .hover\:border-danger:hover {
+    border-color: var(--danger);
   }
   .hover\:border-fg:hover {
     border-color: var(--fg);
@@ -2173,6 +2233,9 @@
   }
   .hover\:text-accent-text:hover {
     color: var(--accent-text);
+  }
+  .hover\:text-danger:hover {
+    color: var(--danger);
   }
   .hover\:text-fg:hover {
     color: var(--fg);
@@ -3342,6 +3405,9 @@
 .\[\&_strong\]\:text-fg-muted strong {
   color: var(--fg-muted);
 }
+.data-\[dragging\=true\]\:\[\&_textarea\]\:border-accent[data-dragging="true"] textarea {
+  border-color: var(--accent);
+}
 .\[\&\:\:-webkit-details-marker\]\:hidden::-webkit-details-marker {
   display: none;
 }
@@ -3394,6 +3460,9 @@
 }
 .\[\&\[data-done\=true\]\>span\]\:bg-ok-fill[data-done=true] > span {
   background-color: var(--ok-fill);
+}
+.\[\&\[hidden\]\]\:hidden[hidden] {
+  display: none;
 }
 *, ::before, ::after {
   border: 0 solid;

@@ -50,6 +50,7 @@ const migrated = [
   "core/kit.js",
   "core/ui.js",
   "core/tools.js",
+  "core/attachments.js",
   "app.js",
 ];
 

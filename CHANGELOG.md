@@ -476,6 +476,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   because the classes that list named are three views' chrome that moved over.
   The field-size list in `views.css` keeps only the plugin fields it still owns.
 
+- The composer is utilities: the box with its focus-within ring and its
+  drag state (`data-dragging`, an attribute now), the task textarea with its
+  autosizing and placeholder, the attachments strip and each attached
+  thumbnail's remove control (`core/attachments.js`, which joins the ledger),
+  the toolbar and its meta line, the jump-to-latest pill, Voice, Stop and Run.
+  The coarse-pointer 44px floor those controls need is `pointer-coarse:min-h-11`
+  on each rather than a media block naming classes that no longer exist, and
+  the task field's phone guard is `max-[640px]:[font-size:16px]` beside it. A
+  Run button's accent pill is `button.primary` alone: `#submit` no longer needs
+  a rule of its own.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

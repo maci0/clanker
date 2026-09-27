@@ -14,18 +14,26 @@ export var max_video_frames = 4;
 export var max_video_bytes = 256 * 1024 * 1024;
 export var video_frame_width = 640;
 
+/* An attached image and its remove control. Small enough to stay out of the
+   way, large enough to tell two screenshots apart. */
+var ATTACH_WRAP_CLASS = "relative";
+var ATTACH_IMG_CLASS = "block h-18 w-18 rounded-plate border border-border bg-surface object-cover";
+var ATTACH_REMOVE_CLASS = "absolute -top-1.5 -right-1.5 min-h-6 w-6 cursor-pointer rounded-capsule border border-border bg-surface p-0 font-mono text-sm leading-none font-bold text-fg-muted hover:border-danger hover:text-danger";
+
 export function renderAttachments(els, iconFn, fmtBytesFn) {
   els.attachments.textContent = "";
   els.attachments.hidden = pendingImages.length === 0;
   pendingImages.forEach(function (img, i) {
     var wrap = document.createElement("div");
-    wrap.className = "attachment";
+    wrap.className = ATTACH_WRAP_CLASS;
     var thumb = document.createElement("img");
+    thumb.className = ATTACH_IMG_CLASS;
     thumb.src = "data:" + img.mime + ";base64," + img.b64;
     thumb.alt = "Attached image " + (i + 1) + ", " + fmtBytesFn(img.bytes);
     wrap.appendChild(thumb);
     var rm = document.createElement("button");
     rm.type = "button";
+    rm.className = ATTACH_REMOVE_CLASS;
     rm.appendChild(iconFn("strike", 14));
     rm.setAttribute("aria-label", "Remove attached image " + (i + 1));
     rm.addEventListener("click", function () {

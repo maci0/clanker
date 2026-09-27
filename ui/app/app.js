@@ -2175,11 +2175,11 @@ el.task.addEventListener("paste", function (e) {
   el.form.addEventListener(evt, function (e) {
     if (!e.dataTransfer) return;
     e.preventDefault();
-    el.form.classList.add("dragging");
+    el.form.setAttribute("data-dragging", "true");
   });
 });
 ["dragleave", "drop"].forEach(function (evt) {
-  el.form.addEventListener(evt, function () { el.form.classList.remove("dragging"); });
+  el.form.addEventListener(evt, function () { el.form.setAttribute("data-dragging", "false"); });
 });
 el.form.addEventListener("drop", function (e) {
   if (!e.dataTransfer || !e.dataTransfer.files) return;

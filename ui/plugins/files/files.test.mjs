@@ -35,7 +35,7 @@ function classOf(name) {
 test("host accent pill is primary and submit only", function () {
   // The PatternFly guard is gone with the button bridge; what the test pins is
   // that only `button.primary, #submit` paints the accent pill.
-  assert.match(host, /button\.primary,\s*\n#submit\s*\{/);
+  assert.match(host, /button\.primary\s*\{/);
   assert.doesNotMatch(
     host,
     /(^|[,\s])button\s*(,[^{]*)?\{[^}]*background:\s*var\(--accent\)/m,

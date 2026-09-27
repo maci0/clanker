@@ -87,7 +87,7 @@ test("shipped Chat markup is a session-first column", function () {
   assert.doesNotMatch(html, /id="rail-context"[^>]*\bhidden\b/);
   assert.match(html, /class="conversation-header"/);
   assert.match(html, /class="conversation-scroll"/);
-  assert.match(html, /id="task-form" class="composer"/);
+  assert.match(html, /<form id="task-form" class="/);
   assert.match(css, /--accent:\s*#1d5c9e/);
   assert.match(css, /#view-chat \.conversation-scroll/);
   assert.match(css, /#view-chat \.composer/);

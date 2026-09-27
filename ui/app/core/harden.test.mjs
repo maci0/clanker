@@ -699,8 +699,9 @@ test("accent pill is primary/#submit only, not every unmarked button", function 
   // `button.primary, #submit` is the accent pill; a selector list that only
   // names bare `button` must not paint it.
   assert.doesNotMatch(css, /(^|[,\s])button\s*(,[^{]*)?\{[^}]*background:\s*var\(--accent\)/m);
-  const primary = ruleBody("button.primary,\n#submit");
+  const primary = ruleBody("button.primary");
   assert.match(primary, /background:\s*var\(--accent\)/);
+  assert.match(html, /id="submit"[^>]*class="primary|class="primary[^"]*"[^>]*id="submit"/);
 });
 
 test("Search and Create channel use a primary CTA", function () {

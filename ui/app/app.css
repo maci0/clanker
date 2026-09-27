@@ -506,7 +506,6 @@ button.chip-btn:hover { color: var(--fg); background: var(--surface-2); border-c
 .plan-toggle.safety-toggle span {
   font-family: var(--mono); letter-spacing: var(--track-label);
 }
-#submit { display: inline-flex; align-items: center; gap: 0.35rem; }
 .view:not(#view-chat):not([hidden]) {
   flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain;
 }
@@ -971,41 +970,8 @@ form[hidden] { display: none; }
 @keyframes caret { 50% { opacity: 0.15; } }
 @media (prefers-reduced-motion: reduce) { .caret { animation: none; opacity: 0.6; } }
 
-.composer {
-  position: sticky; bottom: var(--space-3); z-index: 2;
-  margin-top: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 0.55rem 0.7rem 0.45rem;
-  box-shadow: var(--lift-low);
-  transition: box-shadow 160ms ease, border-color 160ms ease;
-}
-.composer:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
-  box-shadow: var(--lift);
-}
-.composer > label[for="task"] {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
-}
 /* Images travelling with the next task. Small enough to stay out of the way,
    large enough to tell two screenshots apart. */
-.attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem; }
-.attachment { position: relative; }
-.attachment img {
-  display: block; width: 72px; height: 72px; object-fit: cover;
-  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
-}
-.attachment button {
-  position: absolute; top: -6px; right: -6px;
-  min-height: 24px; width: 24px; padding: 0; line-height: 1;
-  font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
-  background: var(--surface); color: var(--fg-muted);
-  border: 1px solid var(--border); border-radius: var(--radius-pill); cursor: pointer;
-}
-.attachment button:hover { color: var(--danger); border-color: var(--danger); }
-.composer.dragging textarea { border-color: var(--accent); }
 label {
   display: block; font-family: var(--sans);
   font-size: var(--step-0); font-weight: 500; letter-spacing: 0.01em;
@@ -1021,47 +987,15 @@ textarea {
   box-shadow: var(--bevel-inset);
 }
 textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
-.composer textarea {
-  min-height: 2.6rem; max-height: 10rem; padding: 0.55rem 0.75rem;
-  font-size: var(--step-0); line-height: 1.5;
-  background: transparent; border: 0; border-radius: 0; resize: none;
-  box-shadow: none; outline: none; field-sizing: content;
-}
-.composer textarea:focus-visible {
-  border-color: transparent;
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
 ::placeholder { color: var(--fg-muted); opacity: 1; }
-.composer textarea::placeholder { font-size: var(--step-0); opacity: 0.85; }
-.toolbar {
-  display: flex; flex-wrap: wrap; justify-content: space-between;
-  align-items: center; gap: var(--space-2) var(--space-3); margin-top: var(--space-2);
-  padding-top: var(--space-2); border-top: 1px solid color-mix(in srgb, var(--rule) 55%, transparent);
-}
-.composer .toolbar { border-top-color: color-mix(in srgb, var(--rule) 35%, transparent); }
-.composer .toolbar #submit { border-radius: var(--radius-pill); padding-inline: 1rem; min-height: 34px; font-size: var(--step-0); }
 /* Send is a labeled "↑ Run" pill; Stop swaps into its spot as a matching
    labeled pill so the control still names the action while a turn runs. */
-.composer .toolbar #cancel {
-  display: inline-flex; align-items: center; justify-content: center;
-  gap: var(--space-1); min-height: 36px; padding-inline: 1rem; border-radius: var(--radius-pill);
-}
-.composer .toolbar #submit { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
-.composer .toolbar #submit svg,
-.composer .toolbar #cancel svg { display: block; }
 /* The author display above beats the UA [hidden] rule (same trap as
    .rail-context[hidden]); restate it or the off-duty circle paints. */
-.composer .toolbar #submit[hidden],
-.composer .toolbar #cancel[hidden] { display: none; }
-.toolbar > .meta { margin-right: auto; font-size: var(--step--1); }
-.toolbar > .meta:empty { display: none; }
-.toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
 /* Primary actuators that skip upgradePfButton. A bare `button` must not
    inherit the accent pill: plugins and unmarked row controls (filenames,
    crumbs, #card-add) were painted as 40px Run buttons. */
-button.primary,
-#submit {
+button.primary {
   min-height: 40px; padding: 0.5rem 1.05rem;
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
   color: var(--on-accent); background: var(--accent);
@@ -1529,19 +1463,6 @@ mark {
    happens to be beneath it, and moving it only changes which button that is.
    It lives in the composer's toolbar, which is where "latest" is, and is shown
    only while the latest turn is off screen. */
-.scroll-bottom {
-  min-height: 32px; padding: 0 var(--space-4);
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  white-space: nowrap;
-  border: 1px solid var(--border); border-radius: var(--radius-pill);
-  background: var(--surface); color: var(--fg);
-  font-family: var(--sans); font-size: var(--step-0); cursor: pointer;
-  box-shadow: var(--lift);
-}
-.scroll-bottom[hidden] { display: none; }
-.scroll-bottom:hover { border-color: var(--accent); color: var(--accent-text); }
-.scroll-bottom:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--bevel-pressed); }
-.scroll-bottom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
 
 /* Transcript empty — idle legend plate, not a chat-product hero */
