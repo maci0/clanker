@@ -102,7 +102,10 @@ Then confirm the choice is actually restorable:
 
 ```bash
 ls -lt <storage_root>/backups/ | head -5
-readlink -f <storage_root>/backups/latest   # which snapshot is newest
+# which snapshot is newest. Plain `readlink` resolves the `latest` link
+# (its target is absolute, so no `-f` is needed to make it meaningful);
+# add `-f` on GNU/Linux to canonicalize a path that is itself a chain.
+readlink <storage_root>/backups/latest
 ls <storage_root>/backups/<timestamp>/state | head   # has content?
 ```
 
@@ -116,16 +119,22 @@ this runbook can manufacture a snapshot that does not exist.
 1. Stop everything that writes `state/` first: `clanker serve`, `clanker
    repl`, and any `clanker run`/goal loops. Restoring over a live tree mixes
    old and new writes and the next backup re-snapshots the mess.
-   `systemctl --user stop clanker-state-backup.timer` if the timer is enabled,
-   so a mid-restore run does not snapshot the half-restored tree (the weekly
-   verify drill only reads snapshots, so it can keep running).
+   On a host with a systemd user manager (the arrangement
+   `scripts/install-state-backup.sh` sets up, and the one it links units for),
+   `systemctl --user stop clanker-state-backup.timer` so a mid-restore run does
+   not snapshot the half-restored tree. The same installer deliberately
+   supports a host with no systemd, and there the scheduling is whatever you
+   set up yourself (cron, launchd): suspend that schedule instead, and the
+   weekly verify drill only reads snapshots, so it can keep running.
 2. Restore into the *target* of the `state` link — the external storage root —
    not into the checkout, so the checkout's link keeps working. Anchor on the
    snapshot path you picked in Diagnose, not on `state`, which the incident
-   may have destroyed:
+   may have destroyed. `SNAP` is already absolute, so plain `readlink -f`
+   above would only canonicalize it; keep it BSD/macOS-compatible with
+   `readlink` alone (macOS ships a readlink with no `-f`):
    ```bash
    SNAP=<storage_root>/backups/<timestamp>    # the path you picked above
-   storage_root=$(dirname "$(dirname "$(readlink -f "$SNAP")")")
+   storage_root=$(dirname "$(dirname "$SNAP")")
    rsync -a --delete "$SNAP/state/" "$storage_root/state/"
    # only if the snapshot has them and the targets exist:
    rsync -a --delete "$SNAP/local/" "$storage_root/.local/" 2>/dev/null || true
@@ -145,11 +154,13 @@ this runbook can manufacture a snapshot that does not exist.
 3. Recreate anything the snapshot does not carry: provider credentials held
    outside `config.local.*`/`.env`, and re-link any
    `state`/`.local`/`.agents` symlinks the incident destroyed.
-4. Restart the backup timer, then clanker:
+4. Restart the backup schedule, then clanker. With systemd:
    ```bash
    systemctl --user start clanker-state-backup.timer
    ./scripts/backup-state.sh   # prove the restored store snapshots cleanly
    ```
+   On a host with no systemd (macOS), re-enable whatever you scheduled in step
+   1 and run the same `./scripts/backup-state.sh` line.
 
 ## Verify
 
@@ -162,10 +173,12 @@ this runbook can manufacture a snapshot that does not exist.
 - If a torn tail is suspected (snapshots are crash-consistent), open the
   affected `*.jsonl`: a torn last line is normal and the file's reader
   tolerates it — do not "repair" the whole store for it.
-- `readlink -f <storage_root>/backups/latest` points at a snapshot newer than
-  the restore time, and neither `systemctl --user is-failed
+- `readlink <storage_root>/backups/latest` points at a snapshot newer than
+  the restore time, and on a systemd host neither `systemctl --user is-failed
   clanker-state-backup.service` nor `systemctl --user is-failed
-  clanker-state-verify.service` prints `failed`.
+  clanker-state-verify.service` prints `failed` (on a host with no systemd,
+  the equivalent is that the schedule you manage runs and the last run
+  succeeded).
 - A restore is only proven by a drill. `scripts/verify-backup.sh` is the
   drill: it restores a snapshot into a scratch directory, compares every
   entry byte-for-byte, opens each restored database

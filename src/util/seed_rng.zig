@@ -6,6 +6,15 @@
 //! same stream for the same `agent.seed` and the same module bytes, or a
 //! replay of a run that called a nested tool diverges from the original at
 //! the first `ck_random` the child makes.
+//!
+//! The seed and the clock are hashed as little-endian bytes rather than
+//! through `asBytes`, which hands over the host's own byte order. A run graph
+//! carries `agent.seed` precisely so the run can be replayed, and a run
+//! recorded on one machine and replayed on another of the opposite
+//! endianness would otherwise derive a different stream from the same seed
+//! and diverge at the first draw. Every target clanker ships today is
+//! little-endian, so this pins a promise the code was making only by
+//! coincidence; it costs four bytes of stack and one explicit byte order.
 
 const std = @import("std");
 
@@ -19,10 +28,10 @@ const std = @import("std");
 /// `clanker eval --seed` and a replay both rely on.
 pub fn derive(seed: u64, salt: []const u8, io: std.Io) u64 {
     var h = std.hash.Wyhash.init(0x6A09E667F3BCC909);
-    h.update(std.mem.asBytes(&seed));
+    h.update(&std.mem.toBytes(std.mem.nativeTo(u64, seed, .little)));
     if (seed == 0) {
         const ts: u64 = @intCast(std.Io.Timestamp.now(io, .real).nanoseconds);
-        h.update(std.mem.asBytes(&ts));
+        h.update(&std.mem.toBytes(std.mem.nativeTo(u64, ts, .little)));
     }
     h.update(salt);
     return h.final();
@@ -50,4 +59,21 @@ test "a different salt for the same seed gives a different stream" {
     try std.testing.expect(
         derive(7, "tool-a", tp.io()) != derive(7, "tool-b", tp.io()),
     );
+}
+
+test "the derived stream is pinned to a little-endian seed, not the host's byte order" {
+    // Pins the exact value `derive` must produce for a nonzero seed, so a
+    // host whose native byte order differs (or a future edit back to
+    // `asBytes`) fails here rather than silently re-deriving every recorded
+    // run's stream. The reference is computed the way the function claims to
+    // work -- Wyhash over the little-endian seed bytes, then the salt -- so
+    // the test states the contract instead of freezing an arbitrary number.
+    var tp = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer tp.deinit();
+    const seed: u64 = 0x0102_0304_0506_0708;
+    const salt = "module bytes";
+    var want = std.hash.Wyhash.init(0x6A09E667F3BCC909);
+    want.update(&std.mem.toBytes(std.mem.nativeTo(u64, seed, .little)));
+    want.update(salt);
+    try std.testing.expectEqual(want.final(), derive(seed, salt, tp.io()));
 }
