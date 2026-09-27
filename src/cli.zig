@@ -7613,13 +7613,23 @@ fn printServeBanner(io: std.Io, environ_map: *std.process.Environ.Map, disp: []c
     if (loopback)
         w.print("  {s}▌{s} {s}◉{s} {s}▐{s}   Web UI is reachable from this machine only.\n", .{ dim, off, green, off, dim, off }) catch return
     else
-        w.print("  {s}▌{s} {s}◉{s} {s}▐{s}   Web UI is reachable from the network.\n", .{ dim, off, green, off, dim, off }) catch return;
+        w.print("  {s}▌{s} {s}◉{s} {s}▐{s}   Web UI and API are reachable from the network.\n", .{ dim, off, green, off, dim, off }) catch return;
     w.print("  {s}▙▄▄▄▟{s}\n\n", .{ dim, off }) catch return;
     w.print("  Local:    {s}http://{s}/webui{s}\n", .{ cyan, disp, off }) catch return;
     if (loopback)
         w.print("  Network:  off  {s}use --host 0.0.0.0 to enable{s}\n", .{ dim, off }) catch return
     else
         w.print("  Network:  on  {s}bound to {s}{s}\n", .{ dim, listen.host, off }) catch return;
+    // The card above says the web UI is reachable. The same socket also
+    // serves /api/*, and that half has no credential of any kind: the proxy
+    // subtree is the only authorized one, and it is off unless --proxy. So a
+    // non-loopback bind hands every host that can route to this port the run
+    // verb, the tool exec path, /api/files over the whole workspace, and the
+    // session transcript read endpoints. `--help` says so in prose, but the
+    // operator starting a service unit never reads it, and this line is the
+    // one they see at the moment they expose it.
+    if (!loopback)
+        w.print("  Exposed:  /api/* needs no auth -- put a firewall in front.\n", .{}) catch return;
     if (listen.proxy_enabled) {
         if (listen.proxy_port != listen.port)
             w.print("  Proxy:    {s}port {d}{s} at /v1\n", .{ cyan, listen.proxy_port, off }) catch return
