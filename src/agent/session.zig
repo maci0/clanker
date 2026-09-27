@@ -38,14 +38,21 @@ const schema: [:0]const u8 =
     \\  key TEXT PRIMARY KEY,
     \\  value TEXT NOT NULL
     \\);
+    // The CHECKs are the same invariants `types.Role` and the boolean columns
+    // already carry, enforced where a foreign writer (the mesh transcript
+    // pull) writes rows nobody validated. A role the read path cannot decode
+    // fails `loadStored` for the whole conversation, so it is refused at the
+    // insert instead. Only databases created after this change carry them:
+    // tightening an existing table is a rebuild, not an ALTER, and
+    // `CREATE TABLE IF NOT EXISTS` leaves the old shape alone.
     \\CREATE TABLE IF NOT EXISTS messages (
     \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    \\  role TEXT NOT NULL,
+    \\  role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
     \\  content TEXT,
     \\  images TEXT,
     \\  tool_calls TEXT,
     \\  tool_call_id TEXT,
-    \\  steered INTEGER NOT NULL DEFAULT 0
+    \\  steered INTEGER NOT NULL DEFAULT 0 CHECK (steered IN (0, 1))
     \\);
     \\CREATE TABLE IF NOT EXISTS events (
     \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -652,7 +659,14 @@ pub fn renameSession(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocato
 
 /// Reads one session's listing row (meta + counts) through a short-lived
 /// connection. Returns null when the file is unreadable or has no id.
-fn sessionMetaFromDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) ?SessionMeta {
+fn sessionMetaFromDb(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) ?SessionMeta {
+    // Refuse to create: `openDb` opens with create, and a search reaches this
+    // with ids the FTS index named, not ids the directory holds. A session
+    // deleted while its index rows survived (the index write is fail-open)
+    // would otherwise have a fresh titleless `<id>.db` minted for it on every
+    // search, littering state/sessions with conversations that do not exist.
+    const path = std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix }) catch return null;
+    _ = std.Io.Dir.cwd().statFile(io, path, .{}) catch return null;
     var conn = openDb(arena, sessions_dir, id) catch return null;
     defer conn.close();
     return sessionMetaFromConnection(arena, &conn, id);
@@ -740,7 +754,7 @@ pub fn listSessionsLimited(io: std.Io, arena: std.mem.Allocator, sessions_dir: [
         if (!std.mem.endsWith(u8, entry.name, db_suffix)) continue;
         const id = entry.name[0 .. entry.name.len - db_suffix.len];
         if (!validSessionId(id)) continue;
-        if (sessionMetaFromDb(arena, sessions_dir, id)) |meta| try out.append(arena, meta);
+        if (sessionMetaFromDb(io, arena, sessions_dir, id)) |meta| try out.append(arena, meta);
     }
 
     sortNewestFirst(out.items);
@@ -764,9 +778,10 @@ pub const SessionMeta = struct {
     workspace: []const u8 = "",
     archived: bool = false,
     messages: usize = 0,
-    /// Total byte length of the transcript's message content (plus tool-call
-    /// arguments). Compaction thresholds are in bytes, so a picker can show
-    /// this: it is how close a conversation is to being compacted.
+    /// Total byte length of the transcript's message `content` columns, which
+    /// is what `saveSession` sums and what the aggregate fallback recomputes.
+    /// Tool-call arguments and images are not counted, so this reads low
+    /// against `estimatedTokens`, which does count them.
     bytes: usize = 0,
 };
 
@@ -880,7 +895,7 @@ pub fn searchSessions(
     if (session_fts.candidates(io, gpa, arena, query)) |ids| {
         var listed: std.ArrayList(SessionMeta) = .empty;
         for (ids) |id| {
-            if (sessionMetaFromDb(arena, sessions_dir, id)) |meta| try listed.append(arena, meta);
+            if (sessionMetaFromDb(io, arena, sessions_dir, id)) |meta| try listed.append(arena, meta);
         }
         sortNewestFirst(listed.items);
         metas = listed.items;
@@ -1420,6 +1435,66 @@ test "meta edits on an unknown id fail and mint no database" {
     try std.testing.expectError(error.FileNotFound, setWorkspace(io, std.testing.allocator, arena, dir, "never-saved", "ws"));
     const path = try std.fmt.allocPrint(arena, "{s}/never-saved{s}", .{ dir, db_suffix });
     try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, path, .{}));
+}
+
+test "the messages table refuses what the read path could not decode" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    var conn = try openDb(arena, dir, "checked");
+    defer conn.close();
+
+    // A role outside types.Role is a row `loadStored` fails the whole
+    // conversation on; the table refuses it where the writer is.
+    var bad_role = try conn.prepare("INSERT INTO messages (role, content) VALUES ('root', 'x');");
+    defer bad_role.finalize();
+    try std.testing.expectError(sqlite.Error.StepFailed, bad_role.step());
+
+    // The boolean is a 0/1 column, not a truthy int.
+    var bad_flag = try conn.prepare("INSERT INTO messages (role, steered) VALUES ('user', 7);");
+    defer bad_flag.finalize();
+    try std.testing.expectError(sqlite.Error.StepFailed, bad_flag.step());
+
+    for ([_][:0]const u8{ "system", "user", "assistant", "tool" }) |role| {
+        var ins = try conn.prepare("INSERT INTO messages (role, content) VALUES (?1, 'x');");
+        defer ins.finalize();
+        try ins.bindText(1, role);
+        _ = try ins.step();
+    }
+    const rows = try loadStored(&conn, arena, "checked");
+    try std.testing.expectEqual(@as(usize, 4), rows.items.len);
+}
+
+test "a search over an indexed id with no database mints none" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    // `deleteSession`'s index write is fail-open, so a session removed while
+    // the index was unopenable leaves its rows behind naming a conversation
+    // that has no file. Reading one must not create it.
+    try saveSession(io, std.testing.allocator, arena, dir, .{
+        .id = "real",
+        .title = "real",
+        .messages = &.{.{ .role = .user, .content = "hello" }},
+        .created = 1,
+        .updated = 2,
+    });
+    const saved_index_path = session_fts.index_path;
+    defer session_fts.index_path = saved_index_path; // restore before env.deinit frees the path
+    session_fts.index_path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/session_fts.db", .{&env.tmp.sub_path});
+    const ghost = [_]types.Message{.{ .role = .user, .content = "ghostneedle text" }};
+    session_fts.replaceSession(io, std.testing.allocator, arena, "ghost", &ghost);
+
+    const hits = try searchSessions(io, std.testing.allocator, arena, dir, "ghostneedle", 10);
+    try std.testing.expectEqual(@as(usize, 0), hits.len);
+    const ghost_path = try std.fmt.allocPrint(arena, "{s}/ghost{s}", .{ dir, db_suffix });
+    try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, ghost_path, .{}));
+    try std.testing.expectEqual(@as(usize, 1), (try listSessions(io, arena, dir)).len);
 }
 
 test "a session database opens in WAL journal mode" {
