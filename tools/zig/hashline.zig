@@ -130,7 +130,7 @@ pub fn apply(
     var resolved: std.ArrayList(Resolved) = .empty;
     for (hunks) |h| {
         const start = findAnchor(lines, h, tolerance) orelse return error.AnchorNotFound;
-        if (start + h.old_count > lines.len) return error.PastEnd;
+        if (start +| h.old_count > lines.len) return error.PastEnd;
         try resolved.append(alloc, .{ .start = start, .hunk = h });
     }
     std.mem.sort(Resolved, resolved.items, {}, resolvedLess);
@@ -146,7 +146,7 @@ pub fn apply(
     for (resolved.items, 0..) |r, i| {
         if (i == 0) continue;
         const prev = resolved.items[i - 1]; // larger start: applied earlier
-        if (r.start + r.hunk.old_count > prev.start) return error.OverlappingHunks;
+        if (r.start +| r.hunk.old_count > prev.start) return error.OverlappingHunks;
     }
 
     // One pass. The ranges above are proven disjoint, so every hunk can be
@@ -167,7 +167,7 @@ pub fn apply(
         idx -= 1;
         const r = resolved.items[idx];
         const start_off = lineOffset(lines, r.start);
-        const end_off = if (r.start + r.hunk.old_count < lines.len)
+        const end_off = if (r.start +| r.hunk.old_count < lines.len)
             lineOffset(lines, r.start + r.hunk.old_count)
         else
             src.len;
@@ -314,6 +314,23 @@ test "apply rejects when old_count walks past the end" {
         .anchor_hash = lineHash("only"),
         .anchor_line = 1,
         .old_count = 4,
+        .new_text = "x\n",
+    }};
+    try std.testing.expectError(error.PastEnd, apply(arena_state.allocator(), src, &hunks, 10));
+}
+
+test "apply rejects an old_count that would overflow the range check" {
+    // `start + old_count` is usize arithmetic over a model-supplied count.
+    // Unsaturated it wraps below `lines.len` in the ReleaseSmall build these
+    // guests ship as, so the PastEnd guard passes and the end offset is taken
+    // from a wrapped line index.
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const src = "only\nsecond\n";
+    const hunks = [_]Hunk{.{
+        .anchor_hash = lineHash("only"),
+        .anchor_line = 1,
+        .old_count = std.math.maxInt(usize),
         .new_text = "x\n",
     }};
     try std.testing.expectError(error.PastEnd, apply(arena_state.allocator(), src, &hunks, 10));

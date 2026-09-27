@@ -5,6 +5,12 @@ const lib = @import("lib.zig");
 const logic = @import("commit_logic.zig");
 const model_reply = @import("model_reply.zig");
 const utf8 = @import("utf8");
+const num = @import("num.zig");
+
+/// A grouping wider than this is one commit per file with nothing left to
+/// say, so a caller asking for more is answered with the cap rather than a
+/// value the group count cannot reach.
+const max_commits_cap: usize = 1000;
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -25,7 +31,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (!std.mem.eql(u8, scope, "staged") and !std.mem.eql(u8, scope, "all"))
         return lib.fail(out, "scope must be \"staged\" or \"all\"");
     const max_commits: usize = switch (obj.get("max_commits") orelse std.json.Value{ .integer = 10 }) {
-        .integer => |n| if (n < 1) 1 else @as(usize, @intCast(n)),
+        // Bounded as a parsed integer, not as a cast: `usize` is 32 bits in
+        // the wasm build this ships as, and a check written against the i64
+        // does not survive the narrowing.
+        .integer => |n| num.clampJsonInt(usize, n, 1, max_commits_cap),
         else => 10,
     };
 
@@ -508,10 +517,14 @@ fn parseGroups(raw: []const u8, all_files: []const []const u8, max_commits: usiz
     }
     if (out.items.len == 0) return error.InvalidArg;
     if (out.items.len > max_commits) {
+        // `keep`, not `max_commits`: the slice below indexes from
+        // `max_commits - 1`, and any value past the number of groups the
+        // model actually returned puts that index outside the list.
+        const keep = @min(max_commits, out.items.len);
         var extra: std.ArrayList([]const u8) = .empty;
-        for (out.items[max_commits - 1 ..]) |g| try extra.appendSlice(lib.alloc, g.files);
-        out.items[max_commits - 1].files = extra.items;
-        out.shrinkRetainingCapacity(max_commits);
+        for (out.items[keep - 1 ..]) |g| try extra.appendSlice(lib.alloc, g.files);
+        out.items[keep - 1].files = extra.items;
+        out.shrinkRetainingCapacity(keep);
     }
     return out.toOwnedSlice(lib.alloc);
 }

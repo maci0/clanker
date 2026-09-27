@@ -18,6 +18,15 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const hashline = @import("hashline.zig");
+const num = @import("num.zig");
+
+/// Ceilings on the two numbers a hunk carries. Both are counts into a file
+/// whose length the hunk itself is about, so a value past this is a mistaken
+/// request rather than a large one, and `usize` is 32 bits in the wasm build:
+/// an unclamped `{"old_count": 4294967296}` narrows to 0 and the range checks
+/// in `hashline.apply` are computed off the wrapped value.
+const max_old_count: usize = 1_000_000;
+const max_anchor_line: usize = 10_000_000;
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
@@ -129,13 +138,13 @@ fn applyHashline(obj: std.json.ObjectMap, path: []const u8, out: *lib.Out) !void
         const hash = hashline.parseHash(hash_s) orelse
             return lib.fail(out, "anchor_hash must be 4 lowercase hex digits");
         const old_count = switch (h.get("old_count") orelse std.json.Value{ .integer = 1 }) {
-            .integer => |n| if (n < 1) 1 else @as(usize, @intCast(n)),
+            .integer => |n| num.clampJsonInt(usize, n, 1, max_old_count),
             else => 1,
         };
         const new_text = joinNewLines(alloc, h) catch
             return lib.fail(out, "hunk needs \"new_lines\" (array of strings)");
         const anchor_line: usize = switch (h.get("anchor_line") orelse std.json.Value{ .integer = 1 }) {
-            .integer => |n| if (n < 1) 1 else @as(usize, @intCast(n)),
+            .integer => |n| num.clampJsonInt(usize, n, 1, max_anchor_line),
             else => 1,
         };
         try hunks.append(alloc, .{

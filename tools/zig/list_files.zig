@@ -14,12 +14,16 @@ const lib = @import("lib.zig");
 // The same skip table the host's ck_fs_find walk uses, so the two answer the
 // same about a tree rather than drifting apart.
 const fs_skip = @import("fs_skip");
+const num = @import("num.zig");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
     return lib.run(ptr, len, tool_main);
 }
 
 const default_max = 500;
+/// The widest listing a caller can ask for. Above this the answer is a tree
+/// the model cannot read anyway, and every entry costs a guest arena slot.
+const max_cap = 20_000;
 /// Deep enough for this project's tree, shallow enough that a symlink loop or
 /// a vendored dependency cannot spin the sandbox.
 const max_depth = 8;
@@ -38,7 +42,10 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         else => false,
     };
     const max = switch (obj.get("max") orelse std.json.Value{ .integer = default_max }) {
-        .integer => |i| if (i <= 0) default_max else @as(usize, @intCast(i)),
+        // Clamped as a parsed integer: `usize` is 32 bits in the wasm build,
+        // so `{"max": 4294967296}` casts to 0 and the walk's `len >= max`
+        // test then truncates before it appends a single entry.
+        .integer => |i| num.clampJsonInt(usize, i, 1, max_cap),
         else => default_max,
     };
 

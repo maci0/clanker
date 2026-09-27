@@ -65,6 +65,37 @@ pub fn clampInt(comptime T: type, f: f64, lo: T, hi: T) T {
     return hi;
 }
 
+/// A parsed JSON integer clamped into `lo..=hi` as a `T`. The same hazard as
+/// `clampInt` one step earlier in the parse: the `.integer` arm of a
+/// `std.json.Value` is an unbounded `i64`, and the guests build as wasm32, so
+/// `usize` is 32 bits there. A bound checked against the `i64` does not
+/// survive the narrowing, and `{"max": 4294967296}` is a value a model emits
+/// without thinking twice: `if (n < 1) 1 else @as(usize, @intCast(n))` passes
+/// it and yields 0, so a walk bounded by `max` returns nothing at all.
+pub fn clampJsonInt(comptime T: type, n: i64, lo: T, hi: T) T {
+    // Both endpoints widen to i128 exactly, so the comparison is against the
+    // value the cast will produce rather than against the i64 it came from.
+    const wide: i128 = n;
+    if (wide < @as(i128, lo)) return lo;
+    if (wide > @as(i128, hi)) return hi;
+    return @intCast(wide);
+}
+
+test "clampJsonInt bounds a parsed integer before the narrowing" {
+    try std.testing.expectEqual(@as(usize, 5), clampJsonInt(usize, 5, 1, 100));
+    try std.testing.expectEqual(@as(usize, 100), clampJsonInt(usize, 5000, 1, 100));
+    try std.testing.expectEqual(@as(usize, 1), clampJsonInt(usize, 0, 1, 100));
+    try std.testing.expectEqual(@as(usize, 1), clampJsonInt(usize, -7, 1, 100));
+    // 2^32 is 0 as a wasm32 usize, and `max_commits - 1` off that is an
+    // out-of-bounds slice in the guest.
+    try std.testing.expectEqual(@as(u32, 100), clampJsonInt(u32, 4294967296, 1, 100));
+    try std.testing.expectEqual(@as(u32, 100), clampJsonInt(u32, std.math.maxInt(i64), 1, 100));
+    try std.testing.expectEqual(@as(u32, 100), clampJsonInt(u32, std.math.minInt(i64), 1, 100));
+    // A cap the type cannot represent would itself be a wrap, so the widest
+    // legal destination value is still returned as itself.
+    try std.testing.expectEqual(@as(u64, 4294967295), clampJsonInt(u64, 4294967295, 1, std.math.maxInt(u64)));
+}
+
 test "intFromFloat refuses what @trunc would corrupt" {
     try std.testing.expectEqual(@as(u32, 5), intFromFloat(u32, 5.9).?);
     try std.testing.expectEqual(@as(u32, 5), intFromFloat(u32, 5.0).?);
