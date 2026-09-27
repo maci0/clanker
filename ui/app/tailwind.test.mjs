@@ -45,6 +45,7 @@ const migrated = [
   "features/arena.js",
   "features/fleet.js",
   "features/runs.js",
+  "features/board.js",
   "lib/graph.js",
   "core/kit.js",
 ];
@@ -97,7 +98,7 @@ function splitVariants(token) {
 /// An arbitrary *variant* is not an arbitrary value: `[&_input]:h-4` and
 /// `has-[:focus-visible]:outline-2` reach a descendant or a child state, and
 /// only the utility they carry is checked against the scale.
-const variant_bracket_ok = /^(?:\[&|has-\[|max-\[|min-\[|data-\[|group-data-\[|aria-\[|group-aria-\[)/;
+const variant_bracket_ok = /^(?:\[&|\[[a-z-]+\]|has-\[|max-\[|min-\[|data-\[|group-data-\[|aria-\[|group-aria-\[)/;
 
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

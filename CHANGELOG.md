@@ -253,6 +253,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   raising it. A host without a module loader (the plugins suite) replaces the
   loader through `__kitLoader`.
 
+- The board's lane is styled with Tailwind utilities: the column shell with its
+  collapsed, drop and over states, the header and title, the count, the card
+  list, the empty slot, the quick-add form and the column options menu — all in
+  `ui/app/features/board.js`, where a column is a `group` so a child can read
+  the states the column itself carries. The menu's open state is `data-open`
+  beside the class, the quick-add's expanded state is `data-adding`, and the
+  two classes that existed only as selectors (`.board-add-trigger`,
+  `.board-col-menu.is-open`) are attributes now. First paint falls to 61.6K gz;
+  the sheet's own accounting figure moves to 60K, as the test's note there
+  records.
+- `ui/app/features/board.js` joins the ledger, which found four classes no
+  sheet ever styled: `usage`/`num` (the pre-kit usage table, replaced by
+  utilities) and `board-list-table`/`board-list-title` (the list view's table,
+  now utilities — the title rule was deleted as board chrome a step early).
+  A bare attribute variant (`[hidden]:hidden`) is allowed by the arbitrary-value
+  check: an attribute selector is a variant, not a value.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

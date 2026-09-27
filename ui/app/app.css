@@ -2340,90 +2340,7 @@ h2#session-title {
 @media (max-width: 40rem) {
   .board { flex-wrap: wrap; overflow-x: hidden; }
 }
-.board-col {
-  flex: 0 0 272px; min-width: 272px; max-width: 272px; display: flex; flex-direction: column;
-  border: 0; border-radius: var(--radius-lg);
-  background: var(--surface-2); max-height: calc(100vh - 14rem);
-  padding-top: 0;
-  /* Collapse snaps like Trello's (the incumbent reference for this board);
-     opacity still tweens as the feedback. Animating flex/min/max-width
-     re-laid out the whole board row every frame for 200ms. */
-  transition: background 180ms ease, box-shadow 180ms ease, opacity 200ms ease;
-}
-
-.board-col[data-collapsed="true"] { flex: 0 0 40px; min-width: 40px; max-width: 40px; cursor: pointer; opacity: 0.8; }
-.board-col[data-collapsed="true"]:hover { opacity: 1; }
-.board-col[data-collapsed="true"] .board-cards, .board-col[data-collapsed="true"] .board-quick-add, .board-col[data-collapsed="true"] .board-empty-slot { display: none; }
-.board-col[data-collapsed="true"] .board-col-title { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: var(--track-label); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
-.board-col[data-collapsed="true"] .board-col-actions { display: none; }
-.board-col[data-collapsed="true"] .board-col-head { padding: 0.65rem var(--space-2); justify-content: center; }
-.board-col[data-drop="true"] { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); box-shadow: inset 0 0 0 2px var(--accent); }
-.board-col[data-drop="true"] .board-empty-slot { border-color: var(--accent); color: var(--accent-text); }
-.board-col-head {
-  display: flex; justify-content: space-between; align-items: center; gap: var(--space-2);
-  padding: 0.65rem 0.75rem 0.45rem; border-bottom: 0;
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 600; letter-spacing: 0.02em;
-  user-select: none; -webkit-user-select: none;
-  cursor: pointer;
-}
-.board-col-title { color: var(--fg); font-weight: 700; text-transform: uppercase; letter-spacing: var(--track-label); flex: 1; min-width: 0; font-size: var(--step-0); }
-.board-col-actions { display: flex; gap: var(--space-1); align-items: center; }
-.board-col-actions button { min-height: 24px; padding: 0 var(--space-2); font-size: var(--step--1); border-radius: var(--radius-pill); }
-.board-quick-add { padding: var(--space-2) 0.5rem; border-top: 1px solid color-mix(in srgb, var(--rule) 50%, transparent); background: transparent; border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
-.board-quick-add[hidden] { display: none; }
-/* Trello-style: add-card shows a placeholder button, expanding to textarea on click */
-.board-quick-add .board-add-trigger {
-  display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2) 0.5rem;
-  border: none; background: none; color: var(--fg-muted); font-size: var(--step-0); font-family: var(--sans);
-  cursor: pointer; border-radius: var(--radius-lg); transition: background 120ms ease, color 120ms ease;
-}
-.board-quick-add .board-add-trigger:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
-.board-quick-add .board-add-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-.board-quick-add .board-add-trigger .icon { opacity: 0.6; }
-.board-quick-add .board-add-form { display: none; flex-direction: column; gap: var(--space-2); }
-.board-quick-add.is-adding .board-add-trigger { display: none; }
-.board-quick-add.is-adding .board-add-form { display: flex; }
-.board-quick-add .board-add-form textarea {
-  width: 100%; min-height: 54px; max-height: 140px; resize: vertical; font-size: var(--step-0);
-  border-radius: var(--radius-lg); padding: 0.5rem var(--space-3); font-family: var(--sans);
-  border: 1px solid var(--rule); background: var(--surface);
-  box-shadow: var(--lift-low); line-height: 1.4;
-}
-.board-quick-add .board-add-form textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
-.board-quick-add .board-add-actions { display: flex; gap: var(--space-2); align-items: center; }
-.board-quick-add .board-add-actions button { min-height: 32px; font-size: var(--step-0); border-radius: var(--radius-lg); }
-.board-quick-add .board-add-actions .board-add-cancel { background: none; border: none; color: var(--fg-muted); cursor: pointer; padding: 0 var(--space-2); font-size: 16px; line-height: 1; }
-.board-quick-add .board-add-actions .board-add-cancel:hover { color: var(--fg); }
-.board-col-count { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
-.board-col-count[data-over="true"] { color: var(--warn-text); }
-.board-col[data-over="true"] { box-shadow: inset 0 0 0 1.5px var(--warn); }
-
 /* Trello-style column options "⋯" menu */
-.board-col-menu-btn { font-size: 16px; padding: 0 0.3rem; line-height: 1; border-radius: var(--radius); min-width: auto; }
-.board-col-menu-btn:hover { background: var(--surface-hover); }
-.board-col-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.board-col-menu {
-  position: absolute; top: 100%; right: 0; z-index: 50;
-  min-width: 220px; background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); box-shadow: var(--lift);
-  padding: var(--space-1) 0; display: none;
-}
-.board-col-menu.is-open { display: block; }
-.board-col-menu-title {
-  padding: 0.5rem 0.75rem; font-size: var(--step-0); font-weight: 700;
-  color: var(--fg-muted); text-transform: uppercase; letter-spacing: var(--track-label);
-}
-.board-col-menu-sep { border: none; border-top: 1px solid var(--border); margin: 0.15rem 0; }
-.board-col-menu-item {
-  display: block; width: 100%; text-align: left; padding: 0.45rem 0.75rem;
-  background: none; border: none; color: var(--fg); font-size: var(--step-0);
-  cursor: pointer; border-radius: 0;
-}
-.board-col-menu-item:hover:not(:disabled) { background: var(--surface-hover); color: var(--accent); }
-.board-col-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.board-col-menu-item:disabled { cursor: default; }
-.board-col-menu-backdrop { position: fixed; inset: 0; z-index: 49; }
-.board-col-head-actions { display: flex; gap: var(--space-1); align-items: center; }
 
 /* Shared board popups (member, priority, column move, label name). */
 .menu-popup {
@@ -2513,24 +2430,6 @@ h2#session-title {
 .card-comment-send { flex: none; min-height: 32px; }
 
 .board-wip-banner { font-size: var(--step--1); font-weight: 600; color: var(--warn-text); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border: 1px solid var(--warn); border-radius: var(--radius); padding: var(--space-1) 0.5rem; margin: 0.3rem 0.5rem; text-align: center; }
-.board-cards {
-  list-style: none; margin: 0; padding: var(--space-1) var(--space-2) var(--space-2);
-  display: flex; flex-direction: column; gap: var(--space-2);
-  overflow-y: auto; min-height: 2rem; flex: 1;
-  scroll-behavior: smooth;
-  scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg) 15%, transparent) transparent;
-}
-.board-cards::-webkit-scrollbar { width: 6px; }
-.board-cards::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg) 15%, transparent); border-radius: var(--radius-pill); }
-.board-cards::-webkit-scrollbar-track { background: transparent; }
-.board-empty-slot {
-  border: 1px dashed var(--rule); border-radius: var(--radius);
-  padding: 1rem 0.75rem; text-align: center;
-  color: var(--fg-muted); font-size: var(--step-0);
-  background: color-mix(in srgb, var(--surface) 70%, var(--surface-2));
-}
-.board-empty-slot button { margin-top: 0.5rem; min-height: 28px; font-size: var(--step-0); border-radius: var(--radius-pill); }
-
 /* ---- Drop indicator: thin line between cards showing where a card will land ---- */
 .board-drop-indicator {
   height: 2px; background: var(--accent); border-radius: var(--radius-pill); margin: -1px 0.5rem;

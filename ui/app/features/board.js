@@ -306,6 +306,32 @@ export function renderBoard(next) {
   if (_renderBoardList) _renderBoardList();
 }
 
+/* The lane — column shell, header, quick-add and its options menu — as
+   Tailwind utilities over the cabinet tokens (ui/app/tailwind.src.css). The
+   column is a `group`, so a child can read the states the column itself
+   carries (collapsed, drop); the menu's open state is `data-open` beside the
+   class, because the class is what the port keeps rewriting. */
+var COL_CLASS = "group flex-none basis-[272px] min-w-[272px] max-w-[272px] flex max-h-[calc(100vh-14rem)] flex-col rounded-plate-lg bg-surface-2 pt-0 transition-colors transition-shadow transition-opacity duration-200 data-[collapsed=true]:basis-[40px] data-[collapsed=true]:min-w-[40px] data-[collapsed=true]:max-w-[40px] data-[collapsed=true]:cursor-pointer data-[collapsed=true]:opacity-80 data-[collapsed=true]:hover:opacity-100 data-[drop=true]:bg-[color-mix(in_srgb,var(--accent)_12%,var(--surface))] data-[drop=true]:shadow-[inset_0_0_0_2px_var(--accent)] data-[over=true]:shadow-[inset_0_0_0_1.5px_var(--warn)]";
+var COL_HEAD_CLASS = "flex cursor-pointer select-none items-center justify-between gap-2 px-3 pb-2 pt-3 font-sans text-sm font-semibold tracking-wide group-data-[collapsed=true]:justify-center group-data-[collapsed=true]:px-2 group-data-[collapsed=true]:py-3";
+var COL_TITLE_CLASS = "min-w-0 flex-1 text-sm font-bold uppercase tracking-label text-fg group-data-[collapsed=true]:overflow-hidden group-data-[collapsed=true]:text-ellipsis group-data-[collapsed=true]:whitespace-nowrap group-data-[collapsed=true]:[writing-mode:vertical-rl] group-data-[collapsed=true]:rotate-180";
+var COL_COUNT_CLASS = "tabular-nums text-fg-muted data-[over=true]:text-warn-text";
+var COL_HEAD_ACTIONS_CLASS = "flex items-center gap-1";
+var COL_ACTIONS_CLASS = "flex items-center gap-1 group-data-[collapsed=true]:hidden";
+var CARDS_CLASS = "m-0 flex min-h-8 flex-1 list-none flex-col gap-2 overflow-y-auto px-2 py-1 pb-2 scroll-smooth [scrollbar-color:color-mix(in_srgb,var(--fg)_15%,transparent)_transparent] [scrollbar-width:thin] group-data-[collapsed=true]:hidden";
+var EMPTY_SLOT_CLASS = "rounded-plate border border-dashed border-rule bg-[color-mix(in_srgb,var(--surface)_70%,var(--surface-2))] px-3 py-4 text-center text-sm text-fg-muted group-data-[collapsed=true]:hidden group-data-[drop=true]:border-accent group-data-[drop=true]:text-accent-text [&_button]:mt-2 [&_button]:rounded-capsule [&_button]:text-sm";
+var QUICK_ADD_CLASS = "group rounded-b-plate-lg border-t border-rule/50 bg-transparent px-2 py-2 [hidden]:hidden group-data-[collapsed=true]:hidden";
+var ADD_TRIGGER_CLASS = "flex w-full cursor-pointer items-center gap-2 rounded-plate-lg border-0 bg-transparent px-2 py-2 font-sans text-sm text-fg-muted transition-colors hover:bg-[color-mix(in_srgb,var(--fg)_8%,transparent)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 group-data-[adding=true]:hidden [&_.icon]:opacity-60";
+var ADD_FORM_CLASS = "hidden flex-col gap-2 group-data-[adding=true]:flex";
+var ADD_TEXTAREA_CLASS = "max-h-[140px] min-h-[54px] w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-2 font-sans text-sm leading-snug shadow-[var(--lift-low)] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_25%,transparent)]";
+var ADD_ACTIONS_CLASS = "flex items-center gap-2 [&_button]:min-h-8 [&_button]:rounded-plate-lg [&_button]:text-sm";
+var ADD_CANCEL_CLASS = "cursor-pointer border-0 bg-transparent px-2 text-base leading-none text-fg-muted hover:text-fg";
+var MENU_BTN_CLASS = "secondary board-lane-control min-w-auto rounded-plate px-1 text-base leading-none hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+var MENU_CLASS = "absolute right-0 top-full z-50 hidden min-w-[220px] rounded-plate-lg border border-border bg-surface px-0 py-1 shadow-[var(--lift)] data-[open=true]:block";
+var MENU_TITLE_CLASS = "px-3 py-2 text-sm font-bold uppercase tracking-label text-fg-muted";
+var MENU_SEP_CLASS = "my-px border-0 border-t border-border";
+var MENU_ITEM_CLASS = "block w-full cursor-pointer rounded-none border-0 bg-transparent px-3 py-2 text-left text-sm text-fg enabled:cursor-pointer enabled:hover:bg-surface-hover enabled:hover:text-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 disabled:cursor-default";
+var MENU_BACKDROP_CLASS = "fixed inset-0 z-40";
+
 function boardColumn(col, s) {
   var shown = s.cards
     .filter(function (c) { return c.column === col.id && cardMatchesBoardFilter(c, s); })
@@ -313,7 +339,7 @@ function boardColumn(col, s) {
 
   var over = col.wip && shown.length > col.wip;
   var count = T.span({
-    class: "board-col-count",
+    class: COL_COUNT_CLASS,
     "data-over": over ? "true" : null,
     // Over the limit is said in words as well as colour, because colour is the
     // one thing forced-colors and colour blindness both take away.
@@ -326,7 +352,7 @@ function boardColumn(col, s) {
   });
   if (!shown.length) {
     var emptySlot = document.createElement("li");
-    emptySlot.className = "board-empty-slot";
+    emptySlot.className = EMPTY_SLOT_CLASS;
     if (boardHasActiveFilters(s)) {
       emptySlot.textContent = "No cards in this lane match the filters";
     } else {
@@ -340,7 +366,7 @@ function boardColumn(col, s) {
     items.push(emptySlot);
   }
   var list = T.ul({
-    class: "board-cards",
+    class: CARDS_CLASS,
     id: "board-cards-" + col.id,
     "aria-label": col.title + ", " + plural(shown.length, { one: "card", other: "cards" })
   }, items);
@@ -348,26 +374,27 @@ function boardColumn(col, s) {
   /* Trello-style add card: a subtle "+ Add a card" trigger that expands to
      a textarea form on click. Cards are goals, so completing the form fills
      the goal objective and shifts focus to the criterion. */
-  var quickAdd = T.div({ class: "board-quick-add" });
+  var quickAdd = T.div({ class: QUICK_ADD_CLASS });
 
   // Trigger button (visible by default)
   var qaTrigger = document.createElement("button");
   qaTrigger.type = "button";
-  qaTrigger.className = "board-add-trigger";
+  qaTrigger.className = ADD_TRIGGER_CLASS;
+  qaTrigger.dataset.addTrigger = "";
   qaTrigger.appendChild(icon("plus", 14));
   qaTrigger.appendChild(document.createTextNode(" Add a card"));
 
   // Form (hidden by default, shown on trigger click)
   var qaForm = document.createElement("div");
-  qaForm.className = "board-add-form";
+  qaForm.className = ADD_FORM_CLASS;
   var qaTextarea = document.createElement("textarea");
   qaTextarea.placeholder = "Enter a goal for this card…";
   qaTextarea.maxLength = 500;
   qaTextarea.rows = 2;
   var qaActions = document.createElement("div");
-  qaActions.className = "board-add-actions";
+  qaActions.className = ADD_ACTIONS_CLASS;
   var qaSave = document.createElement("button"); qaSave.type = "button"; qaSave.className = "secondary"; qaSave.textContent = "Add card";
-  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = "board-add-cancel"; qaCancel.appendChild(icon("close", 12));
+  var qaCancel = document.createElement("button"); qaCancel.type = "button"; qaCancel.className = ADD_CANCEL_CLASS; qaCancel.appendChild(icon("close", 12));
   qaCancel.setAttribute("aria-label", "Cancel adding a goal to " + col.title);
   qaActions.appendChild(qaSave);
   qaActions.appendChild(qaCancel);
@@ -376,8 +403,8 @@ function boardColumn(col, s) {
   quickAdd.appendChild(qaTrigger);
   quickAdd.appendChild(qaForm);
 
-  function openQuickAdd(){ quickAdd.classList.add("is-adding"); qaTextarea.focus(); }
-  function closeQuickAdd(){ quickAdd.classList.remove("is-adding"); qaTextarea.value = ""; qaTextarea.title = ""; }
+  function openQuickAdd(){ quickAdd.dataset.adding = "true"; qaTextarea.focus(); }
+  function closeQuickAdd(){ quickAdd.dataset.adding = ""; qaTextarea.value = ""; qaTextarea.title = ""; }
   qaTrigger.addEventListener("click", function(e){ e.stopPropagation(); openQuickAdd(); });
   qaCancel.addEventListener("click", function(e){ e.stopPropagation(); closeQuickAdd(); });
   // The trailing "@partial" in quick-add, resolved against known peers. Both
@@ -438,7 +465,7 @@ function boardColumn(col, s) {
   }
   qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });
   var colEl = T.section({
-    class: "board-col",
+    class: COL_CLASS,
     "data-column": col.id,
     "aria-labelledby": "board-col-" + col.id,
     ondragover: function (e) { e.preventDefault(); colEl.setAttribute("data-drop", "true"); },
@@ -450,7 +477,7 @@ function boardColumn(col, s) {
       if (id) postBoard({ op: "move", id: id, column: col.id }, "Moved to " + col.title + ".");
     }
   },
-    T.div({ class: "board-col-head" },
+    T.div({ class: COL_HEAD_CLASS },
       (function(){
         var collapse = document.createElement("button");
         collapse.type = "button"; collapse.className = "secondary";
@@ -475,8 +502,8 @@ function boardColumn(col, s) {
         });
         return collapse;
       })(),
-      T.h3({ class: "board-col-title", id: "board-col-" + col.id }, col.title),
-      T.span({ class: "board-col-head-actions" },
+      T.h3({ class: COL_TITLE_CLASS, id: "board-col-" + col.id }, col.title),
+      T.span({ class: COL_HEAD_ACTIONS_CLASS },
         (function(){
           var add = document.createElement("button");
           add.type = "button"; add.className = "secondary";
@@ -487,7 +514,7 @@ function boardColumn(col, s) {
           add.addEventListener("click", function(e){
             e.stopPropagation();
             // Trello-style: open the inline quick-add form
-            if (!quickAdd.classList.contains("is-adding")) openQuickAdd(); else closeQuickAdd();
+            if (quickAdd.dataset.adding !== "true") openQuickAdd(); else closeQuickAdd();
           });
           var wrap = document.createElement("span");
           wrap.appendChild(add);
@@ -496,24 +523,26 @@ function boardColumn(col, s) {
         /* Trello-style column options menu */
         (function(){
           var menuBtn = document.createElement("button");
-          menuBtn.type = "button"; menuBtn.className = "secondary board-lane-control board-col-menu-btn";
+          menuBtn.type = "button"; menuBtn.className = MENU_BTN_CLASS;
           menuBtn.appendChild(icon("more", 14)); menuBtn.title = "Column actions";
           menuBtn.setAttribute("aria-label", "Actions for " + col.title);
           menuBtn.setAttribute("aria-haspopup", "true");
           menuBtn.addEventListener("click", function(e){
             e.stopPropagation();
             /* close any other open column menu */
-            document.querySelectorAll(".board-col-menu.is-open").forEach(function(m){ m.classList.remove("is-open"); });
+            document.querySelectorAll("[data-col-menu][data-open=true]").forEach(function(m){ m.dataset.open = ""; });
             var menu = document.createElement("div");
-            menu.className = "board-col-menu is-open";
+            menu.className = MENU_CLASS;
+            menu.dataset.colMenu = "";
+            menu.dataset.open = "true";
             menu.setAttribute("role", "menu");
             var title = document.createElement("div");
-            title.className = "board-col-menu-title";
+            title.className = MENU_TITLE_CLASS;
             title.textContent = "List actions";
             menu.appendChild(title);
 
             var sep1 = document.createElement("hr");
-            sep1.className = "board-col-menu-sep";
+            sep1.className = MENU_SEP_CLASS;
             menu.appendChild(sep1);
 
             /* Reorders this lane in place, without a write: a sort is a way of
@@ -536,7 +565,7 @@ function boardColumn(col, s) {
             }
             function sortItem(label, cmp) {
               var b = document.createElement("button");
-              b.type = "button"; b.className = "board-col-menu-item";
+              b.type = "button"; b.className = MENU_ITEM_CLASS;
               b.textContent = label;
               b.setAttribute("role", "menuitem");
               b.addEventListener("click", function(){
@@ -551,12 +580,12 @@ function boardColumn(col, s) {
             sortItem("Sort alphabetically", function(a, b){ return (a.title || "").localeCompare(b.title || ""); });
 
             var sep2 = document.createElement("hr");
-            sep2.className = "board-col-menu-sep";
+            sep2.className = MENU_SEP_CLASS;
             menu.appendChild(sep2);
 
             /* Move all cards to… (quick-move to another column) */
             var moveAll = document.createElement("button");
-            moveAll.type = "button"; moveAll.className = "board-col-menu-item";
+            moveAll.type = "button"; moveAll.className = MENU_ITEM_CLASS;
             moveAll.textContent = "Move all cards in this list…";
             moveAll.setAttribute("role", "menuitem");
             if (shown.length === 0) { moveAll.disabled = true; moveAll.style.opacity = "0.5"; }
@@ -564,16 +593,16 @@ function boardColumn(col, s) {
               /* replace menu contents with column picker */
               while (menu.firstChild) menu.removeChild(menu.firstChild);
               var pickTitle = document.createElement("div");
-              pickTitle.className = "board-col-menu-title";
+              pickTitle.className = MENU_TITLE_CLASS;
               pickTitle.textContent = "Move all to…";
               menu.appendChild(pickTitle);
               var sep = document.createElement("hr");
-              sep.className = "board-col-menu-sep";
+              sep.className = MENU_SEP_CLASS;
               menu.appendChild(sep);
               s.columns.forEach(function(dest){
                 if (dest.id === col.id) return;
                 var opt = document.createElement("button");
-                opt.type = "button"; opt.className = "board-col-menu-item";
+                opt.type = "button"; opt.className = MENU_ITEM_CLASS;
                 opt.textContent = dest.title;
                 opt.setAttribute("role", "menuitem");
                 opt.addEventListener("click", function(){
@@ -592,7 +621,7 @@ function boardColumn(col, s) {
 
             /* close backdrop */
             var backdrop = document.createElement("div");
-            backdrop.className = "board-col-menu-backdrop";
+            backdrop.className = MENU_BACKDROP_CLASS;
             backdrop.addEventListener("click", function(){ menu.remove(); backdrop.remove(); });
 
             menuBtn.parentElement.style.position = "relative";
@@ -2243,7 +2272,7 @@ export function bindBoard(deps) {
     // the trigger rather than focusing the textarea directly is what expands
     // the collapsed form — openQuickAdd() does both.
     if (e.key === "n") {
-      var trigger = el.board && el.board.querySelector(".board-add-trigger");
+      var trigger = el.board && el.board.querySelector("[data-add-trigger]");
       if (trigger) { trigger.click(); e.preventDefault(); }
       return;
     }
@@ -2323,7 +2352,7 @@ export function bindBoard(deps) {
         return;
       }
       var table=document.createElement("table");
-      table.className="usage board-list-table";
+      table.className="border-collapse font-mono text-sm";
       var caption=document.createElement("caption");
       caption.className="sr-only"; caption.textContent="Goal cards matching the current board filters"; table.appendChild(caption);
       var thead=document.createElement("thead");
@@ -2335,12 +2364,12 @@ export function bindBoard(deps) {
       var tbody=document.createElement("tbody");
       rows.forEach(function(c){
         var tr=document.createElement("tr");
-        var titleTd=document.createElement("th"); titleTd.scope="row"; titleTd.textContent=c.title; titleTd.className="board-list-title"; titleTd.title=c.title; tr.appendChild(titleTd);
+        var titleTd=document.createElement("th"); titleTd.scope="row"; titleTd.textContent=c.title; titleTd.className="max-w-72 truncate text-left"; titleTd.title=c.title; tr.appendChild(titleTd);
         var colTd=document.createElement("td"); colTd.textContent=c.column; tr.appendChild(colTd);
         var whoTd=document.createElement("td"); whoTd.textContent=c.assignee||"—"; tr.appendChild(whoTd);
         var dueTd=document.createElement("td"); dueTd.textContent=c.deadline?fmtBoardDate(c.deadline):"—"; if(c.deadline){ var ds=dueState(c); if(ds==="late") dueTd.style.color="var(--danger)"; else if(ds==="soon") dueTd.style.color="var(--warn-text)"; } tr.appendChild(dueTd);
         var prTd=document.createElement("td"); prTd.textContent=c.priority||"normal"; tr.appendChild(prTd);
-        var costTd=document.createElement("td"); costTd.className="num"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"—"; tr.appendChild(costTd);
+        var costTd=document.createElement("td"); costTd.className="text-right tabular-nums"; costTd.textContent=(c.usage&&c.usage.cost)?fmtCost(c.usage.cost):"—"; tr.appendChild(costTd);
         var actTd=document.createElement("td");
         var openBtn=document.createElement("button"); openBtn.type="button"; openBtn.className="secondary"; openBtn.textContent="Open"; openBtn.addEventListener("click", function(){ openCardId=c.id; renderBoard(board); }); actTd.appendChild(openBtn);
         if(c.assignee!==((document.getElementById("instance-chip")||{}).textContent||"").trim()){
