@@ -191,7 +191,7 @@ rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig | sort
 | `ck_publish` | Post a JSON value onto the serve live bus as a plugin event. Denied unless the descriptor sets `"live_publish": true`. The host stamps `t:"plugin"` and `from` as the tool name; a guest cannot pick chat/run/metrics |
 | `ck_std_api` | Look up a symbol in the Zig standard library source |
 | `ck_config` | Return this tool's `config` object from its descriptor |
-| `ck_harness_config` | Return the calling tool's allowlisted slice of clanker's effective config as JSON. Unknown tools are denied; shipped callers receive only providers, peers, or their configured workflow/chain directory as needed |
+| `ck_harness_config` | Return the calling tool's allowlisted slice of clanker's effective config as JSON. Unknown tools are denied; shipped callers receive one scoped slice: providers, peers, the tools dir, `skills_dir`, the kernel/debug section, or their configured workflow/chain directory, and `config` the whole thing |
 | `ck_result` | Write the tool result into the host arena |
 
 Host functions write results into the host arena, and the guest reads them back via `ck_result`. Tool definitions in `tools/manifests/*.tool.json` control network and filesystem access.
@@ -693,6 +693,7 @@ changes as tools are added.
 | `compare` | `state/compare/` | Put one prompt to 2-8 configured models at once and show the answers unlabeled, so a winner is picked on the answer rather than the badge. The entrant calls go through `ck_llm_many`, so they run concurrently; the display order is derived from the comparison id and each model's own names are struck out of its own answer. Rules live in `tools/zig/compare_logic.zig` (host-tested) |
 | `reasoning` | `state/` | Read recent reasoning traces recorded from reasoning models (`state/reasoning.jsonl`) |
 | `kanban_add`, `kanban_move`, `kanban_claim`, `kanban_update`, `kanban_log`, `kanban_subtask`, `kanban_depend`, `kanban_cost`, `kanban_list`, `kanban_delete` | none | Work the shared Kanban board (folded from the board room's chat log, not a file): add, move, claim, edit, log progress, manage subtasks/dependencies/cost, list, or delete a card |
+| `webui_addon` | `ui/plugins/`, `state/webui_plugins.json` | Create, update, list, and toggle ad-hoc web UI views from chat |
 
 Internal tools, never offered to the model:
 
@@ -703,11 +704,10 @@ Internal tools, never offered to the model:
 | `graph` | `state/runs/` | Render the latest execution graph |
 | `status` | none — reads clanker's own config through the host (ck_harness_config) | Show this instance and its peers |
 | `plugins` | `tools/manifests/`, `state/` | List plugins, toggle the optional ones |
-| `webui_addon` | `ui/plugins/`, `state/webui_plugins.json` | Create, update, list, and toggle ad-hoc web UI views from chat |
 | `autolearn` | `state/autolearn.jsonl`, `docs/ROADMAP.md` | Aggregate usage observations into roadmap items (`clanker autolearn`); `--model` is the same guest via `ck_llm` |
 | `webui` | none | Serve the web UI at `GET /`. Same-origin only: every script, style and font comes from this server's own `/webui/*` routes, with no CDN and no third-party origin (`script-src 'self'`). Not a single file — the page is many small ES modules, each served on its own route |
 | `translate` | none | Transform plugin, off by default: translates tool results through `ck_llm` |
-| `board` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
+| `kanban` | none | The whole board operation surface behind one entry point, used by `/api/board`; agents use the `kanban_*` tools instead (same wasm, one op each) |
 | `janitor` | `state/` | Report what old runs left behind, for `/api/janitor` |
 | `notifications` | `state/notifications.jsonl` | The durable inbox behind `POST /api/notify`: append one notification, deduped by delivery id, trimmed at the 1 MiB ceiling. Never model-callable |
 | `knowledge` | `state/` | Knowledge collections behind `/api/knowledge`: list, create, delete, add or search documents |
@@ -947,7 +947,7 @@ A bare `clanker providers check` sweeps every configured provider in config orde
 - A provider that cannot possibly answer — no `base_url`, or an `api_key_env` that is not set in the environment — is reported as `not configured — …, nothing sent` before any socket work, so it costs the sweep nothing.
 - Every other provider is announced (`<name>: checking <model>...`) *before* the request goes out, then gets its result line.
 - Each attempt is capped by `agent.provider_check_timeout_seconds` (default 10, `0` disables) or the provider's own `check_timeout_seconds`. A provider that has not answered by then is canceled and reported as timed out, and the sweep moves on.
-- The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`.
+- The sweep ends with a summary table on stdout: one row per provider with name, status, model, latency, and `*` in the `default` column. Statuses are a closed set — `OK`, `not configured`, `failed` (it answered, with an error status — a model the endpoint does not serve looks like this), `unreachable` (nothing answered: refused, DNS, TLS), `timed out`, `needs login` (no OAuth token on disk, so nothing was sent; the repair is `clanker auth login <name>`).
 
 `clanker providers check <name>` checks one provider: the same provenance line and `default=true`/`default=false` marker, no summary table. It exits non-zero when the named provider is unknown (`UnknownProvider`) or did not come back OK (`ProviderCheckFailed`); a full sweep does not fail on a provider that is down.
 
@@ -1284,7 +1284,7 @@ Flags: `--provider <p>` / `--model <m>` are recorded on the entry by `add`, so a
 
 `run-due` claims a window — writes `last_run` and `runs += 1` — *before* it calls the model, then re-opens the store afterwards to record the outcome. A sweep killed halfway therefore leaves the entry looking fired (at-most-once, rather than a crash loop that bills per iteration), and an `enable`/`disable` that landed while the model was working survives the write.
 
-**Ledger.** `state/schedule/log.jsonl`, one JSON object per line, the same shape `state/arena/log.jsonl` uses: `{ts, id, cron, task, trigger, due_at, skipped, ok, duration_ms, err}`. `trigger` is `due` or `manual`; `due_at` is the window that made the entry due, which differs from `ts` because cron granularity is a minute and `run-due` may be seconds late. Trimmed oldest-first at 4 MiB.
+**Ledger.** `state/schedule/log.jsonl`, one JSON object per line: `{ts, id, cron, task, trigger, due_at, skipped, ok, duration_ms, err}`. `trigger` is `due` or `manual`; `due_at` is the window that made the entry due, which differs from `ts` because cron granularity is a minute and `run-due` may be seconds late. Trimmed oldest-first at 4 MiB.
 
 The shell scripts `scripts/clanker-improve.sh` and `scripts/clanker-review.sh` are still driven from outside the binary; nothing in them has moved into `schedule`. What `schedule` replaces is a crontab line calling `clanker run "<prompt>"`.
 

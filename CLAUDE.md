@@ -404,8 +404,9 @@ clanker gate
 ```
 
 It runs build, test, tools, fmt, lint, provider-kind, test-root-coverage,
-js-suite-coverage, webui-budget, sandbox-abi, tools-ts-toolchain,
-release-contract, reports-inventory, skills-inventory and dep-patches.
+js-suite-coverage, tool-helper-coverage, webui-budget, sandbox-abi,
+tools-ts-toolchain, release-contract, reports-inventory, skills-inventory and
+dep-patches.
 `zig build e2e` is separate and is not part of it.
 
 For a fresh checkout or worktree, follow the bootstrap in AGENTS.md:
