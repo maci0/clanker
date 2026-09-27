@@ -66,7 +66,7 @@ say so in the header and cover it.
 | `ui/app/core/palette.js`, `ui/app/core/modelpicker.js`, `ui/app/core/dialog.js` | The three modal surfaces, and the shortcut/help table users reach instead of a manual |
 | `ui/app/core/kit.js`, `ui/app/core/ui.js` | The shared element builders, where a missing `aria-*` or a `div` used as a button propagates to every caller |
 | `ui/app/app.css` | Design tokens, focus rings, the `prefers-reduced-motion` blocks, the 40rem 16px phone-field guard |
-| `ui/app/views.css` | The deferred sheet: view-scoped rules whose focus and contrast state are easy to miss because the file loads after first paint |
+| `ui/app/tailwind.src.css` | The Tailwind 4 source sheet (compiles to the shipped `ui/app/tailwind.css`, loaded after `app.css`): the component rules, including the dialog `::backdrop` the deleted per-view sheet used to own |
 | `themes/<id>.json` | The per-theme token set (`--fg`, `--fg-muted`, `--bg`, `--surface`, `--accent`, `--code-fg`): a theme can be the only place a contrast bar is missed |
 | `src/tui/theme.zig`, `src/tui/repl.zig` | How a token becomes a vaxis color, and where meaning is carried by a cell attribute or a bare glyph |
 | `src/cli.zig` (`printUsage`, `printUsageError`) | The CLI's only accessibility surface: structure, wording, and what a pipe or a dumb terminal receives |
@@ -111,8 +111,9 @@ already scans plugin sheets for the themes contract.
    rule with no `:focus-visible` replacement is a finding.
 3. **Motion.** Every animation and transition is either guarded by
    `prefers-reduced-motion` or justified in a comment as carrying information
-   the static state does not. Check both sheets: `app.css` and the deferred
-   `views.css`, plus `ui/app/tailwind.css`'s `reduce` block.
+   the static state does not. Check both source sheets: `app.css` and
+   `ui/app/tailwind.src.css`, plus the shipped `ui/app/tailwind.css`'s `reduce`
+   block.
 4. **Contrast and theme coverage.** For each theme in `themes/`, the muted,
    accent, and code-foreground tokens are legible against the surface they sit
    on. A theme that is not in the catalog the UI loads, or a token a view reads
@@ -146,16 +147,16 @@ rg -n 'onclick=|addEventListener\("click"' ui/app ui/plugins | rg -v '\.test\.mj
 rg -n 'openOverlay|closeOverlay|trapOverlayTab|aria-modal' ui/app
 
 # Focus ring removals with no :focus-visible replacement
-rg -n 'outline:\s*(none|0)|:focus\b' ui/app/app.css ui/app/views.css
+rg -n 'outline:\s*(none|0)|:focus\b' ui/app/app.css ui/app/tailwind.src.css
 
 # Motion without a reduce guard (every hit needs a justification comment)
-rg -n 'animation:|transition:' ui/app/app.css ui/app/views.css | rg -v 'prefers-reduced-motion'
+rg -n 'animation:|transition:' ui/app/app.css ui/app/tailwind.src.css | rg -v 'prefers-reduced-motion'
 
 # Fields under 16px inside the phone breakpoint
-rg -n 'font-size:\s*(1[0-5]|[1-9])px' ui/app/app.css ui/app/views.css ui/plugins
+rg -n 'font-size:\s*(1[0-5]|[1-9])px' ui/app/app.css ui/app/tailwind.src.css ui/plugins
 
 # Theme tokens a theme defines versus what the sheets read
-rg -o --no-filename 'var\(--[a-z-]+\)' ui/app/app.css ui/app/views.css | sort -u
+rg -o --no-filename 'var\(--[a-z-]+\)' ui/app/app.css ui/app/tailwind.src.css | sort -u
 rg -o --no-filename '"--[a-z-]+"' themes/*.json | sort -u
 
 # TUI meaning carried by color alone

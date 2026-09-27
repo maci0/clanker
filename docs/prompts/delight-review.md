@@ -201,7 +201,7 @@ a multi-second wait, a control that looks interactive but does nothing).
       point at `clanker init`/the README, or is "MissingConfig" the whole
       answer?
 - [ ] `clanker doctor` as the recovery surface: when another command fails
-      (bad key, unreachable provider, stale config.local.json), does anything
+      (bad key, unreachable provider, stale `config.local.toml`), does anything
       suggest running doctor, and does doctor's own output then name the fix
       rather than just the state?
 - [ ] Long non-interactive waits: `providers check` against a slow endpoint,

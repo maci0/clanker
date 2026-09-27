@@ -170,6 +170,15 @@ rg --files -g '*.o' -g '*.so' | rg -v 'zig-out|zig-cache|zig-pkg'
 
 Classify each hit: **move / delete / leave (deliberately parked, say why)**.
 
+## Finding priority
+
+| Sev | Meaning | Examples |
+|---|---|---|
+| **P0** | Something silently stops running | A `.zig` with a `test` block missing from `src/main.zig`'s comptime registry; a descriptor/source pair that stops the tools build |
+| **P1** | A trust boundary or protected surface at risk | A proposed move that would put gating or promotion code where a self-authored patch reaches it |
+| **P2** | Real confusion the next editor pays for | A misplaced subsystem file; a descriptor and source that no longer pair up; a `docs/` link naming a file that moved |
+| **P3** | Nit | Naming that fights location; a stale cross-reference inside one paragraph |
+
 ## Response contents
 
 Return these sections in the captured response:

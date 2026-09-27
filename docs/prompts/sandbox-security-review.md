@@ -67,7 +67,7 @@ is `delight-review.md`'s; whether the config is parsed correctly is
 | `src/sandbox/runtime.zig` | What is actually wired: `rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig` |
 | `tools/manifests/*.tool.json` | Declared authority per tool: `fs_prefixes`, `network_allow`, `exec_allow`, `env_allow`, `confirm`, `fuel`, `llm`, `internal` |
 | `src/agent/loop.zig` (`capToolResult`), `src/util/prompt_fence.zig` | What the host already does to untrusted bytes before they reach a model, and therefore what it does not do |
-| `src/tui/sanitize.zig`, `ui/app/lib/markdown.js` | The existing display sinks, and the paths that reach them |
+| `src/util/sanitize.zig`, `ui/app/lib/markdown.js` | The existing display sinks, and the paths that reach them |
 
 ## Read first
 
@@ -258,7 +258,7 @@ file under `tools/manifests/`, `src/sandbox/`, and any `tools/zig/*.zig` /
       / `srcdoc` assignment in `ui/app/` or `ui/plugins/` fed by tool output,
       model text, peer chat, or a fetched page is a finding, and a plugin's
       `app.js` is in scope for it.
-- [ ] The TUI's own path is checked, not assumed: `src/tui/sanitize.zig` is
+- [ ] The TUI's own path is checked, not assumed: `src/util/sanitize.zig` is
       called from the transcript and line renderers that draw guest text
       (`src/tui/repl.zig`, `src/tui/transcript.zig`). A sanitizer that exists,
       is tested, and is bypassed by the live path is a P1, not a nit.

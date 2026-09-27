@@ -132,9 +132,17 @@ every file under `src/improve/` plus `src/gate/checks.zig`.
       load-bearing internals survive too — not just that the delegation call
       site exists (a delegation call to a gutted implementation still
       "calls" the gate and still passes the invariant check if only the
-      call site is asserted). `buildGate`/`testGate`/`toolsGate` share one
-      exit-code check (`runZigArgs` in `checks.zig`) — confirm the needle
-      targets that shared choke point, not each gate's thin wrapper.
+      call site is asserted). `buildGate`/`toolsGate`/`fmtGate` share one
+      exit-code check (`runZigArgs` in `checks.zig`) while `testGate` returns
+      from `runZig` — confirm the needle targets that shared choke point, not
+      each gate's thin wrapper.
+- [ ] `checksZigShapeBroken` (`src/improve/engine.zig`) carries a table entry
+      for **every** `pub fn <name>Gate(` in `checks.zig` (the outer fn plus its
+      scan body). The table is closed and the shape check refuses a gate
+      missing from it, so the recurring failure is a new gate shipped with a
+      call-site needle and no table entry: `skillsInventoryGate` did exactly
+      that and nothing noticed. Cross-check the current gate list against the
+      table every run, not against the list as of writing.
 - [ ] `brokenInvariant` only checks files a proposal actually *touches*
       (`for (changes) |c| if (std.mem.eql(u8, c.file, inv.file)) touched = true`)
       — confirm this is intentional (checking untouched files would be
@@ -229,6 +237,10 @@ rg -n 'gate_checks\.\w+Gate\(' src/improve/engine.zig
 # The shared choke point gate_invariants has to reach into checks.zig for
 rg -n '\.exited => \|c\| c == 0' src/gate/checks.zig
 rg -n 'fn buildGate|fn testGate|fn toolsGate|fn runZig' src/gate/checks.zig
+
+# Every checks.zig gate against the closed checksZigShapeBroken table (empty diff = covered)
+comm -3 <(rg -o '^pub fn \w+Gate\(' src/gate/checks.zig | sed 's/pub fn //;s/(//' | sort -u) \
+         <(rg -o '\.sig = "fn \w+Gate\(' src/improve/engine.zig | sed 's/.*fn //;s/(//' | sort -u)
 
 # History recording on every rejection path
 rg -n 'hist\.append|self\.hist' src/improve/engine.zig
