@@ -507,7 +507,11 @@ fn recommend(obj: std.json.Value, out: *lib.Out) !void {
         return lib.fail(out, "recommend needs a recommendation naming the option (a phased path is fine: 'A now, revisit if X')");
     const confidence_raw = lib.optNum(obj, "confidence") orelse
         return lib.fail(out, "recommend needs a confidence from 0 to 10");
-    if (confidence_raw < 0 or confidence_raw > 10)
+    // Both comparisons are false for nan, so a non-finite value would sail
+    // through this range test and reach `@round` below, which is undefined
+    // behaviour in the ReleaseSmall build this guest ships as. `isFinite` has
+    // to be asked before the range, not folded into it.
+    if (!std.math.isFinite(confidence_raw) or confidence_raw < 0 or confidence_raw > 10)
         return lib.fail(out, "confidence must be between 0 and 10");
     const confidence: u8 = @round(confidence_raw);
     const rationale = lib.str(obj, "rationale") catch

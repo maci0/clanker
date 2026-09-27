@@ -63,6 +63,23 @@ pub fn tzOffsetRangeMessage(gpa: std.mem.Allocator) ![]const u8 {
     });
 }
 
+pub const TzOffsetError = error{TzOffsetOutOfRange};
+
+/// A model-supplied `tz_offset_minutes` as an offset. The range check runs
+/// before the conversion, not after: a JSON number reaches the guest as an
+/// `f64`, and `@trunc` of `1e30` to `i32` is undefined behaviour in the
+/// `ReleaseSmall` build this guest ships as, so a `validTzOffset` test on the
+/// already-converted value comes too late to help. Comparing in float space
+/// against the same constant `validTzOffset` uses leaves `@trunc` with a value
+/// it is defined on. Both writers of the store (the `add` and `update`
+/// actions) read the field through here, so neither can be the one that
+/// converts first and validates second.
+pub fn parseTzOffset(f: f64) TzOffsetError!i32 {
+    const bound: f64 = @floatFromInt(cron.max_tz_offset_minutes);
+    if (!std.math.isFinite(f) or f < -bound or f > bound) return error.TzOffsetOutOfRange;
+    return @intFromFloat(@trunc(f));
+}
+
 /// The next free `sch-N`. Sequential, never reused, so a removed id keeps
 /// meaning the job the ledger already recorded.
 pub fn nextId(arena: std.mem.Allocator, ids: []const []const u8) ![]const u8 {
@@ -108,6 +125,23 @@ test "validId matches the session-id alphabet" {
     try std.testing.expect(!validId("sch 1"));
     try std.testing.expect(!validId("x" ** 65));
     try std.testing.expect(!validId("-foo"));
+}
+
+test "parseTzOffset refuses a float too large for i32 before converting" {
+    try std.testing.expectEqual(@as(i32, 0), try parseTzOffset(0));
+    try std.testing.expectEqual(@as(i32, -330), try parseTzOffset(-330));
+    try std.testing.expectEqual(@as(i32, cron.max_tz_offset_minutes), try parseTzOffset(cron.max_tz_offset_minutes));
+    try std.testing.expectEqual(@as(i32, -cron.max_tz_offset_minutes), try parseTzOffset(-cron.max_tz_offset_minutes));
+    // Out of the offset range, which is also the range the conversion is
+    // defined over: `1e30` reaches here as ordinary model output, and
+    // `@trunc` of it to i32 is undefined in the build the guest ships as.
+    try std.testing.expectError(error.TzOffsetOutOfRange, parseTzOffset(1e30));
+    try std.testing.expectError(error.TzOffsetOutOfRange, parseTzOffset(-1e30));
+    try std.testing.expectError(error.TzOffsetOutOfRange, parseTzOffset(1e400));
+    try std.testing.expectError(error.TzOffsetOutOfRange, parseTzOffset(-std.math.inf(f64)));
+    try std.testing.expectError(error.TzOffsetOutOfRange, parseTzOffset(std.math.nan(f64)));
+    try std.testing.expectError(error.TzOffsetOutOfRange, parseTzOffset(cron.max_tz_offset_minutes + 1));
+    try std.testing.expectError(error.TzOffsetOutOfRange, parseTzOffset(-cron.max_tz_offset_minutes - 1));
 }
 
 test "the tz offset bound is the cron's, so both writers of the store agree" {

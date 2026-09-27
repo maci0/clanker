@@ -103,7 +103,7 @@ pub fn resolveCredentialsPath(
 /// Classifies a parsed credentials object. Incomplete fields and unknown
 /// `type` values (workload identity, impersonation) are errors: those ADC
 /// shapes need a different mint and must not be treated as a service account.
-pub fn classifyFile(c: anytype) error{ UnsupportedAdcType, IncompleteCredentials }!FileKind {
+fn classifyFile(c: CredentialsFile) error{ UnsupportedAdcType, IncompleteCredentials }!FileKind {
     if (c.type.len == 0) {
         if (c.private_key.len > 0 and c.client_email.len > 0) return .service_account;
         if (c.refresh_token.len > 0 and c.client_id.len > 0) return .authorized_user;

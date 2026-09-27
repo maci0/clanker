@@ -10,7 +10,6 @@
 
 const std = @import("std");
 const lib = @import("lib.zig");
-const num = @import("num");
 const logic = @import("schedule_logic.zig");
 
 const store_path = "state/schedule.json";
@@ -112,11 +111,10 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
     // undefined behaviour in the ReleaseSmall build this guest ships as, and
     // the check that would have caught it runs too late to help. Refused, not
     // clamped: a caller asking for 1e30 minutes did not mean a day.
-    // `intFromFloat` also refuses a non-finite request, so `1e400` gets this
-    // message rather than trapping the guest.
-    const tz: i32 = num.intFromFloat(i32, lib.optNum(req, "tz_offset_minutes") orelse 0) orelse
-        return lib.fail(out, "tz_offset_minutes out of range (-1440..+1440)");
-    if (!logic.validTzOffset(tz))
+    // `parseTzOffset` also refuses a non-finite request, so `1e400` gets this
+    // message rather than trapping the guest. The `update` action below reads
+    // the same field through the same helper.
+    const tz: i32 = logic.parseTzOffset(lib.optNum(req, "tz_offset_minutes") orelse 0) catch
         return lib.fail(out, try logic.tzOffsetRangeMessage(lib.alloc));
     const now: i64 = @trunc(lib.nowSeconds());
     logic.validateCron(cron_text, now, tz) catch |err| return lib.fail(out, switch (err) {
@@ -186,10 +184,11 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
     // the correct offset.
     var new_tz: i32 = 0;
     if (has_tz) {
+        // Same helper the add path above reads the field through, so the two
+        // writers of the store cannot disagree on what a legal offset is. It
+        // applies `validTzOffset` itself, so there is no second range test here.
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse return lib.fail(out, "tz_offset_minutes must be numeric");
-        if (!std.math.isFinite(n_f)) return lib.fail(out, "tz_offset_minutes must be a finite number of minutes");
-        new_tz = @trunc(n_f);
-        if (!logic.validTzOffset(new_tz))
+        new_tz = logic.parseTzOffset(n_f) catch
             return lib.fail(out, try logic.tzOffsetRangeMessage(lib.alloc));
     }
 
