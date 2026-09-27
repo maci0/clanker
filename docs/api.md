@@ -38,7 +38,7 @@ carries `gap`, `have`, `need`), never instead of it.
 | 400 | malformed body, missing or invalid field, unparseable query value |
 | 403 | cross-origin request, or a Host this listener does not answer to |
 | 404 | no such route, no such resource, or the owning module is disabled |
-| 405 | the path exists but not with this method |
+| 405 | the path exists but not with this method; the `Allow` header lists the methods it does take |
 | 409 | a conflict the caller can resolve (duplicate workspace, cursor gap) |
 | 413 | request body or a `path` query value over the cap |
 | 421 | the `Host` header names a different listener |
@@ -66,6 +66,10 @@ it unset or naming an unset variable the proxy serves unauthenticated.
 
 **Body parsing.** Unknown fields are ignored, not refused. A field that is
 present but the wrong type is a 400.
+
+**Method refusal.** A `405` carries the RFC 9110 `Allow` list of the methods
+that path does take, so a client learns the verbs from the refusal rather than
+probing for them.
 
 ## Health
 
@@ -266,6 +270,12 @@ Module gate: `a2a`.
 |---|---|
 | GET | `/.well-known/agent.json` |
 | POST | `/api/a2a/message` |
+
+`POST /api/a2a/message` is JSON-RPC 2.0 and answers a JSON-RPC object
+(`{"jsonrpc":"2.0","id":...,"result":...}`), so its refusals are the API
+envelope above rather than JSON-RPC error objects. A request with no `method`,
+or with a `jsonrpc` other than `"2.0"`, is a 400. Every other method name is
+answered the same way: the agent runs and its message comes back.
 
 ## Proxy
 

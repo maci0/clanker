@@ -7920,6 +7920,12 @@ threadlocal var request_head: bool = false;
 /// the response that spends the budget has to say `close` instead: see
 /// `keepAliveBudgetLeft`.
 threadlocal var request_spends_keep_alive_budget: bool = false;
+/// Comma-separated method list for the `Allow` header of the response being
+/// sent, set by `respondMethodNotAllowed` and cleared by every other responder
+/// through `respond`. RFC 9110 15.5.6 requires it on every 405: a client that
+/// gets the status without it has to guess which verbs the path takes, and
+/// generated clients read the header rather than probing.
+threadlocal var response_allow: []const u8 = "";
 var http_requests_total = std.atomic.Value(u64).init(0);
 var http_errors_total = std.atomic.Value(u64).init(0);
 var http_latency_le_10ms = std.atomic.Value(u64).init(0);
@@ -8609,10 +8615,42 @@ const NotifyRequestBody = struct {
 };
 
 const A2ARequest = struct {
+    /// JSON-RPC 2.0 spells the version out, and the reply already writes
+    /// `"jsonrpc":"2.0"`; the request side declared no field for it, so the
+    /// value was dropped as an unknown key and a client speaking 1.0 got an
+    /// answer in 2.0 with no word about it.
+    jsonrpc: ?[]const u8 = null,
     id: ?std.json.Value = null,
     method: ?[]const u8 = null,
     params: ?std.json.Value = null,
 };
+
+/// What the A2A envelope got wrong, or null when it is acceptable. Split out
+/// of the handler so the refusal is testable without a provider behind it.
+///
+/// `method` is required but its *value* is not matched against a table: this
+/// route answers one way (run the agent, return its message) for every method a
+/// peer names, and refusing names it does not know would break a peer speaking
+/// a later A2A revision than this one does. A body with no method at all is
+/// the malformed case JSON-RPC 2.0 calls out.
+fn a2aEnvelopeError(req: A2ARequest) ?[]const u8 {
+    if (req.jsonrpc) |sent_version| {
+        if (!std.mem.eql(u8, sent_version, "2.0")) return "unsupported jsonrpc version";
+    }
+    if (req.method == null or req.method.?.len == 0) return "missing method";
+    return null;
+}
+
+test "the A2A envelope is checked the way JSON-RPC 2.0 spells it" {
+    const ok = A2ARequest{ .jsonrpc = "2.0", .method = "message/send" };
+    try std.testing.expect(a2aEnvelopeError(ok) == null);
+    // A peer that omits the version still works: 2.0 is what this route emits.
+    try std.testing.expect(a2aEnvelopeError(.{ .method = "message/send" }) == null);
+    try std.testing.expectEqualStrings("unsupported jsonrpc version", a2aEnvelopeError(.{ .jsonrpc = "1.0", .method = "message/send" }).?);
+    try std.testing.expectEqualStrings("unsupported jsonrpc version", a2aEnvelopeError(.{ .jsonrpc = "2.0.0", .method = "message/send" }).?);
+    try std.testing.expectEqualStrings("missing method", a2aEnvelopeError(.{ .jsonrpc = "2.0" }).?);
+    try std.testing.expectEqualStrings("missing method", a2aEnvelopeError(.{ .method = "" }).?);
+}
 
 /// POST /api/notify: a peer clanker delivering a notification. The store is
 /// the `notifications` WASM tool (state/notifications.jsonl); this route
@@ -9613,6 +9651,11 @@ fn handleA2AMessage(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
     const arena = arena_state.allocator();
 
     const parsed = jsonBody(A2ARequest, arena, body, stream) orelse return;
+    if (a2aEnvelopeError(parsed)) |why| {
+        const err = std.fmt.allocPrint(arena, "{{\"ok\":false,\"error\":\"{s}\"}}", .{why}) catch return;
+        respond(stream, 400, "Bad Request", err);
+        return;
+    }
     const id = parsed.id orelse .null;
     var text: []const u8 = "";
     if (parsed.params) |p| {
@@ -13495,7 +13538,7 @@ fn handleSessions(
             handleSessionEventsPost(io, gpa, arena, sid, body, stream);
             return;
         }
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET, POST");
         return;
     }
 
@@ -13662,7 +13705,7 @@ fn handleSessions(
         return;
     }
     if (!std.mem.eql(u8, method, "GET")) {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET, POST");
         return;
     }
 
@@ -14127,7 +14170,7 @@ fn handleFeedback(
     else if (std.mem.eql(u8, method, "POST"))
         if (body.len > 0) body else "{}"
     else {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET, POST");
         return;
     };
     const raw = toolJson(io, gpa, arena, cfg, environ_map, "feedback", tool_input) catch {
@@ -14420,7 +14463,7 @@ fn handleRecords(
 
     const input = switch (recordsRouteToToolInput(arena, store, method, target, body)) {
         .method_not_allowed => {
-            respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+            respondMethodNotAllowed(stream, "GET, POST");
             return;
         },
         .bad_request => |msg| {
@@ -14893,7 +14936,7 @@ fn handleWorkspaces(
             writeWorkspaceCreated(arena, stream, updated);
             return;
         }
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "DELETE, POST");
         return;
     }
     if (rest.len != 0) {
@@ -14930,7 +14973,7 @@ fn handleWorkspaces(
         return;
     }
     if (!std.mem.eql(u8, method, "GET")) {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET, POST");
         return;
     }
 
@@ -15180,7 +15223,7 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
 
     const tool_input = knowledgeRouteToToolInput(arena, method, rest, target, body) orelse {
         if (std.mem.eql(u8, method, "PUT") or std.mem.eql(u8, method, "PATCH")) {
-            respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+            respondMethodNotAllowed(stream, "DELETE, GET, POST");
         } else if (std.mem.eql(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing q\"}");
         } else if ((std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")) and
@@ -15557,7 +15600,7 @@ fn handlePrompts(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, 
         !std.mem.eql(u8, method, "POST") and
         !std.mem.eql(u8, method, "DELETE"))
     {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "DELETE, GET, POST");
         return;
     }
     const tool_input = promptsRouteToToolInput(arena, method, body) orelse {
@@ -15588,7 +15631,7 @@ fn handleArena(
     stream: std.Io.net.Stream,
 ) void {
     if (!std.mem.eql(u8, method, "GET")) {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET");
         return;
     }
     var arena_state = std.heap.ArenaAllocator.init(gpa);
@@ -15662,7 +15705,7 @@ fn handleSchedule(
     const arena = arena_state.allocator();
 
     if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "POST")) {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET, POST");
         return;
     }
     const tool_input = scheduleRouteToToolInput(arena, method, path, body) orelse {
@@ -15749,7 +15792,7 @@ fn handleCompare(
     const arena = arena_state.allocator();
 
     if (!std.mem.eql(u8, method, "GET") and !std.mem.eql(u8, method, "POST")) {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET, POST");
         return;
     }
     // Told apart from the 400 below on purpose. "You posted a pick to the
@@ -15757,7 +15800,7 @@ fn handleCompare(
     // collapsing both into one `bad request` left a client unable to tell
     // which it had made.
     if (compareCollectionPost(method, path)) {
-        respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
+        respondMethodNotAllowed(stream, "GET");
         return;
     }
     const tool_input = compareRouteToToolInput(arena, method, path, body) orelse {
@@ -17341,10 +17384,16 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
     // a fully-read GET, where the framing (Content-Length above) lets the
     // connection carry the SPA's next poll without a new TCP handshake.
     const request_id = log.getContext();
-    const hdr = if (request_id.len > 0)
-        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\nX-Request-ID: {s}\r\n{s}\r\n", .{ status, reason, body.len, request_id, connHeader() }) catch return
+    var abuf: [96]u8 = undefined;
+    const allow_hdr = if (response_allow.len == 0)
+        ""
     else
-        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\n{s}\r\n", .{ status, reason, body.len, connHeader() }) catch return;
+        std.fmt.bufPrint(&abuf, "Allow: {s}\r\n", .{response_allow}) catch "Allow: \r\n";
+    response_allow = "";
+    const hdr = if (request_id.len > 0)
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\n{s}X-Request-ID: {s}\r\n{s}\r\n", .{ status, reason, body.len, allow_hdr, request_id, connHeader() }) catch return
+    else
+        std.fmt.bufPrint(&hbuf, "HTTP/1.1 {d} {s}\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nX-Content-Type-Options: nosniff\r\n{s}{s}\r\n", .{ status, reason, body.len, allow_hdr, connHeader() }) catch return;
     raw_http.writeAllFd(stream.socket.handle, hdr);
     // RFC 9110 9.3.2: a HEAD response carries the headers the GET would carry,
     // Content-Length included, and none of the content. This used to write the
@@ -17352,6 +17401,16 @@ fn respond(stream: std.Io.net.Stream, status: u16, reason: []const u8, body: []c
     // it — which cost keep-alive on every HEAD, the case keep-alive was added
     // for. Same guard the asset, JSON and plugin responders already use.
     if (!request_head) raw_http.writeAllFd(stream.socket.handle, body);
+}
+
+/// `405` carrying the methods the path does take, in the RFC 9110 15.5.6
+/// `Allow` list order. Every refusal site names its own path's verbs, so a
+/// client learns them from the refusal instead of probing or reading source.
+/// The body stays the shared `{"ok":false,"error":"method not allowed"}` every
+/// other route uses; only the header is added.
+fn respondMethodNotAllowed(stream: std.Io.net.Stream, allow: []const u8) void {
+    response_allow = allow;
+    respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
 }
 
 /// The web UI ships its CSS and JS inline in one embedded file, so the policy
@@ -20468,6 +20527,32 @@ test "a HEAD is not routed into the SSE stream, and a POST-only route still refu
     var run_buf: [4096]u8 = undefined;
     const post_only = try routeCapture(&run_buf, try testRequest(&req_buf, "HEAD", "/api/run"));
     try std.testing.expect(std.mem.startsWith(u8, post_only, "HTTP/1.1 404 Not Found\r\n"));
+}
+
+test "a 405 names the methods the path takes" {
+    // RFC 9110 15.5.6: the origin server must generate Allow on a 405. Every
+    // refusal used to send the status alone, so a client that walked a wrong
+    // verb had nothing to read but the body's generic "method not allowed".
+    var req_buf: [128]u8 = undefined;
+    var out_buf: [4096]u8 = undefined;
+
+    const arena = try routeCapture(&out_buf, try testRequest(&req_buf, "DELETE", "/api/arena"));
+    try std.testing.expect(std.mem.startsWith(u8, arena, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try std.testing.expect(std.mem.find(u8, arena, "Allow: GET\r\n") != null);
+    const arena_sep = std.mem.find(u8, arena, "\r\n\r\n") orelse return error.NoHeaderTerminator;
+    try std.testing.expectEqualStrings("{\"ok\":false,\"error\":\"method not allowed\"}", arena[arena_sep + 4 ..]);
+
+    // A path that takes several verbs lists them all, and a route that was
+    // matched normally carries no Allow at all.
+    var prompts_buf: [4096]u8 = undefined;
+    const prompts = try routeCapture(&prompts_buf, try testRequest(&req_buf, "PUT", "/api/prompts"));
+    try std.testing.expect(std.mem.startsWith(u8, prompts, "HTTP/1.1 405 Method Not Allowed\r\n"));
+    try std.testing.expect(std.mem.find(u8, prompts, "Allow: DELETE, GET, POST\r\n") != null);
+
+    var ok_buf: [1 << 16]u8 = undefined;
+    const status = try routeCapture(&ok_buf, try testRequest(&req_buf, "GET", "/api/status"));
+    try std.testing.expect(std.mem.startsWith(u8, status, "HTTP/1.1 200 OK\r\n"));
+    try std.testing.expect(std.mem.find(u8, status, "Allow:") == null);
 }
 
 /// Runs `respondSaturated` over a socket pair with the two per-request
