@@ -9,7 +9,7 @@
 //!
 //!   chat_send:      {"room":"dev","text":"hello","id":"optional-key"}
 //!   chat_dm:        {"to":"other-clanker","text":"hello"}
-//!   chat_history:   {"room":"dev","after":0}
+//!   chat_history:   {"room":"dev","after":0,"oldest":false}
 //!   chat_rooms:     {}
 //!   chat_subscribe: {"room":"dev","on":true}
 //!   todo_add:       {"title":"ship it"}
@@ -82,8 +82,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // that is missing nor the operation that wanted it, and every chat
         // tool shares this one call site.
         return switch (err) {
+            // One InvalidArg covers every rejection ck_chat makes, so the
+            // message has to name the ones a caller can actually have got
+            // wrong: a missing field, a room and a `to` together, or text past
+            // the cap. (A malformed "id" is answered by the host itself, which
+            // knows the alphabet, rather than folded in here.)
             error.InvalidArg => if (std.mem.eql(u8, op, "send"))
-                lib.fail(out, "chat send needs \"room\" and \"text\"; a direct message is chat_dm with \"to\" and \"text\"")
+                lib.fail(out, "chat send needs \"room\" (or \"to\" for a direct message) and a non-empty \"text\" of at most 4096 chars, and takes only one of \"room\" and \"to\"")
             else if (std.mem.eql(u8, op, "history"))
                 lib.fail(out, "chat history needs \"room\", and optionally \"after\" (a timestamp)")
             else if (std.mem.eql(u8, op, "subscribe"))

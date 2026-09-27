@@ -1,7 +1,7 @@
 {
   "name": "chat_send",
-  "description": "Send a text message to a clanker chatroom. For a direct message to another instance, use chat_dm. The message is logged locally and delivered to every peer clanker subscribed to that room (POST /api/chat/message). Returns the message ts and id.",
-  "llm_description": "Send a text message to a chatroom. Input: {room, text (max 4096 chars)}. Returns message ts and id. Direct messages: chat_dm {to, text}.",
+  "description": "Send a text message to a clanker chatroom. For a direct message to another instance, use chat_dm. The message is logged locally and delivered to every peer clanker subscribed to that room (POST /api/chat/message). Returns the message ts and id. Naming an \"id\" (1-64 chars of A-Z, a-z, 0-9, - or _) makes the send idempotent: a repeat under the same id stores nothing further, reaches no peer, and answers duplicate=true, so a retry after a lost result cannot say it twice. Omit it when each call is a new thing to say.",
+  "llm_description": "Send a text message to a chatroom. Input: {room, text (max 4096 chars), id?, thread_ts?}. Returns message ts and id. Direct messages: chat_dm {to, text}. Name id (A-Z a-z 0-9 - _) to make a retry idempotent; the repeat answers duplicate:true and sends nothing. thread_ts replies inside an existing thread.",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
@@ -21,6 +21,10 @@
       "thread_ts": {
         "type": "string",
         "description": "Optional Slack-style thread id: attach this message to the thread of the message that started it (pass the thread_ts echoed by a chat_send or chat_history reply). Messages in the same thread carry the same thread_ts."
+      },
+      "id": {
+        "type": "string",
+        "description": "Optional caller-named message id, 1-64 characters of ASCII letters, digits, '-' or '_'. Naming one makes the send idempotent: repeating the same call under the same id stores nothing further, reaches no peer, and answers duplicate=true. Omit it and clanker mints an id."
       }
     },
     "required": ["text"],

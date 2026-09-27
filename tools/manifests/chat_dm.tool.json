@@ -1,7 +1,7 @@
 {
   "name": "chat_dm",
-  "description": "Send a direct message to another clanker instance. Uses the canonical room dm:<you>|<to> automatically, so neither side constructs or orders it. The message is logged locally and delivered to every peer subscribed to that room (POST /api/chat/message). Returns the message ts and id. Machine notifications (improve promotions, /api/notify) stay on the peers tool's notify action.",
-  "llm_description": "DM another clanker. Input: {to, text (max 4096 chars)}. Uses canonical room dm:<you>|<to>. Returns ts and id. Not peers notify (that is a machine notification, not a conversation).",
+  "description": "Send a direct message to another clanker instance. Uses the canonical room dm:<you>|<to> automatically, so neither side constructs or orders it. The message is logged locally and delivered to every peer subscribed to that room (POST /api/chat/message). Returns the message ts and id. Naming an \"id\" (1-64 chars of A-Z, a-z, 0-9, - or _) makes the send idempotent: a repeat under the same id stores nothing further, reaches no peer, and answers duplicate=true. Machine notifications (improve promotions, /api/notify) stay on the peers tool's notify action.",
+  "llm_description": "DM another clanker. Input: {to, text (max 4096 chars), id?, thread_ts?}. Uses canonical room dm:<you>|<to>. Returns ts and id. Name id (A-Z a-z 0-9 - _) to make a retry idempotent; the repeat answers duplicate:true and sends nothing. Not peers notify (that is a machine notification, not a conversation).",
   "wasm": "zig-out/tools/chat.wasm",
   "input_schema": {
     "type": "object",
@@ -17,6 +17,10 @@
       "thread_ts": {
         "type": "string",
         "description": "Optional Slack-style thread id: attach this message to the thread of the message that started it (pass the thread_ts echoed by a chat_send or chat_history reply). Messages in the same thread carry the same thread_ts."
+      },
+      "id": {
+        "type": "string",
+        "description": "Optional caller-named message id, 1-64 characters of ASCII letters, digits, '-' or '_'. Naming one makes the send idempotent: repeating the same call under the same id stores nothing further, reaches no peer, and answers duplicate=true. Omit it and clanker mints an id."
       }
     },
     "required": ["to", "text"]
