@@ -12,6 +12,23 @@
 
 const std = @import("std");
 
+/// The smallest value `T` can hold, and the first value past the largest.
+/// Neither `minInt` nor `maxInt` is exactly representable as an f64 once the
+/// type is 64 bits wide (`maxInt(i64)` rounds to 2^63), so both bounds are
+/// powers of two, which are exact at every width.
+fn bounds(comptime T: type) struct { lo: f64, hi: f64 } {
+    const info = @typeInfo(T).int;
+    if (info.bits == 64) {
+        return if (info.signedness == .signed)
+            .{ .lo = -9223372036854775808.0, .hi = 9223372036854775808.0 }
+        else
+            .{ .lo = 0, .hi = 18446744073709551616.0 };
+    }
+    const exp: u6 = if (info.signedness == .signed) @intCast(info.bits - 1) else @intCast(info.bits);
+    const hi: f64 = @floatFromInt(@as(u64, 1) << exp);
+    return .{ .lo = if (info.signedness == .signed) -hi else 0, .hi = hi };
+}
+
 /// The integer part of `f` as a `T`, or null when it does not fit: nan and inf
 /// never do, a negative value never fits an unsigned type, and a value whose
 /// integer part is past the type's range is refused rather than wrapped.
@@ -22,14 +39,8 @@ pub fn intFromFloat(comptime T: type, f: f64) ?T {
     // and turn a negative request into a zero-sized one.
     if (@typeInfo(T).int.signedness == .unsigned and f < 0) return null;
     const t = @trunc(f);
-    // `maxInt` is not exactly representable as an f64 once the type is 64 bits
-    // wide (it rounds to 2^63), so the upper bound is compared against the
-    // first value past it rather than against maxInt itself.
-    if (@typeInfo(T).int.signedness == .signed) {
-        if (!(t >= -9223372036854775808.0 and t < 9223372036854775808.0)) return null;
-    } else {
-        if (!(t >= 0 and t < 18446744073709551616.0)) return null;
-    }
+    const b = bounds(T);
+    if (!(t >= b.lo and t < b.hi)) return null;
     return @intFromFloat(t);
 }
 
@@ -71,6 +82,18 @@ test "intFromFloat refuses what @trunc would corrupt" {
     try std.testing.expect(intFromFloat(usize, 1e30) == null);
     try std.testing.expect(intFromFloat(i32, 1e30) == null);
     try std.testing.expect(intFromFloat(i32, -1e30) == null);
+
+    // Wider than 64 bits' worth of checking would not catch: every one of
+    // these is inside the f64 range a 64-bit bound admits, and inside the
+    // range of the *type* only at the very edge. A bound hardcoded to 64 bits
+    // let all four through to the unchecked `@intFromFloat`.
+    try std.testing.expect(intFromFloat(u32, 5_000_000_000) == null);
+    try std.testing.expectEqual(@as(u32, 4294967295), intFromFloat(u32, 4294967295).?);
+    try std.testing.expect(intFromFloat(u16, 70000) == null);
+    try std.testing.expect(intFromFloat(i32, 3_000_000_000) == null);
+    try std.testing.expect(intFromFloat(i32, -3_000_000_000) == null);
+    try std.testing.expectEqual(@as(i32, 2147483647), intFromFloat(i32, 2147483647).?);
+    try std.testing.expectEqual(@as(i8, -128), intFromFloat(i8, -128.9).?);
 }
 
 test "intFromFloatExact additionally refuses a fraction" {
@@ -87,4 +110,7 @@ test "clampInt saturates instead of refusing" {
     try std.testing.expectEqual(@as(u32, 1), clampInt(u32, std.math.nan(f64), 1, 800));
     try std.testing.expectEqual(@as(u32, 640), clampInt(u32, 640.7, 1, 800));
     try std.testing.expectEqual(@as(i32, -1440), clampInt(i32, -1e30, -1440, 1440));
+    // Out of range for the type but not for a 64-bit check, so only the type's
+    // own bound sends it to the saturating branch.
+    try std.testing.expectEqual(@as(u32, 800), clampInt(u32, 5_000_000_000.0, 1, 800));
 }

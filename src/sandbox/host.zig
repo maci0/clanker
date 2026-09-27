@@ -3383,9 +3383,30 @@ fn urlParamNameIsSecret(name: []const u8) bool {
 /// that name a secret do not encode it. Returns `url` itself when there is
 /// nothing to redact, and the query is dropped whole rather than truncated
 /// mid-value when the URL does not fit.
+/// How many query segments carry a secret-shaped name, each of which redacts
+/// to `url_redacted_marker` and can therefore *lengthen* the rendered URL.
+fn countSecretParams(url: []const u8) usize {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < url.len) {
+        const amp = std.mem.indexOfScalarPos(u8, url, i, '&') orelse url.len;
+        const seg = url[i..amp];
+        if (std.mem.indexOfScalar(u8, seg, '=')) |e| {
+            if (urlParamNameIsSecret(seg[0..e])) n += 1;
+        }
+        if (amp == url.len) break;
+        i = amp + 1;
+    }
+    return n;
+}
+
 fn urlForLog(buf: []u8, url: []const u8) []const u8 {
     const q = std.mem.indexOfScalar(u8, url, '?') orelse return url;
-    if (url.len + url_redacted_marker.len > buf.len) return url[0 .. q + 1];
+    // The fit check has to count every replacement, not one: redaction grows
+    // the string by `marker.len - value.len` per secret parameter, so a URL
+    // holding several one-character secrets overruns a guard that reserved
+    // room for a single marker.
+    if (url.len + countSecretParams(url) * url_redacted_marker.len > buf.len) return url[0 .. q + 1];
 
     @memcpy(buf[0 .. q + 1], url[0 .. q + 1]);
     var out: usize = q + 1;
@@ -3428,6 +3449,18 @@ test "urlForLog drops a credential from the query and keeps the rest" {
         "https://host/v1?access_token=REDACTED&page=2",
         urlForLog(&buf, "https://host/v1?access_token=abc123&page=2"),
     );
+
+    // Two one-character secrets each replace a 1-byte value with an 8-byte
+    // marker, so the rendered URL is 14 bytes longer than the input. A guard
+    // reserving room for one marker admits this and the copies below run past
+    // the end of the caller's buffer.
+    var long: [256]u8 = undefined;
+    const head = "https://host/v1?";
+    @memcpy(long[0..head.len], head);
+    @memset(long[head.len..236], 'x');
+    @memcpy(long[236..248], "&key=1&sig=2");
+    const near = long[0..248];
+    try std.testing.expectEqualStrings("https://host/v1?", urlForLog(&buf, near));
 }
 
 fn httpExImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {

@@ -40,6 +40,10 @@ export function renderTools(filterText) {
   };
 }
 
+/* Set by a failed `loadTools` and read by the panel's render, so the failure
+   and its retry survive every re-render the filter triggers. */
+var _toolLoadError = null;
+
 function buildToolRow(t) {
   var row = document.createElement("div");
   row.className = "tool-row";
@@ -307,13 +311,20 @@ export function loadTools() {
   return fetch("/api/plugins")
     .then(_readJson)
     .then(function (data) {
+      _toolLoadError = null;
       _allToolsHolder.list.length = 0; Array.prototype.push.apply(_allToolsHolder.list, data.plugins || []);
       renderTools(_el.toolFilter.value);
     })
     .catch(function (err) {
       var msg = "Could not load tools: " + err.message;
+      _toolLoadError = msg;
       _el.toolsStatus.textContent = msg;
       showLoadError(_el.tools, msg, loadTools);
+      // The filter input sits outside the bound panel, so typing in it re-runs
+      // the bind and would replace the failure above — and its retry — with
+      // "no tool matches" on top of a list that never loaded. The render reads
+      // `_toolLoadError` so the panel keeps saying so.
+      renderTools(_el.toolFilter.value);
     });
 }
 
@@ -470,6 +481,12 @@ export function bindTools(ctx) {
   // renderer that was previously inline as bind(el.tools, toolState, ...)
   if (ctx.bind && ctx.T && ctx.UI) {
     ctx.bind(_el.tools, _toolState, function (s) {
+      if (_toolLoadError) {
+        _el.toolsStatus.textContent = _toolLoadError;
+        return ctx.T.p({ class: "run-empty" },
+          _toolLoadError + " ",
+          ctx.T.button({ type: "button", class: "secondary", onclick: loadTools }, "Try again"));
+      }
       var shown = !s.filter ? s.tools : s.tools.filter(function (t) {
         return t.name.toLowerCase().indexOf(s.filter) !== -1 ||
           (t.description || "").toLowerCase().indexOf(s.filter) !== -1 ||

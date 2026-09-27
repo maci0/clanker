@@ -401,10 +401,31 @@ function setExpanded(on) {
   });
 }
 
+/* The options the select already holds, read back into picker rows. A
+   `loadProviders` that fails part way leaves the options it appended before the
+   failure in place, so the index is the only thing out of date. */
+function indexFromSelectOptions(select) {
+  var out = [];
+  for (var i = 0; i < select.options.length; i++) {
+    var opt = select.options[i];
+    var value = opt.value || "";
+    if (value.indexOf("backend:") === 0) {
+      var backend = value.slice("backend:".length);
+      out.push({ value: value, provider: "Local coding-agent backend", model: backend, label: backend, meta: "local CLI", backend: backend });
+      continue;
+    }
+    var sp = value.indexOf(" ");
+    if (sp <= 0) continue;
+    out.push({ value: value, provider: value.slice(0, sp), model: value.slice(sp + 1), label: value.slice(sp + 1), meta: "" });
+  }
+  return out;
+}
+
 export function openModelPicker(anchor) {
   ensurePickerDom();
   if (!_modelIndex.length && _el && _el.modelSelect && _el.modelSelect.options.length) {
     // Index may be empty if load failed partially; rebuild from select.
+    _modelIndex = indexFromSelectOptions(_el.modelSelect);
   }
   _anchor = anchor || _el.composerModel || _el.headerModel;
   if (!_anchor) return;
