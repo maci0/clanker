@@ -68,8 +68,16 @@ release is pinned in
 builds and runs every tool — but the test step drives its JS suites with
 `bun test`.
 
-Build the binary, compile the WASM tools, run the test suite, create local
-state, run the complete gate, and enable the repository hooks:
+From a fresh clone, one command checks the toolchain, extracts the pinned
+dependencies, applies the dependency patches and builds the binary and its
+WASM tools:
+
+```sh
+scripts/setup.sh
+```
+
+It prints the next commands when it finishes. Those are the same steps
+written out, if you would rather run them one at a time:
 
 ```sh
 zig build --fetch=all
@@ -94,8 +102,9 @@ fresh dependency fetch replaced the trees.
 
 The edit loop has three speeds, slowest last:
 
-- `zig build quick-check`: format check plus a compile of every target, no
-  tests. Seconds, and enough to catch a patch that does not build.
+- `zig build quick-check`: format check plus a compile of the host binary, no
+  tests. Seconds, and enough to catch a patch that does not build. It does not
+  compile the WASM guests under `tools/zig/`; that is `zig build tools`.
 - `zig build test -Dtest-filter="<substring>"`: compiles the Zig binary with
   only the matching tests registered (a filter that matches nothing passes with
   0 tests; the JS suites still run).

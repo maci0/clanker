@@ -21,9 +21,9 @@ pub const capabilities = [_][]const u8{
     "confirm", "prompt", "toast",   "workspace", "icon",
     "storage", "render", "session", "foldFind",  "boardTimeline",
     "el",      "status", "fmt",     "showView",  "van",
-    "preact",  "html",   "signals", "kit",
-    "ui",      "overlay", "stream", "text",      "dom",
-    "color",   "goals",
+    "preact",  "html",   "signals", "kit",       "ui",
+    "overlay", "stream", "text",    "dom",       "color",
+    "goals",
 };
 
 /// Fresh `state/webui_plugins.json` is missing: Files is the Work surface

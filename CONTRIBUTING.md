@@ -6,13 +6,20 @@ a change that cannot pass them does not land.
 
 ## Getting started
 
-Follow the quick start in [README.md](README.md): `zig build --fetch=all`,
-`scripts/apply-patches.sh` (re-applies `patches/*.patch` to the fetched
-dependencies — the SIGWINCH patch is load-bearing for `clanker repl` and the
-pty e2e journeys, and `build.zig` refuses to compile against an unpatched
-tree), `zig build`, `zig build tools`, `zig build test`,
-`./zig-out/bin/clanker init`, `./zig-out/bin/clanker gate`, and enable the
-repository hooks with:
+```sh
+scripts/setup.sh
+```
+
+That is the whole bootstrap: it checks the toolchain, runs
+`zig build --fetch=all` and `scripts/apply-patches.sh` (re-applying
+`patches/*.patch` to the fetched dependencies — the SIGWINCH patch is
+load-bearing for `clanker repl` and the pty e2e journeys, and `build.zig`
+refuses to compile against an unpatched tree), then `zig build` and
+`zig build tools`. The order is the whole trap: `--fetch=all` extracts
+without compiling, and the patch script cannot patch a tree that is not on
+disk yet. It prints the remaining steps when it finishes: `zig build test`,
+`./zig-out/bin/clanker init`, `./zig-out/bin/clanker gate`, and the
+repository hooks:
 
 ```sh
 git config core.hooksPath .githooks
@@ -28,9 +35,11 @@ locally.
 
 Three speeds, slowest last:
 
-- `zig build quick-check`: `zig fmt --check` plus a compile of every target,
-  no tests. Seconds; enough to know a patch builds before spending a test run
-  on it.
+- `zig build quick-check`: `zig fmt --check` plus a compile of the host, no
+  tests. Seconds; enough to know a patch builds before spending a test run
+  on it. It does **not** compile the WASM guests under `tools/zig/`, so an
+  edit there needs `zig build tools` (or `zig build test`, which depends on
+  it) to show a green compile.
 - `zig build test -Dtest-filter="<substring>"`: only tests whose name
   contains the substring are compiled in. A filter that matches nothing passes
   with 0 tests; the JS suites still run.
