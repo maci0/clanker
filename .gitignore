@@ -66,6 +66,7 @@ chatrooms.jsonl
 
 # Scratch space for agent sessions (experiments, bisect files); never project source.
 /.scratch
+/.scratch_*
 
 # tree-sitter grammars built by tools/grammars/build.sh
 tools/grammars/*.so

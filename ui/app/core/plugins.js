@@ -243,16 +243,16 @@ function syncTablistOwns(tablist) {
   if (ids.length) tablist.setAttribute("aria-owns", ids.join(" "));
 }
 
-/* Every addon view's chrome: the panel, the rail tab, and the tablist wiring.
-   Built from name/title/group alone, which is all `/api/webui/plugins` answers
-   with, so a deferred addon gets a working tab before its script exists.
-   Returns the <section> the addon's `mount` is handed. */
 /* One row per plugin in the Set up list, and the row's parts. */
 var PLUGIN_ROW_CLASS = "mt-1 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-plate-sm border border-rule bg-surface-2 p-2";
 var PLUGIN_NAME_CLASS = "font-sans text-sm font-bold text-fg";
 var PLUGIN_GROUP_CLASS = "font-mono text-xs uppercase tracking-label text-fg-muted";
 var PLUGIN_DESC_CLASS = "min-w-56 flex-1 font-sans text-sm text-fg-muted";
 
+/* Every addon view's chrome: the panel, the rail tab, and the tablist wiring.
+   Built from name/title/group alone, which is all `/api/webui/plugins` answers
+   with, so a deferred addon gets a working tab before its script exists.
+   Returns the <section> the addon's `mount` is handed. */
 function makeViewShell(id, title, group) {
   var panel = document.createElement("div");
   panel.setAttribute("data-view", "true");

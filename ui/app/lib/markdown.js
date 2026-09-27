@@ -10,14 +10,14 @@ function runIdOf(m) {
   var mm = /(sub|run)-\d+/.exec(m);
   return mm ? mm[0] : m;
 }
-/* Run references (`run-<ts>`, `sub-<ns>`, or the trailing `[subagent run:
-   sub-…]` a nested run appends to its answer) become chips that open that
-   run's graph, the way file:line citations open the callgraph search. */
 /* A citation chip: the number a claim's source is filed under, inline in the
    answer. It reads as a chip, not a link, so it carries the accent's own mix
    rather than the link colour. */
 var CITATION_CHIP_CLASS = "inline-flex cursor-pointer items-center gap-0.5 rounded-capsule border border-[color-mix(in_srgb,var(--accent)_22%,var(--border))] bg-[color-mix(in_srgb,var(--accent)_8%,var(--surface))] px-2 py-0.5 font-mono text-xs font-semibold text-fg no-underline hover:border-accent hover:bg-[color-mix(in_srgb,var(--accent)_14%,var(--surface))] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
 
+/* Run references (`run-<ts>`, `sub-<ns>`, or the trailing `[subagent run:
+   sub-…]` a nested run appends to its answer) become chips that open that
+   run's graph, the way file:line citations open the callgraph search. */
 export function appendRunRefs(parent, text) {
   RUN_RE.lastIndex = 0;
   var last = 0, m;
