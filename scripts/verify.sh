@@ -84,6 +84,11 @@ if command -v zig >/dev/null 2>&1; then
 fi
 ./scripts/apply-patches.sh || status=1
 
+step "zig formatting (CI: Check Zig formatting)"
+# The gate's fmt check covers only the files a proposal touched, so the
+# repo-wide check needs its own invocation to match CI.
+zig build fmt || status=1
+
 step "zig build + clanker gate (CI: Run deterministic gate)"
 zig build || status=1
 ./zig-out/bin/clanker gate || status=1

@@ -145,6 +145,14 @@ jobs:
           "$RUNNER_TEMP/ruff-venv/bin/pip" install --disable-pip-version-check --quiet "ruff==0.16.4"
           git ls-files -z '*.py' | xargs -0 -r "$RUNNER_TEMP/ruff-venv/bin/ruff" check
 
+      # `zig build fmt` is the repo-wide `zig fmt --check` over every tree
+      # holding committed .zig (build.zig owns that path list). `clanker gate`
+      # and the pre-commit hook only format-check the files a proposal or a
+      # staged set touches, so on a merge to main neither of them looks at the
+      # rest of the checkout and a misformatted file reaches the trunk.
+      - name: Check Zig formatting
+        run: zig build fmt
+
       - name: Run deterministic gate
         run: |
           zig build

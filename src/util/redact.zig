@@ -168,7 +168,7 @@ test "forCaller masks a credential too, and stays valid UTF-8" {
 test "a short run after a scheme is not masked" {
     // "sk-" in prose, or a five-character token, is not a credential; masking
     // it would destroy the reason line a caller reads.
-    var buf: [max_log_detail_len] u8 = undefined;
+    var buf: [max_log_detail_len]u8 = undefined;
     const out = forLog(&buf, "model sk-turbo is not served here");
     try std.testing.expectEqualStrings("model sk-turbo is not served here", out);
 }
