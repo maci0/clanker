@@ -69,6 +69,14 @@ pub const host_arena_cap = 64 * 1024;
 /// nothing to free at exit. `zig_lib_dir_mutex` guards the one-shot: sandbox
 /// host functions run on `clanker serve`'s worker threads, and the startup
 /// call used to be what kept concurrent readers off a half-written slice.
+///
+/// `zig_lib_dir_resolved` latches a *success*, never a failure. Latching the
+/// attempt instead pinned an empty answer for the life of the process: on a
+/// long-lived `serve` or improve run, one `zig` that was not yet on PATH, one
+/// fork/exec that lost a race for resources, or one `zig env` whose output did
+/// not parse left `zig_std` and `stdSymbolHelp` permanently blind, with no way
+/// to recover short of a restart. A retry costs a PATH scan, and this is not
+/// a hot path (the tool, or a patch that already failed to compile).
 var zig_lib_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
 var zig_lib_dir_mutex: std.atomic.Mutex = .unlocked;
 var zig_lib_dir_resolved: bool = false;
@@ -78,7 +86,6 @@ pub fn zigLibDir(io: std.Io, environ_map: *std.process.Environ.Map) []const u8 {
     while (!zig_lib_dir_mutex.tryLock()) std.Thread.yield() catch {};
     defer zig_lib_dir_mutex.unlock();
     if (zig_lib_dir_resolved) return zig_lib_dir;
-    zig_lib_dir_resolved = true;
     // `page_allocator`: the captured output is freed here and the answer is
     // copied into `zig_lib_dir_buf`, so no caller allocator has to outlive it.
     const gpa = std.heap.page_allocator;
@@ -108,6 +115,7 @@ pub fn zigLibDir(io: std.Io, environ_map: *std.process.Environ.Map) []const u8 {
         if (dir.len == 0 or dir.len > zig_lib_dir_buf.len) return zig_lib_dir;
         @memcpy(zig_lib_dir_buf[0..dir.len], dir);
         zig_lib_dir = zig_lib_dir_buf[0..dir.len];
+        zig_lib_dir_resolved = true;
         return zig_lib_dir;
     }
     return zig_lib_dir;

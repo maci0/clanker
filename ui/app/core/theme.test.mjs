@@ -35,6 +35,21 @@ test("theme.js loads the catalog from disk, not a hardcoded list", function () {
   assert.doesNotMatch(themeJs, /export var THEMES = \["system", "light"/);
 });
 
+// The catalog fetch is memoized so concurrent callers share one request, but
+// loadCatalog swallows its own errors. Memoizing the settled promise therefore
+// cached a failed fetch as a durable answer: the picker stayed on "system" and
+// a stored named theme never applied, for the rest of the page, with no retry.
+test("only a loaded catalog is memoized, so a failed fetch can be retried", function () {
+  assert.match(themeJs, /return true;[\s\S]{0,400}return false;/, "loadCatalog must report whether it loaded");
+  assert.match(
+    themeJs,
+    /_catalogPromise = loadCatalog\(\)\.then\(function \(loaded\) \{[\s\S]{0,80}?if \(!loaded\) _catalogPromise = null;/,
+    "themesReady must clear the memo when the fetch failed",
+  );
+  // The success path stays a single in-flight request, not one per caller.
+  assert.match(themeJs, /if \(_catalogPromise\) return _catalogPromise;/);
+});
+
 // A palette can ship chrome its tokens cannot express. The catalog names that
 // stylesheet only for the theme that has one, and the page fetches it on the
 // first apply, so every other theme still pays nothing for the skin.

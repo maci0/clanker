@@ -40,14 +40,25 @@ function loadCatalog() {
     CATALOG = next;
     THEMES = names;
     applyTheme(_current);
+    return true;
   }).catch(function () {
     // Serve path missing (tests, a host without themes/): picker keeps
     // "system" and any stored named theme waits until a later load.
+    return false;
   });
 }
 
 export function themesReady() {
-  if (!_catalogPromise) _catalogPromise = loadCatalog();
+  if (_catalogPromise) return _catalogPromise;
+  // Only a loaded catalog is memoized. loadCatalog swallows its own errors,
+  // so memoizing the settled promise turned one failed fetch into a durable
+  // "there are no themes": the picker stayed on "system", a stored named
+  // theme never applied, and the comment's "a later load" named a load that
+  // could not happen, because every later caller got this same promise back.
+  // A failure is a miss, so drop the memo and let the next caller retry.
+  _catalogPromise = loadCatalog().then(function (loaded) {
+    if (!loaded) _catalogPromise = null;
+  });
   return _catalogPromise;
 }
 
