@@ -243,6 +243,104 @@ fn writeStamp(buf: []u8, epoch: i64) []const u8 {
     return buf[0..16];
 }
 
+/// The newest snapshot-shaped directory name under an open backup root, and
+/// how many there are. Null when the root holds no snapshot, so callers report
+/// the root's state themselves. Names are fixed-width UTC stamps, so
+/// lexicographic order IS chronological order (the prune in backup-state.sh
+/// relies on the same).
+const NewestSnapshot = struct { name: []const u8, count: usize };
+
+fn scanNewest(io: std.Io, arena: std.mem.Allocator, bdir: *std.Io.Dir) !?NewestSnapshot {
+    var newest: []const u8 = "";
+    var count: usize = 0;
+    var it = bdir.iterate();
+    while (it.next(io) catch null) |entry| {
+        if (!isSnapshotName(entry.name)) continue;
+        count += 1;
+        if (newest.len == 0 or std.mem.order(u8, entry.name, newest) == .gt) {
+            newest = try arena.dupe(u8, entry.name);
+        }
+    }
+    if (count == 0) return null;
+    return NewestSnapshot{ .name = newest, .count = count };
+}
+
+fn newestSnapshot(io: std.Io, arena: std.mem.Allocator, backup_root: []const u8) !?NewestSnapshot {
+    var bdir = std.Io.Dir.cwd().openDir(io, backup_root, .{ .iterate = true }) catch return null;
+    defer bdir.close(io);
+    return scanNewest(io, arena, &bdir);
+}
+
+/// An rsync remote spec (`host:path`, `user@host:path`) is a colon with no
+/// slash before it; a local path never has one. The mirror can only be read
+/// when it is local, so this decides whether its freshness is checkable at
+/// all rather than guessing at the colon.
+fn isRemoteRsyncDest(dest: []const u8) bool {
+    const colon = std.mem.indexOfScalar(u8, dest, ':') orelse return false;
+    return std.mem.indexOfScalar(u8, dest[0..colon], '/') == null;
+}
+
+/// Second failure domain. `local_newest` is the newest snapshot in the
+/// checked-out store, or null when the store has none. A configured mirror is
+/// only a second copy if it actually holds one: the mirror write fails loudly
+/// on the run that breaks, and nothing after it re-asserts, so a destination
+/// that stopped being reachable leaves a stale copy that still reads as
+/// healthy. A remote destination has no local directory to read, so it is
+/// reported as configured-and-unchecked rather than counted as a pass.
+fn reportOffsiteMirror(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    offsite_dest: []const u8,
+    local_newest: ?NewestSnapshot,
+    rep: *Report,
+) !void {
+    if (offsite_dest.len == 0) {
+        rep.line(
+            .warn,
+            "offsite mirror",
+            "CLANKER_BACKUP_OFFSITE_DEST is unset: every copy shares the store's disk; set it to an rsync destination outside that volume",
+        );
+        return;
+    }
+    if (isRemoteRsyncDest(offsite_dest)) {
+        rep.line(
+            .ok,
+            "offsite mirror",
+            try std.fmt.allocPrint(arena, "{s} is remote, so its freshness is not checked from here; a mirror run that fails fails the backup service loudly", .{offsite_dest}),
+        );
+        return;
+    }
+    if (!dirExists(io, offsite_dest)) {
+        rep.line(
+            .warn,
+            "offsite mirror",
+            try std.fmt.allocPrint(arena, "{s} is not readable from this host: the second failure domain is not being written", .{offsite_dest}),
+        );
+        return;
+    }
+    const mirrored = try newestSnapshot(io, arena, offsite_dest) orelse {
+        rep.line(
+            .warn,
+            "offsite mirror",
+            try std.fmt.allocPrint(arena, "{s} holds no snapshot: the second failure domain is empty or stale", .{offsite_dest}),
+        );
+        return;
+    };
+    if (local_newest) |local| {
+        if (std.mem.order(u8, mirrored.name, local.name) == .lt) {
+            rep.line(
+                .warn,
+                "offsite mirror",
+                try std.fmt.allocPrint(arena, "{s}: newest is {s}, behind the local {s}; the mirror stopped following the store", .{ offsite_dest, mirrored.name, local.name }),
+            );
+            return;
+        }
+        rep.line(.ok, "offsite mirror", try std.fmt.allocPrint(arena, "{s}: newest {s} ({d} present)", .{ offsite_dest, mirrored.name, mirrored.count }));
+        return;
+    }
+    rep.line(.ok, "offsite mirror", try std.fmt.allocPrint(arena, "{s}: newest {s} ({d} present)", .{ offsite_dest, mirrored.name, mirrored.count }));
+}
+
 /// Reports the durability posture of the runtime-local store: whether the
 /// state backup is installed and current, and whether a second failure
 /// domain exists at all. Read-only and offline, like every doctor check; the
@@ -307,25 +405,16 @@ fn checkStateBackups(
     };
     defer bdir.close(io);
 
-    // Names are fixed-width UTC stamps, so lexicographic order IS
-    // chronological order (the prune in backup-state.sh relies on the same).
-    var newest: []const u8 = "";
-    var count: usize = 0;
-    var it = bdir.iterate();
-    while (it.next(io) catch null) |entry| {
-        if (!isSnapshotName(entry.name)) continue;
-        count += 1;
-        if (newest.len == 0 or std.mem.order(u8, entry.name, newest) == .gt) {
-            newest = try arena.dupe(u8, entry.name);
-        }
-    }
-    if (count == 0) {
+    const found = try scanNewest(io, arena, &bdir);
+    if (found == null) {
         rep.line(
             .warn,
             "snapshots",
             try std.fmt.allocPrint(arena, "no snapshot under {s}; every timer run is failing -- see docs/runbooks/state-backups-not-running.md", .{backup_root}),
         );
     } else {
+        const newest = found.?.name;
+        const count = found.?.count;
         var stamp_buf: [16]u8 = undefined;
         const cutoff = writeStamp(&stamp_buf, now_s - backup_stale_after_s);
         const ts = snapshotEpoch(newest) orelse 0;
@@ -348,15 +437,7 @@ fn checkStateBackups(
     // so without an off-site mirror one dead volume takes every copy. The
     // variable is read from the environment the way the timer's service
     // inherits it.
-    if (offsite_dest.len > 0) {
-        rep.line(.ok, "offsite mirror", offsite_dest);
-    } else {
-        rep.line(
-            .warn,
-            "offsite mirror",
-            "CLANKER_BACKUP_OFFSITE_DEST is unset: every copy shares the store's disk; set it to an rsync destination outside that volume",
-        );
-    }
+    try reportOffsiteMirror(io, arena, offsite_dest, found, rep);
 }
 
 /// The main checkout a linked worktree's `.git` FILE points back at, or null
@@ -1116,4 +1197,120 @@ test "doctor names the checkout-confined state the backup script refuses" {
 
     try std.testing.expectEqual(@as(usize, 1), rep.warnings);
     try std.testing.expect(std.mem.find(u8, text, "refuses to back this up") != null);
+}
+
+test "doctor flags a mirror that stopped following the store" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ck = try setupBackupLayout(io, arena, &tmp);
+    defer ck.close(io);
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+
+    var stamp_buf: [16]u8 = undefined;
+    const newest = try arena.dupe(u8, writeStamp(&stamp_buf, backup_layout_now - 5 * 60));
+    const older = try arena.dupe(u8, writeStamp(&stamp_buf, backup_layout_now - 3 * 60 * 60));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "store/backups/{s}", .{newest}));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "mirror/{s}", .{older}));
+    const mirror = try std.fmt.allocPrint(arena, "{s}/mirror", .{root});
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, mirror, backup_layout_now, &rep);
+    const text = buf[0..w.end];
+
+    try std.testing.expectEqual(@as(usize, 1), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, text, "stopped following the store") != null);
+    try std.testing.expect(std.mem.find(u8, text, older) != null);
+}
+
+test "doctor flags a mirror holding no snapshot" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ck = try setupBackupLayout(io, arena, &tmp);
+    defer ck.close(io);
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+
+    var stamp_buf: [16]u8 = undefined;
+    const newest = try arena.dupe(u8, writeStamp(&stamp_buf, backup_layout_now - 5 * 60));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "store/backups/{s}", .{newest}));
+    try tmp.dir.createDirPath(io, "mirror");
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, try std.fmt.allocPrint(arena, "{s}/mirror", .{root}), backup_layout_now, &rep);
+    const text = buf[0..w.end];
+
+    try std.testing.expectEqual(@as(usize, 1), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, text, "empty or stale") != null);
+}
+
+test "doctor calls a caught-up mirror a second copy" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ck = try setupBackupLayout(io, arena, &tmp);
+    defer ck.close(io);
+
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root_len = try tmp.dir.realPath(io, &root_buf);
+    const root = root_buf[0..root_len];
+
+    var stamp_buf: [16]u8 = undefined;
+    const newest = try arena.dupe(u8, writeStamp(&stamp_buf, backup_layout_now - 5 * 60));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "store/backups/{s}", .{newest}));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "mirror/{s}", .{newest}));
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, try std.fmt.allocPrint(arena, "{s}/mirror", .{root}), backup_layout_now, &rep);
+
+    try std.testing.expectEqual(@as(usize, 0), rep.warnings);
+}
+
+test "doctor says a remote mirror cannot be read from here" {
+    const io = std.testing.io;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var ck = try setupBackupLayout(io, arena, &tmp);
+    defer ck.close(io);
+
+    var stamp_buf: [16]u8 = undefined;
+    const newest = try arena.dupe(u8, writeStamp(&stamp_buf, backup_layout_now - 5 * 60));
+    try tmp.dir.createDirPath(io, try std.fmt.allocPrint(arena, "store/backups/{s}", .{newest}));
+
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    var rep = Report{ .w = &w };
+    try checkStateBackups(io, arena, ck, "backup@nas:/vol/clanker-backups", backup_layout_now, &rep);
+    const text = buf[0..w.end];
+
+    try std.testing.expectEqual(@as(usize, 0), rep.warnings);
+    try std.testing.expect(std.mem.find(u8, text, "is remote") != null);
 }

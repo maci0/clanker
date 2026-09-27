@@ -54,6 +54,18 @@ The script's own diagnostics are one line each and name the entry at fault:
   `CLANKER_BACKUP_OFFSITE_DEST` did not update. The local snapshot just
   taken is complete; fix the destination and re-run so the second failure
   domain stops lagging.
+- `error: the newest snapshot is <age> old, past the <n>s bound` — the weekly
+  restore drill found the newest snapshot older than
+  `CLANKER_BACKUP_MAX_AGE_SECONDS` (default 7200, four timer intervals). The
+  snapshots it verified restore fine, which is exactly the trap: a perfect
+  restore of a month-old snapshot still means the RPO is a month. This is the
+  only check that notices a backup that stopped running, so the drill
+  (`clanker-state-verify.timer`) is what turns a silent stall into a failed
+  unit.
+- `warning: off-site mirror <dest> holds no latest` — the mirror is a local
+  path but has no promoted snapshot, so the second failure domain is empty or
+  stale even though local runs succeed. Re-run the backup with the
+  destination reachable.
 
 Reproduce outside systemd, which prints the same line without the journal:
 

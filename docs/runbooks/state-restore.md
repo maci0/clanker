@@ -45,15 +45,19 @@ newest snapshot. Restore is a copy-out of one snapshot — never an edit of
   recoverable from these backups.
 
 **RPO / RTO.** RPO is at most 30 minutes (timer interval), and `latest` is
-never more than one interval behind a running backup. Because retention
-(default `CLANKER_BACKUP_RETENTION_DAYS` = 30) keeps every snapshot, a
-point-in-time restore can go back up to the retention window — the realistic
-recovery for logical corruption, where the newest snapshot is the one you do
-*not* want. RTO is measured by `scripts/verify-backup.sh`, which restores a
-snapshot to a scratch dir and reports the copy time; the install wires that
-as `clanker-state-verify.timer`, a weekly drill whose journal history keeps
-the number current. Until a drill has covered the target size, treat RTO as
-unmeasured.
+never more than one interval behind a running backup. That claim only holds
+while runs keep happening: the weekly drill refuses a `latest` older than
+`CLANKER_BACKUP_MAX_AGE_SECONDS` (default 7200, four missed intervals), so a
+backup that stopped is a failed verify unit rather than a quiet RPO nobody
+recomputed. Because retention (default `CLANKER_BACKUP_RETENTION_DAYS` = 30)
+keeps every snapshot, a point-in-time restore can go back up to the retention
+window — the realistic recovery for logical corruption, where the newest
+snapshot is the one you do *not* want. RTO is measured by
+`scripts/verify-backup.sh`, which restores a snapshot to a scratch dir,
+re-opens every restored session database, and reports the copy time; the
+install wires that as `clanker-state-verify.timer`, a weekly drill whose
+journal history keeps the number current. Until a drill has covered the
+target size, treat RTO as unmeasured.
 
 Session databases are checkpointed before the copy and quick-checked after
 (when the `sqlite3` CLI is present), so what lands in a snapshot loads; if
@@ -145,7 +149,8 @@ this runbook can manufacture a snapshot that does not exist.
   clanker-state-verify.service` prints `failed`.
 - A restore is only proven by a drill. `scripts/verify-backup.sh` is the
   drill: it restores a snapshot into a scratch directory, compares every
-  entry byte-for-byte, and reports the copy time. The install schedules it
+  entry byte-for-byte, opens each restored session database
+  (`PRAGMA quick_check`), and reports the copy time. The install schedules it
   weekly (`clanker-state-verify.timer`, catch-up run after downtime), so the
   journal holds recent drill artifacts; run it once more before this
   procedure on the exact snapshot you picked.

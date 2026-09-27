@@ -79,20 +79,34 @@ backup root there, and a failed mirror fails the run loudly rather than
 leaving a silently stale second copy. The mirror never gets `--delete`: local
 retention prunes do not propagate, so one deletion path cannot destroy both
 copies (reclaim mirror space with a deliberate manual `rsync -a --delete`).
+`clanker doctor` reads a local mirror and reports how it compares with the
+store's newest snapshot, so a destination that stopped being written shows up
+without waiting for the next backup run to fail; a remote `user@host:/path`
+destination has no local directory to read, so doctor says it is configured
+rather than claiming it holds anything.
 
 **Restore verification.** A backup that has never been restored is a
 hypothesis. `scripts/verify-backup.sh` restores a snapshot's entries into a
-scratch directory, compares them byte-for-byte against the snapshot, and
-prints the copy time. The install wires it as
-`clanker-state-verify.timer`, a weekly drill (Saturdays 03:17, catch-up run
-after downtime) so restore verification does not depend on anyone remembering;
-run it by hand before every incident-time restore so RTO stops being an
-unknown:
+scratch directory, compares them byte-for-byte against the snapshot, opens
+every restored session database with `PRAGMA quick_check`, and prints the copy
+time. A restore that copies faithfully but does not load is a failure, not a
+pass. The install wires it as `clanker-state-verify.timer`, a weekly drill
+(Saturdays 03:17, catch-up run after downtime) so restore verification does
+not depend on anyone remembering; run it by hand before every incident-time
+restore so RTO stops being an unknown:
 
 ```bash
 ./scripts/verify-backup.sh               # newest snapshot
 ./scripts/verify-backup.sh <snapshot>    # a specific one, before restoring it
 ```
+
+Verifying the newest snapshot also asserts it is fresh: a perfect restore of a
+three-month-old snapshot still means the RPO is three months. The bound is
+`CLANKER_BACKUP_MAX_AGE_SECONDS`, default 7200 (four missed 30-minute timer
+intervals); a drill of a snapshot you chose on purpose skips the age check.
+When `CLANKER_BACKUP_OFFSITE_DEST` names a directory on this host, the drill
+also warns if that mirror holds no `latest`, so a second failure domain that
+stopped following the local root is not read as a healthy copy.
 
 **RPO / RTO.** RPO is bounded by the timer interval: at most 30 minutes of
 writes are lost, and `Persistent=true` runs a catch-up snapshot after downtime.
