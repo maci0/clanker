@@ -17,6 +17,7 @@
   "fs_prefixes": [
     "."
   ],
+  "fs_read_only": true,
   "network_allow": [],
   "category": "media",
   "confirm": false

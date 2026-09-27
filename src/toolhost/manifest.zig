@@ -59,6 +59,7 @@ pub const known_keys = [_][]const u8{
     "network_allow",
     "network_from_config",
     "fs_prefixes",
+    "fs_read_only",
     "exec_allow",
     "env_allow",
     "fuel",
@@ -93,6 +94,7 @@ const string_array_keys = [_][]const u8{
 /// Keys whose value must be a boolean. The loader ignores any other type, so
 /// `"internal": "true"` reads as `false`.
 const bool_keys = [_][]const u8{
+    "fs_read_only",
     "internal",
     "enabled",
     "llm",
@@ -538,6 +540,14 @@ fn checkPolicy(v: *Validator, obj: json.ObjectMap) !void {
         }
     }
 
+    // `fs_read_only` narrows `fs_prefixes`; with no prefix there is nothing to
+    // narrow, so the descriptor reads as a read-only tool that has been given
+    // no filesystem. The same class as the empty-prefix finding above: a grant
+    // list that validates clean and grants nothing.
+    if (boolAt(obj, "fs_read_only") and arrayOf(obj, "fs_prefixes") == null) {
+        try v.add(.err, "fs_read_only", "it narrows fs_prefixes and there are none; a read-only descriptor with no prefix has no filesystem at all");
+    }
+
     if (arrayOf(obj, "exec_allow")) |cmds| {
         for (cmds) |item| {
             if (item != .string or item.string.len == 0) continue;
@@ -835,6 +845,39 @@ test "sandbox grants are checked for shape, not just type" {
         \\  "exec_allow": ["git", "zig"] }
     );
     try testing.expectEqual(@as(usize, 0), good.findings.len);
+}
+
+test "fs_read_only is a known boolean key and needs a prefix to narrow" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The shipped shape: a prefix plus the narrowing flag, validating clean.
+    const read_tool = try reportFor(arena,
+        \\{ "name": "read", "description": "d", "wasm": "r.wasm", "input_schema": {"type":"object"},
+        \\  "fs_prefixes": ["."], "fs_read_only": true }
+    );
+    try testing.expectEqual(@as(usize, 0), read_tool.findings.len);
+
+    // With no prefix the flag grants nothing, which is the same mistake as an
+    // empty prefix entry: a grant list that validates clean and reaches nothing.
+    const no_prefix = try reportFor(arena,
+        \\{ "name": "ro", "description": "d", "wasm": "r.wasm", "input_schema": {"type":"object"},
+        \\  "fs_read_only": true }
+    );
+    try testing.expect(hasFinding(no_prefix, .err, "fs_read_only"));
+
+    // Wrong type is caught like every other boolean, and a near-miss spelling
+    // warns rather than silently granting nothing, which is why the key is
+    // listed at all: the loader ignores what it does not know.
+    try testing.expect(hasFinding(try reportFor(arena,
+        \\{ "name": "typo", "description": "d", "wasm": "t.wasm", "input_schema": {"type":"object"},
+        \\  "fs_prefixes": ["."], "fs_readonly": true }
+    ), .warn, "fs_readonly"));
+    try testing.expect(hasFinding(try reportFor(arena,
+        \\{ "name": "str", "description": "d", "wasm": "s.wasm", "input_schema": {"type":"object"},
+        \\  "fs_prefixes": ["."], "fs_read_only": "true" }
+    ), .err, "fs_read_only"));
 }
 
 test "category is a known group or a named warning" {

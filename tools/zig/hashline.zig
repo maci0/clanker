@@ -171,8 +171,9 @@ pub fn apply(
             lineOffset(lines, r.start + r.hunk.old_count)
         else
             src.len;
-        // Signed: the spliced text shrinks as often as it grows, and the
-        // comparison below is against an offset in it.
+        // Signed on purpose: this is the spliced text's length, and
+        // `higher_delta` is a byte delta that can pull it below an original
+        // offset, which is the answer "nothing follows this hunk".
         const text_len: i64 = @as(i64, @intCast(src.len)) + higher_delta;
         const needs_sep = r.hunk.new_text.len > 0 and
             r.hunk.new_text[r.hunk.new_text.len - 1] != '\n' and

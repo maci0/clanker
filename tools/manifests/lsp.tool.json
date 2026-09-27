@@ -17,6 +17,7 @@
   "sequential": true,
   "exec_allow": ["zls"],
   "fs_prefixes": ["."],
+  "fs_read_only": true,
   "network_allow": [],
   "confirm": false
 }

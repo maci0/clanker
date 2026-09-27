@@ -260,6 +260,12 @@ pub const Sandbox = struct {
     /// Directory prefixes (relative to root_dir) the tool may read/write.
     /// Empty means filesystem access is denied entirely.
     fs_prefixes: []const []const u8 = &.{},
+    /// When true, the ck_fs_* write calls are refused even though
+    /// `fs_prefixes` granted the path. A prefix is a whole-channel grant, so
+    /// without this a read-only tool holds write authority over its entire
+    /// prefix and only its current source says otherwise. See
+    /// registry.Tool.fs_read_only.
+    fs_read_only: bool = false,
     /// Whether a component of an already-granted path may be a symlink
     /// (`agent.sandbox_follow_symlinks`, ADR 0017). Off by default: the
     /// no-follow walk in `safeJoinSecure` is what stops a link inside a
@@ -427,6 +433,7 @@ pub fn sandboxFor(
         .extra_roots = cfg.agent.sandbox_roots,
         .follow_symlinks = cfg.agent.sandbox_follow_symlinks,
         .network_allow = net,
+        .fs_read_only = tool.fs_read_only,
         .llm = llm_access,
         .session = tool.session,
         .exec_allow = tool.exec_allow,
@@ -4503,6 +4510,7 @@ pub fn ckFsCopy(caller: *zwasm.Caller, src_ptr: u32, src_len: u32, dst_ptr: u32,
 }
 
 fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u8) u32 {
+    if (fsWriteDenied(h.sandbox)) return Err.denied;
     const full_src = safeJoinSecure(h.sandbox, src_sub) catch return Err.denied;
     defer h.sandbox.gpa.free(full_src);
     const full_dst = safeJoinSecure(h.sandbox, dst_sub) catch return Err.denied;
@@ -4535,8 +4543,19 @@ fn fsCopyImpl(h: *Host, mem_bytes: []u8, src_sub: []const u8, dst_sub: []const u
 /// ck_fs_rename(old_path, new_path), rename/move a file under the sandbox root.
 /// Both paths must pass the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 /// Returns Err.not_found when the source does not exist.
+/// Whether a ck_fs_* write call is refused because the descriptor narrowed its
+/// filesystem grant to reads (`fs_read_only`). A prefix is a whole-channel
+/// grant, so the only thing that made a read tool read-only was its source
+/// happening to call no write function; the host now says so too.
+fn fsWriteDenied(sb: *const Sandbox) bool {
+    if (!sb.fs_read_only) return false;
+    log.log(.warn, "[sandbox] tool '{s}' may not write: its descriptor set fs_read_only", .{sb.tool_self_name});
+    return true;
+}
+
 pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u32, new_len: u32) u32 {
     const h = getHost(caller);
+    if (fsWriteDenied(h.sandbox)) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
     const old_path = sliceOf(bytes, old_ptr, old_len) orelse return Err.invalid;
     const new_path = sliceOf(bytes, new_ptr, new_len) orelse return Err.invalid;
@@ -4556,6 +4575,7 @@ pub fn ckFsRename(caller: *zwasm.Caller, old_ptr: u32, old_len: u32, new_ptr: u3
 /// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
+    if (fsWriteDenied(h.sandbox)) return Err.denied;
     const path = blk: {
         const bytes = memBytes(caller) orelse return Err.invalid;
         break :blk sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
@@ -4580,6 +4600,7 @@ pub fn ckFsDelete(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
 /// Enforces the same fs_prefixes policy as ck_fs_read / ck_fs_write.
 pub fn ckFsMkdir(caller: *zwasm.Caller, path_ptr: u32, path_len: u32) u32 {
     const h = getHost(caller);
+    if (fsWriteDenied(h.sandbox)) return Err.denied;
     const bytes = memBytes(caller) orelse return Err.invalid;
     const path = sliceOf(bytes, path_ptr, path_len) orelse return Err.invalid;
     if (path.len == 0) return Err.invalid;
@@ -4639,6 +4660,7 @@ fn fsReadImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8) u32 {
 
 fn fsWriteRangeImpl(h: *Host, sub_path: []const u8, data: []const u8, offset: u32) u32 {
     if (data.len == 0) return Err.ok;
+    if (fsWriteDenied(h.sandbox)) return Err.denied;
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
     const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
@@ -4702,6 +4724,7 @@ pub fn ckFsWrite(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, data_ptr: 
 }
 
 fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
+    if (fsWriteDenied(h.sandbox)) return Err.denied;
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
     const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
@@ -4746,6 +4769,7 @@ fn appendLocked(io: std.Io, base: std.Io.Dir, rel: []const u8, data: []const u8,
 }
 
 fn fsWriteImpl(h: *Host, mem_bytes: []u8, sub_path: []const u8, data: []const u8) u32 {
+    if (fsWriteDenied(h.sandbox)) return Err.denied;
     if (data.len > h.sandbox.max_fs_bytes) return Err.too_large;
     const full = safeJoinSecure(h.sandbox, sub_path) catch return Err.denied;
     defer h.sandbox.gpa.free(full);
@@ -4784,6 +4808,7 @@ pub fn ckFsWriteIf(caller: *zwasm.Caller, path_ptr: u32, path_len: u32, expect_p
 }
 
 fn fsWriteIfImpl(sb: *Sandbox, base: std.Io.Dir, sub_path: []const u8, expected_hex: []const u8, data: []const u8) u32 {
+    if (fsWriteDenied(sb)) return Err.denied;
     if (data.len > sb.max_fs_bytes) return Err.too_large;
     const full = safeJoinSecure(sb, sub_path) catch return Err.denied;
     defer sb.gpa.free(full);
@@ -9014,6 +9039,49 @@ fn testSandboxAtRoot(gpa: std.mem.Allocator, io: std.Io) Sandbox {
         .fs_prefixes = &.{"."},
         .environ_map = undefined,
     };
+}
+
+test "fs_read_only refuses every ck_fs_* write and still reads" {
+    var fixture: test_env.Env = .init();
+    defer fixture.deinit();
+    const gpa = std.testing.allocator;
+    const io = fixture.io();
+
+    // A "." prefix grants the whole ck_fs_* channel. The only thing that made
+    // read_file, list_files, find_files, image, lsp and repo_search read-only
+    // was their source calling no write function; this is the host saying so.
+    var sb = testSandboxAtRoot(gpa, io);
+    sb.fs_read_only = true;
+    var host = Host{ .sandbox = &sb, .rng = std.Random.DefaultPrng.init(0) };
+    // The mem_bytes argument is only the caller's scratch space, unread on
+    // every path that is refused before it reaches the filesystem.
+    var no_mem: [0]u8 = .{};
+
+    try std.testing.expectEqual(Err.denied, fsWriteImpl(&host, no_mem[0..], "new.txt", "x"));
+    try std.testing.expectEqual(Err.denied, fsAppendImpl(&host, "new.txt", "x"));
+    try std.testing.expectEqual(Err.denied, fsWriteRangeImpl(&host, "new.txt", "x", 0));
+    try std.testing.expectEqual(Err.denied, fsCopyImpl(&host, no_mem[0..], "a.txt", "b.txt"));
+    // fsWriteIfImpl takes the sandbox directly, so the CAS path is checked
+    // through it: a compare-and-swap that creates a file is still a write.
+    try std.testing.expectEqual(Err.denied, fsWriteIfImpl(&sb, fixture.tmp.dir, "new.txt", "", "x"));
+    try std.testing.expect(fsWriteDenied(&sb));
+
+    // Nothing landed, including no parent directories.
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.dir.statFile(io, "new.txt", .{}));
+    try std.testing.expectError(error.FileNotFound, fixture.tmp.dir.statFile(io, "a.txt", .{}));
+
+    // A read still works, so the grant narrows the channel rather than the
+    // descriptor: an fs_read_only tool that can read nothing is a typo. Proved
+    // on the writable sandbox through the same CAS path, against the fixture
+    // directory rather than the process cwd the other Impl functions resolve.
+    var writable = testSandboxAtRoot(gpa, io);
+    try std.testing.expectEqual(Err.ok, fsWriteIfImpl(&writable, fixture.tmp.dir, "seed.txt", "", "hello"));
+    const got = try fixture.tmp.dir.readFileAlloc(io, "seed.txt", gpa, .limited(1 << 20));
+    defer gpa.free(got);
+    try std.testing.expectEqualStrings("hello", got);
+
+    // And the flag defaults off: a descriptor that says nothing keeps writing.
+    try std.testing.expect(!fsWriteDenied(&testSandboxAtRoot(gpa, io)));
 }
 
 test "fsWriteIfImpl writes when hash matches and rejects on mismatch" {

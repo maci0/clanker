@@ -6,6 +6,7 @@
   "enabled": true,
   "category": "code",
   "fs_prefixes": ["."],
+  "fs_read_only": true,
   "input_schema": {
     "type": "object",
     "properties": {

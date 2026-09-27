@@ -18,9 +18,6 @@
     ".agents",
     ".local",
     ".github",
-    "Dockerfile",
-    ".dockerignore",
-    "docker-compose.yml",
     "README.md"
   ],
   "input_schema": {

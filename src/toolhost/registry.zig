@@ -47,6 +47,14 @@ pub const Tool = struct {
     /// Directory prefixes (relative to the sandbox root) the tool may access
     /// via ck_fs_*; empty = filesystem denied.
     fs_prefixes: []const []const u8 = &.{},
+    /// Narrows `fs_prefixes` to reads. A prefix grants the whole ck_fs_*
+    /// channel, so without this a tool whose code only ever calls
+    /// `ck_fs_read` still holds write authority over the entire prefix, and
+    /// the next patch to it inherits that silently. False (write allowed) is
+    /// the default because most tools do write; a read-only descriptor opts in.
+    /// Covers the ck_fs_* channel only: exec authority is `exec_allow`, and a
+    /// nested `ck_tool` call is bounded by the callee's own descriptor.
+    fs_read_only: bool = false,
     /// Instruction budget (wasm fuel) for one call of this tool. 0 means the
     /// sandbox default; a positive value is clamped to that default as a
     /// ceiling in runtime.zig, so a descriptor can tighten its own budget
@@ -120,11 +128,11 @@ pub const Tool = struct {
 
     /// Ask the human before running this tool, when a confirm channel is
     /// installed (agent.confirm_writes). Unset, the answer is derived from
-    /// what the descriptor grants: anything with exec or filesystem access,
-    /// where fs_prefixes carry write access (there is no read-only grant), is a
-    /// write in a viewer's eyes. Read-only tools opt out with
-    /// `"confirm": false` so reads keep running free; a tool whose risk its
-    /// grants understate (delegation, say) opts in with `"confirm": true`.
+    /// what the descriptor grants: anything with exec or a *writable*
+    /// filesystem prefix is a write in a viewer's eyes. Read-only tools opt
+    /// out with `"confirm": false`, which `fs_read_only` implies on its own,
+    /// so reads keep running free; a tool whose risk its grants understate
+    /// (delegation, say) opts in with `"confirm": true`.
     confirm: ?bool = null,
 
     /// Core tools (the `cmd_*` slash commands, the web UI, the formatter) back
@@ -137,7 +145,8 @@ pub const Tool = struct {
     /// Whether a human channel, when one is installed, must approve a call
     /// to this tool before it runs (see the `confirm` field for the default).
     pub fn needsConfirm(self: *const Tool) bool {
-        return self.confirm orelse (self.exec_allow.len > 0 or self.fs_prefixes.len > 0);
+        const writes_fs = self.fs_prefixes.len > 0 and !self.fs_read_only;
+        return self.confirm orelse (self.exec_allow.len > 0 or writes_fs);
     }
 
     /// True when `key` is one the descriptor opted in to runtime editing.
@@ -763,6 +772,12 @@ pub const Registry = struct {
                 else => {},
             }
         }
+        if (obj.get("fs_read_only")) |ro| {
+            switch (ro) {
+                .bool => |b| t.fs_read_only = b,
+                else => {},
+            }
+        }
         if (obj.get("fuel")) |fv| {
             // Anything but a positive integer keeps the default: a fuel of 0
             // or a typo'd string must not turn into an unrunnable tool.
@@ -1263,6 +1278,43 @@ test "a missing tools_dir list entry does not empty the rest" {
     const reg = try Registry.load(io, arena, env.tmp.dir, &.{ "no-such-extra", "builtins" });
     try std.testing.expectEqual(@as(usize, 1), reg.tools.count());
     try std.testing.expect(reg.get("keep") != null);
+}
+
+test "fs_read_only narrows the fs channel and defaults to off" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Absent means write authority, because most tools do write and a default
+    // of "read only" would silently break every descriptor that omits the key.
+    const writing = try Registry.parseDescriptor(arena,
+        \\{ "name": "w", "description": "d", "wasm": "w.wasm", "fs_prefixes": ["."] }
+    );
+    try std.testing.expect(!writing.fs_read_only);
+
+    // A read tool's prefix is a whole-channel grant; the flag is what says the
+    // tool is not allowed to use the write half of it.
+    const reading = try Registry.parseDescriptor(arena,
+        \\{ "name": "r", "description": "d", "wasm": "r.wasm", "fs_prefixes": ["."], "fs_read_only": true }
+    );
+    try std.testing.expect(reading.fs_read_only);
+
+    // Every shipped read-only descriptor names the flag. The point of the grant
+    // is that the read tools stop carrying write authority over the whole root,
+    // and a flag nothing declares is a flag nothing enforces.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    for ([_][]const u8{ "read_file", "list_files", "find_files", "image", "lsp", "repo_search" }) |name| {
+        const raw = try std.Io.Dir.cwd().readFileAlloc(
+            threaded.io(),
+            try std.fmt.allocPrint(arena, "tools/manifests/{s}.tool.json", .{name}),
+            arena,
+            .limited(1 << 20),
+        );
+        const tool = try Registry.parseDescriptor(arena, raw);
+        try std.testing.expect(tool.fs_read_only);
+        try std.testing.expect(tool.fs_prefixes.len > 0);
+    }
 }
 
 test "schedule manifest grants only its store and ledger" {

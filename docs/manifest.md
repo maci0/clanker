@@ -74,7 +74,8 @@ its arguments.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fs_prefixes` | string[] | `[]` | Directory prefixes, relative to `agent.sandbox_root`, this tool may read and write through `ck_fs_*`. Empty means no filesystem at all. There is no read-only grant: a prefix carries write access. For a multi-root workspace, a relative guest path whose first component names one of the project's roots resolves under that root; the same prefix grant is checked against the remainder, so the prefix list itself is unchanged |
+| `fs_prefixes` | string[] | `[]` | Directory prefixes, relative to `agent.sandbox_root`, this tool may reach through `ck_fs_*`. Empty means no filesystem at all. A prefix covers the whole channel, writes included; narrow it to reads with `fs_read_only`. For a multi-root workspace, a relative guest path whose first component names one of the project's roots resolves under that root; the same prefix grant is checked against the remainder, so the prefix list itself is unchanged |
+| `fs_read_only` | bool | `false` | Narrows `fs_prefixes` to reads: every `ck_fs_*` write call is refused even though the path is granted. Name it on a tool whose code only ever reads, so the next patch to that tool does not silently inherit write authority over the whole prefix. Covers the `ck_fs_*` channel only; exec is `exec_allow` and a nested `ck_tool` call is bounded by the callee's own descriptor. As shipped: `read_file`, `list_files`, `find_files`, `image`, `lsp`, `repo_search` |
 | `network_allow` | string[] | `[]` | Hostnames this tool may reach through `ck_http`. Each entry is an exact hostname or a glob (`*.github.com`, and a bare `*` allows every host). No scheme, no path, no port |
 | `network_from_config` | string | `""` | `"peers"` or `"providers"`: the harness appends those configured hosts to `network_allow` at load, because a manifest cannot know what is in someone's `config.toml` |
 | `exec_allow` | string[] | `[]` | Commands this tool may run through `ck_exec`, compared against `argv[0]` **exactly**. Empty is not "the harness default set" — it is no exec at all |
@@ -85,7 +86,7 @@ its arguments.
 | `live_publish` | bool | `false` | May emit onto the serve live bus through `ck_publish`. The import existing is not a grant. Events land on `Topic.plugin` only; the host stamps `t` and `from`. Forces the sequential path: the bus is host-shared state |
 | `tool_call` | bool | `false` | May call other tools through `ck_tool`. Only tools that call others need it — as shipped, `chain` (the tools it wraps), `run_plan` (a bounded step list), `bugreport` (`kanban_add`), and `goal_write` (`ask_user`) |
 | `tool_allow` | string[] | all | With `tool_call`, which tool names it may invoke. Absent or empty means every enabled non-internal tool. Ignored entirely without `tool_call` |
-| `confirm` | bool | derived | Ask the human before running, when a confirm channel is installed (`agent.confirm_writes`). Unset, it is derived from the grants: any tool with `exec_allow` or `fs_prefixes` is a write in a viewer's eyes. A read-only tool opts out with `false`; a tool whose risk its grants understate opts in with `true` |
+| `confirm` | bool | derived | Ask the human before running, when a confirm channel is installed (`agent.confirm_writes`). Unset, it is derived from the grants: any tool with `exec_allow` or a writable `fs_prefixes` is a write in a viewer's eyes, so `fs_read_only` implies no confirm on its own. A read-only tool opts out with `false`; a tool whose risk its grants understate opts in with `true` |
 
 ### Fuel
 

@@ -29,6 +29,7 @@
   "fs_prefixes": [
     "."
   ],
+  "fs_read_only": true,
   "exec_allow": [
     "rg",
     "ast-grep",
