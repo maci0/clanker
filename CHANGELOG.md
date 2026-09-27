@@ -639,7 +639,7 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   wells, citations). Those shapes are the renderer's own class names —
   `.md-p`, `.md-table`, `.code-block` — which no utility can address, so they
   are the one component block the port keeps on purpose, beside the tokens they
-  read. `app.css` falls from 66.8K to 49K raw; first paint 58.7 → 57.8K gz (the
+  read. `app.css` falls from 66.8K to 57.2K raw; first paint 58.7 → 57.8K gz (the
   moved rules now load with the blocking sheet, and the cabinet sheet that
   carried them is smaller).
 
