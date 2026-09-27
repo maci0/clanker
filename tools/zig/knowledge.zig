@@ -7,12 +7,16 @@
 //!   get    {id}                  -> {ok, id, title, description, docs:[{id,name,bytes,created,content}]}
 //!   create {title, description?} -> {ok, id, title}
 //!   delete {id}                  -> {ok}
-//!   add_doc {collection_id, name, content} -> {ok, id}
+//!   add_doc {collection_id, name, content} -> {ok, id, created}
+//!     Upsert on name: a second add of a name the collection already has
+//!     replaces that document instead of appending a duplicate (see
+//!     knowledge_logic.zig).
 //!   delete_doc {collection_id, doc_id}     -> {ok}
 //!   search {query, collections?} -> {ok, hits:[{collection_id,collection_title,doc_id,doc_name,snippet}]}
 
 const std = @import("std");
 const lib = @import("lib.zig");
+const logic = @import("knowledge_logic.zig");
 
 const store_dir = "state/knowledge";
 
@@ -63,13 +67,9 @@ fn chunksPath(id: []const u8) []const u8 {
     return std.fmt.allocPrint(lib.alloc, "{s}/{s}.chunks.json", .{ store_dir, id }) catch "";
 }
 
-const StoredDoc = struct {
-    id: []const u8 = "",
-    name: []const u8 = "",
-    content: []const u8 = "",
-    bytes: usize = 0,
-    created: i64 = 0,
-};
+/// The document record, defined beside the name rule that keys it
+/// (`knowledge_logic`) so the guest and the host tests cannot drift apart.
+const StoredDoc = logic.Doc;
 
 const StoredCollection = struct {
     id: []const u8 = "",
@@ -351,6 +351,38 @@ fn actionAddDoc(obj: std.json.Value, out: *lib.Out) !void {
     if (content.len == 0 or content.len > 500_000) return lib.fail(out, "content required, max 500KB");
 
     var col = loadCollection(col_id) orelse return lib.fail(out, "no such collection");
+
+    // A document is identified by its name within its collection, so this is
+    // an upsert: a second execution with the same name leaves the collection
+    // as one document, whether the content is the same (nothing to write) or
+    // revised (replace in place, keeping the id so nothing referencing this
+    // document is orphaned). Appending unconditionally is what put two copies
+    // of a name into the collection on every retried POST
+    // `/api/knowledge/<id>/docs`, a repeated model call, or a re-run of the
+    // folder sync, and both copies then answer `search` and get injected into
+    // the prompt of every later run.
+    if (logic.findByName(col.docs, name)) |at| {
+        const doc_id = col.docs[at].id;
+        if (!std.mem.eql(u8, col.docs[at].content, content)) {
+            var docs: std.ArrayList(StoredDoc) = .empty;
+            docs.appendSlice(lib.alloc, col.docs) catch return lib.fail(out, "alloc");
+            docs.items[at] = .{
+                .id = doc_id,
+                .name = name,
+                .content = content,
+                .bytes = content.len,
+                .created = col.docs[at].created,
+            };
+            col.docs = docs.items;
+            col.updated = nowSec();
+            saveCollection(col) catch return lib.fail(out, "save failed");
+            // Chunks are keyed by doc id, so deriving over the same id
+            // replaces the old ones rather than adding to them.
+            deriveChunks(col.id, docs.items[at]) catch {};
+        }
+        return respondAddDoc(out, doc_id, false);
+    }
+
     const doc_id = newId();
     const doc = StoredDoc{ .id = doc_id, .name = name, .content = content, .bytes = content.len, .created = nowSec() };
 
@@ -363,6 +395,12 @@ fn actionAddDoc(obj: std.json.Value, out: *lib.Out) !void {
 
     deriveChunks(col.id, doc) catch {};
 
+    return respondAddDoc(out, doc_id, true);
+}
+
+/// `created:false` says the name was already in the collection, so a caller
+/// retrying a lost call can tell "done" from "added a second one".
+fn respondAddDoc(out: *lib.Out, doc_id: []const u8, created: bool) !void {
     var w = lib.writer(out);
     var s = lib.json(&w);
     try s.beginObject();
@@ -370,6 +408,8 @@ fn actionAddDoc(obj: std.json.Value, out: *lib.Out) !void {
     try s.write(true);
     try s.objectField("id");
     try s.write(doc_id);
+    try s.objectField("created");
+    try s.write(created);
     try s.endObject();
     lib.commit(out, &w);
 }

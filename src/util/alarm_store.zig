@@ -75,8 +75,55 @@ test "parseList ignores unknown fields for forward compatibility" {
     try std.testing.expectEqual(@as(usize, 1), got.len);
 }
 
+/// The row a `set` would duplicate, or null when the store holds no such
+/// reminder. Identity is the reminder itself, not the id: `set` mints a new
+/// id every call, so the model repeating a call whose reply it never saw --
+/// a retried turn, a resumed session, a second agent reasoning over the
+/// same reminder -- appended a second copy of a reminder it had already
+/// set, and both copies then surfaced in the system prompt of every later
+/// run until each was handled. Same message, same fire time, same interval
+/// is the same reminder; anything else is a different one.
+pub fn findSame(alarms: []const Alarm, message: []const u8, ts: i64, every: i64) ?usize {
+    for (alarms, 0..) |a, i| {
+        if (a.ts != ts or a.every != every) continue;
+        if (!std.mem.eql(u8, a.message, message)) continue;
+        return i;
+    }
+    return null;
+}
+
 test "parseList rejects non-array JSON" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     try std.testing.expectError(error.CorruptAlarmFile, parseList(arena_state.allocator(), "{}"));
+}
+
+test "a repeated set finds the reminder it would duplicate" {
+    const alarms = [_]Alarm{
+        .{ .id = "a-100-0", .ts = 100, .message = "check CI", .set_ts = 90 },
+        .{ .id = "a-200-0", .ts = 200, .message = "check CI", .set_ts = 90, .every = 30 },
+    };
+    // Exactly the set that is already there: same message, fire time, interval.
+    try std.testing.expectEqual(@as(?usize, 0), findSame(&alarms, "check CI", 100, 0));
+    try std.testing.expectEqual(@as(?usize, 1), findSame(&alarms, "check CI", 200, 30));
+    // A different message, a different fire time, and a different interval
+    // are three different reminders, not a match on the message alone.
+    try std.testing.expectEqual(@as(?usize, null), findSame(&alarms, "check CD", 100, 0));
+    try std.testing.expectEqual(@as(?usize, null), findSame(&alarms, "check CI", 101, 0));
+    // A one-shot and a recurring reminder for the same text are distinct:
+    // handling the one-shot must not silence the recurring one.
+    try std.testing.expectEqual(@as(?usize, null), findSame(&alarms, "check CI", 200, 0));
+    try std.testing.expectEqual(@as(?usize, null), findSame(&alarms, "check CI", 100, 30));
+}
+
+test "setting the same reminder twice leaves one row" {
+    var alarms: std.ArrayList(Alarm) = .empty;
+    defer alarms.deinit(std.testing.allocator);
+    // The guest's append step, run twice, guarded by findSame.
+    for (0..2) |_| {
+        if (findSame(alarms.items, "re-poll the peer", 500, 0) == null) {
+            try alarms.append(std.testing.allocator, .{ .id = "a-500-0", .ts = 500, .message = "re-poll the peer", .set_ts = 400 });
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), alarms.items.len);
 }

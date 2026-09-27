@@ -1,6 +1,6 @@
 {
   "name": "knowledge",
-  "description": "Knowledge base: collections of uploaded documents. Actions: list, get {id}, create {title,description}, delete {id}, add_doc {collection_id,name,content}, delete_doc {collection_id,doc_id}, search {query,collections?}.",
+  "description": "Knowledge base: collections of uploaded documents. Actions: list, get {id}, create {title,description}, delete {id}, add_doc {collection_id,name,content} (upsert on name: a name already in the collection is replaced, not duplicated), delete_doc {collection_id,doc_id}, search {query,collections?}.",
   "input_schema": {
     "type": "object",
     "properties": {

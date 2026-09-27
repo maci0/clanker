@@ -8,7 +8,8 @@
 //!         {"action":"list"}
 //!         {"action":"done","id":"a-..."}   handled: recurring advances, one-shot is removed
 //!         {"action":"cancel","id":"a-..."} delete outright, recurring or not
-//! Output: {"ok":true,...} (list carries alarms with "due" and "every_minutes")
+//! Output: {"ok":true,...} (list carries alarms with "due" and "every_minutes");
+//!          `set` carries "already_set", true when the reminder was already there)
 
 const std = @import("std");
 const lib = @import("lib.zig");
@@ -99,6 +100,16 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
     while (attempt < 3) : (attempt += 1) {
         var loaded = try load();
         if (loaded.alarms.items.len >= max_alarms) return lib.fail(out, "alarm list is full (50); cancel some first");
+        // Setting a reminder that is already set is that reminder, not a
+        // second one. The id is minted per call, so it cannot answer this:
+        // a repeated call (a retried turn, a resumed session, a second
+        // agent over the same reminder) used to append a copy, and both
+        // copies then surfaced in the system prompt of every later run
+        // until each was handled separately. Checked on every attempt, so
+        // a store that changed under a compare-and-swap is re-read first.
+        if (alarm_store.findSame(loaded.alarms.items, message, fire, every)) |dup| {
+            return out.writeAll(try setReply(loaded.alarms.items[dup].id, fire - now, every, true));
+        }
         // An id must be unique across the whole store, not just this
         // creation's list length: cancels recycle lengths, so two alarms
         // at the same fire time could otherwise share an id and a later
@@ -112,16 +123,23 @@ fn doSet(obj: std.json.ObjectMap, out: *lib.Out) !void {
         }
         const id = try std.fmt.allocPrint(lib.alloc, "a-{d}-{d}", .{ fire, next });
         try loaded.alarms.append(lib.alloc, .{ .id = id, .ts = fire, .message = message, .set_ts = now, .every = every });
-        if (try store(loaded)) {
-            if (every > 0) {
-                const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d},\"every_minutes\":{d}}}", .{ id, fire - now, every });
-                return out.writeAll(reply);
-            }
-            const reply = try std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d}}}", .{ id, fire - now });
-            return out.writeAll(reply);
-        }
+        if (try store(loaded)) return out.writeAll(try setReply(id, fire - now, every, false));
     }
     return lib.fail(out, "alarms file kept changing underneath; try again");
+}
+
+/// `already_set` distinguishes "this reminder is now set" from "this call
+/// was the one that set it", which is what a caller retrying a lost reply
+/// needs to see.
+fn setReply(id: []const u8, fires_in: i64, every: i64, already_set: bool) ![]const u8 {
+    if (every > 0) {
+        return std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d},\"every_minutes\":{d},\"already_set\":{}}}", .{
+            id, fires_in, every, already_set,
+        });
+    }
+    return std.fmt.allocPrint(lib.alloc, "{{\"ok\":true,\"id\":\"{s}\",\"fires_in_seconds\":{d},\"already_set\":{}}}", .{
+        id, fires_in, already_set,
+    });
 }
 
 fn doList(out: *lib.Out) !void {

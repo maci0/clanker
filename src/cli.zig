@@ -15029,25 +15029,13 @@ fn handleKnowledgeSync(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Alloca
             continue;
         }
 
-        // Upsert: replace the existing doc of this name, if any.
-        var upsert_ok = true;
-        for (col.docs) |d| {
-            if (!std.mem.eql(u8, d.name, name)) continue;
-            const del = std.fmt.allocPrint(arena, "{{\"action\":\"delete_doc\",\"collection_id\":\"{s}\",\"doc_id\":\"{s}\"}}", .{ col_id, d.id }) catch return;
-            const del_out = kb.call(del) catch {
-                upsert_ok = false;
-                break;
-            };
-            if (toolResultFailed(del_out)) {
-                upsert_ok = false;
-                break;
-            }
-            break;
-        }
-        if (!upsert_ok) {
-            skipped += 1;
-            continue;
-        }
+        // One upsert, keyed on the file's name inside the collection. The
+        // guest's `add_doc` replaces the document of that name and keeps its
+        // id, so a sync re-run lands on the same document instead of
+        // appending a second one, and a crash mid-file no longer leaves the
+        // collection with neither: this used to be a `delete_doc` followed by
+        // an `add_doc`, and anything that died between the two took the
+        // document with it (and its chunks, which the delete invalidates).
         var w: std.Io.Writer.Allocating = .init(arena);
         var s = std.json.Stringify{ .writer = &w.writer };
         s.beginObject() catch return;
