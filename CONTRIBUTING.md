@@ -35,11 +35,12 @@ locally.
 
 Three speeds, slowest last:
 
-- `zig build quick-check`: `zig fmt --check` plus a compile of the host, no
-  tests. Seconds; enough to know a patch builds before spending a test run
-  on it. It does **not** compile the WASM guests under `tools/zig/`, so an
-  edit there needs `zig build tools` (or `zig build test`, which depends on
-  it) to show a green compile.
+- `zig build quick-check`: `zig fmt --check` plus a compile of the host binary,
+  no tests. Seconds; enough to know a patch builds before spending a test run
+  on it. It does **not** compile the WASM guests under `tools/zig/` (the
+  dependency runs the other way round: `zig build tools` depends on the host,
+  not the reverse), so an edit there needs `zig build tools` (or `zig build
+  test`, which depends on it) to show a green compile.
 - `zig build test -Dtest-filter="<substring>"`: only tests whose name
   contains the substring are compiled in. A filter that matches nothing passes
   with 0 tests; the JS suites still run.

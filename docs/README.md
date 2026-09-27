@@ -598,7 +598,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `tui-plugins/`, `cli-plugins/` | `src/tui/slash_plugins.zig`, `src/cli/cli_plugins.zig` | Slash-command / subcommand plugin manifests (PRD 0012) |
 | `hooks/` | `src/hooks/` | Claude-compatible lifecycle hook catalogs (`[hooks] config_path`, `ponytail.json` is the shipped one) |
 | `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
-| `rules/` | — | `ast-grep` rules, loaded through `sgconfig.yml` (`ruleDirs: rules`) alongside the custom Zig grammar built by `tools/grammars/build.sh` |
+| `rules/` | — | `ast-grep` rules, loaded through `sgconfig.yml` (`ruleDirs: rules`) alongside the custom Zig grammar built by `grammars/build.sh` |
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |
 | `patches/` | — | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
@@ -617,7 +617,7 @@ dependency cache location is controlled by the Zig installation/environment.
 - `tools/zig/` — Zig tool sources.
 - `tools/ts/` — AssemblyScript tool sources.
 - `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
-- `tools/grammars/` — grammars used by tools that parse.
+- `grammars/` — grammars used by `ast-grep` structural search (`sgconfig.yml` registers the Zig one here; the `.so` is a build artifact, gitignored).
 - `tools/examples/manifests/` — descriptors the registry does not load. The matching sources already exist (`tools/c/`, `tools/cpp/`, `tools/ts/calc_ts.ts`); `zig build tools` compiles the C and C++ guests into `zig-out/tools/`. They stay parked so a language-showcase tool is not offered to the model until it is shipped.
 - `patches/` — patches applied on top of vendored dependencies (`scripts/apply-patches.sh`).
 - `ui/plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
@@ -663,14 +663,14 @@ changes as tools are added.
 | `image` | `.` | Read an image file and return it as a multimodal part, so the model can see it |
 | `ask_user` | none | Put a multiple-choice question to the human, to another clanker instance, or (in a sub-agent run) to the parent agent via `{"parent": true}` |
 | `note_forget` | `state` | Remove learnings matching a substring, with `dry_run` to see what would go |
-| `repo_search` | none | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
+| `repo_search` | `.` (read-only) | Search this project via `{"engine": "rg" \| "ast-grep" \| "semcode", "query", "path"}` |
 | `symbols` | none | Find the Zig declaration site of a fn, const, struct, enum, or union |
 | `zig_std` | none | Look up a Zig 0.16 std signature and docs before writing code against it |
 | `sourcegraph_search` | none | Search open-source code through Sourcegraph |
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `web_fetch` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
+| `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, `worktree`, plus the index verbs `write-tree`, `read-tree` without `-u`, and `restore --staged` (never `restore --worktree`), which `smart_commit` needs to honor a hunk-narrowed index, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or deliver a machine notification (`notify`). Conversational DMs are `chat_dm` |
 | `chat_dm` | none | Direct message another instance (`to` + `text`); same send path as `chat_send`, canonical dm room |
@@ -1201,15 +1201,18 @@ one-to-one.
 
 | Endpoint | Tool | Store(s) | GET actions | POST actions |
 |---|---|---|---|---|
-| `/api/reports` | `reports` | `docs/reports/`, `docs/runbooks/` | `list`, `search`, `open` | `create`, `append`, `update`, `status` |
-| `/api/rfc` | `rfc` | `docs/rfcs/` | `list`, `search`, `open`, `checklist` | `create`, `append`, `update`, `recommend`, `status` |
-| `/api/adr` | `adr` | `docs/adrs/` | `list`, `search`, `open` | `create`, `append`, `update`, `status` |
-| `/api/prd` | `prd` | `docs/prds/` | `list`, `search`, `open`, `checklist` | `create`, `append`, `update`, `status` |
-| `/api/research` | `research` | `docs/research/` | `list`, `search`, `open`, `plan` | `create`, `append`, `update`, `status` |
+| `/api/reports` | `reports` | `docs/reports/`, `docs/runbooks/` | `list`, `search`, `open` | `create`, `append`, `update`, `status`, `rename` |
+| `/api/rfc` | `rfc` | `docs/rfcs/` | `list`, `search`, `open`, `checklist` | `create`, `append`, `update`, `recommend`, `status`, `rename` |
+| `/api/adr` | `adr` | `docs/adrs/` | `list`, `search`, `open` | `create`, `append`, `update`, `status`, `rename` |
+| `/api/prd` | `prd` | `docs/prds/` | `list`, `search`, `open`, `checklist` | `create`, `append`, `update`, `status`, `rename` |
+| `/api/research` | `research` | `docs/research/` | `list`, `search`, `open`, `plan` | `create`, `append`, `update`, `status`, `rename` |
 
-Each endpoint relays the guest and nothing else: no record logic is native and
-`src/` never reads or writes `docs/`. The field names are the tool's own, so
-what the agent sends and what a browser sends are the same request.
+Each endpoint relays the guest and nothing else: no record logic is native, and
+`src/records/` only renders what the guest hands back. The one other native
+reader of these trees is `src/improve/backlog.zig`, which scores open reports
+and PRD boxes as candidate ideas and never writes a record. The field names
+are the tool's own, so what the agent sends and what a browser sends are the
+same request.
 
 A bare `GET` lists a store:
 

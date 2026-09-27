@@ -176,9 +176,10 @@ clanker schedule [list|add|remove|enable|disable|run|run-due|log]
 ```
 
 **Nothing fires on its own.** `clanker schedule run-due` is the only way an
-entry fires, and it is a short-lived command the system's cron or a systemd
-timer invokes, typically every minute. clanker ships no always-on loop and
-`clanker serve` gains no scheduling thread
+entry fires unattended (`clanker schedule run <id>` fires one by hand, whatever
+its schedule says), and it is a short-lived command the system's cron or a
+systemd timer invokes, typically every minute. clanker ships no always-on
+loop and `clanker serve` gains no scheduling thread
 ([ADR 0008](docs/adrs/0008-the-scheduler-is-cron-driven-not-a-daemon.md)).
 `run-due` takes a non-blocking exclusive flock for its duration, so a
 minute-by-minute invocation cannot stack sweeps.
