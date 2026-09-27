@@ -160,6 +160,67 @@ fn metaGet(conn: *sqlite.Connection, arena: std.mem.Allocator, key: []const u8) 
     return null;
 }
 
+/// `meta` key holding `<message-count> <hash>` for the last transcript write.
+/// See `saveSession` for what it buys.
+const msg_state_key = "msg_state";
+
+const WrittenState = struct {
+    count: usize,
+    hash: u64,
+};
+
+fn readWrittenState(conn: *sqlite.Connection, arena: std.mem.Allocator) ?WrittenState {
+    const raw = metaGet(conn, arena, msg_state_key) orelse return null;
+    const sp = std.mem.findScalar(u8, raw, ' ') orelse return null;
+    const count = std.fmt.parseInt(usize, raw[0..sp], 10) catch return null;
+    const hash = std.fmt.parseInt(u64, raw[sp + 1 ..], 10) catch return null;
+    return .{ .count = count, .hash = hash };
+}
+
+/// Wyhash over the fields that become one `messages` row, length-delimited so
+/// boundaries cannot alias: ("ab","c") must never hash like ("a","bc"), or a
+/// rewrite in the middle of the transcript would read as an append.
+///
+/// Hashed over the caller's fields, not the stored (sanitized, JSON-encoded)
+/// ones, so a save can check the prefix without encoding the whole transcript
+/// first. Those encoders are pure, so an equal row implies an equal field; the
+/// converse can fail (two byte strings that sanitize to the same text hash
+/// differently), and that fails toward a full rebuild, which is the safe side.
+fn hashMessages(messages: []const types.Message) u64 {
+    var h = std.hash.Wyhash.init(0);
+    var len_buf: [8]u8 = undefined;
+    const feed = struct {
+        fn f(wh: *std.hash.Wyhash, buf: *[8]u8, slice: []const u8) void {
+            std.mem.writeInt(u64, buf, slice.len, .little);
+            wh.update(buf);
+            wh.update(slice);
+        }
+    }.f;
+    for (messages) |m| {
+        feed(&h, &len_buf, m.role.asStr());
+        feed(&h, &len_buf, m.content orelse "");
+        feed(&h, &len_buf, m.tool_call_id orelse "");
+        const images: []const types.ImagePart = m.images orelse &.{};
+        std.mem.writeInt(u64, &len_buf, images.len, .little);
+        h.update(&len_buf);
+        for (images) |img| {
+            feed(&h, &len_buf, img.mime);
+            feed(&h, &len_buf, img.b64);
+        }
+        const calls: []const types.ToolCall = m.tool_calls orelse &.{};
+        std.mem.writeInt(u64, &len_buf, calls.len, .little);
+        h.update(&len_buf);
+        for (calls) |tc| {
+            feed(&h, &len_buf, tc.id);
+            feed(&h, &len_buf, tc.name);
+            feed(&h, &len_buf, tc.arguments);
+        }
+        const flag = [1]u8{@intFromBool(m.steered)};
+        feed(&h, &len_buf, &flag);
+    }
+    return h.final();
+}
+
 /// JSON-encodes a message's images (or "[]" when absent).
 fn encodeImages(arena: std.mem.Allocator, images: ?[]const types.ImagePart) ![]const u8 {
     const imgs = images orelse return "[]";
@@ -223,14 +284,49 @@ pub fn saveSession(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u
     try metaSet(&conn, "archived", if (session.archived) "true" else "false");
     if (session.system_prompt) |sp| try metaSet(&conn, "system_prompt", try utf8.sanitize(arena, sp));
 
-    try conn.exec("DELETE FROM messages;");
+    // The transcript is a projection of the caller's message list, so a save
+    // used to delete every row and reinsert the whole conversation. That is a
+    // full rewrite of a multi-MB table on every turn, and the cost per session
+    // grows with its length. A conversation is append-only in practice (a
+    // message already sent to a provider is never rewritten, and compaction
+    // drops a prefix), so the everyday save only needs the tail.
+    //
+    // `msg_state` says what the last save wrote: the number of messages, plus
+    // a hash over their fields. When that prefix still matches the list being
+    // written, only messages past it are inserted and the earlier rows keep
+    // their `seq`. Anything else (first save, a database written before the
+    // key existed, compaction that shortened the list, an edited or steered
+    // earlier message) takes the full rebuild, so the table can lag the hash
+    // but never disagree with it.
+    const written = readWrittenState(&conn, arena);
+    // The byte total is summed from what is bound, so an appended save needs
+    // the previous figure to add to; without it, rebuild.
+    const previous_bytes: ?usize = blk: {
+        const raw = if (written != null) metaGet(&conn, arena, "message_bytes") else null;
+        const value = raw orelse break :blk null;
+        break :blk std.fmt.parseInt(usize, value, 10) catch null;
+    };
+    const appendable = if (written) |st|
+        previous_bytes != null and
+            st.count <= session.messages.len and
+            hashMessages(session.messages[0..st.count]) == st.hash
+    else
+        false;
+
+    const from: usize = if (appendable)
+        written.?.count
+    else blk: {
+        try conn.exec("DELETE FROM messages;");
+        break :blk 0;
+    };
+    var stored_bytes: usize = if (appendable) previous_bytes.? else 0;
+
     var ins = try conn.prepare(
         \\INSERT INTO messages (role, content, images, tool_calls, tool_call_id, steered)
         \\VALUES (?1, ?2, ?3, ?4, ?5, ?6);
     );
     defer ins.finalize();
-    var stored_bytes: usize = 0;
-    for (session.messages) |m| {
+    for (session.messages[from..]) |m| {
         ins.reset();
         const content = try utf8.sanitize(arena, m.content orelse "");
         try ins.bindText(1, m.role.asStr());
@@ -251,6 +347,11 @@ pub fn saveSession(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u
     // disagree with what was just written.
     try metaSet(&conn, "message_count", try std.fmt.bufPrint(&buf, "{d}", .{session.messages.len}));
     try metaSet(&conn, "message_bytes", try std.fmt.bufPrint(&buf, "{d}", .{stored_bytes}));
+    var state_buf: [48]u8 = undefined;
+    try metaSet(&conn, msg_state_key, try std.fmt.bufPrint(&state_buf, "{d} {d}", .{
+        session.messages.len,
+        hashMessages(session.messages),
+    }));
     try tx.commit();
     // Cross-session full-text index (fail-open: a missing index only costs
     // the next search its speedup).
@@ -1260,6 +1361,117 @@ test "a steered message round-trips as the user's own words plus the flag" {
     // framing instead of sending a prefix that changed under the provider.
     try std.testing.expect(s.messages[1].steered);
     try std.testing.expect(!s.messages[0].steered);
+}
+
+/// The `seq` of every message row, in order. Appended rows keep their
+/// sequence across a later save; a rewrite renumbers from 1, so this is what
+/// tells the two apart from the outside.
+fn storedSeqs(arena: std.mem.Allocator, dir: []const u8, id: []const u8) ![]i64 {
+    const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ dir, id, db_suffix });
+    const pathz = try arena.dupeZ(u8, path);
+    var conn: sqlite.Connection = .{};
+    try conn.open(pathz);
+    defer conn.close();
+    var out: std.ArrayList(i64) = .empty;
+    var stmt = try conn.prepare("SELECT seq FROM messages ORDER BY seq;");
+    defer stmt.finalize();
+    while ((try stmt.step()) == .row) try out.append(arena, stmt.columnInt(0));
+    return out.toOwnedSlice(arena);
+}
+
+test "a save appends the new turn and leaves the earlier rows alone" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const first = [_]types.Message{
+        .{ .role = .user, .content = "the opening turn" },
+        .{ .role = .assistant, .content = "the opening answer" },
+    };
+    try saveSession(io, arena, dir, .{ .id = "app", .title = "app", .messages = &first, .created = 1, .updated = 1 });
+    const before = try storedSeqs(arena, dir, "app");
+    try std.testing.expectEqual(@as(usize, 2), before.len);
+
+    // The everyday turn: same prefix, one more message.
+    const second = first ++ [_]types.Message{.{ .role = .user, .content = "a follow-up" }};
+    try saveSession(io, arena, dir, .{ .id = "app", .title = "app", .messages = &second, .created = 1, .updated = 2 });
+    const after = try storedSeqs(arena, dir, "app");
+    try std.testing.expectEqual(@as(usize, 3), after.len);
+    // Unchanged sequence numbers are the append: a rewrite would restamp the
+    // whole table from 1 on every turn.
+    try std.testing.expectEqual(before[0], after[0]);
+    try std.testing.expectEqual(before[1], after[1]);
+
+    const s = try loadSession(io, std.testing.allocator, arena, dir, "app");
+    try std.testing.expectEqual(@as(usize, 3), s.messages.len);
+    try std.testing.expectEqualStrings("the opening turn", s.messages[0].content.?);
+    try std.testing.expectEqualStrings("a follow-up", s.messages[2].content.?);
+    // The listing's cached byte total follows the append, or every picker
+    // would report a size smaller than the transcript it opens.
+    const meta = sessionMetaFromDb(io, arena, dir, "app").?;
+    try std.testing.expectEqual(@as(usize, 3), meta.messages);
+    try std.testing.expectEqual("the opening turn".len + "the opening answer".len + "a follow-up".len, meta.bytes);
+}
+
+test "an edited earlier message rewrites the transcript instead of appending onto it" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const first = [_]types.Message{
+        .{ .role = .user, .content = "the original turn" },
+        .{ .role = .assistant, .content = "the original answer" },
+    };
+    try saveSession(io, arena, dir, .{ .id = "edit", .title = "edit", .messages = &first, .created = 1, .updated = 1 });
+
+    // Same count, different content in the middle: the prefix hash must catch
+    // it, or the old text stays in the table beside the new.
+    const edited = [_]types.Message{
+        .{ .role = .user, .content = "the original turn" },
+        .{ .role = .assistant, .content = "the corrected answer" },
+    };
+    try saveSession(io, arena, dir, .{ .id = "edit", .title = "edit", .messages = &edited, .created = 1, .updated = 2 });
+    const s = try loadSession(io, std.testing.allocator, arena, dir, "edit");
+    try std.testing.expectEqual(@as(usize, 2), s.messages.len);
+    try std.testing.expectEqualStrings("the corrected answer", s.messages[1].content.?);
+
+    // A steered flag landing on an already-written message is a rewrite too.
+    const steered = [_]types.Message{
+        .{ .role = .user, .content = "the original turn", .steered = true },
+        .{ .role = .assistant, .content = "the corrected answer" },
+    };
+    try saveSession(io, arena, dir, .{ .id = "edit", .title = "edit", .messages = &steered, .created = 1, .updated = 3 });
+    const flagged = try loadSession(io, std.testing.allocator, arena, dir, "edit");
+    try std.testing.expect(flagged.messages[0].steered);
+    try std.testing.expectEqual(@as(usize, 2), flagged.messages.len);
+}
+
+test "a shortened transcript (compaction) rebuilds rather than appending" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const first = [_]types.Message{
+        .{ .role = .user, .content = "dropped turn" },
+        .{ .role = .assistant, .content = "dropped answer" },
+        .{ .role = .user, .content = "kept turn" },
+    };
+    try saveSession(io, arena, dir, .{ .id = "shrink", .title = "shrink", .messages = &first, .created = 1, .updated = 1 });
+
+    const compacted = first[2..];
+    try saveSession(io, arena, dir, .{ .id = "shrink", .title = "shrink", .messages = compacted, .created = 1, .updated = 2 });
+    const s = try loadSession(io, std.testing.allocator, arena, dir, "shrink");
+    try std.testing.expectEqual(@as(usize, 1), s.messages.len);
+    try std.testing.expectEqualStrings("kept turn", s.messages[0].content.?);
+    const meta = sessionMetaFromDb(io, arena, dir, "shrink").?;
+    try std.testing.expectEqual(@as(usize, 1), meta.messages);
+    try std.testing.expectEqual("kept turn".len, meta.bytes);
 }
 
 test "a session written before the steered column still opens and saves" {
