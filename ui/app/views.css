@@ -63,12 +63,6 @@
   display: flex; flex-direction: column; overflow: hidden;
 }
 
-/* ── Sidebar ──
-   Collapse slides with transform (no width tween / layout thrash). Desktop
-   snaps the flex slot closed; mobile keeps a fixed drawer width and slides it. */
-
-/* Unread dot and message-count pill render identically; app.js emits one or
-   the other per row, never both. */
 
 /* ── Main chat area ── */
 /* ── Channel header ── */

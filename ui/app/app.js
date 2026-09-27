@@ -3392,6 +3392,7 @@ function buildChatMessage(m) {
   text.className = CHAT_TEXT_CLASS;
   text.setAttribute("data-role", "body");
   text.setAttribute("data-md", "true");
+  text.setAttribute("data-role", "body");
   // Deleted messages
   if (m.deleted) {
     text.setAttribute("data-deleted", "true");
@@ -3589,7 +3590,7 @@ function buildChatMessage(m) {
         fetch("/api/chat/delete", { method: "POST", headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ room: el.chatRoom.value, msg_id: m.id })
         }).then(function(r){ return r.json(); }).then(function(d){
-          if(d.ok) { wrap.setAttribute("data-deleted", "true"); text.textContent = "[This message was deleted]"; text.classList.add("chat-deleted"); }
+          if(d.ok) { wrap.setAttribute("data-deleted", "true"); text.textContent = "[This message was deleted]"; text.setAttribute("data-deleted", "true"); }
           else if (el.chatStatus) el.chatStatus.textContent = "Could not delete that message.";
         }).catch(function(err){
           if (el.chatStatus) el.chatStatus.textContent = "Could not delete: " + (err && err.message ? err.message : "request failed");
