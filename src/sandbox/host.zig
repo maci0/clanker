@@ -5862,6 +5862,13 @@ fn swarmAccessAllowed(name: []const u8) bool {
     return std.mem.eql(u8, name, "swarm");
 }
 
+/// Stack reserved for a subagent worker thread. A subagent runs the whole
+/// agent loop, so this is the same zwasm interpreter recursion a bare tool
+/// worker pays in `parallel_tool_stack_bytes`, at twice that budget. Like
+/// that one it is a reservation rather than memory in use: the pages are
+/// mapped lazily, so only the frames actually touched are ever resident.
+const subagent_stack_bytes: usize = 128 * 1024 * 1024;
+
 /// One nested agent run, driven on its own thread by `ck_subagent` and by each
 /// member of a `ck_swarm` batch.
 const SubagentCall = struct {
@@ -6070,7 +6077,7 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
             heap.freeOwned();
             return Err.invalid;
         };
-        const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, subagentBgWorker, .{ heap, id_owned }) catch {
+        const th = std.Thread.spawn(.{ .stack_size = subagent_stack_bytes }, subagentBgWorker, .{ heap, id_owned }) catch {
             // The thread never started, so no worker will free its copies.
             gpa.free(task_row);
             gpa.free(id_row);
@@ -6098,7 +6105,7 @@ pub fn ckSubagent(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
         gpa.free(id_row);
         return h.writeResult(bytes, out);
     }
-    const th = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&call}) catch return Err.invalid;
+    const th = std.Thread.spawn(.{ .stack_size = subagent_stack_bytes }, SubagentCall.run, .{&call}) catch return Err.invalid;
     th.join();
     if (call.err) |e| {
         // The task is the operator's own prose, so it stays out of the log
@@ -6264,7 +6271,7 @@ pub fn ckSwarm(caller: *zwasm.Caller, json_ptr: u32, json_len: u32) u32 {
     const threads = arena.alloc(std.Thread, calls.len) catch return Err.too_large;
     var spawned: usize = 0;
     while (spawned < calls.len) : (spawned += 1) {
-        threads[spawned] = std.Thread.spawn(.{ .stack_size = 128 * 1024 * 1024 }, SubagentCall.run, .{&calls[spawned]}) catch break;
+        threads[spawned] = std.Thread.spawn(.{ .stack_size = subagent_stack_bytes }, SubagentCall.run, .{&calls[spawned]}) catch break;
     }
     for (threads[0..spawned]) |th| th.join();
     // Any call past `spawned` never ran: result and err both stay null,
