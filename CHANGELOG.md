@@ -211,6 +211,28 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   that no sheet ever styled (`run-graph-search`, `run-detail-close`) are gone —
   the search row's hook is `[data-graph-search]` now, as the fleet toggle's is.
 
+- The run graph is styled with Tailwind utilities: the canvas, breadcrumbs,
+  kind filter and minimap in `ui/app/features/runs.js`, and the nodes, edges,
+  iteration tags and duration badges in `ui/app/lib/graph.js`. ~5.6 KB leaves
+  `views.css`. An element is addressed by a data attribute now rather than by a
+  class — `[data-run-node]`, `[data-iter-tag]`, `[data-edges]`, `[data-crumb]`,
+  `data-selected` — because the class is what the port keeps rewriting and a
+  selector on it breaks silently when it does. A node's kind, failure,
+  match, jump, slowest and highlight states were descendant or self selectors
+  on `data-kind`/`data-ok`/`data-match`/`data-jump`/`data-slowest`/
+  `data-highlight`; they are `data-[…]:` on the node itself and `group-data-[…]:`
+  on its children, and the highlight's `!important` is the `border-accent!`
+  utility. The edges' `CanvasText` forced-colors rule and the canvas's
+  scrollbar width are `forced-colors:` and `[scrollbar-width:thin]`.
+- The generated sheet's own budget is 56K raw, raised from 48 on purpose. This
+  number is accounting, not the ceiling: as views move over the sheet absorbs
+  the cabinet sheets' rules while both still ship. The binding number is first
+  paint (62.1K gz of the 64K budget today), which counts this sheet plus
+  app.css plus index.html — a *views.css* port raises it and an *app.css* port
+  leaves it flat, so the remaining views.css-heavy work (Rooms, the tool rows)
+  should land beside an app.css port (the board, the rail, chat). The eager-JS
+  budget is 149K gz.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

@@ -4492,7 +4492,7 @@ function showView(name, focusPanel) {
   if (pendingSessionId) switchSession(pendingSessionId);
   if (deepRun) {
     window._pendingRunNode = deepNode || null;
-    if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
+    if (viewLoaded.runs) { openRun(deepRun); if (deepNode) setTimeout(function(){ try{ var n = el.runGraph.querySelector('[data-run-node][data-label="' + CSS.escape(deepNode) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); }
     // The view has never been opened, so the module is not loaded; hand it the
     // id it should open the moment its list arrives.
     else loadRunsModule().then(function (m) { m.setPendingRunId(deepRun); }).catch(function () {});

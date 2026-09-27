@@ -45,6 +45,7 @@ const migrated = [
   "features/arena.js",
   "features/fleet.js",
   "features/runs.js",
+  "lib/graph.js",
   "core/kit.js",
 ];
 
@@ -55,7 +56,7 @@ const migrated = [
 /// cabinet's scales are not asked to carry.
 const arbitrary_ok = [
   /^max-w-\[min\(/,
-  /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|grid-cols|grid-rows|ps|pl|pr|pt|pb|stroke)-\[/,
+  /^(?:h|w|min-h|min-w|max-h|max-w|basis|top|left|right|bottom|inset|grid-cols|grid-rows|ps|pl|pr|pt|pb|stroke|border)-\[/,
 ];
 /// A generated-content utility: `content-['…']` is the only spelling for an
 /// empty output's placeholder, and the value is a character, not a size.
@@ -96,7 +97,7 @@ function splitVariants(token) {
 /// An arbitrary *variant* is not an arbitrary value: `[&_input]:h-4` and
 /// `has-[:focus-visible]:outline-2` reach a descendant or a child state, and
 /// only the utility they carry is checked against the scale.
-const variant_bracket_ok = /^(?:\[&|has-\[|max-\[|min-\[|data-\[|group-data-\[)/;
+const variant_bracket_ok = /^(?:\[&|has-\[|max-\[|min-\[|data-\[|group-data-\[|aria-\[|group-aria-\[)/;
 
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

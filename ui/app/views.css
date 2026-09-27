@@ -67,114 +67,6 @@
 }
 
 /* ---- run canvas: llm -> tool(s) -> llm -> ... -> final, drawn as nodes and edges ---- */
-.run-canvas { position: relative; overflow: auto; border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--surface); max-height: min(55vh, 520px); padding-bottom: 92px; }
-
-.run-crumbs { scrollbar-width: thin; }
-
-.run-crumbs button { font-size: var(--step-0); }
-
-.run-crumbs button[aria-current="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-
-.run-canvas:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.run-minimap { position: absolute; right: 8px; bottom: 8px; width: 148px; height: 90px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--lift); overflow: hidden; cursor: pointer; }
-
-.run-minimap[hidden] { display: none; }
-
-.run-minimap:hover { border-color: var(--accent); }
-
-.run-minimap-viewport { position: absolute; border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: var(--radius); cursor: grab; pointer-events: auto; }
-
-.run-minimap-viewport:active { cursor: grabbing; }
-
-.run-minimap-label { position: absolute; left: 4px; top: 2px; font-family: var(--mono); font-size: var(--step--2); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted); pointer-events: none; }
-
-.run-minimap canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-
-.run-kind-filter button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
-
-.run-edges { position: absolute; top: 0; left: 0; pointer-events: none; }
-
-.run-edges path { fill: none; stroke: var(--border); stroke-width: 1.5; }
-
-.run-node {
-  position: absolute; padding: var(--space-2) var(--space-3); border-radius: var(--radius);
-  background: var(--surface); border: 1px solid var(--border);
-  font-family: var(--mono); font-size: var(--step-0);
-  /* Reset the base button rule's centering/weight/min-height: this box grows
-     to fit its content (the layout measures each box rather than assuming a
-     height) and reads left-aligned like every other label in the file. */
-  min-height: auto; font-weight: normal; color: inherit; text-align: left; cursor: pointer;
-  box-shadow: var(--lift-low);
-}
-
-.run-node:hover { border-color: var(--accent); }
-
-.run-node.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.run-node[data-kind="llm"] { border-color: var(--accent); }
-
-.run-node[data-kind="tool"] { border-color: var(--ok); }
-
-.run-node[data-kind="final"] { border-color: var(--fg); background: var(--surface-2); font-weight: 700; }
-
-.run-node[data-ok="false"] { border-color: var(--danger); border-width: 2px; }
-
-.run-node-kind {
-  display: flex; align-items: center; gap: 0.3rem;
-  font-size: var(--step-0); letter-spacing: var(--track-label); text-transform: uppercase;
-  color: var(--fg-muted); margin-bottom: 0.1rem;
-}
-
-.run-node[data-kind="llm"] .run-node-kind { color: var(--accent-text); }
-
-.run-node[data-kind="tool"] .run-node-kind { color: var(--ok); }
-
-.run-node[data-ok="false"] .run-node-kind { color: var(--danger); }
-
-.run-node[data-match="true"] { outline: 2px solid var(--warn); outline-offset: 2px; }
-
-.run-node[data-jump="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent), var(--lift-low); }
-
-.run-node[data-jump="true"] .run-node-label::after { content: " ↗"; color: var(--accent-text); font-weight: 700; }
-
-.run-node[data-highlight="true"] { border-color: var(--accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent); z-index: 1; }
-
-.run-edges path[data-highlight="true"] { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; }
-
-.run-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-.run-node-duration { position: absolute; top: 4px; right: 6px; font-size: var(--step--2); font-weight: 600; color: var(--fg-muted); background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius-pill); padding: 0 0.35rem; line-height: 1.4; }
-
-/* The run's bottleneck. The badge already says "slowest" in words, so this is
-   emphasis on top of a label rather than the only thing carrying it. */
-.run-node[data-slowest="true"] { border-color: var(--warn); }
-
-.run-node-duration[data-slowest="true"] { color: var(--warn-text); border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface-2)); }
-
-.run-node-label { display: block; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: var(--space-6); }
-
-.run-node-metrics { font-variant-numeric: tabular-nums; display: block; color: var(--fg-muted); font-size: var(--step-0); margin-top: 0.15rem; }
-
-/* The bar is the picture: width is the node's share of the run's slowest node. */
-.run-node-bar { display: block; height: 3px; margin-top: 0.3rem; border-radius: var(--radius-sm); background: var(--rule); overflow: hidden; }
-
-.run-node-bar > span { display: block; height: 100%; background: var(--accent); }
-
-.run-node[data-kind="tool"] .run-node-bar > span { background: var(--ok-fill); }
-
-.run-iter-tag {
-  position: absolute; font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-  display: flex; align-items: center; justify-content: center;
-  width: 1.4rem; height: 1.4rem; border-radius: 50%; border: 1px dashed var(--rule);
-}
-
-.run-node-incomplete {
-  position: absolute; font-family: var(--mono); font-size: var(--step-0); color: var(--danger);
-  padding: var(--space-2) var(--space-3); border: 1px dashed var(--danger); border-radius: var(--radius);
-}
-
-
 /* ---- detail panel: what a clicked node actually produced ---- */
 .run-detail {
   margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--rule); border-radius: var(--radius-lg);
@@ -1010,7 +902,6 @@ button.tool-name:hover { color: var(--accent-text); }
 
 /* ---- goals: what the agent is steering toward ---- */
 @media (forced-colors: active) {
-.run-edges path { stroke: CanvasText; }
 }
 @media (pointer: coarse) {
   .board-lane-control { min-width: 44px; min-height: 44px; }

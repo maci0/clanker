@@ -3,6 +3,23 @@
 import { loadD3 } from "../core/vendor.js";
 import { fmtInt, fmtMs, fmtPct, searchFold } from "../core/utils.js";
 
+/* The run graph's shapes, as Tailwind utilities over the cabinet tokens
+   (ui/app/tailwind.src.css). An element is addressed by a data attribute rather
+   than by a class: the class says how it looks, the attribute says what it is,
+   so a restyle cannot break a selector. */
+var STOP_CLASS = "absolute rounded-plate border border-dashed border-danger px-3 py-2 font-mono text-sm text-danger";
+var NODE_CLASS = "group absolute min-h-[auto] cursor-pointer rounded-plate border border-border bg-surface px-3 py-2 text-left font-mono text-sm font-normal text-inherit shadow-[var(--lift-low)] hover:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 data-[kind=llm]:border-accent data-[kind=tool]:border-ok data-[kind=final]:border-fg data-[kind=final]:bg-surface-2 data-[kind=final]:font-bold data-[ok=false]:border-2 data-[ok=false]:border-danger data-[selected=true]:outline-2 data-[selected=true]:outline-accent data-[selected=true]:outline-offset-1 data-[match=true]:outline-2 data-[match=true]:outline-warn data-[match=true]:outline-offset-2 data-[jump=true]:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_35%,transparent),var(--lift-low)] data-[highlight=true]:z-1 data-[highlight=true]:border-accent! data-[highlight=true]:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_18%,transparent)] data-[slowest=true]:border-warn";
+var KIND_CLASS = "mb-px flex items-center gap-1 font-mono text-sm uppercase tracking-label text-fg-muted group-data-[kind=llm]:text-accent-text group-data-[kind=tool]:text-ok group-data-[ok=false]:text-danger";
+var LABEL_CLASS = "block overflow-hidden text-ellipsis whitespace-nowrap pr-6 text-fg group-data-[jump=true]:after:font-bold group-data-[jump=true]:after:text-accent-text group-data-[jump=true]:after:content-['_↗']";
+var DURATION_CLASS = "absolute right-1.5 top-1 rounded-capsule border border-rule bg-surface-2 px-1.5 font-mono text-2xs font-semibold leading-snug text-fg-muted data-[slowest=true]:border-warn data-[slowest=true]:bg-[color-mix(in_srgb,var(--warn)_12%,var(--surface-2))] data-[slowest=true]:text-warn-text";
+var METRICS_CLASS = "mt-px block font-mono text-sm tabular-nums text-fg-muted";
+var BAR_CLASS = "mt-1 block h-[3px] overflow-hidden rounded-plate-sm bg-rule";
+var BAR_FILL_CLASS = "block h-full bg-accent group-data-[kind=tool]:bg-ok-fill";
+var ITER_TAG_CLASS = "absolute flex h-[1.4rem] w-[1.4rem] items-center justify-center rounded-full border border-dashed border-rule font-mono text-sm text-fg-muted";
+var EDGES_CLASS = "pointer-events-none absolute left-0 top-0";
+var EDGE_CLASS = "fill-none stroke-border stroke-[1.5] forced-colors:stroke-[CanvasText] data-[highlight=true]:stroke-2 data-[highlight=true]:stroke-accent data-[highlight=true]:[stroke-opacity:1]";
+
+
 export function metricsFor(n) {
   if (n.kind === "llm") return fmtInt(n.prompt_tokens) + "/" + fmtInt(n.completion_tokens) + " tok \u00b7 " + fmtMs(n.duration_ms);
   if (n.kind === "tool") return fmtInt(n.result_bytes) + " B \u00b7 " + fmtMs(n.duration_ms);
@@ -111,7 +128,8 @@ export function toDagInput(built) {
 
 export function buildIncompleteNode(nodeW) {
   var stop = document.createElement("div");
-  stop.className = "run-node-incomplete";
+  stop.className = STOP_CLASS;
+  stop.dataset.runNode = "";
   stop.style.width = nodeW + "px";
   stop.textContent = "did not finish";
   var why = document.createElement("span");
@@ -129,17 +147,18 @@ export function buildNodeBox(d, slowest, nodeW, opts) {
   var isSlowest = !!(opts && opts.slowest && opts.slowest === node);
   var box = document.createElement("button");
   box.type = "button";
-  box.className = "run-node";
+  box.className = NODE_CLASS;
+  box.dataset.runNode = "";
   box.dataset.kind = kind;
   if (node.ok === false) box.dataset.ok = "false";
   if (/\[subagent run:\s*sub-\d+\]/.test(node.output || node.detail || "")) box.dataset.jump = "true";
   box.style.width = nodeW + "px";
   var kindEl = document.createElement("span");
-  kindEl.className = "run-node-kind";
+  kindEl.className = KIND_CLASS;
   kindEl.textContent = kind;
   box.appendChild(kindEl);
   var label = document.createElement("span");
-  label.className = "run-node-label";
+  label.className = LABEL_CLASS;
   // Trello/Slack-style: surface file refs + parent→child link inline on the card
   var jumpRe = /\[subagent run:\s*(sub-\d+)\]/;
   var jm = (node.output || node.detail || "").match(jumpRe);
@@ -159,7 +178,7 @@ export function buildNodeBox(d, slowest, nodeW, opts) {
   // Show truncated duration on the card itself as a small badge
   if (node.duration_ms) {
     var dur = document.createElement("span");
-    dur.className = "run-node-duration";
+    dur.className = DURATION_CLASS;
     dur.textContent = fmtMs(node.duration_ms);
     if (isSlowest) dur.dataset.slowest = "true";
     dur.setAttribute("aria-hidden", "true");
@@ -167,13 +186,14 @@ export function buildNodeBox(d, slowest, nodeW, opts) {
   }
   if (isSlowest) box.dataset.slowest = "true";
   var metrics = document.createElement("span");
-  metrics.className = "run-node-metrics";
+  metrics.className = METRICS_CLASS;
   metrics.textContent = metricsFor(node) + (fileHint ? " · " + fileHint : "") + (isSlowest ? " · slowest step" : "");
   box.appendChild(metrics);
   if (kind !== "final") {
     var bar = document.createElement("span");
-    bar.className = "run-node-bar";
+    bar.className = BAR_CLASS;
     var barFill = document.createElement("span");
+    barFill.className = BAR_FILL_CLASS;
     barFill.style.width = Math.max(2, Math.round((node.duration_ms || 0) / slowest * 100)) + "%";
     bar.appendChild(barFill);
     box.appendChild(bar);
@@ -196,7 +216,7 @@ export function layoutGraph(canvas, built, slowest, opts) {
   var containerW = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 320;
   // Re-layouts (search/filter redraws) must not stack on the previous render:
   // drop prior nodes, iter tags, edges and error text; leave the minimap alone.
-  canvas.querySelectorAll(".run-node, .run-node-incomplete, .run-iter-tag, svg.run-edges, .run-empty").forEach(function (el) { el.remove(); });
+  canvas.querySelectorAll("[data-run-node], [data-iter-tag], [data-edges], .run-empty").forEach(function (el) { el.remove(); });
   var data = toDagInput(built);
   if (!data.length) return Promise.resolve();
   // One node per run gets called out as the bottleneck; graphTotals decides
@@ -242,7 +262,8 @@ export function layoutGraph(canvas, built, slowest, opts) {
     canvas.style.minHeight = totalH + "px";
     var svgNS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("class", "run-edges");
+    svg.setAttribute("class", EDGES_CLASS);
+    svg.dataset.edges = "";
     svg.setAttribute("width", totalW);
     svg.setAttribute("height", totalH);
     svg.setAttribute("aria-hidden", "true");
@@ -290,6 +311,7 @@ export function layoutGraph(canvas, built, slowest, opts) {
       var d = "M" + pts[0][0] + "," + pts[0][1];
       for (var pi = 1; pi < pts.length; pi++) d += " L" + pts[pi][0] + "," + pts[pi][1];
       var path = document.createElementNS(svgNS, "path");
+      path.setAttribute("class", EDGE_CLASS);
       path.setAttribute("d", d);
       path.setAttribute("marker-end", "url(#run-arrow)");
       path.setAttribute("data-edge", String(edgePaths.length));
@@ -306,7 +328,8 @@ export function layoutGraph(canvas, built, slowest, opts) {
       if (kind === "incomplete") continue;
       if (kind === "llm") {
         var tag = document.createElement("span");
-        tag.className = "run-iter-tag";
+        tag.className = ITER_TAG_CLASS;
+        tag.dataset.iterTag = "";
         tag.textContent = dn.data.iteration;
         tag.style.left = (cx - nodeW / 2 - 20) + "px";
         tag.style.top = (cy - 11) + "px";
@@ -316,8 +339,8 @@ export function layoutGraph(canvas, built, slowest, opts) {
       (function (k, n, b, iter) {
         function highlightPath(active){
           var id = b.dataset.graphId || "";
-          canvas.querySelectorAll(".run-node[data-highlight]").forEach(function(x){ x.removeAttribute("data-highlight"); });
-          canvas.querySelectorAll(".run-edges path[data-highlight]").forEach(function(x){ x.removeAttribute("data-highlight"); });
+          canvas.querySelectorAll("[data-run-node][data-highlight]").forEach(function(x){ x.removeAttribute("data-highlight"); });
+          canvas.querySelectorAll("[data-edges] path[data-highlight]").forEach(function(x){ x.removeAttribute("data-highlight"); });
           if (!active || !id) return;
           try{
             var me = null;
@@ -344,8 +367,8 @@ export function layoutGraph(canvas, built, slowest, opts) {
         b.addEventListener("focus", function(){ highlightPath(true); });
         b.addEventListener("blur", function(){ highlightPath(false); });
         b.addEventListener("click", function () {
-          canvas.querySelectorAll(".run-node.selected").forEach(function (x) { x.classList.remove("selected"); });
-          b.classList.add("selected");
+          canvas.querySelectorAll("[data-run-node][data-selected]").forEach(function (x) { x.removeAttribute("data-selected"); });
+          b.setAttribute("data-selected", "true");
           onSelect(k, n);
           highlightPath(true);
           // keep URL in sync so Copy link after a click pins this node
@@ -359,7 +382,7 @@ export function layoutGraph(canvas, built, slowest, opts) {
             }
           } catch(_) {}
           try{
-            document.querySelectorAll(".run-crumbs button").forEach(function(ch){
+            document.querySelectorAll("[data-crumb]").forEach(function(ch){
               if (ch.textContent.trim() === "iter " + iter) ch.setAttribute("aria-current","true"); else ch.removeAttribute("aria-current");
             });
           }catch(_){}

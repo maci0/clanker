@@ -59,6 +59,19 @@ export function buildExportCss(read) {
     + "pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border:1px solid var(--edge);padding:0.8rem;border-radius:3px;overflow:auto;font-size:.8rem}"
     + "svg{max-width:100%;height:auto}";
 }
+/* The run graph's shell — canvas, breadcrumbs, kind filter, minimap — as
+   Tailwind utilities over the cabinet tokens. The graph's own nodes and edges
+   are lib/graph.js's, which spells them the same way. */
+var CANVAS_CLASS = "relative max-h-[min(55vh,520px)] overflow-auto rounded-plate-lg border border-rule bg-surface pb-[92px] focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-1";
+var CRUMBS_CLASS = "mb-2 flex flex-wrap gap-1 [scrollbar-width:thin]";
+var CRUMB_BTN_CLASS = "secondary text-sm aria-[current=true]:border-accent aria-[current=true]:bg-accent aria-[current=true]:text-on-accent";
+var KIND_BAR_CLASS = "mb-2 flex flex-wrap gap-1";
+var KIND_BTN_CLASS = "secondary aria-pressed:border-accent aria-pressed:bg-accent aria-pressed:text-on-accent";
+var MINIMAP_CLASS = "absolute bottom-2 right-2 h-[90px] w-[148px] cursor-pointer overflow-hidden rounded-plate border border-border bg-surface shadow-[var(--lift)] hover:border-accent";
+var MINIMAP_LABEL_CLASS = "pointer-events-none absolute left-1 top-0.5 font-mono text-2xs uppercase tracking-label text-fg-muted";
+var MINIMAP_VIEWPORT_CLASS = "pointer-events-auto absolute cursor-grab rounded-plate border-[1.5px] border-accent bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] active:cursor-grabbing";
+var MINIMAP_CANVAS_CLASS = "pointer-events-none absolute inset-0 h-full w-full";
+
 export function initRuns(ctx) {
   el = ctx.el;
   showView = ctx.showView;
@@ -320,7 +333,7 @@ function loadRuns() {
         el.runSelect.value = want;
         var p = loadRun(want);
         var pn = window._pendingRunNode; window._pendingRunNode = null;
-        if (pn) p.then(function(){ setTimeout(function(){ try{ var n = el.runGraph.querySelector('.run-node[data-label="' + CSS.escape(pn) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); });
+        if (pn) p.then(function(){ setTimeout(function(){ try{ var n = el.runGraph.querySelector('[data-run-node][data-label="' + CSS.escape(pn) + '"]'); if(n){ n.focus(); n.click(); n.scrollIntoView({block:"center", inline:"center"}); } }catch(_){}} , 300); });
         return p;
       }
       var wanted = renderRunOptions(el.runFilter.value);
@@ -419,9 +432,9 @@ function diffRuns(aId, bId){
     // Re-render current graph with highlights
     drawRun(ga);
     setTimeout(function(){
-      added.forEach(function(k){ el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.style.outline="2px solid var(--ok)"; }); });
-      removed.forEach(function(k){ el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.setAttribute("data-ok","false"); }); });
-      changed.forEach(function(k){ var lab=k.split(": ")[0]; el.runGraph.querySelectorAll(".run-node").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="0 0 0 2px var(--warn)"; }); });
+      added.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.style.outline="2px solid var(--ok)"; }); });
+      removed.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.setAttribute("data-ok","false"); }); });
+      changed.forEach(function(k){ var lab=k.split(": ")[0]; el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="0 0 0 2px var(--warn)"; }); });
     }, 260);
     if(status) status.textContent = added.length+" added · "+removed.length+" removed · "+changed.length+" changed";
     if(clearBtn) clearBtn.hidden=false;
@@ -512,7 +525,7 @@ function drawRun(g) {
   var copyLink = document.createElement("button"); copyLink.type = "button"; copyLink.className = "secondary"; copyLink.textContent = "Copy link"; upgradePfButton(copyLink);
   copyLink.title = "Copy deep-link to this run — add ?node= to pin this exact graph position";
   copyLink.addEventListener("click", function(){
-    var sel = el.runGraph.querySelector(".run-node.selected");
+    var sel = el.runGraph.querySelector("[data-run-node][data-selected]");
     var nodePart = sel && sel.getAttribute("data-label") ? "?node=" + encodeURIComponent(sel.getAttribute("data-label")) : "";
     var u = location.origin + location.pathname + "#runs/" + encodeURIComponent(g.run_id) + nodePart;
     copyText(u, copyLink, "Copy link", head);
@@ -522,7 +535,7 @@ function drawRun(g) {
   exportBtn.title = "Download this run as a self-contained HTML file";
   exportBtn.addEventListener("click", function(){
     try{
-      var svg = el.runGraph.querySelector("svg.run-edges");
+      var svg = el.runGraph.querySelector("[data-edges]");
       var svgHtml = svg ? new XMLSerializer().serializeToString(svg) : "";
       var detailHtml = el.runDetail.hidden ? "" : el.runDetail.innerHTML;
       // Everything interpolated here is run data — the task is whatever the
@@ -617,10 +630,10 @@ function drawRun(g) {
   var _kindFilter = (function(){ try{ return localStorage.getItem("clanker.graphKind") || ""; }catch(_){ return ""; } })();
   var _initSearch = (function(){ try{ return localStorage.getItem("clanker.graphSearch") || ""; }catch(_){ return ""; } })();
   var graphKindBar = document.createElement("div");
-  graphKindBar.className = "run-kind-filter"; graphKindBar.style.display = "flex"; graphKindBar.style.gap = "var(--space-1)"; graphKindBar.style.flexWrap = "wrap"; graphKindBar.style.marginBottom = "var(--space-2)";
+  graphKindBar.className = KIND_BAR_CLASS;
   graphKindBar.setAttribute("role", "group"); graphKindBar.setAttribute("aria-label", "Filter by node kind");
   [{k:"",label:"All"},{k:"llm",label:"LLM"},{k:"tool",label:"Tools"},{k:"final",label:"Answer"},{k:"failed",label:"Failed"}].forEach(function(opt){
-    var b = document.createElement("button"); b.type = "button"; b.className = "secondary"; b.textContent = opt.label; upgradePfButton(b);
+    var b = document.createElement("button"); b.type = "button"; b.className = KIND_BTN_CLASS; b.textContent = opt.label; upgradePfButton(b);
     b.dataset.kind = opt.k; b.setAttribute("aria-pressed", String(opt.k === _kindFilter));
     if (opt.k === "failed") b.title = "Only failed nodes";
     b.addEventListener("click", function(){
@@ -635,14 +648,15 @@ function drawRun(g) {
   el.runGraph.appendChild(graphKindBar);
   // Codex-style breadcrumb: iteration / step chips + keyboard tour
   var crumb = document.createElement("div");
-  crumb.className = "run-crumbs"; crumb.style.display = "flex"; crumb.style.gap = "var(--space-1)"; crumb.style.flexWrap = "wrap"; crumb.style.marginBottom = "var(--space-2)";
+  crumb.className = CRUMBS_CLASS;
   crumb.setAttribute("role", "navigation"); crumb.setAttribute("aria-label", "Iterations");
   built.stages.forEach(function(st, idx){
     var chip = document.createElement("button");
-    chip.type = "button"; chip.className = "secondary"; chip.textContent = "iter " + st.iteration; upgradePfButton(chip);
+    chip.type = "button"; chip.className = CRUMB_BTN_CLASS; chip.textContent = "iter " + st.iteration; upgradePfButton(chip);
+    chip.dataset.crumb = "";
     chip.title = st.iteration + " · " + (st.llm.label || "llm") + (st.tools.length ? " · " + st.tools.map(function(t){ return t.label; }).join(", ") : "");
     chip.addEventListener("click", function(){
-      var tags = canvas.querySelectorAll(".run-iter-tag");
+      var tags = canvas.querySelectorAll("[data-iter-tag]");
       for (var ti=0; ti<tags.length; ti++) if (tags[ti].textContent.trim() === String(st.iteration)) {
         var x = parseFloat(tags[ti].style.left) + 20;
         var y = parseFloat(tags[ti].style.top) + 11;
@@ -669,7 +683,7 @@ function drawRun(g) {
       var v = parseInt(scrub.value, 10);
       scrubOut.textContent = "iter " + v + " / " + maxIter;
       // dim nodes past scrub point so you can see how the run grew
-      canvas.querySelectorAll(".run-node").forEach(function(n){
+      canvas.querySelectorAll("[data-run-node]").forEach(function(n){
         var nodeIter = parseInt(n.getAttribute("data-iter") || "0", 10);
         if (isNaN(nodeIter)) return;
         n.style.opacity = (nodeIter > v) ? "0.2" : "";
@@ -679,13 +693,13 @@ function drawRun(g) {
   }
 
   var canvas = document.createElement("div");
-  canvas.className = "run-canvas";
+  canvas.className = CANVAS_CLASS;
   canvas.tabIndex = 0;
   canvas.setAttribute("aria-label", "Scrollable execution graph — drag to pan, Ctrl+wheel to zoom, +/- keys, search to highlight");
   (function(){
     var isPanning = false, startX = 0, startY = 0, startScrollLeft = 0, startScrollTop = 0;
     canvas.addEventListener("mousedown", function(e){
-      if (e.target.closest && e.target.closest(".run-node")) return;
+      if (e.target.closest && e.target.closest("[data-run-node]")) return;
       isPanning = true; startX = e.clientX; startY = e.clientY; startScrollLeft = canvas.scrollLeft; startScrollTop = canvas.scrollTop;
       canvas.style.cursor = "grabbing";
       e.preventDefault();
@@ -718,12 +732,12 @@ function drawRun(g) {
   el.runGraph.appendChild(zoomWrap);
 
   var minimap = document.createElement("div");
-  minimap.className = "run-minimap"; minimap.hidden = true;
+  minimap.className = MINIMAP_CLASS; minimap.hidden = true;
   minimap.setAttribute("role", "navigation"); minimap.setAttribute("aria-label", "Minimap — click to jump, drag viewport to pan");
   minimap.title = "Click to jump · drag viewport to pan";
-  var mmLabel = document.createElement("span"); mmLabel.className = "run-minimap-label"; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
-  var mmCanvas = document.createElement("canvas"); mmCanvas.width = 148; mmCanvas.height = 90; minimap.insertBefore(mmCanvas, mmLabel.nextSibling);
-  var mmViewport = document.createElement("div"); mmViewport.className = "run-minimap-viewport";
+  var mmLabel = document.createElement("span"); mmLabel.className = MINIMAP_LABEL_CLASS; mmLabel.textContent = "map"; minimap.appendChild(mmLabel);
+  var mmCanvas = document.createElement("canvas"); mmCanvas.className = MINIMAP_CANVAS_CLASS; mmCanvas.width = 148; mmCanvas.height = 90; minimap.insertBefore(mmCanvas, mmLabel.nextSibling);
+  var mmViewport = document.createElement("div"); mmViewport.className = MINIMAP_VIEWPORT_CLASS;
   minimap.appendChild(mmViewport);
   canvas.appendChild(minimap);
   // Content size and node positions are cached on layout. Scroll only
@@ -741,7 +755,7 @@ function drawRun(g) {
   function rebuildMinimapCache(){
     measureMinimap();
     mmNodes = [];
-    canvas.querySelectorAll(".run-node").forEach(function(n){
+    canvas.querySelectorAll("[data-run-node]").forEach(function(n){
       var lx = parseFloat(n.style.left), ly = parseFloat(n.style.top);
       mmNodes.push({
         el: n,
@@ -749,13 +763,13 @@ function drawRun(g) {
         y: isFinite(ly) ? ly : 0,
         kind: n.getAttribute("data-kind") || "",
         ok: n.getAttribute("data-ok"),
-        selected: n.classList.contains("selected"),
+        selected: n.hasAttribute("data-selected"),
         highlight: n.hasAttribute("data-highlight")
       });
     });
     mmEdges = [];
     try {
-      canvas.querySelectorAll("svg.run-edges path[data-edge]").forEach(function(p){
+      canvas.querySelectorAll("[data-edges] path[data-edge]").forEach(function(p){
         var d = p.getAttribute("d") || "";
         var m = d.match(/M\s*([0-9.\-]+),([0-9.\-]+)\s*L\s*([0-9.\-]+),([0-9.\-]+)/);
         if (!m) return;
@@ -878,10 +892,10 @@ function drawRun(g) {
       if (!lastGraph || !lastGraph.run_id) base = rawHash.split("?")[0] || base;
       var params = [];
       if (_searchQ) params.push("search=" + encodeURIComponent(_searchQ));
-      else if (parsed.search && !canvas.querySelector(".run-node")) params.push("search=" + encodeURIComponent(parsed.search));
+      else if (parsed.search && !canvas.querySelector("[data-run-node]")) params.push("search=" + encodeURIComponent(parsed.search));
       if (_kindFilter) params.push("kind=" + encodeURIComponent(_kindFilter));
-      else if (parsed.kind && !canvas.querySelector(".run-node")) params.push("kind=" + encodeURIComponent(parsed.kind));
-      var sel = canvas.querySelector(".run-node.selected");
+      else if (parsed.kind && !canvas.querySelector("[data-run-node]")) params.push("kind=" + encodeURIComponent(parsed.kind));
+      var sel = canvas.querySelector("[data-run-node][data-selected]");
       var lbl = sel ? sel.getAttribute("data-label") : (parsed.node || window._pendingRunNode || null);
       if (lbl) params.push("node=" + encodeURIComponent(lbl));
       var hash = base + (params.length ? "?" + params.join("&") : "");
@@ -904,7 +918,7 @@ function drawRun(g) {
   var _searchQ = "";
   var _matchIdx = -1;
   function focusNextMatch(){
-    var matches = canvas.querySelectorAll('.run-node[data-match="true"]');
+    var matches = canvas.querySelectorAll('[data-run-node][data-match="true"]');
     if (!matches.length) return;
     _matchIdx = (_matchIdx + 1) % matches.length;
     matches[_matchIdx].focus();
@@ -915,7 +929,7 @@ function drawRun(g) {
   graphFailedBtn.title = "Next failed node";
   graphSearch.appendChild(graphFailedBtn);
   function focusNextFailed(){
-    var fails = canvas.querySelectorAll('.run-node[data-ok="false"]');
+    var fails = canvas.querySelectorAll('[data-run-node][data-ok="false"]');
     if (!fails.length) return;
     _matchIdx = (_matchIdx + 1) % fails.length;
     fails[_matchIdx].focus(); fails[_matchIdx].scrollIntoView({ block: "nearest", inline: "center" });
@@ -944,7 +958,7 @@ function drawRun(g) {
     if (document.activeElement === graphSearchInput) return;
     if (e.key === "ArrowDown" || e.key === "ArrowRight") {
       e.preventDefault();
-      var nodes = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      var nodes = Array.prototype.slice.call(canvas.querySelectorAll("[data-run-node]"));
       if (!nodes.length) return;
       var at = nodes.indexOf(document.activeElement);
       var nxt = at === -1 ? 0 : Math.min(nodes.length - 1, at + 1);
@@ -953,7 +967,7 @@ function drawRun(g) {
     }
     if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
       e.preventDefault();
-      var nodes2 = Array.prototype.slice.call(canvas.querySelectorAll(".run-node"));
+      var nodes2 = Array.prototype.slice.call(canvas.querySelectorAll("[data-run-node]"));
       if (!nodes2.length) return;
       var at2 = nodes2.indexOf(document.activeElement);
       var prv = at2 <= 0 ? 0 : at2 - 1;
@@ -1306,7 +1320,7 @@ function showNodeDetail(kind, node) {
 function closeNodeDetail() {
   el.runDetail.hidden = true;
   el.runDetail.textContent = "";
-  el.runGraph.querySelectorAll(".run-node.selected").forEach(function (n) { n.classList.remove("selected"); });
+  el.runGraph.querySelectorAll("[data-run-node][data-selected]").forEach(function (n) { n.classList.remove("selected"); });
 }
 
 
