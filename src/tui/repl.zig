@@ -65,6 +65,7 @@ const workflows_mod = @import("../agent/workflows.zig");
 const Agent = agent_loop.Agent;
 const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
+const elapsed = @import("../util/elapsed.zig");
 const utf8 = @import("../util/utf8.zig");
 const elapsed_mod = @import("../util/elapsed.zig");
 const syntax = @import("syntax.zig");
