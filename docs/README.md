@@ -132,6 +132,8 @@ than treated as errors.
 
 Providers and models are configured in `config.toml` / `config.local.toml`; the complete field-by-field reference, with per-kind examples and a minimal working config, is [docs/configuration.md](configuration.md).
 
+`clanker serve` exposes the agent, board, sessions, goals, knowledge, peers and proxy surfaces over HTTP; the route reference, the response envelopes and the status-code table are [docs/api.md](api.md).
+
 ### Sandbox (`src/sandbox/`)
 
 Tools run in a WebAssembly sandbox using the zwasm runtime. The guest exports `scratch`, `host_arena`, and `run`. Host functions (`env.ck_*`) provide:

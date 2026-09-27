@@ -8193,15 +8193,22 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         // surface with its own method handling, and the cross-origin check
         // above has already read the real method.
         if (request_head and !streamingReadRoute(path)) method = "GET";
+        // Liveness and readiness answer on every listener. They used to sit
+        // inside the `.proxy` branch, so `--webui-port` (the port a systemd
+        // unit, a container probe or a load balancer health-checks by
+        // default) answered 404 to `/health/ready` and the operator saw the
+        // process as down while `/proxy-port` said ready. Readiness reports
+        // the connection pool, which is per-listener, so each asks about its
+        // own.
+        if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/live")) {
+            respond(stream, 200, "OK", "{\"ok\":true,\"status\":\"live\"}");
+            return;
+        }
+        if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/ready")) {
+            handleReadiness(stream);
+            return;
+        }
         if (surface == .proxy) {
-            if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/live")) {
-                respond(stream, 200, "OK", "{\"ok\":true,\"status\":\"live\"}");
-                return;
-            }
-            if (std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/health/ready")) {
-                handleReadiness(stream);
-                return;
-            }
             respond(stream, 404, "Not Found", "{\"ok\":false,\"error\":\"not found\"}");
             return;
         }
@@ -8228,7 +8235,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_mesh_pending_get = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/mesh/pending");
         const is_mesh_pending_post = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/mesh/pending");
         const is_chat_message = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/message");
-        const is_chat_messages = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/chat/messages");
+        const is_chat_messages = std.mem.eql(u8, method, "GET") and routePrefix(path, "/api/chat/messages");
         const is_chat_rooms = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/chat/rooms");
         const is_chat_send = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/send");
         const is_chat_subscribe = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/chat/subscribe");
@@ -8247,9 +8254,16 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_goals = std.mem.eql(u8, path, "/api/goals") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
         const is_providers = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/providers");
-        const is_catalog = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/catalog");
+        // `/api/catalog/refresh` is the POST action under the same prefix, and
+        // a GET on it is a method the action does not have, not a search for a
+        // model named "refresh". Answering it with the search's own
+        // "pass ?q= with at least 2 characters" told the caller it had asked
+        // the wrong question.
+        const is_catalog = std.mem.eql(u8, method, "GET") and
+            routePrefix(path, "/api/catalog") and
+            !std.mem.eql(u8, path, "/api/catalog/refresh");
         const is_catalog_refresh = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/catalog/refresh");
-        const is_provider_models = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/providers/models");
+        const is_provider_models = std.mem.eql(u8, method, "GET") and routePrefix(path, "/api/providers/models");
         const is_janitor = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/janitor");
         const is_board = std.mem.eql(u8, path, "/api/board") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST"));
@@ -8262,13 +8276,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         const is_webui_command_asset = isWebuiRead(method) and
             std.mem.startsWith(u8, path, "/webui/commands/");
         const is_files = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/files");
-        const is_logs = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/logs");
+        const is_logs = std.mem.eql(u8, method, "GET") and routePrefix(path, "/api/logs");
         const is_plugin_config = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/plugins/config");
         const is_config_model = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model");
         const is_config_model_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/set");
         const is_config_model_remove = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/model/remove");
         const is_config_default = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/default");
-        const is_config_raw_get = std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/config/raw");
+        const is_config_raw_get = std.mem.eql(u8, method, "GET") and routePrefix(path, "/api/config/raw");
         const is_config_raw_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/raw");
         const is_config_status = std.mem.eql(u8, method, "GET") and std.mem.eql(u8, path, "/api/config/status");
         const is_config_table_set = std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/config/table/set");
@@ -8365,13 +8379,13 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleMeshPendingGet(gpa, cfg, stream);
         } else if (is_mesh_pending_post) {
             handleMeshPendingPost(gpa, cfg, body, stream);
-        } else if (std.mem.eql(u8, method, "GET") and std.mem.startsWith(u8, path, "/api/runs")) {
+        } else if (std.mem.eql(u8, method, "GET") and routePrefix(path, "/api/runs")) {
             handleRuns(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
-        } else if (std.mem.startsWith(u8, path, "/api/workspaces") and
+        } else if (routePrefix(path, "/api/workspaces") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
         {
             handleWorkspaces(io, gpa, cfg, method, path, body, acceptsGzip(headers_raw), stream);
-        } else if (std.mem.startsWith(u8, path, "/api/sessions") and
+        } else if (routePrefix(path, "/api/sessions") and
             (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")))
         {
             handleSessions(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
@@ -8416,7 +8430,7 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
         } else if (is_config_raw_set) {
             handleConfigRawSet(io, gpa, body, stream);
         } else if (is_config_status) {
-            handleConfigStatus(stream);
+            handleConfigStatus(gpa, stream);
         } else if (is_config_table_set) {
             handleConfigTableSet(io, gpa, body, stream);
         } else if (is_config_table_remove) {
@@ -8459,15 +8473,15 @@ fn handleConnection(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Confi
             handleLogs(io, gpa, cfg, environ_map, target, acceptsGzip(headers_raw), stream);
         } else if (recordStoreForPath(path)) |record_store| {
             handleRecords(io, gpa, cfg, environ_map, record_store, method, target, body, acceptsGzip(headers_raw), stream);
-        } else if (std.mem.startsWith(u8, path, "/api/knowledge")) {
+        } else if (routePrefix(path, "/api/knowledge")) {
             handleKnowledge(io, gpa, cfg, environ_map, method, target, body, acceptsGzip(headers_raw), stream);
-        } else if (std.mem.startsWith(u8, path, "/api/prompts")) {
+        } else if (routePrefix(path, "/api/prompts")) {
             handlePrompts(io, gpa, cfg, environ_map, method, body, stream);
-        } else if (std.mem.startsWith(u8, path, "/api/arena")) {
+        } else if (routePrefix(path, "/api/arena")) {
             handleArena(io, gpa, cfg, environ_map, method, path, stream);
-        } else if (std.mem.startsWith(u8, path, "/api/schedule")) {
+        } else if (routePrefix(path, "/api/schedule")) {
             handleSchedule(io, gpa, cfg, environ_map, method, path, body, stream);
-        } else if (std.mem.startsWith(u8, path, "/api/compare")) {
+        } else if (routePrefix(path, "/api/compare")) {
             handleCompare(io, gpa, cfg, environ_map, method, path, body, stream);
         } else if (std.mem.eql(u8, method, "POST") and std.mem.eql(u8, path, "/api/a2a/message")) {
             handleA2AMessage(io, gpa, cfg, environ_map, stream, body);
@@ -10739,6 +10753,34 @@ fn isWebuiRead(method: []const u8) bool {
     return std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD");
 }
 
+/// A route that owns a sub-path answers the prefix itself and everything under
+/// a `/`, never a longer sibling name.
+///
+/// `std.mem.startsWith` alone is why `GET /api/runsfoo` listed every run and
+/// `GET /api/catalogfoo?q=ab` searched the catalog: a client typo, a stale
+/// link, or a scanner probing for `/api/sessionsX` all reached a working
+/// handler and got a 200 that looked like the resource it asked for. The
+/// handlers already refused a junk *suffix* below the prefix
+/// (`/api/chat/messages/<extra>`, `/api/runs/<extra>`), so the boundary was
+/// half the rule; this is the other half, in one place, for every prefix
+/// route.
+fn routePrefix(path: []const u8, prefix: []const u8) bool {
+    if (!std.mem.startsWith(u8, path, prefix)) return false;
+    if (path.len == prefix.len) return true;
+    return path[prefix.len] == '/' or path[prefix.len] == '?';
+}
+
+test "routePrefix claims the prefix and its sub-paths, never a longer name" {
+    try std.testing.expect(routePrefix("/api/runs", "/api/runs"));
+    try std.testing.expect(routePrefix("/api/runs/run-1", "/api/runs"));
+    try std.testing.expect(routePrefix("/api/logs?path=x", "/api/logs"));
+
+    try std.testing.expect(!routePrefix("/api/runsfoo", "/api/runs"));
+    try std.testing.expect(!routePrefix("/api/sessions-export", "/api/sessions"));
+    try std.testing.expect(!routePrefix("/api/config/rawfile", "/api/config/raw"));
+    try std.testing.expect(!routePrefix("/api/chat", "/api/chat/messages"));
+}
+
 /// The one read route a HEAD must not be routed to as its GET.
 ///
 /// `handleConnection` rewrites a HEAD to a GET before the route chain so every
@@ -11768,20 +11810,32 @@ fn handleMcpServers(gpa: std.mem.Allocator, cfg: *const config.Config, stream: s
 
 /// `GET /api/config/status` — the last revalidation verdict, so the editor
 /// can say "your hand edit was refused" without tailing the server log.
-fn handleConfigStatus(stream: std.Io.net.Stream) void {
-    var buf: [512]u8 = undefined;
+fn handleConfigStatus(gpa: std.mem.Allocator, stream: std.Io.net.Stream) void {
+    // Rendered with the same `std.json.Stringify` every other handler uses.
+    // Hand-spliced into `"{...\"error\":\"{s}\"..."}` it was one quote or
+    // backslash in the diagnostic away from a body no client could parse, and
+    // this is the one endpoint whose whole job is reporting a bad edit.
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
     _ = std.c.pthread_mutex_lock(&config_check_mutex);
     const ok = config_check_ok;
-    const err_text = config_check_error_buf[0..config_check_error_len];
+    const err_text = arena.dupe(u8, config_check_error_buf[0..config_check_error_len]) catch "";
     const ts = config_check_ts_ms;
-    var body_buf: [768]u8 = undefined;
-    const body = std.fmt.bufPrint(&body_buf, "{{\"ok\":{},\"error\":\"{s}\",\"checked_ts_ms\":{d}}}", .{ ok, std.fmt.bufPrint(&buf, "{s}", .{err_text}) catch "", ts }) catch {
-        _ = std.c.pthread_mutex_unlock(&config_check_mutex);
-        respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not render config status\"}");
-        return;
-    };
     _ = std.c.pthread_mutex_unlock(&config_check_mutex);
-    respond(stream, 200, "OK", body);
+
+    var out: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &out.writer };
+    s.beginObject() catch return;
+    s.objectField("ok") catch return;
+    s.write(ok) catch return;
+    s.objectField("error") catch return;
+    s.write(err_text) catch return;
+    s.objectField("checked_ts_ms") catch return;
+    s.write(ts) catch return;
+    s.endObject() catch return;
+    respond(stream, 200, "OK", out.written());
 }
 
 fn handleConfigDefault(io: std.Io, gpa: std.mem.Allocator, body: []const u8, stream: std.Io.net.Stream) void {
@@ -13160,8 +13214,14 @@ fn handleSessionEventsPost(
             respond(stream, 200, "OK", std.fmt.bufPrint(&buf, "{{\"ok\":true,\"last_seq\":{d}}}", .{last}) catch return);
         },
         .gap => |have| {
-            var buf: [96]u8 = undefined;
-            respond(stream, 409, "Conflict", std.fmt.bufPrint(&buf, "{{\"ok\":false,\"gap\":true,\"have\":{d},\"need\":{d}}}", .{ have, have + 1 }) catch return);
+            // `error` alongside `gap`/`have`/`need`, not instead of them: every
+            // other 4xx on this surface is `{"ok":false,"error":...}`, so a
+            // client that switches on `error` read `undefined` here and could
+            // not tell a cursor gap from any other conflict. The three numbers
+            // are what the replica needs to backfill; the string is what a
+            // human reading a log sees.
+            var buf: [160]u8 = undefined;
+            respond(stream, 409, "Conflict", std.fmt.bufPrint(&buf, "{{\"ok\":false,\"error\":\"event gap: resync from seq {d}\",\"gap\":true,\"have\":{d},\"need\":{d}}}", .{ have + 1, have, have + 1 }) catch return);
         },
     }
 }
@@ -14850,7 +14910,7 @@ fn handleKnowledge(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config
     const tool_input = knowledgeRouteToToolInput(arena, method, rest, target, body) orelse {
         if (std.mem.eql(u8, method, "PUT") or std.mem.eql(u8, method, "PATCH")) {
             respond(stream, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method not allowed\"}");
-        } else if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
+        } else if (std.mem.eql(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
             respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing q\"}");
         } else if ((std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "DELETE")) and
             (rest.len == 0 or std.mem.endsWith(u8, rest, "/docs") or std.mem.find(u8, rest, "/docs/") != null))
@@ -15109,7 +15169,11 @@ fn knowledgeRouteToToolInput(arena: std.mem.Allocator, method: []const u8, rest:
         s.endObject() catch return null;
         return arena.dupe(u8, w.written()) catch null;
     }
-    if (std.mem.startsWith(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
+    // `eql`, not `startsWith`: the sibling collection branch below reads every
+    // `/<id>` as a collection to fetch, so a `startsWith("/search")` made
+    // `/api/knowledge/searches` a search (answered "missing q") instead of a
+    // collection named "searches".
+    if (std.mem.eql(u8, rest, "/search") and std.mem.eql(u8, method, "GET")) {
         const q = queryParam(arena, target, "q") orelse return null;
         if (q.len == 0) return null;
         s.beginObject() catch return null;
