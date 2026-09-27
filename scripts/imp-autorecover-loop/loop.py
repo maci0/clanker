@@ -252,6 +252,24 @@ class Watchdog:
         stop_process_group(self.process)
 
 
+def log_dir() -> Path:
+    """The directory run logs are written to, created if absent.
+
+    A loop run is hours of harness output, and the caller that unlinks the log
+    never runs when the loop is killed between rounds. TMPDIR is a tmpfs on
+    most Linux machines, so a leftover log there is RAM the machine cannot get
+    back; the cache directory is on disk. CLANKER_LOG_DIR overrides it.
+    """
+    override = os.environ.get("CLANKER_LOG_DIR")
+    if override:
+        root = Path(override)
+    else:
+        cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+        root = Path(cache) / "clanker" / "imp-autorecover"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def run_to_log(
     command: Sequence[str],
     *,
@@ -266,7 +284,11 @@ def run_to_log(
     # later repair round, and the caller unlinks it. Closed explicitly below,
     # so the context manager ruff asks for would delete the log on exit.
     log = tempfile.NamedTemporaryFile(  # noqa: SIM115
-        mode="wb", prefix=f"clanker-{label}-", suffix=".log", delete=False
+        mode="wb",
+        prefix=f"clanker-{label}-",
+        suffix=".log",
+        dir=log_dir(),
+        delete=False,
     )
     log_path = Path(log.name)
     try:

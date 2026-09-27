@@ -66,6 +66,8 @@ ENVIRONMENT
                                              script lives in)
   CLANKER_BIN  clanker executable           (default: clanker on PATH, falling
                                              back to $CLANKER_DIR/zig-out/bin/clanker)
+  CLANKER_LOG_DIR  where run logs are kept (default:
+                                             $XDG_CACHE_HOME/clanker/imp-autorecover)
 
 EXAMPLES
   run.sh                                      start the menus, then the loop

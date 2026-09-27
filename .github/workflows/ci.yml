@@ -47,8 +47,15 @@ jobs:
         with:
           use-cache: true
 
+      # bun-version mirrors `packageManager` in package.json (bun@1.4.2), the
+      # pin the local toolchain is verified against; bump both together. Left
+      # implicit, every job installs whatever bun released that morning, so
+      # lint, audit and the AssemblyScript rebuild can all change result on an
+      # unchanged tree.
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
 
       # Extract the pinned dependency trees and re-apply patches/*.patch
       # (patches/README.md). build.zig refuses to configure against pristine
@@ -146,9 +153,11 @@ jobs:
           use-cache: true
 
       # `zig build test` runs the ~20 bun test suites under ui/app, so bun must
-      # be on PATH here too, like the linux verify job.
+      # be on PATH here too, like the linux verify job, on the same pin.
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
 
       # Same reason as the verify job: build.zig refuses pristine upstream
       # dependencies, and the patches must land after extraction.
@@ -221,6 +230,10 @@ jobs:
           name: clanker-${{ matrix.target }}
           path: out/${{ matrix.target }}/bin/clanker-*
           if-no-files-found: error
+          # release-publish attaches the same bytes to the GitHub Release
+          # minutes later, so the 90-day default only keeps superseded builds
+          # (and a failed publish's binaries) alive for a quarter.
+          retention-days: 7
 
   # One immutable tag becomes one GitHub Release with every target's binary
   # attached, so installing clanker never needs a Zig toolchain.

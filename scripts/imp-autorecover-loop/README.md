@@ -230,6 +230,20 @@ the failure that motivated this was a `clanker run` that compacted its context
 on every iteration for hours, logging all the while — so only the wall-clock cap
 catches that one.
 
+## Where the run logs go
+
+Each run's output is mirrored to the terminal and kept in a file, because the
+repair levels re-read the failing run's log by path. Those files live in
+`$XDG_CACHE_HOME/clanker/imp-autorecover` (usually
+`~/.cache/clanker/imp-autorecover`) and are deleted as the loop consumes them.
+A loop killed between rounds leaves them behind, so the directory is on disk
+rather than `TMPDIR`, which is a tmpfs on most Linux machines. Point it
+somewhere else with `CLANKER_LOG_DIR`:
+
+```bash
+CLANKER_LOG_DIR=/var/tmp/clanker-logs ./run.sh
+```
+
 ## Finding the clanker binary
 
 The binary is resolved in this order, so `clanker` does not have to be on

@@ -11,7 +11,6 @@ import os
 import shutil
 import sqlite3
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
@@ -92,7 +91,9 @@ class VerifyBackupTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("no snapshot has ever been promoted", result.stderr)
 
-    def run_verify(self, *args: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    def run_verify(
+        self, *args: str, env_extra: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess:
         """Run the shipped drill; `env_extra` overrides one variable per call."""
         env = dict(os.environ, CLANKER_BACKUP_ROOT=str(self.backup_root), **(env_extra or {}))
         return subprocess.run(
