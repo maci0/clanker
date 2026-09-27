@@ -303,7 +303,11 @@ pub const Sandbox = struct {
     parent_run_id: []const u8 = "",
     /// Effective config, for host functions that need it (subagent runner).
     cfg: ?*const config_mod.Config = null,
-    /// Per-session token budget for ck_llm calls (0 = unlimited).
+    /// Output tokens one sandboxed tool call may spend on `ck_llm` /
+    /// `ck_llm_many` in total. Charged before each request is issued, so a
+    /// refused call costs nothing. 0 is the opt-out, and is not a usable
+    /// default: the per-call `max_tokens` grant bounds one completion, not how
+    /// many a guest makes.
     session_token_budget: usize = 0,
     /// Tokens used so far by ck_llm calls in this session.
     used_session_tokens: u64 = 0,
@@ -435,6 +439,7 @@ pub fn sandboxFor(
         .network_allow = net,
         .fs_read_only = tool.fs_read_only,
         .llm = llm_access,
+        .session_token_budget = @intCast(cfg.agent.llm_token_budget),
         .session = tool.session,
         .exec_allow = tool.exec_allow,
         .git_remote_ops = cfg.agent.git_remote_ops,
@@ -695,6 +700,34 @@ test "sandboxFor adds web.allow only to research tools and keeps static hosts" {
     const no_web_fetch_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &no_web_cfg, &fetch, null);
     try std.testing.expectEqual(@as(usize, 1), no_web_fetch_sb.network_allow.len);
     try std.testing.expectEqualStrings("api.github.com", no_web_fetch_sb.network_allow[0]);
+}
+
+test "sandboxFor hands every tool the configured ck_llm output-token budget" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var env = std.process.Environ.Map.init(std.testing.allocator);
+    defer env.deinit();
+
+    const tool = registry.Tool{
+        .name = "thinker",
+        .description = "test",
+        .wasm = "test.wasm",
+        .input_schema = .{ .object = .empty },
+    };
+    const default_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &config_mod.Config{}, &tool, null);
+    try std.testing.expectEqual(@as(usize, 100_000), default_sb.session_token_budget);
+
+    // A configured ceiling lands on the sandbox; the per-tool `max_tokens`
+    // grant is a different number and does not stand in for it.
+    var cfg = config_mod.Config{};
+    cfg.agent.llm_token_budget = 4_096;
+    const cfg_sb = try sandboxFor(std.testing.allocator, threaded.io(), arena, &env, &cfg, &tool, null);
+    try std.testing.expectEqual(@as(usize, 4_096), cfg_sb.session_token_budget);
+    try std.testing.expect(cfg_sb.llm == null);
 }
 
 test "networkAllowed matches exact hosts, glob patterns, and the catch-all" {
@@ -1073,6 +1106,22 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     return Err.invalid;
 }
 
+/// Whether issuing an LLM call that could produce `incoming` output tokens
+/// would break the sandbox's `session_token_budget`.
+///
+/// A descriptor's `max_tokens` grant bounds one completion, not how many
+/// completions a guest makes, so a guest that loops on `ck_llm` is bounded
+/// only by a per-call cap. This is asked before the request goes out, against
+/// the call's own grant, so a refusal costs nothing; the tokens actually spent
+/// are charged afterwards, keeping the accounting on what the provider
+/// reported. The budget is therefore a ceiling the sandbox may exceed by at
+/// most the one grant in flight when it was last asked.
+fn llmBudgetRefuses(sandbox: *const Sandbox, incoming: u64) bool {
+    const budget = sandbox.session_token_budget;
+    if (budget == 0) return false;
+    return sandbox.used_session_tokens + incoming > budget;
+}
+
 /// ck_llm(request) -> completion text in the host arena. The request is either
 /// a bare prompt or a JSON object:
 /// `{"prompt": "...", "provider": "<name>", "model": "<name>", "system": "...", "max_tokens": N}`.
@@ -1123,6 +1172,10 @@ pub fn ckLlm(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         }
     }
     if (prompt.len == 0) return Err.invalid;
+    if (llmBudgetRefuses(h.sandbox, max_tokens)) {
+        log.log(.warn, "[llm] {s} is out of ck_llm budget for this tool call", .{h.sandbox.tool_self_name});
+        return Err.too_large;
+    }
 
     const messages: []const types.Message = if (system) |sys| blk: {
         const msgs = arena.alloc(types.Message, 2) catch return Err.invalid;
@@ -1297,6 +1350,10 @@ pub fn ckLlmMany(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     const targets = targets_val.array.items;
     if (targets.len == 0) return Err.invalid;
     if (targets.len > max_llm_many_targets) return Err.too_large;
+    if (llmBudgetRefuses(h.sandbox, @as(u64, targets.len) * max_tokens)) {
+        log.log(.warn, "[llm] {s} is out of ck_llm budget for this tool call", .{h.sandbox.tool_self_name});
+        return Err.too_large;
+    }
 
     const cfg = h.sandbox.cfg orelse {
         log.log(.warn, "[llm] ck_llm_many needs config to resolve provider names", .{});
@@ -8384,6 +8441,38 @@ test "ck_llm max_tokens cannot exceed the descriptor grant" {
     try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(99_999, 1024));
     try std.testing.expectEqual(@as(u32, 1024), clampCkLlmMaxTokens(4_000_000_000, 0));
     try std.testing.expectEqual(@as(u32, 256), clampCkLlmMaxTokens(256, 0));
+}
+
+test "ck_llm is refused once a tool call has spent its output-token budget" {
+    // The grant bounds one completion, not how many a guest makes, so the
+    // loop is what the budget has to stop.
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var environ_map = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ_map.deinit();
+
+    var sandbox = Sandbox{
+        .gpa = std.testing.allocator,
+        .io = threaded.io(),
+        .root_dir = ".",
+        .network_allow = &.{},
+        .environ_map = &environ_map,
+        .session_token_budget = 2048,
+    };
+
+    try std.testing.expect(!llmBudgetRefuses(&sandbox, 1024));
+    sandbox.used_session_tokens = 1024;
+    try std.testing.expect(!llmBudgetRefuses(&sandbox, 1024));
+    sandbox.used_session_tokens = 1025;
+    try std.testing.expect(llmBudgetRefuses(&sandbox, 1024));
+    // A smaller request still fits: the check is against the call's own
+    // grant, not a fixed per-call price.
+    try std.testing.expect(!llmBudgetRefuses(&sandbox, 1023));
+
+    // 0 is the explicit opt-out, and nothing accumulates against it.
+    sandbox.session_token_budget = 0;
+    sandbox.used_session_tokens = 9_000_000;
+    try std.testing.expect(!llmBudgetRefuses(&sandbox, 4_000_000_000));
 }
 
 test "ck_llm names why a completion came back with no visible content" {

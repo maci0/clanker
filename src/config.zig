@@ -538,6 +538,13 @@ pub const Agent = struct {
     /// Total history token budget; when accumulated conversation history goes
     /// beyond this, older messages are compacted away.
     max_history_tokens: u32 = 16000,
+    /// Output tokens one sandboxed tool call may spend on `ck_llm` /
+    /// `ck_llm_many` in total. The per-call `max_tokens` grant in a tool
+    /// descriptor bounds one completion, not how many completions the guest
+    /// makes, so a guest that loops on `ck_llm` is bounded by this instead.
+    /// Charged before the request is issued, against the call's own grant, so
+    /// a refused call costs nothing.
+    llm_token_budget: u32 = 100_000,
     /// Send full schemas only for the tools this clanker actually uses,
     /// and let the model ask for the rest by name. With forty-odd tools the
     /// schemas are several thousand tokens in every single request, and most
@@ -826,6 +833,7 @@ pub const AgentFields = struct {
     max_total_tokens: bool = false,
     max_tokens_per_turn: bool = false,
     max_history_tokens: bool = false,
+    llm_token_budget: bool = false,
     tool_catalog: bool = false,
     hot_tools: bool = false,
     tools_dir: bool = false,
@@ -2755,19 +2763,20 @@ pub const Config = struct {
         var a = Agent{};
         var f = AgentFields{};
         warnUnknownKeys(obj, &.{
-            "max_iterations",                 "max_goal_turns",                 "compact_threshold_bytes", "tool_result_prune_bytes",
-            "tool_result_prune_head_bytes",   "tool_result_prune_tail_bytes",   "repeat_tool_thresholds",  "repeat_tool_exclude",
-            "max_total_tokens",               "max_tokens_per_turn",            "max_history_tokens",      "tool_catalog",
-            "hot_tools",                      "tools_dir",                      "skills_dir",              "system_prompt_file",
-            "learnings_file",                 "global_instructions_file",       "state_dir",               "sandbox_root",
-            "sandbox_follow_symlinks",        "workflows_dir",                  "chains_dir",              "tui_plugins_dir",
-            "cli_plugins_dir",                "git_commit",                     "git_remote_ops",          "exec_pattern_allow",
-            "repl_exec_allow",                "seed",                           "ask_timeout_seconds",     "confirm_writes",
-            "provider_check_timeout_seconds", "fallback_provider",              "fallback_providers",      "auto_thinking",
-            "thinking_classifier_model",      "thinking_classifier_timeout_ms", "worktree",                "goal_worktree",
-            "git_worktree_on",                "isolated_cli",                   "isolated_tui",            "isolated_webui",
-            "reasoning_effort",               "repeat_tool_abort_threshold",    "request_timeout_ms",      "stream_idle_timeout_ms",
-            "backend",                        "backend_acp_argv",               "backend_timeout_ms",      "worktree_link_local_config",
+            "max_iterations",               "max_goal_turns",                 "compact_threshold_bytes",        "tool_result_prune_bytes",
+            "tool_result_prune_head_bytes", "tool_result_prune_tail_bytes",   "repeat_tool_thresholds",         "repeat_tool_exclude",
+            "max_total_tokens",             "max_tokens_per_turn",            "max_history_tokens",             "llm_token_budget",
+            "tool_catalog",                 "hot_tools",                      "tools_dir",                      "skills_dir",
+            "system_prompt_file",           "learnings_file",                 "global_instructions_file",       "state_dir",
+            "sandbox_root",                 "sandbox_follow_symlinks",        "workflows_dir",                  "chains_dir",
+            "tui_plugins_dir",              "cli_plugins_dir",                "git_commit",                     "git_remote_ops",
+            "exec_pattern_allow",           "repl_exec_allow",                "seed",                           "ask_timeout_seconds",
+            "confirm_writes",               "provider_check_timeout_seconds", "fallback_provider",              "fallback_providers",
+            "auto_thinking",                "thinking_classifier_model",      "thinking_classifier_timeout_ms", "worktree",
+            "goal_worktree",                "git_worktree_on",                "isolated_cli",                   "isolated_tui",
+            "isolated_webui",               "reasoning_effort",               "repeat_tool_abort_threshold",    "request_timeout_ms",
+            "stream_idle_timeout_ms",       "backend",                        "backend_acp_argv",               "backend_timeout_ms",
+            "worktree_link_local_config",
         }, "agent");
         if (obj.get("max_iterations")) |k| {
             a.max_iterations = try jsonUnsigned(u32, k, "max_iterations");
@@ -2838,6 +2847,10 @@ pub const Config = struct {
         if (obj.get("max_history_tokens")) |k| {
             a.max_history_tokens = try jsonUnsigned(u32, k, "max_history_tokens");
             f.max_history_tokens = true;
+        }
+        if (obj.get("llm_token_budget")) |k| {
+            a.llm_token_budget = try jsonUnsigned(u32, k, "llm_token_budget");
+            f.llm_token_budget = true;
         }
         if (obj.get("tools_dir")) |k| {
             a.tools_dir = try jsonToolsDir(arena, k);
@@ -3061,6 +3074,7 @@ pub const Config = struct {
         if (fields.max_total_tokens) dst.max_total_tokens = src.max_total_tokens;
         if (fields.max_tokens_per_turn) dst.max_tokens_per_turn = src.max_tokens_per_turn;
         if (fields.max_history_tokens) dst.max_history_tokens = src.max_history_tokens;
+        if (fields.llm_token_budget) dst.llm_token_budget = src.llm_token_budget;
         if (fields.tool_catalog) dst.tool_catalog = src.tool_catalog;
         if (fields.hot_tools) dst.hot_tools = src.hot_tools;
         if (fields.tools_dir) dst.tools_dir = src.tools_dir;
@@ -5575,6 +5589,39 @@ test "partial local agent keeps base tools_dir" {
     try std.testing.expectEqual(@as(usize, 1), cfg.agent.tools_dir.len);
     try std.testing.expectEqualStrings("tools/manifests", cfg.agent.tools_dir[0]);
     try std.testing.expectEqualStrings(".", cfg.agent.sandbox_root);
+    try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
+}
+
+test "agent llm_token_budget bounds a tool call's ck_llm spend and defaults on" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\agent = { max_iterations = 30 }
+        ,
+    });
+    const base = try Config.load(io, arena, env.tmp.dir, "config.toml", "missing.local.toml");
+    // A descriptor's max_tokens grant bounds one completion, not how many a
+    // guest makes, so a default of "unlimited" leaves a looping guest with no
+    // ceiling at all.
+    try std.testing.expectEqual(@as(u32, 100_000), base.agent.llm_token_budget);
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\agent = { llm_token_budget = 25000 }
+        ,
+    });
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+    try std.testing.expectEqual(@as(u32, 25_000), cfg.agent.llm_token_budget);
+    // A partial local agent object must not reset what the base file set.
     try std.testing.expectEqual(@as(u32, 30), cfg.agent.max_iterations);
 }
 

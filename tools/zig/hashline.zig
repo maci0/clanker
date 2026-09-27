@@ -173,8 +173,11 @@ pub fn apply(
             src.len;
         // Signed on purpose: this is the spliced text's length, and
         // `higher_delta` is a byte delta that can pull it below an original
-        // offset, which is the answer "nothing follows this hunk".
-        const text_len: i64 = @as(i64, @intCast(src.len)) + higher_delta;
+        // offset, which is the answer "nothing follows this hunk". The floor
+        // keeps the cast total and the comparison signed, so a hunk that
+        // deletes more than it inserts still reads as "nothing follows" --
+        // `end_off` is always inside `src`.
+        const text_len: i64 = @max(@as(i64, @intCast(src.len)) + higher_delta, 0);
         const needs_sep = r.hunk.new_text.len > 0 and
             r.hunk.new_text[r.hunk.new_text.len - 1] != '\n' and
             @as(i64, @intCast(end_off)) < text_len;

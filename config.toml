@@ -328,6 +328,8 @@ repl_exec_allow = ["printf"]
 # max_tokens_per_turn = 4096     # per-turn input cap; history compacts first
 # max_history_tokens = 16000     # total history budget before old turns go
 # max_total_tokens = 200000      # unset (the default) = no ceiling at all
+# llm_token_budget = 100000      # output tokens one tool call may spend on
+#                                # ck_llm in total; 0 = unbounded
 #
 # Tool schemas. With forty-odd tools the full schemas are several thousand
 # tokens in every request, and most are unwanted on most turns; the catalog
