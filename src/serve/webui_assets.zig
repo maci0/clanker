@@ -367,7 +367,7 @@ pub fn renderAbandon(cache: *RenderCache) void {
     cache.state.store(.idle, .release);
 }
 
-const kind_count = std.meta.tags(Kind).len;
+const kind_count = std.enums.values(Kind).len;
 
 var render_caches = [_]RenderCache{.{}} ** kind_count;
 var gzip_caches = [_]GzipCache{.{}} ** kind_count;
@@ -436,8 +436,8 @@ test "every cache kind gets its own slot" {
     // /webui/core/core/utils.js (and the rest of app.js's relative imports)
     // as 404s. Array-backed slots make that unrepresentable; this pins that
     // the indexing stays one-to-one.
-    for (std.meta.tags(Kind), 0..) |a, i| {
-        for (std.meta.tags(Kind)[i + 1 ..]) |b| {
+    for (std.enums.values(Kind), 0..) |a, i| {
+        for (std.enums.values(Kind)[i + 1 ..]) |b| {
             try std.testing.expect(renderCache(a) != renderCache(b));
             try std.testing.expect(gzipCache(a) != gzipCache(b));
         }

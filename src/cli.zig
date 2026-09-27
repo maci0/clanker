@@ -20258,7 +20258,7 @@ test "every webui asset except app.js has its own cache kind" {
     try std.testing.expect(webuiRenderCache(.slash) != webuiRenderCache(.js));
     try std.testing.expect(webuiGzipCache(.slash) != webuiGzipCache(.js));
 
-    var seen = [_]bool{false} ** std.meta.tags(WebuiAssetKind).len;
+    var seen = [_]bool{false} ** std.enums.values(WebuiAssetKind).len;
     for (webui_asset_paths) |p| {
         const k = webuiAssetKind(p);
         if (std.mem.eql(u8, p, "/webui/app.js")) {
