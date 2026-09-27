@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>clanker</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='3'%20fill='%23171916'/%3E%3Crect%20x='3'%20y='3'%20width='26'%20height='26'%20rx='2'%20fill='none'%20stroke='%235c625b'%20stroke-width='1.5'/%3E%3Ccircle%20cx='16'%20cy='13'%20r='5.5'%20fill='%23117a3a'/%3E%3Ccircle%20cx='14'%20cy='11'%20r='2'%20fill='%23ffffff'/%3E%3Crect%20x='9'%20y='22'%20width='14'%20height='3'%20rx='1'%20fill='%235c625b'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/webui/vendor/patternfly.min.css" media="print" data-pf="1" fetchpriority="low">
-<noscript><link rel="stylesheet" href="/webui/vendor/patternfly.min.css"></noscript>
 <link rel="stylesheet" href="/webui/app.css">
 <!-- The Tailwind 4 utilities, render-blocking and last: they are the layer
      that supersedes app.css/views.css as each view moves over, so on equal
@@ -26,26 +24,6 @@
      without changing when they land or how the swap works. -->
 <link rel="stylesheet" href="/webui/views.css" media="print" data-views="1" fetchpriority="low">
 <noscript><link rel="stylesheet" href="/webui/views.css"></noscript>
-<style>
-/* Before app.css arrives, PatternFly parks the sidebar off-canvas below 75rem.
-   Keep our rail on-screen for anything wider than a phone so first paint
-   matches the settled layout (avoids "visible then gone" on zoomed laptops). */
-@media (min-width: 40.01rem) {
-  .pf-v6-c-page__sidebar.rail {
-    --pf-v6-c-page__sidebar--TranslateX: 0;
-    --pf-v6-c-page__sidebar--Opacity: 1;
-    transform: none;
-    opacity: 1;
-  }
-}
-@media (max-width: 40rem) {
-  .pf-v6-c-page__sidebar.rail:not([data-open="true"]) {
-    visibility: hidden;
-    transform: translateX(-100%);
-    position: fixed;
-  }
-}
-</style>
 <link rel="modulepreload" href="/webui/vendor/preact.module.js">
 <link rel="modulepreload" href="/webui/vendor/htm.module.js">
 <link rel="modulepreload" href="/webui/vendor/signals-core.module.js">
@@ -85,15 +63,15 @@ lamps carry further). The seven named palettes ride the same tokens.
      the focused link is ever on screen, so the two never overlap. -->
 <a class="skip-link" href="#task">Skip to composer</a>
 
-<div class="pf-v6-c-page" id="app-page">
-<header class="pf-v6-c-masthead" id="app-masthead">
-  <div class="pf-v6-c-masthead__main">
-    <span class="pf-v6-c-masthead__toggle">
+<div class="flex h-full min-h-0 flex-1 flex-wrap content-start" id="app-page">
+<header class="basis-full border-b border-rule" id="app-masthead">
+  <div class="flex min-w-0 items-center gap-3">
+    <span class="flex items-center">
       <button type="button" class="chip-btn" id="rail-toggle" aria-expanded="false" aria-controls="rail">Menu</button>
     </span>
-    <div class="pf-v6-c-masthead__brand">
+    <div class="flex min-w-0 items-center">
       <!-- Same artwork as the favicon, so the tab and the panel wear one badge. -->
-      <div class="pf-v6-c-masthead__logo">
+      <div class="flex items-center">
         <h1><svg class="logo" width="18" height="18" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
           <rect width="32" height="32" rx="3" fill="var(--code-bg)"/>
           <rect x="3" y="3" width="26" height="26" rx="2" fill="none" stroke="var(--fg-muted)" stroke-width="1.5"/>
@@ -104,7 +82,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
     </div>
   </div>
-  <div class="pf-v6-c-masthead__content">
+  <div class="flex flex-1 items-center justify-end gap-2">
     <button type="button" class="chip header-model" id="header-model" title="Active model (click to change)" aria-haspopup="listbox" aria-expanded="false">
       <span class="model-chip__name">…</span>
     </button>
@@ -126,39 +104,38 @@ lamps carry further). The seven named palettes ride the same tokens.
      them, so a sighted user gets the same message a screen reader is read. -->
 <div class="toasts" id="toasts"></div>
 <div class="rail-scrim" id="rail-scrim" data-open="false"></div>
-<aside class="pf-v6-c-page__sidebar pf-m-expanded rail" id="rail" aria-label="Navigation">
-  <div class="pf-v6-c-page__sidebar-main">
-    <div class="pf-v6-c-page__sidebar-body">
+<aside class="rail" id="rail" aria-label="Navigation">
+  <div class="flex min-h-0 flex-1 flex-col">
   <!-- Session-first rail (DeepSeek Harness topology, cabinet tokens):
        Work destinations stay visible, conversations fill the column,
        Watch and Set up fold so they do not eat the list. -->
-  <nav class="pf-v6-c-nav rail-nav rail-places" role="tablist" aria-orientation="vertical" aria-label="Sections"
+  <nav class="rail-nav rail-places" role="tablist" aria-orientation="vertical" aria-label="Sections"
        aria-owns="tab-chat tab-kanban tab-runs tab-fleet tab-arena tab-rooms tab-models tab-knowledge tab-prompts tab-tools tab-system">
-    <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-work">
-      <h2 class="pf-v6-c-nav__section-title rail-group" id="rail-section-work">Work</h2>
-      <ul class="pf-v6-c-nav__list" role="presentation">
-        <li class="pf-v6-c-nav__item">
+    <section aria-labelledby="rail-section-work">
+      <h2 class="rail-group" id="rail-section-work">Work</h2>
+      <ul class="m-0 list-none p-0" role="presentation">
+        <li>
           <button type="button" class="rail-tab" role="tab" id="tab-chat" aria-controls="view-chat" aria-selected="false" tabindex="-1" data-view="chat">Chat</button>
         </li>
-        <li class="pf-v6-c-nav__item">
+        <li>
           <button type="button" class="rail-tab" role="tab" id="tab-kanban" aria-controls="view-kanban" aria-selected="false" tabindex="-1" data-view="kanban">Kanban</button>
         </li>
       </ul>
     </section>
     <details class="rail-fold" id="rail-fold-watch">
-      <summary class="pf-v6-c-nav__section-title rail-group" id="rail-section-watch">Watch</summary>
-      <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-watch">
-        <ul class="pf-v6-c-nav__list" role="presentation">
-          <li class="pf-v6-c-nav__item">
+      <summary class="rail-group" id="rail-section-watch">Watch</summary>
+      <section aria-labelledby="rail-section-watch">
+        <ul class="m-0 list-none p-0" role="presentation">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-runs" aria-controls="view-runs" aria-selected="false" tabindex="-1" data-view="runs">Runs</button>
           </li>
-          <li class="pf-v6-c-nav__item">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-fleet" aria-controls="view-fleet" aria-selected="false" tabindex="-1" data-view="fleet">Fleet</button>
           </li>
-          <li class="pf-v6-c-nav__item">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-arena" aria-controls="view-arena" aria-selected="false" tabindex="-1" data-view="arena">Arena</button>
           </li>
-          <li class="pf-v6-c-nav__item">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-rooms" aria-controls="view-rooms" aria-selected="false" tabindex="-1" data-view="rooms">Rooms</button>
           </li>
         </ul>
@@ -186,24 +163,24 @@ lamps carry further). The seven named palettes ride the same tokens.
     <ul class="rail-list" id="rail-list" aria-label="Conversations"></ul>
   </div>
 
-  <nav class="pf-v6-c-nav rail-nav rail-settings" aria-label="Set up">
+  <nav class="rail-nav rail-settings" aria-label="Set up">
     <details class="rail-fold" id="rail-fold-setup">
-      <summary class="pf-v6-c-nav__section-title rail-group" id="rail-section-setup">Set up</summary>
-      <section class="pf-v6-c-nav__section" aria-labelledby="rail-section-setup">
-        <ul class="pf-v6-c-nav__list" role="presentation">
-          <li class="pf-v6-c-nav__item">
+      <summary class="rail-group" id="rail-section-setup">Set up</summary>
+      <section aria-labelledby="rail-section-setup">
+        <ul class="m-0 list-none p-0" role="presentation">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-models" aria-controls="view-models" aria-selected="false" tabindex="-1" data-view="models">Models</button>
           </li>
-          <li class="pf-v6-c-nav__item">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-knowledge" aria-controls="view-knowledge" aria-selected="false" tabindex="-1" data-view="knowledge">Knowledge</button>
           </li>
-          <li class="pf-v6-c-nav__item">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-prompts" aria-controls="view-prompts" aria-selected="false" tabindex="-1" data-view="prompts">Prompts</button>
           </li>
-          <li class="pf-v6-c-nav__item">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-tools" aria-controls="view-tools" aria-selected="false" tabindex="-1" data-view="tools">Tools</button>
           </li>
-          <li class="pf-v6-c-nav__item">
+          <li>
             <button type="button" class="rail-tab" role="tab" id="tab-system" aria-controls="view-system" aria-selected="false" tabindex="-1" data-view="system">System</button>
           </li>
         </ul>
@@ -214,8 +191,8 @@ lamps carry further). The seven named palettes ride the same tokens.
   </div>
 </aside>
 
-<div class="pf-v6-c-page__main-container shell" tabindex="-1">
-<main class="pf-v6-c-page__main" id="main" tabindex="-1">
+<div class="shell min-w-0" tabindex="-1">
+<main id="main" tabindex="-1">
   <div class="view conversation" id="view-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="-1">
     <!-- Conversation column: header, scrolling transcript, docked composer.
          No aria-live here: each turn's answer is its own live region (see

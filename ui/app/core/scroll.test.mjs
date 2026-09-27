@@ -77,12 +77,12 @@ test("Jump-to-latest button stays hidden while the conversation is at the end", 
   assert.equal(btn.hidden, true);
 });
 
-test("shipped Chat markup is a session-first PF column", function () {
+test("shipped Chat markup is a session-first column", function () {
   var html = readFileSync(join(here, "..", "index.html"), "utf8");
   var css = readFileSync(join(here, "..", "app.css"), "utf8");
-  assert.match(html, /class="pf-v6-c-page"/);
-  assert.match(html, /class="pf-v6-c-masthead"/);
-  assert.match(html, /pf-v6-c-page__sidebar/);
+  assert.match(html, /id="app-page"/);
+  assert.match(html, /id="app-masthead"/);
+  assert.match(html, /id="rail" aria-label="Navigation"/);
   assert.match(html, /id="rail-context"/);
   assert.doesNotMatch(html, /id="rail-context"[^>]*\bhidden\b/);
   assert.match(html, /class="conversation-header"/);

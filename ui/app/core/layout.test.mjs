@@ -35,9 +35,9 @@ test("operator sections fill the main column", function () {
   assert.ok(sectionMax, ".view > section must set max-width");
   assert.ok(fillsColumn(sectionMax), ".view > section should fill the column, got " + sectionMax);
 
-  const main = ruleBody("main.pf-v6-c-page__main");
+  const main = ruleBody("main");
   const mainMax = decl(main, "max-width");
-  assert.ok(mainMax, "main.pf-v6-c-page__main must set max-width");
+  assert.ok(mainMax, "main must set max-width");
   assert.ok(fillsColumn(mainMax), "main should fill, got " + mainMax);
 });
 

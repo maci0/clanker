@@ -356,101 +356,8 @@ body {
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 @media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
-
-/* PatternFly page shell (step 2): PF grid + cabinet bridge until each surface migrates. */
-#app-page.pf-v6-c-page {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: 100%;
-  /* PF page chrome paints a glass card (align-self:start + page inset).
-     Cabinet shell owns the column: stretch it, drop the end inset. The
-     15rem start inset below 75rem stays so the overlay rail cannot cover
-     the heading. */
-  --pf-v6-c-page__main-container--BorderColor: transparent;
-  --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
-  --pf-v6-c-page__main-container--BorderBlockEndWidth: 0;
-  --pf-v6-c-page__main-container--BorderInlineStartWidth: 0;
-  --pf-v6-c-page__main-container--BorderInlineEndWidth: 0;
-  --pf-v6-c-page__main-container--BackgroundColor: transparent;
-  --pf-v6-c-page__main-container--AlignSelf: stretch;
-  --pf-v6-c-page__main-container--MarginInlineEnd: 0;
-  --pf-v6-c-page__main-container--MarginBlockStart: 0;
-  --pf-v6-c-page__main-container--MaxHeight: 100%;
-  --pf-v6-c-page__main-container--BorderRadius: 0;
-  --pf-v6-c-page__main-container--BoxShadow: none;
-}
-/* PF parks the sidebar off-canvas below 75rem. We keep it visible down to
-   40rem, so the main column has to leave that 15rem track empty. */
-@media (min-width: 40.01rem) and (max-width: 74.99rem) {
-  .pf-v6-c-page__main-container.shell { margin-inline-start: 15rem; }
-  #app-page.pf-v6-c-page:has(#rail[data-collapsed="true"]) .pf-v6-c-page__main-container.shell {
-    margin-inline-start: 3.5rem;
-  }
-}
-/* Above 75rem the same two widths are a grid track, not a margin, and PF
-   sizes that track from `--pf-v6-c-page__sidebar--Width` (18.125rem) with
-   nothing here overriding it. So collapsing the rail to its 3.5rem icon
-   strip left a 14.6rem column of blank panel between rail and content, and
-   the button read as broken. The track follows the rail instead. */
-@media (min-width: 75rem) {
-  #app-page.pf-v6-c-page { --pf-v6-c-page__sidebar--Width: 15rem; }
-  #app-page.pf-v6-c-page:has(#rail[data-collapsed="true"]) { --pf-v6-c-page__sidebar--Width: 3.5rem; }
-}
-#app-masthead.pf-v6-c-masthead {
-  border-bottom: 1px solid var(--rule);
-  background: var(--surface);
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  flex: none;
-  min-height: 0;
-  padding-block: 0.3rem;
-}
-#app-masthead .pf-v6-c-masthead__content {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 0.75rem;
-}
-#app-masthead .pf-v6-c-masthead__logo h1 {
-  font-family: var(--sans);
-  font-size: var(--step-1);
-  font-weight: 600;
-  text-transform: none;
-  margin: 0;
-  color: var(--fg);
-  padding: 0.15rem var(--space-2);
-  border: 0;
-  background: transparent;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.pf-v6-c-page__main-container.shell {
-  display: flex;
-  flex-direction: column;
-  align-self: stretch;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  max-height: 100%;
-  margin-inline-end: 0;
-  margin-block-start: 0;
-  --pf-v6-c-page__main-container--BorderColor: transparent;
-  --pf-v6-c-page__main-container--BorderBlockStartWidth: 0;
-  --pf-v6-c-page__main-container--BorderBlockEndWidth: 0;
-  --pf-v6-c-page__main-container--BorderInlineStartWidth: 0;
-  --pf-v6-c-page__main-container--BorderInlineEndWidth: 0;
-  --pf-v6-c-page__main-container--BackgroundColor: transparent;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  backdrop-filter: none;
-  box-shadow: none;
-}
 @media (max-width: 40rem) {
-  #app-masthead.pf-v6-c-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
-  #app-masthead .pf-v6-c-masthead__content { gap: var(--space-1) var(--space-2); flex-wrap: nowrap; }
+  #app-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
   /* Phone chrome is Menu, model, Jump, theme. Lamps and help live in
      System / the palette so they cannot wrap and clip here. */
   #instance-chip, #peers-chip, #session-chip, #help-open { display: none; }
@@ -540,10 +447,7 @@ button.chip-btn {
   padding: var(--space-1) 0.65rem; border-radius: var(--radius-pill); cursor: pointer;
   background: transparent; color: var(--fg-muted); border: 1px solid transparent;
 }
-button.chip-btn:hover { color: var(--fg); background: var(--surface-2); border-color: var(--rule); }
-
-main,
-main.pf-v6-c-page__main {
+button.chip-btn:hover { color: var(--fg); background: var(--surface-2); border-color: var(--rule); }main {
   flex: 1 1 auto; min-width: 0; width: 100%; max-width: none; margin: 0;
   padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5);
   display: flex; flex-direction: column;
@@ -606,26 +510,11 @@ main.pf-v6-c-page__main {
 .view:not(#view-chat):not([hidden]) {
   flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain;
 }
-
-/* ---- tabs: one view at a time ----
-   Everything used to be stacked in one column, so reaching Tools meant
-   scrolling past the whole transcript, the run graph and every room. */
-.rail-nav,
-.pf-v6-c-nav.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: clip; }
-.pf-v6-c-nav.rail-nav .pf-v6-c-nav__list { list-style: none; margin: 0; padding: 0; }
-.pf-v6-c-nav.rail-nav .pf-v6-c-nav__item { margin: 0; }
-/* Legend plates down the rail: engraved caps in mono, a lamp beside the
-   channel that is engaged. */
-.rail-tab,
-.pf-v6-c-nav__link.rail-tab,
-button.pf-v6-c-nav__link.rail-tab {
+/* ---- tabs: one view at a time ---- Everything used to be stacked in one column, so reaching Tools meant scrolling past the whole transcript, the run graph and every room. */
+.rail-nav { display: flex; flex-direction: column; gap: 1px; flex: none; min-height: 0; overflow: clip; }
+/* Legend plates down the rail: engraved caps in mono, a lamp beside the channel that is engaged. */
+.rail-tab {
   /* Own the PF nav link tokens so theme flips do not leave light greys. */
-  --pf-v6-c-nav__link--Color: var(--fg-muted);
-  --pf-v6-c-nav__link--hover--Color: var(--fg);
-  --pf-v6-c-nav__link--m-current--Color: var(--fg);
-  --pf-v6-c-nav__link--BackgroundColor: transparent;
-  --pf-v6-c-nav__link--hover--BackgroundColor: var(--surface-2);
-  --pf-v6-c-nav__link--m-current--BackgroundColor: var(--surface-2);
   /* Drop UA button chrome under color-scheme:dark; otherwise selected tabs
      keep system greys even when color/background use !important. */
   appearance: none;
@@ -641,27 +530,12 @@ button.pf-v6-c-nav__link.rail-tab {
   /* Engraved into the backplane, not mounted on it: the base button's bevel
      would turn eight quiet channel names into eight raised plates. */
   box-shadow: none;
-}
-.rail-tab:hover,
-.pf-v6-c-nav__link.rail-tab:hover,
-button.pf-v6-c-nav__link.rail-tab:hover {
+}.rail-tab:hover {
   background-color: var(--surface-2);
   color: var(--fg);
-}
-.rail-tab:focus-visible,
-.pf-v6-c-nav__link.rail-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-/* Selected channel: longhand + !important so PF .pf-m-current cannot leave
-   light greys on dark rails (same class of leak as plain/primary buttons). */
-.rail-tab[aria-selected="true"],
-.pf-v6-c-nav__link.rail-tab.pf-m-current,
-button.pf-v6-c-nav__link.rail-tab.pf-m-current,
-.rail-tab[aria-selected="true"]:hover,
-.pf-v6-c-nav__link.rail-tab.pf-m-current:hover,
-button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
-  --pf-v6-c-nav__link--Color: var(--fg);
-  --pf-v6-c-nav__link--m-current--Color: var(--fg);
-  --pf-v6-c-nav__link--BackgroundColor: var(--surface-2);
-  --pf-v6-c-nav__link--m-current--BackgroundColor: var(--surface-2);
+}.rail-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+/* Selected channel: longhand + !important so PF . cannot leave light greys on dark rails (same class of leak as plain/primary buttons). */
+.rail-tab[aria-selected="true"], .rail-tab[aria-selected="true"]:hover {
   color: var(--fg) !important;
   background-color: var(--surface-2) !important;
   background-image: none !important;
@@ -669,20 +543,11 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
   -webkit-appearance: none;
   font-weight: 600;
   border-color: var(--rule);
-}
-.rail-tab .pf-v6-c-nav__link-text,
-.pf-v6-c-nav__link.rail-tab .pf-v6-c-nav__link-text {
-  color: inherit;
-}
-.rail-tab:active:not(:disabled),
-.pf-v6-c-nav__link.rail-tab:active:not(:disabled) { transform: translateY(1px); }
-@media (prefers-reduced-motion: reduce) {
-  .rail-tab:active:not(:disabled),
-  .pf-v6-c-nav__link.rail-tab:active:not(:disabled) { transform: none; }
+}.rail-tab:active:not(:disabled) { transform: translateY(1px); }
+@media (prefers-reduced-motion: reduce) {.rail-tab:active:not(:disabled), .rail-tab:active:not(:disabled) { transform: none; }
 }
 /* The engaged channel's lamp: lit blue, because blue is operator action. */
-.rail-tab[aria-selected="true"]::before,
-.pf-v6-c-nav__link.rail-tab.pf-m-current::before {
+.rail-tab[aria-selected="true"]::before {
   content: "";
   position: absolute;
   left: var(--space-2);
@@ -694,9 +559,7 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
   color: var(--accent);
   background: var(--lamp-dome);
   box-shadow: var(--lamp-ring), var(--lamp-glow);
-}
-.rail-tab,
-.pf-v6-c-nav__link.rail-tab { position: relative; padding-left: var(--space-5); }
+}.rail-tab { position: relative; padding-left: var(--space-5); }
 .rail-context {
   margin-top: var(--space-2); border-top: 1px solid var(--rule); padding-top: var(--space-2);
   flex: 1 1 auto; min-height: 8rem; display: flex; flex-direction: column;
@@ -727,9 +590,7 @@ button.pf-v6-c-nav__link.rail-tab.pf-m-current:hover {
 }
 /* A count of what is behind the tab, so the numbers are not hidden by the
    thing that hides everything else. */
-.tab-count { color: var(--fg-muted); font-weight: 400; margin-left: var(--space-2); }
-.rail-tab[aria-selected="true"] .tab-count,
-.pf-v6-c-nav__link.rail-tab.pf-m-current .tab-count { color: var(--accent-text); }
+.tab-count { color: var(--fg-muted); font-weight: 400; margin-left: var(--space-2); }.rail-tab[aria-selected="true"] .tab-count { color: var(--accent-text); }
 .view[hidden] { display: none; }
 /* Any flex/grid element with [hidden] would otherwise still paint: the
    author display beats the UA [hidden] rule. Patch individually would
@@ -1222,50 +1083,21 @@ button.secondary.danger:focus-visible {
   background: var(--danger); color: var(--on-danger); border-color: var(--danger);
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-/* Keep hit area even when PF plain zeros padding;
-
-/* PatternFly forms (step 5): cabinet field look on upgraded controls. */
-.pf-v6-c-form-control,
-input.pf-v6-c-form-control,
-textarea.pf-v6-c-form-control,
-.pf-v6-c-form-control:focus-visible,
-input.pf-v6-c-form-control:focus-visible,
-textarea.pf-v6-c-form-control:focus-visible,
-.pf-v6-c-form__label,
-.pf-v6-c-check.checkbox-row,
-
-/* PatternFly modals (step 6): overlay scrim + dialog box. */
-.overlay,
-.overlay.pf-v6-c-backdrop {
+/* Keep hit area even when PF plain zeros padding;/* PatternFly modals (step 6): overlay scrim + dialog box. */
+.overlay {
   position: fixed; inset: 0; z-index: 20;
   display: flex; justify-content: center; align-items: flex-start;
   padding: 10vh var(--space-5) var(--space-5);
   background: var(--scrim);
 }
-.overlay[hidden] { display: none; }
-.overlay-box,
-.pf-v6-c-modal-box.overlay-box,
-dialog.slack-dialog.pf-v6-c-modal-box {
+.overlay[hidden] { display: none; }.overlay-box {
   width: 100%; max-width: 38rem; max-height: 68vh; overflow-y: auto;
   padding: var(--space-4); border: 1px solid var(--border);
   border-radius: var(--radius-lg); background: var(--surface);
   box-shadow: var(--lift-high);
 }
-.pf-v6-c-modal__header.run-detail-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-.pf-v6-c-modal__title.run-detail-title {
-  font-weight: 600;
-  font-size: var(--step-1);
-}
-
 /* PatternFly alerts (step 7): toast notifications. */
-.toast,
-.toast.pf-v6-c-alert {
+.toast {
   pointer-events: auto; max-width: min(40rem, 90vw);
   display: flex; align-items: flex-start; gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
@@ -1275,7 +1107,6 @@ dialog.slack-dialog.pf-v6-c-modal-box {
   box-shadow: var(--lift);
   animation: toast-in 180ms ease-out;
 }
-.toast .pf-v6-c-alert__title { flex: 1; min-width: 0; }
 .toast-dismiss {
   flex: none; margin: 0; padding: 0.2rem var(--space-2);
   min-height: 28px; min-width: auto;
@@ -1283,21 +1114,10 @@ dialog.slack-dialog.pf-v6-c-modal-box {
   color: var(--fg-muted); font: inherit; font-size: var(--step--1);
   cursor: pointer; text-decoration: underline; text-underline-offset: 0.15em;
 }
-.toast-dismiss:hover, .toast-dismiss:focus-visible { color: var(--fg); }
-.toast[data-kind="bad"],
-.toast.pf-v6-c-alert.pf-m-danger,
-.toast.pf-v6-c-alert[data-kind="bad"] {
+.toast-dismiss:hover, .toast-dismiss:focus-visible { color: var(--fg); }.toast[data-kind="bad"] {
   border-color: var(--danger);
   color: var(--danger);
-}
-.pf-v6-c-alert__title { display: block; }
-
-/* PatternFly labels (step 7): masthead status chips. */
-.chip.pf-v6-c-label,
-.chip.pf-v6-c-label[data-state="live"],
-.chip.pf-v6-c-label[data-state="down"],
-
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 ::selection { background: var(--accent); color: var(--on-accent); }
 .meta {
@@ -1400,10 +1220,7 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
    target across every view, including controls created dynamically. */
 @media (pointer: coarse) {
   button, summary, input[type="text"], input[type="search"], input[type="number"],
-  input[type="date"], select { min-height: 44px; }
-  .rail-tab,
-  .pf-v6-c-nav__link.rail-tab,
-  button.pf-v6-c-nav__link.rail-tab { min-height: 44px; }
+  input[type="date"], select { min-height: 44px; }.rail-tab, .rail-tab, button.rail-tab { min-height: 44px; }
   .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
   .rail-item, .rail-new, .chat-actions button, .chat-thread-bar button,
@@ -1418,28 +1235,12 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
 }
 /* Narrow viewports: primary composer actions and rail channels stay hittable
    even when the UA reports a fine pointer (phones + many tablets). */
-@media (max-width: 40rem) {
-/* iOS Safari zooms the page when a focused field is under 16px. */
-  input[type="text"],
-  input[type="search"],
-  input[type="date"],
-  input[type="number"],
-  input[type="url"],
-  textarea,
-  select,
-  .pf-v6-c-form-control,
-  input.pf-v6-c-form-control,
-  textarea.pf-v6-c-form-control,
-  select.pf-v6-c-form-control,
-  .composer textarea,
-  .composer .model-select {
+@media (max-width: 40rem) {/* iOS Safari zooms the page when a focused field is under 16px. */
+  input[type="text"], input[type="search"], input[type="date"], input[type="number"], input[type="url"], textarea, select, input, textarea, select, .composer textarea, .composer .model-select {
     font-size: 16px;
   }
 .composer .toolbar #submit,
-  .composer .toolbar #cancel { min-height: 44px; }
-.rail-tab,
-  .pf-v6-c-nav__link.rail-tab,
-  button.pf-v6-c-nav__link.rail-tab {
+  .composer .toolbar #cancel { min-height: 44px; }.rail-tab, .rail-tab, button.rail-tab {
     min-height: 44px;
     padding-block: 0.55rem;
   }
@@ -1857,19 +1658,14 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
   }
 }
 
-.shell { display: flex; align-items: stretch; gap: 0; flex: 1 1 auto; min-height: 0; }
-
-main,
-main.pf-v6-c-page__main {
+.shell { display: flex; align-items: stretch; gap: 0; flex: 1 1 auto; min-height: 0; }main {
   background: var(--bg);
   border: 0;
   box-shadow: none;
   min-height: 0;
   flex: 1 1 auto;
   overflow: hidden;
-}
-.rail,
-.pf-v6-c-page__sidebar.rail {
+}.rail {
   flex: none; width: 15rem;
   height: 100%;
   display: flex; flex-direction: column; overflow: hidden;
@@ -1881,25 +1677,10 @@ main.pf-v6-c-page__main {
   /* PatternFly's page sidebar defaults to TranslateX:-100%/opacity:0 below
      75rem until pf-m-expanded wins. Pin our rail open on every non-phone
      width so zoomed laptops do not watch it slide away after first paint. */
-  --pf-v6-c-page__sidebar--TranslateX: 0;
-  --pf-v6-c-page__sidebar--Opacity: 1;
   transform: none !important;
   opacity: 1 !important;
   max-width: none;
-}
-.rail:hover,
-.pf-v6-c-page__sidebar.rail:hover { scrollbar-color: var(--border) transparent; }
-.pf-v6-c-page__sidebar.rail .pf-v6-c-page__sidebar-main,
-.pf-v6-c-page__sidebar.rail .pf-v6-c-page__sidebar-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  /* PatternFly's sidebar-body is overflow auto; that lets tab/filter
-     focus scroll Work (Chat/Board) off the top of the rail. Only
-     .rail-list is allowed to scroll. */
-  overflow: hidden !important;
-}
+}.rail:hover { scrollbar-color: var(--border) transparent; }
 .rail-head { display: flex; flex-direction: column; gap: var(--space-2); flex: none; }
 .rail-workspace-bar { display: flex; align-items: stretch; gap: var(--space-1); }
 .rail-workspace-bar select {
@@ -1954,19 +1735,14 @@ main.pf-v6-c-page__main {
 }
 .rail-workspace:first-child { margin-top: 0; }
 .rail-workspace-count { color: var(--fg-muted); font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.rail-folder { padding-left: var(--space-3); border-left: 1px solid var(--rule); margin-left: var(--space-2); }
-
-.rail-group,
-.pf-v6-c-nav__section-title.rail-group {
+.rail-folder { padding-left: var(--space-3); border-left: 1px solid var(--rule); margin-left: var(--space-2); }.rail-group {
   display: flex; align-items: center; gap: var(--space-2); width: 100%;
   margin: var(--space-3) 0 var(--space-1); padding: 0.2rem 0;
   border: none; background: transparent; text-align: left;
   font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
   text-transform: uppercase; letter-spacing: var(--track-label); font-weight: 600;
 }
-button.rail-group { cursor: pointer; }
-.rail-group:first-child,
-.pf-v6-c-nav__section:first-child .pf-v6-c-nav__section-title.rail-group { margin-top: 0; }
+button.rail-group { cursor: pointer; }.rail-group:first-child { margin-top: 0; }
 button.rail-group:hover { color: var(--fg); }
 .rail-group-caret { width: 1em; flex: none; }
 .rail-group-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2002,50 +1778,30 @@ button.rail-group:hover { color: var(--fg); }
   color: var(--accent-text); font: inherit; cursor: pointer;
   text-decoration: underline; text-underline-offset: 0.15em;
 }
-.rail-empty-action:hover, .rail-empty-action:focus-visible { color: var(--accent); }
-label:has(+ input[required])::after,
-label:has(+ textarea[required])::after,
-label:has(> input[required])::after,
-label:has(> textarea[required])::after,
-label.pf-v6-c-form__label:has(+ input[required])::after,
-label.pf-v6-c-form__label:has(+ textarea[required])::after,
-label.pf-v6-c-form__label:has(> input[required])::after,
-h2#session-title {
+.rail-empty-action:hover, .rail-empty-action:focus-visible { color: var(--accent); }label:has(+ input[required])::after, label:has(+ textarea[required])::after, label:has(> input[required])::after, label:has(> textarea[required])::after, h2#session-title {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 100%;
   font-family: var(--sans); font-size: var(--step-1); font-weight: 600; color: var(--fg);
   text-transform: none;
 }
 #rail-toggle { display: none; }
-#app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: none; }
 
 /* Under 40rem the rail would eat half the screen, so it becomes a drawer
    you open. Tablets and zoomed laptops keep a persistent column instead. */
-@media (max-width: 40rem) {
-  .rail,
-  .pf-v6-c-page__sidebar.rail {
+@media (max-width: 40rem) {.rail, .rail {
     position: fixed; inset: 0 auto 0 0; z-index: 15; width: min(20rem, 85vw);
     transform: translateX(-100%) !important; transition: transform 160ms ease;
     background: var(--bg);
     box-shadow: 0 0 3rem color-mix(in srgb, var(--bg) 70%, transparent);
     max-height: none; height: auto;
     /* Drawer closed: undo the desktop pin above. */
-    --pf-v6-c-page__sidebar--TranslateX: -100%;
     opacity: 1 !important;
-  }
-  .rail[data-open="true"],
-  .pf-v6-c-page__sidebar.rail[data-open="true"] {
+  }.rail[data-open="true"], .rail[data-open="true"] {
     transform: none !important;
-    --pf-v6-c-page__sidebar--TranslateX: 0;
   }
-  /* Closed means gone: without this, tabbing from the header walked ten
+/* Closed means gone: without this, tabbing from the header walked ten
      controls that were translated off screen, with no visible focus anywhere. */
-  .rail:not([data-open="true"]),
-  .pf-v6-c-page__sidebar.rail:not([data-open="true"]) { visibility: hidden; }
-  .rail:not([data-open="true"]) *,
-  .pf-v6-c-page__sidebar.rail:not([data-open="true"]) * { visibility: hidden; }
-  #rail-toggle,
-  #app-masthead .pf-v6-c-masthead__toggle #rail-toggle { display: inline-flex; }
+  .rail:not([data-open="true"]), .rail:not([data-open="true"]) { visibility: hidden; }.rail:not([data-open="true"]) *, .rail:not([data-open="true"]) * { visibility: hidden; }#rail-toggle, #app-masthead #rail-toggle { display: inline-flex; }
   /* Collapse is a desktop affordance: under 40rem the rail is a drawer you
      open and close as a whole, so the collapse toggle would describe a state
      the drawer does not have. */
@@ -2054,24 +1810,9 @@ h2#session-title {
      after the page-wide 16px phone guard and would zoom iOS Safari on focus. */
   .rail input[type="search"] { font-size: 16px; }
 }
-@media (min-width: 40.01rem) {
-  .rail[data-collapsed="true"],
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] {
+@media (min-width: 40.01rem) {.rail[data-collapsed="true"], .rail[data-collapsed="true"] {
     width: 3.5rem; max-width: 3.5rem !important; padding-inline: var(--space-2);
-  }
-  .rail[data-collapsed="true"] .rail-item, .rail[data-collapsed="true"] .rail-tab,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-item,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-tab { font-size: 0; letter-spacing: 0; }
-  .rail[data-collapsed="true"] .rail-item::after, .rail[data-collapsed="true"] .rail-tab::after,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-item::after,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-tab::after { content: attr(data-short); font-size: var(--step-0); }
-  .rail[data-collapsed="true"] .rail-context, .rail[data-collapsed="true"] .rail-group,
-  .rail[data-collapsed="true"] .rail-fold, .rail[data-collapsed="true"] .rail-settings,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-context,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-group,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-fold,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .rail-settings,
-  .pf-v6-c-page__sidebar.rail[data-collapsed="true"] .pf-v6-c-nav__section { display: none; }
+  }.rail[data-collapsed="true"] .rail-item, .rail[data-collapsed="true"] .rail-tab, .rail[data-collapsed="true"] .rail-item, .rail[data-collapsed="true"] .rail-tab { font-size: 0; letter-spacing: 0; }.rail[data-collapsed="true"] .rail-item::after, .rail[data-collapsed="true"] .rail-tab::after, .rail[data-collapsed="true"] .rail-item::after, .rail[data-collapsed="true"] .rail-tab::after { content: attr(data-short); font-size: var(--step-0); }.rail[data-collapsed="true"] .rail-context, .rail[data-collapsed="true"] .rail-group, .rail[data-collapsed="true"] .rail-fold, .rail[data-collapsed="true"] .rail-settings, .rail[data-collapsed="true"] .rail-context, .rail[data-collapsed="true"] .rail-group, .rail[data-collapsed="true"] .rail-fold, .rail[data-collapsed="true"] .rail-settings, .rail[data-collapsed="true"] { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .rail { transition: none; } }
 

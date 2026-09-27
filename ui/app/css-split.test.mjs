@@ -275,15 +275,15 @@ test("views.css is loaded non-blocking with a no-JS fallback", function () {
   // (74 KB gz between them) queue ahead of app.css and the entry script on a
   // constrained link. Both must carry fetchpriority="low"; the swap to
   // media="all" is unaffected either way, so this is ordering, not delivery.
-  assert.ok(html.includes('<link rel="stylesheet" href="/webui/vendor/patternfly.min.css" media="print" data-pf="1" fetchpriority="low">'),
-    "the deferred PatternFly sheet must be fetched at low priority");
+  assert.ok(html.includes('<link rel="stylesheet" href="/webui/views.css" media="print" data-views="1" fetchpriority="low">'),
+    "the deferred views sheet must be fetched at low priority");
+  assert.ok(!html.includes("patternfly"), "PatternFly is gone: nothing links its sheet");
   // preact-boot.js flips the async sheets to all once they are ready (CSP
   // forbids inline onload). It has to be preact-boot and not app.js: app.js
   // evaluates only after its whole static import graph lands (~146 KB gz),
   // which parked PatternFly \u2014 the page's layout framework \u2014 behind every
   // module the page has, so the frame painted from app.css and then reflowed.
   assert.match(bootJs, /link\[data-views\]/);
-  assert.match(bootJs, /link\[data-pf\]/);
   assert.match(bootJs, /link\.media = "all"/);
   assert.ok(!/link\[data-views\]/.test(appJs), "the sheet swap must not move back onto app.js's import graph");
   // preact-boot.js is the first module script tag, so nothing else has to run

@@ -373,6 +373,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - The new sheet-integrity check scanned with a regex that backtracks for twelve
   seconds over a 120 KB sheet; it is a linear scan now.
 
+- The frame is the cabinet's own, and the page no longer loads PatternFly. The
+  page wrapper, masthead, rail, nav, its sections and lists carried `pf-v6-*`
+  classes whose layout came from PF's page grid; they are utilities now (the
+  page is a wrapping flex column, the masthead takes the first row, the rail
+  and content column share the second), and the rail tab's PF custom-property
+  overrides and the `#app-page` grid patches go with them. The `<link>` to
+  `patternfly.min.css`, its `<noscript>` fallback and the inline `<style>` that
+  pre-empted PF's off-canvas sidebar before `app.css` arrived are gone. First
+  paint 58.6K → 56.8K gz, and the 59.6K gz sheet is no longer fetched at all.
+- Three suites pinned PF: the sheet-priority test now pins the deferred views
+  sheet and that nothing links PatternFly, the layout test reads `main` rather
+  than `main.pf-v6-c-page__main`, and the Chat-markup test pins the frame's own
+  ids. What is left is the sheet itself and its host wiring (`ui/vendor.zig`,
+  `src/cli.zig`, `src/serve/webui_assets.zig`, the size gate in
+  `src/gate/checks.zig`, the subset script and `ui/PATTERNFLY.md`), plus the
+  modal and toast bridges in `ui/app/core/ui.js`.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is
