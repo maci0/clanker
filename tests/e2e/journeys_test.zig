@@ -55,7 +55,14 @@ test "operator journey: help and config dump report stdout write failures" {
         try std.testing.expectEqual(std.process.Child.Term{ .exited = 1 }, term);
         const stderr = try tmp.dir.readFileAlloc(io, "stderr", gpa, .limited(4096));
         defer gpa.free(stderr);
-        try std.testing.expect(std.mem.find(u8, stderr, "error: NoSpaceLeft") != null);
+        // The write boundary names the disk fact, not the Zig error name, so
+        // the help/version paths print the recovery hint. `--dump-config`
+        // writes its own line and still names the error it hit.
+        const expected = if (std.mem.eql(u8, args[0], "--dump-config"))
+            "error: NoSpaceLeft: could not write config JSON to stdout"
+        else
+            "error: the output ran out of space";
+        try std.testing.expect(std.mem.find(u8, stderr, expected) != null);
     }
 }
 
