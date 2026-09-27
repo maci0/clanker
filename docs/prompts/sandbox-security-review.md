@@ -48,6 +48,15 @@ authority scoped correctly, and does the host actually enforce what the
 manifest claims? Cite the other prompts and move on for findings that belong
 there.
 
+This review also owns the **egress** side of the same boundary: bytes a
+guest, a peer, a fetched page, or the model itself produced that leave the
+sandbox and reach a surface that renders them. `delight-review.md` routes its
+security findings here and `config-provider-review.md` covers what a config
+*means*; keep the split straight, so neither pointer dead-ends. Whether
+untrusted bytes can act on the way out is this review's; how the web UI looks
+is `delight-review.md`'s; whether the config is parsed correctly is
+`config-provider-review.md`'s.
+
 ## Ground truth
 
 | Source | Use |
@@ -57,6 +66,8 @@ there.
 | `src/sandbox/host.zig` | Actual enforcement: `safeJoin`/`safeJoinSecure`, `envAllowed`, exec deny lists, `sandboxFor` |
 | `src/sandbox/runtime.zig` | What is actually wired: `rg -o 'defineFuncCtx\("env", "[a-z_0-9]+"' src/sandbox/runtime.zig` |
 | `tools/manifests/*.tool.json` | Declared authority per tool: `fs_prefixes`, `network_allow`, `exec_allow`, `env_allow`, `confirm`, `fuel`, `llm`, `internal` |
+| `src/agent/loop.zig` (`capToolResult`), `src/util/prompt_fence.zig` | What the host already does to untrusted bytes before they reach a model, and therefore what it does not do |
+| `src/tui/sanitize.zig`, `ui/app/lib/markdown.js` | The existing display sinks, and the paths that reach them |
 
 ## Read first
 
@@ -238,6 +249,29 @@ file under `tools/manifests/`, `src/sandbox/`, and any `tools/zig/*.zig` /
       guest-side state across calls (accumulating into a global instead of
       using the arena/out buffer) is a resource-exhaustion smell worth a P2.
 
+### H. Untrusted text leaving the sandbox
+
+- [ ] Untrusted bytes reach a rendered sink as text, never as markup.
+      `capToolResult` (`src/agent/loop.zig`) neutralizes harness fence markers
+      and caps the length; it does not escape for a display sink, so the escape
+      has to exist where the bytes land. An `innerHTML` / `insertAdjacentHTML`
+      / `srcdoc` assignment in `ui/app/` or `ui/plugins/` fed by tool output,
+      model text, peer chat, or a fetched page is a finding, and a plugin's
+      `app.js` is in scope for it.
+- [ ] The TUI's own path is checked, not assumed: `src/tui/sanitize.zig` is
+      called from the transcript and line renderers that draw guest text
+      (`src/tui/repl.zig`, `src/tui/transcript.zig`). A sanitizer that exists,
+      is tested, and is bypassed by the live path is a P1, not a nit.
+- [ ] Fence neutralization in `src/util/prompt_fence.zig` is reached for every
+      untrusted byte handed to a model (knowledge hits, memory hits, tool
+      results, peer messages). A new caller that skips it is a gap, and so is a
+      second, divergent fence list living beside the one in `prompt_fence.zig`.
+- [ ] A refusal or error path that echoes a guest-provided string (a path, a
+      query, a tool argument, a peer id) into an HTTP response body or the
+      terminal without going through the existing sanitizer. Name the exact
+      string and the exact sink; "should be sanitized" with neither is not a
+      finding.
+
 ## Search recipes (run early)
 
 ```bash
@@ -259,6 +293,12 @@ rg -n 'ck_fs_|safeJoin' src/sandbox/host.zig
 
 # Exec surface
 rg -n 'ck_exec|exec_allow' src/sandbox/host.zig tools/manifests/*.tool.json
+
+# Rendered sinks that untrusted bytes can reach (vendor is out of scope)
+rg -n 'innerHTML|insertAdjacentHTML|srcdoc|outerHTML' ui/app ui/plugins | rg -v 'vendor'
+
+# Untrusted bytes on their way to a model (every caller must reach prompt_fence)
+rg -n 'prompt_fence' src --glob '!src/util/prompt_fence.zig'
 ```
 
 Classify each hit: **correctly scoped, leave** / **narrow the manifest** /
@@ -292,6 +332,8 @@ Return the following in the captured response:
       tool's actual code, not just its `description`
 - [ ] Filesystem, network, exec, env, confirm, and fuel each explicitly
       covered (or explicitly stated as out of scope for this run)
+- [ ] Untrusted text on its way to a rendered sink checked, with the exact
+      sink named, or explicitly stated out of scope for this run
 - [ ] No finding assumes additive `exec_allow`, or that `confirm_writes`
       gates unattended runs, without checking the actual code
 - [ ] No recommendation widens a manifest to silence a finding
