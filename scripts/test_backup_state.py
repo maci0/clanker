@@ -175,6 +175,72 @@ class BackupStateTest(unittest.TestCase):
         self.assertIn("is absent; skipping", result.stderr)
         self.assertTrue((self.latest() / "state" / self.session_db("s1")).exists())
 
+    def test_local_config_and_env_are_in_the_snapshot(self) -> None:
+        # These three exist nowhere but the checkout: they are gitignored, so a
+        # lost checkout or volume takes them with it and a restored store has
+        # no provider to call.
+        for name, body in (
+            ("config.local.toml", 'default_provider = "anthropic"\n'),
+            (".env", "ANTHROPIC_API_KEY=secret\n"),
+        ):
+            path = self.repo / name
+            path.write_text(body)
+            path.chmod(0o600)
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = self.latest()
+        self.assertEqual(
+            (snapshot / "config" / "config.local.toml").read_text(),
+            'default_provider = "anthropic"\n',
+        )
+        self.assertEqual(
+            (snapshot / "config" / ".env").read_text(), "ANTHROPIC_API_KEY=secret\n"
+        )
+        # Credentials ride along, so neither the entry nor the root may be
+        # readable by anyone else.
+        self.assertEqual((snapshot / "config" / ".env").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(snapshot.joinpath("config").stat().st_mode & 0o777, 0o700)
+        self.assertEqual(self.backups.stat().st_mode & 0o777, 0o700)
+        self.assertFalse((snapshot / "config" / "config.toml").exists())
+
+    def test_absent_local_config_adds_no_config_entry(self) -> None:
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+        result = self.run_backup()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.latest() / "config").exists())
+
+    def test_installed_symlink_launcher_resolves_the_checkout(self) -> None:
+        # What the systemd unit runs: `~/.local/bin/clanker-state-backup` is a
+        # symlink to the script in the checkout. Both links matter -- the
+        # launcher and the `state` link -- and resolving only the directory
+        # part of either put the backup root inside the checkout, which the
+        # script then refused. That is every timer run, so the store was never
+        # actually being snapshotted.
+        launcher_dir = self.root / "bin"
+        launcher_dir.mkdir()
+        launcher = launcher_dir / "clanker-state-backup"
+        launcher.symlink_to(self.script)
+        connection = self.open_db(self.session_db("s1"))
+        connection.close()
+
+        result = subprocess.run(
+            [str(launcher)],
+            cwd=self.repo,
+            env=dict(os.environ, HOME=str(self.root)),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.backups.is_dir(), "no snapshot root beside the storage root")
+        self.assertTrue((self.latest() / "state" / self.session_db("s1")).exists())
+        self.assertFalse(
+            (self.repo / "backups").exists(), "snapshot landed inside the checkout"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

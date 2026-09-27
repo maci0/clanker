@@ -27,8 +27,8 @@
 # Restore time is measured so RTO stops being an unknown: a snapshot that
 # takes N seconds to copy out is the lower bound on a real restore of the
 # same size. The drill copies the same entry set the backup captures
-# (state/, plus local/ and agents/ when the snapshot holds them); `staging/`
-# and `*.lock` are absent by design (see backup-state.sh).
+# (state/, plus local/, agents/ and config/ when the snapshot holds them);
+# `staging/` and `*.lock` are absent by design (see backup-state.sh).
 set -euo pipefail
 
 # Portable stand-in for `readlink -f`: macOS ships a BSD readlink with no
@@ -36,14 +36,43 @@ set -euo pipefail
 # Mac. The target need not exist (state/ is created on first run), so an
 # unresolvable path falls back to the spelling it was given.
 resolve_path() {
-    local p="$1" dir base
+    local p="$1" depth=0 link dir base phys
+    # Follow a symlinked final component, which is the whole point. `state`,
+    # `.local` and `.agents` are symlinks into the storage root: resolving only
+    # the directory part left the link in place, the parent of an unresolved
+    # `state` is the checkout, and every run was then refused as a backup root
+    # inside the checkout -- the one arrangement the script exists to support
+    # was the one it could not see. The same held for the installed
+    # `~/.local/bin/clanker-state-backup` launcher, a link to this script, so
+    # the checkout it derives came out as the bin directory. Relative targets
+    # compose against the link's directory, as the kernel resolves them.
+    while [ -L "$p" ] && [ "$depth" -lt 32 ]; do
+        link=$(readlink -- "$p")
+        if [ "${link#/}" = "$link" ]; then
+            p="$(dirname -- "$p")/$link"
+        else
+            p="$link"
+        fi
+        depth=$((depth + 1))
+    done
+    # Then the directory part goes physical (macOS spells /tmp as a link, a
+    # mounted volume has a device-real path), and a directory target is
+    # entered so the answer is that directory's own physical path. A path that
+    # does not exist yet keeps the spelling it was given, since a store is
+    # created on first run and there is nothing to resolve.
     dir=$(dirname -- "$p")
     base=$(basename -- "$p")
-    if [ -d "$dir" ]; then
-        printf '%s/%s\n' "$(cd -- "$dir" && pwd -P)" "$base"
-    else
+    if [ ! -d "$dir" ]; then
         printf '%s\n' "$p"
+        return 0
     fi
+    phys=$(cd -- "$dir" && pwd -P)
+    if [ -d "$phys/$base" ]; then
+        (cd -- "$phys/$base" && pwd -P) 2>/dev/null ||
+            printf '%s/%s\n' "$phys" "$base"
+        return 0
+    fi
+    printf '%s/%s\n' "$phys" "$base"
 }
 
 script_path=$(resolve_path "$0")
@@ -72,7 +101,7 @@ fi
 snapshot=$(resolve_path "$snapshot")
 
 entries="state"
-for extra in local agents; do
+for extra in local agents config; do
     [ -d "$snapshot/$extra" ] && entries="$entries $extra"
 done
 

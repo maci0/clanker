@@ -6,14 +6,43 @@ set -euo pipefail
 # Mac. The target need not exist (state/ is created on first run), so an
 # unresolvable path falls back to the spelling it was given.
 resolve_path() {
-    local p="$1" dir base
+    local p="$1" depth=0 link dir base phys
+    # Follow a symlinked final component, which is the whole point. `state`,
+    # `.local` and `.agents` are symlinks into the storage root: resolving only
+    # the directory part left the link in place, the parent of an unresolved
+    # `state` is the checkout, and every run was then refused as a backup root
+    # inside the checkout -- the one arrangement the script exists to support
+    # was the one it could not see. The same held for the installed
+    # `~/.local/bin/clanker-state-backup` launcher, a link to this script, so
+    # the checkout it derives came out as the bin directory. Relative targets
+    # compose against the link's directory, as the kernel resolves them.
+    while [ -L "$p" ] && [ "$depth" -lt 32 ]; do
+        link=$(readlink -- "$p")
+        if [ "${link#/}" = "$link" ]; then
+            p="$(dirname -- "$p")/$link"
+        else
+            p="$link"
+        fi
+        depth=$((depth + 1))
+    done
+    # Then the directory part goes physical (macOS spells /tmp as a link, a
+    # mounted volume has a device-real path), and a directory target is
+    # entered so the answer is that directory's own physical path. A path that
+    # does not exist yet keeps the spelling it was given, since a store is
+    # created on first run and there is nothing to resolve.
     dir=$(dirname -- "$p")
     base=$(basename -- "$p")
-    if [ -d "$dir" ]; then
-        printf '%s/%s\n' "$(cd -- "$dir" && pwd -P)" "$base"
-    else
+    if [ ! -d "$dir" ]; then
         printf '%s\n' "$p"
+        return 0
     fi
+    phys=$(cd -- "$dir" && pwd -P)
+    if [ -d "$phys/$base" ]; then
+        (cd -- "$phys/$base" && pwd -P) 2>/dev/null ||
+            printf '%s/%s\n' "$phys" "$base"
+        return 0
+    fi
+    printf '%s/%s\n' "$phys" "$base"
 }
 
 script_path=$(resolve_path "$0")
@@ -48,6 +77,10 @@ case "$backup_root" in
 esac
 
 mkdir -p "$backup_root"
+# Owner-only: a snapshot can carry `.env` and `config.local.*` (see
+# copy_local_config below), so the root that holds every snapshot is not
+# world-readable even when the operator's umask said otherwise.
+chmod 700 "$backup_root"
 # If the script dies mid-backup, the incomplete staging directory is garbage
 # (the `latest` symlink still points at the last good snapshot). Remove it so
 # failed runs do not accumulate; after a successful `mv` the path no longer
@@ -137,6 +170,35 @@ for entry in state:state agents:.agents local:.local; do
     rsync "${rsync_args[@]}" "$source/" "$staging/$name/"
     copied="$copied $name"
 done
+
+# Local configuration and credentials are the one piece of machine state that
+# lives in the checkout rather than in `state/`: `config.local.toml`,
+# `config.local.json` and `.env` are gitignored, so they exist nowhere else.
+# A checkout loss or a lost storage root takes them with it, and no amount of
+# restored transcripts tells a restored clanker which provider to call, so the
+# restored store would come back unable to run at all. They are three small
+# files, copied verbatim, and `verify-backup.sh` drills them like every other
+# entry.
+#
+# They carry API keys, so the snapshot root is owner-only (see the chmod on
+# `$backup_root` above) and each file keeps its own mode. `config.toml` is
+# deliberately absent: it is committed, and git is its backup.
+copy_local_config() {
+    local file copied_any=0
+    mkdir -p -- "$staging/config"
+    for file in config.local.toml config.local.json .env; do
+        [ -f "$repo_root/$file" ] || continue
+        cp -p -- "$repo_root/$file" "$staging/config/$file"
+        copied_any=1
+    done
+    if [ "$copied_any" = 1 ]; then
+        chmod 700 "$staging/config"
+        copied="$copied config"
+    else
+        rmdir -- "$staging/config" 2>/dev/null || true
+    fi
+}
+copy_local_config
 
 # rsync's exit code is the only success signal so far; a run that copied
 # nothing would still rotate `latest` onto a hollow snapshot and read as

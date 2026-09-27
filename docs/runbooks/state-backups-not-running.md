@@ -77,13 +77,16 @@ The script's own diagnostics are one line each and name the entry at fault:
   stale even though local runs succeed. Re-run the backup with the
   destination reachable.
 - local runs all succeed, no `mirrored backup root` line ever appears, and
-  `CLANKER_BACKUP_OFFSITE_DEST` looks set — the variable is in a shell, not
-  where the timer reads it. Both units read
-  `${XDG_CONFIG_HOME:-~/.config}/clanker/state-backup.env`, written by
-  `scripts/install-state-backup.sh`; a timer-run service inherits systemd's
-  environment, so an export in an interactive shell never reached it. Put the
-  destination there, `systemctl --user daemon-reload`, and re-run
-  `./scripts/backup-state.sh` to see the mirror line.
+  `CLANKER_BACKUP_OFFSITE_DEST` looks set — the variable is in a shell, or in a
+  file no unit reads. Both units read
+  `${XDG_CONFIG_HOME:-~/.config}/clanker/backup.env` (`EnvironmentFile=`),
+  written by `scripts/install-state-backup.sh`; a timer-run service inherits
+  systemd's environment, so an export in an interactive shell never reached
+  it. A `state-backup.env` beside it is read by nothing: an older installer
+  created it and the docs pointed there, so a destination set in it silently
+  did nothing. Move the setting into `backup.env`,
+  `systemctl --user daemon-reload`, and re-run `./scripts/backup-state.sh` to
+  see the mirror line.
 
 Reproduce outside systemd, which prints the same line without the journal:
 

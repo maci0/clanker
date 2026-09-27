@@ -68,6 +68,18 @@ snapshot whose entries did not materialize is refused rather than promoted.
 
 `.agents` and `.local` are checkout-private and may be real directories inside
 the checkout; when either is absent the backup skips it instead of aborting.
+
+**Local configuration.** `config.local.toml`, `config.local.json` and `.env`
+are the one piece of machine state that lives in the checkout rather than in
+`state/`, and they are gitignored, so a lost checkout or a lost volume takes
+them with it and nothing else has a copy. They are copied verbatim into a
+`config/` entry (a snapshot that has none of them carries no `config/`
+directory), which the weekly drill restores and byte-compares like any other
+entry. They carry API keys, so the backup root is created `chmod 700` and each
+file keeps its own mode; a snapshot, and the off-site mirror that copies one,
+is as sensitive as the keys it holds. `config.toml` is deliberately absent: it
+is committed, and git is its backup.
+
 `state` must resolve into the shared storage root. A run whose resolved backup
 root would land inside the checkout itself (state never pointed at an external
 root) is refused: a snapshot next to the data it protects is on the same disk
@@ -84,18 +96,16 @@ single-failure-domain trade-off. To buy a second domain, set `CLANKER_BACKUP_OFF
 destination outside the storage root (another disk, or another machine:
 `user@host:/vol/clanker-backups`); every successful run mirrors the whole
 backup root there, and a failed mirror fails the run loudly rather than
-leaving a silently stale second copy. That variable (and the retention and
-freshness bounds) belongs in
-`${XDG_CONFIG_HOME:-~/.config}/clanker/state-backup.env`, which both units
-read through `EnvironmentFile=-` and which the installer creates with the
-options commented out. It has to be a file: a timer-run service starts with
-systemd's own environment, so exporting the variable in a shell never reached
-the timer, and the second failure domain would have silently not existed.
+leaving a silently stale second copy. It has to be a file: a timer-run
+service starts with systemd's own environment, so exporting the variable in a
+shell never reached the timer, and the second failure domain would have
+silently not existed.
 The mirror never gets `--delete`: local
 retention prunes do not propagate, so one deletion path cannot destroy both
 copies (reclaim mirror space with a deliberate manual `rsync -a --delete`).
 
-The scheduled runs read that variable, and every other backup knob, from
+The scheduled runs read that variable, and every other backup knob
+(`CLANKER_BACKUP_RETENTION_DAYS`, `CLANKER_BACKUP_MAX_AGE_SECONDS`), from
 `~/.config/clanker/backup.env` (`$XDG_CONFIG_HOME/clanker/backup.env`), which
 `scripts/install-state-backup.sh` writes as a commented template on first run
 and never rewrites. It is a systemd `EnvironmentFile`: `KEY=value`, one per
@@ -103,6 +113,16 @@ line, no `export`. A shell export is not enough and does not reach the timer,
 because a user service inherits the user manager's environment, not the login
 shell's; `clanker doctor` reads the same file, so a shell whose export
 disagrees with it is reported rather than believed.
+
+`backup.env` is the only file either unit reads (both name it in
+`EnvironmentFile=-`). An earlier installer also wrote a sibling
+`state-backup.env` and the docs pointed operators there, so a
+`CLANKER_BACKUP_OFFSITE_DEST` set in it reached no timer and the second
+failure domain did not exist while looking configured; the installer now
+names the dead file and tells the operator to move its settings, and
+`clanker doctor` reads `backup.env` only. A `state-backup.env` on an already
+installed machine is left in place (it may hold the only copy of a
+destination) and reported, never deleted.
 `clanker doctor` reads a local mirror and reports how it compares with the
 store's newest snapshot, so a destination that stopped being written shows up
 without waiting for the next backup run to fail; a remote `user@host:/path`

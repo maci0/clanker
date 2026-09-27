@@ -2,9 +2,10 @@
 
 ## TL;DR
 
-- **Use when:** `state/` (or `.local/`, `.agents/`) is lost, corrupted, or
-  deleted, or bad code wrote bad data for a while and you want the store as it
-  was before — and `<storage_root>/backups/` holds snapshots.
+- **Use when:** `state/` (or `.local/`, `.agents/`, the machine-local
+  configuration) is lost, corrupted, or deleted, or bad code wrote bad data
+  for a while and you want the store as it was before — and
+  `<storage_root>/backups/` holds snapshots.
 - **Recover by:** Pick a snapshot, stop clanker, copy its `state/` tree back
   over the live target, verify, restart.
 - **Verify with:** `clanker sessions` lists the old sessions and spot-checked
@@ -16,9 +17,9 @@ Applies wherever `scripts/backup-state.sh` is installed (user timer, every 30
 minutes, `scripts/install-state-backup.sh`). `storage_root` is the parent of
 whatever `state` resolves to; snapshots live in
 `<storage_root>/backups/<YYYYmmddTHHMMSSZ>/`, each a complete tree with
-`state/` and, when present, `local/` and `agents/`. `latest` symlinks the
-newest snapshot. Restore is a copy-out of one snapshot — never an edit of
-`backups/`.
+`state/` and, when present, `local/`, `agents/` and `config/`. `latest`
+symlinks the newest snapshot. Restore is a copy-out of one snapshot, never an
+edit of `backups/`.
 
 **What a snapshot does and does not cover:**
 
@@ -26,16 +27,19 @@ newest snapshot. Restore is a copy-out of one snapshot — never an edit of
   spill and export text, run graphs (`runs/`, `history/`), the improve ledger
   (`improvements.jsonl`), stats (`token_stats.jsonl`, `reasoning.jsonl`,
   `autolearn.jsonl`), goals, board, plugins, chat history, logs — plus
-  checkout-local `.local/` and `.agents/` when they exist. `*.lock` files are
+  checkout-local `.local/` and `.agents/` when they exist, plus a `config/`
+  entry carrying `config.local.toml`, `config.local.json` and `.env` (the
+  gitignored machine-local configuration, which exists nowhere else and
+  without which a restored store has no provider to call). `*.lock` files are
   excluded by design; flock locks die with their process, so a restored tree
   never carries stale locks. `state/staging/` (the improve loop's checkout
   copies with build artifacts) is excluded too: regenerable, and it would
   dominate snapshot size and restore time.
 - Not covered: the checkout itself (`docs/` records, source — they live in
-  git), `config.local.toml`, `.env`, and provider credentials. Those are
-  machine-local and are restore *inputs*, not outputs: recreate them from
-  wherever the keys are kept, or the restored store will not run against the
-  same providers.
+  git) and any provider credentials held outside those files. A snapshot
+  taken before a key was added to `.env` cannot carry that key, so where the
+  keys are actually kept stays a restore *input* for credentials no file in
+  the checkout holds.
 - Not covered by design: `.clanker-worktrees/` (ephemeral improve staging;
   merged work lands in git and `state/improvements.jsonl`).
 - Failure-domain boundary: snapshots live under the same storage root as
@@ -123,6 +127,8 @@ this runbook can manufacture a snapshot that does not exist.
    # only if the snapshot has them and the targets exist:
    rsync -a --delete "$SNAP/local/" "$storage_root/.local/" 2>/dev/null || true
    rsync -a --delete "$SNAP/agents/" "$storage_root/.agents/" 2>/dev/null || true
+   # the gitignored machine-local config, back into the checkout it came from
+   rsync -a "$SNAP/config/" "$repo_root/" 2>/dev/null || true
    ```
    `--delete` makes the target match the snapshot exactly, dropping files the
    corruption added. That also drops a live `state/staging/` if one exists —
@@ -130,9 +136,9 @@ this runbook can manufacture a snapshot that does not exist.
    staging). Skip `--delete` when the goal is to *recover* files into a
    store that was only partially lost — prefer keeping whatever survived.
    Run as the same user clanker runs as, so ownership and mode stay intact.
-3. Recreate anything the snapshot does not carry: `config.local.toml`, `.env`
-   (or re-export the provider keys), and re-link any `state`/`.local`/`.agents`
-   symlinks the incident destroyed.
+3. Recreate anything the snapshot does not carry: provider credentials held
+   outside `config.local.*`/`.env`, and re-link any
+   `state`/`.local`/`.agents` symlinks the incident destroyed.
 4. Restart the backup timer, then clanker:
    ```bash
    systemctl --user start clanker-state-backup.timer
