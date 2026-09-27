@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const json = std.json;
+const fuzz_corpus = @import("../util/fuzz_corpus.zig");
 const log = @import("../util/log.zig");
 const elapsed = @import("../util/elapsed.zig");
 const subprocess = @import("../agent/subprocess.zig");
@@ -855,4 +856,141 @@ test "idAsInt truncates in-range float ids and answers -1 outside i64" {
     try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "1e300")));
     try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "-1e300")));
     try std.testing.expectEqual(@as(i64, -1), idAsInt(val(arena, "9223372036854775808.0")));
+}
+
+test "fuzz: a vendor agent's JSON-RPC lines drive the response parsers" {
+    // Every byte here comes off a child process clanker does not control: the
+    // vendor CLI behind `--backend` answers the handshake, and its ids,
+    // session ids, stop reasons, auth method lists, update text and
+    // permission options are all fields read straight out of that output.
+    // `server.zig` has the mirror-image target for the messages this process
+    // sends; this side had none.
+    //
+    // Liveness is half of it. The other half is that no field is ever
+    // invented: an id that is not a number is the fallback, a string handed
+    // back is the string the peer sent, and a permission option picked was
+    // one of the options offered. A harness that only ran these would miss a
+    // swapped comparison or an id widening.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+            const raw = buf[0..len];
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+
+            const value = json.parseFromSliceLeaky(json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return;
+
+            if (value == .object) {
+                if (value.object.get("id")) |id_val| {
+                    switch (id_val) {
+                        .integer => |n| try std.testing.expectEqual(n, idAsInt(id_val)),
+                        .float => |f| {
+                            const got = idAsInt(id_val);
+                            // A float id inside i64 comes back as its own
+                            // truncation; `1e999` (which parses to +inf),
+                            // NaN, and anything past the range are the
+                            // fallback rather than a trapped conversion. Both
+                            // bounds are exact in f64, being powers of two.
+                            if (std.math.isFinite(f) and
+                                f >= -9223372036854775808.0 and f < 9223372036854775808.0)
+                            {
+                                const exact: i64 = @trunc(f);
+                                try std.testing.expectEqual(exact, got);
+                            } else {
+                                try std.testing.expectEqual(@as(i64, -1), got);
+                            }
+                        },
+                        else => try std.testing.expectEqual(@as(i64, -1), idAsInt(id_val)),
+                    }
+                }
+
+                if (authRequired(arena, raw)) {
+                    const methods = value.object.get("authMethods").?;
+                    try std.testing.expect(methods == .array);
+                    try std.testing.expect(methods.array.items.len > 0);
+                }
+                if (firstAuthMethodId(arena, raw)) |id| {
+                    const methods = value.object.get("authMethods").?;
+                    try std.testing.expect(methods == .array);
+                    try std.testing.expect(methods.array.items.len > 0);
+                    const first = methods.array.items[0];
+                    try std.testing.expect(first == .object);
+                    const first_id = first.object.get("id").?;
+                    try std.testing.expect(first_id == .string);
+                    try std.testing.expectEqualStrings(id, first_id.string);
+                }
+                if (sessionIdOf(arena, raw)) |sid| {
+                    const field = value.object.get("sessionId").?;
+                    try std.testing.expect(field == .string);
+                    try std.testing.expectEqualStrings(sid, field.string);
+                }
+                if (stopReasonOf(arena, raw)) |reason| {
+                    const field = value.object.get("stopReason").?;
+                    try std.testing.expect(field == .string);
+                    try std.testing.expectEqualStrings(reason, field.string);
+                }
+            }
+
+            // consumeUpdate's two reads, over whatever `params` the peer sent.
+            if (value == .object) {
+                if (value.object.get("params")) |params| {
+                    if (params == .object) {
+                        if (params.object.get("update")) |update| {
+                            if (update == .object) {
+                                if (update.object.get("content")) |content| {
+                                    const text = textOf(content);
+                                    if (text.len > 0) {
+                                        // Whatever came back is text the peer
+                                        // actually sent, not a field guessed at.
+                                        if (content == .string) {
+                                            try std.testing.expectEqualStrings(text, content.string);
+                                        } else {
+                                            const field = content.object.get("text").?;
+                                            try std.testing.expect(field == .string);
+                                            try std.testing.expectEqualStrings(text, field.string);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // A permission reply names an option the peer offered, so a
+                    // vendor agent cannot talk this client into answering with
+                    // an id of its own invention.
+                    if (pickAllowOption(params)) |option_id| {
+                        const options = params.object.get("options").?;
+                        try std.testing.expect(options == .array);
+                        var offered = false;
+                        for (options.array.items) |item| {
+                            if (item != .object) continue;
+                            const oid = item.object.get("optionId") orelse continue;
+                            if (oid != .string) continue;
+                            if (std.mem.eql(u8, oid.string, option_id)) offered = true;
+                        }
+                        try std.testing.expect(offered);
+                    }
+                }
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{
+        .corpus = &.{
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"authMethods\":[{\"id\":\"oauth\",\"name\":\"OAuth\"}]}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"sessionId\":\"acp-1\"}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"stopReason\":\"end_turn\"}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":4.0,\"result\":{}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":1e999,\"result\":{}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":9223372036854775808.0,\"result\":{}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":{}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":5,\"error\":{\"code\":-32601,\"message\":\"nope\"}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"acp-1\",\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"hi\"}}}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"session/request_permission\",\"params\":{\"options\":[{\"optionId\":\"reject\",\"kind\":\"reject_once\"},{\"optionId\":\"allow-once\",\"kind\":\"allow_once\"}]}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"fs/read_text_file\",\"params\":{\"path\":\"/etc/passwd\"}}"),
+            fuzz_corpus.entry("{\"authMethods\":[1,\"x\",null,{\"id\":7}]}"),
+            fuzz_corpus.entry(""),
+        },
+    });
 }

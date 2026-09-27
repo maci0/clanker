@@ -6,6 +6,7 @@
 //! can run without standing a server up.
 
 const std = @import("std");
+const fuzz_corpus = @import("../util/fuzz_corpus.zig");
 
 /// First matching header value, trimmed. Header names are matched
 /// case-insensitively; the first occurrence wins.
@@ -486,18 +487,102 @@ test "fuzz: header parsing never panics on bytes straight off the socket" {
     // connection to the listener, before any validation. These functions all
     // slice on colons/commas/semicolons/brackets found in that input, the same
     // category of bug that overflowed raw_http's Content-Length check.
+    //
+    // Liveness is half the contract. The other half is that the guards this
+    // layer exists for keep holding on bytes nobody wrote by hand: a request
+    // whose Host is refused is refused, a same-authority Origin is not
+    // cross-origin, and a decoded query value is a fixed point. Without those
+    // a mutation that flipped one comparison would fuzz clean forever.
     const Ctx = struct {
         fn one(_: void, smith: *std.testing.Smith) anyerror!void {
             var buf: [4096]u8 = undefined;
             const len = smith.slice(&buf);
             const headers_raw = buf[0..len];
             const allow: []const []const u8 = &.{"clanker.lan"};
-            _ = headerValue(headers_raw, "origin");
-            _ = crossOriginRequest(headers_raw, 4173, allow);
-            _ = unexpectedHost(headers_raw, 4173, allow);
+            const origin = headerValue(headers_raw, "origin");
+            const host = headerValue(headers_raw, "host");
             _ = acceptsGzip(headers_raw);
             _ = ifNoneMatchHits(headers_raw, "\"abc\"");
+
+            // No Origin header is never cross-origin, however the request is
+            // addressed: browsers omit it on same-site navigations.
+            if (origin == null) try std.testing.expect(!crossOriginRequest(headers_raw, 4173, allow));
+            // A refused Host is refused whatever the Origin says. A duplicated
+            // Host is refused outright (HTTP/1.1 requires exactly one), so
+            // below there is a single authority to compare against.
+            if (origin != null and unexpectedHost(headers_raw, 4173, allow)) {
+                try std.testing.expect(crossOriginRequest(headers_raw, 4173, allow));
+            }
+            // An Origin naming this request's own Host, itself an authority
+            // this listener answers to, is same-site. `headerValue` trims
+            // spaces and `unexpectedHost` trims spaces and tabs, so the two
+            // only read the same string when the value has no tab in it.
+            if (origin != null and host != null and
+                std.mem.eql(u8, host.?, std.mem.trim(u8, host.?, " \t")) and
+                !unexpectedHost(headers_raw, 4173, allow))
+            {
+                if (originAuthority(origin.?)) |authority| {
+                    if (std.ascii.eqlIgnoreCase(authority, host.?)) {
+                        try std.testing.expect(!crossOriginRequest(headers_raw, 4173, allow));
+                    }
+                }
+            }
+
+            const target = headers_raw;
+            const path = requestPath(target);
+            try std.testing.expect(std.mem.startsWith(u8, target, path));
+            try std.testing.expect(std.mem.indexOfScalar(u8, path, '?') == null);
+            try std.testing.expect(@as(u16, 200) == toolRefusalStatus(target) or
+                @as(u16, 400) == toolRefusalStatus(target) or
+                @as(u16, 404) == toolRefusalStatus(target));
+
+            // The query value is the untrusted tail of a request target, and
+            // this is the one decoder on it. Two properties, both of which a
+            // caller sizing a room-name buffer relies on: an escape collapses
+            // three bytes into one, so the result can only shrink, and a
+            // string with neither `%` nor `+` in it is already decoded and
+            // comes back byte for byte.
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const arena = arena_state.allocator();
+            const once = try percentDecode(arena, target);
+            try std.testing.expect(once.len <= target.len);
+            if (std.mem.indexOfScalar(u8, target, '%') == null and
+                std.mem.indexOfScalar(u8, target, '+') == null)
+            {
+                try std.testing.expectEqualStrings(target, once);
+            }
         }
     };
-    try std.testing.fuzz({}, Ctx.one, .{});
+    try std.testing.fuzz({}, Ctx.one, .{
+        .corpus = &.{
+            fuzz_corpus.entry("GET /api/run HTTP/1.1\r\nHost: 127.0.0.1:4173\r\n"),
+            fuzz_corpus.entry("GET / HTTP/1.1\r\nHost: 127.0.0.1:4173\r\nOrigin: http://127.0.0.1:4173\r\n"),
+            fuzz_corpus.entry("GET / HTTP/1.1\r\nHost: clanker.lan:4173\r\nOrigin: http://clanker.lan:4173\r\n"),
+            fuzz_corpus.entry("GET / HTTP/1.1\r\nHost: [fe80::1]:4173\r\nOrigin: http://[fe80::1]:4173\r\n"),
+            fuzz_corpus.entry("GET / HTTP/1.1\r\nHost: localhost:4173\r\nOrigin: file://localhost:4173\r\n"),
+            fuzz_corpus.entry("GET / HTTP/1.1\r\nHost: [::1\r\nOrigin: http://:4173\r\n"),
+            fuzz_corpus.entry("GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\nOrigin: http://a\r\n"),
+            fuzz_corpus.entry("Accept-Encoding: gzip;q=0, *\r\nIf-None-Match: W/\"abc\", *\r\n"),
+            fuzz_corpus.entry("GET /api/sessions/dm%3Aa%7Cb?q=a+b&p=100%25&bad=%zz&half=%2"),
+            fuzz_corpus.entry("GET /api/rooms/dm%2ba?x=%2%2f%00%ff"),
+            fuzz_corpus.entry("{\"ok\":false,\"error\":\"no such run\"}"),
+            fuzz_corpus.entry("{\"ok\":false,\"error\":\"need a title\"}"),
+        },
+    });
+}
+
+/// The authority an `Origin` header names, or null when it names none: a
+/// browser sends a scheme and an authority and nothing else, so anything else
+/// is malformed rather than same-site. Facts only, so the fuzz target can state
+/// the same-origin rule without restating `crossOriginRequest`.
+fn originAuthority(origin: []const u8) ?[]const u8 {
+    const authority = if (std.mem.startsWith(u8, origin, "http://"))
+        origin["http://".len..]
+    else if (std.mem.startsWith(u8, origin, "https://"))
+        origin["https://".len..]
+    else
+        return null;
+    if (std.mem.findScalar(u8, authority, '/') != null) return null;
+    return authority;
 }
