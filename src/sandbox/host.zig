@@ -2298,7 +2298,12 @@ fn runPythonCellUnsandboxed(sb: *const Sandbox, arena: std.mem.Allocator, cell: 
         error.FileNotFound => return error.Python3NotFound,
         else => return err,
     };
-    defer child.kill(sb.io);
+    // Only while the child is still ours: `wait` below reaps it, and the
+    // kernel may hand the freed pid to something else before this defer
+    // runs, so a kill on the success path would signal a stranger. Same
+    // `waited` guard as `tui/clipboard.zig` and `acp/fallback_spawn.zig`.
+    var waited = false;
+    defer if (!waited) child.kill(sb.io);
     if (child.stdin) |stdin_file| {
         var wbuf: [4096]u8 = undefined;
         var writer = stdin_file.writer(sb.io, &wbuf);
@@ -2319,6 +2324,7 @@ fn runPythonCellUnsandboxed(sb: *const Sandbox, arena: std.mem.Allocator, cell: 
         }
     }
     _ = try child.wait(sb.io);
+    waited = true;
     if (out.items.len == 0) return error.Python3NotFound;
     return out.items;
 }
@@ -6925,7 +6931,12 @@ pub fn execUnderPolicyInput(
         .stdout = .pipe,
         .stderr = .pipe,
     }) catch |err| return .{ .failed = err };
-    defer child.kill(sb.io);
+    // Every exit before the `wait` below releases the child. Past it the
+    // pid is reaped and possibly reused, so the kill must not run: a hook
+    // that exits cleanly would otherwise have its pid signalled after the
+    // fact, landing on whatever inherited it.
+    var waited = false;
+    defer if (!waited) child.kill(sb.io);
 
     if (child.stdin) |stdin_file| {
         var buffer: [4096]u8 = undefined;
@@ -6958,6 +6969,7 @@ pub fn execUnderPolicyInput(
     }
     multi.checkAnyError() catch |err| return .{ .failed = err };
     const term = child.wait(sb.io) catch |err| return .{ .failed = err };
+    waited = true;
     const stdout = multi.toOwnedSlice(0) catch |err| return .{ .failed = err };
     errdefer sb.gpa.free(stdout);
     const stderr = multi.toOwnedSlice(1) catch |err| return .{ .failed = err };
@@ -7028,7 +7040,12 @@ fn execWithStdin(
             else => Err.invalid,
         };
     };
-    defer child.kill(io);
+    // The kill is the release for every exit that skips the wait, including
+    // the timeout return below. Once `wait` has reaped the child the pid is
+    // free for reuse, so signalling it again would reach an unrelated
+    // process.
+    var waited = false;
+    defer if (!waited) child.kill(io);
 
     // Write everything, then close: a server reading framed messages waits for
     // EOF (or a shutdown message) before exiting, and an open pipe would hang
@@ -7091,6 +7108,7 @@ fn execWithStdin(
     };
 
     const term = child.wait(io) catch return Err.invalid;
+    waited = true;
     const code: u32 = switch (term) {
         .exited => |c| c,
         else => 0,
