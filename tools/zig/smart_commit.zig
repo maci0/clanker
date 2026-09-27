@@ -3,6 +3,7 @@
 const std = @import("std");
 const lib = @import("lib.zig");
 const logic = @import("commit_logic.zig");
+const model_reply = @import("model_reply.zig");
 const utf8 = @import("utf8");
 
 export fn run(ptr: u32, len: u32) callconv(.c) u64 {
@@ -465,9 +466,13 @@ fn mergeAll(groups: []const logic.Group) ![]logic.Group {
 }
 
 fn parseGroups(raw: []const u8, all_files: []const []const u8, max_commits: usize) ![]logic.Group {
-    const start = std.mem.findScalar(u8, raw, '{') orelse return error.InvalidArg;
-    const end = std.mem.findScalarLast(u8, raw, '}') orelse return error.InvalidArg;
-    const v = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, raw[start .. end + 1], .{});
+    // The reply is a model's free-form answer to "reply with JSON only", so
+    // it arrives fenced, wrapped in prose, or both. First `{` to last `}` is
+    // the wrong span for that (it swallows any nested object plus the prose
+    // between them); the shared extractor finds the first balanced object
+    // instead, ignoring braces inside strings.
+    const span = model_reply.objectSpan(model_reply.stripFence(raw)) orelse return error.InvalidArg;
+    const v = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, span, .{});
     if (v != .object) return error.InvalidArg;
     const arr = switch (v.object.get("commits") orelse return error.InvalidArg) {
         .array => |a| a,
@@ -476,7 +481,7 @@ fn parseGroups(raw: []const u8, all_files: []const []const u8, max_commits: usiz
     var out: std.ArrayList(logic.Group) = .empty;
     for (arr.items) |item| {
         if (item != .object) continue;
-        const msg = switch (item.object.get("message") orelse continue) {
+        const raw_msg = switch (item.object.get("message") orelse continue) {
             .string => |s| s,
             else => continue,
         };
@@ -493,6 +498,12 @@ fn parseGroups(raw: []const u8, all_files: []const []const u8, max_commits: usiz
             if (inList(name, all_files)) try files.append(lib.alloc, name);
         }
         if (files.items.len == 0) continue;
+        // The message is the only field of this answer that reaches git
+        // history, so it goes through the same one-line / length / control-byte
+        // gate every other model-authored log line does. Files are already
+        // allowlisted above, which is the other half of the same concern.
+        const msg = (try logic.sanitizeMessage(lib.alloc, raw_msg)) orelse
+            try logic.messageOrDefault(lib.alloc, files.items);
         try out.append(lib.alloc, .{ .message = msg, .files = files.items });
     }
     if (out.items.len == 0) return error.InvalidArg;

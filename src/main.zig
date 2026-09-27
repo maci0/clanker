@@ -196,6 +196,7 @@ comptime {
     _ = @import("agent/subagent.zig");
     _ = @import("util/dotenv.zig");
     _ = @import("util/secret_dotenv.zig");
+    _ = @import("util/prompt_fence.zig");
     _ = @import("util/log.zig");
     _ = @import("util/redact.zig");
     _ = @import("util/append_line.zig");

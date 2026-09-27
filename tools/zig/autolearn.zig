@@ -226,7 +226,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         };
         if (std.mem.trim(u8, synthesized, " \t\r\n").len == 0)
             return lib.fail(out, "synthesizer returned an empty section (the [llm] log line names the cause; a reasoning model can spend the whole max_tokens grant before emitting content)");
-        try upsertRoadmap(alloc, synthesized);
+        // The reply is model-written markdown bound for a committed document
+        // that the improve engine later reads back as backlog seed material,
+        // so it is bounded and its headings demoted before it is merged. A
+        // reply that never opens the section leaves the mechanical draft in
+        // place rather than writing a section no later run can replace.
+        const safe_section = logic.sanitizeSection(alloc, synthesized) catch
+            return lib.fail(out, "could not sanitize the synthesized section");
+        if (safe_section) |sec| {
+            try upsertRoadmap(alloc, sec);
+        } else {
+            synthesized = section.items;
+        }
     }
 
     var result: std.Io.Writer.Allocating = .init(alloc);

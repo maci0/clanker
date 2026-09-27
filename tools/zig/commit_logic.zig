@@ -163,6 +163,58 @@ pub const Group = struct {
     files: []const []const u8,
 };
 
+/// Longest commit message accepted from the grouping model. A conventional
+/// commit is a one-line subject, so this is generous rather than tight; the
+/// point is that a model cannot write a novel into a commit subject.
+pub const max_message_bytes: usize = 400;
+
+/// Make a model-proposed commit message safe to hand to `git commit -m`.
+///
+/// The message is the one field of the grouping answer that reaches git
+/// history verbatim, and it is the one field no schema constrains. Two classes
+/// of model output have to be refused rather than forwarded:
+/// control bytes (a newline turns the subject into an arbitrary multi-paragraph
+/// body; a NUL truncates the argv element, silently committing a different
+/// message than the one shown in the dry run), and unbounded length.
+///
+/// Returns a single line of at most `max_message_bytes`, or null when the
+/// input carries nothing usable (empty, or control bytes only). Callers that
+/// must produce a commit fall back to `messageOrDefault`.
+pub fn sanitizeMessage(alloc: std.mem.Allocator, raw: []const u8) !?[]const u8 {
+    var line: std.ArrayList(u8) = .empty;
+    // `collapsed` makes runs of whitespace (including newlines) read as one
+    // space, so a message that wrapped across lines is still one subject.
+    var collapsed = false;
+    for (raw) |c| {
+        // Every kind of whitespace folds into the same single separator, and
+        // a run at the very start folds into nothing, so a message that
+        // wrapped or was indented still reads as one subject.
+        if (c <= 0x20 or c == 0x7f) {
+            if (!std.ascii.isWhitespace(c)) return null; // a control byte that is not whitespace
+            if (line.items.len > 0) collapsed = true;
+            continue;
+        }
+        if (collapsed) try line.append(alloc, ' ');
+        collapsed = false;
+        try line.append(alloc, c);
+    }
+    if (line.items.len == 0) return null;
+    if (line.items.len > max_message_bytes) line.shrinkRetainingCapacity(max_message_bytes);
+    const trimmed = std.mem.trimEnd(u8, line.items, " ");
+    if (trimmed.len == 0) return null;
+    return try alloc.dupe(u8, trimmed);
+}
+
+/// A deterministic conventional-commit subject for a group whose proposed
+/// message did not survive `sanitizeMessage`. Losing the model's wording costs
+/// nothing worth failing the commit over; a group with no message at all would
+/// hand git an empty subject.
+pub fn messageOrDefault(alloc: std.mem.Allocator, files: []const []const u8) ![]const u8 {
+    if (files.len == 0) return "chore: update staged files";
+    const subject = std.mem.trim(u8, files[0], "/");
+    return std.fmt.allocPrint(alloc, "chore: update {s}", .{subject});
+}
+
 pub const OrderError = error{ PartialCycle, DegenerateCycle, OutOfMemory };
 
 /// Kahn topo sort. `deps[i]` lists group indices that must come before i.
@@ -363,4 +415,42 @@ test "renderPlan reports what was written once it is not a dry run" {
     // failure this renderer exists to fix was a verb that said it had done
     // something it had not.
     try std.testing.expect(std.mem.find(u8, text, "committed") != null);
+}
+
+test "sanitizeMessage reduces a model message to one bounded printable line" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    try std.testing.expectEqualStrings("fix: guard the cap", (try sanitizeMessage(arena, "  fix: guard the cap  ")).?);
+    // A wrapped subject is one line, not a message with a body.
+    try std.testing.expectEqualStrings("fix: guard the cap and the fence", (try sanitizeMessage(arena, "fix: guard the cap\nand the fence")).?);
+    try std.testing.expectEqualStrings("fix: a b", (try sanitizeMessage(arena, "fix: a\n\n\n  b")).?);
+
+    // No usable subject at all.
+    try std.testing.expect((try sanitizeMessage(arena, "   ")) == null);
+    try std.testing.expect((try sanitizeMessage(arena, "\n\n")) == null);
+    // A control byte that is not whitespace has no one-line spelling, so the
+    // message is refused rather than silently mangled into a different one.
+    try std.testing.expect((try sanitizeMessage(arena, "fix: a\x00b")) == null);
+    try std.testing.expect((try sanitizeMessage(arena, "fix: a\x07b")) == null);
+
+    // A runaway subject is capped, and the cap lands on a whole byte.
+    const huge = try arena.alloc(u8, max_message_bytes * 4);
+    @memset(huge, 'x');
+    const capped = (try sanitizeMessage(arena, huge)).?;
+    try std.testing.expectEqual(max_message_bytes, capped.len);
+    try std.testing.expect(std.ascii.isPrint(capped[capped.len - 1]));
+}
+
+test "messageOrDefault names the group when the model message is unusable" {
+    const gpa = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const files = [_][]const u8{"src/agent/loop.zig"};
+    try std.testing.expectEqualStrings("chore: update src/agent/loop.zig", try messageOrDefault(arena, &files));
+    try std.testing.expectEqualStrings("chore: update staged files", try messageOrDefault(arena, &.{}));
 }
