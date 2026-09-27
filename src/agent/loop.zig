@@ -1076,9 +1076,13 @@ pub const Agent = struct {
                 // configured (the default) every delta memmoves ~`buf_len`
                 // bytes to make room and then finds nothing to match, so the
                 // whole turn pays that per streamed token for a guard that
-                // cannot fire.
-                if (ttsr_rules.items.len == 0) break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
-                const guard_buf = self.arena.alloc(u8, buf_len) catch
+                // cannot fire. A zero-length window keeps the turn streaming:
+                // `feed` forwards each delta to the real callback and returns
+                // before the memmove. Falling back to `llmChat` instead would
+                // un-stream the request, and a provider that answers in SSE
+                // (every OpenAI-compatible one) cannot serve that.
+                const guard_len = if (ttsr_rules.items.len == 0) 0 else buf_len;
+                const guard_buf = self.arena.alloc(u8, guard_len) catch
                     break :blk try self.llmChat(request_messages, err_detail, &g, iteration, llm_t0, effort);
                 var guard = TtsrStreamGuard{
                     .inner = cb,
