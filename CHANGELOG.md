@@ -336,6 +336,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   Tailwind does not know compiles to nothing, which is why the ledger's list
   needs `index.html` in it before the frame's own port lands.
 
+- Buttons no longer carry PatternFly's classes. `upgradePfButton` is the seam
+  that added `pf-v6-c-button` and its `pf-m-*` variant, and wrapped a control's
+  icon and label in PF's `__icon`/`__text` spans so PF's flex layout could space
+  them; the kit's base button rule spaces them itself, so the bridge now only
+  guarantees a variant class and `UI.button` builds a plain button. The two
+  places that reached for the wrapper span — the archive label and the icon
+  mount — write the button's own text and child instead. The rules in `app.css`
+  that name `pf-v6-c-button` are unreachable as of this change and go in the
+  next step, with the sheet.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

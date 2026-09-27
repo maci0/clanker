@@ -5115,12 +5115,11 @@ el.runCopy.addEventListener("click", function () {
   var archBtn = document.getElementById("session-archive");
   var importBtn = document.getElementById("session-import");
   var tog = document.getElementById("archived-toggle");
-  // upgradePfButton wrapped the label in a .pf-v6-c-button__text span;
-  // assigning textContent on the button itself would tear that wrapper out.
   function setArchiveLabel(text){
     if (!archBtn) return;
-    var span = archBtn.querySelector(".pf-v6-c-button__text");
-    if (span) span.textContent = text; else archBtn.textContent = text;
+    // The label is the button's own text now: the kit does not wrap it in a
+    // span the way the PatternFly bridge did.
+    archBtn.textContent = text;
   }
   if (archBtn) archBtn.addEventListener("click", function(){
     withSessionMeta(function(meta){
@@ -5353,10 +5352,7 @@ function mountIcon(node, name, size) {
   if (!node) return;
   upgradePfButton(node);
   node.textContent = "";
-  var wrap = document.createElement("span");
-  wrap.className = "pf-v6-c-button__icon";
-  wrap.appendChild(icon(name, size || 15));
-  node.appendChild(wrap);
+  node.appendChild(icon(name, size || 15));
 }
 upgradePfUi(document);
 mountIcon(el.helpOpen, "help", 15);

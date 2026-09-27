@@ -84,87 +84,26 @@ export function bind(node, st, render) {
   });
 }
 
-/* PatternFly button bridge (step 4): add pf-v6-c-button + variant modifiers and
-   wrap label/icon children without removing cabinet classes yet. */
-var pfButtonSkip = {
-  "rail-tab": 1, "rail-item": 1, "tool-name": 1, "suggestion": 1,
-  "palette-item": 1, "board-header-btn": 1, "rail-pin": 1, "label-picker-item": 1,
-  "rail-empty-action": 1, "toast-dismiss": 1,
-  /* Status lamps and model pills are labels, not actuators. Upgrading them to
-     pf-m-primary painted the masthead solid PatternFly blue. */
-  "chip": 1, "header-model": 1, "model-pill": 1,
-  /* Masthead chips and icon chrome: PF plain keeps light-scheme greys that
-     ignore cabinet tokens even when --fg-muted is correct. Stay cabinet-native. */
-  "chip-btn": 1, "slack-btn-icon": 1, "slack-sidebar-toggle": 1,
-};
+/* The button vocabulary is the kit's now. A control states its variant as the
+   cabinet class the theme already knows, and the base button rule spaces an
+   icon and a label on its own: the PatternFly content spans existed only so
+   PF's flex layout could, and PF's own button rules are what the cabinet's
+   `.secondary`/`.primary` rules were fighting. `upgradePfButton` stays the name
+   its ~30 call sites use; it now only guarantees a variant, because the
+   callers set `className` themselves and this is the seam that used to fill
+   the rest in. */
+var BUTTON_VARIANT_CLASSES = ["primary", "secondary", "danger", "chip-btn", "scroll-bottom", "rail-new"];
 
-function pfButtonVariant(el) {
-  if (el.classList.contains("secondary") && el.classList.contains("danger")) return "secondary-danger";
-  if (el.classList.contains("secondary") || el.classList.contains("scroll-bottom")) return "secondary";
-  if (el.classList.contains("danger")) return "danger";
-  /* Explicit primary only: submit, .primary, and the rail's New chat CTA. */
-  if (el.classList.contains("primary") || el.classList.contains("rail-new") ||
-      el.id === "submit" || el.type === "submit") return "primary";
-  return "secondary";
-}
-
-function looseButtonText(el) {
-  var s = "";
-  for (var i = 0; i < el.childNodes.length; i++) {
-    var n = el.childNodes[i];
-    if (n.nodeType === 3) s += n.textContent;
+function buttonVariantMissing(el) {
+  for (var i = 0; i < BUTTON_VARIANT_CLASSES.length; i++) {
+    if (el.classList.contains(BUTTON_VARIANT_CLASSES[i])) return false;
   }
-  return s.trim();
-}
-
-function wrapPfButtonContent(el) {
-  var textSpan = el.querySelector(":scope > .pf-v6-c-button__text");
-  var iconSpan = el.querySelector(":scope > .pf-v6-c-button__icon");
-  var loose = looseButtonText(el);
-  if (textSpan) {
-    if (loose) textSpan.textContent = loose;
-    for (var i = el.childNodes.length - 1; i >= 0; i--) {
-      if (el.childNodes[i].nodeType === 3) el.removeChild(el.childNodes[i]);
-    }
-    return;
-  }
-  if (iconSpan) return;
-  var svg = el.querySelector("svg");
-  var text = loose || (el.textContent || "").trim();
-  if (svg && (!text || el.getAttribute("aria-label"))) {
-    el.textContent = "";
-    var iconWrap = document.createElement("span");
-    iconWrap.className = "pf-v6-c-button__icon";
-    iconWrap.appendChild(svg);
-    el.appendChild(iconWrap);
-    return;
-  }
-  if (!text) return;
-  el.textContent = "";
-  var span = document.createElement("span");
-  span.className = "pf-v6-c-button__text";
-  span.textContent = text;
-  el.appendChild(span);
+  return true;
 }
 
 export function upgradePfButton(el) {
   if (!el || el.tagName !== "BUTTON") return el;
-  for (var cls in pfButtonSkip) {
-    if (el.classList.contains(cls)) return el;
-  }
-  /* Composer Run/Cancel must follow --accent/--on-accent across themes; PF
-     primary paints a fixed brand blue that survives token remaps. */
-  if (el.id === "submit" || el.id === "cancel") return el;
-  if (!el.classList.contains("pf-v6-c-button")) {
-    var variant = pfButtonVariant(el);
-    el.classList.add("pf-v6-c-button");
-    if (variant === "plain") el.classList.add("pf-m-plain");
-    else if (variant === "secondary") el.classList.add("pf-m-secondary");
-    else if (variant === "danger") el.classList.add("pf-m-danger");
-    else if (variant === "secondary-danger") el.classList.add("pf-m-secondary", "pf-m-danger");
-    else if (variant === "primary") el.classList.add("pf-m-primary");
-  }
-  wrapPfButtonContent(el);
+  if (buttonVariantMissing(el)) el.classList.add("secondary");
   return el;
 }
 
@@ -173,10 +112,6 @@ export function upgradePfButtons(root) {
   scope.querySelectorAll("button").forEach(function (btn) { upgradePfButton(btn); });
   return scope;
 }
-
-/* PatternFly form bridge (step 5): pf-v6-c-form on forms, pf-v6-c-form-control on
-   inputs, pf-v6-c-check on checkbox labels. Cabinet layout classes stay until step 9. */
-var pfControlSkip = { hidden: 1, file: 1, button: 1, submit: 1, reset: 1, image: 1 };
 
 export function upgradePfFormControl(el) {
   if (!el) return el;
@@ -558,27 +493,21 @@ import { icon as iconFn } from "./icons.js";
 export var UI = {
   button: function (label, onclick, opts) {
     opts = opts || {};
-    var cls = "pf-v6-c-button ";
-    if (opts.kind === "plain") cls += "pf-m-plain chip-btn";
-    else if (opts.kind === "primary") cls += "pf-m-primary";
-    else if (opts.kind === "danger") cls += "pf-m-danger danger";
-    else if (opts.kind === "secondary-danger") cls += "pf-m-secondary pf-m-danger secondary danger";
-    else cls += "pf-m-secondary secondary";
+    var cls = opts.kind === "plain" ? "chip-btn"
+      : opts.kind === "primary" ? "primary"
+      : opts.kind === "danger" ? "danger"
+      : opts.kind === "secondary-danger" ? "secondary danger"
+      : "secondary";
     var icon = iconFn || function(){ return document.createElement("span"); };
     var attrs = {
       type: "button",
-      class: cls.trim(),
+      class: cls,
       onclick: onclick
     };
     if (opts.label) attrs["aria-label"] = opts.label;
     if (opts.title) attrs.title = opts.title;
-    if (opts.icon) {
-      var node = T.button(attrs,
-        T.span({ class: "pf-v6-c-button__icon" }, icon(opts.icon, 14)),
-        label ? T.span({ class: "pf-v6-c-button__text" }, label) : null);
-      return node;
-    }
-    return T.button(attrs, T.span({ class: "pf-v6-c-button__text" }, label));
+    if (opts.icon) return T.button(attrs, icon(opts.icon, 14), label || null);
+    return T.button(attrs, label || null);
   },
   field: function (id, label, control) {
     if (control && control.classList) upgradePfFormControl(control);
