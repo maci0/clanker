@@ -293,17 +293,27 @@ export function sessionMatchesFilter(item, q) {
 }
 
 /* Conversations group by when they were last touched, because that is how
-   you look for one: "the thing I was doing this morning", not an id. */
-export function recencyGroup(updated) {
+   you look for one: "the thing I was doing this morning", not an id.
+   Grouped by calendar day, never by a 24-hour block: after a spring-forward
+   the local day is 23 hours, so Saturday 00:00 read at Monday 00:30 is 47.5
+   hours old and a 48-hour window still filed it under "Yesterday". The
+   helper in lib/runs-list.js already made this correction for the Runs view;
+   `now` is a parameter here for the same reason it is one there. */
+export function recencyGroup(updated, nowMs) {
   if (!updated) return "Undated";
-  var day = 24 * 60 * 60;
-  var now = Math.floor(Date.now() / 1000);
-  var age = now - updated;
+  var now = typeof nowMs === "number" ? nowMs : Date.now();
   var rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  if (age < day && new Date(updated * 1000).toDateString() === new Date().toDateString()) return rtf.format(0, "day");
-  if (age < 2 * day) return rtf.format(-1, "day");
-  if (age < 7 * day) return "Previous 7 days";
-  if (age < 30 * day) return "Previous 30 days";
+  var d = new Date(updated * 1000);
+  var today = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+  // A clock stepped backwards puts a session in the future; it belongs with
+  // today, not with yesterday.
+  var days = Math.max(0, Math.round((today - d) / 86400000));
+  if (days === 0) return rtf.format(0, "day");
+  if (days === 1) return rtf.format(-1, "day");
+  if (days < 7) return "Previous 7 days";
+  if (days < 30) return "Previous 30 days";
   return "Older";
 }
 

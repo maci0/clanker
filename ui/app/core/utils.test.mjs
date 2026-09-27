@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost } from "./utils.js";
+import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup } from "./utils.js";
+
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -167,4 +168,47 @@ test("graphemes falls back to whole code points without Intl.Segmenter", functio
   // The fallback path is exercised directly so a platform without Segmenter
   // still gets surrogate pairs intact (it is combining marks it cannot join).
   assert.deepEqual(Array.from(graphemes("a😀b")), ["a", "😀", "b"]);
+});
+
+/* The chat rail's day headings. Expectations are built from the local
+   calendar, the way Intl renders them, so they read the same on a machine
+   whose zone is not the CI one. `atS` is the epoch-seconds shape a session
+   record carries; `at` is the same instant in the milliseconds the
+   `now` argument takes. */
+const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+const atS = (y, m, d, h, min) => Math.floor(new Date(y, m - 1, d, h, min, 0).getTime() / 1000);
+const at = (y, m, d, h, min) => new Date(y, m - 1, d, h, min, 0).getTime();
+
+test("a spring-forward weekend is grouped by calendar day, not by 24 hours", function () {
+  // 2026-03-29 02:00 -> 03:00 local, so Sunday is 23 hours long and a
+  // Saturday session read on the Monday after it is 47.5 hours old: an
+  // elapsed-24-hour window files it under "Yesterday" when the calendar says
+  // two days back. The zone is set and restored inside this one test, so no
+  // other suite in the sweep sees it.
+  const before = process.env.TZ;
+  process.env.TZ = "Europe/Warsaw";
+  try {
+    const now = at(2026, 3, 30, 0, 30);
+    assert.ok(Math.abs((now - at(2026, 3, 28, 0, 0)) / 3600000 - 47.5) < 1.5);
+    assert.equal(recencyGroup(atS(2026, 3, 30, 0, 0), now), rtf.format(0, "day"));
+    assert.equal(recencyGroup(atS(2026, 3, 29, 23, 30), now), rtf.format(-1, "day"));
+    assert.equal(recencyGroup(atS(2026, 3, 28, 0, 0), now), "Previous 7 days");
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+});
+
+test("an ordinary week is unchanged, and a future stamp reads as today", function () {
+  const now = at(2026, 6, 17, 12, 0);
+  assert.equal(recencyGroup(atS(2026, 6, 17, 1, 0), now), rtf.format(0, "day"));
+  assert.equal(recencyGroup(atS(2026, 6, 16, 23, 0), now), rtf.format(-1, "day"));
+  assert.equal(recencyGroup(atS(2026, 6, 15, 12, 0), now), "Previous 7 days");
+  assert.equal(recencyGroup(atS(2026, 6, 11, 12, 0), now), "Previous 7 days");
+  assert.equal(recencyGroup(atS(2026, 6, 10, 12, 0), now), "Previous 30 days");
+  assert.equal(recencyGroup(atS(2026, 6, 1, 12, 0), now), "Previous 30 days");
+  assert.equal(recencyGroup(atS(2026, 4, 1, 12, 0), now), "Older");
+  // A clock stepped backwards leaves a session stamped in the future.
+  assert.equal(recencyGroup(now + 3600, now), rtf.format(0, "day"));
+  assert.equal(recencyGroup(0, now), "Undated");
 });
