@@ -19,7 +19,7 @@ const Listing = struct {
     bytes: usize = 0,
 };
 
-const ListResponse = struct { sessions: []const Listing = &.{} };
+const ListResponse = struct { sessions: []const Listing = &.{}, truncated: bool = false };
 
 const SearchHit = struct {
     id: []const u8 = "",
@@ -81,7 +81,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     if (as_json) {
         logic.sortNewestFirst(metas.items);
         var w = lib.writer(out);
-        try logic.writeJson(&w, metas.items);
+        try logic.writeJson(&w, metas.items, parsed.truncated);
         lib.commit(out, &w);
         return;
     }
@@ -93,7 +93,11 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     logic.sortOldestFirst(metas.items);
     const now_s: i64 = @trunc(lib.nowSeconds());
     const text = try logic.writeText(lib.alloc, metas.items, now_s);
-    return lib.okText(out, text);
+    if (!parsed.truncated) return lib.okText(out, text);
+    var noted: std.ArrayList(u8) = .empty;
+    try noted.appendSlice(lib.alloc, text);
+    try noted.appendSlice(lib.alloc, "\n(listing truncated to the newest sessions)");
+    return lib.okText(out, noted.items);
 }
 
 fn searchSessions(out: *lib.Out, query: []const u8) !void {

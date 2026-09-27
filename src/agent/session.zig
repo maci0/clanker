@@ -712,10 +712,23 @@ fn sessionMetaFromConnection(arena: std.mem.Allocator, conn: *sqlite.Connection,
     };
 }
 
+/// Rows a listing surface may ask for. The store only ever grows (nothing
+/// prunes it on its own), so an unbounded listing is a per-request cost
+/// that rises for the life of the installation. The newest rows are what
+/// every listing caller shows, so the cap drops the oldest.
+pub const list_max: usize = 200;
+
 /// Lists every saved session, most recently updated first. A database that
 /// cannot be opened or has no id is skipped rather than failing the whole
 /// listing: one corrupt session should not make the others unreachable.
 pub fn listSessions(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8) ![]SessionMeta {
+    return listSessionsLimited(io, arena, sessions_dir, 0);
+}
+
+/// `listSessions` keeping only the newest `limit` rows; 0 is every row.
+/// Applied after the sort, so the surviving rows are the most recently
+/// updated ones rather than whichever the directory walk happened to yield.
+pub fn listSessionsLimited(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const u8, limit: usize) ![]SessionMeta {
     var out: std.ArrayList(SessionMeta) = .empty;
 
     var dir = std.Io.Dir.cwd().openDir(io, sessions_dir, .{ .iterate = true }) catch return out.toOwnedSlice(arena);
@@ -731,6 +744,7 @@ pub fn listSessions(io: std.Io, arena: std.mem.Allocator, sessions_dir: []const 
     }
 
     sortNewestFirst(out.items);
+    if (limit > 0 and out.items.len > limit) out.shrinkRetainingCapacity(limit);
     return out.toOwnedSlice(arena);
 }
 
@@ -1282,6 +1296,35 @@ test "listing reads counts stamped at save and scans a database without them" {
             try std.testing.expectEqual(@as(usize, 11), meta.bytes);
         }
     }
+}
+
+test "a limited listing keeps the newest rows, not the first ones walked" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    for ([_]i64{ 10, 30, 20 }) |updated| {
+        var id_buf: [16]u8 = undefined;
+        const id = try std.fmt.bufPrint(&id_buf, "sess{d}", .{updated});
+        try saveSession(io, std.testing.allocator, arena, dir, .{
+            .id = id,
+            .title = id,
+            .messages = &messages,
+            .created = 1,
+            .updated = updated,
+        });
+    }
+
+    const capped = try listSessionsLimited(io, arena, dir, 2);
+    try std.testing.expectEqual(@as(usize, 2), capped.len);
+    try std.testing.expectEqualStrings("sess30", capped[0].id);
+    try std.testing.expectEqualStrings("sess20", capped[1].id);
+
+    const all = try listSessionsLimited(io, arena, dir, 0);
+    try std.testing.expectEqual(@as(usize, 3), all.len);
 }
 
 test "the events table is append-only: UPDATE and DELETE are refused" {

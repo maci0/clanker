@@ -893,7 +893,13 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     var w = std.json.Stringify{ .writer = &out_w.writer, .options = .{ .emit_null_optional_fields = false } };
 
     if (std.mem.eql(u8, op, "list")) {
-        const metas = session_mod.listSessions(h.sandbox.io, arena, sessions_dir) catch return Err.invalid;
+        // Capped: this is the backing store for a picker and for
+        // `GET /api/sessions`, both of which read the newest rows, and the
+        // serialized listing is built into a buffer that grew with the store.
+        // The guest reports `truncated` so a clipped listing says so.
+        const all = session_mod.listSessionsLimited(h.sandbox.io, arena, sessions_dir, 0) catch return Err.invalid;
+        const truncated = all.len > session_mod.list_max;
+        const metas = if (truncated) all[0..session_mod.list_max] else all;
         w.beginObject() catch return Err.invalid;
         w.objectField("sessions") catch return Err.invalid;
         w.beginArray() catch return Err.invalid;
@@ -918,6 +924,8 @@ pub fn ckSession(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
             w.endObject() catch return Err.invalid;
         }
         w.endArray() catch return Err.invalid;
+        w.objectField("truncated") catch return Err.invalid;
+        w.write(truncated) catch return Err.invalid;
         w.endObject() catch return Err.invalid;
         return h.writeResult(bytes, out_w.written());
     }

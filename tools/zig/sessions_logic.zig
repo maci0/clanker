@@ -140,7 +140,7 @@ pub fn writeSearchJson(w: *std.Io.Writer, query: []const u8, hits: []const Searc
     try s.endObject();
 }
 
-pub fn writeJson(w: *std.Io.Writer, items: []const Listing) !void {
+pub fn writeJson(w: *std.Io.Writer, items: []const Listing, truncated: bool) !void {
     var s = std.json.Stringify{ .writer = w, .options = .{ .emit_null_optional_fields = false } };
     try s.beginObject();
     try s.objectField("ok");
@@ -168,6 +168,8 @@ pub fn writeJson(w: *std.Io.Writer, items: []const Listing) !void {
         try s.endObject();
     }
     try s.endArray();
+    try s.objectField("truncated");
+    try s.write(truncated);
     try s.endObject();
 }
 
@@ -285,7 +287,7 @@ test "writeJson matches the picker contract" {
     const list = [_]Listing{
         .{ .id = "s1", .title = "one", .created = 1, .updated = 2, .messages = 2, .bytes = 13 },
     };
-    try writeJson(&out.writer, &list);
+    try writeJson(&out.writer, &list, false);
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, out.written(), .{});
     const first = parsed.object.get("sessions").?.array.items[0];
     try std.testing.expect(parsed.object.get("ok").?.bool);
