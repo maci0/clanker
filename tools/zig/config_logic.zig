@@ -267,6 +267,150 @@ fn lineStartBefore(text: []const u8, at: usize) usize {
     return 0;
 }
 
+// ----------------------------------------------------------------- redaction --
+
+/// Placeholder written in place of a secret value.
+pub const redacted = "<redacted>";
+
+/// Assignment keys whose *value* is the secret. `api_key_env`,
+/// `proxy_token_env` and `service_account_file` name a variable or a path and
+/// are deliberately absent: naming the holder is how an operator finds it.
+const secret_keys = [_][]const u8{
+    "api_key",       "apikey",        "token",
+    "access_token",  "refresh_token", "bearer_token",
+    "auth_token",    "password",      "passwd",
+    "secret",        "client_secret", "private_key",
+    "authorization", "auth",
+};
+
+fn keyIsSecret(key: []const u8) bool {
+    for (secret_keys) |k| if (std.mem.eql(u8, key, k)) return true;
+    return false;
+}
+
+fn unquote(key: []const u8) []const u8 {
+    if (key.len >= 2 and key[0] == '"' and key[key.len - 1] == '"') return key[1 .. key.len - 1];
+    return key;
+}
+
+/// Mask every double-quoted string in `seg`, keeping the part up to the first
+/// `sep`. `sep` comes from the caller because the two shapes are not
+/// interchangeable and a wrong guess cuts *inside* the secret: an `env` entry
+/// is `NAME=value` while a `headers` entry is `Name: value`, and a base64
+/// `Basic` credential is `=`-padded, so cutting at the last `=` would print
+/// the whole credential one padding character short.
+fn redactSegment(alloc: std.mem.Allocator, seg: []const u8, sep: u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < seg.len) : (i += 1) {
+        if (seg[i] != '"') {
+            try out.append(alloc, seg[i]);
+            continue;
+        }
+        // Copy the quoted string, keeping any `\<char>` escape paired so a
+        // `\"` inside the value cannot end the string early.
+        const content_start = i + 1;
+        var j = content_start;
+        while (j < seg.len) : (j += 1) {
+            if (seg[j] == '\\' and j + 1 < seg.len) {
+                j += 1;
+                continue;
+            }
+            if (seg[j] == '"') break;
+        }
+        if (j >= seg.len) {
+            try out.appendSlice(alloc, seg[i..]);
+            return out.toOwnedSlice(alloc);
+        }
+        const content = seg[content_start..j];
+        try out.append(alloc, '"');
+        if (std.mem.indexOfScalar(u8, content, sep)) |cut| {
+            const after = cut + 1;
+            const gap = after + (std.mem.indexOfNone(u8, content[after..], " \t") orelse content.len - after);
+            try out.appendSlice(alloc, content[0..gap]);
+            try out.appendSlice(alloc, redacted);
+        } else {
+            try out.appendSlice(alloc, content);
+        }
+        try out.append(alloc, '"');
+        i = j;
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+/// Whitespace and comment following a scalar value, so redacting a secret
+/// keeps the operator's note beside it. Empty when the value is unquoted,
+/// where nothing can be told apart from a comment.
+fn commentAfterValue(rest: []const u8) []const u8 {
+    const gap = std.mem.indexOfNone(u8, rest, " \t") orelse return "";
+    const value = rest[gap..];
+    if (value.len == 0 or value[0] != '"') return "";
+    var j: usize = 1;
+    while (j < value.len) : (j += 1) {
+        if (value[j] == '\\') {
+            j += 1;
+            continue;
+        }
+        if (value[j] == '"') return value[j + 1 ..];
+    }
+    return "";
+}
+
+/// Secret values masked out of raw config.toml bytes, keeping names, layout
+/// and comments. The host's merged-config views already withhold them
+/// (`writeKvNames` in src/config.zig, `writeMcpServerJson` in
+/// src/sandbox/host.zig); the whole-file dump is the one path that shows the
+/// operator's own bytes, and it is reachable from an agent run as well as
+/// from the CLI, so an unredacted `[mcp_servers.*]` credential or a
+/// hand-written `api_key` would land in a transcript. A multi-line array
+/// carries its `pending` separator across lines, since an `env` list written
+/// one entry per line is the shape a long token list takes.
+pub fn redactSecrets(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var pending: ?u8 = null;
+    var start: usize = 0;
+    while (start <= text.len) {
+        const nl = std.mem.indexOfScalarPos(u8, text, start, '\n');
+        const end = nl orelse text.len;
+        const line = text[start..end];
+        if (pending) |sep| {
+            const masked = try redactSegment(alloc, line, sep);
+            defer alloc.free(masked);
+            try out.appendSlice(alloc, masked);
+            if (std.mem.indexOfScalar(u8, line, ']') != null) pending = null;
+        } else {
+            const eq = std.mem.indexOfScalar(u8, line, '=');
+            if (eq) |e| {
+                const key = unquote(std.mem.trim(u8, line[0..e], " \t"));
+                if (keyIsSecret(key)) {
+                    try out.appendSlice(alloc, line[0 .. e + 1]);
+                    try out.append(alloc, ' ');
+                    try out.appendSlice(alloc, redacted);
+                    try out.appendSlice(alloc, commentAfterValue(line[e + 1 ..]));
+                } else {
+                    const sep: ?u8 = if (std.mem.eql(u8, key, "env"))
+                        '='
+                    else if (std.mem.eql(u8, key, "headers")) ':' else null;
+                    if (sep) |s| {
+                        const masked = try redactSegment(alloc, line, s);
+                        defer alloc.free(masked);
+                        try out.appendSlice(alloc, masked);
+                        if (std.mem.indexOfScalar(u8, line[e + 1 ..], ']') == null) pending = s;
+                    } else {
+                        try out.appendSlice(alloc, line);
+                    }
+                }
+            } else {
+                try out.appendSlice(alloc, line);
+            }
+        }
+        if (nl == null) break;
+        try out.append(alloc, '\n');
+        start = end + 1;
+    }
+    return out.toOwnedSlice(alloc);
+}
+
 // ------------------------------------------------------------------- tests --
 
 const t = std.testing;
@@ -507,4 +651,59 @@ test "forbiddenReason refuses exactly the policy keys" {
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("improve.plan_phase"));
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("serve.webui_port"));
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("sandbox_follow_symlinks"));
+}
+
+test "redactSecrets masks mcp env and header values, keeping the names" {
+    const a = t.allocator;
+    const got = try redactSecrets(a,
+        \\[mcp_servers.github]
+        \\transport = "stdio"
+        \\env = ["GITHUB_TOKEN=ghp_secret", "PLAIN"]
+        \\headers = ["Authorization: Basic dXNlcjpwYXNzd29yZA=="]
+    );
+    defer a.free(got);
+    try t.expectEqualStrings(
+        \\[mcp_servers.github]
+        \\transport = "stdio"
+        \\env = ["GITHUB_TOKEN=<redacted>", "PLAIN"]
+        \\headers = ["Authorization: <redacted>"]
+    , got);
+    try t.expect(std.mem.indexOf(u8, got, "ghp_secret") == null);
+    // A base64 credential is `=`-padded: cutting at the first `=` is what keeps
+    // the padding out of the dump.
+    try t.expect(std.mem.indexOf(u8, got, "dXNlcjpwYXNzd29yZA") == null);
+}
+
+test "redactSecrets masks a hand-written secret and leaves api_key_env alone" {
+    const a = t.allocator;
+    const got = try redactSecrets(a,
+        \\[providers.custom]
+        \\api_key = "sk-live-1234"   # operator note
+        \\api_key_env = "CUSTOM_KEY"
+    );
+    defer a.free(got);
+    try t.expectEqualStrings(
+        \\[providers.custom]
+        \\api_key = <redacted>   # operator note
+        \\api_key_env = "CUSTOM_KEY"
+    , got);
+}
+
+test "redactSecrets carries a multi-line env array across lines" {
+    const a = t.allocator;
+    const got = try redactSecrets(a,
+        \\env = [
+        \\  "A_TOKEN=aaa",
+        \\  "B_TOKEN=bbb",
+        \\]
+        \\command = "server"
+    );
+    defer a.free(got);
+    try t.expectEqualStrings(
+        \\env = [
+        \\  "A_TOKEN=<redacted>",
+        \\  "B_TOKEN=<redacted>",
+        \\]
+        \\command = "server"
+    , got);
 }

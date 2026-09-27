@@ -1189,9 +1189,13 @@ pub const TtsrRule = struct {
 /// cap would let a config grow that allocation without bound.
 pub const ttsr_buffer_bytes_max: u32 = 64 * 1024;
 
+/// Window size the field falls back to when a config sets 0, which is
+/// otherwise a size no window can be.
+pub const ttsr_buffer_bytes_default: u32 = 4096;
+
 pub const Ttsr = struct {
     max_retries_per_turn: u32 = 3,
-    buffer_bytes: u32 = 4096,
+    buffer_bytes: u32 = ttsr_buffer_bytes_default,
     rules: []const TtsrRule = &.{},
 };
 
@@ -1815,7 +1819,15 @@ pub const Config = struct {
         }, "config");
 
         if (obj.get("default_provider")) |v| {
-            cfg.default_provider = try jsonStr(v, "default_provider");
+            const name = try jsonStr(v, "default_provider");
+            // "Set to empty" is not "unset": an empty name matches no
+            // provider, and the load would go on to report it as a missing
+            // provider rather than as the typo'd value it is.
+            if (name.len == 0) {
+                cfgLog(.error_, "\"default_provider\" must name a provider, or be omitted to take the built-in default", .{});
+                return error.DefaultProviderEmpty;
+            }
+            cfg.default_provider = name;
             cfg.default_provider_present = true;
         }
         if (obj.get("agent")) |v| {
@@ -2499,7 +2511,16 @@ pub const Config = struct {
             "proxy_idle_timeout_s",
         }, "serve");
         if (obj.get("host")) |k| {
-            s.host = try jsonStr(k, "host");
+            // An empty host overrides the loopback default with a value that
+            // cannot be bound, and it is not read as "unset" the way
+            // CLANKER_HOST="" is (cli.zig skips that one), so the two layers
+            // would disagree about what the same empty means.
+            const host = try jsonStr(k, "host");
+            if (host.len == 0) {
+                cfgLog(.error_, "[serve].host must be a bind address, or be omitted to take the loopback default", .{});
+                return error.ServeHostEmpty;
+            }
+            s.host = host;
             f.host = true;
         }
         if (obj.get("webui_port")) |k| {
@@ -3253,8 +3274,17 @@ pub const Config = struct {
         }
         if (obj.get("buffer_bytes")) |k| {
             t.buffer_bytes = try jsonUnsigned(u32, k, "ttsr.buffer_bytes");
-            if (t.buffer_bytes == 0) t.buffer_bytes = 4096;
-            if (t.buffer_bytes > ttsr_buffer_bytes_max) t.buffer_bytes = ttsr_buffer_bytes_max;
+            // A value that cannot be honoured is reported rather than
+            // silently replaced: an operator who set 8 MiB and got 4 MiB
+            // would otherwise read the dump back and believe the cap is theirs.
+            if (t.buffer_bytes == 0) {
+                cfgLog(.warn, "[ttsr].buffer_bytes = 0 has no meaning; using {d}", .{ttsr_buffer_bytes_default});
+                t.buffer_bytes = ttsr_buffer_bytes_default;
+            }
+            if (t.buffer_bytes > ttsr_buffer_bytes_max) {
+                cfgLog(.warn, "[ttsr].buffer_bytes = {d} exceeds the {d} ceiling; using the ceiling", .{ t.buffer_bytes, ttsr_buffer_bytes_max });
+                t.buffer_bytes = ttsr_buffer_bytes_max;
+            }
         }
         if (obj.get("rules")) |k| {
             const arr = switch (k) {
@@ -5593,6 +5623,35 @@ test "a negative check timeout is rejected instead of wrapping into a huge one" 
         ,
     });
     try std.testing.expectError(error.FieldNotUint, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
+}
+
+test "a set-to-empty provider name or bind host is refused, not read as unset" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = ""
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        ,
+    });
+    try std.testing.expectError(error.DefaultProviderEmpty, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "a"
+        \\providers = { a = { base_url = "https://a.test" } }
+        \\models = { "a/m" = { provider = "a" } }
+        \\[serve]
+        \\host = ""
+        ,
+    });
+    try std.testing.expectError(error.ServeHostEmpty, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
 }
 
 test "a negative max_tokens is rejected instead of wrapping into a huge cap" {

@@ -1,7 +1,10 @@
 //! config: read and pin the effective config so the agent knows its own
 //! settings (providers, models, modules, budgets). The full dump shows
 //! config.toml + config.local.toml raw (local last, matching
-//! src/config.zig's load order). Optional {"section": "<key>"} filters to
+//! src/config.zig's load order), with every secret value replaced by
+//! <redacted> and the names, layout and comments left as the operator wrote
+//! them, since a dump is read by people and by the model. Optional
+//! {"section": "<key>"} filters to
 //! one top-level key of the HOST-MERGED config via ck_harness_config -- a
 //! wasm guest carries no TOML parser, so structured access goes through the
 //! host, which already parsed and merged both files. Known keys include
@@ -55,17 +58,24 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         // Section mode goes through ck_harness_config and must not depend on
         // this read: a missing grant here used to fail every call, including
         // {"section":"modules"}.
+        //
+        // The bytes are the operator's, so the names and layout survive, but
+        // the values do not: [mcp_servers.*].env/headers carry tokens inline
+        // and a hand-written api_key carries one by name, and the merged
+        // views (--dump-config, {"section":...}) already withhold both. This
+        // dump is what an agent run calls, so leaving it raw would put a
+        // credential in every transcript that asked to see the config.
         const base = lib.readConfigFile("config") orelse return lib.fail(out, "config.toml unreadable");
         const local = lib.readConfigFile("config.local");
         try text.appendSlice(lib.alloc, "=== ");
         try text.appendSlice(lib.alloc, base.name);
         try text.appendSlice(lib.alloc, " ===\n");
-        try text.appendSlice(lib.alloc, base.text);
+        try text.appendSlice(lib.alloc, try logic.redactSecrets(lib.alloc, base.text));
         if (local) |l| {
             try text.appendSlice(lib.alloc, "\n\n=== ");
             try text.appendSlice(lib.alloc, l.name);
             try text.appendSlice(lib.alloc, " ===\n");
-            try text.appendSlice(lib.alloc, l.text);
+            try text.appendSlice(lib.alloc, try logic.redactSecrets(lib.alloc, l.text));
         }
     } else {
         // Section filter over the host-merged config: ck_harness_config

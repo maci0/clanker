@@ -564,6 +564,63 @@ fn checkWorktreeLinks(
     }
 }
 
+/// How far the config reaches off this machine. `clanker serve` warns about
+/// one case (a proxy on a broad host with no token); the rest of the listener
+/// surface, and every grant a tool inherits, was only visible by reading the
+/// config, and these are the values an operator changes when moving a
+/// deployment off a laptop.
+///
+/// `isLoopbackHost` and `tokenInEffect` are the same two answers `cmdServe`
+/// warns from, so the report cannot disagree with the startup log about what
+/// "unprotected" means.
+const proxy = @import("serve/proxy.zig");
+///
+/// A non-loopback bind is a warning, not a failure: it is a legitimate LAN or
+/// container setup. What it says is the part that is otherwise invisible,
+/// that `/api` has no credential of its own and is held back by the Host and
+/// Origin guards (`serve/http.zig`) alone. A flag or an env var overriding
+/// the file is not visible from here, so the line names the config value it
+/// read rather than claiming to know the running listener.
+fn checkNetworkExposure(
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    cfg: *const config.Config,
+    rep: *Report,
+) !void {
+    const host = cfg.serve.host;
+    const broad = host != null and !proxy.isLoopbackHost(host.?);
+    if (broad) {
+        rep.line(.warn, "serve.host", try std.fmt.allocPrint(
+            arena,
+            "{s} is reachable off this machine; /api takes no token, so a Host/Origin guard is all that holds it (--host and CLANKER_HOST override this value)",
+            .{host.?},
+        ));
+    } else {
+        rep.line(.ok, "serve.host", if (host) |h|
+            try std.fmt.allocPrint(arena, "{s} (loopback)", .{h})
+        else
+            "unset (loopback default)");
+    }
+    if (cfg.serve.proxy) {
+        const unprotected = broad and !proxy.tokenInEffect(&cfg.serve, environ_map);
+        rep.line(
+            if (unprotected) .warn else .ok,
+            "serve.proxy",
+            if (unprotected)
+                try std.fmt.allocPrint(arena, "mounted on {s} without an effective proxy_token_env; anyone who can reach the port spends the configured keys", .{host.?})
+            else if (proxy.tokenInEffect(&cfg.serve, environ_map))
+                "mounted; proxy_token_env is set"
+            else
+                "mounted; loopback, no token needed",
+        );
+    }
+    for (cfg.web.allow) |allowed| {
+        if (std.mem.eql(u8, allowed, "*")) {
+            rep.line(.warn, "web.allow", "\"*\" lets the research tools reach any host");
+        }
+    }
+}
+
 /// Every check doctor runs, so `setup` can end with the same report rather
 /// than a second, drifting copy of it.
 fn runChecks(
@@ -700,6 +757,9 @@ fn runChecks(
     } else if (usable == 0) {
         rep.line(.fail, "any usable provider", "no provider has a credential");
     }
+
+    rep.section("network exposure");
+    try checkNetworkExposure(arena, environ_map, &cfg, rep);
 
     rep.section("directories");
     for (cfg.agent.tools_dir) |tools_dir| {

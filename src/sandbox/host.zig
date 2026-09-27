@@ -1424,8 +1424,9 @@ pub fn ckConfig(caller: *zwasm.Caller) u32 {
 /// models, instance, peers, default_provider), as JSON. Distinct from
 /// ck_config: that returns this *tool's* descriptor `config` object; this
 /// returns clanker's config.toml/config.local.toml, merged, as the harness
-/// parsed it, regardless of whether the checkout uses TOML or (legacy)
-/// JSON. Guests need this because a wasm32-freestanding module carries no
+/// parsed it. TOML is the only format the loader reads (`loadFile` in
+/// src/config.zig), and a leftover config.json does nothing. Guests need this
+/// because a wasm32-freestanding module carries no
 /// TOML parser: reading config.toml's raw bytes directly only works for
 /// tools that just display the file (config's whole-dump path); a tool
 /// that needs structured fields (peers, providers, status, ask_user)

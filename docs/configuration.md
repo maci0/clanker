@@ -26,6 +26,22 @@ code wins.
 TOML is the only supported format (there is no JSON config). A missing key
 takes its default; an unknown key logs a warning and is ignored (so a typo like
 `mx_iterations` does not silently misbehave, it warns and uses the default).
+A value that is present but empty is not a missing value: `default_provider =
+""` and `[serve] host = ""` are both refused at load, naming the key, because
+each would otherwise be read as a setting that resolves to nothing.
+
+Four places read the result, and each is redacted the same way:
+
+- `clanker config dump` prints both files as the operator wrote them, with
+  every secret value replaced by `<redacted>`: an `[mcp_servers.<name>]`
+  `env`/`headers` value, and an assignment whose key names a secret
+  (`api_key`, `token`, `password`, and the rest). The names, the layout and
+  the comments survive, so the dump is still the file a human reads.
+- `clanker config get <key>` and `clanker config dump --section <key>` go
+  through the merged config, which already withholds those values.
+- `--dump-config` on any command prints the merged config the same way.
+- The `config` tool an agent run calls is the `clanker config dump` path, so
+  a transcript never carries a credential the merged views would not show.
 
 ## Configuration errors
 
@@ -635,7 +651,12 @@ A second process on the same host uses another `id`, `listen_port`,
   disables either ceiling. The weakest of three layers —
   `CLANKER_HOST` / `CLANKER_WEBUI_PORT` / `CLANKER_PROXY_PORT` override it, and
   `--host` / `--webui-port` / `--serve-as` / `--proxy` / `--no-proxy` /
-  `--proxy-port` override those. Field-merged, so a `config.local.toml` that
+  `--proxy-port` override those. A non-loopback `host` also puts `/api` off
+  this machine, and that surface takes no token of its own: it is held back by
+  the Host and Origin guards alone. `clanker doctor` says so in its
+  **network exposure** section, along with a proxy mounted on a broad host
+  without an effective `proxy_token_env` and a `web.allow` of `["*"]`.
+  Field-merged, so a `config.local.toml` that
   only sets `host` keeps a base `proxy = true`. With no proxy enabled, the
   process opens exactly one socket; a distinct `proxy_port` opens the only
   second listener.

@@ -389,6 +389,12 @@ id = "main"
 # --host / --webui-port / --serve-as / --proxy / --no-proxy / --proxy-port
 # override those in turn. Commented out because the default (loopback, 17921)
 # is the one that is safe unattended.
+#
+# 0.0.0.0 also puts /api off this machine, and that surface takes no token of
+# its own: the Host and Origin guards are all that hold it. `clanker doctor`
+# reports a broad bind, a proxy mounted on one without a working
+# proxy_token_env, and a `web.allow` of ["*"] in its network exposure section.
+# An empty `host` is refused at load, not read as "unset".
 # [serve]
 # host = "0.0.0.0"
 # webui_port = 17921
