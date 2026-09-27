@@ -10,7 +10,7 @@ import test from "node:test";
 // comptime and `clanker serve` has no build step, so the file in the tree is
 // what the browser gets. That makes two mistakes invisible by eye — a utility
 // written into markup and never regenerated (Tailwind emits nothing for it and
-// the element silently inherits), and a theme value naming a token app.css
+// the element silently inherits), and a theme value naming a token the source
 // does not declare (a `var()` with no declaration computes to nothing, so the
 // property is simply dropped).
 //
@@ -21,7 +21,7 @@ import test from "node:test";
 const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, "tailwind.src.css"), "utf8");
 const built = readFileSync(join(here, "tailwind.css"), "utf8");
-const appCss = readFileSync(join(here, "app.css"), "utf8");
+const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
 
 /// Files whose class strings are Tailwind utilities. Add a path only with the
 /// rules it replaces deleted in the same change.
@@ -189,10 +189,10 @@ test("the compiled sheet is the build of the source beside it", function () {
   assert.match(built, /^\/\*! tailwindcss v4\./, "tailwind.css must be a Tailwind build");
   assert.match(source, /@import "tailwindcss\/theme\.css"/);
   assert.match(source, /@import "tailwindcss\/utilities\.css"/);
-  // Preflight is deliberately deferred until the cabinet sheets are gone; if
-  // it lands here first, every unported view repaints at once.
-  assert.ok(!/@import "tailwindcss\/preflight/.test(source),
-    "preflight lands with the last cabinet sheet, not before");
+  // Preflight is Tailwind's reset and it is here now that the last cabinet
+  // sheet is gone: the cabinet's own element rules sit in @layer base after it,
+  // so nothing repaints that the port did not move first.
+  assert.match(source, /@import "tailwindcss\/preflight\.css" layer\(base\)/);
 });
 
 test("every token the theme reads is declared by a shipped sheet", function () {
@@ -211,7 +211,7 @@ test("every token the theme reads is declared by a shipped sheet", function () {
 test("every class a migrated file uses resolves in a shipped sheet", function () {
   // The utility has to be in the compiled sheet — a class written into markup
   // and never rebuilt emits no rule at all, and the element silently inherits.
-  // A chrome class still defined in app.css is legal until that view moves.
+  // A chrome class resolves in the sheet's component layer or in a utility.
   const missing = [];
   for (const rel of migrated) {
     const src = readFileSync(join(here, rel), "utf8");
@@ -304,7 +304,7 @@ test("migrated files use scale utilities, not arbitrary values", function () {
 // happened while the Tailwind port deleted rules, so this checks every shipped
 // sheet rather than trusting the diff.
 test("every shipped sheet is brace-balanced and has no dangling selector list", function () {
-  for (const [name, src] of [["app.css", readFileSync(join(here, "app.css"), "utf8")], ["tailwind.css", readFileSync(join(here, "tailwind.css"), "utf8")]]) {
+  for (const [name, src] of [["tailwind.src.css", readFileSync(join(here, "tailwind.src.css"), "utf8")], ["tailwind.css", readFileSync(join(here, "tailwind.css"), "utf8")]]) {
     let depth = 0;
     let line = 1;
     let firstNegative = 0;

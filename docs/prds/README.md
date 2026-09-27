@@ -117,7 +117,7 @@ and Implementation lists checkable file-level phases.
 | [0056](0056-goal-queue-started-only-on-complete.md) | Goal queue started only on complete | Draft |  |
 | [0057](0057-nested-explore-plan-coder-presets.md) | Nested explore/plan/coder presets | Draft |  |
 | [0058](0058-repl-mid-stream-inject-via-steer.md) | REPL mid-stream inject via steer | Shipped | Composer-as-steer-box shipped differently than drafted; no `/steer` command, no Ctrl-S binding |
-| [0059](0059-port-every-web-ui-view-onto-tailwind-4-and-a-shadcn-shaped.md) | Port every web UI view onto Tailwind 4 and a shadcn-shaped component kit | Draft |  |
+| [0059](0059-port-every-web-ui-view-onto-tailwind-4-and-a-shadcn-shaped.md) | Port every web UI view onto Tailwind 4 and a shadcn-shaped component kit | Shipped |  |
 <!-- inventory:prd:end -->
 
 ## Recommended build order (Drafts and open in-progress work)

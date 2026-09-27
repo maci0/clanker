@@ -7,7 +7,7 @@ import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
-const css = readFileSync(join(here, "..", "app.css"), "utf8");
+const css = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 
 test("empty Chat hides session verbs and find", function () {
   // The empty state is an attribute on the view, and the script that knows it

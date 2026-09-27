@@ -79,7 +79,7 @@ test("Jump-to-latest button stays hidden while the conversation is at the end", 
 
 test("shipped Chat markup is a session-first column", function () {
   var html = readFileSync(join(here, "..", "index.html"), "utf8");
-  var css = readFileSync(join(here, "..", "app.css"), "utf8");
+  var css = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
   assert.match(html, /id="app-page"/);
   assert.match(html, /id="app-masthead"/);
   assert.match(html, /id="rail" aria-label="Navigation"/);

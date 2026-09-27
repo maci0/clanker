@@ -49,7 +49,7 @@ test("join field stays 16px on a phone so iOS does not zoom", function () {
   // field is still a plain text input, and that the page-wide guard is still
   // the one that covers it (harden.test.mjs pins the guard itself).
   assert.match(js, /addr\.type = "text"/);
-  const host = readFileSync(join(dir, "..", "..", "app", "app.css"), "utf8");
+  const host = readFileSync(join(dir, "..", "..", "app", "tailwind.src.css"), "utf8");
   assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="search"\]/);
 });
 

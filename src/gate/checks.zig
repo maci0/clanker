@@ -2262,12 +2262,14 @@ const WebuiCap = struct {
 /// smaller is covered by the total below, where growth from many small
 /// additions shows up without each file needing its own row to maintain.
 /// Limits are raw bytes measured on this tree with ~15% headroom:
-/// index.html 74382, app.css 168540, app.js 252003,
+/// index.html 74382, tailwind.css 184850, app.js 252003,
 /// all as of 2026-08-25. Raising one is
 /// a deliberate edit to this table, made with a fresh measurement beside it.
 const webui_first_paint_caps = [_]WebuiCap{
     .{ .path = "ui/app/index.html", .limit = 88 * 1024 },
-    .{ .path = "ui/app/app.css", .limit = 194 * 1024 },
+    // The one sheet: the cabinet's tokens, its element layer, the port's
+    // utilities and the component rules. Measured 184850 raw on 2026-08-25.
+    .{ .path = "ui/app/tailwind.css", .limit = 196 * 1024 },
     .{ .path = "ui/app/app.js", .limit = 290 * 1024 },
 };
 
@@ -2408,7 +2410,7 @@ test "collectEagerWebuiUrls takes the three tag shapes, dedupes, and skips forei
     var urls: std.ArrayList([]const u8) = .empty;
     const html =
         \\<link rel="modulepreload" href="/webui/app.js">
-        \\<link rel="stylesheet" href="/webui/app.css">
+        \\<link rel="stylesheet" href="/webui/tailwind.css">
         \\<link rel="icon" href="data:image/svg+xml,xxx">
         \\<script type="module" src="/webui/app.js"></script>
         \\<script type="module" src="/webui/core/utils.js"></script>
@@ -2437,20 +2439,20 @@ test "scanWebuiBudget names an over-cap file and a missing reference" {
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io, "ui/app");
-    // Over the app.css cap (194 KiB) but nowhere near the eager total, so the
+    // Over the tailwind.css cap but nowhere near the eager total, so the
     // failure can only be the per-file one.
     const big = try gpa.alloc(u8, 200 * 1024);
     defer gpa.free(big);
     @memset(big, 'a');
-    try tmp.dir.writeFile(io, .{ .sub_path = "ui/app/app.css", .data = big });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/app/tailwind.css", .data = big });
     const html =
-        \\<link rel="stylesheet" href="/webui/app.css">
+        \\<link rel="stylesheet" href="/webui/tailwind.css">
         \\<script type="module" src="/webui/core/gone.js"></script>
     ;
     var result = try scanWebuiBudget(gpa, io, tmp.dir, html);
     defer result.deinit(gpa);
     try std.testing.expect(!result.ok);
-    try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/app.css is ") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/tailwind.css is ") != null);
     try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/core/gone.js does not exist") != null);
 }
 

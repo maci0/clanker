@@ -79,7 +79,8 @@ test "readDiskAsset refuses linked assets and linked parent directories" {
 pub const Kind = enum {
     css,
     /// The compiled Tailwind sheet (`app/tailwind.css`). Its own kind: a tag
-    /// that aliased `.css` served app.css's bytes at /webui/tailwind.css.
+    /// that aliased `.css` served the cabinet sheet's bytes at
+    /// /webui/tailwind.css.
     tailwind_css,
     js,
     boot,
@@ -192,7 +193,6 @@ pub fn kindFor(target: []const u8) Kind {
 /// a test in `cli.zig` walks the source tree and fails if a file exists that
 /// this list has never heard of.
 pub const asset_paths = [_][]const u8{
-    "/webui/app.css",
     "/webui/tailwind.css",
     "/webui/app.js",
     "/webui/preact-boot.js",

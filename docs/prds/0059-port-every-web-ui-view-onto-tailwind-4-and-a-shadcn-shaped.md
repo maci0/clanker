@@ -2,7 +2,7 @@
 
 ## Status
 
-Draft — opened 2026-09-27, foundation and every plugin but `arena3d` landed,
+Shipped — 2026-09-27. The one sheet is ui/app/tailwind.src.css, compiled to the committed ui/app/tailwind.css: the cabinet tokens, the element layer in @layer base after preflight, every view's utilities, and the component rules for the rendered document and for the chrome vocabulary plugins write by name. ui/app/app.css, ui/app/views.css, the PatternFly sheet and every pf-v6-* class are gone.
 with all ten feature views, app.js, core/ui.js, core/kit.js, core/tools.js,
 core/usage.js and lib/graph.js on the ledger (re-counted 2026-09-27; the
 `bun test ui/app ui/plugins` suite is green at 371 pass). The single
@@ -171,11 +171,13 @@ kit only through the plugin API and a declared capability, gated in
 
 - [x] `bun test ui/app ui/plugins` and `zig build test` green at every step;
       `clanker gate` green at the end.
-- [ ] No cabinet selector remains for a file on the migrated ledger, and
-      every class a migrated file names resolves in a shipped sheet.
-- [ ] First paint stays inside 64K gz; the final tree carries no PatternFly
-      sheet, no views.css and no app.css.
-- [ ] Adding a view under ui/plugins/ needs no host rebuild and no ui/app/
+- [x] No cabinet selector remains for a file on the migrated ledger, and
+      every class a migrated file names resolves in a shipped sheet — the
+      ledger is `ui/app/tailwind.test.mjs`, and its `migrated` list covers
+      every view, plugin app and chrome module.
+- [x] First paint stays inside 64K gz (49.9K gz measured on the shipped tree);
+      the final tree carries no PatternFly sheet, no views.css and no app.css.
+- [x] Adding a view under ui/plugins/ needs no host rebuild and no ui/app/
       edit.
 
 ## Open questions / future work

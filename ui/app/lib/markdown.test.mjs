@@ -15,7 +15,7 @@ after(function () { restoreDom(); });
 const here = dirname(fileURLToPath(import.meta.url));
 const md = readFileSync(join(here, "markdown.js"), "utf8");
 const app = readFileSync(join(here, "../app.js"), "utf8");
-const css = readFileSync(join(here, "../app.css"), "utf8");
+const css = readFileSync(join(here, "../tailwind.src.css"), "utf8");
 // A ported file's shapes live in the Tailwind source, not the cabinet sheet.
 const tw = readFileSync(join(here, "../tailwind.src.css"), "utf8");
 

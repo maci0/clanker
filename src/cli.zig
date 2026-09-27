@@ -11352,7 +11352,7 @@ fn handleWebui(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, en
 /// again to `/webui/~tag/core/core/utils.js` and 404'd. The whole UI then
 /// painted the rail chrome and never ran app.js.
 fn webuiImportMapJson(buf: []u8, tag: []const u8) ![]const u8 {
-    return std.fmt.bufPrint(buf, "{{\"imports\":{{\"/webui/vendor/\":\"/webui/~{s}/vendor/\",\"/webui/core/\":\"/webui/~{s}/core/\",\"/webui/lib/\":\"/webui/~{s}/lib/\",\"/webui/features/\":\"/webui/~{s}/features/\",\"/webui/app.js\":\"/webui/~{s}/app.js\",\"/webui/app.css\":\"/webui/~{s}/app.css\",\"/webui/preact-boot.js\":\"/webui/~{s}/preact-boot.js\"}}}}", .{ tag, tag, tag, tag, tag, tag, tag });
+    return std.fmt.bufPrint(buf, "{{\"imports\":{{\"/webui/vendor/\":\"/webui/~{s}/vendor/\",\"/webui/core/\":\"/webui/~{s}/core/\",\"/webui/lib/\":\"/webui/~{s}/lib/\",\"/webui/features/\":\"/webui/~{s}/features/\",\"/webui/app.js\":\"/webui/~{s}/app.js\",\"/webui/tailwind.css\":\"/webui/~{s}/tailwind.css\",\"/webui/preact-boot.js\":\"/webui/~{s}/preact-boot.js\"}}}}", .{ tag, tag, tag, tag, tag, tag, tag });
 }
 
 /// `GET /api/runs` lists recorded runs; `GET /api/runs/<id>` returns one whole
@@ -20748,17 +20748,17 @@ test "isWebuiRead treats HEAD like GET" {
 
 test "normalizeWebuiPath strips a well-formed cache-bust prefix" {
     var buf: [128]u8 = undefined;
-    const a = normalizeWebuiPath("/webui/~abcdef12/app.css", &buf);
+    const a = normalizeWebuiPath("/webui/~abcdef12/tailwind.css", &buf);
     try std.testing.expect(a.tagged);
-    try std.testing.expectEqualStrings("/webui/app.css", a.path);
+    try std.testing.expectEqualStrings("/webui/tailwind.css", a.path);
 
-    const b = normalizeWebuiPath("/webui/app.css", &buf);
+    const b = normalizeWebuiPath("/webui/tailwind.css", &buf);
     try std.testing.expect(!b.tagged);
-    try std.testing.expectEqualStrings("/webui/app.css", b.path);
+    try std.testing.expectEqualStrings("/webui/tailwind.css", b.path);
 
-    const c = normalizeWebuiPath("/webui/~nothex!!/app.css", &buf);
+    const c = normalizeWebuiPath("/webui/~nothex!!/tailwind.css", &buf);
     try std.testing.expect(!c.tagged);
-    try std.testing.expectEqualStrings("/webui/~nothex!!/app.css", c.path);
+    try std.testing.expectEqualStrings("/webui/~nothex!!/tailwind.css", c.path);
 
     const d = normalizeWebuiPath("/webui/~ABCDEF00/core/ui.js", &buf);
     try std.testing.expect(d.tagged);
@@ -20771,14 +20771,14 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
     const arena = arena_state.allocator();
     const html =
         \\<!doctype html><head><title>x</title></head>
-        \\<link href="/webui/app.css">
+        \\<link href="/webui/tailwind.css">
         \\<link rel="modulepreload" href="/webui/app.js">
         \\<script type="module" src="/webui/app.js"></script>
     ;
     var map_buf: [1024]u8 = undefined;
     const map_json = try webuiImportMapJson(&map_buf, "deadbeef");
     const out = try withWebuiCacheUrls(arena, html, "deadbeef", map_json);
-    try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.css") != null);
+    try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/tailwind.css") != null);
     try std.testing.expect(std.mem.find(u8, out, "/webui/~deadbeef/app.js") != null);
     // A modulepreload link is rewritten like any other asset URL: if the head
     // preloads the untagged URL while the script tag loads the tagged one, the
@@ -20793,7 +20793,7 @@ test "withWebuiCacheUrls rewrites assets and injects an import map" {
     // The map's own keys must survive the rewrite pass untagged, or every
     // specifier it exists to remap stops matching.
     try std.testing.expect(std.mem.find(u8, out, "\"/webui/core/\":\"/webui/~deadbeef/core/\"") != null);
-    try std.testing.expect(std.mem.find(u8, out, "href=\"/webui/app.css\"") == null);
+    try std.testing.expect(std.mem.find(u8, out, "href=\"/webui/tailwind.css\"") == null);
 }
 
 test "webui import map keys do not match an already-tagged URL" {

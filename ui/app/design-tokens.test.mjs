@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 // The Control Cabinet's edges and its type scale are tokens, not literals.
-// app.css declares five radii (2/3/4px plus the pill) and six type steps, and
+// The source declares five radii (2/3/4px plus the pill) and six type steps, and
 // the header comment says why: machined plate edges, "not SaaS cards", with
 // every legend plate on one scale. A stray `border-radius: 12px` or
 // `font-size: 14px` does not read as a bug, so nothing catches it — the sheet
@@ -20,12 +20,10 @@ const pluginsDir = join(here, "..", "plugins");
 
 function sheets() {
   const out = [
-    ["app/app.css", readFileSync(join(here, "app.css"), "utf8")],
-    // The Tailwind source, not its build product: tailwind.css is machine
-    // output, and every value a person writes lives in the source, which maps
-    // each one onto the token app.css declares. Migration in progress: when the
-    // last cabinet rule moves over, the tokens move into the @theme block and
-    // this entry is what the two sheets were pinned against.
+    // The one sheet, source not build product: tailwind.css is machine output,
+    // and every value a person writes lives in tailwind.src.css — the cabinet's
+    // tokens, its element layer and the port's utilities, in one place now that
+    // the last cabinet sheet is gone.
     ["app/tailwind.src.css", readFileSync(join(here, "tailwind.src.css"), "utf8")],
     // The win2k skin is fetched only when that theme is applied, but it is
     // still a sheet this page paints with, so it rides the same scale and edge
@@ -169,8 +167,8 @@ test("every font-size is a type step, inherited, or the 16px touch-field guard",
   assert.deepEqual(strays, [], `off-scale font sizes (use --step--2 … --step-3):\n${strays.join("\n")}`);
 });
 
-test("the scale the sheets reference is the scale app.css declares", () => {
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+test("the scale the sheets reference is the scale the source declares", () => {
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   for (const token of ["--step--2", "--step--1", "--step-0", "--step-1", "--step-2", "--step-3"]) {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
@@ -198,7 +196,7 @@ test("letter-spacing is --track-label, optical, or none", () => {
 // catch those; a PF class that still reads the library tokens would round
 // a plate into a SaaS card. The rungs have to ride the cabinet scale.
 test("PatternFly radius and glass tokens ride the cabinet scale", () => {
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   const pairs = [
     ["--pf-t--global--border--radius--300", "var(--radius-lg)"],
     ["--pf-t--global--border--radius--400", "var(--radius-lg)"],
@@ -294,8 +292,8 @@ test("spacing that lands on a rung of the scale is written as the token", () => 
   assert.deepEqual(strays, [], `spacing on the scale must name its token:\n${strays.join("\n")}`);
 });
 
-test("the space scale the sheets reference is the scale app.css declares", () => {
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+test("the space scale the sheets reference is the scale the source declares", () => {
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   for (const token of Object.values(SPACE_STEPS)) {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
@@ -322,7 +320,7 @@ test("the lamp dome is a token, never retyped", () => {
 });
 
 test("the lamp tokens the sheets reference are declared", () => {
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   for (const token of ["--lamp-dome", "--lamp-ring", "--lamp-glow"]) {
     assert.match(appCss, new RegExp(`\\n\\s*${token}\\s*:`), `${token} is used but never declared`);
   }
@@ -395,7 +393,7 @@ test("every theme declares all three elevation rungs", () => {
   // A rung declared only in app.css is a rung the ten themes cannot retune,
   // which is how a light-theme smudge survives on graphite. The bevels are on
   // this list for the same reason and by the same rule.
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   const rungs = [
     "--lift-low", "--lift", "--lift-high",
     "--bevel-raised", "--bevel-inset", "--bevel-pressed",
@@ -423,7 +421,7 @@ test("every theme declares all three elevation rungs", () => {
 // pins. Both halves are the same rule, so the theme rides the token rather
 // than forking it.
 test("violet is the interactive accent in every theme", () => {
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   assert.match(
     appCss,
     /\n\s*--violet\s*:\s*var\(--accent\)\s*;/,
@@ -533,7 +531,7 @@ test("card colours are --card-* tokens, never literals", () => {
 });
 
 test("every card hue is declared once and carries legible ink", () => {
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
 
   const hex = (token) => {
     const m = appCss.match(new RegExp(`\\n\\s*${token}\\s*:\\s*(#[0-9a-fA-F]{6})\\s*;`));
@@ -557,7 +555,7 @@ test("every card hue is declared once and carries legible ink", () => {
 test("card hues stay theme-constant", () => {
   // A card's colour must mean the same thing in either theme, so unlike the
   // chat hues these are declared once and never redefined in a dark block.
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   for (const hue of CARD_HUES) {
     const count = [...appCss.matchAll(new RegExp(`\\n\\s*--card-${hue}\\s*:`, "g"))].length;
     assert.equal(count, 1, `--card-${hue} is declared ${count} times; it must be theme-constant`);
@@ -596,7 +594,7 @@ function themeTokens() {
 // because a neutral has no hue angle, so matching against it would let any
 // desaturated colour through.
 function enamelAngles() {
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   const angles = [];
   for (const m of appCss.matchAll(/\n\s*--card-([a-z]+)\s*:\s*(#[0-9a-fA-F]{6})\s*;/g)) {
     const angle = hueAngle(m[2]);
@@ -621,7 +619,7 @@ test("every chat hue is a card enamel, shaded", () => {
     // Shading preserves hue exactly; 3 degrees is rounding to 8-bit channels.
     if (near.gap > 3) strays.push(`${where}  ${hex} (hue ${angle.toFixed(0)}) matches no enamel; nearest is --card-${near.name} at ${near.gap.toFixed(0)} degrees off`);
   };
-  const appCss = readFileSync(join(here, "app.css"), "utf8");
+  const appCss = readFileSync(join(here, "tailwind.src.css"), "utf8");
   for (const { value, line } of declarations(appCss, "--chat-hue-\\d")) {
     check(`app/app.css:${line}`, value);
   }

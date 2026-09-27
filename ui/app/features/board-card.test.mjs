@@ -28,7 +28,7 @@ import vm from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const js = readFileSync(join(here, "board.js"), "utf8");
-const css = readFileSync(join(here, "..", "app.css"), "utf8");
+const css = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 
 function elem(tag) {
   const e = {

@@ -11,11 +11,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 // These assertions are about shipped behavior; app.css is the cabinet sheet,
 // and the chrome vocabulary — the names a plugin also writes by hand — is a
 // component block in the Tailwind source.
-const css = readFileSync(join(here, "..", "app.css"), "utf8");
+const css = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 const chrome = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
-// The cascade is app.css then tailwind.css, so a rule's position in this
-// concatenation is the order the browser applies them in.
-const cascade = css + "\n" + chrome;
+// One sheet: tailwind.src.css compiles to tailwind.css, and its own order is
+// the cascade order.
+const cascade = chrome;
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
 // The last place a guard appears is the one the browser applies last.
 function lastIndexOfPattern(text, re) {

@@ -40,7 +40,7 @@ test("music URL field is 16px on a phone so iOS does not zoom", () => {
   // the page-wide 40rem guard covers (harden.test.mjs pins that guard). What
   // this checks is that the field still qualifies for it.
   assert.match(js, /url\.type = "url"/);
-  const host = readFileSync(join(dir, "..", "..", "app", "app.css"), "utf8");
+  const host = readFileSync(join(dir, "..", "..", "app", "tailwind.src.css"), "utf8");
   assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="url"\]/);
 });
 

@@ -8,7 +8,7 @@ import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // These assertions are about shipped layout; the cabinet sheet is the one left.
-const css = readFileSync(join(here, "..", "app.css"), "utf8");
+const css = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 // The view frame and the section rhythm are component rules in the source.
 const frame = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 // The rendered document's shapes are a component block in the Tailwind source.

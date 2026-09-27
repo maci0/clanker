@@ -95,7 +95,7 @@ test("the win2k skin is scoped to its theme and draws from its own tokens", func
 // passes (imp-1787095166595783866, imp-1787096287238773039,
 // imp-1787097418987953973), were removed wholesale in 48d03d8b, and are
 // restored here; the pins exist so a third round-trip is a red test.
-const appCss = readFileSync(join(here, "..", "app.css"), "utf8");
+const appCss = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
 
 test("the picker walks its options with ArrowUp/ArrowDown and wraps", function () {
   assert.match(themeJs, /ArrowDown/);

@@ -3,7 +3,7 @@
 // inherit the host's button shape, and the phone layout keeps the names.
 //
 // The plugin ships no stylesheet (the Tailwind port deleted it), so what used
-// to be asserted against `app.css` is asserted against the class strings the
+// to be asserted against the cabinet sheet is asserted against the class strings the
 // view builds its elements from, plus the page sheet where the styling is the
 // page's own. ui/app/tailwind.test.mjs proves every one of these utilities has
 // a rule in the compiled sheet; these are the layout and hit-target contracts.
@@ -15,7 +15,7 @@ import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const js = readFileSync(join(here, "app.js"), "utf8");
-const host = readFileSync(join(here, "../../app/app.css"), "utf8");
+const host = readFileSync(join(here, "../../app/tailwind.src.css"), "utf8");
 
 /// The utility string a named class constant holds, including what it is built
 /// from (`"…" + PLAIN_BTN`).

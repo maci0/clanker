@@ -25,6 +25,334 @@
 
 @import "tailwindcss/theme.css";
 @import "tailwindcss/utilities.css";
+@import "tailwindcss/preflight.css" layer(base);
+
+:root {
+  color-scheme: light dark;
+
+  /* Day-shift cabinet: warm RAL greys, not zinc-on-white. Backplane is
+     pebble grey; panel faces are a lighter grey-white. */
+  --paper: #eeebe4;
+  --bg: #dcd9d1;
+  --surface: #eeebe4;
+  --surface-2: #e2dfd6;
+  --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
+  --surface-raised: var(--surface-2);
+  --border: #b9b5aa;
+  --rule: #cdc9bf;
+  --fg: #1b1c18;
+  --fg-muted: #4f534b;
+
+  /* Operator action blue and the IEC 60073 signal colours, as RAL Classic
+     readings — the same enamels as the card covers and chat hues, not a
+     framework ramp. The interactive blue used to be Material's #0b57d0 while
+     RAL 5017 traffic blue sat two dozen lines below it in --card-blue, and
+     the lamps drew Tailwind's red-700/amber-700/green-600; a cabinet whose
+     whole argument is that one blue means one thing cannot carry two blues. */
+  --accent: #1d5c9e;    /* RAL 5017 traffic blue */
+  --accent-dim: #1d5c9e14;
+  --accent-text: #1d5c9e;
+  --on-accent: #ffffff;
+  --ok: #117a3a;
+  --ok-fill: #2c6b34;   /* RAL 6002 leaf green */
+  /* Goals and jumps are operator action: same blue as the actuators. Every
+     theme/ file carries its own blue reading of that role, so this is the day
+     face's value and not the value a theme may borrow. */
+  --violet: var(--accent);
+  --violet-text: var(--accent-text);
+  --danger: #a72920;    /* RAL 3001 signal red */
+  --on-danger: #ffffff;
+  --scrim: rgba(27, 28, 24, 0.32);
+  /* Golden yellow is the abnormal lamp; on the day face it is darkened so
+     white legend text on it still clears 4.5, and the text reading darker
+     still for its own 4.5 on the panel. */
+  --warn: #8a6d00;      /* RAL 1004 golden yellow, darkened */
+  --warn-text: #6b5200; /* RAL 1004, darker reading */
+  /* Code wells stay in the page's luminance family so hljs tokens
+     (--fg / --ok / --accent-text / --warn-text) keep contrast. A
+     GitHub-dark well on a light page made every token unreadable. */
+  --code-bg: #d4d0c6;
+  --code-fg: #1b1c18;
+
+  /* Per-sender chat hues: one stable colour per clanker name so different
+     senders read as different people at a glance.
+
+     These are the card enamels below, shaded for text: the same RAL Classic
+     vocabulary as the panel greys, not a second palette. They used to be a
+     framework's default ramp used raw (violet-600, purple-600, emerald-700,
+     lime-800 and friends), which is how a page that had exiled violet from
+     its chrome one screen up still painted two of its eight senders violet.
+     Worse, all ten themes/*.json shipped byte-identical copies of two sets,
+     so hackerman's green-on-black CRT and latte's pastel both drew senders
+     in the same borrowed ramp: a "theme" that themed everything but this.
+
+     Day is each enamel darkened until it clears 5.5:1 on the panel face,
+     night is the same enamel tinted until it clears 5.5:1 on the cabinet
+     interior, a derivation per theme family rather than one set inverted. Leaf
+     green is pushed past its minimum on purpose: at the bar it and yellow
+     green were the same colour. Pinned by design-tokens.test.mjs. */
+  --chat-hue-0: #1d5c9e;  /* RAL 5017 traffic blue */
+  --chat-hue-1: #9c386a;  /* RAL 4003 heather violet */
+  --chat-hue-2: #1f4a24;  /* RAL 6002 leaf green */
+  --chat-hue-3: #984517;  /* RAL 2001 red orange */
+  --chat-hue-4: #6c4a86;  /* RAL 4008 signal violet */
+  --chat-hue-5: #406727;  /* RAL 6018 yellow green */
+  --chat-hue-6: #a72920;  /* RAL 3001 signal red */
+  --chat-hue-7: #715b00;  /* RAL 1004 golden yellow */
+
+  /* Card cover/label hues. Theme-constant on purpose: a card's colour must
+     mean the same thing whichever theme the browser picked, so these are the
+     one set the dark blocks below do NOT redefine.
+
+     The values are RAL Classic enamels, the same vocabulary the panel greys
+     come from — signal red, traffic blue, signal violet — not a web palette.
+     Each carries its own ink, picked by measured contrast rather than per
+     rule: every pair here is >= 5.5:1, so a label is legible on either
+     theme. Covers, labels, swatches and the detail header all read these,
+     which is what keeps one hue one value; they used to be four literal
+     sets that had already drifted apart (cover green #0a7a2e vs label
+     green #22a24a). */
+  --card-green: #2c6b34;   /* RAL 6002 leaf green */
+  --card-yellow: #c19a00;  /* RAL 1004 golden yellow */
+  --card-orange: #a84c19;  /* RAL 2001 red orange */
+  --card-red: #a72920;     /* RAL 3001 signal red */
+  --card-purple: #6c4a86;  /* RAL 4008 signal violet */
+  --card-blue: #1d5c9e;    /* RAL 5017 traffic blue */
+  --card-sky: #1f6389;     /* RAL 5012 light blue */
+  --card-pink: #ab3d74;    /* RAL 4003 heather violet */
+  --card-lime: #68a83f;    /* RAL 6018 yellow green */
+  --card-black: #2b2b2c;   /* RAL 9004 signal black */
+  --card-ink-on-dark: #ffffff;
+  --card-ink-on-light: #12140f;
+  --card-green-ink: var(--card-ink-on-dark);
+  --card-yellow-ink: var(--card-ink-on-light);
+  --card-orange-ink: var(--card-ink-on-dark);
+  --card-red-ink: var(--card-ink-on-dark);
+  --card-purple-ink: var(--card-ink-on-dark);
+  --card-blue-ink: var(--card-ink-on-dark);
+  --card-sky-ink: var(--card-ink-on-dark);
+  --card-pink-ink: var(--card-ink-on-dark);
+  --card-lime-ink: var(--card-ink-on-light);
+  --card-black-ink: var(--card-ink-on-dark);
+
+  /* Prose in the text face; every measurement and every legend plate in
+     mono, because a panel's engraving is fixed-pitch and its readings align. */
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Micro rung for dense readouts: badge counts, graph-node stamps. */
+  --step--2: 0.6875rem;
+  --step--1: 0.75rem;
+  --step-0: 0.875rem;
+  --step-1: 1rem;
+  --step-2: 1.125rem;
+  --step-3: 1.375rem;
+  /* Engraved legend plates: one tracking, the 0.06em DESIGN.md names.
+     Headings stay untracked; tight tracking is the SaaS default this page
+     does not use. */
+  --track-label: 0.06em;
+
+  --space-1: 0.25rem;
+  --space-2: 0.4rem;
+  --space-3: 0.6rem;
+  --space-4: 0.9rem;
+  --space-5: 1.4rem;
+  --space-6: 2.2rem;
+  --space-7: 3.4rem;
+
+  --measure: 70ch;
+
+  /* Machined plate edges, not SaaS cards. Pills stay for lamp housings. */
+  --radius-sm: 2px;
+  --radius: 3px;
+  --radius-lg: 4px;
+  --radius-pill: 999px;
+
+  /* The margin column the transcript's job numbers are stamped into. */
+  --gutter: 3.25rem;
+
+  /* The lamp dome — the one boldness this page spends, so it is a token
+     rather than a recipe every new lamp retypes. It was retyped: five
+     hand-copied variants had already drifted to two highlight opacities,
+     three glow radii, and one plugin doing a paper-mix with no glow at all.
+     The dome reads `currentColor`, which resolves at the element that uses
+     it, so a lamp is coloured by setting `color:` to an IEC token and the
+     geometry never has to be restated. */
+  --lamp-dome: radial-gradient(circle at 35% 30%,
+    rgba(255, 255, 255, 0.85) 0%,
+    currentColor 50%,
+    color-mix(in srgb, currentColor 60%, #000) 100%);
+  --lamp-ring: 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
+  --lamp-glow: 0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
+
+  /* A panel has depth on the backplane: offset and blur, never a halo. Three
+     rungs, because there were always three and only two had names: a plate
+     seated flush on the backplane (--lift-low), one standing off it (--lift),
+     and one floating clear of it (--lift-high). The seated rung was the one
+     every rule retyped, in five recipes between 0.04 and 0.12 alpha, and
+     because a retyped `rgba(0, 0, 0, 0.04)` is a literal it never reached the
+     dark block or any of themes/*.json -- so a seated plate had no edge at all
+     on graphite and cast a black shadow under hackerman's green-on-black.
+     Every theme redefines all three; a shadow that is not one of them is a
+     shadow the theme cannot see. */
+  --lift-low: 0 1px 2px rgba(24, 29, 26, 0.10);
+  --lift: 0 1px 2px rgba(24, 29, 26, 0.12), 0 6px 18px -8px rgba(24, 29, 26, 0.35);
+  --lift-high: 0 2px 4px rgba(24, 29, 26, 0.15), 0 20px 44px -16px rgba(24, 29, 26, 0.45);
+
+  /* The machined edge, which is depth *within* a plate rather than height
+     above the backplane, so it is its own scale and not a --lift rung. Three
+     idioms, the same three a real panel has: a face standing proud of its
+     surround (--bevel-raised, lit from above and shaded below), a well milled
+     into it (--bevel-inset, the textarea and the goal plate), and an actuator
+     held down (--bevel-pressed, deeper than the well so a press reads as
+     travel).
+
+     These were seven retyped literals in six alphas -- 0.06, 0.08, 0.10,
+     0.12, 0.18, 0.25 -- and, being literals, they went the way --lift-low
+     went before it was named: no theme could see them. Every theme repaints
+     its shadow hue (hackerman's rungs are green, because black on a black
+     backplane is nothing at all), so a hardcoded rgba(0, 0, 0, .25) meant the
+     pressed actuator and the textarea well simply vanished there while the
+     raised plate wore a white highlight borrowed from a grey cabinet. Every
+     theme redefines all three; a bevel that is not one of them is a bevel the
+     theme cannot see. */
+  --bevel-raised: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(24, 29, 26, 0.10);
+  --bevel-inset: inset 0 1px 2px rgba(24, 29, 26, 0.08);
+  --bevel-pressed: inset 0 1px 2px rgba(24, 29, 26, 0.18);
+
+  /* PatternFly theme bridge (step 8): clanker palette tokens drive PF globals.
+     Brand/icon/on-brand must remap too: plain buttons read icon-color, primary
+     reads brand + on-brand text, and those defaults stay light-theme greys. */
+  --pf-t--global--background--color--100: var(--bg);
+  --pf-t--global--background--color--200: var(--surface);
+  --pf-t--global--background--color--300: var(--surface-2);
+  --pf-t--global--background--color--control--default: var(--surface-2);
+  --pf-t--global--background--color--primary--default: var(--accent);
+  --pf-t--global--background--color--primary--hover: color-mix(in srgb, var(--accent) 88%, black);
+  --pf-t--global--background--color--backdrop--default: var(--scrim);
+  --pf-t--global--background--color--action--plain--default: transparent;
+  --pf-t--global--background--color--action--plain--hover: var(--surface-2);
+  --pf-t--global--background--color--action--plain--clicked: var(--surface-2);
+  --pf-t--global--background--color--action--plain--alt--hover: var(--surface-2);
+  --pf-t--global--background--color--action--plain--alt--clicked: var(--surface-2);
+  --pf-t--global--background--color--600: color-mix(in srgb, var(--fg) 12%, transparent);
+  --pf-t--global--text--color--regular: var(--fg);
+  --pf-t--global--text--color--subtle: var(--fg-muted);
+  --pf-t--global--text--color--100: var(--fg);
+  --pf-t--global--text--color--200: var(--fg-muted);
+  --pf-t--global--text--color--on-brand--default: var(--on-accent);
+  --pf-t--global--text--color--on-brand--hover: var(--on-accent);
+  --pf-t--global--text--color--on-brand--clicked: var(--on-accent);
+  --pf-t--global--text--color--inverse: var(--on-accent);
+  --pf-t--global--icon--color--regular: var(--fg-muted);
+  --pf-t--global--icon--color--subtle: var(--fg-muted);
+  --pf-t--global--icon--color--100: var(--fg);
+  --pf-t--global--icon--color--200: var(--fg-muted);
+  --pf-t--global--icon--color--on-brand--default: var(--on-accent);
+  --pf-t--global--icon--color--on-brand--hover: var(--on-accent);
+  --pf-t--global--icon--color--on-brand--clicked: var(--on-accent);
+  --pf-t--global--color--brand--default: var(--accent);
+  --pf-t--global--color--brand--hover: color-mix(in srgb, var(--accent) 88%, black);
+  --pf-t--global--color--brand--clicked: color-mix(in srgb, var(--accent) 80%, black);
+  --pf-t--global--color--brand--200: var(--accent);
+  --pf-t--global--color--brand--300: color-mix(in srgb, var(--accent) 88%, black);
+  --pf-t--global--border--color--default: var(--border);
+  --pf-t--global--color--status--success--default: var(--ok-fill);
+  --pf-t--global--color--status--danger--default: var(--danger);
+  --pf-t--global--color--status--warning--default: var(--warn);
+  --pf-t--global--font--family--body: var(--sans);
+  --pf-t--global--font--family--heading: var(--sans);
+  --pf-t--global--font--family--mono: var(--mono);
+  /* The PatternFly stylesheet is unlinked, so none of these tokens are read
+     by a library rule: they are aliases kept for the handful of `pf-v6-*`
+     class names the rail still ships, and for any rule that names a token
+     directly. PatternFly's own rungs are 4/6/16/24px plus a glass blur,
+     which reintroduce the soft-card look the cabinet radii exist to refuse.
+     Map the rungs onto the plate scale; kill glass. */
+  --pf-t--global--border--radius--0: 0px;
+  --pf-t--global--border--radius--100: var(--radius-sm);
+  --pf-t--global--border--radius--200: var(--radius);
+  --pf-t--global--border--radius--300: var(--radius-lg);
+  --pf-t--global--border--radius--400: var(--radius-lg);
+  --pf-t--global--border--radius--500: var(--radius-pill);
+  --pf-t--global--border--radius--tiny: var(--radius-sm);
+  --pf-t--global--border--radius--small: var(--radius);
+  --pf-t--global--border--radius--medium: var(--radius-lg);
+  --pf-t--global--border--radius--large: var(--radius-lg);
+  --pf-t--global--border--radius--pill: var(--radius-pill);
+  --pf-t--global--border--radius--sharp: 0;
+  --pf-t--global--border--radius--glass--default: var(--radius-lg);
+  --pf-t--global--border--radius--action--default: var(--radius-pill);
+  --pf-t--global--border--radius--action--plain--default: var(--radius);
+  --pf-t--global--border--radius--control--default: var(--radius);
+  --pf-t--global--border--radius--control--form-element: var(--radius);
+  --pf-t--global--background--image--default: none;
+  --pf-t--global--background--filter--glass--blur--primary: none;
+  --pf-t--global--background--color--glass--primary--default: var(--surface);
+  --pf-t--global--box-shadow--glass--default: none;
+}
+
+/* Night-shift cabinet: anthracite backplane, green-grey panel faces.
+   Slightly lifted from true black so chat bubbles have room to breathe.
+   Only when theme is system (no data-theme): named palettes set the
+   attribute and write their tokens inline from themes/*.json. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --paper: #232622;
+    --bg: #171916;
+    --surface: #232622;
+    --surface-2: #2e322d;
+    --surface-hover: color-mix(in srgb, var(--fg) 8%, var(--surface));
+    --surface-raised: var(--surface-2);
+    --border: #454a44;
+    --rule: #353934;
+    --fg: #e8eae5;
+    --fg-muted: #a3aaa1;
+    /* Night readings of the same RAL signals — each enamel tinted for the
+       cabinet interior, the derivation the sender hues below show. */
+    --accent: #7aa7ff;  /* RAL 5017 traffic blue, tinted */
+    --accent-dim: #7aa7ff1f;
+    --accent-text: #8fb5ff;
+    --on-accent: #171916;
+    --ok: #a0d8a7;      /* RAL 6002 leaf green, tinted */
+    --ok-fill: #a0d8a7;
+    --violet: var(--accent);
+    --violet-text: var(--accent-text);
+    --danger: #e58079;  /* RAL 3001 signal red, tinted */
+    --on-danger: #171916;
+    --scrim: rgba(0, 0, 0, 0.56);
+    --warn: #c19a00;    /* RAL 1004 golden yellow */
+    --warn-text: #e6cf87; /* RAL 1004, tinted */
+    --chat-hue-0: #62a1e2;  /* RAL 5017 traffic blue */
+    --chat-hue-1: #d385ac;  /* RAL 4003 heather violet */
+    --chat-hue-2: #a0d8a7;  /* RAL 6002 leaf green */
+    --chat-hue-3: #e5834e;  /* RAL 2001 red orange */
+    --chat-hue-4: #ae92c3;  /* RAL 4008 signal violet */
+    --chat-hue-5: #6bad41;  /* RAL 6018 yellow green */
+    --chat-hue-6: #e58079;  /* RAL 3001 signal red */
+    --chat-hue-7: #c19a00;  /* RAL 1004 golden yellow */
+    --code-bg: #121411;
+    --code-fg: #e8eae5;
+    --lift-low: 0 1px 2px rgba(0, 0, 0, 0.40);
+    --lift: 0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+    --lift-high: 0 2px 6px rgba(0, 0, 0, 0.5), 0 20px 44px -16px rgba(0, 0, 0, 0.7);
+    /* Graphite catches far less light than a grey enamel face, so the
+       highlight drops to a third of the day-shift value; the shade deepens to
+       match the heavier rungs above. */
+    --bevel-raised: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+    --bevel-inset: inset 0 1px 2px rgba(0, 0, 0, 0.30);
+    --bevel-pressed: inset 0 1px 2px rgba(0, 0, 0, 0.50);
+  }
+}
+/* Named palettes (light, dark, mocha, ...) live in themes/*.json and are
+   applied as inline tokens by core/theme.js. :root and the system dark
+   block above stay here so "system" has paint before any fetch. */
+
+/* Preflight is Tailwind's reset: margins zeroed, headings un-sized, lists
+   un-bulleted, form controls unstyled. The cabinet's own element rules sit
+   in the same layer, after it, so this sheet is the only one that has to
+   paint the page. */
+
 
 @source "./index.html";
 @source "./**/*.js";
@@ -38,6 +366,518 @@
 /* One component rule, because a utility cannot carry both of these: Firefox
    took `crisp-edges` before `pixelated` was standard, so the floor's canvas
    needs the pair, in that order, and a second declaration is not a class name. */
+@layer base {
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: var(--step-1);
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @media (prefers-reduced-motion: reduce) { .skip-link { transition: none; } }
+  @media (max-width: 40rem) {
+    #app-masthead { padding-block: 0.35rem; padding-inline: 0.75rem; }
+    /* Phone chrome is Menu, model, Jump, theme. Lamps and help live in
+       System / the palette so they cannot wrap and clip here. */
+    #instance-chip, #peers-chip, #session-chip, #help-open { display: none; }
+    #theme-toggle { font-size: var(--step--1); }
+    /* Compact header: daily verbs + find move into More (same nodes). */
+    #view-chat .suggestions { gap: var(--space-2); margin-top: var(--space-2); }
+    #view-chat .suggestion { min-height: 44px; padding: 0.55rem 0.7rem; }
+    .attachment button {
+      min-height: 44px; min-width: 44px; width: 44px;
+      top: -10px; inset-inline-end: -10px;
+    }
+    #session-more-actions .session-acts-body,
+    #session-more-actions .transcript-tools { width: 100%; }
+    #session-more-actions .transcript-tools { margin-top: 0; }
+    #view-chat .conversation-header > .transcript-tools { display: none; }
+  }
+  h1 {
+    font-family: var(--sans); font-size: var(--step-1); font-weight: 600; text-transform: none;
+    margin: 0; color: var(--fg);
+    padding: 0.15rem var(--space-2);
+    border: 0; background: transparent;
+    display: inline-flex; align-items: center; gap: var(--space-2);
+  }
+  h1 .logo { flex: none; }
+  /* A gauge chip: reading in mono behind a lamp. The lamp is the signature —
+     a lit dome when the thing is live, a dark dome when it is not. */
+  /* The composer's model pill: the active model as a compact button beside the
+     run controls. The same value the header chip carries, rendered where the
+     eye already is when composing; no lamp dot — it is a control, not a state
+     lamp, and it already has hover/focus to signal that. */
+  /* The model name is a control label, not ambient chrome: --fg-muted alone
+     can sit near the 4.5:1 floor on a raised panel, so both the header chip
+     and the composer pill pull the muted tone toward the main text colour —
+     dark enough on every light palette, bright enough on every dark one,
+     because both variables are per-theme. */
+  main {
+    flex: 1 1 auto; min-width: 0; width: 100%; max-width: none; margin: 0;
+    padding: var(--space-4) clamp(0.75rem, 2.5vw, 2rem) var(--space-5);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  /* Operator pages and Chat fill the main column. A leftover 46rem cap on
+     Chat left a stripe of text in a wide window. */
+  /* Conversation column: header / scrollport / docked composer, full width. */
+  /* Suggestions belong to the empty state only; once a turn exists the column
+     is transcript over docked composer with nothing beneath it. */
+  /* Idle Chat is a work-order stack, not a centered chat-product hero:
+     legend plate, composer, jobs. Session verbs and find wait until a
+     turn exists (they stay in the palette). */
+  /* ---- tabs: one view at a time ---- Everything used to be stacked in one column, so reaching Tools meant scrolling past the whole transcript, the run graph and every room. */
+  /* Legend plates down the rail: engraved caps in mono, a lamp beside the channel that is engaged. */
+  /* Selected channel: longhand + !important so PF . cannot leave light greys on dark rails (same class of leak as plain/primary buttons). */
+  /* The engaged channel's lamp: lit blue, because blue is operator action. */
+  /* The disclosure chevron follows the reading direction. `border-inline-end`
+     already swaps sides under `dir="rtl"`, so the rotation that points it
+     outward has to swap with it or an RTL rail opens its groups sideways. */
+  /* A count of what is behind the tab, so the numbers are not hidden by the
+     thing that hides everything else. */
+  /* Any flex/grid element with [hidden] would otherwise still paint: the
+     author display beats the UA [hidden] rule. Patch individually would
+     whack-a-mole; catch all. Must sit after component display rules.
+     Keep the explicit form[hidden] selector the test looks for too. */
+  form[hidden] { display: none; }
+  [hidden] { display: none !important; }
+  /* The first section inside a view has nothing above it to be separated from. */
+  /* ---- transcript: a running list of turns, chat-style ---- */
+  /* A turn is a job on the panel's record: seamed off from the one above,
+     its number stamped in the margin, a blue strip lit while it runs.
+     Card width is clamped to --measure so answers stay legible even on a
+     32-inch shop monitor. */
+  /* The job in progress: its strip is powered. */
+  /* Arrived at from a Search hit. A scroll on its own does not say which turn
+     was the reason for it, so the card is named for a moment: the same accent
+     strip the live turn uses, held rather than pulsing, plus a wash that fades
+     out. Removed after two seconds by the code that set it, so nothing here has
+     to decide when the reader has seen it. */
+  /* The wash is decoration; the mark inside the turn is what actually says
+     where the match is, and that is not animated. */
+  /* What was asked, set as the entry's heading: the text face, not mono,
+     because it is prose and not a measurement. */
+  /* A restored answer whose question is no longer in the transcript is not
+     yours: attributing it to "you" said the wrong thing about who wrote it. */
+
+  /* A <details> per tool-call batch: the summary is the familiar pill, the
+     fold-out lists each call's arguments. Rows with nothing to unfold
+     (.no-detail) keep the pill and lose the affordance. */
+  /* A frozen ring says nothing, so reduced motion swaps the spinner for the
+     word it stands in for. The running/finished state change survives either
+     way — a settled row replaces both with its duration. */
+  /* A question the run is blocked on (ask_user over the stream): the blue
+     strip marks it as the one thing on the panel waiting for the operator. */
+  /* The truncated arguments of a tool call awaiting confirm-before-write:
+     code, so mono, and scrollable rather than page-widening when one long
+     line arrives (the server caps the preview, not its line length). */
+  /* Notes about a turn's own outcome — stopped, or never answered. Real text
+     rather than generated content, so they survive Copy answer and reach a
+     screen reader the same way the answer does. */
+  /* The one authored motion moment beyond the tool spinner: the caret marks a live stream. */
+  /* Images travelling with the next task. Small enough to stay out of the way,
+     large enough to tell two screenshots apart. */
+  label {
+    display: block; font-family: var(--sans);
+    font-size: var(--step-0); font-weight: 500; letter-spacing: 0.01em;
+    color: var(--fg-muted); margin-bottom: 0.35rem;
+  }
+
+  textarea {
+    width: 100%; min-height: 5rem; padding: 0.75rem;
+    font-family: var(--sans); font-size: var(--step-1); line-height: 1.55;
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius); resize: vertical;
+    box-shadow: var(--bevel-inset);
+  }
+  textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: -1px; }
+  ::placeholder { color: var(--fg-muted); opacity: 1; }
+  /* Send is a labeled "↑ Run" pill; Stop swaps into its spot as a matching
+     labeled pill so the control still names the action while a turn runs. */
+  /* The author display above beats the UA [hidden] rule (same trap as
+     .rail-context[hidden]); restate it or the off-duty circle paints. */
+  /* Primary actuators that skip upgradePfButton. A bare `button` must not
+     inherit the accent pill: plugins and unmarked row controls (filenames,
+     crumbs, #card-add) were painted as 40px Run buttons. */
+  button.primary {
+    min-height: 40px; padding: 0.5rem 1.05rem;
+    font-family: var(--sans); font-size: var(--step-1); font-weight: 600;
+    color: var(--on-accent); background: var(--accent);
+    border: 0; border-radius: var(--radius-pill); cursor: pointer;
+    box-shadow: var(--lift-low);
+  }
+  button.secondary {
+    font-size: var(--step-0); padding: var(--space-2) 0.8rem;
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border);
+    font-family: var(--sans);
+    border-radius: var(--radius-pill);
+  }
+  button.secondary:hover { border-color: var(--fg-muted); background: color-mix(in srgb, var(--fg) 5%, var(--surface)); }
+  button.danger { background: var(--danger); color: var(--on-danger); }
+  button.secondary.danger { background: var(--surface); color: var(--danger); border-color: var(--border); }
+  button.secondary.danger:hover,
+  button.secondary.danger:focus-visible {
+    background: var(--danger); color: var(--on-danger); border-color: var(--danger);
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  /* Keep hit area even when PF plain zeros padding;/* PatternFly modals (step 6): overlay scrim + dialog box. */
+  .overlay[hidden] { display: none; }/* PatternFly alerts (step 7): toast notifications. */
+  .toast-dismiss:hover, .toast-dismiss:focus-visible { color: var(--fg); }.toast[data-kind="bad"] {
+    border-color: var(--danger);
+    color: var(--danger);
+  }:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  ::selection { background: var(--accent); color: var(--on-accent); }
+  section { margin-top: var(--space-3); border-top: 0; padding-top: 0; }
+  h2 {
+    font-family: var(--sans);
+    font-size: var(--step-1); font-weight: 600;
+    color: var(--fg); margin: 0; line-height: 1.3;
+  }
+  .runs { margin-top: var(--space-4); }.run-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }.run-picker input[type="search"] { font-family: var(--sans); font-size: var(--step-0); letter-spacing: 0; line-height: 1.4; border-radius: var(--radius-pill); }.run-picker label { margin: 0; flex-basis: 100%; color: var(--fg-muted); }.run-list-head {
+    display: flex; align-items: baseline; gap: var(--space-3);
+    margin: var(--space-4) 0 var(--space-2);
+  }.run-list-head h3 { margin: 0; font-size: var(--step-0); }.run-list {
+    max-height: 22rem; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    background: var(--surface-2);
+  }.run-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }.run-row-day {
+    position: sticky; top: 0; z-index: 1;
+    padding: var(--space-2) var(--space-3);
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: var(--step--1); text-transform: uppercase;
+    letter-spacing: var(--track-label); color: var(--fg-muted);
+  }.run-row {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }.run-row:last-child { border-bottom: 0; }.run-row:hover { background: var(--accent-dim); }.run-row.is-selected { background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }.run-row.is-nested { padding-inline-start: calc(var(--space-3) + 1rem); }.run-row-top { display: flex; align-items: center; gap: var(--space-3); }.run-row-task {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }.run-row-when { flex: 0 0 auto; font-size: var(--step-0); color: var(--fg-muted); }.run-row-meta {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: var(--space-1) var(--space-2); margin-top: 0.2rem;
+  }.run-row-chip { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); }.run-row-id { color: var(--accent-text); }.run-row-failed { color: var(--danger); }.run-row.is-failed .run-row-task { color: var(--danger); }.run-compare {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3);
+  }.run-compare[hidden] { display: none; }.run-compare label { margin: 0; }.session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }.session-acts-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }.session-actions .secondary { min-height: 30px; padding: var(--space-1) var(--space-3); font-size: var(--step-0); border-radius: var(--radius-pill); }.session-actions .more > summary { min-height: 30px; padding: var(--space-1) var(--space-3); font-size: var(--step-0); border-radius: var(--radius-pill); }select, #run-filter {
+    flex: 0 1 auto; max-width: 100%; min-height: 40px; padding: 0.35rem 0.7rem;
+    font-family: var(--sans); font-size: var(--step-0);
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+  }#run-filter, #tool-filter, #turn-filter { flex: 1 1 24rem; min-width: 14rem; max-width: 34rem; }#board-room, #card-column { max-width: 14rem; }#model, #run-picker { flex: 1 1 16rem; min-width: 12rem; }input[type="text"],
+  input[type="search"],
+  input[type="date"],
+  input[type="number"],
+  input[type="url"] {
+    min-height: 40px; padding: var(--space-2) 0.7rem; box-sizing: border-box;
+    font-family: var(--sans); font-size: var(--step-0);
+    background: var(--surface); color: var(--fg);
+    border: 1px solid var(--border); border-radius: var(--radius-pill);
+  }input[type="text"]:focus-visible,
+  input[type="search"]:focus-visible,
+  input[type="date"]:focus-visible,
+  input[type="number"]:focus-visible,
+  input[type="url"]:focus-visible,
+  select:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }#run-filter:focus, #run-filter:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }#run-filter::-webkit-search-cancel-button { cursor: pointer; opacity: 0.9; }#run-filter::-webkit-search-cancel-button:hover { opacity: 1; filter: brightness(1.1); }.run-graph { margin-top: 1rem; }.run-head {
+    max-width: var(--measure);
+    font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); font-weight: 600;
+    padding-bottom: var(--space-3); border-bottom: 1px dashed var(--rule); margin-bottom: var(--space-4);
+    overflow-wrap: anywhere; white-space: pre-line;
+  }.run-empty { font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted); line-height: 1.6; max-width: var(--measure); margin-inline-start: auto; margin-inline-end: auto; text-align: center; }.run-detail-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem;
+    font-family: var(--sans); font-size: var(--step-0); font-weight: 600; margin-bottom: 0.5rem;
+  }.run-detail-title { color: var(--fg); font-weight: 700; }dl { display: grid; grid-template-columns: 8rem 1fr; gap: 0.5rem 1rem; margin: 1.25rem 0 0; }
+  dd ul { list-style: none; margin: 0; padding: 0; }
+  dd ul li + li { margin-top: var(--space-1); }
+  dt { font-family: var(--mono); font-size: var(--step-0); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted); }
+  dd { font-family: var(--mono); font-size: var(--step-1); margin: 0; overflow-wrap: anywhere; }
+  dd ul { margin: 0; padding-inline-start: 1.1rem; }
+  a { color: var(--accent-text); overflow-wrap: anywhere; }
+
+  @media (max-width: 40rem) {
+    main { padding: 1rem; }
+    dl { grid-template-columns: 1fr; gap: var(--space-1); }
+    dt { margin-top: 0.75rem; }
+    .toolbar-actions { width: 100%; }
+  }
+
+  /* Density is useful with a mouse; coarse pointers need a reliably hittable
+     target across every view, including controls created dynamically. */
+  @media (pointer: coarse) {
+    button, summary, input[type="text"], input[type="search"], input[type="number"],
+    input[type="date"], select { min-height: 44px; }
+    .composer .toolbar #submit,
+    .composer .toolbar #cancel { min-height: 44px; }
+    .board-quick-add .board-add-actions button,
+    .card-quick-actions button, .slack-btn-icon, .slack-room-item, .label-picker-item,
+    .session-actions .secondary, .session-actions .more > summary,
+    .session-actions button,
+    .composer .toolbar #voice-btn {
+      min-width: 44px; min-height: 44px; height: 44px;
+    }
+  }
+  /* Narrow viewports: primary composer actions and rail channels stay hittable
+     even when the UA reports a fine pointer (phones + many tablets). */
+  @media (max-width: 40rem) {/* iOS Safari zooms the page when a focused field is under 16px. */
+    input[type="text"], input[type="search"], input[type="date"], input[type="number"], input[type="url"], textarea, select, input, textarea, select, .composer textarea, .composer .model-select {
+      font-size: 16px;
+    }
+  .composer .toolbar #submit,
+    .composer .toolbar #cancel { min-height: 44px; }
+  .session-actions .secondary,
+    .session-actions .more > summary,
+    .session-actions button {
+      min-height: 44px;
+    }
+  .composer .toolbar #voice-btn,
+    .composer .toolbar button.secondary {
+      min-height: 44px;
+    }
+  .composer details > summary,
+    .composer details.more > summary,
+    #params > summary {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+    }
+  }
+
+  /* A pressed actuator travels; scale reads as shrinking, travel reads as a
+     press. Harmless on pointer devices too. */
+  button:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: var(--bevel-pressed);
+  }
+  @media (prefers-reduced-motion: reduce) { button:active:not(:disabled) { transform: none; } }
+
+  @media (forced-colors: active) {
+  button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-tag,
+    .code-block, .code-head, .copy-code-btn, .run-node-incomplete { border: 1px solid ButtonText; }
+  :focus-visible { outline: 2px solid Highlight; }
+  /* Selection is carried by lamps and box-shadow everywhere, and forced-colors
+       drops box-shadow and overrides backgrounds, so "where am I" disappeared
+       entirely — worst in the palette, where the highlighted row is the only
+       clue what Enter will do. */
+    .palette-item[aria-selected="true"] {
+    border-color: Highlight;
+    }
+  }
+
+  /* Overlays: the palette and the shortcut sheet. Both are one box on a scrim,
+     positioned high rather than centred so the list grows downward into space
+     the eye is already looking at. Layout lives with the PF modal bridge above. */
+
+  /* The phone guard above is an earlier rule, and a media query carries no
+     extra weight, so the 12px composer's two selects kept zooming the page on
+     focus. Restored here, next to the rule it corrects. */
+  @media (max-width: 40rem) {
+    .composer .model-select { font-size: 16px; }
+  }
+
+  /* Model pill: short name + chevron, opens the popover (Kimi/Unsloth-style). */
+  /* Theme rows carry a colour dot, so they lay out across instead of down.
+     Must stay after .model-picker__option, whose flex-direction it overrides. */
+  /* Plan mode: the composer toggle sits beside Run, and the turn it produced
+     carries a badge so a proposal is never mistaken for something that ran. */
+  /* The current/last turn's receipt: goal, tool-call count, sub-agent count,
+     todo progress. Sits under the session title, above the transcript. */
+  input[type="checkbox"] {
+    flex: none; width: 1.05rem; height: 1.05rem; margin: 0;
+    accent-color: var(--accent);
+  }
+
+  /* The match itself, not the whole turn: scanning a long answer for the word
+     you searched is the part a filter alone does not help with. */
+  mark {
+    background: var(--accent-dim); color: var(--fg);
+    border-radius: var(--radius-sm); padding: 0.15em 0.2em; box-decoration-break: clone;
+  }
+
+  /* Not an overlay. A control fixed over a scrolling column covers whatever
+     happens to be beneath it, and moving it only changes which button that is.
+     It lives in the composer's toolbar, which is where "latest" is, and is shown
+     only while the latest turn is off screen. */
+  @media (prefers-reduced-motion: reduce) { .scroll-bottom:active:not(:disabled) { transform: none; } }
+
+  /* Transcript empty — idle legend plate, not a chat-product hero */
+  @media (max-width: 520px) { .suggestions { grid-template-columns: 1fr; } }
+  /* Chat docks a composer at the bottom of the main column, and the composer's
+     toolbar is where Run and Stop live. A toast band at the viewport's bottom
+     edge landed exactly on those buttons — `pointer-events: auto` on the toast,
+     so the click dismissed the message instead of starting the task, and three
+     stacked toasts covered the whole composer. The band rides above the docked
+     composer there, and stays at the bottom edge on the views with no composer. */
+  :root { --composer-docked-height: 10rem; }
+  body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(--composer-docked-height)); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+  /* The one checkbox among text boxes. The global `input[type="checkbox"]` rule
+     already sizes it, but `.goal-form input`'s `flex: 1 1 16rem` matches at the
+     same specificity and comes later, so it wins and stretches the box. Size is
+     left to the global rule; only the stretch is undone here. */
+  /* Board header — lane plate, not a Trello banner */
+  .shell { display: flex; align-items: stretch; gap: 0; flex: 1 1 auto; min-height: 0; }main {
+    background: var(--bg);
+    border: 0;
+    box-shadow: none;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }/* The rail is pinned: only the conversation list scrolls, not the whole
+     sidebar, so the tabs and the chat controls stay put while the history
+     moves under the pointer. The list owns the scrollbar. */
+  /* A workspace is a folder: its conversations are indented under its name, so
+     the nesting is visible rather than implied by order. */
+  /* Same density-slice contrast fix as the model chips: --fg-muted alone can
+     sit near the 4.5:1 floor on a raised panel. */
+  label:has(+ input[required])::after, label:has(+ textarea[required])::after, label:has(> input[required])::after, label:has(> textarea[required])::after, h2#session-title {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 100%;
+    font-family: var(--sans); font-size: var(--step-1); font-weight: 600; color: var(--fg);
+    text-transform: none;
+  }
+  /* Under 40rem the rail would eat half the screen, so it becomes a drawer
+     you open. Tablets and zoomed laptops keep a persistent column instead. */
+  /* Board: Trello-style horizontal scroll — columns never wrap; the board
+     scrolls sideways and each column scrolls cards internally. On narrow
+     viewports the columns stack vertically. */
+
+  @media (max-width: 40rem) {
+    .board { flex-wrap: wrap; overflow-x: hidden; }
+  }
+  /* Trello-style column options "⋯" menu */
+
+  /* Shared board popups (member, priority, column move, label name). */
+
+  /* ---- Drop indicator: thin line between cards showing where a card will land ---- */
+
+  /* A card is a small plate mounted in its column's channel. */
+
+  /* The card's list item is the positioning context for the hover actions, which
+     are its siblings rather than its children. */
+
+  /* Trello-style card badges row */
+
+  /* The reassign button is a sibling of the card button (see cardMemberControl),
+     so it is positioned against the card's list item and the avatar left inside
+     the card only holds the row open. `.card-body`'s own padding is the offset,
+     plus the card's 1px border, so the button lands exactly where the in-flow
+     avatar sits. */
+
+  /* The control sits at the card's bottom-right, so its picker opens upward and
+     right-aligned: down and to the left it would leave the column. */
+
+  /* Starred card indicator */
+
+  /* Quick actions overlay on card hover */
+
+  /* Blue marks operator action; a due date is a reading, in signal amber or red. */
+
+  /* Drag ghost: a plate lifted off the backplane, so it rises straight and
+     throws the high lift. It used to tilt 3deg and grow 4% behind a hand-rolled
+     halo, which is the drag animation every board ships and the one thing a
+     machined plate cannot do. Height is carried by --lift-high alone. */
+
+  /* Card detail: a plate on the backplane, not a sliding Trello modal. */
+
+  /* Cover image/color at the top of card detail */
+
+  /* Card detail section headers */
+
+  /* Card detail metadata pills */
+
+  /* Description edit area in card detail */
+
+  /* Label picker inside card detail */
+
+  /* Card detail save button — Trello green accent */
+
+  /* Board column count badge */
+
+  /* Claimed by this instance: the one thing you scan a shared list for. */
+  /* The goal "start work" row sits in the narrow 11rem sidebar column, so it
+     stacks its iterations box above the button instead of overflowing sideways. */
+  @media (max-width: 40rem) {
+    .checklist-children { margin-inline-start: var(--space-2); padding-inline-start: var(--space-2); }
+    .checklist-dependency-add { flex-wrap: wrap; }
+  }
+
+  /* Trello-style activity timeline */
+
+  /* Activity avatars pick a stable tone per name from the theme-aware chat-hue
+     palette. Background and foreground both come from per-theme tokens, never
+     literal hex, so the initials stay legible in light and dark themes. */
+
+  /* Log tail */
+
+  /* Drawn icons take their colour from the text they sit in and never carry
+     their own weight scale. */
+  /* Labels in the goal and card forms wrap onto their own line, the way
+     .run-picker's already do; without it the second label orphans against the
+     right edge at 390px. */
+
+  /* Whether the job held, said in the turn's own foot — behind a lamp. */
+  /* Alive lamp phase: chip pending amber; turn data-phase left border.
+     The phase strip shares the live strip's geometry but carries its own
+     semantics: llm is the accent's idle glow, tool is the healthy green,
+     ask is the operator-action blue held at full. */
+  .turn[data-phase="llm"]::before,
+  .turn[data-phase="tool"]::before,
+
+  /* alive polish: control-cabinet lamps and fleet accents fade rather than snap */
+  @keyframes lamp-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.65; } }
+  @keyframes lamp-steady { 0%, 100% { opacity: 0.7; } 50% { opacity: 0.92; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fleet-card, .card { transition: none; }
+    .turn[data-phase="ask"]::before,
+    .turn[data-phase="llm"]::before { animation: none; }
+    .card:hover { transform: none; box-shadow: var(--lift); }
+    .card[data-dragging="true"] { transform: none; }
+  }
+  @media (max-width: 56.25rem) {
+    #view-fleet   .fleet-card { flex-direction: column; align-items: flex-start; }
+    .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }
+    #view-kanban .board { gap: var(--space-3); }
+    #view-kanban .board-col { min-width: 10rem; }
+    .board-goal-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .board-goal-form label, .board-goal-form input, .board-goal-form textarea, .board-goal-form button { grid-row: auto; }
+    .board-goal-form label { margin-top: var(--space-2); }
+    .board-filter { grid-template-columns: auto minmax(10rem, 1fr) auto auto; }
+  }
+  @media (max-width: 40rem) {
+    #view-kanban .section-head { align-items: flex-start; margin-bottom: var(--space-4); }
+    #view-kanban .section-head .toolbar-actions { gap: var(--space-2); }
+    #view-kanban .section-head button { min-height: 44px; }
+    #view-kanban .board { flex-direction: column; }
+    #view-kanban .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
+    .board-goal-form { display: flex; padding: var(--space-3); }
+    .board-goal-form input, .board-goal-form textarea, .board-goal-form button { width: 100%; min-height: 44px; }
+    /* Exempt from the full-width rule above: a checkbox has nothing to fill. */
+    .board-goal-form input[type="checkbox"] { width: 1.05rem; min-height: 0; }
+    .board-filter { display: flex; align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
+    .board-filter > input[type="search"] { flex: 1 1 14rem; min-height: 44px; }
+    .board-filter select { min-height: 44px; }
+    .board-empty { margin: var(--space-4) auto; align-items: flex-start; text-align: start; }
+    /* Same iOS zoom contract as the page-wide phone-field guard: this
+       textarea's 13px rule is declared after that guard. */
+    .board-quick-add .board-add-form textarea { font-size: 16px; }
+  }@media (max-width: 40rem) {
+    /* Every view-scoped field carries its own 16px reset as a utility now. */
+  }
+}
+
 @layer components {
   .pixelated { image-rendering: crisp-edges; image-rendering: pixelated; }
 
