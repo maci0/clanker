@@ -991,6 +991,16 @@ pub fn latestSessionId(io: std.Io, arena: std.mem.Allocator, sessions_dir: []con
     return best.id;
 }
 
+/// A fresh conversation's id. Every surface that starts a new session mints
+/// it here, so one conversation is spelled one way in the store: the REPL used
+/// to mint `sess-<nanos>` at save time and `repl-<seconds>` at startup, and a
+/// fork mints a third form. The nanosecond clock keeps rapid successive
+/// sessions distinct and the result stays inside the alphabet
+/// `validSessionId` accepts, since the id becomes a path fragment.
+pub fn mintSessionId(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
+    return try std.fmt.allocPrint(arena, "sess-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
+}
+
 pub const max_session_tokens = 128 * 1024;
 
 /// Chars/4, rounded up. Short strings are not free. One function so
@@ -1628,4 +1638,19 @@ test "deleting a session removes its journal sidecars too" {
         const path = try std.fmt.allocPrint(arena, "{s}/{s}", .{ dir, name });
         try std.testing.expectError(error.FileNotFound, std.Io.Dir.cwd().statFile(io, path, .{}));
     }
+}
+
+test "mintSessionId produces a distinct id the store will accept each call" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    const a = try mintSessionId(io, arena);
+    const b = try mintSessionId(io, arena);
+    try std.testing.expect(validSessionId(a));
+    try std.testing.expect(validSessionId(b));
+    try std.testing.expect(std.mem.startsWith(u8, a, "sess-"));
+    // Nanosecond-resolution ids of two consecutive mints are not equal.
+    try std.testing.expect(!std.mem.eql(u8, a, b));
 }

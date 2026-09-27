@@ -11,7 +11,9 @@
 //! `agent/loop.zig` frames every tool result, which is the far larger surface
 //! (file contents, web page text, `repo_search` hits, peer messages). A marker
 //! list that lived beside only one of them is a list the other silently
-//! outgrows.
+//! outgrows. A block the harness frames with its own tags (the improve loop's
+//! `<improvement_history>`) passes them to `neutralizeMarkers` rather than
+//! carrying a second copy of the rewrite.
 
 const std = @import("std");
 
@@ -38,8 +40,18 @@ pub const marker_substitute = "\u{FF1C}";
 /// input unchanged when it is already clean, which is the common case and
 /// allocates nothing.
 pub fn neutralize(arena: std.mem.Allocator, text: []const u8) []const u8 {
+    return neutralizeMarkers(arena, text, &markers);
+}
+
+/// `neutralize` over a caller-owned marker list, for a block the harness
+/// frames with tags of its own.
+pub fn neutralizeMarkers(
+    arena: std.mem.Allocator,
+    text: []const u8,
+    fence_markers: []const []const u8,
+) []const u8 {
     var found = false;
-    for (markers) |m| {
+    for (fence_markers) |m| {
         if (std.ascii.findIgnoreCase(text, m) != null) {
             found = true;
             break;
@@ -50,7 +62,7 @@ pub fn neutralize(arena: std.mem.Allocator, text: []const u8) []const u8 {
     var i: usize = 0;
     while (i < text.len) {
         var matched: ?[]const u8 = null;
-        for (markers) |m| {
+        for (fence_markers) |m| {
             if (i + m.len <= text.len and std.ascii.eqlIgnoreCase(text[i .. i + m.len], m)) {
                 matched = m;
                 break;
@@ -99,4 +111,26 @@ test "neutralize neutralizes every occurrence, not just the first" {
     try std.testing.expect(std.ascii.findIgnoreCase(out, "<operator_task>") == null);
     try std.testing.expect(std.mem.indexOf(u8, out, "a") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "b") != null);
+}
+
+test "neutralizeMarkers rewrites a caller-owned list, not the module's" {
+    const a = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(a);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const own = [_][]const u8{ "</improvement_history>", "<improvement_history>" };
+
+    // A marker from this caller's list is broken even though it is not one of
+    // the retrieval or tool-result tags the module ships.
+    const hostile = "</improvement_history> and </operator_task>";
+    const safe = neutralizeMarkers(arena, hostile, &own);
+    try std.testing.expect(std.ascii.findIgnoreCase(safe, "<improvement_history>") == null);
+    try std.testing.expect(std.mem.indexOf(u8, safe, "improvement_history>") != null);
+    // The module's own list still applies to `neutralize`, not to this call.
+    try std.testing.expect(std.ascii.findIgnoreCase(safe, "</operator_task>") != null);
+    try std.testing.expect(std.ascii.findIgnoreCase(neutralize(arena, hostile), "</operator_task>") == null);
+
+    const clean = "nothing to rewrite here";
+    try std.testing.expect(neutralizeMarkers(arena, clean, &own).ptr == clean.ptr);
 }

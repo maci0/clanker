@@ -587,14 +587,15 @@ pub fn byPath(_: void, a: std.json.Value, b: std.json.Value) bool {
 ///
 /// `titleText` is how a store drops the number its own titles repeat — ADR
 /// titles carry an "ADR 0001 — " prefix the path above the row already
-/// spells, RFC titles do not, so the transform is the caller's.
+/// spells. A store whose titles carry no such prefix passes null rather than
+/// an identity function that exists only to satisfy the parameter.
 pub fn renderStatusRows(
     w: *std.Io.Writer,
     records: []const std.json.Value,
     min_status_width: usize,
     status_column_max: usize,
     title_column_bytes: usize,
-    titleText: *const fn ([]const u8) []const u8,
+    titleText: ?*const fn ([]const u8) []const u8,
 ) !void {
     var status_width = min_status_width;
     for (records) |r| {
@@ -615,7 +616,8 @@ pub fn renderStatusRows(
         try w.print("  {s}\n", .{path});
         if (title.len > 0) {
             try w.splatByteAll(' ', status_width + 4);
-            try w.print("{s}\n", .{utf8.cap(titleText(title), title_column_bytes)});
+            const text = if (titleText) |t| t(title) else title;
+            try w.print("{s}\n", .{utf8.cap(text, title_column_bytes)});
         }
     }
 }
@@ -644,11 +646,6 @@ pub fn sortedMatches(arena: std.mem.Allocator, matches: []const std.json.Value) 
     const sorted = try arena.dupe(std.json.Value, matches);
     std.mem.sort(std.json.Value, sorted, {}, matchBefore);
     return sorted;
-}
-
-/// Title transform for a store whose titles carry no number of their own.
-pub fn titleAsIs(title: []const u8) []const u8 {
-    return title;
 }
 
 fn missingStatusArg(store: []const u8, usage: StatusUsage, what: []const u8) Error {

@@ -4741,7 +4741,7 @@ const Model = struct {
         // the operator is told nothing at all while the whole conversation is
         // lost. That is the same bug the comment above that `setLevel` call
         // records for the mint failure.
-        const id = self.session_id orelse (mintSessionId(self.io, self.arena) catch {
+        const id = self.session_id orelse (session_mod.mintSessionId(self.io, self.arena) catch {
             log.log(.error_, "repl: could not mint a session id; conversation not saved", .{});
             return;
         });
@@ -9770,38 +9770,6 @@ test "resolveMascot takes speed from the flag, the config, then 5" {
     try std.testing.expectEqualStrings("zoom", junk.bad_speed.?);
 }
 
-/// The id `--continue` means: the saved session touched most recently.
-/// Returns null when there are none, so a first `--continue` starts a fresh
-/// session rather than failing at someone who has not made one yet.
-fn latestSessionId(io: std.Io, arena: std.mem.Allocator) ?[]const u8 {
-    return session_mod.latestSessionId(io, arena, "state/sessions");
-}
-
-/// A fresh conversation's id, minted the first time it is saved. The
-/// nanosecond suffix keeps rapid successive sessions distinct and stays
-/// within the slug alphabet `session.validSessionId` accepts, like the server's
-/// `sess-<base36>` fallback.
-fn mintSessionId(io: std.Io, arena: std.mem.Allocator) ![]const u8 {
-    return try std.fmt.allocPrint(arena, "sess-{d}", .{std.Io.Timestamp.now(io, .real).nanoseconds});
-}
-
-test "mintSessionId produces a distinct valid id each call" {
-    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const a = try mintSessionId(io, arena);
-    const b = try mintSessionId(io, arena);
-    try std.testing.expect(session_mod.validSessionId(a));
-    try std.testing.expect(session_mod.validSessionId(b));
-    try std.testing.expect(std.mem.startsWith(u8, a, "sess-"));
-    // Nanosecond-resolution ids of two consecutive mints are not equal.
-    try std.testing.expect(!std.mem.eql(u8, a, b));
-}
-
 test "clean returns the input slice unchanged when nothing to drop" {
     const untouched = "hello\nworld\t!";
     try std.testing.expectEqual(untouched.ptr, clean(std.testing.allocator, untouched).?.ptr);
@@ -10082,7 +10050,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
 
     // Which conversation this is: `--session <id>` names one, `--continue`
     // picks up the most recently touched one, and otherwise (sessions module
-    // on) a fresh `repl-<ts>` id is minted so the conversation is findable in
+    // on) a fresh id is minted so the conversation is findable in
     // `clanker sessions` afterwards, the same contract the deleted REPL and
     // `clanker run` honor. With the module off, nothing is read or written.
     const now_s: i64 = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000));
@@ -10096,7 +10064,7 @@ pub fn cmdReplVaxis(init: std.process.Init, opts: ReplOptions) !void {
         if (!session_mod.validSessionId(sid)) return error.InvalidSessionId;
     }
     if (session_id == null and cfg.modules.sessions) {
-        session_id = try std.fmt.allocPrint(arena, "repl-{d}", .{now_s});
+        session_id = try session_mod.mintSessionId(io, arena);
     }
     var session_created: i64 = now_s;
     var session_title: []const u8 = "";

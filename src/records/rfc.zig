@@ -235,7 +235,7 @@ pub fn renderList(arena: std.mem.Allocator, rfcs: []const std.json.Value, next_n
     std.mem.sort(std.json.Value, sorted, {}, common.byPath);
 
     try w.writer.print("{d} RFC(s)\n\n", .{sorted.len});
-    try common.renderStatusRows(&w.writer, sorted, 6, status_column_max, title_column_bytes, common.titleAsIs);
+    try common.renderStatusRows(&w.writer, sorted, 6, status_column_max, title_column_bytes, null);
 
     try w.writer.print("\nNEXT\n\n  next free number is {d:0>4}\n", .{next_number});
     try w.writer.writeAll("  clanker rfc open <path>          read one in full\n");
