@@ -334,6 +334,11 @@ resource host). Amazon Bedrock is not in that map.
 The table is `src/llm/catalog.zig`.
 `clanker providers check` pings every configured provider and reports
 latency/cost; `clanker providers models <name>` lists a provider's models.
+The table goes to stdout and the sweep's progress and its recovery line to
+stderr, and the exit status follows the `default_provider` row: a check that
+cannot reach the provider every unqualified command reaches for exits 1, in
+both the sweep and the named form, so `providers check && clanker run "..."`
+gates on it.
 
 ## `[agent]`
 

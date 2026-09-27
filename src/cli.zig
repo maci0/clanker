@@ -63,6 +63,7 @@ const serve_http = @import("serve/http.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
 const oauth_command = @import("llm/oauth_command.zig");
+const oauth_registry = @import("llm/oauth_plugins/registry.zig");
 const doctor_mod = @import("doctor.zig");
 const log = @import("util/log.zig");
 const redact = @import("util/redact.zig");
@@ -2864,28 +2865,63 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
 
 // --------------------------------------------------------- providers check --
 
+/// The provider names `clanker auth` accepts, in registry order. Rendered
+/// rather than hardcoded in the diagnostic so a fourth plugin names itself.
+fn oauthPluginNames(buf: []u8) []const u8 {
+    var rest = buf;
+    var len: usize = 0;
+    for (oauth_registry.plugins, 0..) |plugin, i| {
+        const sep = if (i == 0) "" else ", ";
+        const n = std.fmt.bufPrint(rest[0..], "{s}{s}", .{ sep, plugin.name }) catch return "codex, grok, claude";
+        rest = rest[n.len..];
+        len += n.len;
+    }
+    return buf[0..len];
+}
+
+/// The provider token a login/logout needs, or the exit-2 usage error saying
+/// which names exist. A bare `MissingOAuthProvider` / `UnknownOAuthPlugin`
+/// reached the operator as the Zig error name at exit 1, so a typo'd provider
+/// read as an internal failure instead of a wrong argument.
+fn oauthProviderArg(io: std.Io, auth_sub: []const u8, given: ?[]const u8, names: []const u8) []const u8 {
+    const name = given orelse {
+        const first = oauth_registry.plugins[0].name;
+        usageExitFor(io, "auth", "clanker auth {s} needs a provider: clanker auth {s} {s} (one of: {s})", .{ auth_sub, auth_sub, first, names });
+    };
+    if (oauth_registry.find(name) == null) {
+        usageExitFor(io, "auth", "no provider '{s}' has a native OAuth flow; clanker auth {s} takes one of: {s}", .{ name, auth_sub, names });
+    }
+    return name;
+}
+
 fn cmdAuth(init: std.process.Init, opts: Options) !void {
+    const io = init.io;
     const arena = init.arena.allocator();
-    const cfg = try config.Config.load(init.io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    const cfg = try config.Config.load(io, arena, std.Io.Dir.cwd(), "config.toml", "config.local.toml");
+    var names_buf: [128]u8 = undefined;
+    const names = oauthPluginNames(&names_buf);
     if (std.mem.eql(u8, opts.auth_sub, "login")) {
-        const name = opts.provider orelse return error.MissingOAuthProvider;
+        const name = oauthProviderArg(io, opts.auth_sub, opts.provider, names);
         var stdout_buf: [4096]u8 = undefined;
-        var stdout = std.Io.File.stdout().writerStreaming(init.io, &stdout_buf);
+        var stdout = std.Io.File.stdout().writerStreaming(io, &stdout_buf);
         try oauth_command.login(init, &cfg, name, &stdout.interface);
         try stdout.interface.flush();
         return;
     }
     var output: std.Io.Writer.Allocating = .init(arena);
     if (std.mem.eql(u8, opts.auth_sub, "status")) {
-        try oauth_command.status(init.io, std.Io.Dir.cwd(), arena, &cfg, opts.provider, init.environ_map, &output.writer);
+        // A named provider is a filter, so an unknown one is a wrong argument
+        // rather than an empty report over every plugin.
+        if (opts.provider) |name| _ = oauthProviderArg(io, opts.auth_sub, name, names);
+        try oauth_command.status(io, std.Io.Dir.cwd(), arena, &cfg, opts.provider, init.environ_map, &output.writer);
     } else {
-        const name = opts.provider orelse return error.MissingOAuthProvider;
+        const name = oauthProviderArg(io, opts.auth_sub, opts.provider, names);
         if (std.mem.eql(u8, opts.auth_sub, "logout")) {
-            const removed = try oauth_command.logout(init.io, std.Io.Dir.cwd(), arena, &cfg, name);
+            const removed = try oauth_command.logout(io, std.Io.Dir.cwd(), arena, &cfg, name);
             try output.writer.print("{s}: {s}\n", .{ name, if (removed) "OAuth login removed" else "already logged out" });
         } else return error.BadSubcommand;
     }
-    try writeStdOut(init.io, output.written());
+    try writeStdOut(io, output.written());
 }
 
 /// What a sweep concluded about one provider. A closed vocabulary of five, so
@@ -3125,6 +3161,10 @@ fn writeCheckSummary(w: *std.Io.Writer, rows: []const CheckRow) !void {
 /// A full provider sweep is primarily a recovery command. If the provider
 /// selected for unqualified runs cannot answer, finish with the exact next
 /// action instead of making the operator infer it from the table's `*` row.
+///
+/// Rendered into `w` rather than written where it is called, so the test can
+/// assert the wording; the caller puts it on stderr, beside the sweep's other
+/// status lines, leaving stdout as the table alone.
 fn writeDefaultProviderRecovery(w: *std.Io.Writer, rows: []const CheckRow) !void {
     for (rows) |r| {
         if (!r.is_default or r.status == .ok) continue;
@@ -3138,6 +3178,17 @@ fn writeDefaultProviderRecovery(w: *std.Io.Writer, rows: []const CheckRow) !void
         try w.print("\nDefault provider '{s}' is {s}. Fix its config or choose another with `default_provider` in config.local.toml.\n", .{ r.name, r.status.label() });
         return;
     }
+}
+
+/// The default provider's row, or null when none was recorded. The sweep's
+/// exit status is this row's status: a `check` that cannot reach the provider
+/// every unqualified command reaches for has failed, whatever the other
+/// configured providers did.
+fn defaultProviderRow(rows: []const CheckRow) ?CheckRow {
+    for (rows) |r| {
+        if (r.is_default) return r;
+    }
+    return null;
 }
 
 fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
@@ -3254,8 +3305,22 @@ fn cmdProvidersCheck(init: std.process.Init, opts: Options) !void {
         var out: std.Io.Writer.Allocating = .init(arena);
         try out.writer.writeAll("\n");
         try writeCheckSummary(&out.writer, rows.items);
-        try writeDefaultProviderRecovery(&out.writer, rows.items);
         try std.Io.File.stdout().writeStreamingAll(io, out.written());
+    }
+    // The recovery line is a status line, so it goes to stderr with the
+    // sweep's other announcements, leaving stdout as the table a script can
+    // parse. Same command, two streams, one rule.
+    var recovery: std.Io.Writer.Allocating = .init(arena);
+    try writeDefaultProviderRecovery(&recovery.writer, rows.items);
+    if (recovery.written().len > 0) writeStdErr(io, recovery.written()) catch {};
+    // A sweep whose default provider cannot answer has failed, and said so in
+    // the recovery line. It used to exit 0: `clanker providers check && clanker
+    // run "<task>"` read a green light off a sweep that had just printed
+    // "Default provider '...' is not configured", and the named single-provider
+    // form (`clanker providers check ollama`) has always exited non-zero. One
+    // verdict for both spellings.
+    if (defaultProviderRow(rows.items)) |d| {
+        if (d.status != .ok) std.process.exit(1);
     }
 }
 
@@ -18987,6 +19052,33 @@ test "provider sweep ends with recovery when the default cannot answer" {
         "\nDefault provider 'openai' is not configured. Fix its config or choose another with `default_provider` in config.local.toml.\n",
         out.written(),
     );
+    // A default that answered suppresses the line, and with it the failure the
+    // sweep's exit status is read from.
+    const healthy = [_]CheckRow{
+        .{ .name = "openai", .status = .ok, .model = "gpt-4o-mini", .ms = 42, .is_default = true },
+        .{ .name = "ollama", .status = .failed, .model = "qwen3.5", .ms = 103, .is_default = false },
+    };
+    var healthy_out: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer healthy_out.deinit();
+    try writeDefaultProviderRecovery(&healthy_out.writer, &healthy);
+    try std.testing.expectEqualStrings("", healthy_out.written());
+}
+
+test "the sweep's exit verdict follows the default provider's row" {
+    const broken = [_]CheckRow{
+        .{ .name = "openai", .status = .not_configured, .model = "gpt-4o-mini", .ms = null, .is_default = true },
+        .{ .name = "ollama", .status = .ok, .model = "qwen3.5", .ms = 81, .is_default = false },
+    };
+    try std.testing.expectEqual(CheckStatus.not_configured, defaultProviderRow(&broken).?.status);
+    const healthy = [_]CheckRow{
+        .{ .name = "openai", .status = .ok, .model = "gpt-4o-mini", .ms = 42, .is_default = true },
+        .{ .name = "ollama", .status = .failed, .model = "qwen3.5", .ms = 103, .is_default = false },
+    };
+    try std.testing.expectEqual(CheckStatus.ok, defaultProviderRow(&healthy).?.status);
+    // No default among the rows (a filter that matched none is refused earlier)
+    // is not itself a failure to report.
+    const unmarked = [_]CheckRow{.{ .name = "ollama", .status = .ok, .model = "qwen3.5", .ms = 81, .is_default = false }};
+    try std.testing.expect(defaultProviderRow(&unmarked) == null);
 }
 
 test "providers models can render configured models without an HTTP endpoint" {
@@ -19442,6 +19534,19 @@ test "auth parses native provider lifecycle commands" {
     const status = try parse(&.{ "clanker", "auth", "grok" }, null);
     try std.testing.expectEqualStrings("status", status.auth_sub);
     try std.testing.expectEqualStrings("grok", status.provider.?);
+}
+
+test "the auth refusal names every registered OAuth plugin" {
+    var buf: [128]u8 = undefined;
+    const names = oauthPluginNames(&buf);
+    // Rendered from the registry, so a fourth plugin is accepted by
+    // cmdAuth and named in the refusal without a second edit here.
+    for (oauth_registry.plugins) |plugin| {
+        try std.testing.expect(oauth_registry.find(plugin.name) != null);
+        try std.testing.expect(std.mem.indexOf(u8, names, plugin.name) != null);
+    }
+    try std.testing.expect(std.mem.startsWith(u8, names, oauth_registry.plugins[0].name));
+    try std.testing.expect(std.mem.indexOf(u8, names, ", ") != null);
 }
 
 test "catalogCapabilities is the one translation both the CLI snippet and /api/catalog use" {

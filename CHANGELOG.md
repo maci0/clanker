@@ -282,6 +282,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ### Fixed
 
+- `clanker providers check` exits non-zero when the `default_provider` row is
+  not `ok`, in the sweep as well as the named form. The sweep used to print
+  "Default provider 'x' is not configured" and exit 0, so
+  `clanker providers check && clanker run "<task>"` took its green light from
+  a check that had just said the provider every unqualified command reaches for
+  cannot answer; `clanker providers check <name>` has always exited 1. The
+  recovery line moves to stderr with the sweep's other status lines, leaving
+  stdout as the table.
+- `clanker auth` refuses a missing or misspelled provider with the argument it
+  needs and the three names `login`/`logout`/`status` accept, at exit 2. All
+  four paths printed the Zig error name (`error: MissingOAuthProvider`,
+  `error: UnknownOAuthPlugin`) at exit 1, so a typo read as an internal
+  failure. The name list is rendered from the OAuth plugin registry, so a
+  fourth plugin names itself.
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive
   filesystem. `state/Goals.json` and `state/goals.json` are one file on macOS's
   default APFS, and hashing each spelling gave every writer a lock of its own, so
