@@ -23,6 +23,9 @@ const max_instruction_file_bytes: usize = 64 * 1024;
 const max_learnings_prompt_bytes: usize = 4096;
 /// Claude-compatible hop limit for nested `@` imports.
 const max_import_depth: usize = 4;
+/// Read cap for `state/skills_overrides.json`, the per-skill enable flags.
+/// Small by construction: it holds a name per skill, not skill bodies.
+const max_skills_overrides_bytes: usize = 16 * 1024;
 
 /// The newest `max_bytes` of an append-only notes file, starting on a line
 /// boundary.
@@ -471,7 +474,7 @@ pub fn build(
     // `skills` tool is how a later turn reads one. Disabled skills (frontmatter
     // or state/skills.json) stay off the prompt.
     const skill_overrides_raw = if (parts.skills_overrides_file.len > 0)
-        std.Io.Dir.cwd().readFileAlloc(io, parts.skills_overrides_file, arena, .limited(16 * 1024)) catch ""
+        std.Io.Dir.cwd().readFileAlloc(io, parts.skills_overrides_file, arena, .limited(max_skills_overrides_bytes)) catch ""
     else
         "";
     const skill_overrides = skills_logic.parseOverrides(arena, skill_overrides_raw);

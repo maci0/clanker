@@ -4178,8 +4178,8 @@ fn skipGrepName(name: []const u8) bool {
     const ext = name[dot..];
     if (ext.len < 2 or ext.len > 7) return false;
     var buf: [7]u8 = undefined;
-    for (ext, 0..) |c, i| buf[i] = std.ascii.toLower(c);
-    return grep_skip_ext.get(buf[0..ext.len]) != null;
+    const lowered = std.ascii.lowerString(buf[0..ext.len], ext);
+    return grep_skip_ext.get(lowered) != null;
 }
 
 const grep_skip_ext = std.StaticStringMap(void).initComptime(.{

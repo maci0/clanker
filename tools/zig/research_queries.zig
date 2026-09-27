@@ -224,8 +224,7 @@ pub fn dedupeKey(url: []const u8, buf: []u8) []const u8 {
     if (std.mem.findScalar(u8, rest, '?')) |q| rest = rest[0..q];
     while (rest.len > 1 and rest[rest.len - 1] == '/') rest = rest[0 .. rest.len - 1];
     const n = @min(rest.len, buf.len);
-    for (rest[0..n], 0..) |c, i| buf[i] = std.ascii.toLower(c);
-    return buf[0..n];
+    return std.ascii.lowerString(buf[0..n], rest[0..n]);
 }
 
 /// The host part of a URL, for grouping results by where they came from.

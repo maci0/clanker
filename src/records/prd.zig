@@ -214,7 +214,7 @@ pub fn renderList(arena: std.mem.Allocator, raw_prds: []const std.json.Value, ne
             const status = json_util.strFieldOrEmpty(p.object, "status");
             if (!std.mem.eql(u8, status, group)) continue;
             if (!wrote_heading) {
-                try w.writer.print("\n{s}\n\n", .{upper(arena, group) catch group});
+                try w.writer.print("\n{s}\n\n", .{std.ascii.allocUpperString(arena, group) catch group});
                 wrote_heading = true;
             }
             try printRow(&w.writer, p);
@@ -264,12 +264,6 @@ fn isKnownStatus(status: []const u8) bool {
         if (std.mem.eql(u8, status, known)) return true;
     }
     return false;
-}
-
-fn upper(arena: std.mem.Allocator, s: []const u8) ![]const u8 {
-    const buf = try arena.alloc(u8, s.len);
-    for (s, 0..) |c, i| buf[i] = std.ascii.toUpper(c);
-    return buf;
 }
 
 /// PRDs and ADRs are searched together: an ADR is what constrains a feature's

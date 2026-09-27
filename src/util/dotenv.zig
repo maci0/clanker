@@ -10,6 +10,11 @@
 const std = @import("std");
 const log = @import("log.zig");
 
+/// Ceiling on the `.env` file (or its `CLANKER_ENV_FILE` override). Past
+/// this the file is refused rather than truncated, so a runaway file cannot
+/// be read into a process that had no key.
+const max_env_file_bytes: usize = 1 << 16;
+
 pub fn load(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process.Environ.Map) void {
     loadFromDir(io, gpa, environ_map, std.Io.Dir.cwd());
 }
@@ -18,12 +23,12 @@ pub fn loadFromDir(io: std.Io, gpa: std.mem.Allocator, environ_map: *std.process
     const path: ?[]const u8 = if (environ_map.get("CLANKER_ENV_FILE")) |p| (if (p.len > 0) p else null) else null;
 
     const data = if (path) |p|
-        base.readFileAlloc(io, p, gpa, .limited(1 << 16)) catch |err| {
+        base.readFileAlloc(io, p, gpa, .limited(max_env_file_bytes)) catch |err| {
             log.log(.warn, "cannot read CLANKER_ENV_FILE '{s}': {s}", .{ p, @errorName(err) });
             return;
         }
     else
-        base.readFileAlloc(io, ".env", gpa, .limited(1 << 16)) catch |err| switch (err) {
+        base.readFileAlloc(io, ".env", gpa, .limited(max_env_file_bytes)) catch |err| switch (err) {
             // A checkout with no .env is the normal state for a machine that
             // sets real environment variables; stay silent there. Anything
             // else -- permission denied, a file over the 64 KiB cap -- would

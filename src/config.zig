@@ -77,6 +77,20 @@ pub fn profileOverlay() ?[]const u8 {
     return overlay_profile;
 }
 
+/// Comma-separated accepted `kind` spellings for the diagnostic that tells a
+/// config which values this binary takes. Derived from the enum at comptime,
+/// so a new arm cannot leave the message stale.
+fn enumSpellingList(comptime T: type, comptime quote: bool) []const u8 {
+    comptime {
+        var out: []const u8 = "";
+        for (std.meta.fieldNames(T), 0..) |name, i| {
+            if (i > 0) out = out ++ ", ";
+            out = out ++ (if (quote) "\"" ++ name ++ "\"" else name);
+        }
+        return out;
+    }
+}
+
 /// The wire format a provider speaks. One tag per entry in the
 /// `src/llm/registry.zig` registry; the tag *is* the `kind = "..."` spelling,
 /// so adding a provider means adding a tag here and a row there, and nothing
@@ -110,14 +124,7 @@ pub const ProviderKind = enum {
     /// Every accepted `kind` spelling, comma-separated, for the diagnostic
     /// when a config names one this binary does not know (commonly a stale
     /// binary reading a config written for a newer one).
-    pub const known_names: []const u8 = blk: {
-        var out: []const u8 = "";
-        for (std.meta.fieldNames(ProviderKind), 0..) |field_name, i| {
-            if (i > 0) out = out ++ ", ";
-            out = out ++ field_name;
-        }
-        break :blk out;
-    };
+    pub const known_names: []const u8 = enumSpellingList(ProviderKind, false);
 };
 
 /// Reasoning effort for models that expose it on the OpenAI-compatible wire
@@ -177,14 +184,7 @@ pub const ThinkingSchema = enum {
     /// Every accepted spelling, comma-separated, for the load diagnostic when
     /// a config names one this binary does not know. Derived from the enum so
     /// a new arm cannot leave the message stale.
-    pub const known_names: []const u8 = blk: {
-        var out: []const u8 = "";
-        for (std.meta.fieldNames(ThinkingSchema), 0..) |field_name, i| {
-            if (i > 0) out = out ++ ", ";
-            out = out ++ "\"" ++ field_name ++ "\"";
-        }
-        break :blk out;
-    };
+    pub const known_names: []const u8 = enumSpellingList(ThinkingSchema, true);
 };
 
 /// How reasoning is read OUT of a response. The request side is

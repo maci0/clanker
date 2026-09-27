@@ -3862,10 +3862,8 @@ const Model = struct {
                     self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: queue cleared ({d} dropped)", .{had}) catch "attach: queue cleared", .dim = true }) catch {};
                     return;
                 }
-                const max_images: usize = 4;
-                const max_bytes: usize = 4 * 1024 * 1024;
-                if (self.pending_attach_paths.items.len >= max_images) {
-                    self.lines.append(self.arena, .{ .text = "attach: at most 4 images per message", .dim = true }) catch {};
+                if (self.pending_attach_paths.items.len >= attach_max_images) {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: at most {d} images per message", .{attach_max_images}) catch "attach: image queue full", .dim = true }) catch {};
                     return;
                 }
                 // Refuse at the command, not with a provider 400 a turn later.
@@ -3894,8 +3892,8 @@ const Model = struct {
                     self.lines.append(self.arena, .{ .text = "attach: cannot stat file", .dim = true }) catch {};
                     return;
                 };
-                if (stat.size > max_bytes) {
-                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: file too large ({d} bytes, limit {d})", .{ stat.size, max_bytes }) catch "attach: file too large", .dim = true }) catch {};
+                if (stat.size > attach_max_bytes) {
+                    self.lines.append(self.arena, .{ .text = std.fmt.allocPrint(self.arena, "attach: file too large ({d} bytes, limit {d})", .{ stat.size, attach_max_bytes }) catch "attach: file too large", .dim = true }) catch {};
                     return;
                 }
                 if (stat.kind == .directory) {
@@ -9133,6 +9131,10 @@ test "composerEnterAction submits once an unanswered paste window expires" {
 /// The largest attachment `/attach` queues and the submit drain will read.
 /// Mirrors the web composer's limit (PRD 0041).
 const attach_max_bytes: usize = 4 * 1024 * 1024;
+/// How many attachments one message may queue. Applies to every queued
+/// path, images included, so the queue is a per-message budget and not an
+/// image-specific one.
+const attach_max_images: usize = 4;
 
 /// What `readAttachments` made of the queue.
 const AttachDrain = struct {

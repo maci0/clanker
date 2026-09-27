@@ -47,7 +47,7 @@ pub const Name = enum {
 
 /// Default ACP spawn argv for this vendor. Grok speaks first-party
 /// `agent stdio`; Claude and Codex go through the published adapters.
-pub fn defaultAcpArgv(name: Name) []const []const u8 {
+fn defaultAcpArgv(name: Name) []const []const u8 {
     return switch (name) {
         .grok => &.{ "grok", "agent", "stdio" },
         .claude => &.{ "npx", "-y", "@agentclientprotocol/claude-agent-acp" },
@@ -77,7 +77,7 @@ pub fn headlessArgv(alloc: std.mem.Allocator, name: Name, prompt: []const u8) ![
 }
 
 /// Whether `name` is an executable on `path_env` (`:`-separated).
-pub fn onPath(io: std.Io, name: []const u8, path_env: []const u8) bool {
+fn onPath(io: std.Io, name: []const u8, path_env: []const u8) bool {
     if (name.len == 0) return false;
     if (std.mem.findScalar(u8, name, '/') != null) {
         std.Io.Dir.cwd().access(io, name, .{}) catch return false;
