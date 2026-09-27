@@ -7,9 +7,8 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// The stylesheet was split for the critical path (app.css blocking, views.css
-// deferred); these assertions are about shipped layout, so they read both.
-const css = readFileSync(join(here, "..", "app.css"), "utf8") + "\n" + readFileSync(join(here, "..", "views.css"), "utf8");
+// These assertions are about shipped layout; the cabinet sheet is the one left.
+const css = readFileSync(join(here, "..", "app.css"), "utf8");
 
 function ruleBody(selector) {
   const needle = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

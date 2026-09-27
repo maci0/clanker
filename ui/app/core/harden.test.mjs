@@ -8,9 +8,8 @@ import test from "node:test";
 import vm from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// app.css and views.css are one stylesheet split for the critical path; these
-// assertions are about shipped behavior, not delivery order, so they read both.
-const css = readFileSync(join(here, "..", "app.css"), "utf8") + "\n" + readFileSync(join(here, "..", "views.css"), "utf8");
+// These assertions are about shipped behavior; app.css is the cabinet sheet.
+const css = readFileSync(join(here, "..", "app.css"), "utf8");
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
 const uiSrc = readFileSync(join(here, "ui.js"), "utf8");
 
@@ -631,7 +630,7 @@ test("failed list loads keep a visible retry in the panel", function () {
   assert.match(html, /data-mcp-for="http"/);
   // The form's labels carry `flex`, which outranks the UA [hidden] default, so
   // each of them states the hidden case. This was a `.models-edit-form label
-  // [hidden]` rule in views.css.
+  // [hidden]` rule the deferred sheet used to carry.
   const models = readFileSync(join(here, "../index.html"), "utf8");
   assert.match(models, /class="[^"]*\[hidden\]:hidden[^"]*">Local name</);
   assert.match(logs, /els\.logView\.textContent = msg/);

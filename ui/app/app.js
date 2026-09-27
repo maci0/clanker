@@ -26,10 +26,6 @@ import { createAnswerHead, ANSWER_LABEL } from "./core/ai-disclosure.js";
 import { loadPrefs as cpLoad, savePrefs as cpSave, prefsFor as cpFor, setPref as cpSet, dropPref as cpDrop, copyPref as cpCopy } from "./core/chatprefs.js";
 import { applyDoneStats, applyLiveUsage, beginLiveTurn, emptyRunMetrics, formatRunMetricsParts, liveElapsedMs, noteFirstToken, noteLiveChars } from "./core/run-metrics.js";
 
-/* The deferred stylesheets (PatternFly, views.css) are armed by
-   preact-boot.js, not here: this module evaluates only once its whole static
-   import graph has arrived, which is the wrong moment to be applying the
-   page's layout framework. */
 
 document.addEventListener("DOMContentLoaded", function () {
 "use strict";

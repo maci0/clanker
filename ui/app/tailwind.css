@@ -3821,6 +3821,9 @@
       opacity: 0.35;
     }
   }
+  .slack-dialog::backdrop {
+    background: var(--scrim);
+  }
   [data-md="true"] .md-p {
     margin: 0 0 0.35em;
     font-size: inherit;

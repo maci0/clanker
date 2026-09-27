@@ -78,7 +78,6 @@ test "readDiskAsset refuses linked assets and linked parent directories" {
 /// without its own slot the way it could when each was a hand-written global.
 pub const Kind = enum {
     css,
-    views_css,
     /// The compiled Tailwind sheet (`app/tailwind.css`). Its own kind: a tag
     /// that aliased `.css` served app.css's bytes at /webui/tailwind.css.
     tailwind_css,
@@ -129,7 +128,6 @@ pub const Kind = enum {
 };
 
 pub fn kindFor(target: []const u8) Kind {
-    if (std.mem.endsWith(u8, target, "views.css")) return .views_css;
     if (std.mem.endsWith(u8, target, "tailwind.css")) return .tailwind_css;
     if (std.mem.endsWith(u8, target, ".css")) return .css;
     if (std.mem.endsWith(u8, target, "preact-boot.js")) return .boot;
@@ -196,7 +194,6 @@ pub fn kindFor(target: []const u8) Kind {
 pub const asset_paths = [_][]const u8{
     "/webui/app.css",
     "/webui/tailwind.css",
-    "/webui/views.css",
     "/webui/app.js",
     "/webui/preact-boot.js",
     "/webui/core/attachments.js",

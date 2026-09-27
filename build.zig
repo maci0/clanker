@@ -377,11 +377,6 @@ pub fn build(b: *std.Build) void {
     const webui_load_js_test = b.addSystemCommand(&.{ "bun", "test" });
     webui_load_js_test.addFileArg(b.path("ui/app/webui-load.test.mjs"));
     test_step.dependOn(&webui_load_js_test.step);
-    // The app.css/views.css split is a first-paint contract: nothing in the
-    // deferred sheet may style an element the first draw shows.
-    const css_split_js_test = b.addSystemCommand(&.{ "bun", "test" });
-    css_split_js_test.addFileArg(b.path("ui/app/css-split.test.mjs"));
-    test_step.dependOn(&css_split_js_test.step);
     // Radii and type steps are tokens, not literals: a stray `border-radius:
     // 12px` reads as no bug at all, so nothing catches the sheet drifting back
     // toward the rounded-card default one declaration at a time.

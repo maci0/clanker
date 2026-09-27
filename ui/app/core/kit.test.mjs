@@ -44,7 +44,7 @@ test("variants fills a missing prop from defaults and appends the caller's class
 
 test("the button table's every class exists in a shipped sheet", async function () {
   const kit = await loadKit();
-  const sheets = ["app.css", "views.css", "tailwind.css"]
+  const sheets = ["app.css", "tailwind.css"]
     .map((f) => readFileSync(join(here, "..", f), "utf8")).join("\n");
   const plain = sheets.replace(/\\(.)/g, "$1");
   for (const variant of ["primary", "secondary", "danger", "secondary-danger"]) {

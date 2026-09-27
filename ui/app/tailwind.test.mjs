@@ -22,7 +22,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(here, "tailwind.src.css"), "utf8");
 const built = readFileSync(join(here, "tailwind.css"), "utf8");
 const appCss = readFileSync(join(here, "app.css"), "utf8");
-const viewsCss = readFileSync(join(here, "views.css"), "utf8");
 
 /// Files whose class strings are Tailwind utilities. Add a path only with the
 /// rules it replaces deleted in the same change.
@@ -116,7 +115,7 @@ function escapeRe(s) {
 // sheets are unescaped too, because a migrated file still carries the chrome
 // classes it has not been moved off yet (`section-head`, `secondary`).
 const plain = built.replace(/\\(.)/g, "$1");
-const cabinet = (appCss + viewsCss).replace(/\\(.)/g, "$1");
+const cabinet = appCss.replace(/\\(.)/g, "$1");
 
 function hasSelector(sheet, token) {
   // The trailing `[` matters: a data variant emits
@@ -195,7 +194,7 @@ test("every token the theme reads is declared by a shipped sheet", function () {
   // A theme value is `var(--token)`, never a copy, so a misspelled name is a
   // silently dead utility rather than a visible difference.
   const declared = new Set();
-  for (const m of (appCss + viewsCss + source).matchAll(/(--[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
+  for (const m of (appCss + source).matchAll(/(--[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
   const missing = [];
   const theme = source.slice(source.indexOf("@theme"));
   for (const m of theme.matchAll(/var\((--[a-z0-9-]+)\)/g)) {
@@ -287,4 +286,50 @@ test("migrated files use scale utilities, not arbitrary values", function () {
     }
   }
   assert.deepEqual(offenders, [], `arbitrary values: ${offenders.join(", ")}`);
+});
+
+// ---------- the sheets parse ----------
+// A scripted deletion can take a closing brace with it, or leave a selector
+// list ending in a comma — and a dangling comma invalidates the whole list, so
+// the rule it belonged to is dropped by the parser with nothing said. Both
+// happened while the Tailwind port deleted rules, so this checks every shipped
+// sheet rather than trusting the diff.
+test("every shipped sheet is brace-balanced and has no dangling selector list", function () {
+  for (const [name, src] of [["app.css", readFileSync(join(here, "app.css"), "utf8")], ["tailwind.css", readFileSync(join(here, "tailwind.css"), "utf8")]]) {
+    let depth = 0;
+    let line = 1;
+    let firstNegative = 0;
+    for (const ch of src) {
+      if (ch === "\n") line += 1;
+      else if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth < 0 && !firstNegative) firstNegative = line;
+      }
+    }
+    assert.equal(firstNegative, 0, `${name}: a closing brace with nothing open, at line ${firstNegative}`);
+    assert.equal(depth, 0, `${name}: ${depth} block(s) left unclosed`);
+    // A selector list that ends in a comma: a comma followed (through
+    // whitespace and complete comments) by `{`. Scanned rather than matched:
+    // the same regex over a 120 KB sheet backtracks for twelve seconds.
+    for (let at = src.indexOf(","); at !== -1; at = src.indexOf(",", at + 1)) {
+      let j = at + 1;
+      for (;;) {
+        if (j >= src.length) break;
+        const ch = src[j];
+        if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") { j += 1; continue; }
+        if (src.startsWith("/*", j)) {
+          const end = src.indexOf("*/", j + 2);
+          if (end === -1) break;
+          j = end + 2;
+          continue;
+        }
+        break;
+      }
+      if (src[j] === "{") {
+        const line = src.slice(0, at).split("\n").length;
+        assert.fail(`${name}: a selector list ends in a comma at line ${line}`);
+      }
+    }
+  }
 });

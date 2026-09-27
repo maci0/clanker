@@ -18,7 +18,7 @@
    rounding a plate into a SaaS card.
 
    Two imports, not `@import "tailwindcss"`: preflight is not here yet. It
-   resets margins, headings and controls, and app.css/views.css still own those
+   resets margins, headings and controls, and app.css still owns those
    declarations; landing it now would repaint every unported view at once. It
    arrives with the last cabinet sheet. The one rule the utility layer needs
    from it — a border style to carry `border` + `border-rule` — is below. */
@@ -107,6 +107,10 @@
     .lit[data-state="running"] { animation: lamp-pulse 1.4s ease-in-out infinite; }
   }
   @keyframes lamp-pulse { 50% { opacity: 0.35; } }
+
+  /* A dialog's backdrop is a pseudo-element the author has to style; the
+     create-channel dialog and every uiConfirm/uiPrompt reuse it. */
+  .slack-dialog::backdrop { background: var(--scrim); }
 
   /* A markdown body's shapes. The renderer emits `.md-p`/`.md-h`/`.code-block`
      for a document, and "a paragraph inside a rendered body" is a descendant

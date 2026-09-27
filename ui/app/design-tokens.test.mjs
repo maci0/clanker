@@ -21,7 +21,6 @@ const pluginsDir = join(here, "..", "plugins");
 function sheets() {
   const out = [
     ["app/app.css", readFileSync(join(here, "app.css"), "utf8")],
-    ["app/views.css", readFileSync(join(here, "views.css"), "utf8")],
     // The Tailwind source, not its build product: tailwind.css is machine
     // output, and every value a person writes lives in the source, which maps
     // each one onto the token app.css declares. Migration in progress: when the

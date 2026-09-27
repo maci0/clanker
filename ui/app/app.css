@@ -1858,10 +1858,8 @@ button.rail-group:hover { color: var(--fg); }
      textarea's 13px rule is declared after that guard. */
   .board-quick-add .board-add-form textarea { font-size: 16px; }
 }@media (max-width: 40rem) {
-  /* The view-scoped fields this guard used to cover (.slack-*, .run-picker
-     search, .config-editor, .models-edit-toml-editor) live in views.css,
-     which loads after this sheet, so their 16px reset rides in the deferred
-     file's trailing block and still wins the cascade there. This one stays:
+  /* The view-scoped fields carry their own 16px reset as a utility on the
+     field, beside the class that gave them their desktop size. This one stays:
      the rail's workspace picker is part of the first paint. */
   .rail-workspace-bar select {
     font-size: 16px;

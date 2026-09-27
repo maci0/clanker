@@ -549,6 +549,17 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   expects the restore function, so nine suites that install the stub failed.
   The duplicate is gone.
 
+- The deferred view sheet is deleted. Its last rule — the create-channel
+  dialog's `::backdrop`, which no utility composes — moved into
+  `tailwind.src.css` beside the tokens it reads, and with the file went its
+  `<link>` and `<noscript>` pair, the `preact-boot.js` swap that armed it, its
+  embed in `ui/webui.zig`, its row and cache kind in `webui_assets.zig`, its
+  ceiling in the webui size gate, its row in the weight table and its
+  `css-split.test.mjs` suite (whose one still-useful check, that a shipped sheet
+  is brace-balanced and has no dangling selector list, moved into
+  `tailwind.test.mjs`). The page makes one fewer request and first paint falls
+  to 59.7K gz; `app.css` is the last cabinet sheet.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

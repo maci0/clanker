@@ -2237,22 +2237,20 @@ const WebuiCap = struct {
 /// smaller is covered by the total below, where growth from many small
 /// additions shows up without each file needing its own row to maintain.
 /// Limits are raw bytes measured on this tree with ~15% headroom:
-/// index.html 74382, app.css 168540, views.css 67831, app.js 252003,
+/// index.html 74382, app.css 168540, app.js 252003,
 /// all as of 2026-08-25. Raising one is
 /// a deliberate edit to this table, made with a fresh measurement beside it.
 const webui_first_paint_caps = [_]WebuiCap{
     .{ .path = "ui/app/index.html", .limit = 88 * 1024 },
     .{ .path = "ui/app/app.css", .limit = 194 * 1024 },
-    .{ .path = "ui/app/views.css", .limit = 78 * 1024 },
     .{ .path = "ui/app/app.js", .limit = 290 * 1024 },
 };
 
 /// Everything every visitor downloads before any interaction: the document
 /// itself plus every `/webui/…` URL its head and body pull eagerly (every
 /// stylesheet, the modulepreloads, the eager `<script type="module">` list).
-/// views.css rides `media="print"`, so it is applied late but still fetched
-/// by everyone, which is why it counts here. 1388142 bytes measured across 34
-/// resources on 2026-08-25; the budget is that plus ~15%.
+/// 1388142 bytes measured across 34 resources on 2026-08-25; the budget is
+/// that plus ~15%.
 const webui_eager_budget_bytes: usize = 1_600_000;
 
 /// The web UI's first-paint budget. Nothing else in the repo stated how large
@@ -2385,14 +2383,13 @@ test "collectEagerWebuiUrls takes the three tag shapes, dedupes, and skips forei
     var urls: std.ArrayList([]const u8) = .empty;
     const html =
         \\<link rel="modulepreload" href="/webui/app.js">
-        \\<link rel="stylesheet" href="/webui/app.css" media="print" data-views="1">
-        \\<noscript><link rel="stylesheet" href="/webui/views.css"></noscript>
+        \\<link rel="stylesheet" href="/webui/app.css">
         \\<link rel="icon" href="data:image/svg+xml,xxx">
         \\<script type="module" src="/webui/app.js"></script>
         \\<script type="module" src="/webui/core/utils.js"></script>
     ;
     try collectEagerWebuiUrls(arena, html, &urls);
-    try std.testing.expectEqual(@as(usize, 5), urls.items.len);
+    try std.testing.expectEqual(@as(usize, 4), urls.items.len);
     // app.js appears twice (modulepreload + script tag) and the data: favicon
     // not at all; both folds land in the deduped eager count.
     var unique: usize = 0;
@@ -2403,7 +2400,7 @@ test "collectEagerWebuiUrls takes the three tag shapes, dedupes, and skips forei
         }
         if (!earlier) unique += 1;
     }
-    try std.testing.expectEqual(@as(usize, 4), unique);
+    try std.testing.expectEqual(@as(usize, 3), unique);
 }
 
 test "scanWebuiBudget names an over-cap file and a missing reference" {
@@ -2415,20 +2412,20 @@ test "scanWebuiBudget names an over-cap file and a missing reference" {
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io, "ui/app");
-    // Over the views.css cap (78 KiB) but nowhere near the eager total, so
-    // the failure can only be the per-file one.
-    const big = try gpa.alloc(u8, 80 * 1024);
+    // Over the app.css cap (194 KiB) but nowhere near the eager total, so the
+    // failure can only be the per-file one.
+    const big = try gpa.alloc(u8, 200 * 1024);
     defer gpa.free(big);
     @memset(big, 'a');
-    try tmp.dir.writeFile(io, .{ .sub_path = "ui/app/views.css", .data = big });
+    try tmp.dir.writeFile(io, .{ .sub_path = "ui/app/app.css", .data = big });
     const html =
-        \\<link rel="stylesheet" href="/webui/views.css">
+        \\<link rel="stylesheet" href="/webui/app.css">
         \\<script type="module" src="/webui/core/gone.js"></script>
     ;
     var result = try scanWebuiBudget(gpa, io, tmp.dir, html);
     defer result.deinit(gpa);
     try std.testing.expect(!result.ok);
-    try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/views.css is ") != null);
+    try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/app.css is ") != null);
     try std.testing.expect(std.mem.find(u8, result.detail, "ui/app/core/gone.js does not exist") != null);
 }
 

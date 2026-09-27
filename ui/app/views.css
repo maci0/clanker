@@ -1,6 +1,0 @@
-/* The view-scoped sheet is down to one rule: a dialog's backdrop is a
-   pseudo-element the author must style, and no utility composes it. Everything
-   else this sheet held is a utility string in the file that renders it, or a
-   component rule in the Tailwind source beside the cabinet tokens. */
-
-.slack-dialog::backdrop { background: var(--scrim); }

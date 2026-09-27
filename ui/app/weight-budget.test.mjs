@@ -91,7 +91,6 @@ for (const src of eager.sort()) {
 console.log(`   eager JS (${eager.length} requests): ${eagerJsGz.toFixed(1)}K gz`);
 console.log(`   first paint (index.html + app.css + tailwind.css): ${firstPaintGz.toFixed(1)}K gz`);
 console.log(`   tailwind.css: ${(fileBytes("tailwind.css").length / KiB).toFixed(1)}K raw ${gzKib(fileBytes("tailwind.css")).toFixed(1)}K gz`);
-console.log(`   views.css deferred: ${gzKib(fileBytes("views.css")).toFixed(1)}K gz`);
 
 test("the page head still preloads the heavy entry, not the light modules", function () {
   // The preload list is the critical-path fetch set; growing it dilutes
@@ -134,8 +133,8 @@ test("eager JS stays inside its weight budget", function () {
 
 test("first paint stays inside its weight budget", function () {
   // index.html, app.css and the compiled Tailwind sheet are the render-blocking
-  // critical path; the deferred views.css must not creep back
-  // into them (css-split.test.mjs pins what each sheet may style).
+  // critical path. The deferred view sheet is gone (its last rule moved into the
+  // Tailwind source), so this is the whole style cost a visitor pays.
   assert.ok(firstPaintGz <= 64, `first paint is ${firstPaintGz.toFixed(1)}K gz; budget is 64K`);
   const appCssRaw = fileBytes("app.css").length / KiB;
   assert.ok(appCssRaw <= 192, `app.css is ${appCssRaw.toFixed(1)}K raw; budget is 192K`);
@@ -148,22 +147,18 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
   // that looks like a utility into a rule.
   const css = fileBytes("tailwind.css").length / KiB;
-  // 106, raised from 48 eleven times, each named in CHANGELOG: the run graph, the
+  // 108, raised from 48 twelve times, each named in CHANGELOG: the run graph, the
   // board lane, the card face, its chips, its members, the detail panel, the
   // tool rows, the rooms sidebar, the message row, the rooms main column, the
-  // transcript's turn. This is
+  // transcript's turn, the dialog backdrop that was views.css's last rule. This is
   // accounting, not a ceiling — the sheet absorbs the cabinet sheets' rules as
   // utilities while both still ship (app.css is still ~150K raw), and phase 6
   // deletes those sheets, leaving this one holding the whole UI. The binding
-  // number for a visitor is first paint, asserted above. What this one catches
-  // is growth that is *not* a view moving over: an `@source` glob reaching
-  // beyond ui/ turns prose in docs or .scratch into rules. The binding number is first paint (asserted above), which
-  // counts this sheet plus app.css plus index.html and is what a visitor pays.
-  // Watch it there: a *views.css* port moves rules into the blocking sheet and
-  // raises first paint, while an *app.css* port leaves it flat — so the
-  // remaining views.css-heavy work (Rooms, the tool rows) should land beside
-  // an app.css port (the board, the rail, chat) until the deferred sheet goes.
-  assert.ok(css <= 106, `tailwind.css is ${css.toFixed(1)}K raw; budget is 106K`);
+  // number for a visitor is first paint, asserted above, which counts this
+  // sheet plus app.css plus index.html. What this one catches is growth that is
+  // *not* a view moving over: an `@source` glob reaching beyond ui/ turns prose
+  // in docs or .scratch into rules.
+  assert.ok(css <= 108, `tailwind.css is ${css.toFixed(1)}K raw; budget is 108K`);
 });
 
 test("single large files stay inside their budgets", function () {
@@ -171,8 +166,6 @@ test("single large files stay inside their budgets", function () {
   assert.ok(appJsRaw <= 264, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 264K`);
   const htmlRaw = fileBytes("index.html").length / KiB;
   assert.ok(htmlRaw <= 96, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 96K`);
-  const viewsRaw = fileBytes("views.css").length / KiB;
-  assert.ok(viewsRaw <= 80, `views.css is ${viewsRaw.toFixed(1)}K raw; budget is 80K`);
 });
 
 test("web UI plugins stay off the load path unless they opt in", function () {
