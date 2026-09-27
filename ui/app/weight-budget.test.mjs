@@ -145,19 +145,20 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
   // that looks like a utility into a rule.
   const css = fileBytes("tailwind.css").length / KiB;
-  // 68, raised from 48 four times, each named in CHANGELOG: the run graph, the
-  // board lane, the card face, the card's chips. This is accounting, not a
-  // ceiling — the sheet absorbs the cabinet sheets' rules as utilities while
-  // both still ship (app.css is still ~150K raw), and phase 6 deletes those
-  // sheets, leaving this one holding the whole UI. What the number is good for
-  // is catching growth that is *not* a view moving over: an `@source` glob
-  // reaching beyond ui/ turns prose in docs or .scratch into rules. The binding number is first paint (asserted above), which
+  // 72, raised from 48 five times, each named in CHANGELOG: the run graph, the
+  // board lane, the card face, the card's chips, the card's members. This is
+  // accounting, not a ceiling — the sheet absorbs the cabinet sheets' rules as
+  // utilities while both still ship (app.css is still ~150K raw), and phase 6
+  // deletes those sheets, leaving this one holding the whole UI. The binding
+  // number for a visitor is first paint, asserted above. What this one catches
+  // is growth that is *not* a view moving over: an `@source` glob reaching
+  // beyond ui/ turns prose in docs or .scratch into rules. The binding number is first paint (asserted above), which
   // counts this sheet plus app.css plus index.html and is what a visitor pays.
   // Watch it there: a *views.css* port moves rules into the blocking sheet and
   // raises first paint, while an *app.css* port leaves it flat — so the
   // remaining views.css-heavy work (Rooms, the tool rows) should land beside
   // an app.css port (the board, the rail, chat) until the deferred sheet goes.
-  assert.ok(css <= 68, `tailwind.css is ${css.toFixed(1)}K raw; budget is 68K`);
+  assert.ok(css <= 72, `tailwind.css is ${css.toFixed(1)}K raw; budget is 72K`);
 });
 
 test("single large files stay inside their budgets", function () {

@@ -905,9 +905,9 @@ function cardNode(c) {
      builds instead. See the note there for why it cannot live in here. */
   if (c.assignee) {
     var membersWrap = document.createElement("span");
-    membersWrap.className = "card-members";
+    membersWrap.className = CARD_MEMBERS_CLASS;
     var slot = document.createElement("span");
-    slot.className = "card-member card-member-slot";
+    slot.className = CARD_MEMBER_SLOT_CLASS;
     slot.setAttribute("aria-hidden", "true");
     slot.textContent = memberInitials(c.assignee);
     membersWrap.appendChild(slot);
@@ -1009,10 +1009,10 @@ function memberInitials(name) {
 function cardMemberControl(c) {
   if (!c.assignee) return null;
   var wrap = document.createElement("span");
-  wrap.className = "card-members-overlay";
+  wrap.className = CARD_MEMBERS_OVERLAY_CLASS;
   var btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "card-member";
+  btn.className = CARD_MEMBER_CLASS;
   btn.textContent = memberInitials(c.assignee);
   btn.title = c.assignee + ", click to reassign";
   btn.setAttribute("aria-label", "Reassign " + c.assignee + ": " + (c.title || c.id));
@@ -1055,11 +1055,24 @@ function cardMemberControl(c) {
    card's own `<li>` is the positioning context now, so the overlay still sits
    on the card's top-right corner and still appears on hover or focus, while
    both controls are ordinary buttons the accessibility tree can see. */
+/* The rest of the card face: the member avatars and the overlay that carries
+   the real reassign control, the hover quick-actions and the drop indicator.
+   A starred mark and a drag ghost used to be styled here; nothing has set
+   `data-starred` or named `board-drag-ghost` for a while, so both are gone. */
+var CARD_MEMBERS_CLASS = "ml-auto flex items-center";
+var CARD_MEMBER_CLASS = "relative -ml-1.5 grid h-7 w-7 cursor-pointer place-items-center rounded-capsule border-2 border-surface bg-accent p-0 font-sans text-xs font-bold leading-none text-on-accent transition duration-150 first:ml-0 hover:z-2 hover:-translate-y-0.5 hover:shadow-[var(--lift)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+var CARD_MEMBER_SLOT_CLASS = CARD_MEMBER_CLASS + " invisible";
+var CARD_MEMBERS_OVERLAY_CLASS = "absolute bottom-[calc(0.5rem+1px)] right-[calc(0.65rem+1px)] z-3 flex items-center";
+var CARD_QUICK_CLASS = "absolute right-0.5 top-0.5 z-3 hidden items-center gap-0.5 rounded-plate-lg border border-rule bg-surface p-0.5 shadow-[var(--lift)] group-hover:flex group-focus-within:flex";
+var CARD_QUICK_BTN_CLASS = "grid min-h-[26px] min-w-[26px] cursor-pointer place-items-center rounded-plate-lg border-0 bg-transparent p-0 text-sm text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg";
+var DROP_INDICATOR_CLASS = "mx-2 -my-px h-0.5 rounded-capsule bg-accent";
+
 function cardQuickActions(c) {
   var qa = document.createElement("span");
-  qa.className = "card-quick-actions";
+  qa.className = CARD_QUICK_CLASS;
   var qaEdit = document.createElement("button");
   qaEdit.type = "button";
+  qaEdit.className = CARD_QUICK_BTN_CLASS;
   qaEdit.appendChild(icon("pencil", 14));
   qaEdit.title = "Open card";
   qaEdit.setAttribute("aria-label", "Open card: " + (c.title || c.id));
@@ -1072,6 +1085,7 @@ function cardQuickActions(c) {
   // Quick move to next column
   var qaMove = document.createElement("button");
   qaMove.type = "button";
+  qaMove.className = CARD_QUICK_BTN_CLASS;
   qaMove.appendChild(icon("arrowRight", 14));
   qaMove.title = "Move to next column";
   qaMove.setAttribute("aria-label", "Move to next column: " + (c.title || c.id));
@@ -1093,7 +1107,8 @@ function showDropIndicator(targetCard, e) {
   var rect = targetCard.getBoundingClientRect();
   var above = (e.clientY - rect.top) < rect.height / 2;
   var indicator = document.createElement("div");
-  indicator.className = "board-drop-indicator";
+  indicator.className = DROP_INDICATOR_CLASS;
+  indicator.dataset.dropIndicator = "";
   if (above) {
     targetCard.parentNode.insertBefore(indicator, targetCard);
   } else {
@@ -1102,7 +1117,7 @@ function showDropIndicator(targetCard, e) {
 }
 
 function clearDropIndicators() {
-  var indicators = document.querySelectorAll(".board-drop-indicator");
+  var indicators = document.querySelectorAll("[data-drop-indicator]");
   for (var i = 0; i < indicators.length; i++) indicators[i].remove();
 }
 

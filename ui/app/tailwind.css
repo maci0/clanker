@@ -81,6 +81,9 @@
 .right-0 {
   right: 0px;
 }
+.right-0\.5 {
+  right: calc(var(--spacing) * 0.5);
+}
 .right-1\.5 {
   right: calc(var(--spacing) * 1.5);
 }
@@ -90,11 +93,17 @@
 .right-4 {
   right: var(--space-4);
 }
+.right-\[calc\(0\.65rem\+1px\)\] {
+  right: calc(0.65rem + 1px);
+}
 .bottom-2 {
   bottom: var(--space-2);
 }
 .bottom-4 {
   bottom: var(--space-4);
+}
+.bottom-\[calc\(0\.5rem\+1px\)\] {
+  bottom: calc(0.5rem + 1px);
 }
 .bottom-\[calc\(100\%\+0\.35rem\)\] {
   bottom: calc(100% + 0.35rem);
@@ -113,6 +122,9 @@
 }
 .z-1 {
   z-index: 1;
+}
+.z-3 {
+  z-index: 3;
 }
 .z-4 {
   z-index: 4;
@@ -164,6 +176,12 @@
 }
 .mx-0 {
   margin-inline: 0px;
+}
+.mx-2 {
+  margin-inline: var(--space-2);
+}
+.-my-px {
+  margin-block: -1px;
 }
 .my-1 {
   margin-block: var(--space-1);
@@ -240,6 +258,9 @@
 .mb-px {
   margin-bottom: 1px;
 }
+.-ml-1\.5 {
+  margin-left: calc(var(--spacing) * -1.5);
+}
 .ml-2 {
   margin-left: var(--space-2);
 }
@@ -301,6 +322,9 @@
   width: var(--space-1);
   height: var(--space-1);
 }
+.h-0\.5 {
+  height: calc(var(--spacing) * 0.5);
+}
 .h-1 {
   height: var(--space-1);
 }
@@ -312,6 +336,9 @@
 }
 .h-4 {
   height: var(--space-4);
+}
+.h-7 {
+  height: var(--space-7);
 }
 .h-35 {
   height: calc(var(--spacing) * 35);
@@ -409,6 +436,9 @@
 .min-h-\[22rem\] {
   min-height: 22rem;
 }
+.min-h-\[26px\] {
+  min-height: 26px;
+}
 .min-h-\[54px\] {
   min-height: 54px;
 }
@@ -423,6 +453,9 @@
 }
 .w-4 {
   width: var(--space-4);
+}
+.w-7 {
+  width: var(--space-7);
 }
 .w-8 {
   width: calc(var(--spacing) * 8);
@@ -499,6 +532,9 @@
 .min-w-64 {
   min-width: calc(var(--spacing) * 64);
 }
+.min-w-\[26px\] {
+  min-width: 26px;
+}
 .min-w-\[220px\] {
   min-width: 220px;
 }
@@ -570,6 +606,12 @@
 }
 .transform\! {
   transform: var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,) !important;
+}
+.animate-card-pulse {
+  animation: card-pulse 2s ease-in-out infinite;
+}
+.animate-card-pulse-fast {
+  animation: card-pulse 1.2s ease-in-out infinite;
 }
 .animate-wire-flow {
   animation: mesh-wire-flow 1.1s linear infinite;
@@ -771,6 +813,10 @@
   border-style: var(--tw-border-style);
   border-width: 0px;
 }
+.border-2 {
+  border-style: var(--tw-border-style);
+  border-width: 2px;
+}
 .border-\[1\.5px\] {
   border-style: var(--tw-border-style);
   border-width: 1.5px;
@@ -833,6 +879,9 @@
   @supports (color: color-mix(in lab, red, red)) {
     border-color: color-mix(in oklab, var(--rule) 50%, transparent);
   }
+}
+.border-surface {
+  border-color: var(--surface);
 }
 .border-transparent {
   border-color: transparent;
@@ -956,6 +1005,9 @@
 }
 .p-0 {
   padding: 0px;
+}
+.p-0\.5 {
+  padding: calc(var(--spacing) * 0.5);
 }
 .p-1 {
   padding: var(--space-1);
@@ -1408,6 +1460,9 @@
 .group-open\:text-fg:is(:where(.group):is([open], :popover-open, :open) *) {
   color: var(--fg);
 }
+.group-focus-within\:flex:is(:where(.group):focus-within *) {
+  display: flex;
+}
 .group-focus-within\:h-auto:is(:where(.group):focus-within *) {
   height: auto;
 }
@@ -1427,6 +1482,9 @@
   font-size: var(--step--1);
 }
 @media (hover: hover) {
+  .group-hover\:flex:is(:where(.group):hover *) {
+    display: flex;
+  }
   .group-hover\:h-auto:is(:where(.group):hover *) {
     height: auto;
   }
@@ -1634,6 +1692,9 @@
   --tw-content: ' ↗';
   content: var(--tw-content);
 }
+.first\:ml-0:first-child {
+  margin-left: 0px;
+}
 .last\:border-b-0:last-child {
   border-bottom-style: var(--tw-border-style);
   border-bottom-width: 0px;
@@ -1663,6 +1724,13 @@
   .hover\:z-1:hover {
     z-index: 1;
   }
+  .hover\:z-2:hover {
+    z-index: 2;
+  }
+  .hover\:-translate-y-0\.5:hover {
+    --tw-translate-y: calc(var(--spacing) * -0.5);
+    translate: var(--tw-translate-x) var(--tw-translate-y);
+  }
   .hover\:border-accent:hover {
     border-color: var(--accent);
   }
@@ -1691,6 +1759,10 @@
   }
   .hover\:text-fg:hover {
     color: var(--fg);
+  }
+  .hover\:shadow-\[var\(--lift\)\]:hover {
+    --tw-shadow: var(--lift);
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
   .hover\:shadow-\[var\(--lift-high\)\]:hover {
     --tw-shadow: var(--lift-high);

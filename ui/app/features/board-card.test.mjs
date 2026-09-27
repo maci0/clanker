@@ -50,8 +50,11 @@ function elem(tag) {
 // whole /webui module graph; the same lift-and-run harness `arena.test.mjs`
 // uses for `ensure3d` runs it verbatim over stubs.
 function harness() {
-  const from = js.indexOf("function cardQuickActions(c) {");
-  assert.ok(from >= 0, "cardQuickActions is a top-level function in board.js");
+  // From the shared class lists down: the two functions below name them, and a
+  // class list that lives above its users is outside a slice that starts at the
+  // first function.
+  const from = js.indexOf("var CARD_MEMBERS_CLASS = ");
+  assert.ok(from >= 0, "the card's class lists are at the top of their block");
   const to = js.indexOf("\nfunction showDropIndicator(", from);
   assert.ok(to > from, "cardQuickActions still precedes showDropIndicator");
 
@@ -74,7 +77,7 @@ test("both card actions are real buttons with their own accessible name", functi
   const ctx = harness();
   const qa = ctx.cardQuickActions({ id: "c1", title: "Ship the gate", column: "todo" });
   assert.equal(qa.tagName, "SPAN");
-  assert.equal(qa.className, "card-quick-actions");
+  assert.match(qa.className, /group-hover:flex/, "the overlay reveals itself on the hover of the item that holds it");
   assert.equal(qa.childNodes.length, 2);
   for (const b of qa.childNodes) {
     assert.equal(b.tagName, "BUTTON");
@@ -173,8 +176,11 @@ function memberHarness() {
   );
   const from = js.indexOf("function memberInitials(name) {");
   assert.ok(from >= 0, "memberInitials/cardMemberControl are top-level in board.js");
-  const to = js.indexOf("/* The card's hover actions", from);
-  assert.ok(to > from, "cardMemberControl still precedes the hover actions");
+  // Through the class lists and the quick actions: the members' class lists sit
+  // with them, and a slice stopping at the hover-actions comment would cut the
+  // constants the functions below name.
+  const to = js.indexOf("\nfunction showDropIndicator(", from);
+  assert.ok(to > from, "cardMemberControl still precedes the drop indicator");
 
   const root = node("body");
   const ctx = {
@@ -208,7 +214,7 @@ test("the reassign control is a real button outside the card button", function (
   const ctx = memberHarness();
   const wrap = ctx.mount({ id: "c1", title: "Ship the gate", assignee: "ada" });
   assert.equal(wrap.tagName, "SPAN");
-  assert.equal(wrap.className, "card-members-overlay");
+  assert.match(wrap.className, /absolute bottom-\[/, "the overlay is positioned against the item that holds it");
   const btn = wrap.childNodes[0];
   assert.equal(btn.tagName, "BUTTON");
   assert.equal(btn.type, "button");
@@ -233,7 +239,7 @@ test("the picker and its members are reachable, and the avatar in the card is no
   // as presentational.
   const popup = ctx.root.querySelector(".member-picker-popup");
   assert.ok(popup, "the picker opened");
-  assert.equal(popup.parentNode.className, "card-members-overlay");
+  assert.match(popup.parentNode.className, /CARD_MEMBERS_OVERLAY|bottom-\[/, "the popup is a sibling of the button under the overlay");
   assert.ok(!btn.contains(popup), "the picker is not inside the button");
   assert.equal(btn.getAttribute("aria-expanded"), "true");
   // Remove member, then one item per known peer, all of them <button>.
@@ -241,7 +247,7 @@ test("the picker and its members are reachable, and the avatar in the card is no
 
   // And the avatar left in the card carries no role and no tab stop.
   const cardSrc = js.slice(js.indexOf("function cardNode(c) {"), js.indexOf("function memberInitials(name) {"));
-  const slot = cardSrc.slice(cardSrc.indexOf("card-members"));
+  const slot = cardSrc.slice(cardSrc.indexOf("membersWrap"));
   assert.ok(!/role", "button"/.test(slot), "the in-card avatar must not be a control");
   assert.ok(!/tabIndex/.test(slot), "nor a tab stop");
   assert.match(slot, /aria-hidden", "true"/, "it is scenery, so it says so");
@@ -290,9 +296,9 @@ test("app.css paints the reassign button where the card's own avatar sits", func
   // The card is `overflow: hidden` and is the popup's containing block, so a
   // picker opened from inside it was clipped to the card. The overlay is
   // positioned against the list item, which clips nothing.
-  assert.match(css, /\.card-member-slot \{ visibility: hidden; \}/);
-  assert.match(css, /\.card-members-overlay \{[^}]*position: absolute/);
-  assert.match(css, /\.card-members-overlay \{[^}]*bottom: calc\(0\.5rem \+ 1px\)/);
+  assert.match(js, /CARD_MEMBER_SLOT_CLASS = CARD_MEMBER_CLASS \+ " invisible"/);
+  assert.match(js, /CARD_MEMBERS_OVERLAY_CLASS = "absolute bottom-\[/);
+  assert.match(js, /CARD_MEMBERS_OVERLAY_CLASS = "absolute bottom-\[calc\(0\.5rem\+1px\)\]/);
   // The card body's padding and the card's own clipping are utilities on the
   // markup now; the offset above still has to agree with that padding.
   assert.match(js, /var CARD_BODY_CLASS = "[^"]*px-3 pb-2 pt-2/, "that offset is the card body's own padding");
@@ -304,7 +310,7 @@ test("app.css positions the actions against the list item that holds them", func
   // and the hover rule that reveals the actions is still the sheet's until the
   // actions themselves move over.
   assert.match(js, /var CARD_ITEM_CLASS = "relative"/);
-  assert.match(css, /\.board-card-item:hover \.card-quick-actions, \.board-card-item:focus-within \.card-quick-actions \{ display: flex; \}/);
+  assert.match(js, /CARD_QUICK_CLASS = "[^"]*group-hover:flex group-focus-within:flex/);
   // A `.card ... .card-quick-actions` descendant rule would mean they had been
   // put back inside the button.
   assert.ok(!/\.card:hover \.card-quick-actions/.test(css));

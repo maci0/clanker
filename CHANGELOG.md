@@ -292,6 +292,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   in `app.css` for the turn-answer placeholder. First paint 61.5K gz; the
   sheet's accounting figure moves to 68K, its fourth named raise.
 
+- The rest of the card face is Tailwind utilities: the member avatars, the
+  overlay that carries the real reassign control, the hover quick-actions and
+  the drop indicator, all in `ui/app/features/board.js`. The overlay's reveal is
+  `group-hover:flex group-focus-within:flex` on the item that holds it, the
+  in-card avatar is `invisible` rather than a rule, and the drop indicator's
+  hook is `[data-drop-indicator]`. Three rules nothing named are deleted rather
+  than ported: the starred mark (no code has set `data-starred` for a while)
+  and the drag ghost (nothing names `board-drag-ghost`), plus a duplicate
+  `.card[aria-current="true"]` the shell's port had already replaced. First
+  paint 61.2K gz; the sheet's accounting figure moves to 72K, its fifth named
+  raise.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is
