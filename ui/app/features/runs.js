@@ -25,6 +25,40 @@ var el = {};
 var showView = function () {};
 var viewLoaded = {};
 var parseRunsHash = function () { return null; };
+
+/* One computed token off :root, or "" when there is no page to read. The
+   export below is a file opened outside this window, so it has to carry its
+   own values; reading them here is what keeps them the ones on screen. */
+function readToken(name) {
+  try { return getComputedStyle(document.documentElement).getPropertyValue(name) || ""; }
+  catch (_) { return ""; }
+}
+
+/* Fallbacks are themes/light.json: a named theme, the system dark block, or no
+   computed style at all still exports a cabinet rather than an empty file. */
+var EXPORT_FALLBACK = {
+  "--bg": "#dcd9d1",
+  "--fg": "#1b1c18",
+  "--fg-muted": "#4f534b",
+  "--border": "#b9b5aa",
+  "--surface": "#eeebe4",
+  "--code-bg": "#d4d0c6"
+};
+
+/* The exported graph's stylesheet, in the cabinet vocabulary: RAL panel greys,
+   3px machined edges, engraved mono for the readings. Exported as a named
+   function so a test drives the same code the button does. */
+export function buildExportCss(read) {
+  var v = function (name) { return (read(name) || "").trim() || EXPORT_FALLBACK[name]; };
+  return ":root{--bg:" + v("--bg") + ";--fg:" + v("--fg") + ";--muted:" + v("--fg-muted")
+      + ";--edge:" + v("--border") + ";--card:" + v("--surface") + ";--code:" + v("--code-bg") + "}"
+    + "body{font-family:ui-sans-serif,system-ui;background:var(--bg);color:var(--fg);padding:1.2rem;max-width:70rem;margin:auto}"
+    + "h1{font:700 1.1rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all}"
+    + "body > p{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;color:var(--muted)}"
+    + "hr{border:0;border-top:1px solid var(--edge)}"
+    + "pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border:1px solid var(--edge);padding:0.8rem;border-radius:3px;overflow:auto;font-size:.8rem}"
+    + "svg{max-width:100%;height:auto}";
+}
 export function initRuns(ctx) {
   el = ctx.el;
   showView = ctx.showView;
@@ -508,20 +542,16 @@ function drawRun(g) {
       // interpolation site including this one.
       var esc = escapeHtml;
       // The exported graph is the second artefact that leaves the machine
-      // (`clanker session export` is the other), so it carries the same
-      // Control Cabinet vocabulary rather than a default sans on a grey
-      // rounded box: RAL panel greys, 3px machined edges, engraved mono for
-      // the readings. Values match tools/zig/session_export_logic.zig, which
-      // took them from themes/light.json and themes/dark.json — both files
-      // are self-contained by contract and cannot read the theme store.
-      var exportCss = ":root{color-scheme:light dark;--bg:#dcd9d1;--fg:#1b1c18;--muted:#4f534b;--edge:#b9b5aa;--card:#eeebe4;--code:#d4d0c6}"
-        + "@media (prefers-color-scheme:dark){:root{--bg:#171916;--fg:#e8eae5;--muted:#a3aaa1;--edge:#454a44;--card:#232622;--code:#121411}}"
-        + "body{font-family:ui-sans-serif,system-ui;background:var(--bg);color:var(--fg);padding:1.2rem;max-width:70rem;margin:auto}"
-        + "h1{font:700 1.1rem/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.04em;word-break:break-all}"
-        + "body > p{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;color:var(--muted)}"
-        + "hr{border:0;border-top:1px solid var(--edge)}"
-        + "pre{white-space:pre-wrap;word-break:break-word;background:var(--code);border:1px solid var(--edge);padding:0.8rem;border-radius:3px;overflow:auto;font-size:.8rem}"
-        + "svg{max-width:100%;height:auto}";
+      // (`clanker session export` is the other), so it wears the palette the
+      // operator is looking at, read off the live tokens. It used to carry a
+      // second hand-copied pair of palettes plus a prefers-color-scheme block,
+      // so an operator on latte or hackerman exported a run in the day-shift
+      // cabinet and a copy opened under the other OS mode flipped under them:
+      // an artefact in a look the product does not have. One reading of each
+      // token, whatever palette is applied, and no media query to second-guess
+      // it. buildExportCss is pure; the fallbacks are themes/light.json, for a
+      // page with no computed style to read.
+      var exportCss = buildExportCss(readToken);
       var html = "<!doctype html><meta charset=utf-8><title>" + esc(g.run_id) + "</title><style>" + exportCss + "</style><h1>" + esc(g.run_id) + "</h1><p>" + esc(g.task||"") + " · " + esc(g.duration_ms) + "ms · " + esc(g.total_prompt_tokens) + " prompt + " + esc(g.total_completion_tokens) + " completion</p><div>" + svgHtml + "</div><hr><div>" + detailHtml + "</div><pre>" + esc(JSON.stringify(g, null, 2)) + "</pre>";
       var blob = new Blob([html], {type:"text/html"});
       var url = URL.createObjectURL(blob);

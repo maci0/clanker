@@ -651,12 +651,18 @@ test("inline styles in scripts carry no off-token size", () => {
     // document that is not this page and cannot read its tokens; they are
     // reviewed against themes/*.json instead. The sheet is assembled as a
     // run of concatenated string literals, so the exemption runs from the
-    // `exportCss` declaration to the statement that ends it, not one line.
+    // declaration that opens it to the statement that ends it, not one line.
+    // `buildExportCss` is that declaration now that the values are read from
+    // the live page rather than carried as a second literal palette; a
+    // function body ends at its own closing brace, and a function expression
+    // inside it (the token reader's own `;`) must not close the exemption.
     let inExportCss = false;
     src.split("\n").forEach((line, i) => {
-      if (/\bexportCss\s*=/.test(line)) inExportCss = true;
-      const exempt = inExportCss;
-      if (inExportCss && /;\s*$/.test(line)) inExportCss = false;
+      if (/\bexportCss\s*=/.test(line)) inExportCss = "statement";
+      else if (/\bfunction buildExportCss\b/.test(line)) inExportCss = "function";
+      const exempt = Boolean(inExportCss);
+      if (inExportCss === "statement" && /;\s*$/.test(line)) inExportCss = false;
+      else if (inExportCss === "function" && /^\}/.test(line)) inExportCss = false;
       if (exempt) return;
       for (const m of line.matchAll(sized)) {
         const value = m[2].trim();
@@ -666,4 +672,45 @@ test("inline styles in scripts carry no off-token size", () => {
     });
   }
   assert.deepEqual(strays, [], `off-token inline styles (move the rule into a sheet):\n${strays.join("\n")}`);
+});
+
+// Two artefacts leave the machine carrying their own stylesheet: the run
+// export in features/runs.js and `clanker session export` in
+// tools/zig/session_export_logic.zig. Neither can read this page's tokens at
+// open time, so both pin their own. The run export reads the applied palette
+// and falls back to the day cabinet; the Zig one has only literals, and its
+// lamp colours were still a framework ramp (Material #0b57d0, Tailwind
+// amber-700/green-400/amber-400) while the store it says it copied had moved
+// to RAL 5017/1004/6002. Same product, two blues, one of them the artefact an
+// operator emails to someone.
+test("the export stylesheets wear the theme store's readings", () => {
+  const themesDir = join(here, "..", "..", "themes");
+  const light = JSON.parse(readFileSync(join(themesDir, "light.json"), "utf8")).tokens;
+  const dark = JSON.parse(readFileSync(join(themesDir, "dark.json"), "utf8")).tokens;
+
+  const runs = readFileSync(join(here, "features", "runs.js"), "utf8");
+  const fallback = runs.match(/var EXPORT_FALLBACK = \{[^}]*\}/);
+  assert.ok(fallback, "runs.js must declare EXPORT_FALLBACK");
+  for (const [exported, token] of [["--bg", "--bg"], ["--fg", "--fg"], ["--fg-muted", "--fg-muted"],
+                                   ["--border", "--border"], ["--surface", "--surface"], ["--code-bg", "--code-bg"]]) {
+    const got = fallback[0].match(new RegExp(`"${exported}":\\s*"([^"]+)"`));
+    assert.ok(got, `EXPORT_FALLBACK has no ${exported}`);
+    assert.equal(got[1], light[token], `EXPORT_FALLBACK ${exported} must be themes/light.json ${token}`);
+  }
+  assert.match(runs, /buildExportCss\(readToken\)/, "the export must read the palette on screen, not carry one");
+
+  const zig = readFileSync(join(here, "..", "..", "tools", "zig", "session_export_logic.zig"), "utf8");
+  const day = zig.match(/\\\\:root\{[^}]*\}/);
+  const night = zig.match(/prefers-color-scheme:dark\)\{:root\{([^}]*)\}/);
+  assert.ok(day && night, "the session export must declare a day and a night palette");
+  const read = (block) => Object.fromEntries([...block.matchAll(/--([a-z-]+):(#[0-9a-f]{6})/g)].map((m) => [m[1], m[2]]));
+  const exported = { day: read(day[0]), night: read(night[1]) };
+  for (const [face, theme] of [["day", light], ["night", dark]]) {
+    for (const [exported_name, token] of [["bg", "--bg"], ["fg", "--fg"], ["muted", "--fg-muted"],
+                                         ["line", "--rule"], ["edge", "--border"], ["card", "--surface"],
+                                         ["code", "--code-bg"], ["act", "--accent"], ["ok", "--ok"], ["warn", "--warn"]]) {
+      assert.equal(exported[face][exported_name], theme[token],
+        `session export ${face} --${exported_name} must be ${token} (${theme[token]})`);
+    }
+  }
 });
