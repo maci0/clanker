@@ -1,4 +1,6 @@
 // Vanilla, no bundler. Image/video attachment plumbing for the composer.
+import { plural } from "./utils.js";
+
 export var pendingImages = [];
 export var max_image_bytes = 4 * 1024 * 1024;
 export var max_images = 4;
@@ -134,7 +136,7 @@ export function addVideoFile(file, els, iconFn, fmtBytesFn) {
         renderAttachments(els, iconFn, fmtBytesFn);
         if (els.sessionStatus) {
           els.sessionStatus.textContent = pushed > 0
-            ? "video sampled to " + pushed + (pushed === 1 ? " frame." : " frames.")
+            ? "video sampled to " + plural(pushed, { one: "frame.", other: "frames." })
             : "No frames could be read from that video.";
         }
         return;

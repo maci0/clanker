@@ -114,7 +114,7 @@ clanker.registerView({
       var ok = e.last_status !== "error";
       chip.dataset.state = ok ? "ok" : "error";
       chip.textContent = (ok ? "ok" : "failed") + " · " + relative(e.last_run);
-      chip.title = e.runs + (e.runs === 1 ? " run" : " runs") +
+      chip.title = api.fmt.plural(e.runs, { one: "run", other: "runs" }) +
         (e.failures ? ", " + e.failures + " failed" : ", none failed");
       return chip;
     }
@@ -191,7 +191,7 @@ clanker.registerView({
       }
       var on = state.entries.filter(function (e) { return e.enabled; }).length;
       var msg = state.entries.length
-        ? state.entries.length + (state.entries.length === 1 ? " entry" : " entries") + ", " + on + " active."
+        ? api.fmt.plural(state.entries.length, { one: "entry", other: "entries" }) + ", " + on + " active."
         : "No entries.";
       status.textContent = msg;
       api.status(msg);

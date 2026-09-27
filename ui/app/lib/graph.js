@@ -1,7 +1,7 @@
 // Vanilla, no bundler. Execution-graph layout via d3-dag Sugiyama.
 // Imported by app.js. Imports only loadD3.
 import { loadD3 } from "../core/vendor.js";
-import { fmtInt, fmtMs, fmtPct, searchFold } from "../core/utils.js";
+import { fmtInt, fmtUnit, fmtMs, fmtPct, searchFold } from "../core/utils.js";
 
 /* The run graph's shapes, as Tailwind utilities over the cabinet tokens
    (ui/app/tailwind.src.css). An element is addressed by a data attribute rather
@@ -23,7 +23,7 @@ var EDGE_CLASS = "fill-none stroke-border stroke-[1.5] forced-colors:stroke-[Can
 export function metricsFor(n) {
   if (n.kind === "llm") return fmtInt(n.prompt_tokens) + "/" + fmtInt(n.completion_tokens) + " tok \u00b7 " + fmtMs(n.duration_ms);
   if (n.kind === "tool") return fmtInt(n.result_bytes) + " B \u00b7 " + fmtMs(n.duration_ms);
-  return "answer " + fmtInt(n.result_bytes) + " B";
+  return "answer " + fmtUnit(n.result_bytes, "byte");
 }
 
 export function buildStages(nodes) {

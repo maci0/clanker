@@ -1,5 +1,5 @@
 // Vanilla, no bundler. Usage table — token/cost totals by provider/model.
-import { fmtPct } from "./utils.js";
+import { fmtPct, plural } from "./utils.js";
 
 /* The grid's shapes as Tailwind utilities (ui/app/tailwind.src.css); the
    Models view spells them the same way for its own columns. */
@@ -54,7 +54,7 @@ export function renderUsageTable(rows, modelLabel, fmtInt, fmtCost, UI, T) {
       }))),
       T.tbody(rows.map(function (r) { return usageRow(r, modelLabel, fmtInt, fmtCost, T); })),
       T.tfoot(T.tr(
-        T.td({ class: TD_CLASS + " " + FOOT_CLASS }, fmtInt(rows.length) + (rows.length === 1 ? " model" : " models")),
+        T.td({ class: TD_CLASS + " " + FOOT_CLASS }, plural(rows.length, { one: "model", other: "models" })),
         [fmtInt(totals.calls), fmtInt(totals.failed), fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
           .map(function (v) { return T.td({ class: TD_CLASS + " " + NUM_CLASS + " " + FOOT_CLASS }, v); })))));
 }

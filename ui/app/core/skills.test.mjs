@@ -22,7 +22,7 @@ function shippedLoadSkills(elements, fetchImpl) {
   const doc = Object.create(globalThis.document);
   doc.getElementById = function (id) { return elements[id] || null; };
   const factory = new Function(
-    "document", "fetch", "_readJson", "utilFmtBytes", "showLoadError",
+    "document", "fetch", "_readJson", "utilFmtBytes", "utilPlural", "showLoadError",
     "return (" + m[1] + ");"
   );
   return factory(
@@ -30,6 +30,7 @@ function shippedLoadSkills(elements, fetchImpl) {
     fetchImpl,
     function (x) { return x; },
     function () { return "1 KB"; },
+    function (n, forms) { return n + " " + (forms[new Intl.PluralRules().select(n)] || forms.other); },
     function () { elements.loadErrorShown = true; }
   );
 }

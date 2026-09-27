@@ -25,16 +25,12 @@
  * show. Colour is never the only encoding: the saturation state is a word.
  */
 
-import { fmtPct as fmtPctFmt } from "/webui/core/utils.js";
+import { fmtPct as fmtPctFmt, fmtUnit } from "/webui/core/utils.js";
 
-// One duration or rate, in the reader's own units and separators: a hardcoded
-// "s" after a toFixed reads "1,5s" in German and "1.5 s" in French, and a
-// hardcoded "%" never gets the locale's percent sign or its spacing.
-function fmtUnit(v, unit, digits) {
-  return new Intl.NumberFormat(undefined, {
-    style: "unit", unit: unit, unitDisplay: "narrow", maximumFractionDigits: digits
-  }).format(v);
-}
+// Durations and rates go through core/utils.js's fmtUnit, the same one the
+// rest of the UI uses: a hardcoded "s" after a toFixed reads "1,5s" in German
+// and "1.5 s" in French, and a hardcoded "%" never gets the locale's percent
+// sign or its spacing.
 
 /* The tiles and the distribution table. The tile is a plate with a lamp on its
    edge: `lamp` is the component rule in ui/app/tailwind.src.css (a
@@ -111,7 +107,7 @@ clanker.registerView({
 
     function fmtRate(r) {
       if (r === null) return "—";
-      return new Intl.NumberFormat(undefined, { maximumFractionDigits: r >= 10 ? 0 : 1 }).format(r) + "/s";
+      return fmtUnit(r, "per-second", r >= 10 ? 0 : 1);
     }
 
     function fmtMs(ms) {

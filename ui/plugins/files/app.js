@@ -298,7 +298,7 @@ clanker.registerView({
         } else if (hiddenCount) {
           var hidden = mk("p", EMPTY_CLASS);
           hidden.appendChild(document.createTextNode(
-            hiddenCount === 1 ? "This folder has 1 hidden item. " : "This folder has " + hiddenCount + " hidden items. "
+            hiddenCount === 1 ? "This folder has 1 hidden item. " : "This folder has " + api.fmt.plural(hiddenCount, { one: "hidden item", other: "hidden items" }) + ". "
           ));
           var show = mk("button", CLEAR_CLASS, "Show hidden");
           show.type = "button";
@@ -453,7 +453,7 @@ clanker.registerView({
           var content = d.content || "";
           var lineCount = content ? content.split("\n").length : 0;
           vMeta.textContent = api.fmt.bytes(content.length)
-            + (lineCount > 1 ? " · "+lineCount+" lines" : "");
+            + (lineCount > 1 ? " · " + api.fmt.plural(lineCount, { one: "line", other: "lines" }) : "");
 
           if (d.truncated) {
             vNote.textContent = "Showing first "+api.fmt.bytes(content.length)+" — file is larger.";

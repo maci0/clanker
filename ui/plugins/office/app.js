@@ -923,7 +923,7 @@ clanker.registerView({
             say("janitor: big garbage is gone, back to rounds");
           }
         }
-        status.val = offices.length + (offices.length === 1 ? " room" : " rooms");
+        status.val = api.fmt.plural(offices.length, { one: "room", other: "rooms" });
         draw();
       }).catch(function (err) {
         status.val = "could not load: " + err.message;

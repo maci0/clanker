@@ -259,7 +259,7 @@ function makePage() {
 
 /* ------------------------------------------------------- the host, in a vm */
 
-// plugins.js with its six sibling imports stripped and handed in as globals
+// plugins.js with its sibling imports stripped and handed in as globals
 // instead. `import.meta.url` only ever feeds a `new URL` for a script/css src,
 // so it becomes a literal.
 function loadHost(page, extras) {
@@ -300,6 +300,9 @@ function loadHost(page, extras) {
     icon: () => makeElement("span"),
     searchFoldFind: () => {},
     wireRefresh: () => {},
+    fmtUnit: () => "",
+    fmtAgo: () => "",
+    plural: () => "",
     ...extras
   };
   sandbox.window = sandbox;

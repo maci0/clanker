@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
+import { readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtUnit as utilFmtUnit, fmtAgo as utilFmtAgo, plural as utilPlural, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -45,6 +45,9 @@ var summarizeTitle = utilSummarizeTitle;
 var recencyGroup = utilRecencyGroup;
 var fmtInt = utilFmtInt;
 var fmtMs = utilFmtMs;
+var fmtUnit = utilFmtUnit;
+var fmtAgo = utilFmtAgo;
+var plural = utilPlural;
 var fmtCost = utilFmtCost;
 var fmtUsd = utilFmtUsd;
 var escapeHtml = utilEscapeHtml;
@@ -514,7 +517,7 @@ function railRowFor(s, current) {
   var rawTitle = (s.title || "").replace(/\s+/g, " ").trim();
   var title = summarizeTitle(s.title || "");
   var archivedMark = s.archived ? " · archived" : "";
-  var meta = s.messages + (s.messages === 1 ? " msg" : " msgs") + archivedMark +
+  var meta = plural(s.messages, { one: "msg", other: "msgs" }) + archivedMark +
     (typeof s.bytes === "number" && s.bytes > 0 ? "  ·  " + fmtBytes(s.bytes) : "");
   var open = s.id === current;
 
@@ -589,7 +592,7 @@ bind(el.railList, railState, function (s) {
       class: "rail-group",
       "aria-expanded": String(!collapsed),
       "aria-label": (collapsed ? "Expand " : "Collapse ") + g.name,
-      title: (collapsed ? "Show " : "Hide ") + g.items.length + (g.items.length === 1 ? " conversation" : " conversations") + " in " + g.name,
+      title: (collapsed ? "Show " : "Hide ") + plural(g.items.length, { one: "conversation", other: "conversations" }) + " in " + g.name,
       onclick: function () { toggleCollapsedGroup(g.name); }
     }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
       T.span({ class: "rail-group-name" }, g.name),
@@ -665,7 +668,7 @@ function renderSessionTitle() {
   }
   var full = (meta.title || "").replace(/\s+/g, " ").trim() || "Untitled conversation";
   el.sessionTitle.textContent = full;
-  var bits = [full, meta.messages + (meta.messages === 1 ? " msg" : " msgs")];
+  var bits = [full, plural(meta.messages, { one: "msg", other: "msgs" })];
   if (typeof meta.bytes === "number" && meta.bytes > 0) bits.push(fmtBytes(meta.bytes));
   el.sessionTitle.title = bits.join("  ·  ");
   renderContextMeter();
@@ -1134,7 +1137,7 @@ function switchSession(id, jump) {
       return renderSessionHistory(data.messages || []).then(function () {
         syncTranscriptEmpty();
         var n = (data.messages || []).length;
-        el.sessionStatus.textContent = "Loaded " + n + (n === 1 ? " message." : " messages.");
+        el.sessionStatus.textContent = "Loaded " + plural(n, { one: "message.", other: "messages." });
         restoreDraft();
         if (jump) jumpToMessage(jump.index, jump.query);
       });
@@ -1458,7 +1461,7 @@ function updateComposerModeHint() {
   if (el.worktreeMode && el.worktreeMode.checked) parts.push("Isolated worktree · shared checkout untouched");
   if (el.paramEffort && el.paramEffort.value) parts.push("Effort " + el.paramEffort.value + " · pinned for this chat");
   if (attachImages.length) {
-    parts.push(attachImages.length + (attachImages.length === 1 ? " image attached" : " images attached"));
+    parts.push(plural(attachImages.length, { one: "image attached", other: "images attached" }));
   }
   el.hint.textContent = parts.join(" · ");
 }
@@ -1924,7 +1927,7 @@ function settleLastToolEvent(turn, ms) {
   if (state) state.remove();
   var dur = document.createElement("span");
   dur.className = "dur";
-  dur.textContent = ms + "ms";
+  dur.textContent = fmtUnit(ms, "millisecond");
   // The duration belongs on the always-visible summary line, not in the
   // fold-out body under it.
   (row.querySelector("summary") || row).appendChild(dur);
@@ -2066,7 +2069,7 @@ function renderStats(turn, stats, task) {
       relevant.forEach(function(s){
         var chip = document.createElement("button");
         chip.type = "button"; chip.className = "branch-chip";
-        chip.textContent = utilClip(s.title || s.id, 60) + " · " + (s.messages || 0) + " msgs";
+        chip.textContent = utilClip(s.title || s.id, 60) + " · " + plural(s.messages || 0, { one: "msg", other: "msgs" });
         chip.title = "Switch to " + (s.title || s.id);
         if (s.id === sessionId) chip.setAttribute("data-current", "true");
         chip.addEventListener("click", function(){ switchSession(s.id); });
@@ -2882,8 +2885,7 @@ function renderChatRooms(rooms) {
           var seen = (typeof lastSeenAt !== "undefined" && lastSeenAt[partner]) ? lastSeenAt[partner] : 0;
           if (peerUp) label += " · online";
           else if (seen) {
-            var mins = Math.floor((Date.now()/1000 - seen)/60);
-            label += " · " + (mins < 1 ? "just now" : mins < 60 ? mins + "m ago" : Math.floor(mins/60) + "h ago");
+            label += " · " + fmtAgo(seen);
           } else if (r.room.indexOf("dm:") === 0) label += " · offline";
         }
         return T.option({ value: r.room }, label);
@@ -4632,7 +4634,7 @@ function applyTurnFilter() {
     }
   });
   el.turnFilterCount.textContent = shown
-    ? hits + (hits === 1 ? " match in " : " matches in ") + shown + (shown === 1 ? " turn" : " turns")
+    ? plural(hits, { one: "match in", other: "matches in" }) + " " + shown + " " + plural(shown, { one: "turn", other: "turns" })
     : "No turns match.";
 }
 
@@ -5249,7 +5251,7 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
         // the action opens the run in place, so a link was announced as one
         // that navigates somewhere it doesn't.
         var openRunBtn=document.createElement("button"); openRunBtn.type="button"; openRunBtn.className="fleet-run-link";
-        openRunBtn.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+((r.duration_ms||0)+"ms");
+        openRunBtn.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+fmtUnit(r.duration_ms||0, "millisecond");
         openRunBtn.addEventListener("click", function(){ if(typeof openRun==="function") openRun(r.run_id); });
         li.appendChild(openRunBtn);
         var rev=document.createElement("button"); rev.type="button"; rev.className="secondary"; rev.textContent="Revert"; upgradePfButton(rev); rev.style.marginLeft="var(--space-3)";
@@ -5482,7 +5484,7 @@ function renderKbMentionList() {
         var hint = document.getElementById("knowledge-hint");
         if (hint) {
           var n = kbSelected.length;
-          hint.textContent = n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt.";
+          hint.textContent = plural(n, { one: "collection", other: "collections" }) + " will be included in the next prompt.";
         }
       });
       el.promptList.appendChild(li);

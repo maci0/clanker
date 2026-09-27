@@ -2,7 +2,7 @@
 // row rendering, detail, toggles and config editing. Keeps the list itself as
 // a derived state (toolState) so filter and data cannot disagree.
 import { scrollTo as vendorScrollTo } from "./vendor.js";
-import { fmtBytes as utilFmtBytes } from "./utils.js";
+import { fmtBytes as utilFmtBytes, plural as utilPlural } from "./utils.js";
 import { showLoadError } from "./ui.js";
 import { toolCategoryLabel, compareToolCategories } from "./labels.js";
 
@@ -377,7 +377,7 @@ function loadWorkflows() {
         }
         box.appendChild(card);
       });
-      if (status) status.textContent = list.length + (list.length === 1 ? " workflow." : " workflows.");
+      if (status) status.textContent = utilPlural(list.length, { one: "workflow.", other: "workflows." });
     })
     .catch(function () {
       var msg = "Could not load templates.";
@@ -451,7 +451,7 @@ function loadSkills() {
         }
         box.appendChild(card);
       });
-      if (status) status.textContent = list.length + (list.length === 1 ? " skill." : " skills.");
+      if (status) status.textContent = utilPlural(list.length, { one: "skill.", other: "skills." });
     })
     .catch(function () {
       var msg = "Could not load skills.";
@@ -478,7 +478,7 @@ export function bindTools(ctx) {
           (t.tags || []).some(function (tagName) { return tagName.toLowerCase().indexOf(s.filter) !== -1; });
       });
       _el.toolsStatus.textContent = s.filter
-        ? shown.length + (shown.length === 1 ? " tool matches." : " tools match.")
+        ? utilPlural(shown.length, { one: "tool matches.", other: "tools match." })
         : "";
       if (!shown.length) {
         if (s.filter) {
@@ -519,7 +519,7 @@ export function bindTools(ctx) {
           class: "tool-group",
           "aria-expanded": String(!collapsed),
           "aria-label": (collapsed ? "Expand " : "Collapse ") + groupLabel(cat),
-          title: (collapsed ? "Show " : "Hide ") + items.length + (items.length === 1 ? " tool" : " tools") + " in " + groupLabel(cat),
+          title: (collapsed ? "Show " : "Hide ") + utilPlural(items.length, { one: "tool", other: "tools" }) + " in " + groupLabel(cat),
           onclick: function () { toggleToolGroupCollapsed(cat); }
         }, ctx.T.span({ class: "tool-group-caret" }, collapsed ? "▸" : "▾"),
           ctx.T.span({ class: "tool-group-name" }, groupLabel(cat)),

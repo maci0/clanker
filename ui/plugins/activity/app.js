@@ -110,7 +110,7 @@ clanker.registerView({
           var room = both[1];
           var entries = api.boardTimeline((d.board && d.board.cards) || [], (room && room.messages) || []);
           draw(entries);
-          api.status(entries.length + (entries.length === 1 ? " entry." : " entries."));
+          api.status(api.fmt.plural(entries.length, { one: "entry.", other: "entries." }));
         })
         .catch(function (err) {
           drawFailure("Could not read the board: " + err.message);

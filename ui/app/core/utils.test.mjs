@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup } from "./utils.js";
-
+import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit } from "./utils.js";
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -211,4 +210,50 @@ test("an ordinary week is unchanged, and a future stamp reads as today", functio
   // A clock stepped backwards leaves a session stamped in the future.
   assert.equal(recencyGroup(now + 3600, now), rtf.format(0, "day"));
   assert.equal(recencyGroup(0, now), "Undated");
+});
+
+// The locale-sensitive formatters. These are the ones a reader in another
+// language notices first, so each asserts the shape the fix exists for rather
+// than a fixed string (the exact wording comes from the runtime locale).
+
+test("plural picks the form Intl.PluralRules names, not `n === 1`", function () {
+  const rules = new Intl.PluralRules();
+  const forms = { one: "file", other: "files" };
+  // Whatever the runtime locale selects for 1 and 2 is what has to come out,
+  // including in a locale where "one" covers 2 as well as 1.
+  assert.equal(plural(1, forms), "1 " + forms[rules.select(1)]);
+  assert.equal(plural(2, forms), "2 " + forms[rules.select(2)]);
+  assert.equal(plural(0, forms), "0 " + forms[rules.select(0)]);
+});
+
+test("plural falls back to `other` for a category the caller omitted", function () {
+  // A language with more categories than the two-form object a call site
+  // passes must render the fallback, never the key name.
+  const rules = new Intl.PluralRules();
+  const count = [0, 1, 2, 3, 4, 5, 11, 21].find((n) => rules.select(n) !== "one" && rules.select(n) !== "other");
+  if (count === undefined) return;
+  assert.equal(plural(count, { one: "x", other: "y" }), count + " y");
+});
+
+test("plural groups a large count the way the locale writes numbers", function () {
+  assert.equal(plural(1234, { one: "file", other: "files" }), new Intl.NumberFormat().format(1234) + " files");
+});
+
+test("fmtAgo names the elapsed time in the reader's language", function () {
+  const now = 1_800_000_000;
+  assert.equal(fmtAgo(now - 12 * 60, now), rtf.format(-12, "minute"));
+  assert.equal(fmtAgo(now - 3 * 3600, now), rtf.format(-3, "hour"));
+  assert.equal(fmtAgo(now - 2 * 86400, now), rtf.format(-2, "day"));
+});
+
+test("fmtAgo reads as now inside the first minute and never says \"ago\"", function () {
+  const now = 1_800_000_000;
+  assert.equal(fmtAgo(now - 30, now), rtf.format(0, "second"));
+  assert.equal(fmtAgo(now + 30, now), rtf.format(0, "second"));
+  assert.equal(fmtAgo(undefined, now), "");
+});
+
+test("fmtUnit carries the locale's unit spelling, not a glued suffix", function () {
+  assert.equal(fmtUnit(1500, "millisecond"), new Intl.NumberFormat(undefined, { style: "unit", unit: "millisecond", unitDisplay: "narrow" }).format(1500));
+  assert.equal(fmtUnit(0.5, "second", 1), new Intl.NumberFormat(undefined, { style: "unit", unit: "second", unitDisplay: "narrow", maximumFractionDigits: 1 }).format(0.5));
 });

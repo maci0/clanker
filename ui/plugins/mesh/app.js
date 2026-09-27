@@ -206,7 +206,7 @@ clanker.registerView({
         statusLine.textContent = state.busy || "";
       } else {
         var bits = [];
-        bits.push(list.length + (list.length === 1 ? " member" : " members"));
+        bits.push(api.fmt.plural(list.length, { one: "member", other: "members" }));
         if (state.pending.length) bits.push(state.pending.length + " pending");
         if (state.busy) bits.push(state.busy);
         statusLine.textContent = bits.join(" · ");

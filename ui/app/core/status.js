@@ -1,5 +1,6 @@
 // Vanilla, no bundler. Instance / peers status helpers.
 import { upgradePfChip } from "./ui.js";
+import { plural } from "./utils.js";
 
 function showChip(node, on) {
   if (!node) return;
@@ -26,7 +27,7 @@ export function renderStatusInto(status, els) {
   upgradePfChip(els.instanceChip);
   showChip(els.instanceChip, true);
   showChip(els.peersChip, peers.length > 0);
-  els.peersChip.textContent = peers.length + (peers.length === 1 ? " peer" : " peers");
+  els.peersChip.textContent = plural(peers.length, { one: "peer", other: "peers" });
   upgradePfChip(els.peersChip);
   els.instance.textContent = status.instance.name + " (" + status.instance.id + ")";
   els.peers.textContent = "";

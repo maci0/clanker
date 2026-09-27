@@ -1,6 +1,6 @@
 // Fleet / cross-agent view — ES module, no bundler.
 // Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
-import { clip, peerColor, escapeHtml, themeToken, cssColorAlpha, cssColorMix, fmtInt } from "../core/utils.js";
+import { clip, peerColor, escapeHtml, themeToken, cssColorAlpha, cssColorMix, fmtInt, fmtUnit, plural } from "../core/utils.js";
 import { readJson } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
@@ -78,7 +78,7 @@ function groupRuns(runs) {
 
 function fmtRunMeta(r) {
   var kind = r.run_id && r.run_id.indexOf("sub-") === 0 ? "sub" : "run";
-  var dur = typeof r.duration_ms === "number" ? r.duration_ms + "ms" : "";
+  var dur = typeof r.duration_ms === "number" ? fmtUnit(r.duration_ms, "millisecond") : "";
   var prov = r.provider || "";
   return [kind, prov, dur].filter(Boolean).join(" \u00b7 ");
 }
@@ -291,7 +291,7 @@ function renderDMs(container, chatData) {
     title.title = r.room;
     titleRow.appendChild(badge);
     titleRow.appendChild(title);
-    var metaText = (r.messages != null ? r.messages + " msgs" : "");
+    var metaText = (r.messages != null ? plural(r.messages, { one: "msg", other: "msgs" }) : "");
     if (r.last_from) metaText += (metaText ? " \u00b7 " : "") + "last " + r.last_from;
     if (subSet[r.room]) metaText += (metaText ? " \u00b7 " : "") + "subscribed";
     var meta = el("div", META_CLASS, metaText || r.room);
@@ -385,7 +385,7 @@ function renderRuns(container, detailNode, runs) {
     left.appendChild(title);
     left.appendChild(meta);
     if (hasKids) {
-      var subMeta = el("div", META_CLASS, children.length + " sub-run" + (children.length > 1 ? "s" : ""));
+      var subMeta = el("div", META_CLASS, plural(children.length, { one: "sub-run", other: "sub-runs" }));
       left.appendChild(subMeta);
     }
     var actions = el("div", ACTIONS_CLASS);
@@ -525,13 +525,13 @@ function renderSimpleGraph(container, g) {
   stages.forEach(function (st, idx) {
     var sec = el("div", STAGE_CLASS);
     var label = el("div", "tool-name", "iter " + (st.llm.iteration || idx + 1) + " \u00b7 llm " + (st.llm.label || ""));
-    var meta = el("div", "meta", (st.llm.prompt_tokens || 0) + "/" + (st.llm.completion_tokens || 0) + " tok \u00b7 " + (st.llm.duration_ms || 0) + "ms");
+    var meta = el("div", "meta", fmtInt(st.llm.prompt_tokens || 0) + "/" + fmtInt(st.llm.completion_tokens || 0) + " tok \u00b7 " + fmtUnit(st.llm.duration_ms || 0, "millisecond"));
     sec.appendChild(label);
     sec.appendChild(meta);
     if (st.tools.length) {
       var ul = el("ul", STAGE_TOOLS_CLASS);
       st.tools.forEach(function (t) {
-        var li = el("li", "meta", t.label + " \u00b7 " + (t.result_bytes || 0) + " B \u00b7 " + (t.duration_ms || 0) + "ms" + (t.ok === false ? " \u00b7 FAIL" : ""));
+        var li = el("li", "meta", t.label + " \u00b7 " + fmtUnit(t.result_bytes || 0, "byte") + " \u00b7 " + fmtUnit(t.duration_ms || 0, "millisecond") + (t.ok === false ? " \u00b7 FAIL" : ""));
         if (t.ok === false) li.className += " text-danger";
         ul.appendChild(li);
       });
@@ -540,7 +540,7 @@ function renderSimpleGraph(container, g) {
     container.appendChild(sec);
   });
   if (final) {
-    var f = el("p", "meta", "final \u00b7 " + (final.result_bytes || 0) + " B" + (final.detail ? " \u00b7 " + final.detail : ""));
+    var f = el("p", "meta", "final \u00b7 " + fmtUnit(final.result_bytes || 0, "byte") + (final.detail ? " \u00b7 " + final.detail : ""));
     container.appendChild(f);
   }
   var close = el("button", "secondary", "Close");
@@ -742,8 +742,8 @@ function meshStatusText(data, live) {
     var only = "This clanker only. Join another instance from Mesh, or add a peer in System → Config.";
     return bits.length ? bits.join(" · ") + " · " + only : only;
   }
-  bits.push(fmtInt(nodes.length) + " node" + (nodes.length === 1 ? "" : "s"));
-  if (links.length) bits.push(fmtInt(links.length) + " link" + (links.length === 1 ? "" : "s"));
+  bits.push(plural(nodes.length, { one: "node", other: "nodes" }));
+  if (links.length) bits.push(plural(links.length, { one: "link", other: "links" }));
   if (working) bits.push(fmtInt(working) + " working");
   if (pulses.length) bits.push(fmtInt(pulses.length) + " talking");
   if (data.mesh === false) bits.push("module off; showing configured peers");
@@ -768,7 +768,7 @@ function renderPendingBanner(el, pending) {
     return;
   }
   el.hidden = false;
-  el.textContent = fmtInt(rows.length) + " pending join" + (rows.length === 1 ? "" : "s") + ". Open Mesh to admit or deny.";
+  el.textContent = plural(rows.length, { one: "pending join", other: "pending joins" }) + ". Open Mesh to admit or deny.";
 }
 
 function patchMeshWorking(el, data, statusEl) {

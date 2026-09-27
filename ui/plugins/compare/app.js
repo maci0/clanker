@@ -116,7 +116,7 @@ clanker.registerView({
       h.id = "compare-label-" + a.label;
       col.appendChild(h);
 
-      col.appendChild(api.el("p", "meta", a.ok ? (a.ms + "ms") : ("no answer: " + (a.error || "unknown"))));
+      col.appendChild(api.el("p", "meta", a.ok ? api.fmt.unit(a.ms, "millisecond") : ("no answer: " + (a.error || "unknown"))));
 
       var body = api.el("div", "text-sm whitespace-pre-wrap wrap-anywhere", a.ok ? (a.text || "") : "");
       col.appendChild(body);

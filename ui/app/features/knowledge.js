@@ -1,7 +1,7 @@
 // Knowledge view — single-user. Collections of documents.
 import { uiConfirm, uiPrompt, toast, showLoadError } from "../core/ui.js";
 import * as kit from "../core/kit.js";
-import { readJson, fmtBytes, wireRefresh } from "../core/utils.js";
+import { readJson, fmtBytes, wireRefresh, plural } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
 function persistKnowledge(){ try { window.localStorage.setItem("clanker.knowledge", JSON.stringify(selectedKnowledge)); } catch(_){} }
 function ensureBadge(){
@@ -22,7 +22,7 @@ function refreshBadge(){
   // Reuse knowledge hint text when available
   var hint = document.getElementById("knowledge-hint");
   var n = selectedKnowledge.length;
-  var msg = hint ? hint.textContent : (n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt.");
+  var msg = hint ? hint.textContent : (plural(n, { one: "collection", other: "collections" }) + " will be included in the next prompt.");
   badge.textContent = msg + " ";
   var clear = kit.button({variant:"secondary", class: CLEAR_CLASS}, "Don't include in next chat");
   clear.addEventListener("click", function(){ selectedKnowledge.length=0; persistKnowledge(); updateHint(); refreshBadge(); });
@@ -33,7 +33,7 @@ function updateHint(){
   if(!hint) return;
   var n = selectedKnowledge.length;
   hint.textContent = n
-    ? n + (n === 1 ? " collection" : " collections") + " will be included in the next prompt."
+    ? plural(n, { one: "collection", other: "collections" }) + " will be included in the next prompt."
     : "No knowledge selected. Check Include in chat on a collection to add its documents to the next chat.";
 }
 export function loadKnowledge(){

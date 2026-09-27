@@ -4,7 +4,7 @@
 // goal side of the card<->goal mirroring lives in ./goals.js. bindBoard()
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
-import { fmtInt, fmtCost, fmtPct, formatChatTime, fmtDeadline, readJson, clip, wireRefresh } from "../core/utils.js";
+import { fmtInt, fmtCost, fmtPct, formatChatTime, fmtDeadline, readJson, clip, wireRefresh, plural } from "../core/utils.js";
 import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
@@ -342,7 +342,7 @@ function boardColumn(col, s) {
   var list = T.ul({
     class: "board-cards",
     id: "board-cards-" + col.id,
-    "aria-label": col.title + ", " + shown.length + (shown.length === 1 ? " card" : " cards")
+    "aria-label": col.title + ", " + plural(shown.length, { one: "card", other: "cards" })
   }, items);
 
   /* Trello-style add card: a subtle "+ Add a card" trigger that expands to
@@ -561,7 +561,7 @@ function boardColumn(col, s) {
                   });
                   // The shared themed toast(): keep this off the app-level
                   // error path and on the "moved" update status.
-                  toast("Moved " + shown.length + " card" + (shown.length > 1 ? "s" : "") + " to " + dest.title);
+                  toast("Moved " + plural(shown.length, { one: "card", other: "cards" }) + " to " + dest.title);
                 });
                 menu.appendChild(opt);
               });
@@ -1949,7 +1949,7 @@ function showCardDetail(id) {
     line.className = "meta";
     line.textContent = fmtInt(usage.prompt_tokens || 0) + " prompt + " + fmtInt(usage.completion_tokens || 0) +
       " completion  ·  " + fmtCost(usage.cost || 0) +
-      ((usage.runs || []).length ? "  ·  " + usage.runs.length + (usage.runs.length === 1 ? " run" : " runs") : "");
+      ((usage.runs || []).length ? "  ·  " + plural(usage.runs.length, { one: "run", other: "runs" }) : "");
     u.appendChild(line);
     (usage.runs || []).forEach(function (rid) {
       var b = document.createElement("button");
@@ -2124,7 +2124,7 @@ export function bindBoard(deps) {
       .then(function () {
         var moved = syncCardsFromGoals();
         el.boardStatus.textContent = moved
-          ? ("Moved " + fmtInt(moved) + " card" + (moved === 1 ? "" : "s") + " to match their goals.")
+          ? ("Moved " + plural(moved, { one: "card", other: "cards" }) + " to match their goals.")
           : "Every card already matches its goal.";
         // Let the moves' renderBoard calls flush, then re-enable.
         return loadBoard();

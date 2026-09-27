@@ -5,7 +5,7 @@ import { renderMarkdownWithFences, buildCodeBlock, renderMermaidBlocks } from ".
 import { boardTimeline } from "../lib/board.js";
 import { onLive } from "./stream.js";
 import { icon } from "./icons.js";
-import { searchFoldFind, wireRefresh } from "./utils.js";
+import { searchFoldFind, wireRefresh, fmtUnit, fmtAgo, plural } from "./utils.js";
 
 export var pluginViews = {};
 
@@ -22,7 +22,7 @@ var _formatChatTime = null;
 var _openSession = null;
 var _observeStatus = null;
 
-function fmt() { return { bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime }; }
+function fmt() { return { bytes: _fmtBytes, int: _fmtInt, cost: _fmtCost, time: _formatChatTime, unit: fmtUnit, ago: fmtAgo, plural: plural }; }
 
 /* The System panel's own line, for the loader's messages only. Guarded because
    the panel is not on the page in every embedding of the app. */

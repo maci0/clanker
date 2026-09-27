@@ -118,17 +118,56 @@ export function escapeHtml(s) {
 
 export function fmtMs(ms) {
   if (typeof ms !== "number" || !isFinite(ms)) return "";
-  if (ms < 1000) return new Intl.NumberFormat(undefined, { style: "unit", unit: "millisecond", unitDisplay: "narrow" }).format(ms);
-  if (ms < 60000) return new Intl.NumberFormat(undefined, { style: "unit", unit: "second", unitDisplay: "narrow", maximumFractionDigits: 1 }).format(ms / 1000);
+  if (ms < 1000) return fmtUnit(ms, "millisecond");
+  if (ms < 60000) return fmtUnit(ms / 1000, "second", 1);
   var mins = Math.floor(ms / 60000);
   var seconds = Math.round((ms % 60000) / 1000);
-  var minuteText = new Intl.NumberFormat(undefined, { style: "unit", unit: "minute", unitDisplay: "narrow" }).format(mins);
-  var secondText = new Intl.NumberFormat(undefined, { style: "unit", unit: "second", unitDisplay: "narrow" }).format(seconds);
-  return minuteText + " " + secondText;
+  return fmtUnit(mins, "minute") + " " + fmtUnit(seconds, "second");
+}
+
+/* A past instant as "3 hours ago" in the reader's language. The hand-rolled
+   "3h ago" this replaces abbreviated the unit in English and glued a suffix
+   on, which no other language builds that way; `numeric:"auto"` also collapses
+   yesterday and tomorrow onto their own words. `seconds` is the stamp, not a
+   duration, so the result is always in the past. */
+var relative_time = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+export function fmtAgo(seconds, nowSeconds) {
+  if (typeof seconds !== "number" || !isFinite(seconds)) return "";
+  var now = typeof nowSeconds === "number" && isFinite(nowSeconds) ? nowSeconds : Date.now() / 1000;
+  var delta = seconds - now;
+  var abs = Math.abs(delta);
+  if (abs < 60) return relative_time.format(0, "second");
+  if (abs < 3600) return relative_time.format(Math.round(delta / 60), "minute");
+  if (abs < 86400) return relative_time.format(Math.round(delta / 3600), "hour");
+  return relative_time.format(Math.round(delta / 86400), "day");
 }
 
 export function fmtInt(n) {
   return (typeof n === "number" ? n : 0).toLocaleString();
+}
+
+/* A count and its noun, with the form chosen by Intl.PluralRules rather than
+   by `n === 1`. English has two categories, so the ternary is right here and
+   wrong everywhere else: Polish counts one/few/many, Arabic zero/one/two/few/
+   many/other, and `n === 1` picks "one" for 21 in both, so 21 files reads
+   "21 file". `forms` is keyed by CLDR category; a category the caller left out
+   falls back to `other`, so the two-form object every call site passes still
+   renders in a language with more forms rather than printing the key name. */
+var plural_rules = new Intl.PluralRules();
+export function plural(n, forms) {
+  var count = typeof n === "number" && isFinite(n) ? n : 0;
+  return fmtInt(count) + " " + (forms[plural_rules.select(count)] || forms.other);
+}
+
+/* A value in a named unit, with the locale's own unit spelling and spacing.
+   The narrow forms are the abbreviations every locale defines ("ms", "1,5 s",
+   "1.5 s"), which is what a metric tile wants; a hardcoded suffix next to the
+   number reads as `$0,0001` nowhere and `0,0001 $` outside the US. */
+export function fmtUnit(v, unit, digits) {
+  var value = typeof v === "number" && isFinite(v) ? v : 0;
+  var opts = { style: "unit", unit: unit, unitDisplay: "narrow" };
+  if (typeof digits === "number") opts.maximumFractionDigits = digits;
+  return new Intl.NumberFormat(undefined, opts).format(value);
 }
 
 /* Currency, percent and compact counts go through Intl: a hardcoded "$" plus
@@ -273,7 +312,7 @@ export function summarizeTitle(raw) {
 export function sessionLabel(s) {
   var title = summarizeTitle(s.title || "");
   title = clip(title, 28);
-  var label = title + "  \u00b7  " + s.messages + (s.messages === 1 ? " msg" : " msgs");
+  var label = title + "  \u00b7  " + plural(s.messages, { one: "msg", other: "msgs" });
   // Transcript weight, because agent.compact_threshold_bytes is measured in
   // exactly these bytes and compaction is otherwise invisible until it fires.
   if (typeof s.bytes === "number" && s.bytes > 0) label += "  \u00b7  " + fmtBytes(s.bytes);
@@ -302,7 +341,6 @@ export function sessionMatchesFilter(item, q) {
 export function recencyGroup(updated, nowMs) {
   if (!updated) return "Undated";
   var now = typeof nowMs === "number" ? nowMs : Date.now();
-  var rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
   var d = new Date(updated * 1000);
   var today = new Date(now);
   d.setHours(0, 0, 0, 0);
@@ -310,8 +348,8 @@ export function recencyGroup(updated, nowMs) {
   // A clock stepped backwards puts a session in the future; it belongs with
   // today, not with yesterday.
   var days = Math.max(0, Math.round((today - d) / 86400000));
-  if (days === 0) return rtf.format(0, "day");
-  if (days === 1) return rtf.format(-1, "day");
+  if (days === 0) return relative_time.format(0, "day");
+  if (days === 1) return relative_time.format(-1, "day");
   if (days < 7) return "Previous 7 days";
   if (days < 30) return "Previous 30 days";
   return "Older";

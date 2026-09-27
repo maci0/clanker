@@ -88,7 +88,7 @@ clanker.registerView({
 
       row.appendChild(api.el("div", "meta " + api.kit.recordRow.foot,
         h.role + " · turn " + (h.turn + 1) +
-        (h.more ? " · " + h.more + " more match" + (h.more === 1 ? "" : "es") + " here" : "")));
+        (h.more ? " · " + api.fmt.plural(h.more, { one: "more match here", other: "more matches here" }) : "")));
 
       row.addEventListener("click", function () {
         api.openSession(h.id, { index: h.turn, query: state.query });
@@ -155,7 +155,7 @@ clanker.registerView({
       }
       state.hits.forEach(function (h) { list.appendChild(hitRow(h)); });
       var msg = state.hits.length +
-        (state.hits.length === 1 ? " conversation" : " conversations") +
+        api.fmt.plural(state.hits.length, { one: "conversation", other: "conversations" }) +
         (state.truncated ? " (showing the newest; narrow the search for more)" : "") + ".";
       status.textContent = msg;
       api.status(msg);

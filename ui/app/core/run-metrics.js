@@ -3,7 +3,7 @@
 // formatter. Times tick every frame. Tokens come from mid-run `usage`
 // events (this turn's totals) plus a live output estimate from streamed
 // chars until the next official snapshot.
-import { fmtInt, fmtMs, fmtCompact, fmtPct } from "./utils.js";
+import { fmtInt, fmtMs, fmtCompact, fmtPct, plural } from "./utils.js";
 
 export function fmtTok(n) {
   if (typeof n !== "number" || !isFinite(n)) return "0";
@@ -125,7 +125,7 @@ export function formatRunMetricsParts(m, now) {
   var parts = [];
   parts.push({
     key: "turns",
-    text: fmtInt(turns) + " turn" + (turns === 1 ? "" : "s") + " · " + fmtInt(steps) + " step" + (steps === 1 ? "" : "s"),
+    text: plural(turns, { one: "turn", other: "turns" }) + " · " + plural(steps, { one: "step", other: "steps" }),
   });
   parts.push({
     key: "time",

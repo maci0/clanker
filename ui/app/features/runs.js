@@ -10,7 +10,7 @@
 // per-view loaded flags and the hash parser arrive through `initRuns` rather
 // than being re-derived here. Everything else is imported directly, which is
 // what takes `lib/runs-list.js` off the eager path with this module.
-import { fmtInt, fmtMs, escapeHtml, readJson } from "../core/utils.js";
+import { fmtInt, fmtMs, fmtUnit, plural, escapeHtml, readJson } from "../core/utils.js";
 import { skeletonRows, upgradePfButton, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { loadD3, copyText, scrollTo } from "../core/vendor.js";
@@ -192,7 +192,7 @@ function renderRunList(matches) {
   el.runList.textContent = "";
   if (el.runListCount) {
     el.runListCount.textContent = rows.length
-      ? rows.length + (rows.length === 1 ? " run" : " runs")
+      ? plural(rows.length, { one: "run", other: "runs" })
       : "";
   }
   if (!rows.length) {
@@ -254,7 +254,7 @@ function buildRunRow(row, isSelected) {
   meta.appendChild(runRowChip(row.id, "run-row-id"));
   if (row.nested) meta.appendChild(runRowChip("sub-agent of " + row.parentId, "run-row-nested"));
   if (row.provider) meta.appendChild(runRowChip(row.provider, "run-row-provider"));
-  if (row.nodes) meta.appendChild(runRowChip(fmtInt(row.nodes) + (row.nodes === 1 ? " step" : " steps"), ""));
+  if (row.nodes) meta.appendChild(runRowChip(plural(row.nodes, { one: "step", other: "steps" }), ""));
   if (row.durationMs) meta.appendChild(runRowChip(fmtMs(row.durationMs), ""));
   if (row.tokens) meta.appendChild(runRowChip(fmtInt(row.tokens) + " tok", ""));
   if (row.failed) meta.appendChild(runRowChip("⚠ failed check", "run-row-failed"));
@@ -311,7 +311,7 @@ function announceRunMatches(query, count) {
   }
   el.runStatus.textContent = count === 0
     ? "No runs match " + query + "."
-    : count + (count === 1 ? " run matches " : " runs match ") + query + ". Showing the first.";
+    : plural(count, { one: "run matches", other: "runs match" }) + " " + query + ". Showing the first.";
 }
 
 function loadRuns() {
@@ -427,7 +427,7 @@ function diffRuns(aId, bId){
     (ga.nodes||[]).forEach(function(n){
       var k=n.label||n.detail||n.kind;
       var m=(gb.nodes||[]).find(function(x){ return (x.label||x.detail||x.kind)===k; });
-      if(m && (m.ok!==n.ok || Math.abs((m.duration_ms||0)-(n.duration_ms||0))> Math.max(80, (n.duration_ms||0)*0.25))) changed.push(k + ": " + (m.ok===false?"failed":"") + " " + (n.duration_ms||0)+"ms → "+(m.duration_ms||0)+"ms");
+      if(m && (m.ok!==n.ok || Math.abs((m.duration_ms||0)-(n.duration_ms||0))> Math.max(80, (n.duration_ms||0)*0.25))) changed.push(k + ": " + (m.ok===false?"failed":"") + " " + fmtUnit(n.duration_ms||0, "millisecond") + " → "+fmtUnit(m.duration_ms||0, "millisecond"));
     });
     // Re-render current graph with highlights
     drawRun(ga);
@@ -1042,10 +1042,10 @@ function buildJsonTree(value, keyLabel, depth) {  if (value === null) return jso
   if (typeof value === "string") return jsonLeaf(keyLabel, JSON.stringify(value), "hljs-string");
   if (Array.isArray(value)) {
     var items = value.map(function (v, i) { return [String(i), v]; });
-    return jsonBranch(keyLabel, items, "[", "]", items.length + (items.length === 1 ? " item" : " items"), depth);
+    return jsonBranch(keyLabel, items, "[", "]", plural(items.length, { one: "item", other: "items" }), depth);
   }
   var entries = Object.keys(value).map(function (k) { return [k, value[k]]; });
-  return jsonBranch(keyLabel, entries, "{", "}", entries.length + (entries.length === 1 ? " key" : " keys"), depth);
+  return jsonBranch(keyLabel, entries, "{", "}", plural(entries.length, { one: "key", other: "keys" }), depth);
 }
 
 function jsonLeaf(keyLabel, text, valueClass) {
