@@ -455,9 +455,19 @@ fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []c
         idx += 1;
     }
     by_key.deinit(alloc);
+    // provider/model within an equal total. The rows are gathered from a hash
+    // map, so a sort on `total_tokens` alone (or on nothing, for the
+    // never-used models that all sit at zero) leaves the order to the map's
+    // iteration order, which is a fact about insertion sequence and capacity
+    // rather than about the log. The table then printed rows in an order
+    // nothing in it explains.
     std.mem.sort(Stat, out, {}, struct {
         fn lessThan(_: void, a: Stat, b: Stat) bool {
-            return a.total_tokens > b.total_tokens;
+            if (a.total_tokens != b.total_tokens) return a.total_tokens > b.total_tokens;
+            if (!std.mem.eql(u8, a.provider, b.provider)) {
+                return std.mem.lessThan(u8, a.provider, b.provider);
+            }
+            return std.mem.lessThan(u8, a.model, b.model);
         }
     }.lessThan);
     return out;
@@ -657,6 +667,48 @@ test "append + aggregate groups by provider/model and sums" {
     try std.testing.expectEqual(@as(u64, 0), t.error_calls);
     try std.testing.expectEqual(@as(u64, 1400), t.total_tokens);
     try std.testing.expectApproxEqAbs(@as(f64, 0.03), t.cost, 0.0001);
+}
+
+test "models that tie on tokens list in provider/model order, not map order" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+
+    // Three models with identical totals: the shape every never-used model
+    // contributes, since they all sit at zero. Aggregate gathers them from a
+    // hash map, so a sort on the total alone leaves the order to the map's
+    // per-run layout and `clanker stats` prints a different table each run.
+    for ([_]struct { []const u8, []const u8 }{
+        .{ "openai", "gpt-5" },
+        .{ "anthropic", "claude-sonnet-5" },
+        .{ "anthropic", "claude-opus-5" },
+    }) |pair| {
+        append(env.tmp.dir, io, std.testing.allocator, arena, "", .{
+            .ts = 1,
+            .provider = pair[0],
+            .model = pair[1],
+            .prompt_tokens = 10,
+            .completion_tokens = 2,
+            .total_tokens = 12,
+            .cache_hit = 0,
+            .cache_miss = 10,
+            .cost = 0,
+            .duration_ms = 20,
+        });
+    }
+
+    const stats = try aggregate(env.tmp.dir, io, std.testing.allocator, arena, "");
+    try std.testing.expectEqual(@as(usize, 3), stats.len);
+    const expect = [_]struct { provider: []const u8, model: []const u8 }{
+        .{ .provider = "anthropic", .model = "claude-opus-5" },
+        .{ .provider = "anthropic", .model = "claude-sonnet-5" },
+        .{ .provider = "openai", .model = "gpt-5" },
+    };
+    for (stats, expect) |got, want| {
+        try std.testing.expectEqualStrings(want.provider, got.provider);
+        try std.testing.expectEqualStrings(want.model, got.model);
+    }
 }
 
 test "failed records count toward error_rate and older lines stay successes" {

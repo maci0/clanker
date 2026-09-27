@@ -50,6 +50,12 @@ pub const GraphFile = struct {
     /// failed run from a good one; graphs recorded before the field read
     /// `false`, which is also what a run with no check node means.
     failed: bool = false,
+    /// `agent.seed` this run drew its `ck_random` stream from, so a failing
+    /// run names the seed that reproduces it. 0 is the default and means
+    /// time-seeded, i.e. not reproducible: `clanker eval --seed <n>` and
+    /// `[agent] seed` pin it. Written before `task`, so a listing reading a
+    /// 4 KiB prefix still carries it.
+    seed: u64 = 0,
     /// After the listing scalars: a pasted prompt can be tens of kilobytes
     /// and used to push `node_count` out of the prefix window.
     task: []const u8 = "",

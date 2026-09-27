@@ -782,10 +782,20 @@ pub fn listSessionsLimited(io: std.Io, arena: std.mem.Allocator, sessions_dir: [
     return out.toOwnedSlice(arena);
 }
 
+/// Newest update first, id ascending within one timestamp.
+///
+/// `updated` is whole seconds, so a burst of turns (or two sessions saved in
+/// the same second) ties, and a comparator that answers false for both
+/// directions leaves the tie to whatever order the rows arrived in. That
+/// order is the directory walk's, which is filesystem-dependent, so two
+/// machines listing the same `state/sessions` disagreed, and `limit` kept an
+/// arbitrary one of the tied rows instead of a named one. The id tiebreak
+/// makes the order a total one, so the same store always lists the same way.
 fn sortNewestFirst(metas: []SessionMeta) void {
     std.mem.sort(SessionMeta, metas, {}, struct {
         fn lt(_: void, a: SessionMeta, b: SessionMeta) bool {
-            return a.updated > b.updated;
+            if (a.updated != b.updated) return a.updated > b.updated;
+            return std.mem.lessThan(u8, a.id, b.id);
         }
     }.lt);
 }
@@ -1413,6 +1423,41 @@ test "a limited listing keeps the newest rows, not the first ones walked" {
 
     const all = try listSessionsLimited(io, arena, dir, 0);
     try std.testing.expectEqual(@as(usize, 3), all.len);
+}
+
+test "sessions updated in the same second list in id order, not directory order" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const dir = try testDir(arena, &env);
+
+    const messages = [_]types.Message{.{ .role = .user, .content = "hi" }};
+    // Every row carries the same `updated`, which is the whole case: a
+    // comparator on `updated` alone leaves the order to the walk, so the list
+    // (and which row a `limit` keeps) is a property of the filesystem.
+    for ([_][]const u8{ "sess-c", "sess-a", "sess-b" }) |id| {
+        try saveSession(io, arena, dir, .{
+            .id = id,
+            .title = id,
+            .messages = &messages,
+            .created = 1,
+            .updated = 100,
+        });
+    }
+
+    const all = try listSessions(io, arena, dir);
+    try std.testing.expectEqual(@as(usize, 3), all.len);
+    try std.testing.expectEqualStrings("sess-a", all[0].id);
+    try std.testing.expectEqualStrings("sess-b", all[1].id);
+    try std.testing.expectEqualStrings("sess-c", all[2].id);
+
+    // A capped listing keeps the same rows it would have shown, so the tie
+    // cannot drop one conversation in favour of a walk-order accident.
+    const capped = try listSessionsLimited(io, arena, dir, 2);
+    try std.testing.expectEqual(@as(usize, 2), capped.len);
+    try std.testing.expectEqualStrings("sess-a", capped[0].id);
+    try std.testing.expectEqualStrings("sess-b", capped[1].id);
 }
 
 test "the events table is append-only: UPDATE and DELETE are refused" {

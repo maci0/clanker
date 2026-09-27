@@ -64,10 +64,18 @@ pub fn listingFromPrefix(arena: std.mem.Allocator, prefix: []const u8) ?Listing 
     };
 }
 
+/// Newest update first, id ascending within one timestamp.
+///
+/// `updated` is whole seconds, so rows saved in the same second tie, and a
+/// comparator that answers false for both directions of a tie leaves the
+/// order to the caller's walk. The walk is a directory read, so the picker
+/// and `GET /api/sessions` listed the same conversations in whatever order
+/// the filesystem handed them over. The id tiebreak makes the order total.
 pub fn sortNewestFirst(items: []Listing) void {
     std.mem.sort(Listing, items, {}, struct {
         fn newer(_: void, a: Listing, b: Listing) bool {
-            return a.updated > b.updated;
+            if (a.updated != b.updated) return a.updated > b.updated;
+            return std.mem.lessThan(u8, a.id, b.id);
         }
     }.newer);
 }
@@ -75,7 +83,8 @@ pub fn sortNewestFirst(items: []Listing) void {
 pub fn sortOldestFirst(items: []Listing) void {
     std.mem.sort(Listing, items, {}, struct {
         fn older(_: void, a: Listing, b: Listing) bool {
-            return a.updated < b.updated;
+            if (a.updated != b.updated) return a.updated < b.updated;
+            return std.mem.lessThan(u8, a.id, b.id);
         }
     }.older);
 }
@@ -309,6 +318,35 @@ test "sortNewestFirst puts the latest update first" {
     try std.testing.expectEqualStrings("old", items[2].id);
     sortOldestFirst(&items);
     try std.testing.expectEqualStrings("old", items[0].id);
+}
+
+test "a same-second tie lists by id, so the order is the store's and not the walk's" {
+    var items = [_]Listing{
+        .{ .id = "sess-c", .updated = 100 },
+        .{ .id = "sess-a", .updated = 100 },
+        .{ .id = "sess-b", .updated = 100 },
+    };
+    // Both directions, from both input orders: `updated` alone leaves these
+    // to the directory walk that produced them, so `GET /api/sessions` and
+    // the Search view could disagree about the same conversations.
+    sortNewestFirst(&items);
+    try std.testing.expectEqualStrings("sess-a", items[0].id);
+    try std.testing.expectEqualStrings("sess-b", items[1].id);
+    try std.testing.expectEqualStrings("sess-c", items[2].id);
+    sortOldestFirst(&items);
+    try std.testing.expectEqualStrings("sess-a", items[0].id);
+    try std.testing.expectEqualStrings("sess-b", items[1].id);
+    try std.testing.expectEqualStrings("sess-c", items[2].id);
+
+    // A strictly newer row still outranks the tie on both sides.
+    var mixed = [_]Listing{
+        .{ .id = "sess-a", .updated = 100 },
+        .{ .id = "sess-z", .updated = 101 },
+    };
+    sortNewestFirst(&mixed);
+    try std.testing.expectEqualStrings("sess-z", mixed[0].id);
+    sortOldestFirst(&mixed);
+    try std.testing.expectEqualStrings("sess-a", mixed[0].id);
 }
 
 test "writeText columns and age" {

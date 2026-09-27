@@ -131,17 +131,17 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     var items: std.ArrayList([]const u8) = .empty;
 
+    // Every list below is read out of a hash map, so it is walked into an
+    // array and sorted before a single line is rendered. The section is
+    // committed to docs/ROADMAP.md, feeds the synthesizer's prompt, and is
+    // read back as backlog seed, so a line's position has to be a fact about
+    // the counts rather than about the order the events happened to land in
+    // the map: two runs that saw the same tools equally often wrote the same
+    // file. The top-3 cut below depended on it most, since a tie decided
+    // which tool got named.
     // Most-used tools.
     {
-        const ToolUse = struct { name: []const u8, n: u64 };
-        var list: std.ArrayList(ToolUse) = .empty;
-        var it = tool_uses.iterator();
-        while (it.next()) |kv| try list.append(alloc, .{ .name = kv.key_ptr.*, .n = kv.value_ptr.* });
-        std.mem.sort(ToolUse, list.items, {}, struct {
-            fn lt(_: void, a: ToolUse, b: ToolUse) bool {
-                return a.n > b.n;
-            }
-        }.lt);
+        const list = try logic.sortedUses(alloc, tool_uses);
         if (list.items.len > 0) {
             var names: std.ArrayList(u8) = .empty;
             for (list.items[0..@min(list.items.len, 3)]) |t| {
@@ -153,15 +153,13 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     }
 
     // Missing tools the model asked for.
-    var it = unknown.iterator();
-    while (it.next()) |kv| {
-        try items.append(alloc, try std.fmt.allocPrint(alloc, "Add missing tool '{s}' (the model requested it {d} time(s)): {s}", .{ kv.key_ptr.*, kv.value_ptr.n, kv.value_ptr.detail }));
+    for ((try logic.sortedCounts(alloc, unknown)).items) |kv| {
+        try items.append(alloc, try std.fmt.allocPrint(alloc, "Add missing tool '{s}' (the model requested it {d} time(s)): {s}", .{ kv.name, kv.n, kv.detail }));
     }
 
     // Tool errors.
-    var eit = errors.iterator();
-    while (eit.next()) |kv| {
-        try items.append(alloc, try std.fmt.allocPrint(alloc, "Fix '{s}' tool errors ({d} failure(s), last: {s})", .{ kv.key_ptr.*, kv.value_ptr.n, kv.value_ptr.detail }));
+    for ((try logic.sortedCounts(alloc, errors)).items) |kv| {
+        try items.append(alloc, try std.fmt.allocPrint(alloc, "Fix '{s}' tool errors ({d} failure(s), last: {s})", .{ kv.name, kv.n, kv.detail }));
     }
 
     // Repeated identical calls: one aggregate item, aimed at the model side.
@@ -180,9 +178,8 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
 
     // Model usage.
     if (model_uses.count() > 1) {
-        var mit = model_uses.iterator();
-        while (mit.next()) |kv| {
-            try items.append(alloc, try std.fmt.allocPrint(alloc, "Re-evaluate default model: '{s}' used in {d} run(s) — tune its config (temperature, max_tokens, cost) or make it the default.", .{ kv.key_ptr.*, kv.value_ptr.* }));
+        for ((try logic.sortedUses(alloc, model_uses)).items) |kv| {
+            try items.append(alloc, try std.fmt.allocPrint(alloc, "Re-evaluate default model: '{s}' used in {d} run(s) — tune its config (temperature, max_tokens, cost) or make it the default.", .{ kv.name, kv.n }));
         }
     }
 

@@ -333,6 +333,8 @@ fn listRunsJson(out: *lib.Out, alloc: std.mem.Allocator, names: std.json.Value) 
         try s.write(listingNodeCount(g));
         try s.objectField("failed");
         try s.write(g.failed);
+        try s.objectField("seed");
+        try s.write(g.seed);
         try s.objectField("prompt_tokens");
         try s.write(g.total_prompt_tokens);
         try s.objectField("completion_tokens");

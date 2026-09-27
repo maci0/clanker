@@ -89,6 +89,12 @@ pub const Graph = struct {
     parent_run_id: []const u8 = "",
     task: []const u8,
     provider: []const u8 = "",
+    /// `agent.seed` the run drew its `ck_random` stream from. A run record
+    /// that carries it is a run that can be re-run: with a pinned seed the
+    /// tool stream is byte-identical, so a failure here is replayable instead
+    /// of merely described. 0 is the default and means the run was time-seeded
+    /// and is therefore not reproducible.
+    seed: u64 = 0,
     started_at: i64,
     duration_ms: u64 = 0,
     nodes: std.ArrayList(Node) = .empty,
@@ -173,6 +179,8 @@ pub fn encodeWrite(alloc: std.mem.Allocator, g: *const Graph) ![]u8 {
     try s.write(g.task);
     try s.objectField("provider");
     try s.write(g.provider);
+    try s.objectField("seed");
+    try s.print("{d}", .{g.seed});
     try s.objectField("started_at");
     try s.print("{d}", .{g.started_at});
     try s.objectField("duration_ms");

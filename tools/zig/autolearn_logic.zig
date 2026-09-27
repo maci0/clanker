@@ -49,6 +49,90 @@ pub fn userPrompt(alloc: std.mem.Allocator, observations: []const u8, mechanical
     , .{ observations, mechanical });
 }
 
+/// One `(name, count)` row, in the order a rendered item reads best: most
+/// calls first, name ascending within a tie.
+///
+/// The name tiebreak is the point. The aggregation counts into a hash map, so
+/// a sort on the count alone leaves equal counts to the map's iteration
+/// order, which is a fact about insertion sequence and capacity rather than
+/// about the observations. The section is committed to docs/ROADMAP.md, is
+/// part of the synthesizer's prompt, and is read back as backlog seed, and
+/// the "most-used tools" item cuts the list to the top three, so a tie there
+/// decided which tool got named. Ordering the rows makes the file a function
+/// of the counts.
+pub const Row = struct { name: []const u8, n: u64 };
+
+/// A counted row that also carries the detail the map already resolved to
+/// (last write wins), so ordering the rows does not re-pick which detail a
+/// line names.
+pub const CountRow = struct { name: []const u8, n: u64, detail: []const u8 };
+
+fn rowLessThan(_: void, a: Row, b: Row) bool {
+    if (a.n != b.n) return a.n > b.n;
+    return std.mem.lessThan(u8, a.name, b.name);
+}
+
+fn countRowLessThan(_: void, a: CountRow, b: CountRow) bool {
+    if (a.n != b.n) return a.n > b.n;
+    return std.mem.lessThan(u8, a.name, b.name);
+}
+
+/// `map` walked into a list ordered by `rowLessThan`.
+pub fn sortedUses(alloc: std.mem.Allocator, map: std.array_hash_map.String(u64)) !std.ArrayList(Row) {
+    var list: std.ArrayList(Row) = .empty;
+    var it = map.iterator();
+    while (it.next()) |kv| try list.append(alloc, .{ .name = kv.key_ptr.*, .n = kv.value_ptr.* });
+    std.mem.sort(Row, list.items, {}, rowLessThan);
+    return list;
+}
+
+/// `map` walked into a list ordered by `countRowLessThan`. The value type is
+/// structural so the guest's aggregate map can be passed straight through
+/// (a `{ n: u64, detail: []const u8 }` store is not a named type here).
+pub fn sortedCounts(alloc: std.mem.Allocator, map: anytype) !std.ArrayList(CountRow) {
+    var list: std.ArrayList(CountRow) = .empty;
+    var it = map.iterator();
+    while (it.next()) |kv| {
+        try list.append(alloc, .{ .name = kv.key_ptr.*, .n = kv.value_ptr.n, .detail = kv.value_ptr.detail });
+    }
+    std.mem.sort(CountRow, list.items, {}, countRowLessThan);
+    return list;
+}
+
+test "equal counts order by name, not by the order the map hands rows out" {
+    var uses: std.array_hash_map.String(u64) = .empty;
+    defer uses.deinit(std.testing.allocator);
+    // Inserted in an order the rows must not inherit.
+    for ([_]struct { []const u8, u64 }{ .{ "write_file", 3 }, .{ "read_file", 3 }, .{ "list_files", 9 } }) |row| {
+        try uses.put(std.testing.allocator, row[0], row[1]);
+    }
+
+    var rows = try sortedUses(std.testing.allocator, uses);
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 3), rows.items.len);
+    try std.testing.expectEqualStrings("list_files", rows.items[0].name);
+    try std.testing.expectEqualStrings("read_file", rows.items[1].name);
+    try std.testing.expectEqualStrings("write_file", rows.items[2].name);
+}
+
+test "counted rows carry their resolved detail and sort the same way" {
+    const Count = struct { n: u64 = 0, detail: []const u8 = "" };
+    var counts: std.array_hash_map.String(Count) = .empty;
+    defer counts.deinit(std.testing.allocator);
+    try counts.put(std.testing.allocator, "bash", .{ .n = 2, .detail = "second" });
+    try counts.put(std.testing.allocator, "apply_patch", .{ .n = 2, .detail = "first" });
+    try counts.put(std.testing.allocator, "grep", .{ .n = 5, .detail = "third" });
+
+    var rows = try sortedCounts(std.testing.allocator, counts);
+    defer rows.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("grep", rows.items[0].name);
+    try std.testing.expectEqualStrings("third", rows.items[0].detail);
+    try std.testing.expectEqualStrings("apply_patch", rows.items[1].name);
+    try std.testing.expectEqualStrings("first", rows.items[1].detail);
+    try std.testing.expectEqualStrings("bash", rows.items[2].name);
+    try std.testing.expectEqualStrings("second", rows.items[2].detail);
+}
+
 /// Replaces any existing "## Autolearn" section (from the marker to EOF,
 /// since it is always the last section) with `section`, or appends it.
 pub fn mergeRoadmap(alloc: std.mem.Allocator, existing: []const u8, section: []const u8) ![]const u8 {

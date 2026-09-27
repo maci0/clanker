@@ -2569,11 +2569,16 @@ pub const Engine = struct {
         // the focus block, but under a budget, because the model chooses them.
         for (self.granted) |p| try self.pinPath(p, keywords.items, &cands, request_score);
 
-        std.mem.sort(Candidate, cands.items, {}, struct {
-            fn lt(_: void, a: Candidate, b: Candidate) bool {
-                return a.score > b.score;
-            }
-        }.lt);
+        // Score first, then path. Every file sharing no keyword scores zero,
+        // and the focus walk below stops at its budget, so without the
+        // tiebreak which of those files the model sees is decided by the order
+        // `collectCandidates`' directory walk happened to yield. That order is
+        // a property of the filesystem, not of the tree, so the same
+        // instruction produced a different prompt on a different checkout, and
+        // a replay of a run sent the model a different focus block than the
+        // run it was replaying. The bulk block below sorts by path for the
+        // cache's sake; this one sorts by path for the run's sake.
+        std.mem.sort(Candidate, cands.items, {}, candidateMoreRelevant);
 
         var buf: std.ArrayList(u8) = .empty;
         var focus: std.ArrayList(u8) = .empty;
@@ -2800,6 +2805,14 @@ pub const Engine = struct {
     }
 
     pub const Candidate = struct { path: []const u8, score: usize, data: []const u8 };
+
+    /// Relevance first, then path: a total order, so the focus block is a
+    /// function of the tree's contents and the instruction rather than of the
+    /// order the directory walk yielded. See `collectContext`.
+    fn candidateMoreRelevant(_: void, a: Candidate, b: Candidate) bool {
+        if (a.score != b.score) return a.score > b.score;
+        return std.mem.lessThan(u8, a.path, b.path);
+    }
 
     fn isStopword(w: []const u8) bool {
         const stopwords = [_][]const u8{
@@ -4843,6 +4856,45 @@ test "the context never carries half a file, and names what it left out" {
     try std.testing.expectEqual(before, buf.items.len);
     try std.testing.expectEqual(@as(usize, 1), omitted.items.len);
     try std.testing.expectEqualStrings("big.zig", omitted.items[0]);
+}
+
+test "candidate ranking is a total order, so the focus block does not inherit the directory walk" {
+    const mk = struct {
+        fn c(path: []const u8, score: usize) Engine.Candidate {
+            return .{ .path = path, .score = score, .data = "" };
+        }
+    }.c;
+
+    // The scores the collect walk actually produces: most of the tree shares
+    // no keyword and ties at zero. With score as the only key, the order of
+    // those rows is whatever `dir.iterate()` yielded, and the focus walk
+    // stops at its budget, so the block the model receives followed the
+    // filesystem rather than the tree.
+    const walk_order = [_]Engine.Candidate{
+        mk("src/peers/mesh.zig", 0),
+        mk("src/agent/loop.zig", 0),
+        mk("src/cli.zig", 4),
+        mk("src/agent/session.zig", 0),
+    };
+    const other_walk = [_]Engine.Candidate{
+        mk("src/cli.zig", 4),
+        mk("src/agent/session.zig", 0),
+        mk("src/peers/mesh.zig", 0),
+        mk("src/agent/loop.zig", 0),
+    };
+
+    var a = walk_order;
+    var b = other_walk;
+    std.mem.sort(Engine.Candidate, &a, {}, Engine.candidateMoreRelevant);
+    std.mem.sort(Engine.Candidate, &b, {}, Engine.candidateMoreRelevant);
+    for (a, b) |x, y| try std.testing.expectEqualStrings(x.path, y.path);
+
+    // Relevance still leads: the named file outranks the tie, and the tie is
+    // then in path order.
+    try std.testing.expectEqualStrings("src/cli.zig", a[0].path);
+    try std.testing.expectEqualStrings("src/agent/loop.zig", a[1].path);
+    try std.testing.expectEqualStrings("src/agent/session.zig", a[2].path);
+    try std.testing.expectEqualStrings("src/peers/mesh.zig", a[3].path);
 }
 
 test "the context budget follows the model's own window" {

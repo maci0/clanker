@@ -831,6 +831,11 @@ pub const Agent = struct {
             .parent_run_id = self.parent_run_id,
             .task = task,
             .provider = self.provider.name,
+            // The seed the run's `ck_random` stream came from, so the record
+            // of a failed run carries what re-runs it. `ckRandom` logs the
+            // effective value per tool load, but only when a tool draws, so
+            // a run that never reached one recorded nothing to replay with.
+            .seed = self.cfg.agent.seed,
             .started_at = started_at,
         };
         defer {
