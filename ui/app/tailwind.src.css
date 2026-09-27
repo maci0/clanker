@@ -1003,9 +1003,9 @@
     40% { transform: scale(1); opacity: 1; }
   }
 
-  /* The card badges' soft pulse. The cabinet's own `pulse` keyframes stay in
-     app.css, because the turn-answer placeholder still names them; this is the
-     same shape under a name the sheet emits with the utility that uses it. */
+  /* The card badges' soft pulse: the same shape as `pulse` above, which the
+     empty turn-answer placeholder uses, under a name this sheet emits with the
+     utility that carries it. */
   --animate-card-pulse: card-pulse 2s ease-in-out infinite;
   --animate-card-pulse-fast: card-pulse 1.2s ease-in-out infinite;
   @keyframes card-pulse {
