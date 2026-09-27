@@ -12,16 +12,16 @@
      ui/app/tailwind.src.css by `bun run css:build`; see ui/app/tailwind.css. -->
 <link rel="stylesheet" href="/webui/tailwind.css">
 <!-- The runs/rooms/models/tools/fleet/kanban-adjacent view styles are not
-     needed for the first draw, so like PatternFly they load with media="print"
-     (never applied) and are swapped to "all" by app.js once ready. The frame
+     needed for the first draw, so it loads with media="print" (never applied)
+     and is swapped to "all" by preact-boot.js once ready. The frame
      and chat styles in app.css above stay render-blocking.
 
-     fetchpriority="low" on both deferred sheets: media="print" makes them
+     fetchpriority="low" on the deferred sheet: media="print" makes it
      non-render-blocking but not unrequested, and a stylesheet's default
-     fetch priority is High, so PatternFly (60 KB gz) and views.css (15 KB gz)
-     were queued ahead of app.css (36 KB gz) and the entry script on a
-     constrained link. Low priority keeps them off the first-paint bytes
-     without changing when they land or how the swap works. -->
+     fetch priority is High, so views.css (15 KB gz) was queued ahead of
+     app.css (36 KB gz) and the entry script on a constrained link. Low
+     priority keeps it off the first-paint bytes without changing when it
+     lands or how the swap works. -->
 <link rel="stylesheet" href="/webui/views.css" media="print" data-views="1" fetchpriority="low">
 <noscript><link rel="stylesheet" href="/webui/views.css"></noscript>
 <link rel="modulepreload" href="/webui/vendor/preact.module.js">

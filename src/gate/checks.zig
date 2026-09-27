@@ -2128,9 +2128,9 @@ const webui_first_paint_caps = [_]WebuiCap{
 };
 
 /// Everything every visitor downloads before any interaction: the document
-/// itself plus every `/webui/…` URL its head and body pull eagerly (both
-/// stylesheets, the modulepreloads, the eager `<script type="module">` list).
-/// PatternFly rides `media="print"`, so it is applied late but still fetched
+/// itself plus every `/webui/…` URL its head and body pull eagerly (every
+/// stylesheet, the modulepreloads, the eager `<script type="module">` list).
+/// views.css rides `media="print"`, so it is applied late but still fetched
 /// by everyone, which is why it counts here. 1388142 bytes measured across 34
 /// resources on 2026-08-25; the budget is that plus ~15%.
 const webui_eager_budget_bytes: usize = 1_600_000;
