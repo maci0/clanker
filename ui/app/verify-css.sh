@@ -2,7 +2,7 @@
 # Verify ui/app/tailwind.css matches a clean rebuild of ui/app/tailwind.src.css.
 #
 # ui/app/tailwind.css is committed (see AGENTS.md: not every clanker checkout
-# has a bun toolchain), and the host embeds it into webui.wasm, so a source
+# has a bun toolchain), and the host embeds it into ui/app/app.wasm, so a source
 # edit that was not followed by `bun run css:build` before commit ships a
 # stylesheet that styles nothing. tools/ts/verify.sh already does this for the
 # AssemblyScript output; this is the same check for the other committed build

@@ -72,9 +72,10 @@ pub const Worktree = struct {
     /// Whether the branch holds commits the base branch does not, asked of git
     /// rather than inferred from `merged`.
     ///
-    /// `merged` only ever becomes true inside `mergeBack`, whose sole caller is
-    /// the promotion path, so it answers "did a promotion land?" and not "is
-    /// there anything here to lose". Those differ in both directions: a run
+    /// `merged` only ever becomes true inside `mergeBack`, whose two callers
+    /// are the promotion path and the end-of-run merge of unpromoted commits,
+    /// so it answers "did a promotion land?" and not "is there anything here
+    /// to lose". Those differ in both directions: a run
     /// that promotes nothing never commits either, leaving a branch identical
     /// to its base that `cleanup` used to keep forever; and an agent that
     /// commits inside the worktree outside the promotion path strands real

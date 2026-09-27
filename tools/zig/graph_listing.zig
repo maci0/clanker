@@ -78,10 +78,11 @@ pub fn labelOf(task: []const u8) []const u8 {
 
 const label_max = 200;
 
-/// Graph filenames carry two different clocks: a top-level run is
-/// `run-<unix seconds>` and a nested one `sub-<unix nanoseconds>` (see
+/// Graph filenames carry two clocks on disk: both spellings are written in
+/// nanoseconds today (`run-<ns>` in `src/agent/loop.zig`, `sub-<ns>` in
 /// `src/agent/subagent.zig`, which needs the finer clock because several
-/// sub-agents can start within one second). Ordering the raw names puts every
+/// sub-agents can start within one second), while graphs written before that
+/// are `run-<unix seconds>`. Ordering the raw names puts every
 /// `sub-` after every `run-` — `'s' > 'r'` — so the newest page of a listing
 /// was months-old sub-runs and the web UI's run picker opened on one.
 /// Compare on the timestamp instead, normalized to nanoseconds by padding the

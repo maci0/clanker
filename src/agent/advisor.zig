@@ -3,7 +3,8 @@
 //!
 //! Parse, summarize, and inject live in `tools/zig/advisor_logic.zig`
 //! (host-tested, shared with the `advisor` guest). Provider resolution and
-//! the fail-open `client.chat` call stay native (timeout + credentials).
+//! the fail-open `client.chatWithTimeout` call stay native (timeout +
+//! credentials).
 
 const std = @import("std");
 const config = @import("../config.zig");
