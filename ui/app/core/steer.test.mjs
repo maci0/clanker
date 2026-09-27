@@ -3,14 +3,18 @@
 // second message visibly "disappeared" the first. These tests pin the
 // ledger's ordering, state transitions, and the framed-transcript
 // detection against the server's persisted shape.
-import test from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { serialize } from "../lib/dom-stub.mjs";
+import { installDom, serialize } from "../lib/dom-stub.mjs";
 import {
   makeSteerLedger, steerAdd, steerMark, steerApplyOldest, steerUnapplied,
   steerClear, steerPreview, steerStateLabel, steerFramedText, steeredText,
   steer_frame_sentence, steer_preview_max, renderSteerList,
 } from "./steer.js";
+
+let restoreDom;
+before(function () { restoreDom = installDom(); });
+after(function () { restoreDom(); });
 
 test("two sends are two entries, in order — nothing overwrites", function () {
   const l = makeSteerLedger();

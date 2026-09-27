@@ -1,5 +1,16 @@
 // Tiny DOM for node tests of the markdown renderer. Only what
 // renderMarkdown / inlineInto touch.
+//
+// installDom() rather than a module-scope assignment: bun test runs every
+// suite in one process, so a stub installed at import time outlasted the file
+// that wanted it and whichever suite loaded next inherited a document missing
+// whatever this stub does not implement (graph.test.mjs's createElement-only
+// stub, for one, is why renderMarkdown threw createDocumentFragment). The
+// returned function puts the previous globals back.
+
+// A listener the view installs and the test never runs. focus() and
+// preventDefault() are here because app.js calls both.
+function noop() { return undefined; }
 
 function node(tag) {
   return {
@@ -8,6 +19,10 @@ function node(tag) {
     childNodes: [],
     attributes: {},
     className: "",
+    listeners: {},
+    // A form element reads as "" before anyone types; app.js calls
+    // `input.value.trim()` on mount.
+    value: "",
     parentNode: null,
     textContent: "",
     appendChild: function (c) {
@@ -17,8 +32,21 @@ function node(tag) {
     },
     setAttribute: function (k, v) { this.attributes[k] = String(v); },
     getAttribute: function (k) { return this.attributes[k]; },
-    addEventListener: function () {}
+    removeAttribute: function (k) { delete this.attributes[k]; },
+    focus: noop,
+    addEventListener: function (type, fn) {
+      (this.listeners[type] = this.listeners[type] || []).push(fn);
+    }
   };
+}
+
+// The handlers a view registered, so a test can run the shipped one instead of
+// asserting that its source mentions an event name.
+export function dispatch(el, type, event) {
+  const handlers = (el && el.listeners && el.listeners[type]) || [];
+  const ev = Object.assign({ preventDefault: noop }, event);
+  handlers.forEach(function (fn) { fn(ev); });
+  return handlers.length;
 }
 
 function syncText(el) {
@@ -47,8 +75,17 @@ const document = {
 };
 
 document.head = document.createElement("head");
-globalThis.document = document;
-globalThis.window = globalThis;
+
+export function installDom() {
+  const prevDocument = globalThis.document;
+  const prevWindow = globalThis.window;
+  globalThis.document = document;
+  globalThis.window = globalThis;
+  return function restoreDom() {
+    globalThis.document = prevDocument;
+    globalThis.window = prevWindow;
+  };
+}
 
 export function serialize(el) {
   if (!el) return "";

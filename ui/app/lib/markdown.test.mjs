@@ -4,9 +4,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
-import { serialize } from "./dom-stub.mjs";
+import { after, before, test } from "node:test";
+import { installDom, serialize } from "./dom-stub.mjs";
 import { renderMarkdown, renderMarkdownWithFences } from "./markdown.js";
+
+let restoreDom;
+before(function () { restoreDom = installDom(); });
+after(function () { restoreDom(); });
 
 const here = dirname(fileURLToPath(import.meta.url));
 const md = readFileSync(join(here, "markdown.js"), "utf8");

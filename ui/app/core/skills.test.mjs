@@ -6,8 +6,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
-import "../lib/dom-stub.mjs";
+import { after, before, test } from "node:test";
+import { installDom } from "../lib/dom-stub.mjs";
+
+let restoreDom;
+before(function () { restoreDom = installDom(); });
+after(function () { restoreDom(); });
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "tools.js"), "utf8");

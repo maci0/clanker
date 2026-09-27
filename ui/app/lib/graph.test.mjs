@@ -3,7 +3,7 @@
 // "[object Object]" and every bar got `width: NaN%`, a declaration the browser
 // drops, so the bar never drew.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { after, before, test } from "node:test";
 import { buildNodeBox, graphTotals, slowestWorthNaming } from "./graph.js";
 
 // The smallest element the builder needs: children, a className, textContent,
@@ -23,8 +23,16 @@ function fakeElement(tag) {
   };
 }
 
-// buildNodeBox reads the ambient document, as the browser supplies it.
-globalThis.document = { createElement: fakeElement };
+// buildNodeBox reads the ambient document, as the browser supplies it. Only
+// the graph suite's own tests may see this stub: a module-scope assignment
+// outlived the file and handed the next suite a document with no
+// createDocumentFragment.
+let prevDocument;
+before(function () {
+  prevDocument = globalThis.document;
+  globalThis.document = { createElement: fakeElement };
+});
+after(function () { globalThis.document = prevDocument; });
 
 function build(node, opts) {
   return buildNodeBox({ kind: node.kind, node: node }, opts && opts.slowest, 152, opts || {});
