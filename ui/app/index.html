@@ -11,18 +11,54 @@
      the utility wins by order. Compiled from ui/app/tailwind.src.css by
      `bun run css:build`; see ui/app/tailwind.css. -->
 <link rel="stylesheet" href="/webui/tailwind.css">
+<link rel="modulepreload" href="/webui/app.js">
 <link rel="modulepreload" href="/webui/vendor/preact.module.js">
 <link rel="modulepreload" href="/webui/vendor/htm.module.js">
 <link rel="modulepreload" href="/webui/vendor/signals-core.module.js">
-<!-- The entry and its two largest static dependencies are the heaviest bytes
-     the page downloads, and their <script> tags sit at the far end of a 70 KB
-     document body. Preloading them here starts those fetches the moment the
-     head parses, in parallel with the rest of the HTML, instead of only after
-     the parser walks to the last script tag. The script tags below still load
-     the same URLs, so the browser reuses the preloaded response. -->
-<link rel="modulepreload" href="/webui/app.js">
-<link rel="modulepreload" href="/webui/core/ui.js">
+<!-- Every module the page loads on a visit is listed here, and the
+     <script type="module"> tags at the end of the body name the same URLs.
+     Those tags sit past a 107 KB document body, so the preload scanner cannot
+     see them until the whole HTML has arrived: without this list all 29
+     fetches start one document-transfer late, and on a slow link that is the
+     whole download of a 22 KB gzipped document before the first module moves.
+     A preload is a hint, not a second download (the module map keys on the
+     URL) and not extra bytes on the wire, since every module here is
+     requested on every visit anyway. What it buys is overlap: these start
+     while the document is still streaming, instead of after it.
+     The entry and the vendor primitives come first because HTTP/1.1 has no
+     request priority: when the six-connection pool is full, the queue is
+     served in the order the hints appear, so nothing light may sit ahead of
+     the module nothing else can run without.
+     The script tags stay, because they are what puts the modules in the
+     module map and fixes their evaluation order. -->
+<link rel="modulepreload" href="/webui/preact-boot.js">
 <link rel="modulepreload" href="/webui/core/utils.js">
+<link rel="modulepreload" href="/webui/core/ui.js">
+<link rel="modulepreload" href="/webui/core/modelpicker.js">
+<link rel="modulepreload" href="/webui/lib/markdown.js">
+<link rel="modulepreload" href="/webui/lib/board.js">
+<link rel="modulepreload" href="/webui/core/icons.js">
+<link rel="modulepreload" href="/webui/core/vendor.js">
+<link rel="modulepreload" href="/webui/core/theme.js">
+<link rel="modulepreload" href="/webui/core/slash.js">
+<link rel="modulepreload" href="/webui/core/chat.js">
+<link rel="modulepreload" href="/webui/core/labels.js">
+<link rel="modulepreload" href="/webui/core/stream.js">
+<link rel="modulepreload" href="/webui/core/steer.js">
+<link rel="modulepreload" href="/webui/core/goals.js">
+<link rel="modulepreload" href="/webui/core/overlay.js">
+<link rel="modulepreload" href="/webui/core/search.js">
+<link rel="modulepreload" href="/webui/core/composer.js">
+<link rel="modulepreload" href="/webui/core/scroll.js">
+<link rel="modulepreload" href="/webui/core/dialog.js">
+<link rel="modulepreload" href="/webui/core/usage.js">
+<link rel="modulepreload" href="/webui/core/status.js">
+<link rel="modulepreload" href="/webui/core/attachments.js">
+<link rel="modulepreload" href="/webui/core/plugins.js">
+<link rel="modulepreload" href="/webui/core/palette.js">
+<link rel="modulepreload" href="/webui/core/ai-disclosure.js">
+<link rel="modulepreload" href="/webui/core/chatprefs.js">
+<link rel="modulepreload" href="/webui/core/run-metrics.js">
 </head>
 <body>
 <!--
@@ -1149,11 +1185,13 @@ lamps carry further). The seven named palettes ride the same tokens.
 <script type="module" src="/webui/core/labels.js"></script>
 <script type="module" src="/webui/core/goals.js"></script>
 <script type="module" src="/webui/core/stream.js"></script>
+<script type="module" src="/webui/core/steer.js"></script>
 <script type="module" src="/webui/core/theme.js"></script>
 <script type="module" src="/webui/core/overlay.js"></script>
 <script type="module" src="/webui/core/search.js"></script>
 <script type="module" src="/webui/core/composer.js"></script>
 <script type="module" src="/webui/core/ai-disclosure.js"></script>
+<script type="module" src="/webui/core/chatprefs.js"></script>
 <script type="module" src="/webui/core/scroll.js"></script>
 <script type="module" src="/webui/core/dialog.js"></script>
 <script type="module" src="/webui/core/status.js"></script>

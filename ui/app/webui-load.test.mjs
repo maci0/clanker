@@ -100,6 +100,19 @@ test("critical-path modulepreloads name modules the page actually loads", functi
       `modulepreload ${href} has no matching <script type="module"> tag in the page`
     );
   }
+  // And the other direction, which is the one that costs time: every module
+  // the page loads on every visit carries a script tag at the far end of a
+  // 107 KB body, past what the preload scanner can see while the document is
+  // still streaming. A tag without a head preload therefore starts its fetch
+  // only after the whole document has arrived, which on a slow link is a full
+  // extra round trip before the module moves. Preloading all of them costs no
+  // extra bytes (each is fetched anyway) and starts the whole eager graph
+  // while the HTML is still downloading.
+  const tags = [...markup.matchAll(/<script type="module" src="(\/webui\/[^"]+)">/g)].map((m) => m[1]);
+  assert.ok(tags.length >= 27, `the eager module graph is ${tags.length} modules, expected at least 27`);
+  for (const src of tags) {
+    assert.ok(preloads.includes(src), `${src} is loaded on every visit and must be preloaded in the head`);
+  }
 });
 
 test("a long saved conversation replays in chunks, not one long task", function () {

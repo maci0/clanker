@@ -92,10 +92,34 @@ console.log(`   eager JS (${eager.length} requests): ${eagerJsGz.toFixed(1)}K gz
 console.log(`   first paint (index.html + app.css + tailwind.css): ${firstPaintGz.toFixed(1)}K gz`);
 console.log(`   tailwind.css: ${(fileBytes("tailwind.css").length / KiB).toFixed(1)}K raw ${gzKib(fileBytes("tailwind.css")).toFixed(1)}K gz`);
 
-test("the page head still preloads the heavy entry, not the light modules", function () {
-  // The preload list is the critical-path fetch set; growing it dilutes
-  // priority for the modules that actually gate first paint.
-  assert.ok(preloads.length <= 8, `modulepreloads grew to ${preloads.length}; each one competes with app.js`);
+test("the head preloads the whole eager graph, heaviest first", function () {
+  // The head list used to be a hand-picked few, on the theory that a longer
+  // one dilutes priority for the modules that gate first paint. Every module
+  // it names is a static import of app.js, so all of them are requested on
+  // every visit and every one of them gates interactivity, not just the first
+  // frame. The cost of leaving them off is concrete: their <script> tags sit
+  // at the end of a 107 KB body, so the preload scanner cannot see them until
+  // the whole document has arrived, and the graph then starts a full
+  // document-transfer late. Listing them costs no extra bytes (each is
+  // fetched anyway, and the hint reuses the same response) and starts the
+  // fetches while the HTML is still streaming. The byte budget above is what
+  // bounds this set; the count only has to keep a bound on the hints
+  // themselves.
+  assert.ok(
+    preloads.length <= 40,
+    `modulepreloads grew to ${preloads.length}; a module outside the eager graph does not belong here`
+  );
+  // HTTP/1.1 has no request priority, so when the six-connection pool is full
+  // the queue is served in the order the hints appear. The entry and its two
+  // heaviest dependencies therefore have to come first: a light module ahead
+  // of app.js delays the only module nothing else can run without.
+  assert.equal(preloads[0], "/webui/app.js", "the entry must be the first hint, so it is fetched first");
+  for (const heavy of ["/webui/core/ui.js", "/webui/core/utils.js", "/webui/core/modelpicker.js", "/webui/lib/markdown.js"]) {
+    assert.ok(
+      preloads.indexOf(heavy) <= 8,
+      `${heavy} is one of the largest eager modules and must sit in the first wave of hints`
+    );
+  }
 });
 
 test("eager JS stays inside its weight budget", function () {
