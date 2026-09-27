@@ -275,7 +275,14 @@ jobs:
         run: ./scripts/release-check.sh "${GITHUB_REF_NAME}" "out/${{ matrix.target }}/bin/clanker"
 
       - name: Rename binary
-        run: mv "out/${{ matrix.target }}/bin/clanker" "out/${{ matrix.target }}/bin/clanker-${GITHUB_REF_NAME}-${{ matrix.target }}"
+        run: |
+          mv "out/${{ matrix.target }}/bin/clanker" "out/${{ matrix.target }}/bin/clanker-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          # Record what this target's bytes are, next to the bytes. The
+          # `clanker-*` upload path picks the sidecar up with the binary, and
+          # release-publish refuses to attach a release whose sidecars do not
+          # verify, so a truncated download or a matrix leg that never
+          # uploaded is visible instead of looking like a healthy release.
+          ./scripts/release-checksum.sh create "out/${{ matrix.target }}/bin/clanker-${GITHUB_REF_NAME}-${{ matrix.target }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -310,6 +317,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      # Nothing above has re-derived these bytes: the matrix built and
+      # checksummed them in a different runner, artifacts cross a store in
+      # between, and the release below is immutable. Verify every sidecar
+      # against the merged tree, and refuse to publish if a binary arrived
+      # without one.
+      - name: Verify artifact checksums
+        run: ./scripts/release-checksum.sh verify dist
 
       # The changelog is the source of release notes: extract the section
       # between this version's heading and the next `## [` heading (whichever

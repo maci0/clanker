@@ -41,6 +41,13 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   component lists every declared devDependency under `dependencies`. A
   document that predates this names no `clanker:lockfile` property and
   resolves the project's devDependencies through the components alone.
+- Each GitHub Release now carries a `.sha256` sidecar per binary, and the
+  release job refuses to publish unless every sidecar verifies against the
+  artifacts it downloaded and every `clanker-*` binary has one. A truncated
+  download, or a release matrix leg whose artifact never arrived, is now a
+  failed run instead of a release that looks complete. `sha256sum --check
+  clanker-<version>-<target>.sha256` is the consumer-side check.
+  `scripts/release-checksum.sh create|verify` is the same operation by hand.
 - The Activity plugin is styled with Tailwind utilities and ships no
   stylesheet: `ui/plugins/activity/app.css` is deleted. Its 44px phone and
   coarse-pointer touch target is now the `max-[40rem]`/`pointer-coarse`

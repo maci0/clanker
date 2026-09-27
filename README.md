@@ -106,9 +106,11 @@ or sweep them all with `bun test ui/app` (bun walks the directory itself).
 
 `clanker gate` covers build/test/tools/fmt/lint and the self-integrity gates,
 but CI also runs the end-to-end pty journeys (`zig build e2e`), shellcheck,
-oxlint on `ui/` and `tools/ts`, a Python syntax check, the SBOM generation,
-and the AssemblyScript rebuild-and-diff.
-`scripts/verify.sh` mirrors every CI step locally, so the full pre-push
+oxlint on `ui/` and `tools/ts`, `ruff` over every tracked Python file, the
+`bun audit` of both JavaScript toolchains, the SBOM generation, the state
+backup and restore drills, and the rebuild-and-diff of the two committed
+build artifacts (`tools/ts/dist/` and `ui/app/tailwind.css`).
+`scripts/verify.sh` mirrors the CI verify job locally, so the full pre-push
 verification is one command instead of a list of steps that live only in the
 CI workflow:
 

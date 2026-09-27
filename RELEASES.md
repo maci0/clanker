@@ -60,7 +60,11 @@ Before creating a tag:
    `Security`. Give users outcomes and migrations rather than commit summaries.
 3. Choose the SemVer bump from compatibility impact, then update
    `build.zig.zon`. The changelog heading and intended tag must match it exactly.
-4. Run `zig build`, `zig build test`, `zig build tools`, and the end-to-end tests.
+4. Run `./scripts/verify.sh`. It runs everything the CI verify job runs,
+   including the four `zig build`/test steps above plus the checks the list
+   omits and a release tag is the one chance to catch: shellcheck, oxlint,
+   ruff, the two committed build artifacts (`tools/ts/dist/`, `ui/app/tailwind.css`
+   rebuilt and diffed against what is committed), and SBOM generation.
    Smoke-test the packaged release binary and its `--version` output, not only a
    checkout build.
 5. Run `./scripts/release-check.sh vMAJOR.MINOR.PATCH zig-out/bin/clanker`. CI repeats
@@ -68,7 +72,11 @@ Before creating a tag:
    binary version mismatch.
 6. Create release notes from the changelog and create the immutable version tag.
    Never move a published tag or replace an artifact for an existing version;
-   publish a new patch release instead.
+   publish a new patch release instead. The tag's release job builds one binary
+   per target with a `.sha256` sidecar and refuses to publish unless every
+   sidecar verifies against the merged artifacts
+   (`scripts/release-checksum.sh`, see [scripts/README.md](scripts/README.md));
+   both the binaries and the sidecars are attached to the Release.
 
 ## Supported versions
 

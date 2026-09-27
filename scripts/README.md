@@ -186,3 +186,30 @@ Output is deterministic (sorted components, stable serial number, no
 timestamp unless `SOURCE_DATE_EPOCH` is set, which CI does), so the same tag
 always produces the same document. CI smoke-tests generation on every run and
 attaches `sbom.cdx.json` to each GitHub Release.
+
+## Release artifact checksums
+
+`scripts/release-checksum.sh` writes and verifies a `.sha256` sidecar per
+release binary:
+
+```bash
+./scripts/release-checksum.sh create dist/clanker-v0.5.0-x86_64-linux-musl
+./scripts/release-checksum.sh verify dist
+```
+
+The release matrix (`release-build` in `.github/workflows/ci.yml`) runs
+`create` per target; the sidecar rides out with the binary because the upload
+path is the same `clanker-*` glob. `release-publish` runs `verify` on the
+merged artifact directory before `gh release create`, and both the binaries
+and the sidecars are attached to the Release, so a consumer can check the
+download:
+
+```bash
+sha256sum --check --strict clanker-v0.5.0-x86_64-linux-musl.sha256
+```
+
+`verify` fails on a checksum mismatch, on a directory with no sidecar at all,
+and on a `clanker-*` binary that has no sidecar beside it: a matrix leg that
+never uploaded would otherwise leave a release that verified clean and was
+missing a target. macOS has no `sha256sum`, so the script uses `shasum -a 256`
+there; both write the same sidecar format.
