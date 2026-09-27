@@ -13055,6 +13055,13 @@ fn forgetSessionArtifacts(
     var export_buf: [256]u8 = undefined;
     const export_input = std.fmt.bufPrint(&export_buf, "{{\"id\":{f},\"forget\":true}}", .{std.json.fmt(id, .{})}) catch return;
     forgetVia(io, gpa, arena, cfg, environ_map, "session_export", export_input, id, "exported HTML transcript");
+
+    // state/reasoning.jsonl is one shared file, not a per-session store, so no
+    // guest owns the path: its records carry the session that produced them
+    // and the rewrite is native. Each holds the user's task text and a model
+    // trace that quotes it, so leaving them behind is the same leak the spill
+    // and export ops above close.
+    agent.forgetReasoningForSession(std.Io.Dir.cwd(), io, gpa, id);
 }
 
 fn forgetVia(

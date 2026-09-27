@@ -1491,6 +1491,7 @@ pub const Agent = struct {
 
     const reasoning_record_buf_bytes = 65536;
     const reasoning_record_task_chars = 200;
+    const reasoning_record_session_chars = 128;
     const reasoning_record_reasoning_chars = 20000;
     const reasoning_path = "state/reasoning.jsonl";
     /// Hard cap on the log so a long-running agent cannot grow state without
@@ -1526,7 +1527,7 @@ pub const Agent = struct {
         // Encoding into a fixed buffer can overflow on a long trace. That drops
         // the record either way, but it says so rather than looking like a turn
         // that never reasoned.
-        encodeReasoning(&w, ts, provider, model, task, reasoning) catch |err| {
+        encodeReasoning(&w, ts, self.session_id, provider, model, task, reasoning) catch |err| {
             log.log(.warn, "recordReasoning: encode failed: {s}", .{@errorName(err)});
             return;
         };
@@ -1534,11 +1535,16 @@ pub const Agent = struct {
         appendReasoningLine(std.Io.Dir.cwd(), io, gpa, buf[0..w.end]);
     }
 
-    fn encodeReasoning(w: *std.Io.Writer, ts: i64, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) !void {
+    fn encodeReasoning(w: *std.Io.Writer, ts: i64, session_id: []const u8, provider: []const u8, model: []const u8, task: []const u8, reasoning: []const u8) !void {
         var s = std.json.Stringify{ .writer = w, .options = .{} };
         try s.beginObject();
         try s.objectField("ts");
         try s.print("{d}", .{ts});
+        // The conversation this trace belongs to. Without it the log is one
+        // undeletable pool of every conversation the harness has ever run, and
+        // erasing a session cannot reach the copy of its text held here.
+        try s.objectField("session");
+        try s.write(utf8.cap(session_id, reasoning_record_session_chars));
         try s.objectField("provider");
         try s.write(provider);
         try s.objectField("model");
@@ -1588,6 +1594,62 @@ pub const Agent = struct {
         // The file holds the user's task text and the model's reasoning,
         // which can echo conversation content.
         try atomic_write.writeFilePerms(io, base, reasoning_path, out, atomic_write.private_file);
+    }
+
+    /// Drops every reasoning trace recorded for `session_id` from
+    /// state/reasoning.jsonl.
+    ///
+    /// The log is one shared file across every conversation, but each record
+    /// holds that conversation's task text and a model trace that quotes it.
+    /// Deleting the transcript alone therefore left the text behind, which is
+    /// why the erase path calls this alongside the spill and export forget
+    /// ops. A line that will not parse, and one written before records carried
+    /// a session, are both kept: neither can be attributed, and dropping
+    /// unparseable lines would let a malformed record delete a stranger's.
+    pub fn forgetReasoningForSession(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, session_id: []const u8) void {
+        if (session_id.len == 0) return;
+        _ = base.statFile(io, reasoning_path, .{}) catch return;
+
+        var guard = file_lock.acquire(io, base, "state", "reasoning", gpa);
+        defer guard.release();
+
+        forgetReasoningLocked(base, io, gpa, session_id) catch |err| {
+            log.log(.warn, "forgetReasoningForSession: {s} could not be rewritten: {s}", .{ reasoning_path, @errorName(err) });
+        };
+    }
+
+    fn forgetReasoningLocked(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, session_id: []const u8) !void {
+        const raw = try base.readFileAlloc(io, reasoning_path, gpa, .limited(reasoning_max_log_bytes));
+        defer gpa.free(raw);
+
+        var kept: std.Io.Writer.Allocating = .init(gpa);
+        defer kept.deinit();
+        var it = std.mem.splitScalar(u8, raw, '\n');
+        while (it.next()) |line| {
+            const trimmed = std.mem.trimEnd(u8, line, "\r");
+            if (trimmed.len == 0) continue;
+            if (reasoningLineSession(trimmed, gpa)) |s| {
+                defer gpa.free(s);
+                if (std.mem.eql(u8, s, session_id)) continue;
+            }
+            try kept.writer.writeAll(trimmed);
+            try kept.writer.writeByte('\n');
+        }
+        // Always rewritten, including to empty: a log whose every trace was
+        // the erased session's has to lose them, not keep the file as it was.
+        try atomic_write.writeFilePerms(io, base, reasoning_path, kept.written(), atomic_write.private_file);
+    }
+
+    /// The `session` field of one reasoning record, or null when the line is
+    /// not a record or predates the field. Borrowed from `gpa`; the caller
+    /// frees it.
+    fn reasoningLineSession(line: []const u8, gpa: std.mem.Allocator) ?[]u8 {
+        const parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch return null;
+        defer parsed.deinit();
+        if (parsed.value != .object) return null;
+        const v = parsed.value.object.get("session") orelse return null;
+        if (v != .string) return null;
+        return gpa.dupe(u8, v.string) catch null;
     }
 
     /// Estimates the total token count across all messages in the conversation.
@@ -3427,6 +3489,60 @@ test "trimReasoningLog rewrites the log owner-only" {
     try Agent.trimReasoningLog(tmp.dir, io, std.testing.allocator);
     const st = try tmp.dir.statFile(io, "state/reasoning.jsonl", .{});
     try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+}
+
+test "forgetReasoningForSession drops only that session's traces, owner-only" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    try tmp.dir.createDirPath(io, "state");
+    const body =
+        \\{"ts":1,"session":"a","task":"my email is user@example.test","reasoning":"a"}
+        \\{"ts":2,"task":"legacy, no session field"}
+        \\not json at all
+        \\{"ts":3,"session":"b","task":"b's task"}
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/reasoning.jsonl", .data = body });
+
+    Agent.forgetReasoningForSession(tmp.dir, io, std.testing.allocator, "a");
+    const st = try tmp.dir.statFile(io, "state/reasoning.jsonl", .{});
+    try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777);
+
+    const after = try tmp.dir.readFileAlloc(io, "state/reasoning.jsonl", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(after);
+    // The named session's text is gone; another session's, a line that will
+    // not parse, and one written before the field existed all stay.
+    try std.testing.expect(std.mem.indexOf(u8, after, "user@example.test") == null);
+    try std.testing.expect(std.mem.indexOf(u8, after, "legacy, no session field") != null);
+    try std.testing.expect(std.mem.indexOf(u8, after, "not json at all") != null);
+    try std.testing.expect(std.mem.indexOf(u8, after, "b's task") != null);
+
+    // Erasing the remaining session empties the file rather than leaving it.
+    Agent.forgetReasoningForSession(tmp.dir, io, std.testing.allocator, "b");
+    const tail = try tmp.dir.readFileAlloc(io, "state/reasoning.jsonl", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(tail);
+    try std.testing.expect(std.mem.indexOf(u8, tail, "b's task") == null);
+    try std.testing.expect(std.mem.indexOf(u8, tail, "legacy, no session field") != null);
+}
+
+test "forgetReasoningForSession is a no-op on a missing log and on an empty id" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    Agent.forgetReasoningForSession(tmp.dir, io, std.testing.allocator, "a");
+    try tmp.dir.createDirPath(io, "state");
+    try tmp.dir.writeFile(io, .{ .sub_path = "state/reasoning.jsonl", .data = "{\"ts\":1,\"session\":\"a\"}\n" });
+    Agent.forgetReasoningForSession(tmp.dir, io, std.testing.allocator, "");
+    const kept = try tmp.dir.readFileAlloc(io, "state/reasoning.jsonl", std.testing.allocator, .limited(1 << 20));
+    defer std.testing.allocator.free(kept);
+    try std.testing.expectEqualStrings("{\"ts\":1,\"session\":\"a\"}\n", kept);
 }
 
 test "lastAssistantProse walks back past tool-call-only turns" {
