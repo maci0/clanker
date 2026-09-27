@@ -47,9 +47,9 @@ pub const Kind = enum {
 
 pub fn encodeFrame(alloc: std.mem.Allocator, payload: []const u8) ![]u8 {
     if (payload.len > std.math.maxInt(u32)) return error.FrameTooLarge;
-    const out = try alloc.alloc(u8, 4 + payload.len);
-    std.mem.writeInt(u32, out[0..4], @intCast(payload.len), .big);
-    @memcpy(out[4..], payload);
+    const out = try alloc.alloc(u8, frame_prefix_bytes + payload.len);
+    std.mem.writeInt(u32, out[0..frame_prefix_bytes], @intCast(payload.len), .big);
+    @memcpy(out[frame_prefix_bytes..], payload);
     return out;
 }
 
@@ -58,12 +58,19 @@ pub const Decoded = struct {
     consumed: usize,
 };
 
+pub const frame_prefix_bytes = 4;
+
 pub fn decodeFrame(buf: []const u8, max_frame_bytes: u32) !?Decoded {
-    if (buf.len < 4) return null;
-    const n = std.mem.readInt(u32, buf[0..4], .big);
+    if (buf.len < frame_prefix_bytes) return null;
+    const n = std.mem.readInt(u32, buf[0..frame_prefix_bytes], .big);
     if (n > max_frame_bytes) return error.FrameTooLarge;
-    if (buf.len < 4 + n) return null;
-    return .{ .payload = buf[4 .. 4 + n], .consumed = 4 + n };
+    // `n` widens before the sum: `4 + n` in u32 traps on a header claiming
+    // 0xfffffffc..0xffffffff bytes, which passes the cap whenever an operator
+    // raises mesh.max_frame_bytes near maxInt(u32) and turns four attacker-chosen
+    // bytes into a remote crash of `clanker serve`.
+    const total = @as(usize, n) + frame_prefix_bytes;
+    if (buf.len < total) return null;
+    return .{ .payload = buf[frame_prefix_bytes..total], .consumed = total };
 }
 
 pub const Header = struct {
@@ -336,15 +343,34 @@ test "frame encode/decode is length-prefixed and rejects oversized" {
     const payload = "{\"kind\":\"PING\"}";
     const frame = try encodeFrame(std.testing.allocator, payload);
     defer std.testing.allocator.free(frame);
-    try std.testing.expectEqual(@as(usize, 4 + payload.len), frame.len);
-    try std.testing.expectEqual(@as(u32, @intCast(payload.len)), std.mem.readInt(u32, frame[0..4], .big));
+    try std.testing.expectEqual(@as(usize, frame_prefix_bytes + payload.len), frame.len);
+    try std.testing.expectEqual(@as(u32, @intCast(payload.len)), std.mem.readInt(u32, frame[0..frame_prefix_bytes], .big));
 
     const dec = (try decodeFrame(frame, default_max_frame_bytes)).?;
     try std.testing.expectEqualStrings(payload, dec.payload);
     try std.testing.expectEqual(frame.len, dec.consumed);
 
-    try std.testing.expect((try decodeFrame(frame[0..3], default_max_frame_bytes)) == null);
+    try std.testing.expect((try decodeFrame(frame[0 .. frame_prefix_bytes - 1], default_max_frame_bytes)) == null);
     try std.testing.expectError(error.FrameTooLarge, decodeFrame(frame, 1));
+}
+
+test "a length prefix near maxInt(u32) reads as incomplete, never as an overflow" {
+    // The prefix is attacker-chosen and the cap is operator-configurable, so
+    // the sum of the two has to be computed where it cannot wrap. u32
+    // arithmetic trapped on any header claiming 0xfffffffc..0xffffffff bytes
+    // with the cap raised to match, taking `clanker serve` down from four
+    // bytes on the wire.
+    const cases = [_]struct { header: []const u8, cap: u32 }{
+        .{ .header = "\xff\xff\xff\xff", .cap = std.math.maxInt(u32) },
+        .{ .header = "\xff\xff\xff\xfc", .cap = 0xfffffffc },
+        .{ .header = "\x80\x00\x00\x00", .cap = 0x80000000 },
+    };
+    for (cases) |c| {
+        // A prefix the cap accepts is an incomplete frame, not a sum that
+        // wrapped, and lowering the cap by one byte is the same refusal.
+        try std.testing.expect((try decodeFrame(c.header, c.cap)) == null);
+        try std.testing.expectError(error.FrameTooLarge, decodeFrame(c.header, c.cap - 1));
+    }
 }
 
 test "header parse binds version and known kinds" {
@@ -383,11 +409,11 @@ test "fuzz: no byte sequence crashes mesh frame decode or header parse" {
             const max: u32 = 1024;
             if (decodeFrame(input, max)) |maybe| {
                 if (maybe) |d| {
-                    try std.testing.expect(d.consumed >= 4);
-                    try std.testing.expectEqual(@as(usize, 4 + d.payload.len), d.consumed);
+                    try std.testing.expect(d.consumed >= frame_prefix_bytes);
+                    try std.testing.expectEqual(@as(usize, frame_prefix_bytes + d.payload.len), d.consumed);
                     try std.testing.expect(d.consumed <= input.len);
                     try std.testing.expect(d.payload.len <= max);
-                    try std.testing.expectEqualSlices(u8, input[4..d.consumed], d.payload);
+                    try std.testing.expectEqualSlices(u8, input[frame_prefix_bytes..d.consumed], d.payload);
                 }
             } else |err| {
                 try std.testing.expectEqual(error.FrameTooLarge, err);

@@ -9,6 +9,10 @@ external storage root, install the user-level backup timer:
 ./scripts/install-state-backup.sh
 ```
 
+The timer is systemd's; on a host without `systemctl` the script installs the
+`~/.local/bin` launchers and the config file, says that nothing was scheduled,
+and exits 0. Run `clanker-state-backup` from cron or launchd there.
+
 Run one backup immediately:
 
 ```bash

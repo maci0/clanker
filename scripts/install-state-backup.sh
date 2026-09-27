@@ -56,30 +56,46 @@ ln -sfn "$script_dir/backup-state.sh" "$user_bin/clanker-state-backup"
 # verify-backup.sh on its own (ADR 0008: nothing fires alone).
 ln -sfn "$script_dir/verify-backup.sh" "$user_bin/clanker-state-verify"
 
-# `systemctl link` fails with "File exists" when the unit is already linked,
-# so a plain second run of this script exits 1 instead of converging. Link
-# only when the unit is missing from the user unit dir or points at a
-# different checkout, and replace a stale link (the checkout moved) first.
-user_units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-mkdir -p "$user_units"
+# The launchers above work anywhere; the schedule does not. macOS is a claimed
+# platform for the harness and ships no systemd at all, where the old
+# unconditional `systemctl` died under `set -e` with a bare "command not
+# found" *after* the launchers were already linked, so the run read as a failed
+# install and the operator could not tell what had landed. Probe the capability
+# rather than the OS name, and install the half that exists.
+if command -v systemctl >/dev/null 2>&1; then
+    have_systemd=1
+else
+    have_systemd=0
+fi
+
+if [ "$have_systemd" -eq 1 ]; then
+    # `systemctl link` fails with "File exists" when the unit is already
+    # linked, so a plain second run of this script exits 1 instead of
+    # converging. Link only when the unit is missing from the user unit dir or
+    # points at a different checkout, and replace a stale link (the checkout
+    # moved) first.
+    user_units="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    mkdir -p "$user_units"
+
+    link_unit() {
+        local unit="$1"
+        local target
+        target=$(resolve_path "$script_dir/systemd/$unit")
+        local link_path="$user_units/$unit"
+        if [ "$(readlink -- "$link_path" 2>/dev/null || true)" = "$target" ]; then
+            return 0
+        fi
+        rm -f -- "$link_path"
+        systemctl --user link "$script_dir/systemd/$unit"
+    }
+    link_unit clanker-state-backup.service
+    link_unit clanker-state-backup.timer
+    link_unit clanker-state-verify.service
+    link_unit clanker-state-verify.timer
+fi
 
 backup_env_dir="${XDG_CONFIG_HOME:-$HOME/.config}/clanker"
 mkdir -p "$backup_env_dir"
-link_unit() {
-    local unit="$1"
-    local target
-    target=$(resolve_path "$script_dir/systemd/$unit")
-    local link_path="$user_units/$unit"
-    if [ "$(readlink -- "$link_path" 2>/dev/null || true)" = "$target" ]; then
-        return 0
-    fi
-    rm -f -- "$link_path"
-    systemctl --user link "$script_dir/systemd/$unit"
-}
-link_unit clanker-state-backup.service
-link_unit clanker-state-backup.timer
-link_unit clanker-state-verify.service
-link_unit clanker-state-verify.timer
 
 # Both units read their configuration from here (EnvironmentFile=). A user
 # service does not inherit the login shell's environment, so an export in a
@@ -120,6 +136,15 @@ if [ -e "$backup_env_dir/state-backup.env" ]; then
     printf 'warning: %s/state-backup.env is not read by any unit; move any setting from it into %s\n' \
         "$backup_env_dir" "$backup_env" >&2
 fi
-systemctl --user daemon-reload
-systemctl --user enable --now clanker-state-backup.timer
-systemctl --user enable --now clanker-state-verify.timer
+if [ "$have_systemd" -eq 1 ]; then
+    systemctl --user daemon-reload
+    systemctl --user enable --now clanker-state-backup.timer
+    systemctl --user enable --now clanker-state-verify.timer
+else
+    cat >&2 <<'EOF'
+install-state-backup: no systemctl on PATH, so the backup timer and the
+weekly restore drill were NOT scheduled. The launchers are in place and
+`clanker-state-backup` / `clanker-state-verify` run by hand; schedule them
+yourself (cron, launchd, or a systemd user manager inside a Linux VM).
+EOF
+fi

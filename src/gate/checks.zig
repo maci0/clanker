@@ -1393,7 +1393,7 @@ fn findDuplicateChangelogSection(gpa: std.mem.Allocator, changelog: []const u8) 
             continue;
         }
         if (!in_block or !std.mem.startsWith(u8, line, "### ")) continue;
-        const title = std.mem.trim(u8, line["### ".len..], " ");
+        const title = std.mem.trim(u8, line["### ".len..], " \t\r");
         for (changelog_section_types) |known| {
             if (!std.mem.eql(u8, title, known)) continue;
             var duplicate = false;
@@ -1540,6 +1540,18 @@ test "findDuplicateChangelogSection allows one heading per type across blocks" {
     const good = "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a\n\n### Changed\n\n- b\n" ++
         "\n## [0.1.0] - 2026-08-14\n\n### Added\n\n- c\n\n### Changed\n\n- d\n";
     try std.testing.expectEqual(@as(?[]const u8, null), try findDuplicateChangelogSection(gpa, good));
+}
+
+test "findDuplicateChangelogSection still reads a CRLF changelog" {
+    // A checkout that wrote the file with CRLF line endings leaves a trailing
+    // \r on every heading. Trimming spaces only left the title as "Added\r",
+    // which matches no known section, so the whole check silently stopped
+    // finding anything.
+    const gpa = std.testing.allocator;
+    const bad = "# Changelog\r\n\r\n## [Unreleased]\r\n\r\n### Added\r\n\r\n- a\r\n\r\n### Fixed\r\n\r\n- b\r\n\r\n### Added\r\n\r\n- c\r\n";
+    const detail = (try findDuplicateChangelogSection(gpa, bad)).?;
+    defer gpa.free(detail);
+    try std.testing.expect(std.mem.find(u8, detail, "Added") != null);
 }
 
 // ------------------------------------------------- test-root coverage gate --
@@ -2054,14 +2066,21 @@ fn scanSkillsDir(gpa: std.mem.Allocator, io: std.Io, scope: std.Io.Dir) !GateRes
 /// section is absent or opens with something else ("Resolved on <date>. …"
 /// and bare "Open." both parse). Null means skip: the gate compares only what
 /// it can parse, so legacy records without the section pass untouched.
+///
+/// The heading is matched as a trimmed line, not as the byte sequence
+/// "\n## Status\n": a record written with CRLF endings carries "\r\n## Status"
+/// and the literal marker never matched, so every such record read as having
+/// no status and the inventory gate skipped it.
 fn recordStatusWord(record: []const u8) ?[]const u8 {
-    const marker = "\n## Status\n";
-    const at = std.mem.find(u8, record, marker) orelse return null;
-    var lines = std.mem.splitScalar(u8, record[at + marker.len ..], '\n');
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len == 0) continue;
-        return leadingStatusWord(trimmed);
+    var lines = std.mem.splitScalar(u8, record, '\n');
+    while (lines.next()) |raw| {
+        if (!std.mem.eql(u8, std.mem.trim(u8, raw, " \t\r"), "## Status")) continue;
+        while (lines.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (trimmed.len == 0) continue;
+            return leadingStatusWord(trimmed);
+        }
+        return null;
     }
     return null;
 }
@@ -2153,6 +2172,12 @@ test "recordStatusWord parses dated and bare statuses, skips records without one
     try std.testing.expectEqual(@as(?[]const u8, null), recordStatusWord("# Legacy\n\nno status section\n"));
     // A non-vocabulary opener is unparseable, not a false match.
     try std.testing.expectEqual(@as(?[]const u8, null), recordStatusWord("# Bug\n\n## Status\n\nOpened by hand\n"));
+}
+
+test "recordStatusWord reads a record written with CRLF line endings" {
+    try std.testing.expectEqualStrings("Resolved", recordStatusWord("# Bug\r\n\r\n## Status\r\n\r\nResolved on 2026-08-23.\r\n").?);
+    try std.testing.expectEqualStrings("Open", recordStatusWord("# Bug\r\n\r\n## Status\r\n\r\nOpen.\r\n").?);
+    try std.testing.expectEqual(@as(?[]const u8, null), recordStatusWord("# Legacy\r\n\r\nno status section\r\n"));
 }
 
 test "skillsInventoryGate passes on the live checkout" {
