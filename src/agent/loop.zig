@@ -829,6 +829,10 @@ pub const Agent = struct {
             // /api/runs and the web picker all read both widths.
             .run_id = self.run_id_override orelse try std.fmt.allocPrint(self.arena, "run-{d}", .{started_ns}),
             .parent_run_id = self.parent_run_id,
+            // The run records the task verbatim, so it is also the run's
+            // copy of the conversation: stamping the session is what lets a
+            // session deletion take these with it.
+            .session = self.session_id,
             .task = task,
             .provider = self.provider.name,
             // The seed the run's `ck_random` stream came from, so the record

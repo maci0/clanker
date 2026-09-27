@@ -87,6 +87,11 @@ pub const Graph = struct {
     /// runs. A nested sub-agent run records its own graph (webui-plan 3.1);
     /// this is the upward link that parents it to the caller's timeline.
     parent_run_id: []const u8 = "",
+    /// The session this run belongs to, empty when it has none. The graph
+    /// stores the task verbatim plus tool arguments, outputs and the final
+    /// answer, so this is the key that lets a session deletion erase the run
+    /// records too instead of leaving the conversation under a run id.
+    session: []const u8 = "",
     task: []const u8,
     provider: []const u8 = "",
     /// `agent.seed` the run drew its `ck_random` stream from. A run record
@@ -175,6 +180,11 @@ pub fn encodeWrite(alloc: std.mem.Allocator, g: *const Graph) ![]u8 {
     try s.write(g.run_id);
     try s.objectField("parent_run_id");
     try s.write(g.parent_run_id);
+    // A listing scalar, in front of `task`: a 4 KiB prefix read is what the
+    // session-scoped erase scans, and the task is the one field that can push
+    // the rest of the record out of that window.
+    try s.objectField("session");
+    try s.write(g.session);
     try s.objectField("task");
     try s.write(g.task);
     try s.objectField("provider");
@@ -400,4 +410,27 @@ test "same label with different arguments is not collapsed" {
     try std.testing.expectEqualStrings("{\"path\":\"a.zig\"}", g.nodes.items[0].arguments);
     try std.testing.expectEqualStrings("{\"path\":\"b.zig\"}", g.nodes.items[1].arguments);
     try std.testing.expectEqual(@as(u32, 1), g.nodes.items[1].repeats);
+}
+
+test "encodeWrite puts the session in front of the task, as a listing scalar" {
+    // The session-scoped erase in the graph guest reads a bounded prefix of
+    // each file, so a `session` written after `task` would be cut away by a
+    // long prompt and the run would survive its own session's deletion.
+    var g = Graph{ .run_id = "run-s", .session = "sess-1", .task = "t", .provider = "p", .started_at = 0 };
+    defer g.deinit(std.testing.allocator);
+    const payload = try encodeWrite(std.testing.allocator, &g);
+    defer std.testing.allocator.free(payload);
+
+    const session_at = std.mem.indexOf(u8, payload, "\"session\"").?;
+    const task_at = std.mem.indexOf(u8, payload, "\"task\"").?;
+    try std.testing.expect(session_at < task_at);
+    try std.testing.expect(std.mem.indexOf(u8, payload, "\"session\":\"sess-1\"") != null);
+
+    // A run with no session writes the field as an empty string rather than
+    // dropping it, so the guest's parse cannot mistake absence for a match.
+    var none = Graph{ .run_id = "run-s", .task = "t", .provider = "p", .started_at = 0 };
+    defer none.deinit(std.testing.allocator);
+    const unstamped = try encodeWrite(std.testing.allocator, &none);
+    defer std.testing.allocator.free(unstamped);
+    try std.testing.expect(std.mem.indexOf(u8, unstamped, "\"session\":\"\"") != null);
 }

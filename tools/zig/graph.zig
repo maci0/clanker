@@ -1,6 +1,7 @@
 //! graph: read and persist execution graphs (state/runs/*.json).
 //! Input:  {"args": "" | "list" | "<run-id>" | "json" | "json <run-id>" | "answer" | "answer <run-id>"}
 //!         {"write": {run_id, task, provider, ...}}
+//!         {"forget": {session: "<session-id>"}}
 //! Output: {"ok": true, "text": "..."}  |  {"ok": true}
 //!
 //! `""` renders the latest run, `<run-id>` renders that one, `list` prints one
@@ -24,6 +25,7 @@ const listingFromName = graph_listing.listingFromName;
 const listingNodeCount = graph_listing.listingNodeCount;
 const labelOf = graph_listing.labelOf;
 const lessThanChronological = graph_listing.lessThanChronological;
+const ownedBySession = graph_listing.ownedBySession;
 
 /// Graphs collect a bounded preview for every LLM and tool step. A long run
 /// therefore legitimately exceeds the normal 64 KiB tool-request buffer when
@@ -40,6 +42,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
     if (parsed == .object) {
         if (parsed.object.get("write")) |g| return writeGraph(out, alloc, g);
+        if (parsed.object.get("forget")) |f| return forgetSession(out, alloc, f);
     }
     var args: []const u8 = "";
     if (parsed == .object) {
@@ -394,4 +397,41 @@ fn writeGraph(out: *lib.Out, alloc: std.mem.Allocator, value: std.json.Value) !v
     const path = try std.fmt.allocPrint(alloc, "state/runs/{s}.json", .{g.run_id});
     lib.fsWrite(path, enc.written()) catch |err| return lib.failErr(out, err, "writing the run graph");
     try out.writeAll("{\"ok\":true}");
+}
+
+/// `{"forget": {"session": "<session-id>"}}`: erase every run record that
+/// belongs to that session. A graph holds the task verbatim plus tool
+/// arguments, outputs and the recorded final answer, so the transcript going
+/// away is not the conversation going away unless these go with it. A record
+/// written before the `session` field existed carries none and cannot be
+/// attributed to a session, so it stays rather than being swept on a guess.
+fn forgetSession(out: *lib.Out, alloc: std.mem.Allocator, value: std.json.Value) !void {
+    const want: []const u8 = switch (value) {
+        .object => |o| switch (o.get("session") orelse return lib.fail(out, "forget needs a session id")) {
+            .string => |s| s,
+            else => return lib.fail(out, "forget needs a session id string"),
+        },
+        else => return lib.fail(out, "forget needs an object"),
+    };
+    if (want.len == 0) return lib.fail(out, "forget needs a non-empty session id");
+
+    const raw: []const u8 = lib.fsList("state/runs") catch |err| switch (err) {
+        error.NotFound => return lib.okText(out, "no run records to forget"),
+        else => return lib.failErr(out, err, "reading the run graph"),
+    };
+    const names = std.json.parseFromSliceLeaky(std.json.Value, alloc, raw, .{}) catch |err| return lib.failErr(out, err, "reading the run graph");
+
+    var removed: usize = 0;
+    if (names == .array) {
+        for (names.array.items) |item| {
+            if (item != .string) continue;
+            if (!std.mem.endsWith(u8, item.string, ".json")) continue;
+            const path = try std.fmt.allocPrint(alloc, "state/runs/{s}", .{item.string});
+            defer alloc.free(path);
+            if (!ownedBySession(loadGraphListing(alloc, path, item.string), want)) continue;
+            lib.fsDelete(path) catch |err| return lib.failErr(out, err, "erasing the run graph");
+            removed += 1;
+        }
+    }
+    try lib.okText(out, try std.fmt.allocPrint(alloc, "{d} run record(s) erased", .{removed}));
 }

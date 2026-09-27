@@ -10,6 +10,9 @@
       },
       "write": {
         "type": "object"
+      },
+      "forget": {
+        "type": "object"
       }
     }
   },

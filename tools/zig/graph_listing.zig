@@ -35,6 +35,13 @@ pub const GraphFile = struct {
     /// The run that spawned this one; empty for top-level runs. Carried so a
     /// nested (subagent) run's graph links back to its caller's.
     parent_run_id: []const u8 = "",
+    /// The session the run belonged to, empty for a run with no session (an
+    /// ACP run, or one started before the field landed). A graph holds the
+    /// task verbatim plus tool arguments, outputs and the final answer, so
+    /// this is the key that lets deleting a session take its run records with
+    /// it; `ownedBySession` reads it from a listing prefix, which is why it
+    /// sits with the other scalars in front of `task`.
+    session: []const u8 = "",
     provider: []const u8 = "",
     started_at: i64 = 0,
     duration_ms: u64 = 0,
@@ -68,6 +75,15 @@ pub fn stemOfJson(name: []const u8) []const u8 {
 
 pub fn listingFromName(fname: []const u8) GraphFile {
     return .{ .run_id = stemOfJson(fname) };
+}
+
+/// Whether this run record belongs to `session`, and so is erased with it.
+/// Empty on both sides never matches: a run with no session stamp is not
+/// attributable, and a forget with no session named would otherwise take the
+/// whole archive.
+pub fn ownedBySession(g: GraphFile, session: []const u8) bool {
+    if (session.len == 0 or g.session.len == 0) return false;
+    return std.mem.eql(u8, g.session, session);
 }
 
 pub fn listingNodeCount(g: GraphFile) usize {
@@ -157,6 +173,28 @@ test anyNodeFailed {
     const scalar_only = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"node_count\":9,\"failed\":true}", .{ .ignore_unknown_fields = true });
     try std.testing.expect(scalar_only.failed);
     try std.testing.expect(!anyNodeFailed(scalar_only));
+}
+
+test ownedBySession {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const mine = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"session\":\"sess-abc\",\"task\":\"what I typed\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(ownedBySession(mine, "sess-abc"));
+    try std.testing.expect(!ownedBySession(mine, "sess-other"));
+
+    // A run recorded before the field landed carries no session, so it cannot
+    // be attributed to one and stays.
+    const unstamped = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"task\":\"what I typed\"}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(!ownedBySession(unstamped, "sess-abc"));
+    // An empty session named in a forget must not sweep the whole archive.
+    try std.testing.expect(!ownedBySession(mine, ""));
+
+    // The field is a listing scalar, so a 4 KiB prefix read that cut the task
+    // and nodes away still answers.
+    const prefix_only = try std.json.parseFromSliceLeaky(GraphFile, alloc, "{\"run_id\":\"run-1\",\"session\":\"sess-abc\",\"node_count\":9}", .{ .ignore_unknown_fields = true });
+    try std.testing.expect(ownedBySession(prefix_only, "sess-abc"));
 }
 
 /// Every graph `state/runs/` holds, both id shapes. `janitor` picks its

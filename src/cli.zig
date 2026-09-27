@@ -13430,6 +13430,14 @@ fn forgetSessionArtifacts(
     const export_input = std.fmt.bufPrint(&export_buf, "{{\"id\":{f},\"forget\":true}}", .{std.json.fmt(id, .{})}) catch return;
     forgetVia(io, gpa, arena, cfg, environ_map, "session_export", export_input, id, "exported HTML transcript");
 
+    // state/runs/<run-id>.json holds the task verbatim, plus tool arguments,
+    // outputs and the recorded final answer, so it is the conversation under a
+    // different name. Runs stamp the session they belong to, so the graphs go
+    // with the transcript.
+    var graph_buf: [256]u8 = undefined;
+    const graph_input = std.fmt.bufPrint(&graph_buf, "{{\"forget\":{{\"session\":{f}}}}}", .{std.json.fmt(id, .{})}) catch return;
+    forgetVia(io, gpa, arena, cfg, environ_map, "graph", graph_input, id, "run graphs");
+
     // state/reasoning.jsonl is one shared file, not a per-session store, so no
     // guest owns the path: its records carry the session that produced them
     // and the rewrite is native. Each holds the user's task text and a model
