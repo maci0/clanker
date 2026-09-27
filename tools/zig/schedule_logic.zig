@@ -46,9 +46,21 @@ pub fn validateTask(task: []const u8) TaskError![]const u8 {
     return trimmed;
 }
 
-/// Timezone offsets are whole minutes from UTC; ±1440 covers every real zone.
+/// Timezone offsets are whole minutes from UTC, and the bound is the cron's
+/// own `max_tz_offset_minutes` rather than a second number written here: the
+/// CLI's `--tz-offset` goes through `cron.parseOffset`, so a second limit in
+/// this file let the native side store an offset the guest then refused to
+/// schedule ("never fires" for an entry the CLI had just accepted).
 pub fn validTzOffset(minutes: i32) bool {
-    return minutes >= -1440 and minutes <= 1440;
+    return minutes >= -cron.max_tz_offset_minutes and minutes <= cron.max_tz_offset_minutes;
+}
+
+/// The accepted range as text, so the refusal names the bound that is in force
+/// instead of a hand-copied one.
+pub fn tzOffsetRangeMessage(gpa: std.mem.Allocator) ![]const u8 {
+    return std.fmt.allocPrint(gpa, "tz_offset_minutes out of range (-{d}..+{d})", .{
+        cron.max_tz_offset_minutes, cron.max_tz_offset_minutes,
+    });
 }
 
 /// The next free `sch-N`. Sequential, never reused, so a removed id keeps
@@ -96,6 +108,29 @@ test "validId matches the session-id alphabet" {
     try std.testing.expect(!validId("sch 1"));
     try std.testing.expect(!validId("x" ** 65));
     try std.testing.expect(!validId("-foo"));
+}
+
+test "the tz offset bound is the cron's, so both writers of the store agree" {
+    // `schedule add --tz-offset +26:00` is accepted by the CLI (it parses
+    // through `cron.parseOffset`), so an entry carrying that offset has to
+    // schedule rather than read back as "never fires".
+    try std.testing.expect(validTzOffset(cron.max_tz_offset_minutes));
+    try std.testing.expect(validTzOffset(-cron.max_tz_offset_minutes));
+    try std.testing.expect(!validTzOffset(cron.max_tz_offset_minutes + 1));
+    try std.testing.expect(!validTzOffset(-cron.max_tz_offset_minutes - 1));
+    try std.testing.expectEqual(
+        @as(?i64, null),
+        nextRun(true, "* * * * *", 0, cron.epochFromCivil(2026, 8, 13, 12, 0, 0), cron.max_tz_offset_minutes + 1),
+    );
+}
+
+test "the range message names the bound in force" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    var buf: [64]u8 = undefined;
+    const msg = try tzOffsetRangeMessage(arena_state.allocator());
+    const want = try std.fmt.bufPrint(&buf, "-{d}..+{d}", .{ cron.max_tz_offset_minutes, cron.max_tz_offset_minutes });
+    try std.testing.expect(std.mem.indexOf(u8, msg, want) != null);
 }
 
 test "nextRun omits disabled, junk, and never-firing specs" {

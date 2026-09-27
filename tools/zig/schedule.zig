@@ -108,10 +108,14 @@ fn doAdd(req: std.json.Value, out: *lib.Out) !void {
     });
     const tz: i32 = blk: {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse break :blk 0;
+        // `@trunc` on a non-finite float traps the guest, so `1e400` in the
+        // request would abort the tool instead of being the validation message
+        // it is. An offset is whole minutes either way.
+        if (!std.math.isFinite(n_f)) return lib.fail(out, "tz_offset_minutes must be a finite number of minutes");
         break :blk @trunc(n_f);
     };
     if (!logic.validTzOffset(tz))
-        return lib.fail(out, "tz_offset_minutes out of range (-1440..+1440)");
+        return lib.fail(out, try logic.tzOffsetRangeMessage(lib.alloc));
     const now: i64 = @trunc(lib.nowSeconds());
     logic.validateCron(cron_text, now, tz) catch |err| return lib.fail(out, switch (err) {
         error.ParseFailed => "cron spec is not a valid five-field expression",
@@ -181,9 +185,10 @@ fn doUpdate(req: std.json.Value, out: *lib.Out) !void {
     var new_tz: i32 = 0;
     if (has_tz) {
         const n_f: f64 = lib.optNum(req, "tz_offset_minutes") orelse return lib.fail(out, "tz_offset_minutes must be numeric");
+        if (!std.math.isFinite(n_f)) return lib.fail(out, "tz_offset_minutes must be a finite number of minutes");
         new_tz = @trunc(n_f);
         if (!logic.validTzOffset(new_tz))
-            return lib.fail(out, "tz_offset_minutes out of range (-1440..+1440)");
+            return lib.fail(out, try logic.tzOffsetRangeMessage(lib.alloc));
     }
 
     var cron_text: []const u8 = "";
