@@ -1584,11 +1584,15 @@ fn harnessConfigJSON(arena: std.mem.Allocator, cfg: *const config_mod.Config, ac
             try s.write(cfg.agent.skills_dir);
         }
         if (access == .tools_dir) {
+            // The full scan list, under the config's own key name and in its
+            // own value shape (a list, as `agent.tools_dir` is in config and
+            // in memory), so /plugins and `tools list` match Registry.load.
+            // It used to be emitted twice: a string under "tools_dir" and the
+            // list under "tools_dirs". A guest mirroring either name parsed
+            // the string one as the list type, so the whole config parse
+            // failed and the caller fell back to the hardcoded default
+            // directory, silently losing every out-of-tree entry.
             try s.objectField("tools_dir");
-            // One deterministic write/scaffold destination (plugins new).
-            try s.write(config_mod.firstToolsDir(cfg.agent.tools_dir));
-            try s.objectField("tools_dirs");
-            // Full scan list so /plugins and `tools list` match Registry.load.
             try s.write(cfg.agent.tools_dir);
         }
         try s.endObject();
@@ -8491,6 +8495,17 @@ test "harness config access is scoped to each tool's consumed fields" {
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "vendor/overrides") != null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "providers") == null);
     try std.testing.expect(std.mem.find(u8, tools_dir_json, "max_iterations") == null);
+
+    // The guest-side mirror, parsed with the guest's own field types: a
+    // `tools_dir` that is a string where the config says list fails the whole
+    // parse, and the guest then lists the default directory while the host
+    // scans the configured ones.
+    const GuestAgent = struct { tools_dir: []const []const u8 = &.{} };
+    const GuestBridge = struct { agent: GuestAgent = .{} };
+    const guest = try std.json.parseFromSliceLeaky(GuestBridge, arena, tools_dir_json, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(usize, 2), guest.agent.tools_dir.len);
+    try std.testing.expectEqualStrings("vendor/my-tools", guest.agent.tools_dir[0]);
+    try std.testing.expectEqualStrings("vendor/overrides", guest.agent.tools_dir[1]);
 
     // skills resolves agent.skills_dir through the same bridge; denied, the
     // guest would silently fall back to the literal "skills" directory.

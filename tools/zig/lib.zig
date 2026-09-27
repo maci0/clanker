@@ -1219,8 +1219,10 @@ pub fn jsonStrField(obj: std.json.ObjectMap, name: []const u8) []const u8 {
 /// `ignore_unknown_fields`.
 pub const HarnessProvider = struct { default_model: []const u8 = "" };
 pub const HarnessAgent = struct {
-    tools_dir: []const u8 = "",
-    tools_dirs: []const []const u8 = &.{},
+    // A list, as `agent.tools_dir` is in config.toml and on the host side.
+    // Mirroring it as a string made every parse of this object fail, and the
+    // caller could not tell that from a config that named no directory.
+    tools_dir: []const []const u8 = &.{},
 };
 pub const HarnessKernel = struct { enabled: bool = false, max_output_bytes: u32 = 65536 };
 pub const HarnessDebug = struct { enabled: bool = false };
@@ -1232,16 +1234,11 @@ pub const HarnessConfig = struct {
     debug: HarnessDebug = .{},
 };
 
-/// Every configured manifest directory, last-listed last. Falls back to the
-/// singular `tools_dir` key so a host that only emitted that still works.
+/// Every configured manifest directory, last-listed last, or the default when
+/// the config names none.
 pub fn toolsDirs() []const []const u8 {
     const cfg = parseHarnessConfig();
-    if (cfg.agent.tools_dirs.len > 0) return cfg.agent.tools_dirs;
-    if (cfg.agent.tools_dir.len > 0) {
-        const one = alloc.alloc([]const u8, 1) catch return &.{};
-        one[0] = cfg.agent.tools_dir;
-        return one;
-    }
+    if (cfg.agent.tools_dir.len > 0) return cfg.agent.tools_dir;
     return &.{"tools/manifests"};
 }
 

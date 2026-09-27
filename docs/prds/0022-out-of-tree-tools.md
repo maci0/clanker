@@ -6,7 +6,7 @@ Shipped. `agent.tools_dir` is a list (`[]const []const u8`); a bare string
 still parses as one entry. `Registry.load` scans each directory in order,
 last-listed wins on a cross-directory `name` collision (with a warning),
 and a missing list entry warns and continues. `plugins` / `tools` guests
-read the configured list via `ck_harness_config` (`tools_dirs`) and list
+read the configured list via `ck_harness_config` (`agent.tools_dir`) and list
 every directory; `clanker plugins new` writes into the first-listed one;
 `clanker plugins validate` with no path validates every configured
 directory. Sources of truth: `src/config.zig` (`Agent.tools_dir`,
