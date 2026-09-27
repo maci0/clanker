@@ -16,6 +16,13 @@
 //! carries a `/` cannot match (`.envrc.example` and `.envrc.local` stay
 //! servable on purpose: the rule is `.env`/`.envrc` exactly, or `.env.`
 //! prefix).
+//!
+//! The comparison folds ASCII case because it is matched against a name the
+//! caller chose, and macOS resolves paths on a case-insensitive volume by
+//! default: `safeJoin(".ENV")` opens the same bytes as `safeJoin(".env")`.
+//! A case-sensitive match here let a guest with `fs_prefixes ["."]` read the
+//! process API keys under a spelling the guard did not name, which is the
+//! leak this module exists to close.
 
 const std = @import("std");
 
@@ -23,9 +30,16 @@ const std = @import("std");
 /// and the file browser must refuse: `.env`, `.envrc`, and every `.env.`
 /// prefixed variant (`.env.local`, `.env.production`, ...).
 pub fn isSecretDotenvName(name: []const u8) bool {
-    if (std.mem.eql(u8, name, ".env") or std.mem.eql(u8, name, ".envrc")) return true;
-    if (std.mem.startsWith(u8, name, ".env.")) return true;
+    if (eqlFold(name, ".env") or eqlFold(name, ".envrc")) return true;
+    if (name.len >= dot_prefix.len and
+        std.ascii.eqlIgnoreCase(name[0..dot_prefix.len], dot_prefix)) return true;
     return false;
+}
+
+const dot_prefix = ".env.";
+
+fn eqlFold(a: []const u8, b: []const u8) bool {
+    return a.len == b.len and std.ascii.eqlIgnoreCase(a, b);
 }
 
 /// True when any component of `sub_path` (a `/`-separated relative path) is a
@@ -57,6 +71,24 @@ test "isSecretDotenvName refuses every dotenv spelling the sandbox refuses" {
     try testing.expect(!isSecretDotenvName(".envrc.local"));
     try testing.expect(!isSecretDotenvName("src/main.zig"));
     try testing.expect(!isSecretDotenvName("README.md"));
+}
+
+test "a differently cased spelling is the same file on a case-insensitive volume" {
+    // macOS APFS is case-insensitive by default, so `.ENV` opens the same
+    // bytes as `.env`. A case-sensitive match here refused nothing and the
+    // guest read the keys file anyway.
+    try testing.expect(isSecretDotenvName(".ENV"));
+    try testing.expect(isSecretDotenvName(".Env"));
+    try testing.expect(isSecretDotenvName(".ENVRC"));
+    try testing.expect(isSecretDotenvName(".Envrc"));
+    try testing.expect(isSecretDotenvName(".ENV.local"));
+    try testing.expect(isSecretDotenvName(".env.LOCAL"));
+    try testing.expect(isSecretDotenvPath("dir/.ENV"));
+    try testing.expect(isSecretDotenvPath(".EnV/x"));
+    // Folding the whole name keeps the negative neighbours negative.
+    try testing.expect(!isSecretDotenvName(".ENVRC.EXAMPLE"));
+    try testing.expect(!isSecretDotenvName(".EnVy"));
+    try testing.expect(!isSecretDotenvName(".ENVRCs"));
 }
 
 test "isSecretDotenvPath refuses a secret name at any depth and position" {

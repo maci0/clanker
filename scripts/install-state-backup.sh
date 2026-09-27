@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_path=$(readlink -f -- "$0")
+# Portable stand-in for `readlink -f`: macOS ships a BSD readlink with no
+# `-f`, and every `readlink -f` here died under `set -euo pipefail` on a
+# Mac. The target need not exist (state/ is created on first run), so an
+# unresolvable path falls back to the spelling it was given.
+resolve_path() {
+    local p="$1" dir base
+    dir=$(dirname -- "$p")
+    base=$(basename -- "$p")
+    if [ -d "$dir" ]; then
+        printf '%s/%s\n' "$(cd -- "$dir" && pwd -P)" "$base"
+    else
+        printf '%s\n' "$p"
+    fi
+}
+
+script_path=$(resolve_path "$0")
 script_dir=$(dirname -- "$script_path")
 user_bin="${HOME:?}/.local/bin"
 
@@ -21,7 +36,7 @@ mkdir -p "$user_units"
 link_unit() {
     local unit="$1"
     local target
-    target=$(readlink -f -- "$script_dir/systemd/$unit")
+    target=$(resolve_path "$script_dir/systemd/$unit")
     local link_path="$user_units/$unit"
     if [ "$(readlink -- "$link_path" 2>/dev/null || true)" = "$target" ]; then
         return 0

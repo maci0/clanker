@@ -1,10 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_path=$(readlink -f -- "$0")
+# Portable stand-in for `readlink -f`: macOS ships a BSD readlink with no
+# `-f`, and every `readlink -f` here died under `set -euo pipefail` on a
+# Mac. The target need not exist (state/ is created on first run), so an
+# unresolvable path falls back to the spelling it was given.
+resolve_path() {
+    local p="$1" dir base
+    dir=$(dirname -- "$p")
+    base=$(basename -- "$p")
+    if [ -d "$dir" ]; then
+        printf '%s/%s\n' "$(cd -- "$dir" && pwd -P)" "$base"
+    else
+        printf '%s\n' "$p"
+    fi
+}
+
+script_path=$(resolve_path "$0")
 script_dir=$(dirname -- "$script_path")
 repo_root=$(dirname -- "$script_dir")
-state_root=$(readlink -f -- "$repo_root/state")
+state_root=$(resolve_path "$repo_root/state")
 storage_root=$(dirname -- "$state_root")
 backup_root="$storage_root/backups"
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
@@ -70,7 +85,7 @@ checkpoint_session_wal
 for entry in state:state agents:.agents local:.local; do
     name=${entry%%:*}
     repo_name=${entry#*:}
-    source=$(readlink -f -- "$repo_root/$repo_name")
+    source=$(resolve_path "$repo_root/$repo_name")
     expected="$storage_root/$name"
     # `state` is the shared store and must be where it is declared: backing up
     # some other directory under its name would produce a snapshot that

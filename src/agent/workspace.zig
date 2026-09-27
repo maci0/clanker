@@ -21,7 +21,11 @@ const log = @import("../util/log.zig");
 pub const state_dir = "state";
 pub const store_path = "state/workspaces.json";
 pub const max_store_bytes: usize = 1 << 20;
-pub const max_path_bytes: usize = 4096;
+/// The platform's own `PATH_MAX`, not Linux's 4096: macOS caps at 1024, and a
+/// root between those two lengths passed `validPath`, was stored in the
+/// registry as usable, and then failed every `openDir`/`statFile` on it with
+/// `NameTooLong`.
+pub const max_path_bytes: usize = std.fs.max_path_bytes;
 pub const max_name_len: usize = 64;
 
 pub const Error = error{

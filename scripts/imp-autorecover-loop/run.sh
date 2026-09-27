@@ -3,7 +3,9 @@
 # escalation model and which repair harness to use, then run the loop.
 set -euo pipefail
 
-SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+# macOS ships a BSD readlink with no `-f`, so resolve through cd/pwd, the
+# idiom every other script in scripts/ already uses.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 LOOP="$SCRIPT_DIR/loop.py"
 
 # Same knob as clank.sh. Defaults to the checkout this script lives in;
@@ -87,7 +89,8 @@ if [[ ! -d "$CLANKER_DIR" ]]; then
     echo "error: CLANKER_DIR is not a directory: $CLANKER_DIR" >&2
     exit 2
 fi
-CLANKER_DIR="$(readlink -f "$CLANKER_DIR")"
+# The directory was checked to exist above, so resolving it cannot fail.
+CLANKER_DIR="$(cd "$CLANKER_DIR" && pwd -P)"
 
 # CLANKER_BIN wins, then clanker on PATH, then the binary built in the checkout,
 # so a checkout without a PATH entry still works.

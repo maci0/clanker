@@ -31,10 +31,25 @@
 # and `*.lock` are absent by design (see backup-state.sh).
 set -euo pipefail
 
-script_path=$(readlink -f -- "$0")
+# Portable stand-in for `readlink -f`: macOS ships a BSD readlink with no
+# `-f`, and every `readlink -f` here died under `set -euo pipefail` on a
+# Mac. The target need not exist (state/ is created on first run), so an
+# unresolvable path falls back to the spelling it was given.
+resolve_path() {
+    local p="$1" dir base
+    dir=$(dirname -- "$p")
+    base=$(basename -- "$p")
+    if [ -d "$dir" ]; then
+        printf '%s/%s\n' "$(cd -- "$dir" && pwd -P)" "$base"
+    else
+        printf '%s\n' "$p"
+    fi
+}
+
+script_path=$(resolve_path "$0")
 script_dir=$(dirname -- "$script_path")
 repo_root=$(dirname -- "$script_dir")
-state_root=$(readlink -f -- "$repo_root/state")
+state_root=$(resolve_path "$repo_root/state")
 backup_root="${CLANKER_BACKUP_ROOT:-$(dirname -- "$state_root")/backups}"
 
 snapshot="${1:-}"
@@ -54,7 +69,7 @@ fi
     printf 'error: %s is not a snapshot directory\n' "$snapshot" >&2
     exit 1
 }
-snapshot=$(readlink -f -- "$snapshot")
+snapshot=$(resolve_path "$snapshot")
 
 entries="state"
 for extra in local agents; do
