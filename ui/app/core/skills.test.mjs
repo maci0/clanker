@@ -20,14 +20,18 @@ const src = readFileSync(join(here, "tools.js"), "utf8");
 // tools.js imports ui.js, whose vendor import node cannot resolve, so the
 // module is not importable here and the shipped source is extracted instead
 // (the harden.test.mjs pattern).
+// The card's class lists are module constants now, so the slice has to carry
+// them: a ReferenceError inside the try reads as "could not load skills".
 function shippedLoadSkills(elements, fetchImpl) {
-  const m = /(function loadSkills\(\) \{[\s\S]*?\n\})/.exec(src);
-  assert.ok(m, "loadSkills missing from tools.js");
+  const m = /(var SKILL_CARD_CLASS = [\s\S]*?)(?=\nvar TOOL_CONFIG_CLASS)/.exec(src);
+  const fn = /(function loadSkills\(\) \{[\s\S]*?\n\})/.exec(src);
+  assert.ok(m, "the skill card's class constants are missing from tools.js");
+  assert.ok(fn, "loadSkills missing from tools.js");
   const doc = Object.create(globalThis.document);
   doc.getElementById = function (id) { return elements[id] || null; };
   const factory = new Function(
     "document", "fetch", "_readJson", "utilFmtBytes", "utilPlural", "showLoadError",
-    "return (" + m[1] + ");"
+    m[1] + "\n" + fn[1] + "\nreturn loadSkills;"
   );
   return factory(
     doc,
@@ -50,7 +54,9 @@ test("a non-empty skills list renders its cards into #skills", async function ()
   });
   await loadSkills();
   assert.equal(els.loadErrorShown, undefined, "the happy path must not fall into the load-error branch");
-  const cards = els.skills.childNodes.filter(function (n) { return n.className === "skill-card"; });
+  // The card carries the ported class list, which starts with the hook the
+  // card has always worn.
+  const cards = els.skills.childNodes.filter(function (n) { return (n.className || '').startsWith('border-b border-rule'); });
   assert.equal(cards.length, 2);
   cards.forEach(function (card) {
     assert.equal(card.parentNode, els.skills);

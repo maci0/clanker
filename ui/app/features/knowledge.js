@@ -1,5 +1,5 @@
 // Knowledge view — single-user. Collections of documents.
-import { uiConfirm, uiPrompt, toast, showLoadError } from "../core/ui.js";
+import { uiConfirm, uiPrompt, toast, showLoadError, runDetail as chrome } from "../core/ui.js";
 import * as kit from "../core/kit.js";
 import { readJson, fmtBytes, wireRefresh, plural } from "../core/utils.js";
 export var selectedKnowledge = (function(){ try { var raw = window.localStorage.getItem("clanker.knowledge"); if (raw) return JSON.parse(raw); } catch(_){} return []; })();
@@ -189,8 +189,8 @@ function openCollection(id, docId){
     var detail=document.getElementById("knowledge-detail"); if(!detail) return;
     detail.hidden=false; detail.textContent="";
     showSyncRow(id);
-    var head=document.createElement("div"); head.className="run-detail-head";
-    var t=document.createElement("span"); t.className="run-detail-title"; t.textContent=data.title||id; head.appendChild(t);
+    var head=document.createElement("div"); head.className=chrome.runDetail.head;
+    var t=document.createElement("span"); t.className=chrome.runDetail.title; t.textContent=data.title||id; head.appendChild(t);
     var share=kit.button({variant:"secondary", class:"ml-3"}, "Copy link");
     share.addEventListener("click", function(){
       var url = window.location.origin + window.location.pathname + "#knowledge/" + encodeURIComponent(id);

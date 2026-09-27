@@ -284,6 +284,9 @@
 .mr-2 {
   margin-right: var(--space-2);
 }
+.mr-4 {
+  margin-right: var(--space-4);
+}
 .mr-auto {
   margin-right: auto;
 }
@@ -393,6 +396,9 @@
 .h-2\.5 {
   height: calc(var(--spacing) * 2.5);
 }
+.h-3\.5 {
+  height: calc(var(--spacing) * 3.5);
+}
 .h-4 {
   height: var(--space-4);
 }
@@ -407,6 +413,9 @@
 }
 .h-8 {
   height: calc(var(--spacing) * 8);
+}
+.h-10 {
+  height: calc(var(--spacing) * 10);
 }
 .h-18 {
   height: calc(var(--spacing) * 18);
@@ -476,6 +485,9 @@
 }
 .max-h-72 {
   max-height: calc(var(--spacing) * 72);
+}
+.max-h-80 {
+  max-height: calc(var(--spacing) * 80);
 }
 .max-h-\[45vh\] {
   max-height: 45vh;
@@ -1333,6 +1345,9 @@
 .p-3 {
   padding: var(--space-3);
 }
+.p-4 {
+  padding: var(--space-4);
+}
 .p-6 {
   padding: var(--space-6);
 }
@@ -1837,6 +1852,9 @@
 }
 .\[font\:inherit\] {
   font: inherit;
+}
+.\[image-rendering\:pixelated\] {
+  image-rendering: pixelated;
 }
 .\[stroke-dasharray\:5_9\] {
   stroke-dasharray: 5 9;
@@ -3133,6 +3151,15 @@
   }
 }
 @media (width < 640px) {
+  .max-\[640px\]\:max-w-none {
+    max-width: none;
+  }
+  .max-\[640px\]\:min-w-0 {
+    min-width: 0px;
+  }
+  .max-\[640px\]\:basis-full {
+    flex-basis: 100%;
+  }
   .max-\[640px\]\:\[font-size\:16px\] {
     font-size: 16px;
   }
@@ -3290,6 +3317,27 @@
 .data-\[unread\=true\]\:\[\&_\.room-name\]\:text-fg[data-unread="true"] .room-name {
   color: var(--fg);
 }
+.\[\&_\.runs\]\:mt-7 .runs {
+  margin-top: var(--space-7);
+}
+.\[\&_\.runs\]\:flex .runs {
+  display: flex;
+}
+.\[\&_\.runs\]\:flex-col .runs {
+  flex-direction: column;
+}
+.\[\&_\.runs\]\:gap-7 .runs {
+  gap: var(--space-7);
+}
+.\[\&_\.section-head\]\:mb-7 .section-head {
+  margin-bottom: var(--space-7);
+}
+.\[\&_\.section-head\]\:gap-x-5 .section-head {
+  column-gap: var(--space-5);
+}
+.\[\&_\.section-head\]\:gap-y-3 .section-head {
+  row-gap: var(--space-3);
+}
 .data-\[orphan\=true\]\:\[\&_\.turn-author\]\:text-fg-muted[data-orphan="true"] .turn-author {
   color: var(--fg-muted);
 }
@@ -3380,6 +3428,12 @@
 .\[\&_button\:hover\]\:bg-\[var\(--surface-hover\)\] button:hover {
   background-color: var(--surface-hover);
 }
+.\[\&_code\]\:mt-1 code {
+  margin-top: var(--space-1);
+}
+.\[\&_code\]\:block code {
+  display: block;
+}
 .\[\&_code\]\:px-1 code {
   padding-inline: var(--space-1);
 }
@@ -3388,6 +3442,9 @@
 }
 .\[\&_code\]\:text-xs code {
   font-size: var(--step--1);
+}
+.\[\&_code\]\:wrap-anywhere code {
+  overflow-wrap: anywhere;
 }
 .\[\&_dd\]\:m-0 dd {
   margin: 0px;
@@ -3516,6 +3573,17 @@
 .\[\&_input\:focus-visible\]\:outline-accent input:focus-visible {
   outline-color: var(--accent);
 }
+.\[\&_input\[type\=checkbox\]\]\:mr-2 input[type=checkbox] {
+  margin-right: var(--space-2);
+}
+.\[\&_input\[type\=checkbox\]\]\:align-middle input[type=checkbox] {
+  vertical-align: middle;
+}
+@media (width < 640px) {
+  .\[\&_input\[type\=search\]\]\:max-\[640px\]\:\[font-size\:16px\] input[type=search] {
+    font-size: 16px;
+  }
+}
 .\[\&_label\]\:m-0 label {
   margin: 0px;
 }
@@ -3563,6 +3631,12 @@
 }
 .\[\&\:not\(\[hidden\]\)\]\:grid:not([hidden]) {
   display: grid;
+}
+.\[\&\:not\(\[hidden\]\)\]\:flex-col:not([hidden]) {
+  flex-direction: column;
+}
+.\[\&\:not\(\[hidden\]\)\]\:overflow-hidden:not([hidden]) {
+  overflow: hidden;
 }
 @media (width < 768px) {
   .max-\[768px\]\:\[\&\:not\(\[hidden\]\)\]\:block:not([hidden]) {

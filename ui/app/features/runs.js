@@ -1110,17 +1110,17 @@ function showNodeDetail(kind, node) {
   el.runDetail.hidden = false;
 
   var head = document.createElement("div");
-  head.className = "run-detail-head";
+  head.className = chrome.runDetail.head;
 
   var titleWrap = document.createElement("span");
   var title = document.createElement("span");
-  title.className = "run-detail-title";
+  title.className = chrome.runDetail.title;
   title.textContent = "";
   if (node.ok === false) title.appendChild(icon("strike", 12));
   title.appendChild(document.createTextNode(kind + " · " + (node.label || node.detail || kind)));
   titleWrap.appendChild(title);
   var meta = document.createElement("span");
-  meta.className = "run-detail-meta";
+  meta.className = chrome.runDetail.meta;
   meta.textContent = "  " + metricsFor(node) + (node.detail ? "  ·  " + node.detail : "");
   titleWrap.appendChild(meta);
   head.appendChild(titleWrap);
@@ -1167,7 +1167,7 @@ function showNodeDetail(kind, node) {
   var truncated = typeof node.result_bytes === "number" && node.result_bytes > shownBytes;
   if (truncated) {
     var note = document.createElement("p");
-    note.className = "run-detail-note";
+    note.className = chrome.runDetail.note;
     note.textContent = "Showing the first " + shownBytes + " of " + node.result_bytes +
       " bytes — the rest was not recorded, so this is raw text rather than a parsed tree.";
     el.runDetail.appendChild(note);
@@ -1209,7 +1209,7 @@ function showNodeDetail(kind, node) {
   }
 
   var out = document.createElement("div");
-  out.className = "run-detail-output";
+  out.className = chrome.runDetail.output;
   /* A file-edit tool records its arguments (path/old/new or create/content)
      on the run node now, so the change itself renders here — the result
      line ("replaced 1 match") says it happened, not what it was. Old runs

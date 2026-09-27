@@ -311,7 +311,7 @@ export function renderBoard(next) {
    column is a `group`, so a child can read the states the column itself
    carries (collapsed, drop); the menu's open state is `data-open` beside the
    class, because the class is what the port keeps rewriting. */
-var COL_CLASS = "group flex-none basis-[272px] min-w-[272px] max-w-[272px] flex max-h-[calc(100vh-14rem)] flex-col rounded-plate-lg bg-surface-2 pt-0 transition-colors transition-shadow transition-opacity duration-200 data-[collapsed=true]:basis-[40px] data-[collapsed=true]:min-w-[40px] data-[collapsed=true]:max-w-[40px] data-[collapsed=true]:cursor-pointer data-[collapsed=true]:opacity-80 data-[collapsed=true]:hover:opacity-100 data-[drop=true]:bg-[color-mix(in_srgb,var(--accent)_12%,var(--surface))] data-[drop=true]:shadow-[inset_0_0_0_2px_var(--accent)] data-[over=true]:shadow-[inset_0_0_0_1.5px_var(--warn)]";
+var COL_CLASS = "group flex-none basis-[272px] min-w-[272px] max-w-[272px] flex max-h-[calc(100vh-14rem)] flex-col rounded-plate-lg bg-surface-2 pt-0 transition-colors transition-shadow transition-opacity duration-200 data-[collapsed=true]:basis-[40px] data-[collapsed=true]:min-w-[40px] data-[collapsed=true]:max-w-[40px] data-[collapsed=true]:cursor-pointer data-[collapsed=true]:opacity-80 data-[collapsed=true]:hover:opacity-100 data-[drop=true]:bg-[color-mix(in_srgb,var(--accent)_12%,var(--surface))] data-[drop=true]:shadow-[inset_0_0_0_2px_var(--accent)] data-[over=true]:shadow-[inset_0_0_0_1.5px_var(--warn)] max-[640px]:basis-full max-[640px]:min-w-0 max-[640px]:max-w-none";
 var COL_HEAD_CLASS = "flex cursor-pointer select-none items-center justify-between gap-2 px-3 pb-2 pt-3 font-sans text-sm font-semibold tracking-wide group-data-[collapsed=true]:justify-center group-data-[collapsed=true]:px-2 group-data-[collapsed=true]:py-3";
 var COL_TITLE_CLASS = "min-w-0 flex-1 text-sm font-bold uppercase tracking-label text-fg group-data-[collapsed=true]:overflow-hidden group-data-[collapsed=true]:text-ellipsis group-data-[collapsed=true]:whitespace-nowrap group-data-[collapsed=true]:[writing-mode:vertical-rl] group-data-[collapsed=true]:rotate-180";
 var COL_COUNT_CLASS = "tabular-nums text-fg-muted data-[over=true]:text-warn-text";
@@ -325,7 +325,8 @@ var ADD_FORM_CLASS = "hidden flex-col gap-2 group-data-[adding=true]:flex";
 var ADD_TEXTAREA_CLASS = "max-h-[140px] min-h-[54px] w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-2 font-sans text-sm leading-snug shadow-[var(--lift-low)] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_25%,transparent)]";
 var ADD_ACTIONS_CLASS = "flex items-center gap-2 [&_button]:min-h-8 [&_button]:rounded-plate-lg [&_button]:text-sm";
 var ADD_CANCEL_CLASS = "cursor-pointer border-0 bg-transparent px-2 text-base leading-none text-fg-muted hover:text-fg";
-var MENU_BTN_CLASS = "secondary board-lane-control min-w-auto rounded-plate px-1 text-base leading-none hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+var LANE_CONTROL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+var MENU_BTN_CLASS = "secondary min-w-auto rounded-plate px-1 text-base leading-none hover:bg-surface-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 var MENU_CLASS = "absolute right-0 top-full z-50 hidden min-w-[220px] rounded-plate-lg border border-border bg-surface px-0 py-1 shadow-[var(--lift)] data-[open=true]:block";
 var MENU_TITLE_CLASS = "px-3 py-2 text-sm font-bold uppercase tracking-label text-fg-muted";
 var MENU_SEP_CLASS = "my-px border-0 border-t border-border";
@@ -482,7 +483,7 @@ function boardColumn(col, s) {
         var collapse = document.createElement("button");
         collapse.type = "button"; collapse.className = "secondary";
         collapse.title = "Collapse lane";
-        collapse.classList.add("board-lane-control");
+        collapse.classList.add(LANE_CONTROL_CLASS);
         collapse.setAttribute("aria-label", "Collapse " + col.title + " lane");
         collapse.setAttribute("aria-expanded", "true");
         collapse.setAttribute("aria-controls", "board-cards-" + col.id);
@@ -508,7 +509,7 @@ function boardColumn(col, s) {
           var add = document.createElement("button");
           add.type = "button"; add.className = "secondary";
           add.title = "Define a new goal card";
-          add.classList.add("board-lane-control");
+          add.classList.add(LANE_CONTROL_CLASS);
           add.setAttribute("aria-label", "Add a goal to " + col.title);
           add.appendChild(icon("plus", 14));
           add.addEventListener("click", function(e){

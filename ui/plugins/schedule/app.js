@@ -164,7 +164,7 @@ clanker.registerView({
     function render() {
       list.textContent = "";
       if (!state.entries.length) {
-        var empty = api.el("p", "run-empty");
+        var empty = api.el("p", "run-empty text-left [&_code]:mt-1 [&_code]:block [&_code]:wrap-anywhere");
         empty.appendChild(document.createTextNode("Nothing scheduled. Add one with"));
         empty.appendChild(document.createElement("br"));
         empty.appendChild(api.el("code", null, "clanker schedule add \"*/30 * * * *\" \"<task>\""));
@@ -211,7 +211,7 @@ clanker.registerView({
         status.textContent = msg;
         api.status(msg);
         list.textContent = "";
-        var fail = api.el("p", "run-empty");
+        var fail = api.el("p", "run-empty text-left [&_code]:mt-1 [&_code]:block [&_code]:wrap-anywhere");
         fail.appendChild(document.createTextNode(msg + " "));
         var retry = api.el("button", "secondary", "Try again");
         retry.type = "button";

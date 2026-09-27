@@ -23,6 +23,12 @@ var _scrollTo = vendorScrollTo;
    core/ui.js. The disclosure chevron is the Tailwind source's
    `.disclosure-caret`: a masked chevron on a `::before`, in both mask
    spellings, which no utility composes. */
+/* A skill or workflow card: name and meta on one line, description below. */
+var SKILL_CARD_CLASS = "border-b border-rule px-0 py-3 [&_input[type=checkbox]]:mr-2 [&_input[type=checkbox]]:align-middle";
+var SKILL_NAME_CLASS = "mr-4 font-mono text-sm font-bold text-fg";
+var SKILL_META_CLASS = "font-mono text-xs tabular-nums text-fg-muted";
+var SKILL_DESC_CLASS = "mt-1 font-sans text-sm text-fg-muted wrap-anywhere";
+
 var TOOL_CONFIG_CLASS = "my-1 basis-full";
 var TOOL_CONFIG_SUMMARY_CLASS = "disclosure-caret cursor-pointer list-none py-0.5 font-mono text-sm text-fg-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
 var TOOL_CONFIG_BODY_CLASS = "ml-4 flex flex-wrap items-end gap-x-2 gap-y-2 border-l border-dashed border-rule pl-3 pt-1";
@@ -210,14 +216,14 @@ export function showToolDetail(t) {
   _el.toolDetail.textContent = "";
   _el.toolDetail.hidden = false;
   var head = document.createElement("div");
-  head.className = "run-detail-head";
+  head.className = UI.runDetail.head;
   var titleWrap = document.createElement("span");
   var title = document.createElement("span");
-  title.className = "run-detail-title";
+  title.className = UI.runDetail.title;
   title.textContent = t.name;
   titleWrap.appendChild(title);
   var meta = document.createElement("span");
-  meta.className = "run-detail-meta";
+  meta.className = UI.runDetail.meta;
   var tags = [];
   if (t.core) tags.push("core");
   if (t.llm) tags.push("calls the model");
@@ -371,19 +377,19 @@ function loadWorkflows() {
       }
       list.forEach(function (wf) {
         var card = document.createElement("div");
-        card.className = "skill-card";
+        card.className = SKILL_CARD_CLASS;
         var name = document.createElement("span");
-        name.className = "skill-name";
+        name.className = SKILL_NAME_CLASS;
         name.textContent = wf.name;
         card.appendChild(name);
         if (wf.arg_hint) {
           var hint = document.createElement("span");
-          hint.className = "skill-meta";
+          hint.className = SKILL_META_CLASS;
           hint.textContent = wf.arg_hint;
           card.appendChild(hint);
         }
         var meta = document.createElement("span");
-        meta.className = "skill-meta";
+        meta.className = SKILL_META_CLASS;
         meta.textContent = wf.rel_path;
         card.appendChild(meta);
         if (wf.chain) {
@@ -400,7 +406,7 @@ function loadWorkflows() {
         });
         if (wf.description) {
           var desc = document.createElement("p");
-          desc.className = "skill-desc";
+          desc.className = SKILL_DESC_CLASS;
           desc.textContent = wf.description;
           card.appendChild(desc);
         }
@@ -439,7 +445,7 @@ function loadSkills() {
       }
       list.forEach(function (sk) {
         var card = document.createElement("div");
-        card.className = "skill-card";
+        card.className = SKILL_CARD_CLASS;
         // Not named `box`: this callback used to shadow the #skills container
         // with the checkbox, so the card was appended into its own checkbox,
         // a hierarchy cycle the DOM refuses, which made any non-empty skills
@@ -465,16 +471,16 @@ function loadSkills() {
         });
         card.appendChild(check);
         var name = document.createElement("span");
-        name.className = "skill-name";
+        name.className = SKILL_NAME_CLASS;
         name.textContent = sk.title || sk.name.replace(/\.md$/, "");
         card.appendChild(name);
         var meta = document.createElement("span");
-        meta.className = "skill-meta";
+        meta.className = SKILL_META_CLASS;
         meta.textContent = sk.name + "  \u00b7  " + utilFmtBytes(sk.bytes);
         card.appendChild(meta);
         if (sk.description) {
           var desc = document.createElement("p");
-          desc.className = "skill-desc";
+          desc.className = SKILL_DESC_CLASS;
           desc.textContent = sk.description;
           card.appendChild(desc);
         }

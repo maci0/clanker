@@ -340,19 +340,25 @@ export function uiPrompt(message, initial, opts) {
   });
 }
 
+/* A placeholder row while a list loads: a plate with a rule under it, which
+   reads as a row of content rather than a spinner. */
+var SKELETON_CLASS = "h-10 rounded-plate border border-rule bg-surface-2";
+var SKELETON_ROW_CLASS = "flex items-center gap-3 py-1";
+var SKELETON_BAR_CLASS = "h-3.5 flex-1 rounded-plate-sm border-b border-rule bg-surface-2";
+
 export function skeletonRows(container, n) {
   if (!container) return;
   container.textContent = "";
   container.setAttribute("aria-busy", "true");
   for (var i = 0; i < n; i++) {
     var row = document.createElement("div");
-    row.className = "skeleton";
+    row.className = SKELETON_CLASS;
     container.appendChild(row);
     var r = document.createElement("div");
-    r.className = "skeleton-row";
+    r.className = SKELETON_ROW_CLASS;
     for (var j = 0; j < 3; j++) {
       var bar = document.createElement("div");
-      bar.className = "skeleton-bar";
+      bar.className = SKELETON_BAR_CLASS;
       r.appendChild(bar);
     }
     container.appendChild(r);
@@ -377,6 +383,18 @@ export function setTurnPhase(turn, phase) {
 // label — which is how the page once had two Refresh behaviours and three
 // status conventions.
 import { icon as iconFn } from "./icons.js";
+/* The run-detail panel: the graph's node inspector, the fleet roster's answer,
+   the knowledge collection's body and the tool detail all render it, so the
+   strings are one surface here. */
+export var runDetail = {
+  box: "mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]",
+  head: "flex items-center justify-between gap-2",
+  title: "font-sans text-base font-semibold text-fg",
+  meta: "text-fg-muted",
+  output: "m-0 max-h-80 overflow-y-auto font-mono text-sm whitespace-pre-wrap text-fg wrap-anywhere empty:before:text-fg-muted empty:before:content-['(nothing recorded for this node)']",
+  note: "mb-2 rounded-plate-sm bg-surface-2 px-3 py-1 font-mono text-sm text-fg-muted",
+};
+
 /* The tool-row family: the Tools view, the Fleet roster and the run header
    all show a row of name, description and tags, so the strings live here
    rather than in each of them. */

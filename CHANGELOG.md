@@ -511,6 +511,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   (no reader, in markup or script) — and the System view's jump list, whose rule
   no longer existed, carries the utilities that say what it looked like.
 
+- `views.css` is down to a single rule. Everything it held is a utility string
+  in the file that renders it: the run-detail panel (one surface in
+  `core/ui.js`, since the graph, the fleet roster, the knowledge collection and
+  the tool detail all render it), the skill and workflow cards, the skeleton
+  rows, the fleet canvas and the arena's, the Fleet view's section head and run
+  list, the Rooms view's flex column, the schedule plugin's empty states, and
+  the board lane's coarse-pointer and phone sizes. The file's last rule is the
+  create-channel dialog's `::backdrop`, which no utility composes. First paint
+  60.4K gz.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

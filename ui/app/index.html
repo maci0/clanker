@@ -203,7 +203,7 @@ lamps carry further). The seven named palettes ride the same tokens.
          rather than labelling the row beneath it. -->
     <div class="section-head">
       <h2 id="session-title">New conversation</h2>
-      <div class="run-picker" id="session-picker">
+      <div class="run-picker [&_input[type=search]]:max-[640px]:[font-size:16px]" id="session-picker">
         <div class="session-actions">
           <div class="session-acts-body" id="session-acts-body">
           <button type="button" class="secondary" id="session-fork" title="Open a copy you can change without affecting this conversation">Fork</button>
@@ -377,7 +377,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         </div>
       </div>
       <div class="runs">
-        <div class="run-picker">
+        <div class="run-picker [&_input[type=search]]:max-[640px]:[font-size:16px]">
           <label for="run-filter">Filter recorded runs</label>
           <input type="search" id="run-filter" placeholder="Filter by task or run id…" autocomplete="off">
           <label for="run-select">Recorded run</label>
@@ -407,11 +407,11 @@ lamps carry further). The seven named palettes ride the same tokens.
           <span class="meta" id="run-compare-status"></span>
         </div>
         <div id="run-graph" class="run-graph" role="group" aria-label="Execution graph"></div>
-        <div id="run-detail" class="run-detail" role="region" aria-label="Selected node detail" hidden></div>
+        <div id="run-detail" class="mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" role="region" aria-label="Selected node detail" hidden></div>
       </div>
     </section>
   </div>
-  <div class="view" id="view-fleet" role="tabpanel" aria-labelledby="tab-fleet" tabindex="-1" hidden>
+  <div class="view [&_.section-head]:mb-7 [&_.section-head]:gap-x-5 [&_.section-head]:gap-y-3 [&_.runs]:mt-7 [&_.runs]:flex [&_.runs]:flex-col [&_.runs]:gap-7" id="view-fleet" role="tabpanel" aria-labelledby="tab-fleet" tabindex="-1" hidden>
     <section>
       <div class="section-head">
         <h2>Fleet</h2>
@@ -441,9 +441,9 @@ lamps carry further). The seven named palettes ride the same tokens.
           <h3 id="fleet-runs-head" class="sr-only">Runs</h3>
           <div id="fleet-runs"></div>
         </section>
-        <div id="fleet-detail" class="run-detail" role="region" aria-label="Fleet run detail" hidden></div>
+        <div id="fleet-detail" class="mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" role="region" aria-label="Fleet run detail" hidden></div>
         <div class="pointer-events-none absolute inset-0" id="fleet-floor" aria-hidden="true" hidden>
-          <canvas class="pixel-canvas" id="fleet-canvas" width="640" height="180"></canvas>
+          <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="fleet-canvas" width="640" height="180"></canvas>
           <p class="meta" id="fleet-floor-status" aria-live="polite"></p>
         </div>
         <p class="sr-only" id="fleet-status" role="status" aria-live="polite"></p>
@@ -473,7 +473,7 @@ lamps carry further). The seven named palettes ride the same tokens.
              words and is what a screen reader or a reduced-motion session gets
              instead of the animation. Same split as #fleet-floor. -->
         <div class="pointer-events-none absolute inset-0" id="arena-stage" aria-hidden="true" hidden>
-          <canvas class="pixel-canvas" id="arena-canvas" width="640" height="200"></canvas>
+          <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="arena-canvas" width="640" height="200"></canvas>
           <!-- Arena v2: the three.js stage the 3D toggle swaps in. Same
                decorative contract as the canvas above; inherits aria-hidden
                from #arena-stage. -->
@@ -485,7 +485,7 @@ lamps carry further). The seven named palettes ride the same tokens.
              the stage is; the transcript is the record. -->
         <details id="arena-graph" class="my-1" hidden open>
           <summary class="my-1 cursor-pointer text-sm text-fg-muted">Match graph — HP by move</summary>
-          <canvas class="pixel-canvas" id="arena-hp-canvas" width="640" height="150" aria-hidden="true"></canvas>
+          <canvas class="block h-auto w-full rounded-plate border border-rule bg-surface-2 [image-rendering:pixelated]" id="arena-hp-canvas" width="640" height="150" aria-hidden="true"></canvas>
           <p class="meta" id="arena-graph-caption"></p>
         </details>
         <section aria-labelledby="arena-transcript-head">
@@ -495,7 +495,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       </div>
     </section>
   </div>
-  <div class="view" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
+  <div class="view [&:not([hidden])]:flex [&:not([hidden])]:flex-col [&:not([hidden])]:overflow-hidden" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
     <div class="flex min-h-0 w-full flex-1 overflow-hidden rounded-plate border border-rule bg-surface max-[768px]:relative max-[768px]:h-auto">
       <!-- Sidebar: channel list -->
       <aside max-[768px]:absolute max-[768px]:top-0 max-[768px]:left-0 max-[768px]:z-30 max-[768px]:h-full max-[768px]:w-65 max-[768px]:min-w-65 max-[768px]:max-w-65 max-[768px]:flex-none max-[768px]:shadow-[4px_0_16px_var(--scrim)] max-[768px]:data-[collapsed=true]:w-65 max-[768px]:data-[collapsed=true]:min-w-65 max-[768px]:data-[collapsed=true]:max-w-65 max-[768px]:data-[collapsed=true]:-translate-x-full max-[768px]:data-[collapsed=true]:shadow-none class="group flex w-65 max-w-80 min-w-50 flex-none basis-65 flex-col overflow-hidden border-r border-rule bg-bg translate-x-0 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none [&>*]:min-w-50 data-[collapsed=true]:pointer-events-none data-[collapsed=true]:-translate-x-full data-[collapsed=true]:border-r-transparent min-[769px]:data-[collapsed=true]:m-0 min-[769px]:data-[collapsed=true]:w-0 min-[769px]:data-[collapsed=true]:min-w-0 min-[769px]:data-[collapsed=true]:max-w-0 min-[769px]:data-[collapsed=true]:basis-0 min-[769px]:data-[collapsed=true]:translate-x-0 min-[769px]:data-[collapsed=true]:overflow-hidden min-[769px]:data-[collapsed=true]:p-0 min-[769px]:data-[collapsed=true]:transition-none" id="chat-sidebar">
@@ -777,7 +777,7 @@ lamps carry further). The seven named palettes ride the same tokens.
              the whole candidate config before writing anything. -->
         <div class="relative mt-2 min-h-48" id="models-edit-toml-editor" hidden>
           <pre class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] pointer-events-none z-0 bg-code-bg text-code-fg" aria-hidden="true"><code id="models-edit-toml-code"></code></pre>
-          <textarea class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] z-1 min-h-0 resize-none bg-transparent text-transparent caret-fg shadow-none selection:bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1" id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
+          <textarea class="absolute inset-0 m-0 overflow-auto rounded-plate border border-border px-3 py-3 font-mono text-xs leading-normal whitespace-pre [tab-size:2] z-1 min-h-0 resize-none bg-transparent text-transparent caret-fg shadow-none selection:bg-[color-mix(in_srgb,var(--accent)_30%,transparent)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 max-[640px]:[font-size:16px]" id="models-edit-toml-text" spellcheck="false" autocomplete="off" aria-label="Model TOML table"></textarea>
         </div>
         <p class="mt-2 text-sm text-fg-muted" id="models-edit-note" hidden></p>
       </div>
@@ -817,7 +817,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="knowledge-sync-btn">Sync changes</button>
       </div>
       <div id="knowledge-list" class="section-list"></div>
-      <div id="knowledge-detail" class="run-detail" role="region" aria-label="Collection detail" hidden></div>
+      <div id="knowledge-detail" class="mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" role="region" aria-label="Collection detail" hidden></div>
       <p class="sr-only" id="knowledge-status" role="status" aria-live="polite"></p>
     </section>
   </div>
@@ -849,7 +849,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <h2>Templates</h2>
       </div>
       <p class="meta">Structured prompt files from <code>workflows/</code>. Run with <code>/workflow &lt;name&gt;</code> in the REPL or composer. A template can embed a tool pipeline via frontmatter <code>chain:</code> — that's where automation lives.</p>
-      <div id="workflows" class="skills"></div>
+      <div id="workflows" class="grid gap-3"></div>
       <p class="sr-only" id="workflows-status" role="status" aria-live="polite"></p>
     </section>
     <!-- Skills: skills/*.md embedded in the system prompt — like Cursor's Rules, persistent agent behavior -->
@@ -858,7 +858,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <h2>Skills</h2>
       </div>
       <p class="meta">Persistent agent instructions from <code>skills/</code>, embedded in the system prompt on every run. Define what the agent knows how to do. Authored via <code>skill_edit</code>.</p>
-      <div id="skills" class="skills"></div>
+      <div id="skills" class="grid gap-3"></div>
       <p class="sr-only" id="skills-status" role="status" aria-live="polite"></p>
     </section>
   </div>
@@ -869,12 +869,12 @@ lamps carry further). The seven named palettes ride the same tokens.
         <button type="button" class="secondary" id="tools-refresh">Refresh</button>
       </div>
       <div class="runs">
-        <div class="run-picker">
+        <div class="run-picker [&_input[type=search]]:max-[640px]:[font-size:16px]">
           <label for="tool-filter">Filter tools</label>
           <input type="search" id="tool-filter" placeholder="Filter by name or description…" autocomplete="off">
         </div>
         <div id="tools"></div>
-        <div id="tool-detail" class="run-detail" role="region" aria-label="Selected tool detail" hidden></div>
+        <div id="tool-detail" class="mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" role="region" aria-label="Selected tool detail" hidden></div>
         <p class="sr-only" id="tools-status" role="status" aria-live="polite"></p>
       </div>
     </section>
@@ -900,7 +900,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="secondary danger" id="progress-stop" hidden>Stop</button>
         </div>
       </div>
-      <div class="run-detail progress-log" id="progress-log" role="log" aria-label="Progress log"></div>
+      <div class="progress-log mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" id="progress-log" role="log" aria-label="Progress log"></div>
       <p class="sr-only" id="progress-status" role="status" aria-live="polite"></p>
       <div class="subsection-head-row">
         <h3 class="detail-head">History</h3>
@@ -1050,7 +1050,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <h2>Logs</h2>
         <button type="button" class="secondary" id="logs-refresh">Refresh</button>
       </div>
-      <div class="run-picker">
+      <div class="run-picker [&_input[type=search]]:max-[640px]:[font-size:16px]">
         <label for="log-select">Log file</label>
         <select id="log-select"></select>
       </div>
@@ -1079,7 +1079,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 
 <div class="overlay" id="help" role="dialog" aria-modal="true" aria-labelledby="help-title" hidden>
   <div class="overlay-box">
-    <div class="run-detail-head">
+    <div class="flex items-center justify-between gap-2">
       <span class="run-detail-title" id="help-title">Keyboard shortcuts</span>
       <button type="button" class="secondary" id="help-close">Close</button>
     </div>
@@ -1099,7 +1099,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <div class="overlay" id="workspace-new-dialog" role="dialog" aria-modal="true" aria-labelledby="workspace-new-title" hidden>
   <div class="overlay-box">
     <form id="workspace-new-form" class="goal-form">
-      <div class="run-detail-head">
+      <div class="flex items-center justify-between gap-2">
         <span class="run-detail-title" id="workspace-new-title">New workspace</span>
       </div>
       <label for="workspace-new-name">Name</label>
@@ -1119,7 +1119,7 @@ lamps carry further). The seven named palettes ride the same tokens.
 <div class="overlay" id="text-prompt" role="dialog" aria-modal="true" aria-labelledby="text-prompt-title" hidden>
   <div class="overlay-box">
     <form id="text-prompt-form" class="goal-form">
-      <div class="run-detail-head">
+      <div class="flex items-center justify-between gap-2">
         <span class="run-detail-title" id="text-prompt-title">Rename</span>
       </div>
       <label for="text-prompt-input" id="text-prompt-label">Value</label>
