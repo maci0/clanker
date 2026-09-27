@@ -40,8 +40,9 @@ if command -v bun >/dev/null 2>&1; then
     bun audit --audit-level=high || status=1
     (cd tools/ts && bun audit --audit-level=high) || status=1
     (cd tools/ts && ./verify.sh) || status=1
+    ./ui/app/verify-css.sh || status=1
 else
-    echo "bun not installed; skipping JavaScript lint and tools/ts verification (CI will run them)"
+    echo "bun not installed; skipping JavaScript lint, tools/ts and Tailwind CSS verification (CI will run them)"
 fi
 
 step "SBOM generation (CI: Check SBOM generation)"

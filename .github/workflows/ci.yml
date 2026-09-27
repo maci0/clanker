@@ -38,13 +38,25 @@ jobs:
         with:
           persist-credentials: false
 
-      # No `version`: setup-zig resolves it from build.zig.zon's
-      # minimum_zig_version, so the pin lives in one place. `use-cache`
-      # already caches ~/.cache/zig and redirects local caches there; a
-      # separate actions/cache step on the same directory was redundant.
+      # The Zig version comes from build.zig.zon (read, not restated), so the
+      # pin still lives in exactly one place. setup-zig does not read that file
+      # itself: left without `version` it installs the newest 0.16.x it can
+      # find, and a compiler bump changes codegen on an unchanged tree, which
+      # is the one drift a reproducibility claim cannot absorb.
+      - name: Resolve Zig version
+        id: zigpin
+        run: |
+          version=$(sed -n 's/.*minimum_zig_version = "\(.*\)".*/\1/p' build.zig.zon)
+          [ -n "$version" ] || { echo "build.zig.zon has no minimum_zig_version" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
+          version: ${{ steps.zigpin.outputs.version }}
+          # use-cache already caches ~/.cache/zig and redirects local caches
+          # there; a separate actions/cache step on the same directory was
+          # redundant.
           use-cache: true
 
       # bun-version mirrors `packageManager` in package.json (bun@1.4.2), the
@@ -95,6 +107,13 @@ jobs:
         run: |
           bun audit --audit-level=high
           ./verify.sh
+
+      # ui/app/tailwind.css is the other committed build artifact, so it gets
+      # the same rebuild-and-diff the AssemblyScript output gets. A Tailwind
+      # minor under the old `^4` range could restyle a class the source had
+      # settled on; the exact pins and this check close that.
+      - name: Check Tailwind CSS build output
+        run: ./ui/app/verify-css.sh
 
       # Smoke-tests scripts/sbom.py against every manifest it reads, so a
       # format change in build.zig.zon, the lockfile, or a vendored README
@@ -147,9 +166,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # Same pin as the linux jobs, read from the same one place.
+      - name: Resolve Zig version
+        id: zigpin
+        run: |
+          version=$(sed -n 's/.*minimum_zig_version = "\(.*\)".*/\1/p' build.zig.zon)
+          [ -n "$version" ] || { echo "build.zig.zon has no minimum_zig_version" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
+          version: ${{ steps.zigpin.outputs.version }}
           use-cache: true
 
       # `zig build test` runs the ~20 bun test suites under ui/app, so bun must
@@ -202,9 +230,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # Same pin as the other jobs, read from the same one place.
+      - name: Resolve Zig version
+        id: zigpin
+        run: |
+          version=$(sed -n 's/.*minimum_zig_version = "\(.*\)".*/\1/p' build.zig.zon)
+          [ -n "$version" ] || { echo "build.zig.zon has no minimum_zig_version" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
+          version: ${{ steps.zigpin.outputs.version }}
           use-cache: true
 
       # Same reason as the verify job: build.zig refuses pristine upstream

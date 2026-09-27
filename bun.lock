@@ -5,9 +5,9 @@
     "": {
       "name": "clanker",
       "devDependencies": {
-        "@tailwindcss/cli": "^4",
+        "@tailwindcss/cli": "4.3.3",
         "oxlint": "1.80.0",
-        "tailwindcss": "^4",
+        "tailwindcss": "4.3.3",
       },
     },
   },

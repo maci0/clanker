@@ -6,13 +6,13 @@
   "description": "clanker — self-improving AI agent harness",
   "type": "module",
   "scripts": {
-    "css:build": "tailwindcss -i ui/app/tailwind.src.css -o ui/app/tailwind.css",
+    "css:build": "tailwindcss -i ui/app/tailwind.src.css -o ${CSS_OUT:-ui/app/tailwind.css}",
     "lint": "oxlint --report-unused-disable-directives-severity=error",
     "lint:fix": "oxlint --fix"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "^4",
+    "@tailwindcss/cli": "4.3.3",
     "oxlint": "1.80.0",
-    "tailwindcss": "^4"
+    "tailwindcss": "4.3.3"
   }
 }
