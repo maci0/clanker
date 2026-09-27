@@ -9,6 +9,34 @@
    textContent. SVG icon paths are all hardcoded here. File content goes
    through api.render.markdown / api.render.code which treat input as data. */
 
+// ─── the listing's shapes ─────────────────────────────────────────────────────
+/* Utilities over the cabinet tokens, named because a row, a crumb and a
+   filename button each appear in more than one place. The host paints a bare
+   `button` as the UA's grey box and `button.primary` as the 40px accent pill,
+   so every control here states its own shape from PLAIN_BTN up.
+
+   The one state a utility cannot reach is "the panes when the preview is
+   open": that was `:has(.files-right:not([hidden]))` on the parent, so the JS
+   sets `data-preview` on the panes beside the pane's own `hidden`. */
+var PLAIN_BTN = "bg-transparent p-0 shadow-none text-inherit";
+var CRUMB_CLASS = "inline-flex min-h-7 min-w-0 cursor-pointer items-center whitespace-nowrap rounded-plate-sm border border-transparent px-1 py-0.5 font-mono text-xs font-medium text-fg-muted hover:border-accent hover:text-accent max-[40rem]:min-h-11 " + PLAIN_BTN;
+var CRUMB_HERE_CLASS = "inline-flex min-h-7 min-w-0 items-center whitespace-nowrap rounded-plate-sm border border-transparent px-1 py-0.5 font-mono text-xs font-semibold text-fg " + PLAIN_BTN;
+var SORT_CLASS = "min-h-7 min-w-0 cursor-pointer justify-self-stretch whitespace-nowrap rounded-none border-0 px-1 py-0.5 text-left font-sans text-xs font-semibold text-fg-muted hover:text-fg data-[active=1]:text-accent max-[40rem]:min-h-11 " + PLAIN_BTN;
+var OPEN_CLASS = "block min-h-7 w-full cursor-pointer rounded-none border-0 py-1 text-left font-mono text-xs font-medium text-fg wrap-anywhere break-all hover:text-accent max-[40rem]:min-h-11 " + PLAIN_BTN;
+var CLEAR_CLASS = "inline min-h-0 min-w-0 cursor-pointer font-sans text-xs text-accent-text underline underline-offset-2 hover:text-accent focus-visible:text-accent " + PLAIN_BTN;
+var CRUMBS_CLASS = "mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-plate-sm border border-rule bg-surface-2 px-3 py-2 font-mono text-xs";
+var PANES_CLASS = "grid w-full items-start gap-3 grid-cols-[minmax(0,1fr)] data-[preview=open]:grid-cols-[minmax(16rem,1fr)_minmax(18rem,1.15fr)] max-[700px]:grid-cols-[minmax(0,1fr)]";
+var ROW_CLASS = "grid cursor-pointer grid-cols-[1.5rem_minmax(8rem,1fr)_6.5rem_10rem] items-center gap-2 rounded-plate-sm border border-transparent bg-surface-2 px-2 py-1 text-xs transition-colors hover:border-rule focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 aria-selected:border-accent aria-selected:bg-accent-dim max-[40rem]:min-h-11 max-[40rem]:grid-cols-[1.5rem_minmax(0,1fr)]";
+/* The header line is the same grid without the plate: no fill, one rule under it. */
+var HEADER_ROW_CLASS = "mb-1 grid grid-cols-[1.5rem_minmax(8rem,1fr)_6.5rem_10rem] items-center gap-2 rounded-plate-sm border-x-0 border-t-0 border-b border-rule bg-transparent px-2 pt-0 pb-1 text-xs max-[40rem]:grid-cols-[1.5rem_minmax(0,1fr)]";
+var LIST_CLASS = "flex max-h-[70vh] flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-plate-sm outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+var EMPTY_CLASS = "mt-3 text-xs text-fg-muted";
+var CELL_CLASS = "text-right font-mono text-xs text-fg-muted tabular-nums whitespace-nowrap max-[40rem]:hidden";
+var VIEWER_CLASS = "max-h-[70vh] overflow-x-auto overflow-y-auto rounded-b-plate-sm border border-t-0 border-rule bg-surface p-3";
+var NOTE_CLASS = "m-0 border-x border-rule bg-surface-2 px-3 py-1 text-xs text-fg-muted";
+var PLAIN_PRE_CLASS = "m-0 whitespace-pre-wrap wrap-anywhere font-mono text-xs text-fg";
+var ICON_CLASS = "h-4 w-4 flex-shrink-0";
+
 // ─── DOM helper ───────────────────────────────────────────────────────────────
 function mk(tag, cls, txt) {
   var el = document.createElement(tag);
@@ -63,7 +91,7 @@ function svgIcon(paths) {
   var s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   s.setAttribute("viewBox","0 0 16 16");
   s.setAttribute("aria-hidden","true");
-  s.setAttribute("class","files-icon-svg");
+  s.setAttribute("class",ICON_CLASS);
   paths.forEach(function(d) {
     var p = document.createElementNS("http://www.w3.org/2000/svg","path");
     p.setAttribute("d", d);
@@ -114,19 +142,19 @@ clanker.registerView({
     head.appendChild(title);
     container.appendChild(head);
 
-    var crumbs = mk("nav", "files-crumbs");
+    var crumbs = mk("nav", CRUMBS_CLASS);
     crumbs.setAttribute("aria-label", "Breadcrumb");
     container.appendChild(crumbs);
 
-    var toolbar = mk("div", "files-toolbar");
+    var toolbar = mk("div", "mb-3 flex flex-wrap items-center gap-2");
 
-    var filterInput = mk("input", "files-filter");
+    var filterInput = mk("input", "min-w-24 flex-1 basis-40");
     filterInput.type = "search";
     filterInput.placeholder = "Filter by name…";
     filterInput.setAttribute("aria-label", "Filter entries");
     toolbar.appendChild(filterInput);
 
-    var hiddenBtn = mk("button", "secondary files-toggle-btn", "Hidden");
+    var hiddenBtn = mk("button", "secondary font-mono tracking-label data-[active=1]:border-accent data-[active=1]:text-accent", "Hidden");
     hiddenBtn.type = "button";
     hiddenBtn.title = "Show hidden files";
     hiddenBtn.setAttribute("aria-pressed","false");
@@ -147,8 +175,8 @@ clanker.registerView({
 
     // ── column headers ──
     var sortBtns = {};
-    function makeSortBtn(label, key) {
-      var btn = mk("button", "files-sort-btn", label);
+    function makeSortBtn(label, key, align) {
+      var btn = mk("button", SORT_CLASS + (align === "right" ? " text-right" : ""), label);
       btn.type = "button";
       btn.addEventListener("click", function() {
         if (btn.dataset.active) sortDir *= -1; else sortDir = 1;
@@ -164,7 +192,10 @@ clanker.registerView({
       Object.keys(sortBtns).forEach(function(k) {
         var btn = sortBtns[k];
         var active = k === sortKey;
-        btn.className = "files-sort-btn" + (active ? " active" : "");
+        btn.className = SORT_CLASS;
+        // The two numeric columns right-align; the header line and the rows
+        // carry the same alignment so the columns read as columns.
+        if (k === "size" || k === "mtime") btn.className += " text-right";
         btn.dataset.active = active ? "1" : "";
         btn.textContent = ({ name:"Name", size:"Size", mtime:"Modified" })[k]
           + (active ? (sortDir > 0 ? " ▴" : " ▾") : "");
@@ -172,37 +203,40 @@ clanker.registerView({
     }
 
     // ── split panes ──
-    var panes = mk("div", "files-panes");
+    var panes = mk("div", PANES_CLASS);
 
     // left: listing
-    var leftPane = mk("div", "files-left");
-    var hdrRow = mk("div", "files-row files-header");
-    hdrRow.appendChild(mk("span","files-icon-col"));
+    var leftPane = mk("div", "min-w-0");
+    var hdrRow = mk("div", HEADER_ROW_CLASS);
+    hdrRow.appendChild(mk("span", "flex items-center justify-center"));
     hdrRow.appendChild(makeSortBtn("Name","name"));
-    hdrRow.appendChild(makeSortBtn("Size","size"));
-    hdrRow.appendChild(makeSortBtn("Modified","mtime"));
+    hdrRow.appendChild(makeSortBtn("Size","size","right"));
+    hdrRow.appendChild(makeSortBtn("Modified","mtime","right"));
     leftPane.appendChild(hdrRow);
 
-    var list = mk("div", "files-list");
+    var list = mk("div", LIST_CLASS);
     list.setAttribute("role","listbox");
     list.setAttribute("aria-label","Directory entries");
     list.setAttribute("tabindex","0");
     leftPane.appendChild(list);
 
-    var emptyMsg = mk("p", "files-empty", "This folder is empty.");
+    var emptyMsg = mk("p", EMPTY_CLASS, "This folder is empty.");
     emptyMsg.hidden = true;
     leftPane.appendChild(emptyMsg);
 
     // right: preview
-    var rightPane = mk("div", "files-right");
+    var rightPane = mk("div", "min-w-0");
     rightPane.hidden = true;
+    // The panes read their own width from this: a `:has()` on the child's
+    // [hidden] is the one thing a utility cannot express.
+    panes.dataset.preview = "";
 
-    var vHead = mk("div", "files-viewer-head");
-    var vName = mk("span", "files-viewer-name");
-    var vMeta = mk("span", "files-viewer-meta");
-    var copyBtn = mk("button", "secondary files-copy-btn", "Copy path");
+    var vHead = mk("div", "flex flex-wrap items-center gap-2 rounded-t-plate-sm border border-rule bg-surface-2 px-3 py-2");
+    var vName = mk("span", "min-w-0 flex-1 basis-32 font-mono text-xs font-semibold text-fg wrap-anywhere");
+    var vMeta = mk("span", "font-mono text-xs text-fg-muted whitespace-nowrap");
+    var copyBtn = mk("button", "secondary text-xs", "Copy path");
     copyBtn.type = "button";
-    var closeBtn = mk("button", "secondary files-close-btn", "Close");
+    var closeBtn = mk("button", "secondary text-sm leading-none", "Close");
     closeBtn.type = "button";
     closeBtn.setAttribute("aria-label","Close preview");
     vHead.appendChild(vName);
@@ -211,11 +245,11 @@ clanker.registerView({
     vHead.appendChild(closeBtn);
     rightPane.appendChild(vHead);
 
-    var vNote = mk("p","files-viewer-note");
+    var vNote = mk("p", NOTE_CLASS);
     vNote.hidden = true;
     rightPane.appendChild(vNote);
 
-    var vBody = mk("div","files-viewer");
+    var vBody = mk("div", VIEWER_CLASS);
     rightPane.appendChild(vBody);
 
     panes.appendChild(leftPane);
@@ -249,9 +283,9 @@ clanker.registerView({
       emptyMsg.hidden = true;
       if (!entries.length) {
         if (filterText) {
-          var none = mk("p","files-empty");
+          var none = mk("p", EMPTY_CLASS);
           none.appendChild(document.createTextNode("No matches for “" + filterText + "”. "));
-          var clear = mk("button","files-clear-filter","Clear filter");
+          var clear = mk("button", CLEAR_CLASS, "Clear filter");
           clear.type = "button";
           clear.addEventListener("click", function() {
             filterInput.value = "";
@@ -262,11 +296,11 @@ clanker.registerView({
           none.appendChild(clear);
           list.appendChild(none);
         } else if (hiddenCount) {
-          var hidden = mk("p","files-empty");
+          var hidden = mk("p", EMPTY_CLASS);
           hidden.appendChild(document.createTextNode(
             hiddenCount === 1 ? "This folder has 1 hidden item. " : "This folder has " + hiddenCount + " hidden items. "
           ));
-          var show = mk("button","files-clear-filter","Show hidden");
+          var show = mk("button", CLEAR_CLASS, "Show hidden");
           show.type = "button";
           show.addEventListener("click", function() { hiddenBtn.click(); });
           hidden.appendChild(show);
@@ -274,9 +308,9 @@ clanker.registerView({
         } else if (cur.atRoot) {
           emptyMsg.hidden = false;
         } else {
-          var empty = mk("p","files-empty");
+          var empty = mk("p", EMPTY_CLASS);
           empty.appendChild(document.createTextNode("This folder is empty. "));
-          var up = mk("button","files-clear-filter","Go up");
+          var up = mk("button", CLEAR_CLASS, "Go up");
           up.type = "button";
           up.addEventListener("click", function() { upBtn.click(); });
           empty.appendChild(up);
@@ -285,7 +319,7 @@ clanker.registerView({
         return;
       }
       entries.forEach(function(e, i) {
-        var row = mk("div","files-row");
+        var row = mk("div", ROW_CLASS);
         row.setAttribute("role","option");
         row.setAttribute("aria-selected","false");
         /* Rows carry tabindex=-1 so setFocus()'s .focus() actually moves
@@ -296,12 +330,12 @@ clanker.registerView({
            contract as the run list's role=option rows. */
         row.setAttribute("tabindex","-1");
 
-        var iconCell = mk("span","files-icon-col");
+        var iconCell = mk("span", "flex items-center justify-center");
         iconCell.appendChild(fileIcon(e.name, e.is_dir));
         row.appendChild(iconCell);
 
-        var nameCell = mk("span","files-name");
-        var btn = mk("button","files-open");
+        var nameCell = mk("span", "min-w-0 wrap-anywhere");
+        var btn = mk("button", OPEN_CLASS);
         btn.type = "button";
         btn.textContent = e.name;
         btn.setAttribute("aria-label",(e.is_dir?"Open folder ":"Open file ")+e.name);
@@ -310,11 +344,11 @@ clanker.registerView({
         nameCell.appendChild(btn);
         row.appendChild(nameCell);
 
-        var sizeCell = mk("span","files-size");
+        var sizeCell = mk("span", CELL_CLASS);
         sizeCell.textContent = e.is_dir ? "—" : api.fmt.bytes(e.size);
         row.appendChild(sizeCell);
 
-        var whenCell = mk("span","files-when");
+        var whenCell = mk("span", CELL_CLASS);
         whenCell.textContent = api.fmt.time(e.mtime);
         row.appendChild(whenCell);
 
@@ -327,12 +361,10 @@ clanker.registerView({
     function setFocus(idx, scroll) {
       var rows = list.querySelectorAll("[role=option]");
       rows.forEach(function(r) {
-        r.classList.remove("files-row-active");
         r.setAttribute("aria-selected","false");
       });
       focusIdx = idx;
       if (idx >= 0 && idx < rows.length) {
-        rows[idx].classList.add("files-row-active");
         rows[idx].setAttribute("aria-selected","true");
         if (scroll) rows[idx].scrollIntoView({block:"nearest"});
       }
@@ -368,29 +400,29 @@ clanker.registerView({
       showHidden = !showHidden;
       hiddenBtn.setAttribute("aria-pressed", showHidden ? "true" : "false");
       hiddenBtn.title = showHidden ? "Hide hidden files" : "Show hidden files";
-      hiddenBtn.className = "secondary files-toggle-btn" + (showHidden ? " active" : "");
+      hiddenBtn.dataset.active = showHidden ? "1" : "";
       renderEntries();
     });
 
     // ── breadcrumbs ──
     function drawCrumbs(path, root) {
       crumbs.textContent = "";
-      var rootBtn = mk("button","files-crumb files-crumb-root", root || "workspace");
+      var rootBtn = mk("button", CRUMB_CLASS, root || "workspace");
       rootBtn.type = "button";
       rootBtn.setAttribute("aria-label","Workspace root");
       rootBtn.addEventListener("click", function() { load(""); });
       crumbs.appendChild(rootBtn);
       if (!path) return;
       path.split("/").forEach(function(seg, i, arr) {
-        crumbs.appendChild(mk("span","files-crumb-sep","/"));
+        crumbs.appendChild(mk("span", "text-fg-muted opacity-40", "/"));
         var acc = arr.slice(0,i+1).join("/");
         var last = i === arr.length-1;
         if (last) {
-          var here = mk("span","files-crumb files-crumb-here", seg);
+          var here = mk("span", CRUMB_HERE_CLASS, seg);
           here.setAttribute("aria-current","page");
           crumbs.appendChild(here);
         } else {
-          var b = mk("button","files-crumb", seg);
+          var b = mk("button", CRUMB_CLASS, seg);
           b.type = "button";
           b.addEventListener("click", (function(p){ return function(){ load(p); }; })(acc));
           crumbs.appendChild(b);
@@ -410,10 +442,11 @@ clanker.registerView({
           vBody.textContent = "";
           vNote.hidden = true;
           rightPane.hidden = false;
+          panes.dataset.preview = "open";
 
           if (d.binary) {
             vMeta.textContent = "";
-            vBody.appendChild(mk("p","files-empty","Binary file — no preview."));
+            vBody.appendChild(mk("p", EMPTY_CLASS, "Binary file — no preview."));
             api.status(name+" (binary).");
             return;
           }
@@ -433,7 +466,7 @@ clanker.registerView({
           } else if (LANG[ext]) {
             vBody.appendChild(api.render.code(LANG[ext], content));
           } else {
-            var pre = mk("pre","files-viewer-plain");
+            var pre = mk("pre", PLAIN_PRE_CLASS);
             pre.textContent = content;
             vBody.appendChild(pre);
           }
@@ -446,7 +479,7 @@ clanker.registerView({
           vMeta.textContent = "";
           vNote.hidden = true;
           vBody.textContent = "";
-          var fail = mk("p", "files-empty");
+          var fail = mk("p", EMPTY_CLASS);
           fail.appendChild(document.createTextNode("Could not open this file. " + err.message + " "));
           var retry = mk("button", "secondary", "Try again");
           retry.type = "button";
@@ -454,12 +487,14 @@ clanker.registerView({
           fail.appendChild(retry);
           vBody.appendChild(fail);
           rightPane.hidden = false;
+          panes.dataset.preview = "open";
           api.status("Could not open this file. " + err.message);
         });
     }
 
     function closeViewer() {
       rightPane.hidden = true;
+      panes.dataset.preview = "";
       openPath = "";
     }
 
@@ -523,7 +558,7 @@ clanker.registerView({
           allEntries = [];
           drawCrumbs(want, cur.root);
           list.textContent = "";
-          var fail = mk("p", "files-empty");
+          var fail = mk("p", EMPTY_CLASS);
           fail.appendChild(document.createTextNode("Could not open this folder. " + err.message + " "));
           var retry = mk("button", "secondary", "Try again");
           retry.type = "button";

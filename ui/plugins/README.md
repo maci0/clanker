@@ -6,7 +6,8 @@ one is a directory here:
     ui/plugins/<name>/
       plugin.json    required — what it is and where it belongs
       app.js         required — registers the view
-      app.css        optional — its own styles
+      app.css        optional — its own styles; prefer the page's Tailwind
+                     utilities (ui/app/tailwind.src.css) over a sheet
 
 `plugin.json`:
 

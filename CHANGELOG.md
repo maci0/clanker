@@ -58,6 +58,16 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   component rule. The band ramp rides the opacity scale (35/50/65/80/100) where
   it was five hand-written values, and the distribution table's cells carry
   their own utilities.
+- The Files plugin ships no stylesheet, which is the last of them: no addon
+  under `ui/plugins/` has an `app.css` any more. Its listing, breadcrumbs,
+  viewer and toolbar are utility strings; the `:where(#view-files) button`
+  reset that beat the host's button rule is now a `PLAIN_BTN` class list, and
+  the selected row is drawn from the `aria-selected` the listbox already
+  maintains instead of a class with `!important`. The panes' open state was
+  `:has(.files-right:not([hidden]))`, which no utility can express, so the JS
+  sets `data-preview` beside the pane's own `hidden`. `ui/plugins/README.md`
+  now points a new addon at the page's Tailwind sheet rather than a sheet of
+  its own.
 
 ### Fixed
 
