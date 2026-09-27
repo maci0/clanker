@@ -28,9 +28,19 @@
     "no-unused-vars": ["warn", { "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "varsIgnorePattern": "^_", "argsIgnorePattern": "^_", "destructuredArrayIgnorePattern": "^_" }],
     "no-unused-expressions": "warn",
     "no-useless-empty-export": "error",
-    // Defect-class rules the tree already passes. Categories such as
-    // suspicious/restriction still have unpaid hits, so they stay off as
-    // groups; these individuals cannot regress without failing CI.
+    // Defect-class rules the tree already passes, from categories that stay
+    // off as groups (suspicious/restriction/pedantic all have unpaid hits in
+    // other rules). Each of these was measured at zero on the pinned oxlint
+    // 1.80.0, so a new violation fails CI rather than joining that debt.
+    "default-case": "error",
+    "no-fallthrough": "error",
+    "no-div-regex": "error",
+    "no-document-cookie": "error",
+    // Suppression hygiene: a blanket `oxlint-disable` (or an eslint spelling
+    // of one) silences every rule on the line. `bun run lint` already fails a
+    // disable directive that stopped matching anything. The tree has no
+    // suppression comments, so this costs nothing today.
+    "no-abusive-eslint-disable": "error",
     "array-callback-return": "error",
     "no-alert": "error",
     "no-caller": "error",

@@ -13,6 +13,7 @@ target-version = "py310"
 [lint]
 select = [
     "B",   # bugbear: mutable defaults, bare except shapes
+    "BLE", # blind except; only the one deliberate tool top-level catch is exempt
     "C4",  # comprehensions
     "E",   # pycodestyle errors
     "F",   # pyflakes
