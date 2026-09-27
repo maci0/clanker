@@ -1010,7 +1010,7 @@ function renderSessionHistory(messages) {
               pendingTurn = createTurn("(question not in this transcript)");
               span = { from: idx, to: idx };
               replayedSpans.push(span);
-              var head = pendingTurn.root.querySelector(".turn-you");
+              var head = pendingTurn.root.querySelector("[data-turn=you]");
               head.setAttribute("data-orphan", "true");
               head.querySelector(".turn-author").textContent = "unknown  ·  ";
             }
@@ -1079,7 +1079,7 @@ function jumpToMessage(index, query) {
    reader pastes. */
 function markTurn(turn, text) {
   var note = document.createElement("span");
-  note.className = "turn-note";
+  note.className = TURN_NOTE_CLASS;
   note.textContent = text;
   turn.answer.appendChild(note);
 }
@@ -1532,56 +1532,84 @@ el.steerInput.addEventListener("keydown", function (e) {
    a real conversation history instead of one box that forgets the past
    answer as soon as you ask another question. */
 function turnPromptSource(turnRoot) {
-  var you = turnRoot && turnRoot.querySelector ? turnRoot.querySelector(".turn-you") : null;
+  var you = turnRoot && turnRoot.querySelector ? turnRoot.querySelector("[data-turn=you]") : null;
   if (!you) return "";
   if (you._taskSource != null) return you._taskSource;
   var author = you.querySelector(".turn-author");
   return author ? you.textContent.slice(author.textContent.length) : (you.textContent || "");
 }
 
+/* The transcript's turn: the panel's record of one job on the board. State is
+   an attribute (data-live, data-found, data-phase, data-orphan, data-held,
+   data-current), read by the sheet the way the script writes it. The strips
+   down a running turn's edge and the held lamp's dome are component rules:
+   a pseudo-element carrying a glow is what no utility composes. */
+var TURN_CLASS = "turn group relative py-3 [&:not(:first-child)]:border-t [&:not(:first-child)]:border-[color-mix(in_srgb,var(--rule)_65%,transparent)] data-[found=true]:animate-turn-found motion-reduce:data-[found=true]:animate-none";
+var TURN_DEPTH_CLASS = "hidden";
+var TURN_YOU_CLASS = "ml-auto flex max-w-[min(42rem,86%)] flex-col items-stretch gap-1 rounded-plate-lg border border-rule bg-surface px-3.5 py-3 font-sans text-base text-fg whitespace-normal wrap-anywhere data-[orphan=true]:[&_.turn-author]:text-fg-muted";
+var TURN_YOU_HEAD_CLASS = "flex items-center gap-2";
+var TURN_AUTHOR_CLASS = "font-bold text-fg";
+var TURN_YOU_BODY_CLASS = "min-w-0";
+var TURN_BODY_CLASS = "p-0";
+var TURN_EVENTS_CLASS = "mb-3 flex flex-col gap-1 empty:hidden";
+var TURN_ANSWER_CLASS = "m-0 max-w-none font-sans text-base leading-relaxed whitespace-pre-wrap wrap-anywhere empty:before:inline-block empty:before:animate-pulse-soft empty:before:text-fg-muted empty:before:content-['…'] motion-reduce:empty:before:animate-none motion-reduce:empty:before:opacity-60 [&_.failed]:text-danger";
+var TURN_FOOT_CLASS = "mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 border-t-0 pt-2 font-sans text-sm tabular-nums text-fg-muted empty:hidden [&_button]:rounded-capsule [&_button]:border [&_button]:border-border [&_button]:bg-surface [&_button]:px-3 [&_button]:py-1 [&_button]:text-sm [&_button]:text-fg-muted";
+var TURN_FOOT_ACTIONS_CLASS = "opacity-0 transition-opacity duration-100 group-hover:opacity-100 group-focus-within:opacity-100 hover-none:opacity-100 motion-reduce:opacity-100";
+var TURN_BRANCHES_CLASS = "mt-3 flex flex-wrap gap-2 border-l-2 border-rule pl-3 text-sm empty:hidden";
+var BRANCH_CHIP_CLASS = "inline-flex cursor-pointer items-center gap-0.5 rounded-capsule border border-border bg-surface-2 px-3 py-0.5 font-sans text-sm text-fg-muted hover:border-accent hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 data-[current=true]:border-accent data-[current=true]:bg-accent-dim data-[current=true]:font-semibold data-[current=true]:text-accent-text";
+var TURN_HELD_CLASS = "turn-held inline-flex items-center gap-2 font-sans text-sm font-bold text-ok data-[held=false]:text-danger";
+var TURN_NOTE_CLASS = "italic text-fg-muted";
+var CARET_CLASS = "inline-block h-[1em] w-[0.6ch] animate-caret bg-accent align-text-bottom motion-reduce:animate-none motion-reduce:opacity-60";
+var EVENT_TOOL_CLASS = "w-fit max-w-full font-sans text-sm text-fg-muted [&>summary]:flex [&>summary]:cursor-pointer [&>summary]:list-none [&>summary]:items-center [&>summary]:gap-2 [&>summary]:rounded-capsule [&>summary]:border [&>summary]:border-rule [&>summary]:bg-surface-2 [&>summary]:px-3 [&>summary]:py-1 [&>summary::-webkit-details-marker]:hidden [&>summary::before]:text-2xs [&>summary::before]:text-fg-muted [&>summary::before]:content-['▸'] [&[open]>summary::before]:content-['▾'] [&[data-detail=false]>summary]:cursor-default [&[data-detail=false]>summary::before]:content-none";
+var TOOL_ARGS_CLASS = "my-1 ml-4 max-w-[60ch] rounded-plate-lg border border-rule bg-surface-2 px-2 py-1 font-mono text-xs whitespace-pre-wrap text-fg-muted wrap-anywhere";
+var SPIN_CLASS = "inline-block h-[0.8em] w-[0.8em] flex-none animate-spin rounded-full border-2 border-accent-dim border-t-accent motion-reduce:hidden";
+var RUN_STATE_CLASS = "text-fg-muted motion-safe:hidden";
+
 function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
   document.getElementById("view-chat").classList.remove("chat-empty");
   var turn = document.createElement("div");
-  turn.className = "turn";
+  turn.className = TURN_CLASS;
 
   // The stratum's index, set in the margin against the depth rule.
   var depth = document.createElement("span");
-  depth.className = "turn-depth";
+  depth.className = TURN_DEPTH_CLASS;
   depth.textContent = String(el.transcript.querySelectorAll(".turn").length + 1);
   depth.setAttribute("aria-hidden", "true");
   turn.appendChild(depth);
 
   var you = document.createElement("div");
-  you.className = "turn-you md";
+  you.className = TURN_YOU_CLASS;
+  you.setAttribute("data-md", "true");
+  you.setAttribute("data-turn", "you");
   // Kept on the node so Edit / Copy / export still see the source after
   // the bubble is rendered as markdown (textContent would drop the marks).
   you._taskSource = task;
   // Real text, not generated content: a name in ::before is not announced,
   // not selected, not copied and not exported.
   var youHead = document.createElement("div");
-  youHead.className = "turn-you-head";
+  youHead.className = TURN_YOU_HEAD_CLASS;
   var author = document.createElement("span");
-  author.className = "turn-author";
+  author.className = TURN_AUTHOR_CLASS;
   author.textContent = "you";
   youHead.appendChild(author);
   you.appendChild(youHead);
   var youBody = document.createElement("div");
-  youBody.className = "turn-you-body";
+  youBody.className = TURN_YOU_BODY_CLASS;
   try { youBody.appendChild(renderMarkdownWithFences(task)); }
   catch (_e) { youBody.textContent = task; }
   you.appendChild(youBody);
 
   var body = document.createElement("div");
-  body.className = "turn-body";
+  body.className = TURN_BODY_CLASS;
 
   var events = document.createElement("div");
-  events.className = "turn-events";
+  events.className = TURN_EVENTS_CLASS;
 
   var assistantHead = createAnswerHead();
 
   var answer = document.createElement("div");
-  answer.className = "turn-answer";
+  answer.className = TURN_ANSWER_CLASS;
   // aria-live rather than role="status": status carries an implicit
   // aria-atomic="true", which made every streamed chunk re-announce the
   // whole answer from the top. Explicitly atomic-false announces only the
@@ -1590,7 +1618,7 @@ function createTurn(task) {
   answer.setAttribute("aria-atomic", "false");
 
   var foot = document.createElement("div");
-  foot.className = "turn-foot";
+  foot.className = TURN_FOOT_CLASS;
 
   body.appendChild(assistantHead);
   body.appendChild(events);
@@ -1674,7 +1702,7 @@ function showCaret(turn, on) {
   var caret = turn.answer.querySelector(".caret");
   if (on && !caret) {
     caret = document.createElement("span");
-    caret.className = "caret";
+    caret.className = CARET_CLASS;
     caret.setAttribute("aria-hidden", "true");
     turn.answer.appendChild(caret);
   } else if (!on && caret) {
@@ -1723,10 +1751,11 @@ function addToolEvent(turn, names, calls) {
   // as before, the body shows the arguments each call was made with. Closed
   // by default so a chatty run stays scannable.
   var row = document.createElement("details");
-  row.className = "event-tool";
+  row.className = EVENT_TOOL_CLASS;
+  row.setAttribute("data-event", "tool");
   var head = document.createElement("summary");
   var spin = document.createElement("span");
-  spin.className = "spin";
+  spin.className = SPIN_CLASS;
   spin.setAttribute("aria-hidden", "true");
   var label = document.createElement("span");
   // The spinner beside this already marks it as running; a gear glyph here
@@ -1734,7 +1763,7 @@ function addToolEvent(turn, names, calls) {
   label.textContent = names;
   // Shown only under prefers-reduced-motion, where the spinner is hidden.
   var state = document.createElement("span");
-  state.className = "run-state";
+  state.className = RUN_STATE_CLASS;
   state.textContent = "running…";
   head.appendChild(spin);
   head.appendChild(label);
@@ -1745,7 +1774,7 @@ function addToolEvent(turn, names, calls) {
     calls.forEach(function (c) {
       if (!c || typeof c.name !== "string") return;
       var line = document.createElement("pre");
-      line.className = "tool-args";
+      line.className = TOOL_ARGS_CLASS;
       var args = typeof c.args === "string" ? c.args.trim() : "";
       line.textContent = c.name + (args && args !== "{}" ? " " + args : " (no arguments)");
       row.appendChild(line);
@@ -1918,7 +1947,7 @@ function settleAsk(row, text, iconName) {
 }
 
 function settleLastToolEvent(turn, ms) {
-  var rows = turn.events.querySelectorAll(".event-tool");
+  var rows = turn.events.querySelectorAll("[data-event=tool]");
   if (rows.length === 0) return;
   var row = rows[rows.length - 1];
   var spin = row.querySelector(".spin");
@@ -1926,7 +1955,7 @@ function settleLastToolEvent(turn, ms) {
   var state = row.querySelector(".run-state");
   if (state) state.remove();
   var dur = document.createElement("span");
-  dur.className = "dur";
+
   dur.textContent = fmtUnit(ms, "millisecond");
   // The duration belongs on the always-visible summary line, not in the
   // fold-out body under it.
@@ -1943,7 +1972,7 @@ function renderStats(turn, stats, task) {
     stopped ||
     turn.answer.textContent.indexOf("[the run ended before it finished]") !== -1;
   var held = document.createElement("span");
-  held.className = "turn-held";
+  held.className = TURN_HELD_CLASS;
   held.setAttribute("data-held", String(!failed));
   held.appendChild(icon(failed ? "strike" : "held", 14));
   held.appendChild(document.createTextNode(failed ? "did not hold" : "held"));
@@ -1966,7 +1995,7 @@ function renderStats(turn, stats, task) {
   turn.foot.appendChild(span);
 
   var actions = document.createElement("span");
-  actions.className = "turn-foot-actions";
+  actions.className = TURN_FOOT_ACTIONS_CLASS;
   actions.style.display = "inline-flex";
   actions.style.gap = "var(--space-2)";
   actions.style.flexWrap = "wrap";
@@ -2063,12 +2092,12 @@ function renderStats(turn, stats, task) {
       if (!relevant.length) relevant = forks.slice(0, 3);
       if (!relevant.length) return;
       var bar = document.createElement("div");
-      bar.className = "turn-branches";
+      bar.className = TURN_BRANCHES_CLASS;
       bar.setAttribute("role", "navigation");
       bar.setAttribute("aria-label", "Branches from this turn");
       relevant.forEach(function(s){
         var chip = document.createElement("button");
-        chip.type = "button"; chip.className = "branch-chip";
+        chip.type = "button"; chip.className = BRANCH_CHIP_CLASS;
         chip.textContent = utilClip(s.title || s.id, 60) + " · " + plural(s.messages || 0, { one: "msg", other: "msgs" });
         chip.title = "Switch to " + (s.title || s.id);
         if (s.id === sessionId) chip.setAttribute("data-current", "true");
@@ -2485,7 +2514,7 @@ el.form.addEventListener("submit", function (e) {
     planBadge.className = "plan-badge";
     planBadge.textContent = "plan";
     var youHead = turn.root.querySelector(".turn-you-head");
-    (youHead || turn.root.querySelector(".turn-you")).appendChild(planBadge);
+    (youHead || turn.root.querySelector("[data-turn=you]")).appendChild(planBadge);
   }
   scrollTo(turn.root, "start");
   setTurnPhase(turn, "llm");
@@ -2599,7 +2628,8 @@ el.form.addEventListener("submit", function (e) {
         try {
           var fragMd2 = renderMarkdownWithFences(pend);
           turn.answer.textContent = "";
-          turn.answer.className = "turn-answer md";
+          turn.answer.className = TURN_ANSWER_CLASS;
+          turn.answer.setAttribute("data-md", "true");
           turn.answer.appendChild(fragMd2);
           if (hadCaret2) showCaret(turn, true);
         } catch(_e2) {}

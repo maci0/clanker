@@ -16,6 +16,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const md = readFileSync(join(here, "markdown.js"), "utf8");
 const app = readFileSync(join(here, "../app.js"), "utf8");
 const css = readFileSync(join(here, "../app.css"), "utf8");
+// A ported file's shapes live in the Tailwind source, not the cabinet sheet.
+const tw = readFileSync(join(here, "../tailwind.src.css"), "utf8");
 
 test("INLINE_RE matches strike as well as bold", function () {
   assert.match(md, /~~\[\^~\\n\]\+~~/);
@@ -35,7 +37,10 @@ test("Rooms messages use the same fence-aware renderer", function () {
 test("user chat bubbles render the prompt as markdown and keep the source", function () {
   assert.match(app, /you\._taskSource = task/);
   assert.match(app, /youBody\.appendChild\(renderMarkdownWithFences\(task\)\)/);
-  assert.match(css, /\.turn-you\.md \.md-p/);
+  // The bubble is utilities now, and its markdown body's shapes ride the
+  // sheet's `[data-md="true"]` rule, which the element carries as an attribute.
+  assert.match(app, /you\.setAttribute\("data-md", "true"\)/);
+  assert.match(tw, /\[data-md="true"\] \.md-p/);
 });
 
 test("renderMarkdown turns bold, lists and fences into elements", function () {

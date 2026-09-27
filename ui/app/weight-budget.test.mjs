@@ -148,9 +148,10 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
   // that looks like a utility into a rule.
   const css = fileBytes("tailwind.css").length / KiB;
-  // 100, raised from 48 ten times, each named in CHANGELOG: the run graph, the
+  // 106, raised from 48 eleven times, each named in CHANGELOG: the run graph, the
   // board lane, the card face, its chips, its members, the detail panel, the
-  // tool rows, the rooms sidebar, the message row, the rooms main column. This is
+  // tool rows, the rooms sidebar, the message row, the rooms main column, the
+  // transcript's turn. This is
   // accounting, not a ceiling — the sheet absorbs the cabinet sheets' rules as
   // utilities while both still ship (app.css is still ~150K raw), and phase 6
   // deletes those sheets, leaving this one holding the whole UI. The binding
@@ -162,12 +163,12 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // raises first paint, while an *app.css* port leaves it flat — so the
   // remaining views.css-heavy work (Rooms, the tool rows) should land beside
   // an app.css port (the board, the rail, chat) until the deferred sheet goes.
-  assert.ok(css <= 100, `tailwind.css is ${css.toFixed(1)}K raw; budget is 100K`);
+  assert.ok(css <= 106, `tailwind.css is ${css.toFixed(1)}K raw; budget is 106K`);
 });
 
 test("single large files stay inside their budgets", function () {
   const appJsRaw = fileBytes("app.js").length / KiB;
-  assert.ok(appJsRaw <= 256, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 256K`);
+  assert.ok(appJsRaw <= 264, `app.js is ${appJsRaw.toFixed(1)}K raw; budget is 264K`);
   const htmlRaw = fileBytes("index.html").length / KiB;
   assert.ok(htmlRaw <= 96, `index.html is ${htmlRaw.toFixed(1)}K raw; budget is 96K`);
   const viewsRaw = fileBytes("views.css").length / KiB;

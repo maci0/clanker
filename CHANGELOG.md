@@ -487,6 +487,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   Run button's accent pill is `button.primary` alone: `#submit` no longer needs
   a rule of its own.
 
+- The transcript's turn is utilities: the seam between turns, the question
+  bubble with its markdown body, the author, the assistant head and its label,
+  the tool-event rows with their chevron, spinner and argument fold, the foot
+  and its hover actions, the branch chips, the held lamp's word, the streaming
+  caret and the empty-answer dot. State is an attribute — `data-live`,
+  `data-found`, `data-phase`, `data-orphan`, `data-held`, `data-current` — and
+  the script's two queries read `[data-turn=you]`/`[data-event=tool]` rather
+  than the classes those elements used to carry. The found wash and the caret
+  are theme animations; the live/found strips, the phase strips and the held
+  lamp stay component rules, since a pseudo-element carrying a glow is what no
+  utility composes. First paint 59.9K gz; the sheet's figure goes to 106K and
+  app.js's to 264K.
+- The thinking fold's rules (`turn-thinking`, `turn-thinking__body`, its masked
+  chevron) are deleted: no element, in markup or script, has ever named that
+  class.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

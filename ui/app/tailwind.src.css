@@ -320,6 +320,21 @@
     50% { opacity: 0.5; transform: scale(1.32); }
   }
 
+  /* A turn a search hit jumped to: a wash that fades out, which the script
+     clears after two seconds rather than the sheet deciding. */
+  --animate-turn-found: turn-found 2s ease-out forwards;
+  @keyframes turn-found {
+    from { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+    to { background: transparent; }
+  }
+
+  /* The streaming caret, and the placeholder dot that stands in for an answer
+     that has not started arriving. */
+  --animate-caret: caret 1.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  @keyframes caret { 50% { opacity: 0.15; } }
+  --animate-pulse-soft: pulse 1.2s ease-in-out infinite;
+  @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
   /* A message that a search hit or a pin jumped to, so the eye lands on it. */
   --animate-chat-highlight: chat-highlight-flash 1.5s ease;
   @keyframes chat-highlight-flash {

@@ -603,18 +603,10 @@ form[hidden] { display: none; }
 .view > section:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
 
 /* ---- transcript: a running list of turns, chat-style ---- */
-.transcript { display: flex; flex-direction: column; gap: var(--space-4); margin-top: var(--space-3); padding-bottom: var(--space-3); }
-.transcript:empty { display: none; }
 /* A turn is a job on the panel's record: seamed off from the one above,
    its number stamped in the margin, a blue strip lit while it runs.
    Card width is clamped to --measure so answers stay legible even on a
    32-inch shop monitor. */
-.turn {
-  position: relative;
-  padding: var(--space-3) 0;
-  border-top: 0;
-}
-.turn + .turn { border-top: 1px solid color-mix(in srgb, var(--rule) 65%, transparent); }
 /* The job in progress: its strip is powered. */
 .turn[data-live="true"]::before {
   content: "";
@@ -632,121 +624,18 @@ form[hidden] { display: none; }
   position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
   background: var(--accent);
 }
-.turn[data-found="true"] {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  animation: turn-found 2s ease-out forwards;
-}
-@keyframes turn-found {
-  from { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-  to { background: transparent; }
-}
 /* The wash is decoration; the mark inside the turn is what actually says
    where the match is, and that is not animated. */
-@media (prefers-reduced-motion: reduce) { .turn[data-found="true"] { animation: none; } }
-.turn-depth { display: none; }
-.turn-assistant-head {
-  display: flex; align-items: center; gap: var(--space-3);
-  margin: 0 0 var(--space-2); max-width: min(42rem, 92%);
-}
-.turn-answer-label {
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 600; color: var(--fg-muted);
-}
-.turn-body .turn-assistant-head + .turn-events { margin-top: 0; }
 /* What was asked, set as the entry's heading: the text face, not mono,
    because it is prose and not a measurement. */
-.turn-you {
-  display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1);
-  font-family: var(--sans); font-size: var(--step-1); color: var(--fg);
-  padding: var(--space-3) 0.85rem;
-  border: 1px solid var(--rule); border-radius: var(--radius-lg);
-  background: var(--surface);
-  margin: 0 0 var(--space-3);
-  margin-left: auto;
-  white-space: normal; overflow-wrap: anywhere;
-  max-width: min(42rem, 86%);
-}
-.turn-you-head { display: flex; align-items: center; gap: var(--space-2); }
-.turn-you-body { min-width: 0; }
-.turn-you.md .md-p { margin: 0 0 0.35em; font-size: inherit; line-height: 1.5; }
-.turn-you.md .md-p:last-child { margin-bottom: 0; }
-.turn-you.md .md-h { margin: 0.4em 0 0.25em; font-size: 1em; }
-.turn-you.md ul, .turn-you.md ol { margin: 0.3em 0; }
-.turn-you.md .code-block { margin: 0.4em 0; }
-.turn-author { color: var(--fg); font-weight: 700; }
 /* A restored answer whose question is no longer in the transcript is not
    yours: attributing it to "you" said the wrong thing about who wrote it. */
-.turn-you[data-orphan="true"] .turn-author { color: var(--fg-muted); }
-.turn-body { padding: 0; }
-.turn-body .turn-answer { padding-top: var(--space-2); }
-.turn-thinking {
-  margin: 0 0 var(--space-3);
-  border: 1px solid var(--rule); border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
-}
-.turn-thinking > summary {
-  list-style: none; cursor: pointer; user-select: none;
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-}
-.turn-thinking > summary::-webkit-details-marker { display: none; }
-.turn-thinking > summary::before {
-  content: ""; flex: none; width: 0.85em; height: 0.85em; background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center/contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center/contain no-repeat;
-  transition: transform 120ms ease-out;
-}
-.turn-thinking[open] > summary::before { transform: rotate(90deg); }
-.turn-thinking__body { padding: 0 var(--space-3) var(--space-3); border-top: 1px solid var(--rule); margin-top: 0; }
-.turn:hover .turn-foot-actions, .turn:focus-within .turn-foot-actions { opacity: 1; }
-.turn-foot-actions { opacity: 0.0; transition: opacity 120ms ease; }
-@media (prefers-reduced-motion: reduce) { .turn-thinking > summary::before { transition: none; } .turn-foot-actions { opacity: 1; transition: none; } }
-@media (hover: none) { .turn-foot-actions { opacity: 1; } }
-.turn-events {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  margin: 0 0 var(--space-3);
-  padding: 0;
-  border: 0; background: transparent;
-}
-
-.turn-events:empty { display: none; margin: 0; }
 /* A <details> per tool-call batch: the summary is the familiar pill, the
    fold-out lists each call's arguments. Rows with nothing to unfold
    (.no-detail) keep the pill and lose the affordance. */
-.event-tool {
-  font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted);
-  width: fit-content; max-width: 100%;
-}
-.event-tool > summary {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.35rem var(--space-3); border-radius: var(--radius-pill);
-  background: var(--surface-2); border: 1px solid var(--rule);
-  cursor: pointer; list-style: none;
-}
-.event-tool > summary::-webkit-details-marker { display: none; }
-.event-tool > summary::before { content: "▸"; font-size: var(--step--2); color: var(--fg-muted); }
-.event-tool[open] > summary::before { content: "▾"; }
-.event-tool.no-detail > summary { cursor: default; }
-.event-tool.no-detail > summary::before { content: none; }
-.event-tool .tool-args {
-  margin: var(--space-1) 0 var(--space-1) 1.1rem; padding: 0.3rem 0.5rem;
-  font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
-  background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius-lg);
-  white-space: pre-wrap; overflow-wrap: anywhere; max-width: 60ch;
-}
-.event-tool .dur { color: var(--fg-muted); }
-.spin {
-  display: inline-block; width: 0.8em; height: 0.8em; flex: none;
-  border-radius: 50%; border: 2px solid var(--accent-dim); border-top-color: var(--accent);
-  animation: spin 0.7s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
 /* A frozen ring says nothing, so reduced motion swaps the spinner for the
    word it stands in for. The running/finished state change survives either
    way — a settled row replaces both with its duration. */
-.event-tool .run-state { color: var(--fg-muted); }
-@media (prefers-reduced-motion: no-preference) { .event-tool .run-state { display: none; } }
-@media (prefers-reduced-motion: reduce) { .spin { display: none; } }
 /* A question the run is blocked on (ask_user over the stream): the blue
    strip marks it as the one thing on the panel waiting for the operator. */
 .event-ask {
@@ -780,22 +669,9 @@ form[hidden] { display: none; }
   white-space: pre-wrap; overflow-wrap: anywhere;
   max-width: var(--measure); max-height: 20rem; overflow-y: auto;
 }
-.turn-answer {
-  font-family: var(--sans); font-size: var(--step-1); line-height: 1.65;
-  white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
-  max-width: none;
-}
-.turn-answer:empty::before {
-  content: "…"; color: var(--fg-muted); display: inline-block;
-  animation: pulse 1.2s ease-in-out infinite;
-}
-@keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .turn-answer:empty::before { animation: none; opacity: 0.6; } }
-.turn-answer .failed { color: var(--danger); }
 /* Notes about a turn's own outcome — stopped, or never answered. Real text
    rather than generated content, so they survive Copy answer and reach a
    screen reader the same way the answer does. */
-.turn-note { color: var(--fg-muted); font-style: italic; }
 .citation-chip {
   display: inline-flex; align-items: center; gap: 0.2rem;
   font-family: var(--mono); font-size: var(--step--1); font-weight: 600;
@@ -931,45 +807,7 @@ form[hidden] { display: none; }
 .hljs-number, .hljs-literal, .hljs-meta { color: var(--warn-text); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
-.turn-foot {
-  font-variant-numeric: tabular-nums;
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
-  margin-top: var(--space-3); padding-top: var(--space-2);
-  border-top: 0;
-  font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted);
-  opacity: 0; transition: opacity 140ms ease;
-}
-.turn:hover .turn-foot, .turn:focus-within .turn-foot, .turn-foot:focus-within { opacity: 1; }
-@media (hover: none) { .turn-foot { opacity: 1; transition: none; } }
-@media (prefers-reduced-motion: reduce) { .turn-foot { transition: none; } }
-.turn-foot:empty { display: none; margin: 0; padding: 0; border: 0; }
-.turn-branches {
-  display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3);
-  padding-left: var(--space-3); border-left: 2px solid var(--rule); font-size: var(--step-0);
-}
-.turn-branches:empty { display: none; }
-.branch-chip {
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  padding: 0.2rem var(--space-3); border-radius: var(--radius-pill); cursor: pointer;
-  background: var(--surface-2); border: 1px solid var(--border);
-  color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0);
-}
-.branch-chip:hover { border-color: var(--accent); color: var(--fg); }
-.branch-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.branch-chip[data-current="true"] { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
-.turn-foot button {
-  padding: var(--space-1) var(--space-3); font-size: var(--step-0);
-  background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border); border-radius: var(--radius-pill);
-}
-
 /* The one authored motion moment beyond the tool spinner: the caret marks a live stream. */
-.caret {
-  display: inline-block; width: 0.6ch; height: 1em; vertical-align: text-bottom;
-  background: var(--accent); animation: caret 1.1s cubic-bezier(0.22, 1, 0.36, 1) infinite;
-}
-@keyframes caret { 50% { opacity: 0.15; } }
-@media (prefers-reduced-motion: reduce) { .caret { animation: none; opacity: 0.6; } }
-
 /* Images travelling with the next task. Small enough to stay out of the way,
    large enough to tell two screenshots apart. */
 label {
@@ -1451,7 +1289,6 @@ input[type="checkbox"] {
 .transcript-tools > label { color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0); font-weight: 500; }
 .transcript-tools #turn-filter { min-height: 30px; border: 0; background: transparent; box-shadow: none; padding: 0.2rem var(--space-2); }
 .transcript-tools #turn-filter:focus-visible { outline-offset: 2px; }
-.turn[hidden] { display: none; }
 /* The match itself, not the whole turn: scanning a long answer for the word
    you searched is the part a filter alone does not help with. */
 mark {
@@ -1740,7 +1577,6 @@ button.rail-group:hover { color: var(--fg); }
 /* Rendered markdown. Sized against the text face it sits in: headings step
    up rather than shout. Blocks fill the Chat column so tables and code
    are not re-capped inside it. */
-.turn-answer.md { white-space: normal; }
 .md .md-p { margin: 0 0 var(--space-4); max-width: none; line-height: 1.7; font-size: var(--step-1); }
 .md .md-p:last-child { margin-bottom: 0; }
 .md .md-h {
@@ -1981,18 +1817,11 @@ button.rail-group:hover { color: var(--fg); }
 .goal-form label { flex-basis: 100%; margin: 0; }
 
 /* Whether the job held, said in the turn's own foot — behind a lamp. */
-.turn-held {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  font-family: var(--sans); font-size: var(--step-0); font-weight: 700;
-  color: var(--ok);
-}
 .turn-held::before {
   content: ""; flex: none; width: 0.55em; height: 0.55em; border-radius: 50%;
   background: var(--lamp-dome);
   box-shadow: var(--lamp-ring), var(--lamp-glow);
 }
-.turn-held[data-held="false"] { color: var(--danger); }
-
 /* Alive lamp phase: chip pending amber; turn data-phase left border.
    The phase strip shares the live strip's geometry but carries its own
    semantics: llm is the accent's idle glow, tool is the healthy green,
