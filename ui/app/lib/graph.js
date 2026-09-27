@@ -194,7 +194,13 @@ export function buildNodeBox(d, slowest, nodeW, opts) {
     bar.className = BAR_CLASS;
     var barFill = document.createElement("span");
     barFill.className = BAR_FILL_CLASS;
-    barFill.style.width = Math.max(2, Math.round((node.duration_ms || 0) / slowest * 100)) + "%";
+    // `slowest` is the node object, so dividing by it divided by
+    // "[object Object]" and every bar got `width: NaN%`, which the browser
+    // drops: the bar never rendered at all. Divide by its duration, and when
+    // no step is worth naming there is no scale to share, so the fill keeps
+    // its minimum width rather than asking for a division by nothing.
+    var scale = slowest ? slowest.duration_ms : 0;
+    barFill.style.width = (scale > 0 ? Math.max(2, Math.round((node.duration_ms || 0) / scale * 100)) : 2) + "%";
     bar.appendChild(barFill);
     box.appendChild(bar);
   }

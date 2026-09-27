@@ -410,6 +410,11 @@ pub fn build(b: *std.Build) void {
     const markdown_js_test = b.addSystemCommand(&.{ "bun", "test" });
     markdown_js_test.addFileArg(b.path("ui/app/lib/markdown.test.mjs"));
     test_step.dependOn(&markdown_js_test.step);
+    // The graph node's duration bar is a share of the slowest step, which is
+    // a division that once had a node object on the denominator.
+    const graph_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    graph_js_test.addFileArg(b.path("ui/app/lib/graph.test.mjs"));
+    test_step.dependOn(&graph_js_test.step);
     // The Runs list derives a date and a state from a summary that carries
     // neither directly; its clock has to agree with graph_listing.runOrderKey.
     const runs_list_js_test = b.addSystemCommand(&.{ "bun", "test" });

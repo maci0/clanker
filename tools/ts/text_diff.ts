@@ -12,7 +12,7 @@
 // did not fit.
 
 import { scratch, host_arena, readInput, okText, fail } from "./lib";
-import { parseJSON, JKind } from "./json";
+import { parseJSON, JKind, intFromFloat, int_not_a_number } from "./json";
 
 export { scratch, host_arena };
 
@@ -30,7 +30,13 @@ export function run(ptr: u32, len: u32): u64 {
 
   let context: i32 = 3;
   const c = req.value.get("context");
-  if (c != null && c.kind == JKind.Num) context = <i32>c.n;
+  // A context past the i32 range used to land as whatever `<i32>` of it
+  // produced, and `context * 2` then overflowed into a negative merge
+  // distance that split every hunk apart.
+  if (c != null && c.kind == JKind.Num) {
+    const n = intFromFloat(c.n);
+    if (n != int_not_a_number) context = n;
+  }
   if (context < 0) context = 0;
 
   let aName = "a";

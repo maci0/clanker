@@ -6,7 +6,7 @@
 //         {"ok": true, "text": "<id1>\n<id2>\n..."} for count > 1
 
 import { scratch, host_arena, readInput, randomU64, now, okText, fail } from "./lib";
-import { parseJSON, JKind } from "./json";
+import { parseJSON, JKind, intFromFloat, int_not_a_number } from "./json";
 
 export { scratch, host_arena };
 
@@ -25,9 +25,17 @@ export function run(ptr: u32, len: u32): u64 {
       const k = req.value.get("kind");
       if (k != null && k.kind == JKind.Str) kind = k.s;
       const c = req.value.get("count");
-      if (c != null && c.kind == JKind.Num) count = <i32>c.n;
+      if (c != null && c.kind == JKind.Num) {
+        const n = intFromFloat(c.n);
+        if (n != int_not_a_number) count = n;
+        if (count < 1) count = 1;
+      }
       const l = req.value.get("length");
-      if (l != null && l.kind == JKind.Num) length = <i32>l.n;
+      if (l != null && l.kind == JKind.Num) {
+        const n = intFromFloat(l.n);
+        if (n != int_not_a_number) length = n;
+        if (length < 1) length = 8;
+      }
     }
   }
 

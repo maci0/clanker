@@ -97,10 +97,22 @@ pub fn isSpillFileName(name: []const u8) bool {
 /// The id is a content hash, so spill file names carry no order at all and a
 /// newest-N rule has nothing to sort by; the timestamp is the only signal that
 /// separates a live run's spill from a dead one's. A file dated in the future
-/// (clock skew, a restored backup) is left alone rather than swept.
+/// (clock skew, a restored backup) is left alone rather than swept, and so is
+/// a negative one: that is garbage rather than a timestamp, and `now - mtime`
+/// overflows i64 on an extreme value, which panics the sweep whose only job is
+/// to delete files. The sibling `cas_lock_record.agedOut` reads it the same way.
 pub fn spillAgedOut(now_ms: i64, mtime_ms: i64, keep_ms: i64) bool {
-    if (mtime_ms > now_ms) return false;
+    if (mtime_ms > now_ms or mtime_ms < 0) return false;
     return now_ms - mtime_ms >= keep_ms;
+}
+
+test "an unreadable or impossible stamp is not old" {
+    const now: i64 = 1_787_000_000_000;
+    try std.testing.expect(!spillAgedOut(now, -1, keep_spill_ms));
+    try std.testing.expect(!spillAgedOut(now, std.math.minInt(i64), keep_spill_ms));
+    try std.testing.expect(!spillAgedOut(now, now + 1, keep_spill_ms));
+    try std.testing.expect(spillAgedOut(now, now - keep_spill_ms, keep_spill_ms));
+    try std.testing.expect(!spillAgedOut(now, now - keep_spill_ms + 1, keep_spill_ms));
 }
 
 test "dirFor names the session directory pathFor writes into" {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit } from "./utils.js";
+import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit, fmtMs } from "./utils.js";
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -140,6 +140,17 @@ test("a compact token count abbreviates in the reader's own units", function () 
 test("a sub-dollar cost keeps four digits, a larger one two", function () {
   assert.match(fmtCost(0.0001), /0[,.]0001/);
   assert.match(fmtCost(200), /200[,.]00/);
+});
+
+// A duration over a minute splits into two parts that must add up to the
+// whole. Rounding the seconds alone made 119_999 ms read as "1 min 60 s",
+// and the REPL's compactDuration truncates the same value, so one step could
+// read 1m 60s in the web UI and 1m 59s in the terminal.
+test("a duration over a minute never prints a 60-second remainder", function () {
+  assert.match(fmtMs(119999), /^1\D*59\D*$/);
+  assert.match(fmtMs(60000), /^1\D*0\D*$/);
+  assert.match(fmtMs(3599999), /^59\D*59\D*$/);
+  assert.equal(fmtMs("nonsense"), "");
 });
 
 // Truncation is a grapheme-cluster operation, not a code-point one. A cut

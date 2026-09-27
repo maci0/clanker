@@ -120,8 +120,12 @@ export function fmtMs(ms) {
   if (typeof ms !== "number" || !isFinite(ms)) return "";
   if (ms < 1000) return fmtUnit(ms, "millisecond");
   if (ms < 60000) return fmtUnit(ms / 1000, "second", 1);
+  // Floor both halves. Rounding the seconds made the 59.999s remainder print
+  // as "60 s" beside "1 min", and the two surfaces that format the same
+  // duration (the REPL's compactDuration) truncate, so a step could read
+  // 1m 60s here and 1m 59s there.
   var mins = Math.floor(ms / 60000);
-  var seconds = Math.round((ms % 60000) / 1000);
+  var seconds = Math.floor((ms % 60000) / 1000);
   return fmtUnit(mins, "minute") + " " + fmtUnit(seconds, "second");
 }
 

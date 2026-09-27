@@ -300,6 +300,26 @@ function parseHex4(hex: string): i32 {
   return v;
 }
 
+/* The value `intFromFloat` answers for input that is not an i32: nan, inf, or
+   a magnitude past the type. AssemblyScript has no nullable i32 (`null` is a
+   pointer, and an i32 is not one), so the refusal is a named value instead.
+   It is out of range on purpose, so a caller that skips the check still cannot
+   read it as a plausible count. */
+export const int_not_a_number: i32 = -2147483648;
+
+/* A JSON number narrowed to an i32, or `int_not_a_number` when it is not one.
+   Model-supplied input reaches every tool as f64, and `<i32>` on a value
+   outside the range is undefined: `{"count": 1e30}` and `{"context": 1e30}` are
+   ordinary things for a model to emit, and a bound applied after the
+   conversion cannot catch what the conversion already did. The Zig guests carry
+   `num.intFromFloat` for the same reason; this is the AssemblyScript half. */
+export function intFromFloat(f: f64): i32 {
+  if (isNaN(f) || !isFinite(f)) return int_not_a_number;
+  const t = Math.trunc(f);
+  if (t < -2147483647.0 || t > 2147483647.0) return int_not_a_number;
+  return <i32>t;
+}
+
 /// Parses `input` as a single JSON value with no trailing content. On
 /// failure, `errorMsg` names what was expected and `line`/`col` locate it.
 export function parseJSON(input: string): ParseResult {
