@@ -190,7 +190,7 @@ pub fn run(opts: RunOpts) !RunResult {
 fn runAcp(opts: RunOpts, g: *graph_mod.Graph, answer: *[]const u8) !AcpOutcome {
     var owned_transport: ?acp_client.ChildTransport = null;
     const transport = opts.transport orelse blk: {
-        const proc_reg = opts.acp_reg orelse (subprocess.processRegistry(opts.gpa, opts.io) catch return .missing);
+        const proc_reg = opts.acp_reg orelse (subprocess.processRegistry(opts.gpa) catch return .missing);
         const argv = vendor.acpArgv(opts.name, opts.acp_argv);
         owned_transport = acp_client.spawnTransport(
             opts.io,

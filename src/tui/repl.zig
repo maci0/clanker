@@ -3843,7 +3843,7 @@ const Model = struct {
             },
             .compact => {
                 if (bridge_streaming) {
-                    self.lines.append(self.arena, .{ .text = "compact: wait until the turn is idle", .dim = true }) catch {};
+                    self.appendLineLocked(.{ .text = "compact: wait until the turn is idle", .dim = true });
                     return;
                 }
                 const hint = std.mem.trim(u8, pc.args, " \t");
@@ -3853,7 +3853,7 @@ const Model = struct {
                     std.fmt.allocPrint(self.arena, "notice: next turn will compact, preserving: {s}", .{self.compact_hint}) catch "notice: next turn will compact"
                 else
                     "notice: next turn will compact history";
-                self.lines.append(self.arena, .{ .text = msg, .dim = true }) catch {};
+                self.appendLineLocked(.{ .text = msg, .dim = true });
             },
             .attach => {
                 const path = std.mem.trim(u8, pc.args, " \t");
@@ -4899,6 +4899,23 @@ const Model = struct {
         try self.runCommand(ctx, .{ .spec = spec, .args = "" }, spec.name);
     }
 
+    /// Whether a turn is streaming, read under the lock the run thread
+    /// publishes it through.
+    fn turnStreaming(_: *Model) bool {
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        return bridge_streaming;
+    }
+
+    /// Appends one transcript line under `bridge_mutex`, the same lock the
+    /// run thread takes to append the reply. A UI-thread append without it
+    /// races the run thread's on the ArrayList's own growth.
+    fn appendLineLocked(self: *Model, line: Line) void {
+        bridge_mutex.lockUncancelable(bridge_io);
+        defer bridge_mutex.unlock(bridge_io);
+        self.lines.append(self.arena, line) catch {};
+    }
+
     // ----------------------------------------------------------------- search
 
     /// Ctrl-R: open the search bar. Takes focus for the same reason a picker
@@ -5275,6 +5292,17 @@ const Model = struct {
                         // modal still flagged open would draw the palette on
                         // top of its own output.
                         try self.closeModelPicker(ctx);
+                        // Ctrl-P opens the palette with no streaming gate, and
+                        // a command that prints appends to `self.lines` from
+                        // this thread while the run thread appends the reply
+                        // under `bridge_mutex`: two `ensureTotalCapacity` on
+                        // one ArrayList, one buffer freed under the other.
+                        // Defer exactly the arms `runsWhileStreaming` names as
+                        // safe beside a live worker.
+                        if (self.turnStreaming() and !runsWhileStreaming(picked.action)) {
+                            self.appendLineLocked(.{ .text = std.fmt.allocPrint(self.arena, "{s}: wait until the turn is idle", .{picked.name}) catch "command: wait until the turn is idle", .dim = true });
+                            return ctx.consumeAndRedraw();
+                        }
                         try self.runPaletteSelection(ctx, picked);
                         return ctx.consumeAndRedraw();
                     }

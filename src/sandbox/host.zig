@@ -2051,7 +2051,7 @@ pub fn ckKernel(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         return h.writeResult(bytes, kernel_mod.errorJson(arena, "state/kernels/ directory not writable"));
     defer kdir.close(h.sandbox.io);
 
-    const reg = h.sandbox.subprocs orelse subprocess.processRegistry(h.sandbox.gpa, h.sandbox.io) catch
+    const reg = h.sandbox.subprocs orelse subprocess.processRegistry(h.sandbox.gpa) catch
         return h.writeResult(bytes, kernel_mod.errorJson(arena, "subprocess registry unavailable"));
 
     // The cell's environment is the guest's own filtered set (execEnvironment),
@@ -2108,11 +2108,14 @@ pub fn ckDebug(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
-    const reg = h.sandbox.subprocs orelse subprocess.processRegistry(h.sandbox.gpa, h.sandbox.io) catch
+    const reg = h.sandbox.subprocs orelse subprocess.processRegistry(h.sandbox.gpa) catch
         return h.writeResult(bytes, dap.errorJson(arena, "subprocess registry unavailable"));
 
     const sess = dap.liveSession(h.sandbox.gpa, h.sandbox.io, reg, sid) catch
         return h.writeResult(bytes, dap.errorJson(arena, "debug session unavailable"));
+    // liveSession retains; a concurrent dropLive (the run ending on another
+    // thread) must not free the session while this call drives it.
+    defer dap.releaseLive(sess);
 
     // handle() copies the timeout knobs from HandleOpts onto the session;
     // writing them here too made the opts fields look dead.
@@ -6137,7 +6140,7 @@ pub fn ckJob(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
         else => return Err.invalid,
     };
     const sid = if (h.sandbox.session_id.len > 0) h.sandbox.session_id else "default";
-    const reg = h.sandbox.subprocs orelse (subprocess.processRegistry(h.sandbox.gpa, h.sandbox.io) catch return Err.invalid);
+    const reg = h.sandbox.subprocs orelse (subprocess.processRegistry(h.sandbox.gpa) catch return Err.invalid);
 
     if (std.mem.eql(u8, op, "list")) {
         const json_out = jobs_mod.listJson(arena, reg, sid) catch return Err.invalid;

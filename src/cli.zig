@@ -13271,7 +13271,7 @@ test "endServeSession releases a deleted session's registered processes" {
     var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
-    const reg = try subprocess.processRegistry(std.testing.allocator, io);
+    const reg = try subprocess.processRegistry(std.testing.allocator);
     defer subprocess.deinitProcessRegistry();
     const sid = "serve-end-check";
     try reg.register(sid, "python", 7);

@@ -107,6 +107,18 @@ pub const Session = struct {
     launch_timeout_ms: u32 = 15_000,
     request_timeout_ms: u32 = 15_000,
     disconnect_timeout_ms: u32 = 3_000,
+    /// One DAP session is reachable from every sandbox that names the same
+    /// session id (`ck_swarm` members all fall back to "default"), so `buf`,
+    /// `seq` and the event queues are shared mutable state. `handle` holds
+    /// this for the whole request: two threads driving one adapter would
+    /// interleave `appendSlice` and lose a sequence number.
+    mu: std.atomic.Mutex = .unlocked,
+    /// Holders of the session object, past `closed`. `dropLive` marks a
+    /// session closed and frees it only once the last holder is gone, so a
+    /// run ending on one thread cannot pull the buffers out from under a
+    /// `handle` in flight on another.
+    refs: std.atomic.Value(usize) = .init(0),
+    closed: std.atomic.Value(bool) = .init(false),
 
     pub fn deinit(self: *Session) void {
         self.clearPendingBreakpoints();
@@ -478,6 +490,11 @@ pub const HandleOpts = struct {
 
 pub fn handle(sess: *Session, opts: HandleOpts, input: []const u8) ![]u8 {
     if (!opts.enabled) return error.DebugDisabled;
+    // Serialize every driver of this session. Held for the whole request,
+    // so a second thread waits instead of interleaving frame reads and
+    // event-queue appends with the first.
+    lockSession(sess);
+    defer sess.mu.unlock();
     // HandleOpts is the one writer of the session's timeout knobs, so a test
     // can inject them and a live session picks up a config change per call.
     sess.launch_timeout_ms = opts.launch_timeout_ms;
@@ -923,9 +940,35 @@ const Live = struct {
 
 var live: Live = .{};
 
+fn lockSession(sess: *Session) void {
+    while (!sess.mu.tryLock()) {
+        std.Thread.yield() catch {};
+    }
+}
+
+fn freeSession(sess: *Session) void {
+    sess.deinit();
+    sess.gpa.free(sess.session_id);
+    sess.gpa.destroy(sess);
+}
+
+/// Keeps a live session alive across a `handle` call, so a concurrent
+/// `dropLive` defers the free instead of pulling the buffers out from under
+/// the driver. Pair with `releaseLive`.
+pub fn retainLive(sess: *Session) void {
+    _ = sess.refs.fetchAdd(1, .acq_rel);
+}
+
+pub fn releaseLive(sess: *Session) void {
+    if (sess.refs.fetchSub(1, .acq_rel) != 1) return;
+    if (!sess.closed.load(.acquire)) return;
+    freeSession(sess);
+}
+
 /// One DAP session object per clanker session, so seq / leftover bytes /
-/// queued events survive across tool calls. Tests should pass their own
-/// `Session` to `handle` instead.
+/// queued events survive across tool calls. The returned session is retained:
+/// the caller must `releaseLive` it, otherwise `dropLive` never frees it.
+/// Tests should pass their own `Session` to `handle` instead.
 pub fn liveSession(gpa: std.mem.Allocator, io: std.Io, reg: *subprocess.Registry, session_id: []const u8) !*Session {
     live.lock();
     defer live.mu.unlock();
@@ -933,7 +976,10 @@ pub fn liveSession(gpa: std.mem.Allocator, io: std.Io, reg: *subprocess.Registry
         live.gpa = gpa;
         live.ready = true;
     }
-    if (live.map.get(session_id)) |s| return s;
+    if (live.map.get(session_id)) |s| {
+        _ = s.refs.fetchAdd(1, .acq_rel);
+        return s;
+    }
     const s = try gpa.create(Session);
     errdefer gpa.destroy(s);
     s.* = .{
@@ -944,6 +990,7 @@ pub fn liveSession(gpa: std.mem.Allocator, io: std.Io, reg: *subprocess.Registry
     };
     errdefer gpa.free(s.session_id);
     try live.map.put(gpa, s.session_id, s);
+    _ = s.refs.fetchAdd(1, .acq_rel);
     return s;
 }
 
@@ -951,10 +998,17 @@ pub fn dropLive(session_id: []const u8) void {
     live.lock();
     defer live.mu.unlock();
     if (live.map.fetchRemove(session_id)) |kv| {
-        kv.value.deinit();
-        live.gpa.free(kv.value.session_id);
-        live.gpa.destroy(kv.value);
+        closeSession(kv.value);
     }
+}
+
+/// Marks a session closed and frees it only when nobody holds it. A holder
+/// (`retainLive`) is always counted under `live.mu` before the map row can
+/// be removed, so a zero count here means no driver exists.
+fn closeSession(sess: *Session) void {
+    sess.closed.store(true, .release);
+    if (sess.refs.load(.acquire) != 0) return;
+    freeSession(sess);
 }
 
 /// Frees every live DAP session and the hash map they sit in. Call once at
@@ -968,9 +1022,7 @@ pub fn deinitLive() void {
     if (!live.ready) return;
     var it = live.map.iterator();
     while (it.next()) |kv| {
-        kv.value_ptr.*.deinit();
-        live.gpa.free(kv.value_ptr.*.session_id);
-        live.gpa.destroy(kv.value_ptr.*);
+        closeSession(kv.value_ptr.*);
     }
     live.map.deinit(live.gpa);
     live.map = .empty;
@@ -1057,6 +1109,7 @@ test "deinitLive frees the live session map after dropLive" {
     const s = try liveSession(std.testing.allocator, threaded.io(), &reg, "dbg-live-free");
     try std.testing.expectEqualStrings("dbg-live-free", s.session_id);
     dropLive("dbg-live-free");
+    releaseLive(s);
     deinitLive();
     // A second pass over an already-cleared map is a no-op.
     deinitLive();
@@ -1071,6 +1124,7 @@ test "deinitLive frees a live session that was never dropLive'd" {
     const s = try liveSession(std.testing.allocator, threaded.io(), &reg, "dbg-live-keep");
     try std.testing.expect(s.seq == 1);
     deinitLive();
+    releaseLive(s);
 }
 
 test "adapter events past the cap drop the oldest" {
@@ -1250,6 +1304,90 @@ test "fake adapter: launch, breakpoint, continue, stack, variables, evaluate" {
     const disc = try handle(&sess, opts, "{\"op\":\"disconnect\"}");
     try std.testing.expect(std.mem.find(u8, disc, "\"ok\":true") != null);
     try std.testing.expect(reg.get("dbg-1", "dap") == null);
+}
+
+const ConcurrencyCtx = struct {
+    reg: *subprocess.Registry,
+    tmp_dir: std.Io.Dir,
+    gpa: std.mem.Allocator,
+    sid: []const u8,
+    failures: std.atomic.Value(usize) = .init(0),
+
+    fn run(self: *ConcurrencyCtx) void {
+        var threaded = testIo();
+        defer threaded.deinit();
+        var arena_state = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena_state.deinit();
+        const sess = liveSession(self.gpa, threaded.io(), self.reg, self.sid) catch {
+            _ = self.failures.fetchAdd(1, .monotonic);
+            return;
+        };
+        defer releaseLive(sess);
+        const argv = [_][]const u8{ "python3", "fake_dap.py" };
+        const opts = HandleOpts{
+            .io = threaded.io(),
+            .gpa = self.gpa,
+            .arena = arena_state.allocator(),
+            .reg = self.reg,
+            .session_id = self.sid,
+            .enabled = true,
+            .adapters = &.{},
+            .override_argv = &argv,
+            .override_cwd = .{ .dir = self.tmp_dir },
+        };
+        // Every thread drives the same adapter through the same Session, so
+        // the frame buffer, the event queue and the sequence counter are all
+        // shared. handle serializes them; without that, two threads append
+        // into one ArrayList and one request can be answered with another's
+        // leftover bytes.
+        const out = handle(sess, opts, "{\"op\":\"stack_trace\"}") catch {
+            _ = self.failures.fetchAdd(1, .monotonic);
+            return;
+        };
+        if (std.mem.find(u8, out, "\"name\":\"main\"") == null) _ = self.failures.fetchAdd(1, .monotonic);
+    }
+};
+
+test "concurrent callers share one live DAP session" {
+    // A swarm's members all fall back to session "default", so two sandboxes
+    // can hold the same live session at once. Each one must get a whole
+    // answer, and dropLive must not free the session a caller is driving.
+    var threaded = testIo();
+    defer threaded.deinit();
+    const io = threaded.io();
+    var reg = subprocess.Registry.init(std.testing.allocator, io);
+    defer reg.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    tmp.dir.writeFile(io, .{ .sub_path = "fake_dap.py", .data = fake_adapter_src }) catch return error.SkipZigTest;
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const owner = try liveSession(std.testing.allocator, io, &reg, "dbg-conc");
+    defer releaseLive(owner);
+    const argv = [_][]const u8{ "python3", "fake_dap.py" };
+    const launched = try handle(owner, .{
+        .io = io,
+        .gpa = std.testing.allocator,
+        .arena = arena_state.allocator(),
+        .reg = &reg,
+        .session_id = "dbg-conc",
+        .enabled = true,
+        .adapters = &.{},
+        .override_argv = &argv,
+        .override_cwd = .{ .dir = tmp.dir },
+    }, "{\"op\":\"launch\",\"adapter\":\"fake\",\"program\":\"./myapp\"}");
+    try std.testing.expect(std.mem.find(u8, launched, "\"ok\":true") != null);
+
+    var ctx = ConcurrencyCtx{ .reg = &reg, .tmp_dir = tmp.dir, .gpa = std.testing.allocator, .sid = "dbg-conc" };
+    var threads: [4]std.Thread = undefined;
+    for (&threads) |*t| t.* = try std.Thread.spawn(.{}, ConcurrencyCtx.run, .{&ctx});
+    for (threads) |t| t.join();
+    try std.testing.expectEqual(@as(usize, 0), ctx.failures.load(.monotonic));
+
+    dropLive("dbg-conc");
+    deinitLive();
+    releaseLive(owner);
 }
 
 /// Emits `initialized` *before* its initialize response, which DAP allows —

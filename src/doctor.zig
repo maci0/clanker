@@ -472,8 +472,8 @@ fn backupEnvFileValue(
     const base = if (config_home != null and config_home.?.len > 0)
         config_home.?
     else
-        try std.fmt.allocPrint(arena, "{s}/.config", .{home});
-    const path = try std.fmt.allocPrint(arena, "{s}/clanker/backup.env", .{base});
+        std.fmt.allocPrint(arena, "{s}/.config", .{home}) catch return null;
+    const path = std.fmt.allocPrint(arena, "{s}/clanker/backup.env", .{base}) catch return null;
     const text = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_backup_env_bytes)) catch return null;
     return envFileLookup(arena, text, key);
 }

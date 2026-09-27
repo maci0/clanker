@@ -416,13 +416,24 @@ fn waitChildWithin(io: std.Io, child: *std.process.Child, pid: std.posix.pid_t, 
 
 var process_mu: SpinMutex = .{};
 var process_reg: ?Registry = null;
+var process_io: ?std.Io.Threaded = null;
 
 /// Process-wide registry so a REPL (new Agent per turn) keeps kernel/DAP
 /// processes across turns. Tests should construct a local Registry instead.
-pub fn processRegistry(gpa: std.mem.Allocator, io: std.Io) !*Registry {
+///
+/// The registry outlives every caller, so it owns its own I/O context rather
+/// than borrowing the caller's. A parallel tool worker creates a
+/// `std.Io.Threaded` per tool call and deinits it when the call returns, and
+/// every `Registry` method reaches for the stored `io` (mutex lock, child
+/// kill, wait); capturing a worker's would leave the process-wide registry
+/// driving freed state on the next kernel or DAP call.
+pub fn processRegistry(gpa: std.mem.Allocator) !*Registry {
     process_mu.lock();
     defer process_mu.unlock();
-    if (process_reg == null) process_reg = Registry.init(gpa, io);
+    if (process_reg == null) {
+        process_io = std.Io.Threaded.init(gpa, .{});
+        process_reg = Registry.init(gpa, process_io.?.io());
+    }
     return &process_reg.?;
 }
 
@@ -453,6 +464,9 @@ pub fn deinitProcessRegistry() void {
     defer process_mu.unlock();
     if (process_reg) |*reg| reg.deinit();
     process_reg = null;
+    // After the registry: deinit() locks the mutex through this context.
+    if (process_io) |*t| t.deinit();
+    process_io = null;
 }
 
 fn testIo() std.Io.Threaded {
