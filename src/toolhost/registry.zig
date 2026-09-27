@@ -1293,11 +1293,14 @@ test "every shipped manifest carries a schema the provider accepts" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    var dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch |err| {
+        std.debug.print("cannot open tools/manifests from cwd (test must run at the repo root): {s}\n", .{@errorName(err)});
+        return err;
+    };
     defer dir.close(io);
 
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
         const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
@@ -1327,9 +1330,15 @@ test "a tool that calls the model says so in its descriptor" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var src_dir = std.Io.Dir.cwd().openDir(io, "tools/zig", .{ .iterate = true }) catch return error.SkipZigTest;
+    var src_dir = std.Io.Dir.cwd().openDir(io, "tools/zig", .{ .iterate = true }) catch |err| {
+        std.debug.print("cannot open tools/zig from cwd (test must run at the repo root): {s}\n", .{@errorName(err)});
+        return err;
+    };
     defer src_dir.close(io);
-    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{}) catch return error.SkipZigTest;
+    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{}) catch |err| {
+        std.debug.print("cannot open tools/manifests from cwd (test must run at the repo root): {s}\n", .{@errorName(err)});
+        return err;
+    };
     defer man_dir.close(io);
 
     // Every guest helper that reaches a model. `lib.llmSystem` and
@@ -1340,15 +1349,21 @@ test "a tool that calls the model says so in its descriptor" {
     // third-party plugin directory; a helper added to lib.zig without a line
     // there silently re-opens the hole in both places at once.
     var it = src_dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
-        const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
+        const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch |err| {
+            std.debug.print("cannot read {s}: {s}\n", .{ entry.name, @errorName(err) });
+            return err;
+        };
 
         if (!manifest.sourceCallsModel(body)) continue;
 
         const stem = entry.name[0 .. entry.name.len - ".zig".len];
         const manifest_name = try std.fmt.allocPrint(arena, "{s}.tool.json", .{stem});
-        const raw = man_dir.readFileAlloc(io, manifest_name, arena, .limited(1 << 20)) catch continue;
+        const raw = man_dir.readFileAlloc(io, manifest_name, arena, .limited(1 << 20)) catch |err| {
+            std.debug.print("cannot read {s}: {s}\n", .{ manifest_name, @errorName(err) });
+            return err;
+        };
         const t = try Registry.parseDescriptor(arena, raw);
         if (!t.llm and !t.sequential) {
             std.debug.print("{s} calls the model but its descriptor sets neither llm nor sequential\n", .{manifest_name});
@@ -1408,9 +1423,15 @@ test "a guest that writes files does not opt out of confirmation" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var src_dir = std.Io.Dir.cwd().openDir(io, "tools/zig", .{ .iterate = true }) catch return error.SkipZigTest;
+    var src_dir = std.Io.Dir.cwd().openDir(io, "tools/zig", .{ .iterate = true }) catch |err| {
+        std.debug.print("cannot open tools/zig from cwd (test must run at the repo root): {s}\n", .{@errorName(err)});
+        return err;
+    };
     defer src_dir.close(io);
-    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    var man_dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch |err| {
+        std.debug.print("cannot open tools/manifests from cwd (test must run at the repo root): {s}\n", .{@errorName(err)});
+        return err;
+    };
     defer man_dir.close(io);
 
     // One pass over the manifests: keep each descriptor's wasm output name and
@@ -1419,7 +1440,7 @@ test "a guest that writes files does not opt out of confirmation" {
     const Manifest = struct { wasm: []const u8, tool: Tool };
     var manifests: std.ArrayList(Manifest) = .empty;
     var mit = man_dir.iterate();
-    while (mit.next(io) catch null) |entry| {
+    while (try mit.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
         const raw = try man_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));
         const t = try Registry.parseDescriptor(arena, raw);
@@ -1429,9 +1450,12 @@ test "a guest that writes files does not opt out of confirmation" {
 
     var writers_seen: usize = 0;
     var it = src_dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
-        const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch continue;
+        const body = src_dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20)) catch |err| {
+            std.debug.print("cannot read {s}: {s}\n", .{ entry.name, @errorName(err) });
+            return err;
+        };
         if (!manifest.sourceWritesFiles(body)) continue;
         writers_seen += 1;
 
@@ -1587,12 +1611,15 @@ test "every shipped manifest validates clean, warnings included" {
     defer threaded.deinit();
     const io = threaded.io();
 
-    var dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch return error.SkipZigTest;
+    var dir = std.Io.Dir.cwd().openDir(io, "tools/manifests", .{ .iterate = true }) catch |err| {
+        std.debug.print("cannot open tools/manifests from cwd (test must run at the repo root): {s}\n", .{@errorName(err)});
+        return err;
+    };
     defer dir.close(io);
 
     var bad: usize = 0;
     var it = dir.iterate();
-    while (it.next(io) catch null) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".tool.json")) continue;
         const raw = try dir.readFileAlloc(io, entry.name, arena, .limited(1 << 20));

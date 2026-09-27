@@ -95,7 +95,10 @@ test "fetch returns error on bad url without hanging" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const err = fetch(io, alloc, arena, .GET, "http://127.0.0.1:1/nope", null, null, 300) catch |e| e;
-    // Either ConnectFailed / ConnectionRefused or Timeout — any error is fine,
-    // the point is it does not hang and does not return success.
-    try std.testing.expect(err != error.HttpStatus or true);
+    // Nothing listens on port 1, so the only honest outcomes are a transport
+    // refusal (ConnectFailed / Unreachable) and the deadline firing.
+    // `HttpStatus` would mean an answered request with a >= 400 status, which
+    // is what a refactor invents when it swallows the transport error or
+    // returns a synthetic status for a dial that never completed.
+    try std.testing.expect(err != error.HttpStatus);
 }
