@@ -8,7 +8,19 @@
    one action only -- `log` -- so reading it alone showed nothing while cards
    were being added, moved and archived. The board room's messages carry every
    action, but only as far back as its history window. api.boardTimeline merges
-   and dedupes them. */
+   and dedupes them.
+
+   Styled with Tailwind utilities (ui/app/tailwind.src.css), so this plugin
+   ships no stylesheet: `p-3` is the cabinet's own --space-3 rung and the colour
+   names are the tokens, not copies of them. ui/app/tailwind.test.mjs pins every
+   utility used here against the generated sheet. */
+
+/* One row of the timeline, and the card button inside it. Named rather than
+   written inline so the two buttons that draw a row cannot drift apart. */
+var ROW_CLASS = "m-0 flex flex-wrap items-baseline gap-3 border border-rule rounded-plate-sm bg-surface-2 px-3 py-2 font-mono text-sm";
+/* min-h-8 is 2rem and min-h-11 is 2.75rem: 32px and the 44px touch target,
+   which the two media blocks used to spell out separately. */
+var CARD_CLASS = "min-h-8 cursor-pointer rounded-capsule border border-rule bg-transparent px-3 font-mono text-sm text-fg-muted hover:border-accent hover:text-accent pointer-coarse:min-h-11 max-[40rem]:min-h-11";
 
 clanker.registerView({
   id: "activity",
@@ -23,7 +35,7 @@ clanker.registerView({
     head.appendChild(refresh);
     container.appendChild(head);
 
-    var list = api.el("div", "activity-list");
+    var list = api.el("div", "mt-5 flex flex-col gap-2");
     container.appendChild(list);
 
     /// A card that has never been given a title still has to be announceable,
@@ -56,12 +68,12 @@ clanker.registerView({
         return;
       }
       entries.forEach(function (e) {
-        var row = api.el("p", "activity-row");
-        row.appendChild(api.el("span", "activity-when", api.fmt.time(e.ts)));
-        row.appendChild(api.el("span", "activity-who", e.who || "someone"));
-        row.appendChild(api.el("span", "activity-what", e.what));
+        var row = api.el("p", ROW_CLASS);
+        row.appendChild(api.el("span", "basis-36 flex-none tabular-nums text-fg-muted", api.fmt.time(e.ts)));
+        row.appendChild(api.el("span", "text-accent", e.who || "someone"));
+        row.appendChild(api.el("span", "min-w-48 flex-1 text-fg wrap-anywhere", e.what));
         var label = cardLabel(e);
-        var card = api.el("button", "activity-card", label);
+        var card = api.el("button", CARD_CLASS, label);
         card.type = "button";
         card.title = "Open this card on the board";
         card.setAttribute("aria-label", "Open " + label + " on the board");

@@ -640,7 +640,8 @@ test("failed list loads keep a visible retry in the panel", function () {
   const activity = readFileSync(join(here, "../../plugins/activity/app.js"), "utf8");
   assert.match(activity, /function drawFailure/);
   assert.match(activity, /Try again/);
-  assert.match(activity, /api\.el\("button", "activity-card", label\)/);
+  assert.match(activity, /api\.el\("button", CARD_CLASS, label\)/);
+  assert.match(activity, /var CARD_CLASS = /);
 });
 
 test("templates and skills say when none are on file", function () {
@@ -710,8 +711,12 @@ test("Activity empty state offers to open the board", function () {
   assert.match(src, /Open kanban/);
   assert.match(src, /"primary", "Open kanban"/);
   assert.match(src, /api\.showView\("kanban"\)/);
-  const css = readFileSync(join(here, "../../plugins/activity/app.css"), "utf8");
-  assert.match(css, /@media \(max-width: 40rem\) \{\s*\.activity-card \{ min-height: 44px; \}/);
+  // The card button's 44px touch target was a `@media (max-width: 40rem)` rule
+  // in the plugin's own sheet. The sheet is gone: the port moved it onto the
+  // class string as the max-[40rem] and pointer-coarse variants, so that is
+  // where the guard is asserted now.
+  assert.match(src, /max-\[40rem\]:min-h-11/);
+  assert.match(src, /pointer-coarse:min-h-11/);
 });
 
 test("Knowledge add-document is a primary CTA", function () {
