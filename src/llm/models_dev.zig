@@ -82,6 +82,20 @@ pub fn cacheFresh(cached_stamp: u64, disk_stamp: u64) bool {
     return cached_stamp != 0 and cached_stamp == disk_stamp;
 }
 
+/// The stamp a body produced by one load may be filed under.
+///
+/// `pre` is the snapshot as it stood when the load started, `post` as it
+/// stands now. A zero `pre` means the file was absent and this load wrote it,
+/// so the body *is* the file and `post` is its stamp. Otherwise the body came
+/// from the file, so it belongs to `pre` -- and when `post` differs, the file
+/// was replaced while the load ran, so filing the body under `post` would
+/// claim freshness for bytes nobody can match to the disk. Claiming `pre` is
+/// the honest answer: `cacheFresh` then says no, and the next read refills
+/// from the file that is actually there.
+pub fn filledStamp(pre: u64, post: u64) u64 {
+    return if (pre == 0) post else pre;
+}
+
 fn hostOf(url: []const u8) ?[]const u8 {
     const scheme_end = std.mem.find(u8, url, "://") orelse return null;
     const rest = url[scheme_end + 3 ..];
@@ -840,4 +854,16 @@ test "cacheFresh is never true with a zero stamp" {
     try std.testing.expect(!cacheFresh(1, 0));
     try std.testing.expect(cacheFresh(1, 1));
     try std.testing.expect(!cacheFresh(1, 2));
+}
+
+test "filledStamp files a body under the version it was read from" {
+    // Unchanged across the load: the two agree, and the body is the file.
+    try std.testing.expectEqual(@as(u64, 7), filledStamp(7, 7));
+    // Replaced while the load ran: the body is still the `pre` version, so it
+    // must not claim the `post` stamp, which would read as fresh forever.
+    try std.testing.expectEqual(@as(u64, 7), filledStamp(7, 9));
+    try std.testing.expect(!cacheFresh(filledStamp(7, 9), 9));
+    // No file before the load, so this load wrote it and the body *is* the
+    // file: the post stamp is the honest one.
+    try std.testing.expectEqual(@as(u64, 9), filledStamp(0, 9));
 }

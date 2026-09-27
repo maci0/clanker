@@ -617,7 +617,7 @@ dependency cache location is controlled by the Zig installation/environment.
 - `tools/zig/` — Zig tool sources.
 - `tools/ts/` — AssemblyScript tool sources.
 - `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
-- `grammars/` — grammars used by `ast-grep` structural search (`sgconfig.yml` registers the Zig one here; the `.so` is a build artifact, gitignored).
+- `grammars/` — the Zig tree-sitter grammar `ast-grep` loads for structural search over this repo's own source, patched for the Zig version this tree builds against and rebuilt by `grammars/build.sh`; the `.so` is a build artifact and gitignored.
 - `tools/examples/manifests/` — descriptors the registry does not load. The matching sources already exist (`tools/c/`, `tools/cpp/`, `tools/ts/calc_ts.ts`); `zig build tools` compiles the C and C++ guests into `zig-out/tools/`. They stay parked so a language-showcase tool is not offered to the model until it is shipped.
 - `patches/` — patches applied on top of vendored dependencies (`scripts/apply-patches.sh`).
 - `ui/plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.

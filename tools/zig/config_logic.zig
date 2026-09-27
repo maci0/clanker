@@ -27,6 +27,42 @@ pub fn keyValid(key: []const u8) bool {
     return true;
 }
 
+/// Dotted keys the merged JSON carries that no config file accepts. `Agent`
+/// holds three runtime fields beside its fifty-odd file keys (`shared_root` and
+/// `sandbox_roots` describe how this process was invoked, `workspace_id` the
+/// run's project), and the host serializes the struct, so a `set` on one
+/// wrote an assignment into `config.local.toml` that `parseAgent` warns about
+/// and drops -- with the confirmation reporting a pin that took effect.
+/// `Config`'s own `not_keys` in src/config.zig lists the same fields for the
+/// same reason; neither list reaches the other across the guest boundary.
+pub const runtime_only_keys = [_][]const u8{
+    "agent.shared_root",
+    "agent.sandbox_roots",
+    "agent.workspace_id",
+};
+
+/// Why `key` is not a file key at all, when it is one of the runtime fields.
+pub fn runtimeOnlyReason(key: []const u8) ?[]const u8 {
+    for (runtime_only_keys) |k| {
+        if (std.mem.eql(u8, k, key)) return k;
+    }
+    return null;
+}
+
+/// The dotted key as the *file* spells it, for the one section whose in-memory
+/// field names are not its TOML keys. `[memory.vector]` carries `top_k` and
+/// `threshold`; `Config.memory` holds them as `vector_top_k` and
+/// `vector_threshold`, and the merged JSON the guest reads is that struct, so
+/// `get`/`set` are addressed by the field names. A `set` that wrote the field
+/// name landed in `[memory]` as a key `parseMemory` does not accept: the loader
+/// warned `unknown key 'vector_top_k' in memory (ignored)` and the pinned
+/// value did nothing, with the confirmation reporting success.
+pub fn fileKey(key: []const u8) []const u8 {
+    if (std.mem.eql(u8, key, "memory.vector_top_k")) return "memory.vector.top_k";
+    if (std.mem.eql(u8, key, "memory.vector_threshold")) return "memory.vector.threshold";
+    return key;
+}
+
 /// Walk a dotted key through nested JSON objects. Null when any segment is
 /// missing or the walk hits a non-object before the last segment.
 pub fn lookup(root: std.json.Value, key: []const u8) ?std.json.Value {
@@ -388,6 +424,25 @@ fn commentAfterValue(rest: []const u8) []const u8 {
     return "";
 }
 
+/// Whether `text` closes the array an `env` / `headers` list opened. A `]`
+/// inside a quoted value is a character of the secret, not the end of the
+/// list, so the scan has to know about strings: an entry whose value held one
+/// ended the multi-line scan on its own line and every entry after it was
+/// copied through unredacted, the whole point of this pass.
+fn closesArray(text: []const u8) bool {
+    var in_string = false;
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        switch (text[i]) {
+            '\\' => i += 1,
+            '"' => in_string = !in_string,
+            ']' => if (!in_string) return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
 /// Secret values masked out of raw config.toml bytes, keeping names, layout
 /// and comments. The host's merged-config views already withhold them
 /// (`writeKvNames` in src/config.zig, `writeMcpServerJson` in
@@ -409,7 +464,7 @@ pub fn redactSecrets(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
             const masked = try redactSegment(alloc, line, sep);
             defer alloc.free(masked);
             try out.appendSlice(alloc, masked);
-            if (std.mem.indexOfScalar(u8, line, ']') != null) pending = null;
+            if (closesArray(line)) pending = null;
         } else {
             const eq = std.mem.indexOfScalar(u8, line, '=');
             if (eq) |e| {
@@ -427,7 +482,7 @@ pub fn redactSecrets(alloc: std.mem.Allocator, text: []const u8) ![]u8 {
                         const masked = try redactSegment(alloc, line, s);
                         defer alloc.free(masked);
                         try out.appendSlice(alloc, masked);
-                        if (std.mem.indexOfScalar(u8, line[e + 1 ..], ']') == null) pending = s;
+                        if (!closesArray(line[e + 1 ..])) pending = s;
                     } else {
                         try out.appendSlice(alloc, line);
                     }
@@ -485,6 +540,58 @@ test "renderValue holds a value to the merged type" {
     // Unset optionals infer from the raw's own shape.
     try t.expectEqualStrings("7", try renderValue(a, .null, "7"));
     try t.expectEqualStrings("\"hi\"", try renderValue(a, .null, "hi"));
+}
+
+test "runtimeOnlyReason names the agent fields no file accepts" {
+    try t.expectEqualStrings("agent.shared_root", runtimeOnlyReason("agent.shared_root").?);
+    try t.expectEqualStrings("agent.sandbox_roots", runtimeOnlyReason("agent.sandbox_roots").?);
+    try t.expectEqualStrings("agent.workspace_id", runtimeOnlyReason("agent.workspace_id").?);
+    // The file keys that sit beside them, and the ones the memory nested
+    // table renames, stay settable.
+    try t.expectEqual(@as(?[]const u8, null), runtimeOnlyReason("agent.sandbox_root"));
+    try t.expectEqual(@as(?[]const u8, null), runtimeOnlyReason("agent.workspace"));
+    try t.expectEqual(@as(?[]const u8, null), runtimeOnlyReason("memory.vector_top_k"));
+}
+
+test "fileKey spells memory's nested keys the way the file does" {
+    try t.expectEqualStrings("memory.vector.top_k", fileKey("memory.vector_top_k"));
+    try t.expectEqualStrings("memory.vector.threshold", fileKey("memory.vector_threshold"));
+    try t.expectEqualStrings("agent.reasoning_effort", fileKey("agent.reasoning_effort"));
+    try t.expectEqualStrings("memory.backend", fileKey("memory.backend"));
+}
+
+test "setKey with fileKey writes into the existing [memory.vector] table" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const original =
+        \\[memory]
+        \\backend = "hybrid"
+        \\
+        \\[memory.vector]
+        \\threshold = 0.35
+        \\
+    ;
+    const got = try setKey(a, original, fileKey("memory.vector_top_k"), "5");
+    // The field name would have landed in [memory] as vector_top_k, which the
+    // loader warns about and ignores.
+    try t.expectEqualStrings(
+        \\[memory]
+        \\backend = "hybrid"
+        \\
+        \\[memory.vector]
+        \\threshold = 0.35
+        \\top_k = 5
+        \\
+    , got);
+}
+
+test "setKey with fileKey creates the [memory.vector] table when it is absent" {
+    var arena_state = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    const got = try setKey(a, "[memory]\nbackend = \"hybrid\"\n", fileKey("memory.vector_threshold"), "0.4");
+    try t.expectEqualStrings("[memory]\nbackend = \"hybrid\"\n\n[memory.vector]\nthreshold = 0.4\n", got);
 }
 
 test "setKey replaces one assignment in place" {
@@ -779,4 +886,22 @@ test "redactSecrets carries a multi-line env array across lines" {
         \\]
         \\command = "server"
     , got);
+}
+
+test "redactSecrets does not end a multi-line env array on a ] inside a value" {
+    const a = t.allocator;
+    const got = try redactSecrets(a,
+        \\env = ["A_TOKEN=a]b",
+        \\  "B_TOKEN=ccc"]
+        \\command = "server"
+    );
+    defer a.free(got);
+    // The `]` in the first value is a character of the secret, not the end of
+    // the list: the entry after it was reaching the dump whole.
+    try t.expectEqualStrings(
+        \\env = ["A_TOKEN=<redacted>",
+        \\  "B_TOKEN=<redacted>"]
+        \\command = "server"
+    , got);
+    try t.expect(std.mem.indexOf(u8, got, "ccc") == null);
 }

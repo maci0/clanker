@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const fuzz_corpus = @import("../util/fuzz_corpus.zig");
-const dm_room = @import("../util/dm_room.zig");
+const dm_room = @import("dm_room.zig");
 
 pub const protocol_version = "1.0";
 pub const default_max_frame_bytes: u32 = 1 << 20;

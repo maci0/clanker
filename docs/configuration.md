@@ -3,7 +3,9 @@
 Everything clanker needs to reach a model and run lives in two TOML files at
 the working directory root. This is the complete reference; the authoritative
 schema is `src/config.zig`, and if a claim here disagrees with that file, the
-code wins.
+code wins. The Default columns are the struct defaults in that file; the
+committed `config.toml` overrides several of them, so read it for what a given
+checkout actually does.
 
 ## Where config lives
 
@@ -15,8 +17,9 @@ code wins.
   `[chatrooms]`, `[memory]`, `[web]`, `[advisor]`, `[hooks]`, `[ttsr]`,
   `[kernel]`, `[debug]`, `[improve]`, `[instance]`, `[agent]`, `[serve]` or
   `[modules]` leaves that section's other keys as the base file set them.
-  `[peers]` and `[mcp_servers.*]` are lists/tables of their own and are
-  replaced as a whole. Put machine-specific endpoints, a different
+  `[[peers]]` is a list of its own and is replaced as a whole, while
+  `[mcp_servers.<name>]` overlays server by server, so a local stanza adds or
+  replaces just that one. Put machine-specific endpoints, a different
   `default_provider`, or a local vLLM URL here. See
   `config.local.toml.example`.
 
@@ -52,8 +55,10 @@ Four places read the result, and each is redacted the same way:
   `env`/`headers` value, and an assignment whose key names a secret
   (`api_key`, `token`, `password`, and the rest). The names, the layout and
   the comments survive, so the dump is still the file a human reads.
-- `clanker config get <key>` and `clanker config dump --section <key>` go
-  through the merged config, which already withholds those values.
+- `clanker config get <key>` goes through the merged config, which already
+  withholds those values. (`clanker config dump` has no `--section` flag;
+  filtering a dump to one top-level key is the `config` tool's
+  `{"section": "<key>"}` argument, which an agent run can pass.)
 - `--dump-config` on any command prints the merged config the same way.
 - The `config` tool an agent run calls is the `clanker config dump` path, so
   a transcript never carries a credential the merged views would not show.
@@ -118,6 +123,7 @@ unconfigured one.
 | `base_url` | string | Endpoint base. `openai_compat` appends `/chat/completions`, `anthropic` appends `/v1/messages`, `azure_openai` builds `/openai/deployments/<model>/chat/completions`, `gemini` builds `/models/<model>:generateContent`, unless `path` overrides. |
 | `api_key_env` | string | Name of the `.env` variable holding the credential. Omit for a keyless local endpoint (ollama, vLLM). |
 | `auth` | string | Credential-acquisition strategy: `api_key`, `oauth_static` or `oauth_refresh`. Optional — each `kind` auto-detects where the credential types are distinguishable. See below. |
+| `oauth_plugin` | string | Name of a native OAuth plugin (`codex`, `grok`, `claude`) whose `clanker auth login <name>` flow mints the credential. Names which plugin to drive when `api_key_env` is unset; an available key still wins. Empty is the default. |
 | `default_model` | string | Which of this provider's models is active by default. |
 | `path` | string | Override the endpoint path (rarely needed). |
 | `check_timeout_seconds` | int | How long `providers check` waits for this endpoint before giving up, overriding the global `agent.provider_check_timeout_seconds`. `0` = no ceiling. |
@@ -360,7 +366,8 @@ then only when `clanker providers refresh` (or Refresh catalog in the
 Models view) is asked. Serve start does not contact models.dev.
 Only providers whose API and auth clanker implements appear in catalog
 search: OpenAI-compatible (Bearer API key), Anthropic Messages (API key
-or OAuth by token shape), Vertex Anthropic (GCP `oauth_refresh`), Gemini
+or OAuth by token shape), Vertex AI and Vertex Anthropic (GCP
+`oauth_refresh`), Gemini
 AI Studio (`x-goog-api-key`), and Azure OpenAI (`api-key` plus a
 resource host). Amazon Bedrock is not in that map.
 The table is `src/llm/catalog.zig`.
@@ -385,7 +392,7 @@ Run-loop and path settings. The commonly-touched keys:
 | `confirm_writes` | `never` | Gate write-capable tool calls on a human's allow/deny. `browser` asks streaming web runs; `always` also opens the REPL's allow/deny modal. Runs with no human channel are never gated. |
 | `fallback_provider` / `fallback_providers` | (unset) | Ordered fallbacks after the selected provider cannot serve a request. A string or an array; later entries are tried in order. Also the preferred vision-routing target. Names that are not configured, or whose credentials are missing (`unconfiguredReason`, same offline gate as TUI `/model`), are skipped rather than attempted. |
 | `reasoning_effort` | (unset) | Pin every agent turn's reasoning effort: `"none"`/`"low"`/`"medium"`/`"high"`/`"max"`. Beats the `auto_thinking` classifier, the per-model `reasoning_effort`, and the sampling-profile default; `"none"` disables reasoning on providers that accept it. Unset leaves those lower layers in charge. The CLI's `--reasoning-effort` (repl/run/goal) sets it for one invocation, and the web UI composer's Advanced fold sets it per run (`reasoning_effort` on `POST /api/run`). |
-| `backend` | `""` | Drive a local coding-agent CLI (`grok`, `claude`, or `codex`) instead of the in-process LLM loop. Empty keeps today's in-process loop. The CLI's `--backend` and `POST /api/run` `backend` set it for one invocation. Listed in the model picker when that vendor CLI is on PATH (or `backend_acp_argv` is configured), not when an API key is set. |
+| `backend` | `""` | Drive a local coding-agent CLI (`grok`, `claude`, or `codex`) instead of the in-process LLM loop. Empty keeps today's in-process loop. The CLI's `--backend` and `POST /api/run` `backend` set it for one invocation. Listed in the model picker when that vendor's CLI is on PATH (or, for the one vendor `backend` already names above, when `backend_acp_argv[0]` is on PATH). No credential state affects it. |
 | `backend_acp_argv` | `[]` | Optional full argv for the selected backend's ACP spawn. Empty uses the vendor default (`grok agent stdio`, or the published Claude/Codex adapter). |
 | `backend_timeout_ms` | `120000` | How long an ACP handshake/prompt may block before the client cancels the child, records a failed ACP node, and falls through to headless (`claude -p` / `codex exec` / `grok -p`). |
 | `auto_thinking` | `false` | Per-turn classifier that selects a sampling-profile `reasoning_effort` row. Opt-in, and moot while `reasoning_effort` above is set. |

@@ -18,6 +18,7 @@ const log = @import("../util/log.zig");
 const diag = @import("../util/diag.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
+const tool_reply = @import("../util/tool_reply.zig");
 
 pub const Options = struct {
     /// "list" (default), "add", "remove", "enable", "disable", "run-due",
@@ -46,18 +47,13 @@ pub const Error = error{
     /// The `schedule` guest ran and refused the request, or answered
     /// something this command cannot read. The detail is already logged.
     ToolFailed,
+    OutOfMemory,
 };
 
-/// How this command reaches the `schedule` WASM tool. `cli.zig` owns the
-/// registry, the sandbox and the config needed to load a tool, so it passes
-/// the call in rather than this module reaching back into it. Tests pass a
-/// canned answer through the same seam.
-pub const Tool = struct {
-    ctx: *anyopaque,
-    /// Takes the tool's JSON input, returns its JSON output. The result is
-    /// owned by the caller's arena.
-    call: *const fn (ctx: *anyopaque, input: []const u8) anyerror![]const u8,
-};
+/// How this command reaches the `schedule` WASM tool, and how its answer is
+/// unwrapped. Shared with the five record stores, which are the other CLI
+/// surfaces calling a store guest through a seam `cli.zig` binds.
+pub const Tool = tool_reply.Tool;
 
 /// Task text is a prompt; a table is not the place to print all of it.
 const task_column_bytes: usize = 44;
@@ -290,27 +286,24 @@ fn noSuchEntry(id: []const u8) store.Error {
     return store.Error.NoSuchEntry;
 }
 
-fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) !std.json.Value {
-    const raw = try tool.call(tool.ctx, input);
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.error_, "schedule: the tool answered something that is not JSON", .{});
-        return Error.ToolFailed;
+fn callTool(arena: std.mem.Allocator, tool: Tool, input: []const u8) (Error || store.Error)!std.json.Value {
+    const reply = tool_reply.callTool(arena, "schedule", tool, input) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        // A guest that trapped, was missing, or answered something unreadable
+        // is already a log record naming it; nothing to add for the operator.
+        error.ToolFailed => return Error.ToolFailed,
     };
-    if (parsed != .object) {
-        log.log(.error_, "schedule: the tool answered something that is not a JSON object", .{});
-        return Error.ToolFailed;
+    switch (reply) {
+        .ok => |obj| return .{ .object = obj },
+        .refused => |detail| {
+            if (std.mem.eql(u8, detail, "no such entry") or std.mem.eql(u8, detail, "bad entry id")) {
+                diag.errorLine("no scheduled entry; `clanker schedule list` shows them", .{});
+                return store.Error.NoSuchEntry;
+            }
+            log.log(.error_, "schedule: {s}", .{detail});
+            return Error.ToolFailed;
+        },
     }
-    const ok = parsed.object.get("ok");
-    if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
-        if (std.mem.eql(u8, detail, "no such entry") or std.mem.eql(u8, detail, "bad entry id")) {
-            diag.errorLine("no scheduled entry; `clanker schedule list` shows them", .{});
-            return store.Error.NoSuchEntry;
-        }
-        log.log(.error_, "schedule: {s}", .{detail});
-        return Error.ToolFailed;
-    }
-    return parsed;
 }
 
 fn parseEntries(arena: std.mem.Allocator, result: std.json.Value) ![]store.Entry {

@@ -430,6 +430,40 @@ fn liveElapsedMs() u64 {
     return @intCast(@divTrunc(d, std.time.ns_per_ms));
 }
 
+/// The clock on the streaming phase label: " 12s", " 1m05s", " 2h07m".
+///
+/// A turn that shows a spinner and nothing else cannot be told from a wedged
+/// one: at twenty seconds into a `ck_exec` the two look identical, so a reader
+/// who cannot estimate the wait stops trusting the surface. The web UI's turn
+/// footer has carried live elapsed since the run metrics landed, and this is
+/// the TUI's only live clock. Sub-second stays bare: a counter that reads
+/// `0s` a dozen times per second is noise, and the zero case is also the one
+/// `liveElapsedMs` returns when no turn is in flight.
+fn formatElapsed(buf: []u8, ms: u64) []const u8 {
+    const secs = ms / std.time.ms_per_s;
+    if (secs < 60) {
+        if (secs == 0) return "";
+        return std.fmt.bufPrint(buf, " {d}s", .{secs}) catch "";
+    }
+    const mins = secs / 60;
+    if (mins < 60) return std.fmt.bufPrint(buf, " {d}m{d:0>2}s", .{ mins, secs % 60 }) catch "";
+    return std.fmt.bufPrint(buf, " {d}h{d:0>2}m", .{ mins / 60, mins % 60 }) catch "";
+}
+
+test "formatElapsed counts up in the units a reader watches" {
+    var buf: [24]u8 = undefined;
+    // Sub-second: nothing, so the label does not flicker a zero.
+    try std.testing.expectEqualStrings("", formatElapsed(&buf, 0));
+    try std.testing.expectEqualStrings("", formatElapsed(&buf, 999));
+    try std.testing.expectEqualStrings(" 1s", formatElapsed(&buf, 1000));
+    try std.testing.expectEqualStrings(" 59s", formatElapsed(&buf, 59_999));
+    // Zero-padded so the width does not jump as the digits change.
+    try std.testing.expectEqualStrings(" 1m05s", formatElapsed(&buf, 65_000));
+    try std.testing.expectEqualStrings(" 59m59s", formatElapsed(&buf, 3_599_000));
+    try std.testing.expectEqualStrings(" 1h00m", formatElapsed(&buf, 3_600_000));
+    try std.testing.expectEqualStrings(" 2h07m", formatElapsed(&buf, 7_620_000));
+}
+
 fn onToken(delta: []const u8) void {
     bridge_mutex.lockUncancelable(bridge_io);
     defer bridge_mutex.unlock(bridge_io);
@@ -3045,10 +3079,15 @@ const Model = struct {
     app: ?*vxfw.App = null,
     status_buf: [192]u8 = undefined,
     scroll_buf: [32]u8 = undefined,
-    /// The status line's " running <tool>" phase text. A field rather than a
-    /// draw-local buffer because vaxis cells borrow the slices written into
+    /// The status line's " running <tool> 12s" phase text. A field rather than
+    /// a draw-local buffer because vaxis cells borrow the slices written into
     /// them until the frame is flushed, which is after `draw` has returned.
-    phase_buf: [80]u8 = undefined,
+    /// Sized for a full-width tool name plus the clock; a longer name is cut
+    /// by the `bufPrint` fallback rather than eating the suffix.
+    phase_buf: [96]u8 = undefined,
+    /// The clock suffix `formatElapsed` writes for `phase_buf`, so a nested
+    /// `bufPrint` has its own storage to borrow from.
+    elapsed_buf: [16]u8 = undefined,
     steer_buf: [48]u8 = undefined,
     meter_buf: [64]u8 = undefined,
     cost_buf: [32]u8 = undefined,
@@ -4121,11 +4160,7 @@ const Model = struct {
             self.lines.append(self.arena, .{ .text = "error: internal tool returned an empty result", .dim = true }) catch {};
             return true;
         }
-        var ok = false;
-        if (parsed.object.get("ok")) |k| {
-            if (k == .bool) ok = k.bool;
-        }
-        if (!ok) {
+        if (!json_util.boolFieldOrFalse(parsed.object, "ok")) {
             const raw_detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
             const detail = clean(self.arena, raw_detail) orelse "unknown";
             const extra = internalToolFailureHint(tool_name, detail);
@@ -4267,6 +4302,7 @@ const Model = struct {
                     .foreign_worktree => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' reaches into another run's worktree; this run's tree is '.'", .{ argv[0], a }),
                     .host_path => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' is a path outside the sandbox", .{ argv[0], a }),
                     .git_config => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, '{s}' would make git run guest-chosen code (config injection / alternate git dir); -C and --work-tree are the supported forms", .{ argv[0], a }),
+                    .search_exec_flag => |a| std.fmt.allocPrint(self.arena, "error: ! '{s}': denied, search flag '{s}' would run a program named by the pattern", .{ argv[0], a }),
                 };
                 self.lines.append(self.arena, .{ .text = msg catch "error: ! denied", .dim = true }) catch {};
             },
@@ -4501,8 +4537,7 @@ const Model = struct {
         const val = std.json.parseFromSliceLeaky(std.json.Value, self.arena, raw, .{ .ignore_unknown_fields = true }) catch
             return error.GoalAddReplyNotJson;
         if (val != .object) return error.GoalAddReplyNotJson;
-        const ok = val.object.get("ok") orelse return error.GoalAddRefused;
-        if (ok != .bool or !ok.bool) return error.GoalAddRefused;
+        if (!json_util.boolFieldOrFalse(val.object, "ok")) return error.GoalAddRefused;
         const goal = val.object.get("goal") orelse return error.GoalAddReplyNotJson;
         if (goal != .object) return error.GoalAddReplyNotJson;
         const id = goal.object.get("id") orelse return error.GoalAddReplyNotJson;
@@ -6360,12 +6395,28 @@ const Model = struct {
         // function has returned and its stack frame is gone. The literal
         // arms below are static strings, but " running <tool>" is formatted
         // here, and that one was pointing at dead stack by render time.
+        //
+        // The stop flag wins over the phase word: Ctrl-C only sets a flag the
+        // worker polls, so a turn that has to unwind a tool, a socket read or
+        // an unanswered ask stays "live" for a beat with its spinner turning
+        // and its clock counting. That is the exact moment the reader is
+        // staring at the status line to see whether the keystroke landed, and
+        // "stopping" answers it there rather than after the reply line lands.
         const phase: []const u8 = if (!streaming)
             idlePhaseLabel(self, &self.phase_buf)
+        else if (bridge_stop_flag.load(.acquire))
+            std.fmt.bufPrint(&self.phase_buf, " stopping{s}", .{
+                formatElapsed(&self.elapsed_buf, liveElapsedMs()),
+            }) catch "stopping"
         else if (tool_snap_len > 0)
-            std.fmt.bufPrint(&self.phase_buf, " running {s}", .{tool_snap[0..tool_snap_len]}) catch " tool"
+            std.fmt.bufPrint(&self.phase_buf, " running {s}{s}", .{
+                tool_snap[0..tool_snap_len],
+                formatElapsed(&self.elapsed_buf, liveElapsedMs()),
+            }) catch " tool"
         else
-            " thinking";
+            std.fmt.bufPrint(&self.phase_buf, " thinking{s}", .{
+                formatElapsed(&self.elapsed_buf, liveElapsedMs()),
+            }) catch "thinking";
         // The status line is written in coloured segments rather than one
         // flat string: the brand and the active provider/model are the two
         // things the eye looks for, and the phase word carries the run state

@@ -11,7 +11,6 @@
 const std = @import("std");
 const sanitize = @import("../util/sanitize.zig");
 const diag = @import("../util/diag.zig");
-const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 /// Terminal column measurement. Shared with the REPL because it is the same
@@ -23,22 +22,19 @@ const width = @import("../util/width.zig");
 pub const Error = error{
     BadSubcommand,
     MissingArg,
+    OutOfMemory,
     /// The tool ran and refused the request (`{"ok":false,...}`), or answered
     /// something the command cannot read. The reason is already on stderr: a
     /// refusal as a diagnostic, an unreadable answer as a log record.
     ToolFailed,
 };
 
-/// How a record command reaches its WASM tool. `cli.zig` owns the registry,
-/// the sandbox and the config needed to load a tool, so it passes the call in
-/// rather than these modules reaching back into it. Tests pass a canned answer
-/// through the same seam.
-pub const Tool = struct {
-    ctx: *anyopaque,
-    /// Takes the tool's JSON input, returns its JSON output. The result is
-    /// owned by the caller's arena.
-    call: *const fn (ctx: *anyopaque, input: []const u8) anyerror![]const u8,
-};
+/// How a record command reaches its WASM tool, and how its answer is
+/// unwrapped. Shared with `clanker schedule`, which is the other CLI surface
+/// that calls a store guest through a seam `cli.zig` binds.
+const tool_reply = @import("../util/tool_reply.zig");
+
+pub const Tool = tool_reply.Tool;
 
 /// A matched line is one row of a search result; the rest of a 500-byte grep
 /// hit belongs in the record, not in the summary. Sized so the row, its
@@ -271,43 +267,30 @@ test "englishList reads as prose for one, two and many" {
 /// ts_ms=...` record, which made "no such ADR" read like a subsystem fault.
 /// An answer that is not readable JSON is the opposite case, a broken build
 /// rather than a bad argument, and stays a log record.
-pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: []const u8) !std.json.Value {
-    // The call itself failing -- a WASM trap, a sandbox failure, a missing
-    // tool -- is a broken build rather than a bad argument, so it gets the
-    // same log record as the unreadable-answer cases below instead of
-    // surfacing as an opaque error with no hint of which store was asked.
-    // OutOfMemory is never a tool failure and keeps propagating.
-    const raw = tool.call(tool.ctx, input) catch |err| switch (err) {
+pub fn callTool(arena: std.mem.Allocator, store: []const u8, tool: Tool, input: []const u8) Error!std.json.Value {
+    const reply = tool_reply.callTool(arena, store, tool, input) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        else => {
-            log.log(.error_, "{s}: the tool call failed: {s}", .{ store, @errorName(err) });
-            return Error.ToolFailed;
-        },
+        // A guest that trapped, was missing, or answered something unreadable
+        // is already a log record naming the store; there is nothing to add
+        // for the operator here.
+        error.ToolFailed => return Error.ToolFailed,
     };
-    const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch {
-        log.log(.error_, "{s}: the tool answered something that is not JSON", .{store});
-        return Error.ToolFailed;
-    };
-    if (parsed != .object) {
-        log.log(.error_, "{s}: the tool answered something that is not a JSON object", .{store});
-        return Error.ToolFailed;
-    }
-    const ok = parsed.object.get("ok");
-    if (ok == null or ok.? != .bool or !ok.?.bool) {
-        const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "the tool refused the request";
+    switch (reply) {
+        .ok => |obj| return .{ .object = obj },
         // A path that is not there is the one refusal whose next step is the
         // same in all five stores: ask the listing. Without it these were the
         // only list-style commands in the CLI that ended on a bare "not
         // found", while `clanker graph` and `clanker schedule remove` both
         // name the command that shows the ids.
-        if (mentionsNotFound(detail)) {
-            diag.errorLine("{s}: {s}; run `clanker {s} list` for the paths", .{ store, detail, store });
-        } else {
-            diag.errorLine("{s}: {s}", .{ store, detail });
-        }
-        return Error.ToolFailed;
+        .refused => |detail| {
+            if (mentionsNotFound(detail)) {
+                diag.errorLine("{s}: {s}; run `clanker {s} list` for the paths", .{ store, detail, store });
+            } else {
+                diag.errorLine("{s}: {s}", .{ store, detail });
+            }
+            return Error.ToolFailed;
+        },
     }
-    return parsed;
 }
 
 /// Whether a tool's refusal is about a record that is not there. The guest

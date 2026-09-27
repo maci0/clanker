@@ -396,10 +396,14 @@ pub fn aggregate(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, arena: st
 /// memory. A read that fails after the stat returns `error.LogUnreadable`
 /// rather than an empty slice, so the caller can leave the cache alone; a
 /// genuinely empty log reads as zero rows and is cached like any other
-/// version. OutOfMemory propagates. The map-key dupes are not reclaimed on
-/// cache replacement (bounded: a few dozen short strings per log change, like
-/// the wasm cache's documented superseded-generation leak); the row names in
-/// `out` are freed by `AggregateCache.store`.
+/// version. OutOfMemory propagates. The map keys are scratch-only (each `Stat`
+/// row carries its own duped names) and are freed with the map; the row names
+/// in `out` are freed by `AggregateCache.store`.
+fn freeGroupKeys(alloc: std.mem.Allocator, by_key: *std.array_hash_map.String(Stat)) void {
+    var it = by_key.iterator();
+    while (it.next()) |e| alloc.free(e.key_ptr.*);
+}
+
 fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]Stat {
     const raw = base.readFileAlloc(io, path, gpa, .limited(max_log_bytes + read_slack_bytes)) catch |err| {
         if (err != error.FileNotFound) log.log(.warn, "[stats] read of {s} failed: {s}", .{ path, @errorName(err) });
@@ -447,13 +451,23 @@ fn aggregateFold(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, path: []c
             if (std.mem.eql(u8, level, "xhigh")) gop.value_ptr.thinking_xhigh += 1;
         };
     }
-    const out = try alloc.alloc(Stat, by_key.count());
+    const out = alloc.alloc(Stat, by_key.count()) catch |err| {
+        freeGroupKeys(alloc, &by_key);
+        return err;
+    };
     var idx: usize = 0;
     var it = by_key.iterator();
     while (it.next()) |kv| {
         out[idx] = kv.value_ptr.*;
         idx += 1;
     }
+    // The keys are scratch: every `Stat` row owns its own duped provider and
+    // model, and nothing past this point reads the map. `deinit` frees the
+    // slots, not what they point at, so without this every refold leaked one
+    // string per (provider, model) group from the page allocator -- and a
+    // serve process refolds on every log append, since an append is exactly
+    // what invalidates the cached entry.
+    freeGroupKeys(alloc, &by_key);
     by_key.deinit(alloc);
     // provider/model within an equal total. The rows are gathered from a hash
     // map, so a sort on `total_tokens` alone (or on nothing, for the

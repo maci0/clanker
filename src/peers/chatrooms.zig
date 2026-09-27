@@ -23,6 +23,7 @@ const file_lock = @import("../util/file_lock.zig");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const utf8 = @import("../util/utf8.zig");
 const test_env = @import("../util/test_env.zig");
+const session_id = @import("../util/session_id.zig");
 
 /// Guards the read-modify-write in `append`. Separate from the log so that
 /// trimming, which replaces the log, cannot invalidate a held lock.
@@ -907,12 +908,12 @@ pub fn sendMessageOpts(base: std.Io.Dir, io: std.Io, gpa: std.mem.Allocator, are
 /// Public because `src/sandbox/host.zig` rejects the same id at the `ck_chat`
 /// boundary, naming the rule in its refusal: one rule, one place, checked
 /// before the log is written rather than only at the id the harness mints.
+///
+/// The rule itself is `util/session_id.zig`, which is where the length cap is
+/// named. This copy used to spell the whole predicate out again, so the two
+/// trust boundaries could answer differently about the same bytes.
 pub fn validMessageId(id: []const u8) bool {
-    if (id.len == 0 or id.len > 64) return false;
-    for (id) |c| {
-        if (!std.ascii.isAlphanumeric(c) and c != '-' and c != '_') return false;
-    }
-    return true;
+    return session_id.validIdFragment(id);
 }
 
 /// Per-peer delivery cooldown. A peer that is unreachable (a down dummy, a
@@ -1589,8 +1590,15 @@ test "validMessageId holds the fragment alphabet makeId already speaks" {
     try std.testing.expect(!validMessageId("a b"));
     try std.testing.expect(!validMessageId("a/b"));
     try std.testing.expect(!validMessageId("../x"));
-    var too_long: [65]u8 = .{'x'} ** 65;
+    var too_long: [session_id.max_id_len + 1]u8 = .{'x'} ** (session_id.max_id_len + 1);
     try std.testing.expect(!validMessageId(&too_long));
+    // The `ck_chat` boundary in `src/sandbox/host.zig` answers with this same
+    // predicate, so the two must not drift into disagreeing about one id.
+    try std.testing.expectEqual(
+        session_id.validSessionId("m1758000000-4242-1"),
+        validMessageId("m1758000000-4242-1"),
+    );
+    try std.testing.expectEqual(session_id.validSessionId("../x"), validMessageId("../x"));
 }
 
 test "append trims to max_history and keeps the newest lines" {
@@ -2168,6 +2176,7 @@ test "serialiseMessage scales past the former 64 KiB stack buffer" {
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, reaction_count), parsed.value.object.get("reactions").?.array.items.len);
 }
+
 test "listRooms orders rooms newest-first by last activity" {
     var env: test_env.Env = .init();
     defer env.deinit();

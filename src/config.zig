@@ -1644,6 +1644,7 @@ pub const Config = struct {
         }
         try validateToolResultPrune(cfg.agent);
         try validateRepeatToolThresholds(cfg.agent.repeat_tool_thresholds);
+        validateAdvisorProvider(&cfg);
         // First boot: neither file named an instance, so `cfg.instance.name`
         // is the Io-seeded fallback from `defaultInstName`, which would pick
         // a *different* name next launch. Persist it once so the instance
@@ -1703,6 +1704,19 @@ pub const Config = struct {
         const had_diagnostic = last_load_diagnostic;
         last_load_diagnostic = false;
         return had_diagnostic;
+    }
+
+    /// `[advisor].provider` naming a provider the config does not declare.
+    /// A warning, not an error: the advisor is off by default and its own
+    /// review path already skips cleanly, so a config that does not enable it
+    /// has nothing to be wrong about. What it must not be is silent, since the
+    /// only other sign is a `.debug` line on the first turn of every run.
+    fn validateAdvisorProvider(cfg: *const Config) void {
+        const name = cfg.advisor.provider;
+        if (name.len == 0) return;
+        if (cfg.providers.get(name) == null) {
+            cfgLog(.warn, "[advisor].provider \"{s}\" is not in \"providers\"; the post-turn review is skipped", .{name});
+        }
     }
 
     fn validateToolResultPrune(agent: Agent) !void {
@@ -2622,9 +2636,28 @@ pub const Config = struct {
                 else => return error.PeerNotObject,
             };
             warnUnknownKeys(obj, &.{ "name", "url", "id" }, "peers[]");
+            const name = try jsonStr(try required(obj, "name", "peers[].name", "name = \"peer-name\""), "peers[].name");
+            // An empty name is the key every failure is reported under
+            // (fanout counters, the phonebook's first column, the peer allow-
+            // list), so a blank one makes the misconfiguration untraceable.
+            if (name.len == 0) {
+                cfgLog(.error_, "[[peers]] entry: name must not be empty", .{});
+                return error.PeerNameEmpty;
+            }
+            const url = try jsonStr(try required(obj, "url", "peers[].url", "url = \"https://peer.example.com\""), "peers[].url");
+            // A peer url is concatenated onto request paths (`<url>/api/...`)
+            // and handed to the HTTP client, so a bare host or a typo'd scheme
+            // is not a peer that is down: it is a config that can never
+            // connect, and the first sign of it is a failed chat fan-out at
+            // run time, long from the line that caused it. Same rule as
+            // `unconfiguredReason`'s base_url scheme check, at load instead.
+            if (!std.mem.startsWith(u8, url, "http://") and !std.mem.startsWith(u8, url, "https://")) {
+                cfgLog(.error_, "[[peers]] \"{s}\": url must start with http:// or https://, or be the address of an http(s) peer", .{name});
+                return error.PeerUrlSchemeInvalid;
+            }
             try out.append(arena, .{
-                .name = try jsonStr(try required(obj, "name", "peers[].name", "name = \"peer-name\""), "peers[].name"),
-                .url = try jsonStr(try required(obj, "url", "peers[].url", "url = \"https://peer.example.com\""), "peers[].url"),
+                .name = name,
+                .url = url,
                 .id = if (obj.get("id")) |iv| try jsonStr(iv, "peers[].id") else "",
             });
         }
@@ -3348,7 +3381,18 @@ pub const Config = struct {
         if (obj.get("enabled")) |k| a.enabled = try jsonBool(k, "enabled");
         if (obj.get("provider")) |k| a.provider = try jsonStr(k, "advisor.provider");
         if (obj.get("model")) |k| a.model = try jsonStr(k, "advisor.model");
-        if (obj.get("scope")) |k| a.scope = try jsonStr(k, "advisor.scope");
+        if (obj.get("scope")) |k| {
+            const scope = try jsonStr(k, "advisor.scope");
+            // The one reader is `std.mem.eql(u8, cfg.advisor.scope, "session")`:
+            // every other spelling, including a typo of it, silently reviews
+            // only the last turn, so `context_turns` stops mattering without
+            // a word about it.
+            if (!std.mem.eql(u8, scope, "turn") and !std.mem.eql(u8, scope, "session")) {
+                cfgLog(.error_, "[advisor].scope \"{s}\" is not one of \"turn\", \"session\"", .{scope});
+                return error.AdvisorScopeUnknown;
+            }
+            a.scope = scope;
+        }
         if (obj.get("context_turns")) |k| {
             const n = try jsonUnsigned(u32, k, "advisor.context_turns");
             a.context_turns = if (n == 0) 1 else n;
@@ -3531,7 +3575,22 @@ pub const Config = struct {
         };
         var m = Memory{};
         warnUnknownKeys(obj, &.{ "backend", "vector" }, "memory");
-        if (obj.get("backend")) |k| m.backend = try jsonStr(k, "backend");
+        if (obj.get("backend")) |k| {
+            const backend = try jsonStr(k, "backend");
+            // Every consumer gates on the exact spelling (`hybrid`/`vector`/
+            // `keyword`), so an unrecognized value is not a degraded backend
+            // but memory injection switched off with no message: the run
+            // simply stops recalling. Empty is the documented "off".
+            if (backend.len > 0 and
+                !std.mem.eql(u8, backend, "hybrid") and
+                !std.mem.eql(u8, backend, "vector") and
+                !std.mem.eql(u8, backend, "keyword"))
+            {
+                cfgLog(.error_, "[memory].backend \"{s}\" is not one of \"hybrid\", \"vector\", \"keyword\"; empty disables memory", .{backend});
+                return error.MemoryBackendUnknown;
+            }
+            m.backend = backend;
+        }
         if (obj.get("vector")) |k| {
             const vo = switch (k) {
                 .object => |o| o,
@@ -3539,7 +3598,17 @@ pub const Config = struct {
             };
             warnUnknownKeys(vo, &.{ "top_k", "threshold" }, "memory.vector");
             if (vo.get("top_k")) |x| m.vector_top_k = try jsonUnsigned(u32, x, "vector.top_k");
-            if (vo.get("threshold")) |x| m.vector_threshold = @floatCast(try jsonFloat(x, "vector.threshold"));
+            if (vo.get("threshold")) |x| {
+                const t = try jsonFloat(x, "vector.threshold");
+                // A cosine similarity cut-off: above 1 nothing ever clears it
+                // and below 0 every chunk does, and both look like a memory
+                // store that answers nothing rather than like a bad number.
+                if (t < 0 or t > 1) {
+                    cfgLog(.error_, "[memory.vector].threshold {d} is out of range; it is a similarity between 0 and 1", .{t});
+                    return error.MemoryThresholdOutOfRange;
+                }
+                m.vector_threshold = @floatCast(t);
+            }
         }
         return m;
     }
@@ -6547,6 +6616,7 @@ test "resolveProvider splits provider/model and keeps opaque slash ids whole" {
     try std.testing.expectEqualStrings("kimi-k3", d.name);
     try std.testing.expectEqualStrings("zai/glm-5.2", d.default_model);
 }
+
 test "improve bool fields reject non-bool values instead of silently defaulting" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
@@ -6767,11 +6837,14 @@ test "config.toml documents every key the loader accepts" {
     // Zig 0.16 as outside the package root, but a module name is not a path.
     const text = @embedFile("config_toml");
 
-    // Fields that are not config keys. `shared_root` is set by `run
+    // Fields that are not config keys. The `config` guest's mirror of the
+    // three agent ones is `runtime_only_keys` in tools/zig/config_logic.zig,
+    // which refuses to write them; the two lists cannot check each other
+    // across the guest boundary. `shared_root` is set by `run
     // --worktree` at runtime and deliberately unreadable from a file; the
     // rest are the parsed *results* of keys rather than keys themselves.
     const not_keys = [_][]const u8{ "shared_root", "sandbox_roots", "workspace_id", "name", "models", "context_window_set", "max_tokens_set" };
-    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Debug, Mesh, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider }) |T| {
+    inline for (.{ Agent, Improve, Modules, Web, Notify, Chatrooms, Kernel, Debug, Mesh, Ttsr, TtsrRule, Advisor, Instance, Tui, Serve, Model, Provider, Hooks, McpServer, Peer }) |T| {
         inline for (@typeInfo(T).@"struct".fields) |f| {
             comptime var skip = false;
             inline for (not_keys) |n| {

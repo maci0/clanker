@@ -183,6 +183,7 @@ comptime {
     _ = @import("debug/dap.zig");
     _ = @import("peers/mesh.zig");
     _ = @import("peers/command.zig");
+    _ = @import("peers/dm_room.zig");
     _ = @import("serve/live.zig");
     _ = @import("serve/mesh_net.zig");
     _ = @import("serve/http.zig");
@@ -196,7 +197,6 @@ comptime {
     _ = @import("agent/graph.zig");
     _ = @import("agent/subagent.zig");
     _ = @import("util/dotenv.zig");
-    _ = @import("util/dm_room.zig");
     _ = @import("util/secret_dotenv.zig");
     _ = @import("util/prompt_fence.zig");
     _ = @import("util/log.zig");
@@ -212,7 +212,7 @@ comptime {
     _ = @import("util/error_hint.zig");
     _ = @import("util/no_color.zig");
     _ = @import("util/elapsed.zig");
-    _ = @import("util/seed_rng.zig");
+    _ = @import("sandbox/seed_rng.zig");
     _ = @import("util/ensure_dir.zig");
     _ = @import("util/json.zig");
     _ = @import("util/raw_http.zig");
@@ -220,6 +220,7 @@ comptime {
     _ = @import("util/toml_bridge.zig");
     _ = @import("util/toml_edit.zig");
     _ = @import("util/tool_out.zig");
+    _ = @import("util/tool_reply.zig");
     _ = @import("util/fs_skip.zig");
     _ = @import("util/glob.zig");
     _ = @import("util/tail.zig");
@@ -233,6 +234,7 @@ comptime {
     _ = @import("util/sanitize.zig");
     _ = @import("agent/auto_learn.zig");
     _ = @import("evals/scorers.zig");
+    _ = @import("evals/runner.zig");
     _ = @import("improve/proposal.zig");
     _ = @import("improve/plan.zig");
     _ = @import("improve/backlog.zig");
@@ -525,8 +527,26 @@ fn recoveryHint(err: anyerror) ?[]const u8 {
         error.HttpStatus => "the remote server answered with an HTTP error; check the URL and your network",
         error.ArenaRefused => "the arena match was refused (see output above)",
         error.CompareRefused => "the comparison was refused (see output above)",
+        // A write that fails is a disk or a permission fact, not a name to
+        // read out. `clanker --help > /dev/full` answered "error:
+        // NoSpaceLeft" and `clanker doctor > /root/out` answered
+        // "error.AccessDenied": both are ordinary operator situations and
+        // both were the one failure with nothing a person can act on.
+        error.NoSpaceLeft => "the output ran out of space; free some and re-run the command",
+        error.AccessDenied, error.PermissionDenied => "the output file is not writable; check the path and its permissions",
+        error.BrokenPipe => "the reader closed the pipe; nothing was lost on clanker's side",
         else => null,
     };
+}
+
+test "a failed output write names the disk fact, not the Zig error name" {
+    // The write boundary is the one failure every piped command can hit, and
+    // the bare error name is the least actionable thing a CLI can print.
+    try std.testing.expect(recoveryHint(error.NoSpaceLeft) != null);
+    try std.testing.expect(recoveryHint(error.AccessDenied) != null);
+    // A closed reader stays exit 0 (handled before the hint table), so its
+    // line is only ever reached by a write that is not the pipeline.
+    try std.testing.expect(std.mem.indexOf(u8, recoveryHint(error.NoSpaceLeft).?, "space") != null);
 }
 
 test "a missing profile and a missing config.toml do not share one hint" {

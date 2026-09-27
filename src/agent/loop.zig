@@ -518,7 +518,15 @@ pub const Agent = struct {
         var peer_names: std.ArrayList([]const u8) = .empty;
         for (cfg.peers) |p| peer_names.append(arena, p.name) catch {};
 
-        var usage = tool_usage.Usage.load(ctx.io, arena, std.Io.Dir.cwd());
+        // A tally that cannot be read is not a reason to refuse the run: the
+        // hot-set measurement is an optimization and this turn falls back to
+        // no measured core. It is a reason to say so, because a tally that
+        // silently reads as empty every time is a tool catalog that silently
+        // stopped adapting.
+        var usage = tool_usage.Usage.load(ctx.io, arena, std.Io.Dir.cwd()) catch |err| blk: {
+            log.log(.warn, "tool usage: {s} could not be read ({s}); no measured hot set this run", .{ tool_usage.path, @errorName(err) });
+            break :blk tool_usage.Usage{};
+        };
         var revealed: std.array_hash_map.String(void) = .empty;
         // Mask the caller's list too: with the catalog off this *is* the
         // offered list, and most callers hand over an unfiltered
@@ -1494,10 +1502,7 @@ pub const Agent = struct {
         const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, content, .{ .ignore_unknown_fields = true }) catch
             return .{ .ok = false, .reason = "result was not JSON" };
         if (parsed != .object) return .{ .ok = false, .reason = "result was not an object" };
-        const ok = switch (parsed.object.get("ok") orelse std.json.Value{ .bool = false }) {
-            .bool => |b| b,
-            else => false,
-        };
+        const ok = json_util.boolFieldOrFalse(parsed.object, "ok");
         var reason: []const u8 = "";
         if (parsed.object.get("error")) |e| {
             if (e == .string) reason = e.string;

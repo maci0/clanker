@@ -11,7 +11,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const elapsed = @import("../util/elapsed.zig");
-const seed_rng = @import("../util/seed_rng.zig");
+const seed_rng = @import("seed_rng.zig");
 const json_util = @import("../util/json.zig");
 const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
@@ -26,7 +26,7 @@ const atomic_write = @import("../util/atomic_write.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
 const secret_dotenv = @import("../util/secret_dotenv.zig");
-const dm_room = @import("../util/dm_room.zig");
+const dm_room = @import("../peers/dm_room.zig");
 const glob = @import("../util/glob.zig");
 const fs_skip = @import("../util/fs_skip.zig");
 const token_stats = @import("../stats/tokens.zig");
@@ -2515,7 +2515,7 @@ const ChatOp = struct {
 /// A direct message remains an ordinary chatroom so history, persistence and
 /// peer fan-out need no second transport, which makes the room name the
 /// conversation's identity and the composite-key rule a `dm:` name has to
-/// obey one shared definition of (`util/dm_room.zig`, whose `parse` the mesh
+/// obey one shared definition of `peers/dm_room.zig`, whose `parse` the mesh
 /// map splits names with).
 fn directMessageRoom(arena: std.mem.Allocator, from_raw: []const u8, to_raw: []const u8) ![]const u8 {
     return dm_room.roomName(arena, from_raw, to_raw) catch return error.InvalidDirectMessage;
@@ -4802,9 +4802,50 @@ fn fsAppendImpl(h: *Host, sub_path: []const u8, data: []const u8) u32 {
 /// notifications, per-session state). A tool authoring a project file keeps
 /// the default mode, so this never changes the visibility of non-state files.
 fn stateWritePermissions(state_dir: []const u8, rel: []const u8) std.Io.File.Permissions {
-    const under_state = state_dir.len > 0 and std.mem.startsWith(u8, rel, state_dir) and
-        (rel.len == state_dir.len or rel[state_dir.len] == '/');
+    // Normalize the configured dir the way the rest of this file already
+    // spells it (ckStats at 3096 and the lock path at 4975 both build
+    // `trimEnd(state_dir orelse "state", "/")`). Comparing the guest's path
+    // against the raw configured string instead meant two spellings of the
+    // same directory silently dropped owner-only mode for every store under
+    // it: an empty `state_dir` (which means "state" everywhere else here) and
+    // a trailing slash, under which `state/goals.json` no longer has a
+    // separator at the boundary. Both left the conversation spills,
+    // notifications and per-session stores at the umask default, 0644, for
+    // every local user on the machine.
+    const trimmed = std.mem.trimEnd(u8, state_dir, "/");
+    // A guest path is sandbox-relative (`state/goals.json`) even when the
+    // configured directory is absolute. The name that has to agree is the
+    // last component, so `/var/lib/clanker/state` and `state/` are the same
+    // directory the relative paths already use.
+    const base = if (trimmed.len == 0) "state" else std.fs.path.basename(trimmed);
+    const under_state = base.len > 0 and
+        (std.mem.eql(u8, rel, base) or
+            (std.mem.startsWith(u8, rel, base) and rel.len > base.len and rel[base.len] == '/'));
     return if (under_state) atomic_write.private_file else .default_file;
+}
+
+test "guest writes under the state dir stay owner-only whatever the configured spelling" {
+    // `state` is the default; the other three are spellings the same
+    // configuration accepts, and each one used to fall through to
+    // `.default_file` (0644) for every personal-data store a guest writes.
+    for ([_][]const u8{ "state", "", "state/", "/var/lib/clanker/state" }) |configured| {
+        for ([_][]const u8{ "state/goals.json", "state/spills/sess-1/abc.txt", "state" }) |rel| {
+            try std.testing.expectEqual(
+                atomic_write.private_file,
+                stateWritePermissions(configured, rel),
+            );
+        }
+    }
+    // A project file the tool authored keeps the umask default: this rule
+    // exists to hide the stores, not to make every guest write private.
+    for ([_][]const u8{ "state", "", "state/", "/var/lib/clanker/state" }) |configured| {
+        for ([_][]const u8{ "src/main.zig", "stated.json", "stateful.rs", "notes/state.md" }) |rel| {
+            try std.testing.expectEqual(
+                @as(std.Io.File.Permissions, .default_file),
+                stateWritePermissions(configured, rel),
+            );
+        }
+    }
 }
 
 /// Appends `data` to `rel`, creating it when absent.
@@ -5359,6 +5400,30 @@ fn isSearchCmd(cmd: []const u8) bool {
     return std.mem.eql(u8, cmd, "rg") or std.mem.eql(u8, cmd, "ast-grep") or std.mem.eql(u8, cmd, "semcode");
 }
 
+/// Search-tool flags that hand the tool a program to run.
+///
+/// `rg --pre=<cmd>` runs `<cmd> <file>` for every file it walks, and
+/// `--hostname-bin=<cmd>` does the same for the hostname, so a guest-supplied
+/// search pattern (or a `ck_job` argv) is arbitrary program execution on the
+/// host: neither the host-absolute argv check nor the deny tokens name the
+/// flag, `/bin` is not a `host_abs_roots` entry, and `rg` is not a shell, so
+/// the shell-operator scan never runs either. A tool granted `rg` and a
+/// read-only filesystem would then reach the network and the whole checkout
+/// through a preprocessor. The same shape is refused for every search
+/// command, whether the flag came from a manifest-typed pattern, a nested
+/// `ck_tool` call, or a job argv.
+const search_exec_flags = [_][]const u8{ "--pre", "--pre-glob", "--hostname-bin" };
+
+fn searchExecFlagDenied(cmd: []const u8, argv: []const []const u8) ?[]const u8 {
+    if (!isSearchCmd(cmd)) return null;
+    for (argv[1..]) |arg| {
+        for (search_exec_flags) |flag| {
+            if (argDenied(arg, flag)) return arg;
+        }
+    }
+    return null;
+}
+
 /// An exec argument that reaches outside the sandbox the same way a ck_fs_*
 /// path would if it skipped safeJoin: a host-absolute root, or a `..`
 /// component. argv[0] is the resolved command and is skipped.
@@ -5570,6 +5635,10 @@ pub const ExecDenial = union(enum) {
     /// An argument that names a host-absolute path or walks `..`. Carries the
     /// offending argument. See `execArgPathDenied`.
     host_path: []const u8,
+    /// A search-tool flag that runs a guest-chosen program (`rg --pre`,
+    /// `--hostname-bin`). Carries the offending argument. See
+    /// `search_exec_flags`.
+    search_exec_flag: []const u8,
     /// A git global option that would make git run a guest-chosen program or
     /// open a guest-fabricated git dir (`-c`, `--config-env`, `--exec-path`,
     /// `--git-dir`, `--git-common-dir`). Carries the offending argument. See
@@ -5606,6 +5675,10 @@ fn execDenial(sb: *const Sandbox, cmd: []const u8, argv: []const []const u8) ?Ex
     // argument would read or write outside fs_prefixes. Checked ahead of
     // exec_pattern_allow so a pattern cannot grant `/etc/passwd`.
     if (execArgPathDenied(cmd, argv)) |arg| return .{ .host_path = arg };
+    // Same class, one step further: an allowed search command handed a
+    // program to run. Ahead of exec_pattern_allow for the same reason, so a
+    // pattern cannot grant `--pre=/bin/sh`.
+    if (searchExecFlagDenied(cmd, argv)) |arg| return .{ .search_exec_flag = arg };
 
     var join_buf: [4096]u8 = undefined;
     const policy = execPolicyFor(sb, argv, &join_buf);
@@ -6661,6 +6734,7 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
             .foreign_worktree => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': it reaches into another run's worktree", .{redact.forLog(&arg_buf, a)}),
             .host_path => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': path is outside the sandbox", .{redact.forLog(&arg_buf, a)}),
             .git_config => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': git config injection / alternate git dir would run guest-chosen code", .{redact.forLog(&arg_buf, a)}),
+            .search_exec_flag => |a| log.log(.warn, "[sandbox] ck_exec denied search flag '{s}'", .{redact.forLog(&arg_buf, a)}),
         }
         return Err.denied;
     }

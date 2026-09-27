@@ -185,6 +185,16 @@
     color-mix(in srgb, currentColor 60%, #000) 100%);
   --lamp-ring: 0 0 0 1px color-mix(in srgb, currentColor 35%, transparent);
   --lamp-glow: 0 0 7px 1px color-mix(in srgb, currentColor 50%, transparent);
+  /* Two pixels of a signal colour just outside a plate: the mark that says
+     this is the one you are on. One recipe, so a focus ring is not retyped
+     at a different accent mix on every control. */
+  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  --ring-ok: 0 0 0 2px var(--ok);
+  --ring-warn: 0 0 0 2px var(--warn);
+  --weight-body: 400;
+  --weight-label: 500;
+  --weight-structural: 600;
+  --weight-emphasis: 700;
 
   /* A panel has depth on the backplane: offset and blur, never a halo. Three
      rungs, because there were always three and only two had names: a plate
@@ -1788,6 +1798,13 @@
   --font-sans: var(--sans);
   --font-mono: var(--mono);
   --tracking-label: var(--track-label);
+  /* Four roles, not Tailwind's nine. The class names stay so a pasted
+     snippet still reads; what they resolve to is a cabinet token. */
+  --font-weight-*: initial;
+  --font-weight-normal: var(--weight-body);
+  --font-weight-medium: var(--weight-label);
+  --font-weight-semibold: var(--weight-structural);
+  --font-weight-bold: var(--weight-emphasis);
 
   /* Spacing rungs 1-7 are the cabinet's own space scale, so `p-3` is
      --space-3 and not Tailwind's 0.75rem. Numbers above 7 keep Tailwind's

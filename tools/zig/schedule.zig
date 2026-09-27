@@ -15,32 +15,12 @@ const logic = @import("schedule_logic.zig");
 const store_path = "state/schedule.json";
 const ledger_path = "state/schedule/log.jsonl";
 
-const Entry = struct {
-    id: []const u8,
-    cron: []const u8,
-    task: []const u8,
-    provider: ?[]const u8 = null,
-    model: ?[]const u8 = null,
-    tz_offset_minutes: i32 = 0,
-    enabled: bool = true,
-    created: i64 = 0,
-    last_run: i64 = 0,
-    last_status: []const u8 = "",
-    runs: u32 = 0,
-    failures: u32 = 0,
-};
-
-const Record = struct {
-    ts: i64 = 0,
-    id: []const u8 = "",
-    cron: []const u8 = "",
-    task: []const u8 = "",
-    trigger: []const u8 = "",
-    ok: bool = false,
-    duration_ms: u64 = 0,
-    skipped: u32 = 0,
-    err: []const u8 = "",
-};
+// The record shapes of both files, shared with the native store rather than
+// restated here: this guest rewrites the whole entry list and the native
+// runner does too, on every fire, so a field only one copy names is dropped
+// by the other without an error.
+const Entry = logic.Entry;
+const Record = logic.Record;
 
 const Loaded = struct {
     entries: std.ArrayList(Entry),
@@ -361,6 +341,12 @@ fn writeLog(s: *std.json.Stringify) !void {
         try s.write(r.task);
         try s.objectField("trigger");
         try s.write(r.trigger);
+        if (r.due_at > 0) {
+            // The window that made it due, when the fire was scheduled. 0 is
+            // a manual `schedule run`, which has no window of its own.
+            try s.objectField("due_at");
+            try s.write(r.due_at);
+        }
         try s.objectField("ok");
         try s.write(r.ok);
         try s.objectField("duration_ms");

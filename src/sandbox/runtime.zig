@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
-const seed_rng = @import("../util/seed_rng.zig");
+const seed_rng = @import("seed_rng.zig");
 const protocol = @import("protocol.zig");
 const host = @import("host.zig");
 const config_mod = @import("../config.zig");

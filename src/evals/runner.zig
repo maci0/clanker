@@ -19,7 +19,24 @@ pub const Result = struct {
     score: f64,
     ok: bool,
     detail: []const u8 = "",
+    /// The `agent.seed` this result was produced under, for the task evals
+    /// that draw from the seeded tool RNG. `0` means time-seeded, which is
+    /// the answer a failing run has to print: there is no seed to re-run
+    /// with. Null is a gate eval (build, tests, tools), which never draws.
+    seed: ?u64 = null,
 };
+
+/// The line a failed task eval needs to be replayed from, or `""` for
+/// anything that draws no randomness. Printed after the verdict rather than
+/// folded into it, so the score and PASS/FAIL stay the one thing every
+/// result line says the same way.
+pub fn replayHint(arena: std.mem.Allocator, res: Result) ![]const u8 {
+    const seed = res.seed orelse return "";
+    if (seed == 0) {
+        return "  agent.seed=0: the tool RNG was time-seeded, so this run is not replayable; re-run with --seed <n>\n";
+    }
+    return std.fmt.allocPrint(arena, "  replay: clanker eval {s} --seed {d} (agent.seed)\n", .{ res.name, seed });
+}
 
 pub const Runner = struct {
     ctx: *client.Ctx,
@@ -60,7 +77,7 @@ pub const Runner = struct {
 
         const resp = a.run(&messages, e.prompt, &err_detail) catch |err| {
             log.log(.error_, "eval '{s}' agent run failed: {s}", .{ e.name, @errorName(err) });
-            return .{ .name = e.name, .kind = e.kind, .score = 0, .ok = false, .detail = @errorName(err) };
+            return .{ .name = e.name, .kind = e.kind, .score = 0, .ok = false, .detail = @errorName(err), .seed = self.cfg.agent.seed };
         };
 
         const answer = resp.message.content orelse "";
@@ -85,6 +102,7 @@ pub const Runner = struct {
             .score = score,
             .ok = score >= 1.0,
             .detail = utf8.cap(answer, 200),
+            .seed = self.cfg.agent.seed,
         };
     }
 
@@ -122,4 +140,43 @@ pub const Runner = struct {
 fn trimDetail(arena: std.mem.Allocator, s: []const u8) []const u8 {
     if (s.len <= 600) return s;
     return arena.dupe(u8, utf8.tail(s, 600)) catch s;
+}
+
+test "a failed eval with a pinned seed names the command that re-runs it" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const hint = try replayHint(arena_state.allocator(), .{
+        .name = "calculator",
+        .kind = .task,
+        .score = 0,
+        .ok = false,
+        .seed = 42,
+    });
+    try std.testing.expectEqualStrings("  replay: clanker eval calculator --seed 42 (agent.seed)\n", hint);
+}
+
+test "a time-seeded failure says it cannot be replayed instead of printing a seed of 0" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const hint = try replayHint(arena_state.allocator(), .{
+        .name = "calculator",
+        .kind = .task,
+        .score = 0,
+        .ok = false,
+        .seed = 0,
+    });
+    try std.testing.expect(std.mem.indexOf(u8, hint, "not replayable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hint, "--seed 0") == null);
+}
+
+test "a gate eval draws no randomness and so carries no hint" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const hint = try replayHint(arena_state.allocator(), .{
+        .name = "selfhost build",
+        .kind = .selfhost_build,
+        .score = 0,
+        .ok = false,
+    });
+    try std.testing.expectEqualStrings("", hint);
 }

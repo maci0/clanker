@@ -1,11 +1,15 @@
 //! chain: pipeline runner — one model-visible call that fans out to N
 //! real tool calls via `ck_tool`, with inline LLM `mutate` steps in between.
 //! Each step's output feeds the next via {{prev}} / {{prev.field}} substitution.
+//! A mutate step's prompt reaches the prior step's output through
+//! `prompt_quote.zig`, so a step-1 reply is quoted material to step 2 and not
+//! an instruction to it.
 
 const std = @import("std");
 const lib = @import("lib.zig");
 const utf8 = @import("utf8");
 const model_reply = @import("model_reply.zig");
+const pq = @import("prompt_quote.zig");
 const budget = @import("llm_budget.zig");
 
 const Config = struct {
@@ -125,6 +129,11 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
     }
     var prev_json: ?std.json.Value = null;
     var prev_raw: []const u8 = "";
+    // Which produced `prev_raw`. A tool step yields file contents, a fetched
+    // page or another tool's rendering; a mutate step yields a model's own
+    // reply. Both are quoted material the next step must not act on, and a
+    // mutate reply is the one an adversarial model fully controls.
+    var prev_from_model: bool = false;
     var trace: std.ArrayList(TraceEntry) = .empty;
     for (steps, 0..) |st, idx| {
         const is_tool = st.tool != null;
@@ -139,9 +148,25 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
                 try trace.append(alloc, .{ .index = idx, .kind = "mutate", .ok = false, .output = "mutate instruction must not be empty", .tool = "" });
                 if (st.stop_on_error orelse true) break else continue;
             }
-            const prev_block = if (prev_raw.len > 0) prev_raw else if (prev_json) |v| try stringifyAlloc(alloc, v) else "(no prior output)";
-            const prompt = try std.fmt.allocPrint(alloc, "{s}\n\nPrevious output:\n{s}", .{ m.instruction, prev_block });
-            const answer = lib.llmWith(prompt, null, cfg.max_tokens) catch |err| {
+            const prev_block = if (prev_raw.len > 0) prev_raw else if (prev_json) |v| try stringifyAlloc(alloc, v) else "";
+            // The prior step's output reaches the model as quoted material, not
+            // as the tail of the instruction. Concatenating it raw let a step-1
+            // reply write step 2's instructions; `quote` also neutralizes any
+            // `<<<`/`>>>` the reply carries, so it cannot close its own fence.
+            const quoted = if (prev_block.len > 0)
+                try pq.quote(alloc, if (prev_from_model) "PREVIOUS MODEL OUTPUT" else "PREVIOUS TOOL OUTPUT", prev_block)
+            else
+                "";
+            const prompt = try std.fmt.allocPrint(
+                alloc,
+                "{s}\n\n{s}",
+                .{ m.instruction, pq.untrusted_note },
+            );
+            const prompt_full = if (quoted.len > 0)
+                try std.fmt.allocPrint(alloc, "{s}\n{s}", .{ prompt, quoted })
+            else
+                prompt;
+            const answer = lib.llmWith(prompt_full, null, cfg.max_tokens) catch |err| {
                 const msg = try std.fmt.allocPrint(alloc, "mutate llm failed: {s}", .{switch (err) {
                     error.SandboxDenied => "refused by sandbox policy",
                     error.NetworkError => "request did not complete",
@@ -160,10 +185,12 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
                 };
                 prev_json = vv;
                 prev_raw = cleaned;
+                prev_from_model = true;
                 try trace.append(alloc, .{ .index = idx, .kind = "mutate", .ok = true, .output = cleaned, .tool = "" });
             } else {
                 prev_json = .{ .string = cleaned };
                 prev_raw = cleaned;
+                prev_from_model = true;
                 try trace.append(alloc, .{ .index = idx, .kind = "mutate", .ok = true, .output = cleaned, .tool = "" });
             }
             continue;
@@ -187,6 +214,7 @@ fn executeSteps(out: *lib.Out, alloc: std.mem.Allocator, cfg: Config, steps: []c
             if (st.stop_on_error orelse true) break else continue;
         };
         prev_raw = result;
+        prev_from_model = false;
         prev_json = std.json.parseFromSliceLeaky(std.json.Value, alloc, result, .{}) catch .{ .string = result };
         try trace.append(alloc, .{ .index = idx, .kind = "tool", .ok = true, .output = result, .tool = tool_name });
     }

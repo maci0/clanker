@@ -2146,10 +2146,10 @@ const Flag = enum {
             .tasks => "run only the agent-driven evals, skipping the build gates",
             .seed => "pin the tool-RNG seed for a reproducible run",
             .webui_port => "web UI listen port (default 17921; also [serve].webui_port, CLANKER_WEBUI_PORT)",
-            .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN",
-            .serve_as => "a hostname this server may present itself as; repeatable",
-            .proxy => "mount the OpenAI/Anthropic compatibility proxy at /proxy/v1 (--no-proxy forces off)",
-            .proxy_port => "optional dedicated proxy port; /v1 at the root when it differs from --webui-port",
+            .host => "interface to bind; default 127.0.0.1, 0.0.0.0 reaches the LAN (also [serve].host, CLANKER_HOST)",
+            .serve_as => "a hostname this server may present itself as; repeatable (also [serve].serve_as)",
+            .proxy => "mount the OpenAI/Anthropic compatibility proxy at /proxy/v1 (--no-proxy forces off; also [serve].proxy)",
+            .proxy_port => "optional dedicated proxy port; /v1 at the root when it differs from --webui-port (also [serve].proxy_port, CLANKER_PROXY_PORT)",
             .yes => "confirm destructive actions without prompting",
             .research_target => "file the agent may edit; repeatable, comma-separated",
             .research_harness => "shell command whose output contains the metric",
@@ -4759,9 +4759,7 @@ fn parseToolResult(arena: std.mem.Allocator, raw: []const u8) ToolResult {
     };
     var r = ToolResult{};
     if (parsed == .object) {
-        if (parsed.object.get("ok")) |k| if (k == .bool) {
-            r.ok = k.bool;
-        };
+        r.ok = json_util.boolFieldOrFalse(parsed.object, "ok");
         if (parsed.object.get("text")) |t| if (t == .string) {
             r.text = t.string;
         };
@@ -4880,6 +4878,22 @@ const HotReload = struct {
     /// config.local.toml revalidated cleanly: restart into the new config
     /// even though the binary is unchanged.
     config_restart: std.atomic.Value(bool) = .init(false),
+    /// Whether a notice may carry an ANSI colour. False when NO_COLOR is set
+    /// or stderr is not a terminal, so `clanker serve > serve.log 2>&1`
+    /// does not bury the reload line in escape bytes.
+    color: bool = true,
+
+    /// One operator-facing reload notice. The colour used to be written
+    /// literally at all three call sites, so it was the only output in the
+    /// file that ignored `NO_COLOR` and a redirected stderr; a service that
+    /// captures `serve` output got escape codes in its log.
+    fn notice(self: *HotReload, comptime msg: []const u8) void {
+        if (self.color) {
+            std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m " ++ msg ++ "\n", .{});
+        } else {
+            std.debug.print("\n[hot-reload] " ++ msg ++ "\n", .{});
+        }
+    }
 
     fn begin(self: *HotReload) void {
         self.turn.lockSharedUncancelable(self.io);
@@ -4900,13 +4914,13 @@ const HotReload = struct {
 
     fn restartIfUpdated(self: *HotReload) void {
         if (self.config_restart.swap(false, .acq_rel)) {
-            std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m config changed, restarting with the new config\n", .{});
+            self.notice("config changed, restarting with the new config");
             execSelf(self.gpa, self.exe_path, self.argv_tail);
-            std.debug.print("[hot-reload] exec failed, continuing with the current config\n", .{});
+            self.notice("exec failed, continuing with the current config");
             return;
         }
         if (!binaryUpdated(self.io, self.exe_path, self.start_mtime)) return;
-        std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated, restarting with the new build\n", .{});
+        self.notice("binary updated, restarting with the new build");
         execSelf(self.gpa, self.exe_path, self.argv_tail);
         std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
     }
@@ -5014,9 +5028,9 @@ const HotReload = struct {
             }
         }
         defer self.turn.unlock(self.io);
-        std.debug.print("\n\x1b[33m[hot-reload]\x1b[0m binary updated, restarting with the new build\n", .{});
+        self.notice("binary updated, restarting with the new build");
         execSelf(self.gpa, self.exe_path, self.argv_tail);
-        std.debug.print("[hot-reload] exec failed, continuing with the current build\n", .{});
+        self.notice("exec failed, continuing with the current build");
         return true;
     }
 
@@ -5686,11 +5700,7 @@ fn toolText(
 
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
     if (parsed != .object) return error.ToolBadOutput;
-    var ok = false;
-    if (parsed.object.get("ok")) |k| {
-        if (k == .bool) ok = k.bool;
-    }
-    if (!ok) {
+    if (!json_util.boolFieldOrFalse(parsed.object, "ok")) {
         const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
         if (refusal_detail) |out| out.* = detail;
         if (std.mem.eql(u8, detail, "no such run")) return error.ToolFailed;
@@ -5950,11 +5960,7 @@ fn printPluginTool(init: std.process.Init, cfg: *const config.Config, tool_name:
     const raw = try toolJson(init.io, init.gpa, arena, cfg, init.environ_map, tool_name, iw.written());
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true });
     if (parsed != .object) return error.ToolBadOutput;
-    var ok = false;
-    if (parsed.object.get("ok")) |k| {
-        if (k == .bool) ok = k.bool;
-    }
-    if (!ok) {
+    if (!json_util.boolFieldOrFalse(parsed.object, "ok")) {
         const detail = json_util.strFieldOrNull(parsed.object, "error") orelse "unknown";
         log.log(.error_, "{s}: {s}", .{ tool_name, detail });
         return error.ToolFailed;
@@ -6683,6 +6689,10 @@ fn cmdEval(init: std.process.Init, opts: Options) !void {
     for (results) |res| {
         try out.writeStreamingAll(io, try std.fmt.allocPrint(arena, "{s}: {d:.2} {s}\n", .{ res.name, res.score, if (res.ok) "PASS" else "FAIL" }));
         if (!res.ok) all_ok = false;
+        // A failing task eval that does not name its seed is a failure nobody
+        // can re-run: the startup line is one log record above a run that can
+        // take an hour, and the promote gate reads only what is printed here.
+        if (!res.ok) try out.writeStreamingAll(io, try eval_runner.replayHint(arena, res));
     }
     if (!all_ok) return error.EvalsFailed;
 }
@@ -6816,14 +6826,14 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
             if (toolJson(io, init.gpa, arena, &cfg, init.environ_map, "goal_add", inp) catch null) |raw| {
                 if (std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |parsed| {
                     if (parsed == .object) {
-                        if (parsed.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
+                        if (json_util.boolFieldOrFalse(parsed.object, "ok")) {
                             if (parsed.object.get("goal")) |g| if (g == .object) {
                                 if (g.object.get("id")) |id| if (id == .string) {
                                     created_goal_id = id.string;
                                     log.log(.info, "created board goal {s} for /goal", .{id.string});
                                 };
                             };
-                        };
+                        }
                     }
                 }
             }
@@ -6838,9 +6848,9 @@ fn cmdGoal(init: std.process.Init, opts: Options) !void {
             if (toolJson(io, init.gpa, arena, &cfg, init.environ_map, "kanban", bi) catch null) |braw| {
                 if (std.json.parseFromSliceLeaky(std.json.Value, arena, braw, .{ .ignore_unknown_fields = true }) catch null) |bparsed| {
                     if (bparsed == .object) {
-                        if (bparsed.object.get("ok")) |bok| if (bok == .bool and bok.bool) {
+                        if (json_util.boolFieldOrFalse(bparsed.object, "ok")) {
                             log.log(.info, "created Ready card for goal {s}", .{gid});
-                        };
+                        }
                     }
                 }
             }
@@ -6867,8 +6877,7 @@ fn cmdWriteGoal(init: std.process.Init, opts: Options) !void {
     const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "goal_write", input);
     const result = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
     if (result != .object) return error.ToolFailed;
-    const ok = result.object.get("ok") orelse return error.ToolFailed;
-    if (ok != .bool or !ok.bool) {
+    if (!json_util.boolFieldOrFalse(result.object, "ok")) {
         const detail = json_util.strFieldOrNull(result.object, "error") orelse "tool failed";
         log.log(.error_, "write-goal: {s}", .{detail});
         return error.ToolFailed;
@@ -6903,8 +6912,7 @@ fn cmdAddGoal(init: std.process.Init, opts: Options) !void {
     const raw = try toolJson(io, init.gpa, arena, &cfg, init.environ_map, "goal_add", input.written());
     const result = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch return error.ToolFailed;
     if (result != .object) return error.ToolFailed;
-    const ok = result.object.get("ok") orelse return error.ToolFailed;
-    if (ok != .bool or !ok.bool) {
+    if (!json_util.boolFieldOrFalse(result.object, "ok")) {
         const detail = json_util.strFieldOrNull(result.object, "error") orelse "tool failed";
         log.log(.error_, "add-goal: {s}", .{detail});
         return error.ToolFailed;
@@ -7842,6 +7850,11 @@ fn cmdServe(init: std.process.Init, opts: Options) !void {
         // cannot quietly rebind somewhere else because the config file was
         // edited or the env changed underneath it.
         hot_reload_active = HotReload.start(arena, io, gpa, exe_path, try buildServeArgvTail(arena, listen, config.profileOverlay()));
+        // Same rule every other coloured byte in the CLI follows: NO_COLOR
+        // ahead of the terminal check, so a captured `serve` log carries the
+        // reload line as text.
+        hot_reload_active.?.color = !no_color.requested(init.environ_map) and
+            (std.Io.File.stderr().isTty(io) catch false);
     }
     // Config hot reload is unconditional: a clean edit restarts (when the
     // reload machinery above is on), a broken one warns and the process
@@ -10075,6 +10088,20 @@ fn askResolve(gpa: std.mem.Allocator, id: u64, answer: []const u8) AskResolve {
     return .not_found;
 }
 
+/// Longest single `pthread_cond_timedwait` an ask blocks for. The budget is
+/// re-checked against the monotonic clock between slices, so this bounds how
+/// long a wall-clock step can delay an answer that has already arrived, not
+/// how long a question is allowed to stay open.
+const ask_wait_slice_ns: u64 = std.time.ns_per_s;
+
+/// CLOCK_MONOTONIC in nanoseconds. u64: the clock does not run backwards, so
+/// the difference of two readings is a span and never a negative.
+fn monotonicNowNs() u64 {
+    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+    _ = std.c.clock_gettime(.MONOTONIC, &ts);
+    return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
+}
+
 /// Blocks until the ask is answered or `timeout_ns` passes; either way the
 /// slot is freed before returning, so a late POST gets not_found instead of
 /// writing into a question nobody is waiting on. Returns the gpa-owned
@@ -10085,18 +10112,45 @@ fn askAwait(id: u64, timeout_ns: u64) ?[]u8 {
     const slot = for (&ask_slots) |*s| {
         if (s.id == id) break s;
     } else return null;
-    // pthread_cond_timedwait takes an absolute CLOCK_REALTIME deadline, so a
-    // broadcast that wakes this waiter without answering it (or a spurious
-    // wakeup) re-waits on what is left of the budget for free.
-    var now: std.c.timespec = .{ .sec = 0, .nsec = 0 };
-    _ = std.c.clock_gettime(.REALTIME, &now);
-    const deadline_total = @as(u64, @intCast(now.sec)) * std.time.ns_per_s + @as(u64, @intCast(now.nsec)) + timeout_ns;
-    const deadline: std.c.timespec = .{
-        .sec = @intCast(deadline_total / std.time.ns_per_s),
-        .nsec = @intCast(deadline_total % std.time.ns_per_s),
-    };
+    // The budget is spent against CLOCK_MONOTONIC, not the wall clock. A
+    // timedwait's deadline is absolute and on whatever clock the condvar was
+    // built with, which is CLOCK_REALTIME unless a clock attribute says
+    // otherwise, and std.c exposes no way to set that attribute. Measured
+    // there, the budget is a claim about how long a person gets to answer a
+    // question, and an NTP step or an operator `date -s` decides it instead:
+    // a backward step puts the deadline in the past and every waiting ask
+    // times out at once, with the question never delivered; a forward step
+    // grants the whole interval again and holds the connection thread for it.
+    // So the monotonic clock alone decides expiry, and the wall clock is read
+    // only to place each wait.
+    //
+    // MONOTONIC through std.c rather than `std.Io.Timestamp.now(io, .awake)`
+    // because `askAwait` has no `io`: both callers are bare function pointers
+    // (AskFn, ConfirmFn) whose signature cannot carry one. Same reason
+    // `tui/mascot.zig` reads a clock the std.Io seam cannot hand it.
+    const start = monotonicNowNs();
     while (!slot.answered) {
-        if (std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &deadline) == .TIMEDOUT) break;
+        const spent = monotonicNowNs() - start;
+        const budget: i128 = @as(i128, timeout_ns) - @as(i128, @intCast(spent));
+        // Spent, or never had a budget: the caller's own ceiling, not a
+        // wall clock reading, ends the wait.
+        if (budget <= 0) break;
+        // Re-armed rather than set once, in slices, so a step that lands
+        // between the two clock reads cannot outlive the budget by an hour.
+        // A wakeup that answered nothing (broadcast, spurious) simply
+        // re-reads what is left.
+        const slice: u64 = @intCast(@min(budget, ask_wait_slice_ns));
+        var wall: std.c.timespec = .{ .sec = 0, .nsec = 0 };
+        _ = std.c.clock_gettime(.REALTIME, &wall);
+        const wall_ns = @as(i128, wall.sec) * std.time.ns_per_s + @as(i128, wall.nsec);
+        const deadline_total: u128 = @intCast(wall_ns + slice);
+        const deadline: std.c.timespec = .{
+            .sec = @intCast(deadline_total / std.time.ns_per_s),
+            .nsec = @intCast(deadline_total % std.time.ns_per_s),
+        };
+        // TIMEDOUT is not a verdict here: it says this slice's wall deadline
+        // passed, and the loop above is what decides whether the budget is.
+        _ = std.c.pthread_cond_timedwait(&ask_cond, &ask_mutex, &deadline);
     }
     const answer = if (slot.answered) slot.answer else null;
     slot.* = .{};
@@ -11623,6 +11677,12 @@ fn handleCatalogRefresh(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.S
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
+    // Taken before the fetch, so the stamp filed below can be tied to the
+    // snapshot the fetched body actually corresponds to. A `clanker providers
+    // refresh` from another process landing in the fetch's window used to
+    // file this body under the *other* process's stamp, and the in-process
+    // copy then read as fresh forever while serving the superseded catalog.
+    const pre_stamp = models_dev.snapshotStamp(io, std.Io.Dir.cwd());
 
     const fetched = loadModelsDev(io, gpa, arena, true) catch {
         respond(stream, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"could not reach models.dev\"}");
@@ -11632,9 +11692,10 @@ fn handleCatalogRefresh(io: std.Io, gpa: std.mem.Allocator, stream: std.Io.net.S
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
         return;
     };
+    const post_stamp = models_dev.snapshotStamp(io, std.Io.Dir.cwd());
     _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
     installCatalogCacheLocked(gpa, owned);
-    catalog_cache_stamp = models_dev.snapshotStamp(io, std.Io.Dir.cwd());
+    catalog_cache_stamp = models_dev.filledStamp(pre_stamp, post_stamp);
     _ = std.c.pthread_mutex_unlock(&catalog_cache_mutex);
 
     var out: std.Io.Writer.Allocating = .init(arena);
@@ -11705,7 +11766,13 @@ fn handleCatalog(io: std.Io, gpa: std.mem.Allocator, target: []const u8, accepts
             respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"out of memory\"}");
             return;
         };
-        const filled_stamp = models_dev.snapshotStamp(io, std.Io.Dir.cwd());
+        // `disk_stamp` is the snapshot the body below was read from, so it is
+        // the stamp the body may be filed under. Stamping it with the file as
+        // it stands after the read claimed freshness for a body the disk no
+        // longer matches: a `clanker providers refresh` in that window left
+        // this process serving the superseded catalog to every later search
+        // until the file changed again.
+        const filled_stamp = models_dev.filledStamp(disk_stamp, models_dev.snapshotStamp(io, std.Io.Dir.cwd()));
 
         _ = std.c.pthread_mutex_lock(&catalog_cache_mutex);
         unlocked = false;
@@ -16693,7 +16760,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
             if (toolJson(io, gpa, arena, cfg, environ_map, "goal_add", inp) catch null) |raw| {
                 if (std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{ .ignore_unknown_fields = true }) catch null) |parsed| {
                     if (parsed == .object) {
-                        if (parsed.object.get("ok")) |ok| if (ok == .bool and ok.bool) {
+                        if (json_util.boolFieldOrFalse(parsed.object, "ok")) {
                             if (parsed.object.get("goal")) |g| if (g == .object) {
                                 if (g.object.get("id")) |id| if (id == .string) {
                                     const title = utf8.cap(cond, 512);
@@ -16701,7 +16768,7 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
                                     if (bi) |bin| _ = toolJson(io, gpa, arena, cfg, environ_map, "kanban", bin) catch null;
                                 };
                             };
-                        };
+                        }
                     }
                 }
             }

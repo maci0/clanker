@@ -20,6 +20,66 @@ pub const TaskError = error{
     TaskTooLong,
 };
 
+/// One scheduled entry: the record shape of `state/schedule.json`, which is a
+/// plain array of these and is meant to stay hand-editable.
+///
+/// It lives here because the file has two writers and each rewrites all of it:
+/// the `schedule` guest edits it through `ck_fs_write_if`, and the native
+/// store rewrites the whole list every time a job fires. A field only one of
+/// them names is dropped by the other, silently, because both sides parse
+/// with `ignore_unknown_fields`; a field the guest writes and the fire path
+/// does not know is erased from the operator's schedule the first night cron
+/// runs. The same argument the writable rules (`nextId`, `validateTask`) make
+/// for being here rather than in `store.zig`, applied to the shape itself.
+pub const Entry = struct {
+    id: []const u8,
+    /// The 5-field spec, stored as written so `schedule list` can show the
+    /// user their own text rather than a normalised re-rendering of it.
+    cron: []const u8,
+    /// The prompt handed to the agent, exactly as `clanker run` would take it.
+    task: []const u8,
+    /// Provider/model overrides, absent meaning "whatever the config says at
+    /// fire time" rather than a snapshot of what it said at add time.
+    provider: ?[]const u8 = null,
+    model: ?[]const u8 = null,
+    /// Minutes east of UTC that the cron fields are read at. See
+    /// `schedule_cron.zig`: fixed, never a DST-aware zone.
+    tz_offset_minutes: i32 = 0,
+    enabled: bool = true,
+    created: i64 = 0,
+    /// Wall-clock second of the last fire, scheduled or manual, and the point
+    /// the next fire is computed from. Deliberately the moment it ran and not
+    /// the slot it ran for: that is what makes a machine that slept through a
+    /// day of windows fire once on wake and then resume, instead of working
+    /// through the backlog one window per invocation. See the missed-run
+    /// policy in docs/prds/0009-schedule.md.
+    last_run: i64 = 0,
+    /// "", "ok" or "error", the outcome of that last fire.
+    last_status: []const u8 = "",
+    runs: u32 = 0,
+    failures: u32 = 0,
+};
+
+/// One line of `state/schedule/log.jsonl`. Every field defaults, so a line
+/// written by an older build (or a hand-edit) still reads back instead of
+/// being skipped as malformed, which is how one fire loses its record.
+pub const Record = struct {
+    ts: i64 = 0,
+    id: []const u8 = "",
+    cron: []const u8 = "",
+    task: []const u8 = "",
+    /// "due" (fired by `run-due`) or "manual" (fired by `schedule run <id>`).
+    trigger: []const u8 = "",
+    /// The fire window that made it due, or 0 for a manual run. Distinct from
+    /// `ts`: cron granularity is a minute and `run-due` may be seconds late.
+    due_at: i64 = 0,
+    /// Windows that elapsed and were deliberately not backfilled.
+    skipped: u32 = 0,
+    ok: bool = false,
+    duration_ms: u64 = 0,
+    err: []const u8 = "",
+};
+
 /// Same alphabet `session.validSessionId` uses: schedule ids are typed into
 /// `schedule remove`/`enable` and into `/api/schedule/<id>`, so they stay
 /// path-safe and short.
@@ -116,6 +176,62 @@ pub fn validateCron(cron_text: []const u8, now: i64, tz_offset_minutes: i32) Cro
     if (!validTzOffset(tz_offset_minutes)) return CronValidationError.ParseFailed;
     const spec = cron.parse(cron_text) catch return CronValidationError.ParseFailed;
     _ = spec.nextAfter(now, tz_offset_minutes) orelse return CronValidationError.NeverFires;
+}
+
+test "the shared record shapes carry the fields both writers of the files need" {
+    // The field lists are pinned, not just exercised: a second copy of this
+    // shape is what let the guest's ledger reader go without `due_at` while
+    // the runner wrote one on every line.
+    const entry_fields = [_][]const u8{
+        "id",       "cron",              "task",    "provider",
+        "model",    "tz_offset_minutes", "enabled", "created",
+        "last_run", "last_status",       "runs",    "failures",
+    };
+    const record_fields = [_][]const u8{
+        "ts",      "id", "cron",        "task", "trigger", "due_at",
+        "skipped", "ok", "duration_ms", "err",
+    };
+    try std.testing.expectEqual(entry_fields.len, @typeInfo(Entry).@"struct".fields.len);
+    inline for (entry_fields, @typeInfo(Entry).@"struct".fields) |want, field| {
+        try std.testing.expectEqualStrings(want, field.name);
+    }
+    try std.testing.expectEqual(record_fields.len, @typeInfo(Record).@"struct".fields.len);
+    inline for (record_fields, @typeInfo(Record).@"struct".fields) |want, field| {
+        try std.testing.expectEqualStrings(want, field.name);
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // An entry with no override keeps the key out of the file entirely, so
+    // the store stays hand-editable (`emit_null_optional_fields = false` is
+    // what the native writer relies on; a null would force a hand-editor to
+    // decide its meaning).
+    var enc: std.Io.Writer.Allocating = .init(arena);
+    var s = std.json.Stringify{ .writer = &enc.writer, .options = .{ .emit_null_optional_fields = false } };
+    try s.write([_]Entry{.{ .id = "sch-1", .cron = "* * * * *", .task = "say hi" }});
+    const raw = enc.written();
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"provider\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "\"model\"") == null);
+    const back = try std.json.parseFromSliceLeaky([]Entry, arena, raw, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(?[]const u8, null), back[0].provider);
+    try std.testing.expectEqualStrings("sch-1", back[0].id);
+
+    // A ledger line the runner wrote reads back whole, `due_at` included: a
+    // fire that ran late still says which window it answered.
+    const line = "{\"ts\":200,\"id\":\"sch-1\",\"cron\":\"* * * * *\",\"task\":\"t\"," ++
+        "\"trigger\":\"due\",\"due_at\":60,\"skipped\":0,\"ok\":true,\"duration_ms\":5,\"err\":\"\"}";
+    const rec = try std.json.parseFromSliceLeaky(Record, arena, line, .{ .ignore_unknown_fields = true });
+    try std.testing.expectEqual(@as(i64, 200), rec.ts);
+    try std.testing.expectEqual(@as(i64, 60), rec.due_at);
+    try std.testing.expect(rec.ok);
+
+    // A short line from an older build still reads, rather than costing its
+    // fire: every field defaults.
+    const partial = try std.json.parseFromSliceLeaky(Record, arena, "{\"ts\":1,\"id\":\"sch-1\"}", .{});
+    try std.testing.expectEqual(@as(i64, 0), partial.due_at);
+    try std.testing.expectEqualStrings("", partial.trigger);
 }
 
 test "validId matches the session-id alphabet" {

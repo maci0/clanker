@@ -340,7 +340,7 @@ var EMPTY_SLOT_CLASS = "rounded-plate border border-dashed border-rule bg-[color
 var QUICK_ADD_CLASS = "group rounded-b-plate-lg border-t border-rule/50 bg-transparent px-2 py-2 [hidden]:hidden group-data-[collapsed=true]:hidden";
 var ADD_TRIGGER_CLASS = "flex w-full cursor-pointer items-center gap-2 rounded-plate-lg border-0 bg-transparent px-2 py-2 font-sans text-sm text-fg-muted transition-colors hover:bg-[color-mix(in_srgb,var(--fg)_8%,transparent)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 group-data-[adding=true]:hidden pointer-coarse:min-h-11 [&_.icon]:opacity-60";
 var ADD_FORM_CLASS = "hidden flex-col gap-2 group-data-[adding=true]:flex";
-var ADD_TEXTAREA_CLASS = "max-h-[140px] min-h-[54px] w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-2 font-sans text-sm leading-snug shadow-[var(--lift-low)] max-[640px]:[font-size:16px] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_25%,transparent)]";
+var ADD_TEXTAREA_CLASS = "max-h-[140px] min-h-[54px] w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-2 font-sans text-sm leading-snug shadow-[var(--lift-low)] max-[640px]:[font-size:16px] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[var(--ring)]";
 var ADD_ACTIONS_CLASS = "flex items-center gap-2 [&_button]:min-h-8 [&_button]:rounded-plate-lg [&_button]:text-sm pointer-coarse:[&_button]:min-h-11";
 var ADD_CANCEL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer border-0 bg-transparent px-2 text-base leading-none text-fg-muted hover:text-fg";
 var LANE_CONTROL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
@@ -699,7 +699,7 @@ var LABEL_NAME_CONFIRM_CLASS = "flex-none cursor-pointer rounded-plate-lg border
 var WIP_BANNER_CLASS = "mx-2 my-1 rounded-plate border border-warn bg-[color-mix(in_srgb,var(--warn)_12%,var(--surface))] px-2 py-1 text-center text-xs font-semibold text-warn-text";
 var DETAIL_META_LABEL_CLASS = "text-2xs font-semibold uppercase tracking-label text-fg-muted";
 var DETAIL_META_VALUE_CLASS = "inline-flex items-center gap-1 rounded-plate-lg bg-surface-2 px-2 py-1 text-sm text-fg";
-var DETAIL_DESC_AREA_CLASS = "max-h-[300px] min-h-20 w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-3 font-sans text-sm leading-normal transition-colors focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_20%,transparent)]";
+var DETAIL_DESC_AREA_CLASS = "max-h-[300px] min-h-20 w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-3 font-sans text-sm leading-normal transition-colors focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[var(--ring)]";
 var ACTIVITY_CLASS = "flex flex-col gap-0";
 var ACTIVITY_ITEM_CLASS = "flex gap-3 border-b border-rule py-2 last:border-b-0";
 var ACTIVITY_AVATAR_CLASS = "mr-0 mt-px flex h-8 w-8 flex-none select-none items-center justify-center rounded-full text-xs font-bold tracking-wide";

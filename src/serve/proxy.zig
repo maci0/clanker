@@ -1798,6 +1798,7 @@ test "upstreamUrl keeps embeddings, count_tokens, and files off the chat path" {
     defer gpa.free(msgs);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages", msgs);
 }
+
 test "sseFrameEnd finds both LF and CRLF frame separators" {
     try std.testing.expectEqual(@as(?usize, 0), sseFrameEnd("\n\nrest"));
     try std.testing.expectEqual(@as(?usize, 0), sseFrameEnd("\r\n\r\nrest"));

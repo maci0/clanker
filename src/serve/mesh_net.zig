@@ -441,9 +441,27 @@ fn readLoop(rt: *Runtime, stream: std.Io.net.Stream) void {
 /// `remember` close whatever number they hold, so a stale entry is not just a
 /// burned slot: once the OS reissues that number to a new connection, the
 /// next teardown closes someone else's socket.
+///
+/// The row is released outright, the way `leave` releases it, rather than
+/// only blanking the fd. Keeping `used = true` made the table monotonic: the
+/// slot never came back, so `remember`'s free-slot scan found nothing after
+/// `mesh.max_members` distinct peers had connected once over a serve's life,
+/// and every later JOIN was acked `accepted` and then registered nowhere, so
+/// its frames landed in no member row and fan-out to it went nowhere. The
+/// departed peer also stayed listed as `up: false` forever, which is what
+/// `leave` has never done.
+///
+/// The id is copied out first: `m.* = .{}` clears the buffer the slice points
+/// into, and the note is what tells a subscribed UI the row is gone.
 fn unregisterFdLocked(rt: *Runtime, fd: std.posix.fd_t) void {
+    var id_buf: [64]u8 = undefined;
     for (&rt.members) |*m| {
-        if (m.used and m.fd == fd) m.fd = -1;
+        if (!m.used or m.fd != fd) continue;
+        const id = mid(m);
+        const n = @min(id.len, id_buf.len);
+        @memcpy(id_buf[0..n], id[0..n]);
+        m.* = .{};
+        live.noteMesh("leave", id_buf[0..n]);
     }
 }
 
@@ -943,4 +961,56 @@ test "pendingTimedOut honors the prompt window" {
     try std.testing.expect(!pendingTimedOut(0, timeout - 1, timeout));
     try std.testing.expect(pendingTimedOut(0, timeout, timeout));
     try std.testing.expect(pendingTimedOut(1_000, 1_000 + timeout + 1, timeout));
+}
+
+fn testRuntime() Runtime {
+    return .{
+        .io = undefined,
+        .gpa = std.testing.allocator,
+        .our_id = "self",
+        .our_name = "self",
+        .listen = "127.0.0.1:0",
+        .admission = .open,
+        .seeds = &.{},
+        .max_frame = 64 * 1024,
+        .max_pending = max_pending_joins,
+        .prompt_timeout_ns = 0,
+        .on_chat = null,
+        .server = null,
+    };
+}
+
+test "a departed peer releases its member slot" {
+    var rt = testRuntime();
+    // Fill every slot, then let the first peer go the way a dropped
+    // connection does: the read loop ends and unregisters its fd. The next
+    // peer has to land in the freed slot. With the row only blanked instead of
+    // released, the table stayed at `max_members` used entries and this
+    // registration silently found no slot, so the JOIN had been acked
+    // `accepted` for a peer the mesh could not address.
+    for (0..mesh.max_members) |i| {
+        var buf: [32]u8 = undefined;
+        const id = try std.fmt.bufPrint(&buf, "peer-{d}", .{i});
+        remember(&rt, id, id, @intCast(i + 10));
+    }
+    try std.testing.expectEqual(@as(usize, mesh.max_members), blk: {
+        var n: usize = 0;
+        for (&rt.members) |*m| {
+            if (m.used) n += 1;
+        }
+        break :blk n;
+    });
+
+    unregisterFdLocked(&rt, 10);
+    try std.testing.expect(findMember(&rt, "peer-0") == null);
+    remember(&rt, "late", "late", 99);
+    const m = findMember(&rt, "late") orelse return error.PeerDidNotGetAFreeSlot;
+    try std.testing.expectEqual(@as(std.posix.fd_t, 99), m.fd);
+
+    // The key is the fd, not the name: a stale reader unwinding on the old
+    // descriptor must not unregister the peer that now holds it.
+    unregisterFdLocked(&rt, 42);
+    try std.testing.expect(findMember(&rt, "late") != null);
+    unregisterFdLocked(&rt, 99);
+    try std.testing.expect(findMember(&rt, "late") == null);
 }

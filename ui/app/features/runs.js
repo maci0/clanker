@@ -433,9 +433,9 @@ function diffRuns(aId, bId){
     if (!preCompareGraph && lastGraph) preCompareGraph = lastGraph;
     drawRun(ga);
     setTimeout(function(){
-      added.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.style.outline="2px solid var(--ok)"; }); });
+      added.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.style.boxShadow="var(--ring-ok)"; }); });
       removed.forEach(function(k){ el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(k.slice(0,16))!==-1) el2.setAttribute("data-ok","false"); }); });
-      changed.forEach(function(k){ var lab=k.split(": ")[0]; el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="0 0 0 2px var(--warn)"; }); });
+      changed.forEach(function(k){ var lab=k.split(": ")[0]; el.runGraph.querySelectorAll("[data-run-node]").forEach(function(el2){ if((el2.getAttribute("data-label")||"").indexOf(lab.slice(0,16))!==-1) el2.style.boxShadow="var(--ring-warn)"; }); });
     }, 260);
     if(status) status.textContent = "Showing A in the graph · "+added.length+" added · "+removed.length+" removed · "+changed.length+" changed";
     if(clearBtn) clearBtn.hidden=false;

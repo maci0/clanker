@@ -17,6 +17,7 @@
 
 const std = @import("std");
 const unicode = std.unicode;
+const fuzz_corpus = @import("fuzz_corpus.zig");
 
 const wide_ranges = [_][2]u21{
     .{ 0x1100, 0x115F }, // Hangul Jamo
@@ -75,8 +76,30 @@ const wide_ranges = [_][2]u21{
 
 /// Combining marks (Mn/Me) occupy no cell of their own; they modify the
 /// preceding codepoint. Only the common ranges actually seen in practice.
+///
+/// The Hebrew and Arabic entries are not optional extras: they are the
+/// diacritics those scripts use as part of ordinary orthography rather than
+/// as decoration. Counted one cell each, "كَ" measured two columns for one
+/// glyph and "שָׁ" four, so every border, pad and truncation point around
+/// Arabic or Hebrew text drifted. The ranges skip the spacing members those
+/// two blocks also hold — U+05BE maqaf and U+05C0 paseq are punctuation, and
+/// U+0640 tatweel is a spacing modifier (Lm) the terminal draws in a cell of
+/// its own — because dropping those in would take a column away from every
+/// hyphenated Hebrew line and every stretched Arabic word.
+///
+/// Indic and other abugidas are still out: their marks reorder around the
+/// base consonant, so a zero-width mark table cannot describe a cluster and
+/// the base-plus-mark rule is all that holds there.
 const zero_width_ranges = [_][2]u21{
     .{ 0x0300, 0x036F }, // Combining Diacritical Marks
+    .{ 0x0591, 0x05BD }, // Hebrew points (stops 0x05BE maqaf and 0x05C0 paseq)
+    .{ 0x05BF, 0x05BF }, // Hebrew point rafe
+    .{ 0x05C1, 0x05C2 }, // Hebrew points shin/sin dot
+    .{ 0x05C4, 0x05C5 }, // Hebrew points upper/lower dot
+    .{ 0x05C7, 0x05C7 }, // Hebrew point qamats qatan
+    .{ 0x064B, 0x065F }, // Arabic harakat (stops 0x0640 tatweel, which is Lm)
+    .{ 0x0670, 0x0670 }, // Arabic superscript alef
+    .{ 0x06D6, 0x06ED }, // Arabic Quranic marks, incl. the Cf ayah signs
     .{ 0x200B, 0x200F }, // zero-width space/joiners/marks
     .{ 0x20D0, 0x20FF }, // Combining Diacritical Marks for Symbols
     .{ 0xFE00, 0xFE0F }, // variation selectors
@@ -243,6 +266,69 @@ test "combining marks are width 0" {
     try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x0301)); // combining acute accent
 }
 
+test "arabic harakat are width 0" {
+    // U+064E fatha and friends are Mn: they sit on the letter and take no
+    // cell of their own. Counted as 1 each, "كَ" measured two columns for
+    // one glyph and every box border around Arabic text drifted.
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x064B)); // fathatan
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x064E)); // fatha
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x0655)); // hamza below
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x065F)); // wavy hamza below
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x0670)); // superscript alef
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x06DD)); // end of ayah (Cf)
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x06E5)); // small waw below
+}
+
+test "hebrew points are width 0" {
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x0591)); // etnahta
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x05B0)); // sheva
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x05B7)); // qamats
+    try std.testing.expectEqual(@as(u2, 0), codepointWidth(0x05C7)); // qamats qatan
+}
+
+test "a vowelled arabic word measures as its base letters" {
+    // "كَ" = U+0643 + U+064E: one letter, one cell, whatever the marks on it.
+    try std.testing.expectEqual(@as(usize, 1), displayWidth("\xd9\x83\xd9\x8e"));
+    try std.testing.expectEqual(@as(usize, 4), displayWidth("\xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d"));
+}
+
+test "a pointed hebrew word measures as its base letters" {
+    // "שָׁ" = U+05E9 + U+05C1 + U+05B7 + U+05C1.
+    try std.testing.expectEqual(@as(usize, 1), displayWidth("\xd7\xa9\xd7\x81\xd6\xb7\xd7\x81"));
+}
+
+test "arabic marks join their letter into one cluster" {
+    var i: usize = 0;
+    const c = nextCluster("\xd9\x83\xd9\x8e", &i).?;
+    try std.testing.expectEqualStrings("\xd9\x83\xd9\x8e", c.bytes);
+    try std.testing.expectEqual(@as(usize, 1), c.width);
+    try std.testing.expectEqual(@as(usize, 4), i);
+}
+
+test "arabic tatweel and the arabic base letters still take a cell" {
+    // The kashida is a spacing modifier (Lm), not a mark: it joins letters
+    // horizontally and the terminal draws it in its own column.
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x0640));
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x0628)); // beh
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x0643)); // kaf
+    try std.testing.expectEqual(@as(usize, 3), displayWidth("\xd8\xa8\xd9\x80\xd8\xaa"));
+}
+
+test "hebrew maqaf and paseq are spacing punctuation" {
+    // U+05BE and U+05C0 are Pd/Po, not marks: dropping them into the
+    // zero-width table would eat a cell out of every hyphenated Hebrew line.
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x05BE));
+    try std.testing.expectEqual(@as(u2, 1), codepointWidth(0x05C0));
+}
+
+test "truncation does not cut a vowelled letter in half" {
+    // A width-1 budget must keep the whole letter-plus-mark cell, not the
+    // letter without its mark.
+    const s = "\xd9\x83\xd9\x8e";
+    try std.testing.expectEqualStrings(s, truncateToWidth(s, 1));
+    try std.testing.expectEqualStrings("", truncateToWidth(s, 0));
+}
+
 test "BOM (U+FEFF) is zero-width" {
     try std.testing.expectEqual(@as(u2, 0), codepointWidth(0xFEFF));
 }
@@ -369,4 +455,83 @@ test "a family emoji followed by text walks on to the next cluster" {
     var i: usize = 0;
     _ = nextCluster(s, &i).?;
     try std.testing.expectEqualStrings("!", (nextCluster(s, &i).?).bytes);
+}
+
+/// The shapes the layout code actually measures: a streamed delta that ends
+/// mid-codepoint, a ZWJ family, a VS16 heart, a truncated tail. A corpus of
+/// these reaches the branches random bytes reach only by luck, and every one
+/// of them is bytes off a provider, a tool, or a terminal, so all of them are
+/// untrusted.
+const layout_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry(""),
+    fuzz_corpus.entry("hello"),
+    fuzz_corpus.entry("\xe4\xb8\xad\xe6\x96\x87"),
+    fuzz_corpus.entry("\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7"),
+    fuzz_corpus.entry("\xe2\x9d\xa4\xef\xb8\x8f"),
+    fuzz_corpus.entry("a\xe4\xb8"),
+    fuzz_corpus.entry("\x80\xff\xbf"),
+    fuzz_corpus.entry("\x1b[31m\x07"),
+    fuzz_corpus.entry("a\nb\r\nc"),
+};
+
+test "fuzz: any byte string lays out and truncates inside its own columns" {
+    // The unit tests above are the shapes someone thought of. These are the
+    // invariants, checked on every byte string: the cluster walk is a total
+    // partition of the input (no gap, no overlap, no step that fails to
+    // advance, which is the hang and the out-of-bounds slice the std
+    // iterator brings), and a truncation is the longest prefix whose columns
+    // still fit (no over-cut through a cluster, and no under-cut that drops a
+    // cluster that would have fitted). Both loops here are the shipped ones,
+    // so a logic error shows up as a liveness failure the fuzzer can see
+    // rather than as a silently wrong column count.
+    const Ctx = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [512]u8 = undefined;
+            const s = buf[0..smith.slice(&buf)];
+
+            var i: usize = 0;
+            var walked: usize = 0;
+            var total: usize = 0;
+            while (nextCluster(s, &i)) |c| {
+                try std.testing.expect(c.bytes.len > 0);
+                try std.testing.expect(c.width >= 1 and c.width <= 2);
+                // Contiguity is what rules out a step that advanced `i` past
+                // bytes it did not report, and a skip that would hide them.
+                try std.testing.expectEqualStrings(c.bytes, s[walked..i]);
+                walked = i;
+                total += c.width;
+            }
+            try std.testing.expectEqual(s.len, i);
+            try std.testing.expectEqual(total, displayWidth(s));
+            try std.testing.expect(total <= 2 * s.len);
+
+            // Sampled budgets rather than every column: 0 and 1 for the empty
+            // and single-cluster ends, the middle, both sides of the exact fit,
+            // and one past it. The bound is checked at each, so a cut that
+            // ignores `max_cols` fails on the sample that crosses it.
+            const budgets = [_]usize{
+                0,
+                1,
+                total / 2,
+                if (total > 0) total - 1 else 0,
+                total,
+                total + 1,
+            };
+            for (budgets) |max_cols| {
+                const cut = truncateToWidth(s, max_cols);
+                try std.testing.expect(std.mem.startsWith(u8, s, cut));
+                try std.testing.expect(displayWidth(cut) <= max_cols);
+                if (cut.len == s.len) {
+                    try std.testing.expect(total <= max_cols);
+                } else {
+                    // The next cluster is the one that did not fit, so the cut
+                    // is maximal: keeping it would overrun the budget.
+                    var j = cut.len;
+                    const next = nextCluster(s, &j).?;
+                    try std.testing.expect(displayWidth(cut) + next.width > max_cols);
+                }
+            }
+        }
+    };
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &layout_fuzz_corpus });
 }

@@ -26,13 +26,13 @@ Version column" without trusting the git history alone.
 
 `patternfly.min.css` was removed with the Tailwind port: every `pf-v6-u-*`
 utility and every `pf-v6-c-*` component rule became a utility or a hand-written
-rule in `ui/app/app.css`, so the sheet was unlinked first and then deleted from
+rule in `ui/app/tailwind.src.css`, so the sheet was unlinked first and then deleted from
 the tree and the host wiring (`ui/vendor.zig`, `cli.zig`, `webui_assets.zig`,
 the size gate). Its subset script (`scripts/subset-patternfly.py`) and the
 `@font-face` caveat went with it. A few `pf-v6-*` class names survive in
 `ui/app/app.js` and `ui/app/core/plugins.js` as DOM query hooks and class
 labels; no shipped stylesheet matches them, and the `--pf-t--global--*` aliases
-in `app.css` are kept only so any rule naming a token directly still resolves
+in `tailwind.src.css` are kept only so any rule naming a token directly still resolves
 onto the cabinet scale.
 
 `patternfly-addons.css` was removed 2026-08-26: it stayed unlinked from

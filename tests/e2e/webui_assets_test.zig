@@ -34,12 +34,12 @@ test "every webui asset path renders its own body from the shared guest" {
     defer srv.stop(io);
 
     var buf: [128]u8 = undefined;
-    try harness.waitHttp(io, gpa, try url(&buf, webui, "/webui/app.css"), 8000);
+    try harness.waitHttp(io, gpa, try url(&buf, webui, "/webui/tailwind.css"), 8000);
 
     // One marker per path that only that file can produce, so a guest handing
     // back a previous call's output would fail rather than look plausible.
     const cases = [_]struct { path: []const u8, needle: []const u8 }{
-        .{ .path = "/webui/app.css", .needle = "{" },
+        .{ .path = "/webui/tailwind.css", .needle = "tailwindcss" },
         .{ .path = "/webui/app.js", .needle = "import" },
         .{ .path = "/webui/core/utils.js", .needle = "export" },
         .{ .path = "/webui/lib/markdown.js", .needle = "export" },

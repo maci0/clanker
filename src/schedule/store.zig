@@ -16,11 +16,15 @@
 //!
 //! What an entry may say is not here: `nextId` and `validateTask` live in
 //! `tools/zig/schedule_logic.zig`, which the guest that writes this file and
-//! `command.zig` both link. A second copy of either rule would be one the
-//! writer does not enforce, which is how a native-only cap becomes a cap the
-//! model can route around by calling the tool.
+//! `command.zig` both link, and so do the `Entry` and `Record` shapes. A
+//! second copy of either rule would be one the writer does not enforce, which
+//! is how a native-only cap becomes a cap the model can route around by
+//! calling the tool; a second copy of the shape is how a field the guest
+//! writes is erased by the next fire, since both sides parse with
+//! `ignore_unknown_fields`.
 
 const std = @import("std");
+const logic = @import("schedule_logic");
 const ensure_dir = @import("../util/ensure_dir.zig");
 const file_lock = @import("../util/file_lock.zig");
 const cas_lock = @import("../util/cas_lock.zig");
@@ -66,52 +70,15 @@ pub const Error = error{
 
 /// One scheduled entry. Field names are the JSON keys; `state/schedule.json`
 /// is a plain array of these and is meant to be readable and hand-editable.
-pub const Entry = struct {
-    id: []const u8,
-    /// The 5-field spec, stored as written so `schedule list` can show the
-    /// user their own text rather than a normalised re-rendering of it.
-    cron: []const u8,
-    /// The prompt handed to the agent, exactly as `clanker run` would take it.
-    task: []const u8,
-    /// Provider/model overrides, absent meaning "whatever the config says at
-    /// fire time" rather than a snapshot of what it said at add time.
-    provider: ?[]const u8 = null,
-    model: ?[]const u8 = null,
-    /// Minutes east of UTC that the cron fields are read at. See schedule_cron.zig:
-    /// fixed, never a DST-aware zone.
-    tz_offset_minutes: i32 = 0,
-    enabled: bool = true,
-    created: i64 = 0,
-    /// Wall-clock second of the last fire, scheduled or manual, and the point
-    /// the next fire is computed from. Deliberately the moment it ran and not
-    /// the slot it ran for: that is what makes a machine that slept through a
-    /// day of windows fire once on wake and then resume, instead of working
-    /// through the backlog one window per invocation. See the missed-run
-    /// policy in docs/prds/0009-schedule.md.
-    last_run: i64 = 0,
-    /// "", "ok" or "error", the outcome of that last fire.
-    last_status: []const u8 = "",
-    runs: u32 = 0,
-    failures: u32 = 0,
-};
+/// The shape itself lives in `tools/zig/schedule_logic.zig`, because the guest
+/// that edits this file and this store that rewrites it are two writers of one
+/// format, and a field only one of them names is dropped by the other.
+pub const Entry = logic.Entry;
 
-/// One line of `state/schedule/log.jsonl`.
-pub const Record = struct {
-    ts: i64,
-    id: []const u8,
-    cron: []const u8,
-    task: []const u8,
-    /// "due" (fired by `run-due`) or "manual" (fired by `schedule run <id>`).
-    trigger: []const u8,
-    /// The fire window that made it due, or 0 for a manual run. Distinct from
-    /// `ts`: cron granularity is a minute and `run-due` may be seconds late.
-    due_at: i64 = 0,
-    /// Windows that elapsed and were deliberately not backfilled.
-    skipped: u32 = 0,
-    ok: bool,
-    duration_ms: u64 = 0,
-    err: []const u8 = "",
-};
+/// One line of `state/schedule/log.jsonl`. Same reason, and the runner writes
+/// every field of it, so a reader with a private shorter copy shows a ledger
+/// with a hole in it rather than one that says what happened.
+pub const Record = logic.Record;
 
 /// The whole store plus the lock that serialises writing it back. Callers do
 /// `var s = try open(...); defer s.close();` and then read `s.entries`,

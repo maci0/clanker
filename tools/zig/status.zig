@@ -29,7 +29,15 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     _ = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
 
-    const cfg = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, lib.harnessConfig(), .{ .ignore_unknown_fields = true }) catch StatusInfo{};
+    // `harnessConfig()` answers "{}" when the call is denied or the host
+    // could not serialize, and parsing that into `StatusInfo{}` yields an
+    // instance with no name and an empty peer list: the same object an
+    // instance genuinely configured with neither reads as. Saying so beats
+    // reporting an identity and a peer roster the harness never sent.
+    const raw = lib.harnessConfig();
+    if (std.mem.eql(u8, raw, "{}")) return lib.fail(out, "the harness config is not available to this tool");
+    const cfg = std.json.parseFromSliceLeaky(StatusInfo, lib.alloc, raw, .{ .ignore_unknown_fields = true }) catch
+        return lib.fail(out, "the harness config could not be read");
     const inst = cfg.instance orelse InstanceInfo{};
     const peers = cfg.peers;
 

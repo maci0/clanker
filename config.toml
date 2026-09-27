@@ -418,6 +418,9 @@ id = "main"
 [[peers]]
 name = "dummy-down"
 url = "http://127.0.0.1:9"
+# Optional mesh allowlist key: the id this peer JOINS with, when it differs
+# from `name`. Empty (the default) matches a JOIN on name.
+# id = "lab-node"
 
 [modules]
 mcp = true

@@ -262,6 +262,12 @@ pub fn build(b: *std.Build) void {
             // symbols and omit zig_exe so shipped artifacts do not encode the
             // build host.
             .strip = optimize != .Debug,
+            // Stack canaries. Zig's default leaves them off, the linux
+            // release targets link musl (whose _FORTIFY_SOURCE is a no-op),
+            // and no other flag in this build adds one, so a buffer overrun
+            // in a shipped binary had no stack guard behind it. Native
+            // modules only: the wasm guests below have no protector runtime.
+            .stack_protector = true,
             .imports = linkedHelperImports(b, exe_target, optimize, &.{
                 .{ .name = "zwasm", .module = zwasm_mod },
                 .{ .name = "build_options", .module = build_options.createModule() },
@@ -307,6 +313,7 @@ pub fn build(b: *std.Build) void {
             .target = exe_target,
             .optimize = optimize,
             .strip = optimize != .Debug,
+            .stack_protector = true,
             .link_libc = true,
             .imports = &.{
                 .{ .name = "build_options", .module = build_options.createModule() },

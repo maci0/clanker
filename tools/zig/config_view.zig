@@ -21,8 +21,10 @@
 //! merged value's type decides how the raw value must parse. Table
 //! sections (providers, models, mcp_servers) are refused: their disk shape
 //! is quoted [models."p/m"] / [[providers]] tables this line editor does
-//! not speak. The change applies from the next command; the running
-//! process keeps the config it loaded.
+//! not speak, and so are the run-time fields the struct carries but no
+//! file accepts (`agent.shared_root` and the two beside it). The change
+//! applies from the next command; the running process keeps the config it
+//! loaded.
 //! Input:  {"action": "dump" | "get" | "set", "section"?, "key"?, "value"?}
 //! Output: {"ok": true, "text": "<TOML dump, JSON section, value, or confirmation>"}
 
@@ -134,6 +136,12 @@ fn setKey(parsed: std.json.Value, out: *lib.Out) !void {
     if (logic.forbiddenReason(key)) |k|
         return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "set refuses '{s}': it changes sandbox or safety policy; the operator edits config.local.toml by hand", .{k}));
 
+    // Carried in the merged JSON because the host serializes the struct, but
+    // no file key: writing one would be an assignment the loader warns about
+    // and drops, reported here as a pin that took effect.
+    if (logic.runtimeOnlyReason(key)) |k|
+        return lib.fail(out, try std.fmt.allocPrint(lib.alloc, "set refuses '{s}': it is a run-time field, not a config key; there is nothing for config.local.toml to set", .{k}));
+
     const merged = mergedConfig() catch return lib.fail(out, "could not parse the merged harness config");
     // The merged config is struct-serialized, defaults included, so a key
     // it does not carry is not in the loader's schema: a typo, refused
@@ -147,7 +155,9 @@ fn setKey(parsed: std.json.Value, out: *lib.Out) !void {
     };
 
     const original: []const u8 = if (lib.readConfigFile("config.local")) |l| l.text else "";
-    const new_text = try logic.setKey(lib.alloc, original, key, rendered);
+    // `fileKey`, not `key`: the merged JSON is keyed by struct field names, and
+    // `[memory.vector]`'s two keys are the one place those differ on disk.
+    const new_text = try logic.setKey(lib.alloc, original, logic.fileKey(key), rendered);
     lib.fsWrite("config.local.toml", new_text) catch |err| return lib.failErr(out, err, "writing config.local.toml");
 
     const msg = try std.fmt.allocPrint(lib.alloc, "set {s} = {s} in config.local.toml (was {s}); applies from the next command", .{ key, rendered, try valueText(existing) });

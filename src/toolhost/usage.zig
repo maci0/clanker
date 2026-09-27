@@ -76,18 +76,30 @@ pub const Usage = struct {
         return std.mem.lessThan(u8, a.name, b.name);
     }
 
-    pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) Usage {
+    /// Reads the tally at `path`.
+    ///
+    /// A missing file is the fresh-start case and yields an empty tally. Any
+    /// other failure is returned, because the file being there but unreadable
+    /// is not the same fact as there being no file: a caller that merges this
+    /// tally into a new one and writes it back would, on the old
+    /// empty-tally-on-any-failure behavior, replace a tally it merely failed
+    /// to read with a file holding this run's increments alone. Every count
+    /// ever recorded would be gone, with nothing in the log to say so.
+    pub fn load(io: std.Io, arena: std.mem.Allocator, base: std.Io.Dir) !Usage {
         var u = Usage{};
-        const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch return u;
-        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return u;
-        if (parsed != .object) return u;
+        const raw = base.readFileAlloc(io, path, arena, .limited(1 << 20)) catch |err| switch (err) {
+            error.FileNotFound => return u,
+            else => return err,
+        };
+        const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, raw, .{}) catch return error.CorruptTally;
+        if (parsed != .object) return error.CorruptTally;
         var it = parsed.object.iterator();
         while (it.next()) |kv| {
             const v = switch (kv.value_ptr.*) {
                 .integer => |i| if (i < 0) continue else @as(u64, @intCast(i)),
                 else => continue,
             };
-            u.counts.put(arena, kv.key_ptr.*, v) catch continue;
+            try u.counts.put(arena, kv.key_ptr.*, v);
         }
         return u;
     }
@@ -104,7 +116,16 @@ pub const Usage = struct {
         // Another process may have saved after this Usage was loaded. Merge
         // only this run's increments into its latest snapshot instead of
         // replacing them with our stale absolute counts.
-        var merged = Usage.load(io, arena, base);
+        //
+        // A read that fails here is not a missing tally, it is a tally this
+        // process cannot see, and writing anyway would discard it: the file
+        // would come back holding this run's deltas alone. Keep the counts in
+        // memory, leave the file alone, and name the file in the log so an
+        // operator can look at it.
+        var merged = Usage.load(io, arena, base) catch |err| {
+            log.log(.warn, "tool usage: {s} could not be read ({s}); leaving it as it is rather than writing over it", .{ path, @errorName(err) });
+            return;
+        };
         var delta_it = self.deltas.iterator();
         while (delta_it.next()) |kv| {
             const gop = merged.counts.getOrPut(arena, kv.key_ptr.*) catch return;
@@ -112,14 +133,11 @@ pub const Usage = struct {
             gop.value_ptr.* +|= kv.value_ptr.*;
         }
         var out: std.Io.Writer.Allocating = .init(arena);
-        var s = std.json.Stringify{ .writer = &out.writer };
-        s.beginObject() catch return;
-        var it = merged.counts.iterator();
-        while (it.next()) |kv| {
-            s.objectField(kv.key_ptr.*) catch return;
-            s.write(kv.value_ptr.*) catch return;
-        }
-        s.endObject() catch return;
+        defer out.deinit();
+        serialize(arena, &out, &merged) catch |err| {
+            log.log(.warn, "tool usage: could not encode the tally ({s}); {s} is unchanged", .{ @errorName(err), path });
+            return;
+        };
         // Said rather than swallowed: a tally that silently stops being written
         // decays into a fixed tool set that nobody knows has stopped adapting.
         atomic_write.writeFile(io, base, path, out.written()) catch |err| {
@@ -130,6 +148,22 @@ pub const Usage = struct {
         self.deltas.clearRetainingCapacity();
     }
 };
+
+/// Renders the whole tally as one flat JSON object. Its own function so every
+/// step's error reaches `save`'s single handler: a bare `catch return` per
+/// write made an encoding failure (out of memory) look exactly like a save
+/// that had nothing to write.
+fn serialize(arena: std.mem.Allocator, out: *std.Io.Writer.Allocating, u: *const Usage) !void {
+    _ = arena;
+    var s = std.json.Stringify{ .writer = &out.writer };
+    try s.beginObject();
+    var it = u.counts.iterator();
+    while (it.next()) |kv| {
+        try s.objectField(kv.key_ptr.*);
+        try s.write(kv.value_ptr.*);
+    }
+    try s.endObject();
+}
 
 test "record counts and orders by use" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -208,7 +242,7 @@ test "concurrent process-style saves merge increments" {
             var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
             defer arena_state.deinit();
             const arena = arena_state.allocator();
-            var usage = Usage.load(self.io, arena, self.base);
+            var usage = Usage.load(self.io, arena, self.base) catch Usage{};
             for (0..25) |_| usage.record(arena, "read_file");
             usage.save(self.io, arena, self.base);
         }
@@ -224,6 +258,50 @@ test "concurrent process-style saves merge increments" {
 
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
-    const loaded = Usage.load(io, arena_state.allocator(), tmp.dir);
+    const loaded = try Usage.load(io, arena_state.allocator(), tmp.dir);
     try std.testing.expectEqual(@as(u64, workers.len * 25), loaded.get("read_file"));
+}
+
+test "a corrupt tally is reported and left on disk, not replaced by this run's deltas" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Bytes that are not a tally: the shape a hand edit or a truncated write
+    // leaves behind. Reading them is an error, not an empty tally.
+    try ensure_dir.ensureDir(tmp.dir, io, "state");
+    try atomic_write.writeFile(io, tmp.dir, path, "{not a tally");
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    try std.testing.expectError(error.CorruptTally, Usage.load(io, arena, tmp.dir));
+
+    // The run still counts, and saving must not turn "I could not read the
+    // old tally" into "the old tally is gone": the file keeps its bytes.
+    var u = Usage{};
+    u.record(arena, "read_file");
+    u.save(io, arena, tmp.dir);
+
+    var buf: [64]u8 = undefined;
+    const raw = try tmp.dir.readFile(io, path, &buf);
+    try std.testing.expectEqualStrings("{not a tally", raw);
+    // Still dirty, so the increments are not lost either: a later save that
+    // can read the file merges them in.
+    try std.testing.expect(u.dirty);
+}
+
+test "a missing tally reads as empty, not as an error" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const loaded = try Usage.load(io, arena_state.allocator(), tmp.dir);
+    try std.testing.expectEqual(@as(usize, 0), loaded.counts.count());
 }

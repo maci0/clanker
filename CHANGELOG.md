@@ -5,6 +5,8 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-28
+
 Compatibility-breaking minor. The changes that break a consumer are under
 Breaking and Security, each with the upgrade step; the rest are additive or
 internal.
@@ -143,6 +145,11 @@ internal.
   and escaped before it reaches a prompt, a log line, or a shell. A tool result
   that emitted `</retrieved_knowledge>` verbatim could close a block the
   harness drew around something else.
+- Sandboxed search commands (`rg`, `ast-grep`, `semcode`) refuse `--pre`,
+  `--pre-glob` and `--hostname-bin`. Those flags name a program to run, so a
+  guest that holds a search verb could otherwise execute code the exec
+  allowlist does not name. A command that needs a preprocessor runs outside
+  the sandbox.
 
 ### Added
 
