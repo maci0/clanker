@@ -3335,7 +3335,83 @@ fn prepareHttpFetch(
     } };
 }
 
+/// Query parameter names whose value is a credential. A guest that puts its
+/// key in the URL (the `research` guest's Google calls do) hands it to every
+/// log line that names the URL, and those lines land in `state/logs/`.
+const url_secret_params = [_][]const u8{
+    "key",    "apikey", "api_key",   "access_token", "token",
+    "secret", "sig",    "signature", "password",     "pwd",
+};
+
+const url_redacted_marker = "REDACTED";
+
+/// Scratch size for `urlForLog`. A guest URL longer than this is logged with
+/// its query dropped rather than truncated into a fake host.
+const url_log_buf_len: usize = 1024;
+
+fn urlParamNameIsSecret(name: []const u8) bool {
+    for (url_secret_params) |p| {
+        if (std.ascii.eqlIgnoreCase(name, p)) return true;
+    }
+    return false;
+}
+
+/// `url` with every secret-shaped query value replaced, rendered into `buf`
+/// (which must outlive the log call it feeds). The parameter name survives, so
+/// a log line still says which credential the request carried. Percent
+/// encoding is not decoded, so a name spelled `%6Bey` would pass; the callers
+/// that name a secret do not encode it. Returns `url` itself when there is
+/// nothing to redact, and the query is dropped whole rather than truncated
+/// mid-value when the URL does not fit.
+fn urlForLog(buf: []u8, url: []const u8) []const u8 {
+    const q = std.mem.indexOfScalar(u8, url, '?') orelse return url;
+    if (url.len + url_redacted_marker.len > buf.len) return url[0 .. q + 1];
+
+    @memcpy(buf[0 .. q + 1], url[0 .. q + 1]);
+    var out: usize = q + 1;
+
+    var i: usize = q + 1;
+    while (i <= url.len) {
+        const amp = std.mem.indexOfScalarPos(u8, url, i, '&') orelse url.len;
+        const seg = url[i..amp];
+        if (seg.len > 0) {
+            const eq = std.mem.indexOfScalar(u8, seg, '=');
+            const secret = if (eq) |e| urlParamNameIsSecret(seg[0..e]) else false;
+            if (out != q + 1) {
+                buf[out] = '&';
+                out += 1;
+            }
+            const value: []const u8 = if (secret) blk: {
+                const name = seg[0 .. eq.? + 1];
+                @memcpy(buf[out .. out + name.len], name);
+                out += name.len;
+                break :blk url_redacted_marker;
+            } else seg;
+            @memcpy(buf[out .. out + value.len], value);
+            out += value.len;
+        }
+        if (amp == url.len) break;
+        i = amp + 1;
+    }
+    return buf[0..out];
+}
+
+test "urlForLog drops a credential from the query and keeps the rest" {
+    var buf: [256]u8 = undefined;
+    const redacted = urlForLog(&buf, "https://host/v1?key=SECRET&cx=1234&q=hi");
+    try std.testing.expectEqualStrings("https://host/v1?key=REDACTED&cx=1234&q=hi", redacted);
+
+    // No query, nothing to do, and the caller's slice comes back unchanged.
+    try std.testing.expectEqualStrings("https://host/v1", urlForLog(&buf, "https://host/v1"));
+
+    try std.testing.expectEqualStrings(
+        "https://host/v1?access_token=REDACTED&page=2",
+        urlForLog(&buf, "https://host/v1?access_token=abc123&page=2"),
+    );
+}
+
 fn httpExImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
+    var url_buf: [url_log_buf_len]u8 = undefined;
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -3352,22 +3428,22 @@ fn httpExImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []c
     };
 
     const outcome = httpHeadWithTimeout(h.sandbox.io, args, hdr_buf, http_timeout_ms) orelse {
-        log.log(.warn, "[sandbox] http request to '{s}' timed out after {d}ms", .{ url, http_timeout_ms });
+        log.log(.warn, "[sandbox] http request to '{s}' timed out after {d}ms", .{ urlForLog(&url_buf, url), http_timeout_ms });
         return Err.network;
     };
 
     return switch (outcome) {
         .ok => |r| blk: {
             if (r.status >= 400)
-                log.log(.warn, "[sandbox] http request to '{s}' answered status {d}", .{ url, r.status });
+                log.log(.warn, "[sandbox] http request to '{s}' answered status {d}", .{ urlForLog(&url_buf, url), r.status });
             break :blk writeHttpEnvelope(h, mem_bytes, arena, r.status, hdr_buf[0..r.hdr_len], resp_buf[0..r.body_len]);
         },
         .too_large => blk: {
-            log.log(.warn, "[sandbox] http response from '{s}' exceeded max_http_bytes ({d})", .{ url, h.sandbox.max_http_bytes });
+            log.log(.warn, "[sandbox] http response from '{s}' exceeded max_http_bytes ({d})", .{ urlForLog(&url_buf, url), h.sandbox.max_http_bytes });
             break :blk Err.too_large;
         },
         .transport => |name| blk: {
-            log.log(.warn, "[sandbox] http request to '{s}' failed: {s}", .{ url, name });
+            log.log(.warn, "[sandbox] http request to '{s}' failed: {s}", .{ urlForLog(&url_buf, url), name });
             break :blk Err.network;
         },
     };
@@ -3398,6 +3474,7 @@ fn writeHttpEnvelope(h: *Host, mem_bytes: []u8, arena: std.mem.Allocator, status
 }
 
 fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []const u8, hdr_json: ?[]const u8) u32 {
+    var url_buf: [url_log_buf_len]u8 = undefined;
     var arena_state = std.heap.ArenaAllocator.init(h.sandbox.gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -3412,14 +3489,14 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
     };
 
     const outcome = httpWithTimeout(h.sandbox.io, args, http_timeout_ms) orelse {
-        log.log(.warn, "[sandbox] http request to '{s}' timed out after {d}ms", .{ url, http_timeout_ms });
+        log.log(.warn, "[sandbox] http request to '{s}' timed out after {d}ms", .{ urlForLog(&url_buf, url), http_timeout_ms });
         return Err.network;
     };
 
     return switch (outcome) {
         .ok => |n| h.writeResult(mem_bytes, resp_buf[0..n]),
         .status => |s| blk: {
-            log.log(.warn, "[sandbox] http request to '{s}' failed with status {d}", .{ url, s.code });
+            log.log(.warn, "[sandbox] http request to '{s}' failed with status {d}", .{ urlForLog(&url_buf, url), s.code });
             // The return code stays `Err.network` -- changing it would rewrite
             // the error every existing guest reports for a 4xx. But the status
             // and the server's explanation are the whole content of a 404 or a
@@ -3431,11 +3508,11 @@ fn httpImpl(h: *Host, mem_bytes: []u8, method: u32, url: []const u8, body: []con
             break :blk Err.network;
         },
         .too_large => blk: {
-            log.log(.warn, "[sandbox] http response from '{s}' exceeded max_http_bytes ({d})", .{ url, h.sandbox.max_http_bytes });
+            log.log(.warn, "[sandbox] http response from '{s}' exceeded max_http_bytes ({d})", .{ urlForLog(&url_buf, url), h.sandbox.max_http_bytes });
             break :blk Err.too_large;
         },
         .transport => |name| blk: {
-            log.log(.warn, "[sandbox] http request to '{s}' failed: {s}", .{ url, name });
+            log.log(.warn, "[sandbox] http request to '{s}' failed: {s}", .{ urlForLog(&url_buf, url), name });
             break :blk Err.network;
         },
     };

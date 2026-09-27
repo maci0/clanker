@@ -31,7 +31,7 @@
     "zig"
   ],
   "fs_prefixes": [
-    "."
+    "zig-out/gate-failure.txt"
   ],
   "network_allow": []
 }

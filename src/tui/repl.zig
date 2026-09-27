@@ -65,7 +65,6 @@ const workflows_mod = @import("../agent/workflows.zig");
 const Agent = agent_loop.Agent;
 const json_util = @import("../util/json.zig");
 const log = @import("../util/log.zig");
-const elapsed = @import("../util/elapsed.zig");
 const utf8 = @import("../util/utf8.zig");
 const elapsed_mod = @import("../util/elapsed.zig");
 const syntax = @import("syntax.zig");
@@ -77,7 +76,6 @@ const sampling = @import("../llm/sampling_profiles.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
 const stats_mod = @import("turn_stats.zig");
-const elapsed = @import("../util/elapsed.zig");
 const mascot = @import("mascot.zig");
 const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");

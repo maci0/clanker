@@ -68,6 +68,25 @@ pub const forbidden_keys = [_][]const u8{
     // no green results, inert_gate what stops no-op patches.
     "improve.capability_gate",
     "improve.inert_gate",
+    // Where the sandbox resolves paths. Every relative guest path joins this
+    // root (rootForPath / safeJoin in src/sandbox/host.zig) and every exec'd
+    // child inherits it as cwd, so a set here relocates the whole granted
+    // tree rather than editing anything inside it. Same reasoning as the
+    // exec_pattern_allow git ban: the boundary itself is the operator's.
+    "agent.sandbox_root",
+    // Directory keys. Each redirects what a granted prefix resolves to, or
+    // where a store lands: state_dir moves the session log, spills, exports
+    // and token stats; tools_dir is the manifest directory Registry.load
+    // reads, so pointing it elsewhere hands a run a different set of
+    // declared authority; the rest name where skills, workflows and chains
+    // are read from.
+    "agent.state_dir",
+    "agent.tools_dir",
+    "agent.skills_dir",
+    "agent.workflows_dir",
+    "agent.chains_dir",
+    "agent.tui_plugins_dir",
+    "agent.cli_plugins_dir",
 };
 
 /// Why `key` is refused, when it names policy the model must not set.
@@ -476,6 +495,9 @@ test "forbiddenReason refuses exactly the policy keys" {
     try std.testing.expectEqualStrings("improve.capability_gate", forbiddenReason("improve.capability_gate").?);
     try std.testing.expectEqualStrings("improve.inert_gate", forbiddenReason("improve.inert_gate").?);
     try std.testing.expectEqualStrings("web.allow", forbiddenReason("web.allow").?);
+    try std.testing.expectEqualStrings("agent.sandbox_root", forbiddenReason("agent.sandbox_root").?);
+    try std.testing.expectEqualStrings("agent.state_dir", forbiddenReason("agent.state_dir").?);
+    try std.testing.expectEqualStrings("agent.tools_dir", forbiddenReason("agent.tools_dir").?);
 
     // Neighbours that share a prefix or a section stay settable.
     try std.testing.expectEqual(@as(?[]const u8, null), forbiddenReason("agent.reasoning_effort"));
