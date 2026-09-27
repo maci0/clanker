@@ -664,6 +664,18 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `data-turn-answer`, and a stale PatternFly list wrapper left in the plugin
   rail-tab placement is gone with the framework.
 
+- The chrome vocabulary moved into the Tailwind source's component layer:
+  `meta`, `section-head`, `subsection-head`, `section-output`, `section-list`,
+  `runs`, the run picker and run list head, `more` and its disclosure arrow,
+  `settings-grid/panel/actions`, `toast`/`toasts`/`toast-dismiss`, `overlay`
+  and `overlay-box`, the chip's lamp, the turn's live/found marks, the skip
+  link and `sr-only`. A plugin's markup is its own document and cannot import a
+  JavaScript constant, so these names are the page's public surface and one
+  rule per name is what keeps one meaning per name. `app.css` falls to 44.5K
+  raw; the sheet's budget rises 136 → 152K raw for them. The phone guard for
+  the composer's model selects moved with its desktop rule, since app.css is
+  linked before this sheet and would lose to it. First paint 58.8K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

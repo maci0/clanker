@@ -8,9 +8,22 @@ import test from "node:test";
 import vm from "node:vm";
 
 const here = dirname(fileURLToPath(import.meta.url));
-// These assertions are about shipped behavior; app.css is the cabinet sheet.
+// These assertions are about shipped behavior; app.css is the cabinet sheet,
+// and the chrome vocabulary — the names a plugin also writes by hand — is a
+// component block in the Tailwind source.
 const css = readFileSync(join(here, "..", "app.css"), "utf8");
+const chrome = readFileSync(join(here, "..", "tailwind.src.css"), "utf8");
+// The cascade is app.css then tailwind.css, so a rule's position in this
+// concatenation is the order the browser applies them in.
+const cascade = css + "\n" + chrome;
 const html = readFileSync(join(here, "..", "index.html"), "utf8");
+// The last place a guard appears is the one the browser applies last.
+function lastIndexOfPattern(text, re) {
+  let at = -1;
+  for (const m of text.matchAll(re)) at = m.index;
+  return at;
+}
+
 const uiSrc = readFileSync(join(here, "ui.js"), "utf8");
 
 function ruleBody(selector) {
@@ -139,7 +152,7 @@ test("attaching an image does not wipe the plan/research hint", function () {
 test("toasts expose a visible dismiss control", function () {
   assert.match(uiSrc, /className = "toast-dismiss"/);
   assert.match(uiSrc, /dismiss\.textContent = "Dismiss"/);
-  assert.match(css, /\.toast-dismiss\s*\{/);
+  assert.match(chrome, /\.toast-dismiss\s*\{/);
 });
 
 test("required field labels are marked in CSS", function () {
@@ -671,8 +684,8 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   assert.match(css, /(^|[,\s])select\s*(,[^{]*)?\{/m);
   // The composer's selects are 12px by a later rule, and a media query adds
   // no specificity, so the 16px has to be restated after it.
-  const modelSelectPhone = css.lastIndexOf(".composer .model-select { font-size: 16px; }");
-  const modelSelectDesktop = css.indexOf(".composer .model-select {\n  min-height: 30px;");
+  const modelSelectPhone = lastIndexOfPattern(cascade, /\.composer \.model-select \{ font-size: 16px; \}/g);
+  const modelSelectDesktop = cascade.search(/\.composer \.model-select \{\s*min-height: 30px;/);
   assert.ok(modelSelectDesktop >= 0 && modelSelectPhone > modelSelectDesktop,
     "the phone composer model selects must override the 12px desktop size");
   // These selectors set a smaller size after the page-wide guard. A later
@@ -682,8 +695,8 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   const railField = /<input class="([^"]*)" type="search" id="session-filter"/.exec(html);
   assert.ok(railField, "missing the rail's session filter");
   assert.match(railField[1], /max-\[640px\]:\[font-size:16px\]/, "phone rail search must override the desktop size");
-  const add = css.lastIndexOf(".board-quick-add .board-add-form textarea { font-size: 16px; }");
-  const addDesktop = css.indexOf(".board-quick-add .board-add-form textarea {\n  width: 100%");
+  const add = lastIndexOfPattern(cascade, /\.board-quick-add \.board-add-form textarea \{ font-size: 16px; \}/g);
+  const addDesktop = cascade.search(/\.board-quick-add \.board-add-form textarea \{\s*width: 100%/);
   assert.ok(add > addDesktop, "phone quick-add must override the 13px desktop size");
   // The rooms field carries its own phone guard as a utility, since the class
   // the old selector named is gone.

@@ -1929,7 +1929,7 @@ function showCardDetail(id) {
     var lab = document.createElement("label");
     lab.htmlFor = tick.id;
     lab.textContent = s.text;
-    lab.className = "subtask";
+    lab.setAttribute("data-subtask", "true");
     lab.setAttribute("data-done", String(!!s.done));
     if (blocked.length) {
       lab.setAttribute("data-blocked", "true");
