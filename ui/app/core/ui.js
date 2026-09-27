@@ -245,10 +245,10 @@ export function showLoadError(container, message, retryFn) {
 function openDialog(build) {
   return new Promise(function (resolve) {
     var dlg = document.createElement("dialog");
-    dlg.className = "slack-dialog";
+    dlg.className = "slack-dialog w-[90vw] max-w-[400px] rounded-plate-lg border border-rule bg-surface p-0 shadow-[var(--lift)]";
     var form = document.createElement("form");
     form.method = "dialog";
-    form.className = "slack-dialog-form";
+    form.className = "flex flex-col gap-3 p-6 [&_h3]:m-0 [&_h3]:text-base";
     dlg.appendChild(form);
     build(form, function done(value) {
       dlg.close();
@@ -268,7 +268,7 @@ function openDialog(build) {
 // "nothing happened" value, then the confirming button.
 function dialogActions(form, okLabel, danger, onCancel, onOk) {
   var actions = document.createElement("div");
-  actions.className = "slack-dialog-actions";
+  actions.className = "mt-2 flex justify-end gap-2 [&_.danger]:border-danger [&_.danger]:bg-danger [&_.danger]:text-on-danger";
   var cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "secondary";
@@ -294,7 +294,7 @@ export function uiConfirm(message, opts) {
     title.textContent = opts.title || opts.confirmLabel || "Confirm";
     form.appendChild(title);
     var p = document.createElement("p");
-    p.className = "ui-dialog-message";
+    p.className = "m-0 text-sm text-fg wrap-anywhere";
     p.textContent = message;
     form.appendChild(p);
     var btns = dialogActions(form, opts.confirmLabel || "OK", opts.danger,
@@ -307,7 +307,7 @@ export function uiPrompt(message, initial, opts) {
   opts = opts || {};
   return openDialog(function (form, done) {
     var label = document.createElement("label");
-    label.className = "ui-dialog-message";
+    label.className = "m-0 text-sm text-fg wrap-anywhere";
     label.textContent = message;
     var id = "ui-prompt-" + Math.floor(Math.random() * 1e9);
     label.setAttribute("for", id);
@@ -322,7 +322,7 @@ export function uiPrompt(message, initial, opts) {
     if (multiline) {
       input.wrap = "soft";
       input.rows = opts.rows || 4;
-      input.className = "ui-dialog-textarea";
+      input.className = "box-border min-h-24 max-h-[45vh] w-full resize-y leading-normal";
       input.addEventListener("keydown", function (e) {
         if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); done(input.value); }
       });

@@ -450,8 +450,11 @@ test("empty log picker names the empty state", function () {
 });
 
 test("rooms composer does not park a leftover hash in the text field", function () {
-  assert.doesNotMatch(css, /\.chat-composer::before\s*\{[^}]*content:\s*"#"/);
-  assert.match(css, /\.chat-composer\s*\{[^}]*flex-direction:\s*column/);
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  assert.doesNotMatch(app, /chat-composer::before/);
+  const form = /<form class="([^"]*)" id="chat-form"/.exec(html);
+  assert.ok(form, "missing the rooms composer's class list");
+  assert.match(form[1], /\bflex-col\b/);
 });
 
 test("rooms message actions stay visible without hover", function () {
@@ -678,9 +681,11 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   const add = css.lastIndexOf(".board-quick-add .board-add-form textarea { font-size: 16px; }");
   const addDesktop = css.indexOf(".board-quick-add .board-add-form textarea {\n  width: 100%");
   assert.ok(add > addDesktop, "phone quick-add must override the 13px desktop size");
-  const roomsDesktop = css.indexOf(".slack-composer-row input[type=\"text\"] {\n");
-  const roomsPhone = css.lastIndexOf(".slack-composer-row input[type=\"text\"],");
-  assert.ok(roomsDesktop >= 0 && roomsPhone > roomsDesktop, "phone Rooms composer must override the 13px desktop size");
+  // The rooms field carries its own phone guard as a utility, since the class
+  // the old selector named is gone.
+  const roomsField = /<input class="([^"]*)" type="text" id="chat-text"/.exec(html);
+  assert.ok(roomsField, "missing the rooms composer field");
+  assert.match(roomsField[1], /max-\[640px\]:\[font-size:16px\]/, "phone Rooms composer must override the desktop size");
   // The rail's workspace picker keeps its own 16px guard in app.css (it is
   // first paint); it must come after the desktop 12px rule in the same sheet.
   const wsDesktop = css.indexOf(".rail-workspace-bar select {\n");

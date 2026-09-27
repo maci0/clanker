@@ -320,6 +320,13 @@
     50% { opacity: 0.5; transform: scale(1.32); }
   }
 
+  /* A message that a search hit or a pin jumped to, so the eye lands on it. */
+  --animate-chat-highlight: chat-highlight-flash 1.5s ease;
+  @keyframes chat-highlight-flash {
+    0% { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+    100% { background: transparent; }
+  }
+
   /* The typing indicator's three dots: one keyframe set, staggered by an
      arbitrary `animation-delay` on the second and third. */
   --animate-typing-dot: slack-typing 1.4s infinite ease-in-out both;

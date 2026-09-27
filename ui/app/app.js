@@ -2980,7 +2980,7 @@ function showRoomsComposerLocked(message, offerCreate) {
   if (el.chatChannelTitle) el.chatChannelTitle.textContent = offerCreate ? "No channels" : "Channels unavailable";
   if (el.chatChannelTopic) {
     el.chatChannelTopic.textContent = "";
-    el.chatChannelTopic.classList.remove("is-placeholder");
+    el.chatChannelTopic.setAttribute("data-placeholder", "false");
     el.chatChannelTopic.onclick = null;
   }
   if (el.chatText) el.chatText.placeholder = offerCreate
@@ -3060,7 +3060,7 @@ function openChatRoom(room) {
     // could never be set the first time.
     el.chatChannelTopic.textContent = roomTopics[room] || (isDm(room) ? "" : "Add a topic");
     el.chatChannelTopic.title = roomTopics[room] || (isDm(room) ? "" : "Set a topic for this channel");
-    el.chatChannelTopic.classList.toggle("is-placeholder", !roomTopics[room] && !isDm(room));
+    el.chatChannelTopic.setAttribute("data-placeholder", String(!roomTopics[room] && !isDm(room)));
     el.chatChannelTopic.onclick = isDm(room) ? null : function () {
       uiPrompt("Set channel topic for #" + room, roomTopics[room] || "", { maxlength: 1024 }).then(function (newTopic) {
         if (newTopic === null) return;
@@ -3071,7 +3071,7 @@ function openChatRoom(room) {
             roomTopics[room] = newTopic;
             el.chatChannelTopic.textContent = newTopic || "Add a topic";
             el.chatChannelTopic.title = newTopic || "Set a topic for this channel";
-            el.chatChannelTopic.classList.toggle("is-placeholder", !newTopic);
+            el.chatChannelTopic.setAttribute("data-placeholder", String(!newTopic));
             return;
           }
           var fail = "Could not set the topic: " + (d.error || "unknown error");
@@ -3257,6 +3257,14 @@ function formatChatText(raw) {
   return frag;
 }
 
+/* The rooms main column's own pieces: a pin row, a search hit, and the flash a
+   jumped-to message gets. */
+var PIN_ITEM_CLASS = "flex items-start gap-2 border-b border-rule py-1 last:border-b-0";
+var PIN_SENDER_CLASS = "flex-none text-xs font-semibold text-accent-text";
+var PIN_TEXT_CLASS = "flex-1 wrap-anywhere";
+var SEARCH_RESULT_CLASS = "block w-full cursor-pointer overflow-hidden rounded-none border-0 border-b border-rule bg-transparent px-3 py-2 text-left text-sm text-ellipsis whitespace-nowrap text-fg hover:bg-[var(--surface-hover)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1";
+var CHAT_HIGHLIGHT_CLASS = "animate-chat-highlight motion-reduce:animate-none motion-reduce:bg-[color-mix(in_srgb,var(--accent)_25%,transparent)]";
+
 /* The message row: one shape for the transcript, the same in every room. State
    is an attribute (`data-grouped`, `data-mine`, `data-seen`, `data-md`,
    `data-action`, `data-deleted`), so the sheet reads what the script writes.
@@ -3389,7 +3397,7 @@ function buildChatMessage(m) {
   // Edited indicator
   if (m.edited) {
     var edited = document.createElement("span");
-    edited.className = "chat-edited";
+    edited.className = CHAT_EDITED_CLASS;
     edited.textContent = " (edited)";
     edited.title = "Edited";
     text.appendChild(edited);
@@ -3645,6 +3653,10 @@ function setRoomsSidebarOpen(open, phoneOnly) {
   if (!el.chatSidebar) return;
   if (phoneOnly && !roomsSidebarIsPhone()) return;
   el.chatSidebar.setAttribute("data-collapsed", open ? "false" : "true");
+  // The scrim is the drawer's backdrop on a phone, and the sheet hides it
+  // everywhere else; a sibling selector used to decide that, and the script
+  // that owns the drawer is the one place that knows.
+  if (chatSidebarScrim) chatSidebarScrim.hidden = !open;
   if (el.chatSidebarToggle) {
     el.chatSidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
     el.chatSidebarToggle.setAttribute("aria-label", open ? "Hide channels" : "Show channels");
@@ -3751,21 +3763,21 @@ function loadChatPins(room) {
             var sender = node ? node.querySelector(".chat-from").textContent : m ? m.from : "";
             var text = node ? node.querySelector(".chat-text").textContent : m ? m.text : id;
             var row = document.createElement("div");
-            row.className = "slack-pin-item";
+            row.className = PIN_ITEM_CLASS;
             row.setAttribute("role", "button");
             row.tabIndex = 0;
             var senderEl = document.createElement("span");
-            senderEl.className = "slack-pin-sender";
+            senderEl.className = PIN_SENDER_CLASS;
             senderEl.textContent = sender;
             row.appendChild(senderEl);
             var textEl = document.createElement("span");
-            textEl.className = "slack-pin-text";
+            textEl.className = PIN_TEXT_CLASS;
             textEl.textContent = text;
             row.appendChild(textEl);
             function jump() {
               closeChatPins();
               var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(id) + '"]');
-              if (target) { target.scrollIntoView({ block: "center" }); target.classList.add("chat-highlight"); setTimeout(function () { target.classList.remove("chat-highlight"); }, 1500); }
+              if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(CHAT_HIGHLIGHT_CLASS); setTimeout(function () { target.classList.remove(CHAT_HIGHLIGHT_CLASS); }, 1500); }
             }
             row.addEventListener("click", jump);
             row.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(); } });
@@ -3812,12 +3824,12 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
         hits.forEach(function (m) {
           var row = document.createElement("button");
           row.type = "button";
-          row.className = "slack-search-result";
+          row.className = SEARCH_RESULT_CLASS;
           row.textContent = m.from + ": " + m.text;
           row.addEventListener("click", function () {
             closeChatSearch();
             var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(m.id) + '"]');
-            if (target) { target.scrollIntoView({ block: "center" }); target.classList.add("chat-highlight"); setTimeout(function () { target.classList.remove("chat-highlight"); }, 1500); }
+            if (target) { target.scrollIntoView({ block: "center" }); target.classList.add(CHAT_HIGHLIGHT_CLASS); setTimeout(function () { target.classList.remove(CHAT_HIGHLIGHT_CLASS); }, 1500); }
           });
           el.chatSearchResults.appendChild(row);
         });

@@ -70,305 +70,36 @@
 /* Unread dot and message-count pill render identically; app.js emits one or
    the other per row, never both. */
 
-.slack-room-presence {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--ok-fill); flex-shrink: 0;
-}
-
 /* ── Main chat area ── */
-.slack-main {
-  flex: 1; display: flex; flex-direction: column;
-  min-width: 0; overflow: hidden;
-}
-
 /* ── Channel header ── */
-.slack-channel-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0.5rem 1rem; border-bottom: 1px solid var(--rule);
-  flex-shrink: 0; min-height: 42px; gap: 0.5rem;
-}
-
-.slack-channel-name {
-  display: flex; align-items: center; gap: 0.5rem;
-  min-width: 0; flex: 1;
-}
-
-#chat-channel-title { font-size: var(--step-1); font-weight: 700; white-space: nowrap; }
-
-.slack-channel-topic {
-  font-size: var(--step-0); color: var(--fg-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  border-left: 1px solid var(--rule); padding-left: 0.5rem; margin-left: var(--space-1);
-  cursor: pointer; min-width: 0;
-}
-@media (max-width: 48rem) {
-  .slack-channel-topic {
-    white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  }
-}
-
-.slack-channel-topic:hover { color: var(--fg); text-decoration: underline dotted; }
-
-.slack-channel-topic.is-placeholder { font-style: italic; }
-
-.slack-channel-actions {
-  display: flex; gap: var(--space-1); align-items: center; flex-shrink: 0;
-}
-
-.slack-sidebar-toggle {
-  background: none; border: none; font-size: 16px; cursor: pointer;
-  color: var(--fg-muted); padding: 0.15rem 0.35rem; border-radius: var(--radius);
-  display: none; /* shown on mobile */
-  align-items: center; justify-content: center;
-}
-
-.slack-sidebar-toggle:hover { background: var(--surface-hover); color: var(--fg); }
-
 /* ── Search & pins overlays ── */
-.slack-search-bar {
-  padding: 0.5rem 1rem; border-bottom: 1px solid var(--rule);
-  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-}
-
 /* An author `display` declaration beats the UA [hidden] default regardless
    of specificity, so the flex above would otherwise show this panel even
    while its `hidden` attribute is set. */
-.slack-search-bar[hidden] { display: none; }
-
-.slack-search-bar input {
-  flex: 1; padding: 0.35rem 0.5rem;
-  border: 1px solid var(--rule); border-radius: var(--radius);
-  background: var(--surface); color: var(--fg); font-size: var(--step-0);
-}
-
-.slack-search-bar input:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.slack-search-results {
-  width: 100%; max-height: min(30vh, 200px); overflow-y: auto;
-  margin-top: var(--space-1); font-size: var(--step-0);
-}
-
-.slack-search-result {
-  display: block; width: 100%; text-align: left; padding: var(--space-2) var(--space-3);
-  border: none; border-bottom: 1px solid var(--rule); background: none;
-  color: var(--fg); cursor: pointer;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.slack-search-result:hover { background: var(--surface-hover); }
-
-.slack-search-result:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-
 /* A jumped-to message (from search or a pin), so the reader's eye lands on
    the right line instead of just the scroll position. */
-.chat-highlight { animation: chat-highlight-flash 1.5s ease; }
-
-@keyframes chat-highlight-flash {
-  0% { background: color-mix(in srgb, var(--accent) 25%, transparent); }
-  100% { background: transparent; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-highlight { animation: none; background: color-mix(in srgb, var(--accent) 25%, transparent); }
-}
-
-.slack-pins-panel {
-  border-bottom: 1px solid var(--rule); padding: var(--space-2) 1rem;
-  max-height: min(30vh, 240px); overflow-y: auto; background: var(--bg);
-}
-
-.slack-pins-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 0.5rem; font-weight: 600; font-size: var(--step-0);
-}
-
-.slack-pins-title { display: inline-flex; align-items: center; gap: 0.35rem; }
-
-.slack-pins-list { font-size: var(--step-0); }
-
-.slack-pin-item {
-  padding: 0.35rem 0; border-bottom: 1px solid var(--rule);
-  display: flex; gap: 0.5rem; align-items: flex-start;
-}
-
-.slack-pin-item:last-child { border-bottom: none; }
-
-.slack-pin-sender { font-weight: 600; font-size: var(--step--1); color: var(--accent-text); flex-shrink: 0; }
-
-.slack-pin-text { flex: 1; overflow-wrap: anywhere; }
-
 /* ── Composer ── */
-.chat-composer {
-  padding: 0.5rem 1rem 0.75rem; border-top: 1px solid var(--rule);
-  flex-shrink: 0; background: var(--surface);
-}
-
-.slack-composer-row {
-  display: flex; align-items: center; gap: var(--space-2);
-}
-
-.slack-composer-row input[type="text"] {
-  flex: 1; padding: 0.5rem 0.75rem;
-  border: 1px solid var(--rule); border-radius: var(--radius);
-  background: var(--bg); color: var(--fg); font-size: var(--step-0);
-}
-
-.slack-composer-row input[type="text"]:focus-visible {
-  border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-}
-
-.slack-composer-row button[type="submit"] {
-  padding: 0.45rem 1rem; border-radius: var(--radius);
-  font-weight: 600; font-size: var(--step-0);
-}
-
-.slack-formatting-hint {
-  font-size: var(--step--1); color: var(--fg-muted); margin-top: var(--space-1);
-  padding-left: 0;
-}
-
-.slack-formatting-hint code { font-size: var(--step--1); padding: 0.1rem var(--space-1); }
-
 /* ── Emoji picker ── */
-.slack-emoji-picker {
-  position: absolute; bottom: 100%; left: 1rem; z-index: 40;
-  background: var(--surface); border: 1px solid var(--rule);
-  border-radius: var(--radius-lg); box-shadow: var(--lift);
-  padding: 0.5rem; max-width: 320px;
-  display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px;
-}
-
-.slack-emoji-picker[hidden] { display: none; }
-
-.slack-emoji-picker button {
-  font-size: var(--step-2); padding: var(--space-1); border: none; background: none;
-  border-radius: var(--radius); cursor: pointer;
-}
-
-.slack-emoji-picker button:hover { background: var(--surface-hover); }
-
 /* ── Shared icon button ── */
-.slack-btn-icon {
-  background: none; border: none; cursor: pointer;
-  color: var(--fg-muted); font-size: 16px; padding: var(--space-1);
-  border-radius: var(--radius); line-height: 1;
-  min-width: 32px; min-height: 32px;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-
-.slack-btn-icon:hover { background: var(--surface-hover); color: var(--fg); }
-
-.slack-btn-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
 /* ── Create channel dialog ── */
-.slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 0; background: var(--surface); box-shadow: var(--lift); max-width: 400px; width: 90vw; }
-
 .slack-dialog::backdrop { background: var(--scrim); }
-
-.slack-dialog-form { padding: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
-
-.slack-dialog-form h3 { margin: 0; font-size: var(--step-1); }
-
-.slack-dialog-form input, .slack-dialog-form textarea { padding: 0.5rem; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg); color: var(--fg); font-size: var(--step-1); }
-
-.slack-dialog-form input:focus-visible, .slack-dialog-form textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.ui-dialog-textarea { box-sizing: border-box; width: 100%; min-height: 6rem; max-height: 45vh; resize: vertical; line-height: 1.45; }
-
-.slack-dialog-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem; }
 
 /* uiConfirm / uiPrompt (core/ui.js) reuse this dialog language for every
    confirmation and one-line input, replacing the browser's native chrome. */
-.ui-dialog-message { margin: 0; font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
-
-.slack-dialog-actions .danger { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
-
 /* ── Typing indicator ── */
 /* ── New messages divider ── */
-.slack-new-divider {
-  display: flex; align-items: center; gap: 0.75rem;
-  margin: 0.5rem 0; padding: 0 1rem;
-  font-size: var(--step--1); font-weight: 700; color: var(--danger);
-  text-transform: uppercase; letter-spacing: var(--track-label);
-}
-
 /* ── Mobile responsive ── */
 /* 48rem, not 768px: every other breakpoint here is rem so zoomed-text users
    get consistent trigger points. */
-@media (max-width: 48rem) {
-  .slack-layout { position: relative; height: auto; }
-  .slack-sidebar {
-    position: absolute; z-index: 30; height: 100%; left: 0; top: 0;
-    width: 260px; min-width: 260px; max-width: 260px; flex: none;
-    /* The one shadow that is not a --lift rung: a drawer casts sideways, and
-       no vertical rung says that. Its ink is still the theme's --scrim, which
-       is what the drawer lays over the content anyway. */
-    box-shadow: 4px 0 16px var(--scrim);
-  }
-  .slack-sidebar.is-collapsed {
-    transform: translateX(-100%);
-    box-shadow: none;
-    width: 260px; min-width: 260px; max-width: 260px;
-  }
-  .slack-sidebar-toggle { display: inline-flex; }
-  .slack-sidebar-scrim {
-    display: block; position: absolute; inset: 0; z-index: 25;
-    background: var(--scrim);
-  }
-  .slack-sidebar.is-collapsed + .slack-sidebar-scrim { display: none; }
-  .slack-channel-header { padding: var(--space-2) 0.75rem; }
-  .chat-composer { padding: var(--space-2) 0.75rem 0.5rem; }
-  .slack-formatting-hint { display: none; }
-}
-
-@media (min-width: 48.01rem) {
-  .slack-sidebar-scrim { display: none; }
-}
-
-.chat-log {
-  flex: 1 1 auto; min-height: 0;
-  margin: 0; border: 0; border-radius: 0;
-  background: var(--surface); padding: 0.75rem 1rem;
-  overflow-y: auto; overflow-x: hidden;
-  display: flex; flex-direction: column; gap: 0.5rem;
-}
-
 /* Loading/empty text is rendered by JS (.run-empty / .chat-empty) — the
    pseudo here used to double it when a DOM empty node was also present. */
 
 /* Slack-style "New messages" divider */
-.chat-unread-divider {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: var(--space-1) 0; margin: var(--space-1) 0;
-}
-
-.chat-gutter-time { font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; opacity: 0; margin-left: auto; white-space: nowrap; align-self: flex-end; }
-
-.chat-edited { font-size: var(--step--1); color: var(--fg-muted); font-style: italic; }
-
-.chat-deleted { color: var(--fg-muted); font-style: italic; }
-
-.chat-topic { font-size: var(--step-0); color: var(--fg-muted); padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--rule); font-style: italic; }
-
 /* 24px is the WCAG 2.5.8 floor; pointer:coarse below raises these to 44px. */
 /* This instance's own messages, so a room reads as a conversation rather
    than a log of indistinguishable lines. */
 /* What a card action reads as: a report of something that happened, not
    something anyone typed. */
-.chat-composer { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; align-items: stretch; }
-
-.chat-composer input[type="text"] {
-  flex: 1; min-width: 0; min-height: 40px; padding: 0.45rem 0.75rem;
-  font-family: var(--sans); font-size: var(--step-0);
-  background: var(--surface); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius-pill);
-}
-
-.chat-composer { position: relative; }
-
-.chat-composer button { border-radius: var(--radius-pill); min-height: 40px; }
-
 /* ---- usage: what the model calls actually cost ----
    A dense table rather than tiles: these are readings to compare across
    providers, and a number you can line up beats a number in a box. */
@@ -483,9 +214,6 @@
    still overrides the desktop sizes declared above it (app.css carries the
    first-paint half, the rail's workspace picker). */
 @media (max-width: 40rem) {
-  .slack-search-box input,
-  .slack-search-bar input,
-  .slack-composer-row input[type="text"],
   .run-picker input[type="search"],
   .config-editor textarea,
   .models-edit-toml-editor textarea {

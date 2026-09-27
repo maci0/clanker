@@ -501,7 +501,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <aside max-[768px]:absolute max-[768px]:top-0 max-[768px]:left-0 max-[768px]:z-30 max-[768px]:h-full max-[768px]:w-65 max-[768px]:min-w-65 max-[768px]:max-w-65 max-[768px]:flex-none max-[768px]:shadow-[4px_0_16px_var(--scrim)] max-[768px]:data-[collapsed=true]:w-65 max-[768px]:data-[collapsed=true]:min-w-65 max-[768px]:data-[collapsed=true]:max-w-65 max-[768px]:data-[collapsed=true]:-translate-x-full max-[768px]:data-[collapsed=true]:shadow-none class="group flex w-65 max-w-80 min-w-50 flex-none basis-65 flex-col overflow-hidden border-r border-rule bg-bg translate-x-0 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none [&>*]:min-w-50 data-[collapsed=true]:pointer-events-none data-[collapsed=true]:-translate-x-full data-[collapsed=true]:border-r-transparent min-[769px]:data-[collapsed=true]:m-0 min-[769px]:data-[collapsed=true]:w-0 min-[769px]:data-[collapsed=true]:min-w-0 min-[769px]:data-[collapsed=true]:max-w-0 min-[769px]:data-[collapsed=true]:basis-0 min-[769px]:data-[collapsed=true]:translate-x-0 min-[769px]:data-[collapsed=true]:overflow-hidden min-[769px]:data-[collapsed=true]:p-0 min-[769px]:data-[collapsed=true]:transition-none" id="chat-sidebar">
         <div class="flex flex-none items-center justify-between border-b border-rule px-4 py-3 [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-bold">
           <h2>Channels</h2>
-          <button type="button" class="slack-btn-icon" id="chat-create-room" title="Create channel" aria-label="Create channel">+</button>
+          <button type="button" class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-create-room" title="Create channel" aria-label="Create channel">+</button>
         </div>
         <!-- Filter the channel list. Ctrl+K stays the page Jump palette. -->
         <div class="flex-none px-3 py-2 [&_input]:w-full [&_input]:rounded-plate [&_input]:border [&_input]:border-rule [&_input]:bg-surface [&_input]:px-2 [&_input]:py-1 [&_input]:text-sm [&_input]:text-fg [&_input:focus-visible]:border-accent [&_input:focus-visible]:outline-2 [&_input:focus-visible]:outline-accent [&_input:focus-visible]:outline-offset-1">
@@ -526,66 +526,66 @@ lamps carry further). The seven named palettes ride the same tokens.
       </aside>
       <!-- Mobile only: tap the dimmed chat to close the channel drawer.
            The header toggle sits under the drawer while it is open. -->
-      <div class="slack-sidebar-scrim" id="chat-sidebar-scrim"></div>
+      <div class="hidden max-[768px]:absolute max-[768px]:inset-0 max-[768px]:z-25 max-[768px]:bg-[var(--scrim)] max-[768px]:[&:not([hidden])]:block" id="chat-sidebar-scrim" hidden></div>
       <!-- Main chat area -->
-      <div class="slack-main">
+      <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
         <!-- Channel header -->
-        <div class="slack-channel-header" id="chat-channel-header">
-          <div class="slack-channel-name">
-            <button type="button" class="slack-sidebar-toggle" id="chat-sidebar-toggle" title="Show channels" aria-label="Show channels" aria-controls="chat-sidebar" aria-expanded="false"></button>
-            <span id="chat-channel-title">Loading…</span>
-            <span class="slack-channel-topic" id="chat-channel-topic"></span>
+        <div class="flex min-h-[42px] flex-none items-center justify-between gap-2 border-b border-rule px-4 py-2" id="chat-channel-header">
+          <div class="flex min-w-0 flex-1 items-center gap-2">
+            <button type="button" class="hidden cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg max-[768px]:inline-flex" id="chat-sidebar-toggle" title="Show channels" aria-label="Show channels" aria-controls="chat-sidebar" aria-expanded="false"></button>
+            <span class="text-base font-bold whitespace-nowrap" id="chat-channel-title">Loading…</span>
+            <span class="ml-1 min-w-0 cursor-pointer overflow-hidden border-l border-rule pl-2 text-sm text-ellipsis whitespace-nowrap text-fg-muted hover:text-fg hover:underline hover:decoration-dotted data-[placeholder=true]:italic max-[768px]:whitespace-normal max-[768px]:[-webkit-line-clamp:2] max-[768px]:[display:-webkit-box] max-[768px]:[-webkit-box-orient:vertical]" id="chat-channel-topic"></span>
           </div>
-          <div class="slack-channel-actions">
-            <button type="button" class="slack-btn-icon" id="chat-search-toggle" title="Search messages" aria-label="Search messages"></button>
-            <button type="button" class="slack-btn-icon" id="chat-pin-toggle" title="Pinned messages" aria-label="View pinned messages"></button>
-            <button type="button" class="slack-btn-icon" id="chat-refresh" title="Refresh" aria-label="Refresh"></button>
+          <div class="flex flex-none items-center gap-1">
+            <button type="button" class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-search-toggle" title="Search messages" aria-label="Search messages"></button>
+            <button type="button" class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-pin-toggle" title="Pinned messages" aria-label="View pinned messages"></button>
+            <button type="button" class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-refresh" title="Refresh" aria-label="Refresh"></button>
           </div>
         </div>
         <!-- Search bar (hidden by default) -->
-        <div class="slack-search-bar" id="chat-search-bar" hidden>
-          <input type="search" id="chat-search-input" placeholder="Search messages…" autocomplete="off" aria-label="Search messages">
-          <button type="button" class="slack-btn-icon" id="chat-search-close" title="Close search" aria-label="Close search"></button>
-          <div class="slack-search-results" id="chat-search-results"></div>
+        <div class="hidden flex-wrap items-center gap-2 border-b border-rule px-4 py-2 [&:not([hidden])]:flex" id="chat-search-bar" hidden>
+          <input class="min-w-0 flex-1 rounded-plate border border-rule bg-surface px-2 py-1 text-sm text-fg max-[640px]:[font-size:16px] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" type="search" id="chat-search-input" placeholder="Search messages…" autocomplete="off" aria-label="Search messages">
+          <button type="button" class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-search-close" title="Close search" aria-label="Close search"></button>
+          <div class="mt-1 max-h-[min(30vh,200px)] w-full overflow-y-auto text-sm" id="chat-search-results"></div>
         </div>
         <!-- Pinned messages panel (hidden by default) -->
-        <div class="slack-pins-panel" id="chat-pins-panel" hidden>
-          <div class="slack-pins-head">
-            <span class="slack-pins-title" id="chat-pins-title">Pinned Messages</span>
-            <button type="button" class="slack-btn-icon" id="chat-pins-close" title="Close pins" aria-label="Close pinned messages"></button>
+        <div class="max-h-[min(30vh,240px)] overflow-y-auto border-b border-rule bg-bg px-4 py-2" id="chat-pins-panel" hidden>
+          <div class="mb-2 flex items-center justify-between text-sm font-semibold">
+            <span class="inline-flex items-center gap-1" id="chat-pins-title">Pinned Messages</span>
+            <button type="button" class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-pins-close" title="Close pins" aria-label="Close pinned messages"></button>
           </div>
-          <div class="slack-pins-list" id="chat-pins-list"></div>
+          <div class="text-sm" id="chat-pins-list"></div>
         </div>
         <!-- Message log -->
-        <div class="chat-log" id="chat-log" role="log" aria-label="Room messages" tabindex="0"></div>
+        <div class="m-0 flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto rounded-none border-0 bg-surface px-4 py-3" id="chat-log" role="log" aria-label="Room messages" tabindex="0"></div>
         <!-- Typing indicator -->
-        <div class="slack-typing-indicator" id="chat-typing" aria-live="polite"></div>
+        <div class="min-h-5 flex-none px-4 py-1 text-xs text-fg-muted" id="chat-typing" aria-live="polite"></div>
         <!-- Composer -->
-        <form class="chat-composer" id="chat-form">
-          <div class="slack-composer-row">
-            <button type="button" class="slack-btn-icon slack-emoji-trigger" id="chat-emoji-btn" title="Emoji picker" aria-label="Emoji picker" aria-haspopup="true" aria-expanded="false" aria-controls="chat-emoji-picker"></button>
+        <form class="relative mt-3 flex flex-none flex-col items-stretch gap-2 border-t border-rule bg-surface px-4 pt-2 pb-3 max-[768px]:px-3 max-[768px]:pb-2" id="chat-form">
+          <div class="flex items-center gap-2">
+            <button type="button" class="inline-flex min-h-8 min-w-8 cursor-pointer items-center justify-center rounded-plate border-0 bg-transparent p-1 text-base leading-none text-fg-muted hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" id="chat-emoji-btn" title="Emoji picker" aria-label="Emoji picker" aria-haspopup="true" aria-expanded="false" aria-controls="chat-emoji-picker"></button>
             <label class="sr-only" for="chat-text">Message</label>
-            <input type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
-            <button type="submit" id="chat-send" disabled
+            <input class="min-h-10 min-w-0 flex-1 rounded-capsule border border-border bg-surface px-3 py-2 text-sm text-fg focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 max-[640px]:[font-size:16px]" type="text" id="chat-text" autocomplete="off" placeholder="Message this room…" maxlength="4096" disabled>
+            <button class="min-h-10 rounded-capsule px-4 py-2 text-sm font-semibold" type="submit" id="chat-send" disabled
                     title="Write a message first" aria-label="Write a message first">Send</button>
           </div>
-          <div class="slack-formatting-hint">
+          <div class="mt-1 pl-0 text-xs text-fg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs max-[768px]:hidden">
             <span><b>**bold**</b> <i>*italic*</i> <code>`code`</code> ~~strike~~ &gt;quote</span>
           </div>
         </form>
         <!-- Emoji picker popup -->
-        <div class="slack-emoji-picker" id="chat-emoji-picker" hidden></div>
+        <div class="absolute bottom-full left-4 z-40 hidden max-w-80 grid-cols-8 gap-0.5 rounded-plate-lg border border-rule bg-surface p-2 shadow-[var(--lift)] [&:not([hidden])]:grid [&_button]:cursor-pointer [&_button]:rounded-plate [&_button]:border-0 [&_button]:bg-transparent [&_button]:p-1 [&_button]:text-lg [&_button:hover]:bg-[var(--surface-hover)]" id="chat-emoji-picker" hidden></div>
         <p class="sr-only" id="chat-status" role="status" aria-live="polite"></p>
       </div>
     </div>
     <!-- Create channel modal -->
-    <dialog class="slack-dialog" id="chat-create-dialog">
-      <form method="dialog" class="slack-dialog-form">
+    <dialog class="slack-dialog w-[90vw] max-w-[400px] rounded-plate-lg border border-rule bg-surface p-0 shadow-[var(--lift)]" id="chat-create-dialog">
+      <form class="flex flex-col gap-3 p-6 [&_h3]:m-0 [&_h3]:text-base" method="dialog">
         <h3>Create a channel</h3>
         <label for="chat-new-room-name">Channel name</label>
-        <input type="text" id="chat-new-room-name" placeholder="e.g. project-alpha" pattern="[a-zA-Z0-9_\-]+" maxlength="64" required title="Letters, numbers, underscores, and hyphens only. No spaces." aria-describedby="chat-new-room-hint">
+        <input class="rounded-plate border border-rule bg-bg px-2 py-2 text-base text-fg focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1" type="text" id="chat-new-room-name" placeholder="e.g. project-alpha" pattern="[a-zA-Z0-9_\-]+" maxlength="64" required title="Letters, numbers, underscores, and hyphens only. No spaces." aria-describedby="chat-new-room-hint">
         <p class="meta" id="chat-new-room-hint">Letters, numbers, _ and - only. No spaces.</p>
-        <div class="slack-dialog-actions">
+        <div class="mt-2 flex justify-end gap-2 [&_.danger]:border-danger [&_.danger]:bg-danger [&_.danger]:text-on-danger">
           <button type="button" class="secondary" id="chat-create-cancel">Cancel</button>
           <button type="submit" class="primary" id="chat-create-confirm" value="ok">Create channel</button>
         </div>

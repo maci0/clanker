@@ -459,6 +459,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 - First paint 59.6K gz; the sheet's accounting figure goes to 96K and the eager
   JS one to 152K, both named here.
 
+- The rooms main column is utilities: the channel header, its title and topic
+  (the placeholder is `data-placeholder`), the icon buttons, the search bar and
+  its hits, the pins panel and its rows, the message log, the composer and its
+  field and Send, the formatting hint, the emoji picker, the create-channel
+  dialog and the shared `uiConfirm`/`uiPrompt` language the dialog lent them.
+  The dialog keeps one component rule, its `::backdrop`. A panel whose author
+  `display` would beat the `hidden` attribute says `[&:not([hidden])]:flex`
+  instead. The drawer's scrim is the script's now: a sibling selector decided it
+  before, and the script that owns the drawer is the one place that knows.
+  `views.css` falls from 37.7K to 9.5K over this port's run. First paint 60.7K
+  gz; the sheet's accounting figure goes to 100K.
+- Three rooms guards moved with their rules: the log's "fills the pane" and the
+  composer's "no leftover hash" now read the markup's class list, and the phone
+  16px guard is on the rooms fields themselves (`max-[640px]:[font-size:16px]`)
+  because the classes that list named are three views' chrome that moved over.
+  The field-size list in `views.css` keeps only the plugin fields it still owns.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

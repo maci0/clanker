@@ -92,11 +92,14 @@ test("every named theme owns a code well in the page luminance family", function
 });
 
 test("Rooms log fills the pane instead of a leftover 24rem box", function () {
-  const log = /#view-rooms[\s\S]{0,400}\.chat-log\s*\{([^}]+)\}|\.chat-log\s*\{([^}]+)\}/.exec(css);
-  assert.ok(log, "missing .chat-log rule");
-  const body = log[1] || log[2];
-  assert.match(body, /flex:\s*1/);
-  assert.doesNotMatch(body, /max-height:\s*24rem/);
+  // The log is utilities in the markup now, so the guard reads the markup: it
+  // grows, and no leftover max-height boxes it in.
+  const html = readFileSync(join(here, "..", "index.html"), "utf8");
+  const m = /id="chat-log"[^>]*/.exec(html) || /class="([^"]*)"[^>]*id="chat-log"/.exec(html);
+  const tag = /<div class="([^"]*)" id="chat-log"/.exec(html);
+  assert.ok(tag, "missing the rooms log's class list");
+  assert.match(tag[1], /\bflex-1\b/);
+  assert.doesNotMatch(tag[1], /max-h-\[24rem\]/);
 });
 
 // The favicon is the identity in 32 pixels: a panel plate, a machined bezel,
