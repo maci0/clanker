@@ -558,12 +558,18 @@ export function loadProviders() {
       if (_onModelChange) _onModelChange();
       if (_open) renderList(_search ? _search.value : "");
     })
-    .catch(function () {
+    .catch(function (err) {
+      // Replace, not append: every config write re-runs this, so each failure
+      // stacked another "config default" row on the chip.
+      _el.modelSelect.textContent = "";
       var opt = document.createElement("option");
       opt.value = "";
-      opt.textContent = "config default";
+      opt.textContent = "config default (models could not be loaded)";
+      var why = (err && err.message) || "Could not reach the server.";
+      opt.title = why;
       _el.modelSelect.appendChild(opt);
       if (_onModelChange) _onModelChange();
+      if (_el.modelButton) _el.modelButton.title = "Could not load the model list: " + why;
     });
 }
 

@@ -695,9 +695,15 @@ test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   const railField = /<input class="([^"]*)" type="search" id="session-filter"/.exec(html);
   assert.ok(railField, "missing the rail's session filter");
   assert.match(railField[1], /max-\[640px\]:\[font-size:16px\]/, "phone rail search must override the desktop size");
-  const add = lastIndexOfPattern(cascade, /\.board-quick-add \.board-add-form textarea \{ font-size: 16px; \}/g);
-  const addDesktop = cascade.search(/\.board-quick-add \.board-add-form textarea \{\s*width: 100%/);
-  assert.ok(add > addDesktop, "phone quick-add must override the 13px desktop size");
+  // The board's quick-add textarea wears the 14px `text-sm` class, which beats
+  // the page-wide element guard, so it carries its own phone reset as a utility
+  // like every other field that kept a class-level size.
+  const board = readFileSync(join(here, "../features/board.js"), "utf8");
+  const addField = /qaTextarea\.className = (\w+)/.exec(board);
+  assert.ok(addField, "the quick-add textarea carries no class at all");
+  assert.match(board,
+    new RegExp(`var ${addField[1]} = "[^"]*max-\\\[640px\\\]\\:\\[font-size\\:16px\\]`),
+    "phone quick-add must override the 14px desktop size");
   // The rooms field carries its own phone guard as a utility, since the class
   // the old selector named is gone.
   const roomsField = /<input class="([^"]*)" type="text" id="chat-text"/.exec(html);

@@ -195,6 +195,7 @@ var el = {
   transcriptEmpty: document.getElementById("transcript-empty"),
   suggestions: document.getElementById("suggestions"),
   modelSelect: document.getElementById("model-select"),
+  modelButton: document.getElementById("header-model"),
   paramTemp: document.getElementById("param-temp"),
   paramTopP: document.getElementById("param-topp"),
   paramEffort: document.getElementById("param-effort"),
@@ -3898,6 +3899,7 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
           row.type = "button";
           row.className = SEARCH_RESULT_CLASS;
           row.textContent = m.from + ": " + m.text;
+          row.title = m.text; // the row is one ellipsized line
           row.addEventListener("click", function () {
             closeChatSearch();
             var target = el.chatLog.querySelector('[data-msg-id="' + CSS.escape(m.id) + '"]');
@@ -3906,7 +3908,10 @@ if (el.chatSearchInput) el.chatSearchInput.addEventListener("input", function ()
           el.chatSearchResults.appendChild(row);
         });
       })
-      .catch(function () { el.chatSearchResults.textContent = "Search failed."; });
+      .catch(function (err) {
+        showLoadError(el.chatSearchResults, "Search failed: " + err.message,
+          function () { el.chatSearchInput.dispatchEvent(new Event("input")); });
+      });
   }, 200);
 });
 
@@ -4623,7 +4628,9 @@ function showView(name, focusPanel) {
         var cid = VIEW_CONTAINERS[name];
         var container = cid && document.getElementById(cid);
         if (!container) return;
-        showLoadError(container, "Could not load the " + name + " view" + (err && err.message ? ": " + err.message : "") + ".", function () {
+        // The tab's own text: "rooms" in a message where the tab says Channels.
+        var tab = document.getElementById("tab-" + name);
+        showLoadError(container, "Could not load " + ((tab && tab.textContent) || name).trim() + (err && err.message ? ": " + err.message : "") + ".", function () {
           markLoading(name);
           return viewLoaders[name]().then(function () {
             viewLoaded[name] = true;
@@ -5389,12 +5396,15 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
   function append(t){ if(!progEl) return; progEl.textContent += t; progEl.scrollTop=progEl.scrollHeight; }
   function renderHistory(){
     if(!progHist) return Promise.resolve();
-    // Returned so the Refresh button can stay disabled until both fetches land.
-    return Promise.all([
-      fetch("/api/runs").then(function(r){ return r.json().then(function(d){ var txt=d.text||""; try{ return txt?JSON.parse(txt): (Array.isArray(d)?d:(d.runs||[])); }catch(_){ return []; } }); }).catch(function(){ return []; }),
-      fetch("/api/providers").then(function(r){ return r.json(); }).catch(function(){ return null; })
-    ]).then(function(vals){
-      var runs=vals[0]||[]; progHist.textContent="";
+    progHist.textContent="";
+    return fetch("/api/runs").then(readJson).then(function(d){
+      var txt=(d && d.text)||"";
+      try{ return txt?JSON.parse(txt): (Array.isArray(d)?d:((d&&d.runs)||[])); }
+      catch(e){ throw new Error("not a run list", { cause: e }); }
+    }).catch(function(err){
+      showLoadError(progHist, "Could not load the run history: " + err.message, renderHistory);
+      return [];
+    }).then(function(runs){
       if(!runs.length){
         var p=document.createElement("p"); p.className="run-empty";
         p.appendChild(document.createTextNode("No runs yet. Start a task in Chat and it appears here and in the gate history. "));
@@ -5437,7 +5447,7 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
       progCtrl=new AbortController();
       fetch("/api/run", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body), signal: progCtrl.signal })
         .then(function(r){
-          if(!r.ok) return r.text().then(function(t){ throw new Error(t || ("HTTP "+r.status)); });
+          if(!r.ok) return readJson(r);
           if(!r.body) throw new Error("No stream");
           var reader=r.body.getReader(), dec=new TextDecoder(), buf="", lastSummary="";
           function pump(){ return reader.read().then(function(ch){

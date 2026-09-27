@@ -32,7 +32,7 @@ var RUN_CLASS = "group mt-4 overflow-hidden rounded-plate border border-rule bg-
 var RUN_STATUS_CLASS = "font-mono text-sm text-fg-muted group-data-[status=failed]:font-bold group-data-[status=failed]:text-danger group-data-[status=finished]:font-bold group-data-[status=finished]:text-ok group-data-[status=running]:font-bold group-data-[status=running]:text-accent-text";
 var RUN_OUTPUT_CLASS = "m-0 max-h-72 overflow-auto px-4 py-3 font-mono text-sm leading-normal text-fg whitespace-pre-wrap wrap-anywhere empty:before:content-['…'] empty:before:text-fg-muted";
 var ACTIONS_CLASS = "mt-3 flex flex-wrap gap-3 empty:hidden";
-import { T, bind, UI, state, uiConfirm, uiPrompt } from "../core/ui.js";
+import { T, bind, UI, state, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
 import { goalSortKey, goalFields, goalStatusLabel, goalPinnedColumn, goalWorktreeTitle } from "../core/goals.js";
 import { icon } from "../core/icons.js";
 import { makeLineSplitter, pumpInto } from "../core/stream.js";
@@ -305,11 +305,9 @@ export function loadGoals() {
       return mirrorGoalsToBoard(data.goals || []);
     })
     .catch(function (err) {
-      el.goals.textContent = "";
-      var p = document.createElement("p");
-      p.className = "mt-4 font-mono text-sm text-fg-muted";
-      p.textContent = "Could not load goals: " + err.message;
-      el.goals.appendChild(p);
+      // showLoadError, not a muted paragraph: #goals sits inside a collapsed
+      // <details>, so an inline note is hidden by default and the reason with it.
+      showLoadError(el.goals, "Could not load goals: " + err.message, loadGoals);
     });
 }
 

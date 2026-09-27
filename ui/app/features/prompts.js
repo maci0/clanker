@@ -1,7 +1,7 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 import { uiConfirm, toast, showLoadError } from "../core/ui.js";
 import * as kit from "../core/kit.js";
-import { readJson, wireRefresh, searchFold } from "../core/utils.js";
+import { readJson, wireRefresh, searchFold, formatChatTime } from "../core/utils.js";
 import { copyText } from "../core/vendor.js";
 
 /* The prompt cards, as Tailwind utilities over the cabinet tokens
@@ -126,7 +126,7 @@ function renderPrompts(prompts){
     head.appendChild(delBtn); card.appendChild(head);
     card.appendChild(body);
     var meta=document.createElement("div"); meta.className="meta mt-2";
-    meta.textContent=p.id+(p.updated?" · "+new Date(p.updated*1000).toLocaleString():"");
+    meta.textContent=p.id+(p.updated?" · "+formatChatTime(p.updated*1000):"");
     card.appendChild(meta);
     listEl.appendChild(card);
   });

@@ -3849,6 +3849,11 @@
 .\[\&_button\]\:text-fg-muted button {
   color: var(--fg-muted);
 }
+@media (pointer: coarse) {
+  .pointer-coarse\:\[\&_button\]\:min-h-11 button {
+    min-height: calc(var(--spacing) * 11);
+  }
+}
 .\[\&_button\:hover\]\:bg-\[var\(--surface-hover\)\] button:hover {
   background-color: var(--surface-hover);
 }

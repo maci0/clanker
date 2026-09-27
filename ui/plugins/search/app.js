@@ -154,8 +154,7 @@ clanker.registerView({
         return;
       }
       state.hits.forEach(function (h) { list.appendChild(hitRow(h)); });
-      var msg = state.hits.length +
-        api.fmt.plural(state.hits.length, { one: "conversation", other: "conversations" }) +
+      var msg = api.fmt.plural(state.hits.length, { one: "conversation", other: "conversations" }) +
         (state.truncated ? " (showing the newest; narrow the search for more)" : "") + ".";
       status.textContent = msg;
       api.status(msg);

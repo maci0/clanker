@@ -9,7 +9,7 @@
 //
 // Reference: docs/prds/0008-arena.md, "Web UI: the arena view".
 
-import { readJson, peerColor, themeToken, cssColorAlpha, wireRefresh } from "../core/utils.js";
+import { readJson, peerColor, themeToken, cssColorAlpha, wireRefresh, plural } from "../core/utils.js";
 import * as kit from "../core/kit.js";
 import { showLoadError } from "../core/ui.js";
 import { reducedMotion } from "../core/vendor.js";
@@ -282,7 +282,7 @@ function renderTranscript(m) {
     fold.open = ri === (m.rounds.length - 1);
     var h = document.createElement("summary");
     h.className = "my-2 cursor-pointer text-sm font-semibold";
-    h.textContent = "Round " + r.round + " — " + (r.moves || []).length + " move(s)";
+    h.textContent = "Round " + r.round + " — " + plural((r.moves || []).length, { one: "move", other: "moves" });
     fold.appendChild(h);
     host.appendChild(fold);
     (r.moves || []).forEach(function (mv) {
@@ -324,7 +324,9 @@ function renderTranscript(m) {
     v.className = "mt-3 rounded-plate border border-accent bg-surface p-3";
     var vh = document.createElement("div");
     vh.className = "font-semibold";
-    vh.textContent = "Verdict: " + m.verdict.headline;
+    // A verdict with no headline is a real shape the judge can return; the
+    // literal word "undefined" in the transcript is not an answer to anything.
+    vh.textContent = m.verdict.headline ? "Verdict: " + m.verdict.headline : "Verdict";
     var vb = document.createElement("div");
     vb.className = "text-fg-muted";
     vb.textContent = m.verdict.answer || "";
@@ -350,7 +352,7 @@ function statusLine(m) {
     s += ". Waiting on the next reply.";
     return s;
   }
-  var out = m.verdict ? m.verdict.headline : "Match finished.";
+  var out = m.verdict ? (m.verdict.headline || m.verdict.answer || "Match finished.") : "Match finished.";
   var gone = (m.combatants || []).filter(function (c) { return c.eliminated; });
   if (gone.length) out += " " + gone.map(function (c) { return c.label; }).join(", ") + " eliminated.";
   return out;

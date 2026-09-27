@@ -144,7 +144,10 @@ test("a failed view load surfaces an error with a retry instead of a blank panel
   // empty-but-healthy view. It must say what failed in the view's container
   // and offer a Try again that re-runs the loader.
   assert.match(app, /function \(err\) \{[\s\S]*?clearLoading\(name\);/);
-  assert.match(app, /showLoadError\(container, "Could not load the " \+ name \+ " view"/);
+  // It names the view by the tab's own text, not the route key: `rooms` in a
+  // message where the tab the operator clicked says Channels.
+  assert.match(app, /var tab = document\.getElementById\("tab-" \+ name\);/);
+  assert.match(app, /showLoadError\(container, "Could not load " \+ \(\(tab && tab\.textContent\) \|\| name\)/);
   // The retried loader is the same loader, and the view counts as loaded
   // only once it succeeds.
   assert.match(app, /return viewLoaders\[name\]\(\)\.then\(function \(\) \{\s*viewLoaded\[name\] = true;/);

@@ -139,7 +139,12 @@ export function loadBoardRooms() {
       else el.boardRoom.value = defRoom;
       return loadBoard();
     })
-    .catch(function () { return loadBoard(); });
+    .catch(function (err) {
+      // Loading the rooms and then the board against a stale room is a board
+      // that looks right and is wrong; say the listing failed instead.
+      if (el.boardStatus) el.boardStatus.textContent = "Could not load the channel list: " + err.message + " Showing the last one loaded.";
+      return loadBoard();
+    });
 }
 
 /* The board's default room for the currently selected workspace (RFC 0001):
@@ -185,6 +190,19 @@ export function loadBoard() {
    change would ping-pong between the two stores. The flag is stripped before
    sending — the board tool has no business seeing it. Resolves with the
    server's response (truthy) or false on failure, so callers can gate on it. */
+/* An empty field on a form that just `return`s is a button that looks broken
+   from the other side: nothing tells the operator their text was dropped, and
+   the press did nothing at all. The browser's own bubble names the field and
+   what it wants, which is the pattern the other forms in this app already
+   use. Returns whether there was text to send. */
+export function requireText(input, message) {
+  if (input.value.trim()) { input.setCustomValidity(""); return true; }
+  input.setCustomValidity(message);
+  input.reportValidity();
+  input.setCustomValidity("");
+  return false;
+}
+
 export function postBoard(payload, status) {
   var skipGoalSync = payload.goal_sync === false;
   delete payload.goal_sync;
@@ -320,11 +338,11 @@ var COL_ACTIONS_CLASS = "flex items-center gap-1 group-data-[collapsed=true]:hid
 var CARDS_CLASS = "m-0 flex min-h-8 flex-1 list-none flex-col gap-2 overflow-y-auto px-2 py-1 pb-2 scroll-smooth [scrollbar-color:color-mix(in_srgb,var(--fg)_15%,transparent)_transparent] [scrollbar-width:thin] group-data-[collapsed=true]:hidden";
 var EMPTY_SLOT_CLASS = "rounded-plate border border-dashed border-rule bg-[color-mix(in_srgb,var(--surface)_70%,var(--surface-2))] px-3 py-4 text-center text-sm text-fg-muted group-data-[collapsed=true]:hidden group-data-[drop=true]:border-accent group-data-[drop=true]:text-accent-text [&_button]:mt-2 [&_button]:rounded-capsule [&_button]:text-sm";
 var QUICK_ADD_CLASS = "group rounded-b-plate-lg border-t border-rule/50 bg-transparent px-2 py-2 [hidden]:hidden group-data-[collapsed=true]:hidden";
-var ADD_TRIGGER_CLASS = "flex w-full cursor-pointer items-center gap-2 rounded-plate-lg border-0 bg-transparent px-2 py-2 font-sans text-sm text-fg-muted transition-colors hover:bg-[color-mix(in_srgb,var(--fg)_8%,transparent)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 group-data-[adding=true]:hidden [&_.icon]:opacity-60";
+var ADD_TRIGGER_CLASS = "flex w-full cursor-pointer items-center gap-2 rounded-plate-lg border-0 bg-transparent px-2 py-2 font-sans text-sm text-fg-muted transition-colors hover:bg-[color-mix(in_srgb,var(--fg)_8%,transparent)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 group-data-[adding=true]:hidden pointer-coarse:min-h-11 [&_.icon]:opacity-60";
 var ADD_FORM_CLASS = "hidden flex-col gap-2 group-data-[adding=true]:flex";
-var ADD_TEXTAREA_CLASS = "max-h-[140px] min-h-[54px] w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-2 font-sans text-sm leading-snug shadow-[var(--lift-low)] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_25%,transparent)]";
-var ADD_ACTIONS_CLASS = "flex items-center gap-2 [&_button]:min-h-8 [&_button]:rounded-plate-lg [&_button]:text-sm";
-var ADD_CANCEL_CLASS = "cursor-pointer border-0 bg-transparent px-2 text-base leading-none text-fg-muted hover:text-fg";
+var ADD_TEXTAREA_CLASS = "max-h-[140px] min-h-[54px] w-full resize-y rounded-plate-lg border border-rule bg-surface px-3 py-2 font-sans text-sm leading-snug shadow-[var(--lift-low)] max-[640px]:[font-size:16px] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 focus-visible:shadow-[0_0_0_2px_color-mix(in_srgb,var(--accent)_25%,transparent)]";
+var ADD_ACTIONS_CLASS = "flex items-center gap-2 [&_button]:min-h-8 [&_button]:rounded-plate-lg [&_button]:text-sm pointer-coarse:[&_button]:min-h-11";
+var ADD_CANCEL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11 cursor-pointer border-0 bg-transparent px-2 text-base leading-none text-fg-muted hover:text-fg";
 var LANE_CONTROL_CLASS = "pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 /* The board's detail rows, goal row and subtask checklist: one row vocabulary
    shared by the card detail, the goal card and the checklist tree. */
@@ -401,6 +419,7 @@ function boardColumn(col, s) {
   var qaForm = document.createElement("div");
   qaForm.className = ADD_FORM_CLASS;
   var qaTextarea = document.createElement("textarea");
+  qaTextarea.className = ADD_TEXTAREA_CLASS;
   qaTextarea.placeholder = "Enter a goal for this card…";
   qaTextarea.maxLength = 500;
   qaTextarea.rows = 2;
@@ -457,7 +476,15 @@ function boardColumn(col, s) {
     var m = qaMention();
     var assignee = m ? m.name : "";
     var t = (m ? raw.slice(0, m.at) + " " + raw.slice(m.end) : raw).trim().replace(/\s+/g, " ");
-    if (!t) return;
+    if (!requireText(qaTextarea, "Write the goal for this card.")) return;
+    // The box can hold text and still leave nothing once the mention is
+    // stripped, so the second refusal says which of the two it is.
+    if (!t) {
+      qaTextarea.setCustomValidity("Write the goal itself; the @mention only names who it is for.");
+      qaTextarea.reportValidity();
+      qaTextarea.setCustomValidity("");
+      return;
+    }
     closeQuickAdd();
     el.boardStatus.textContent = "Creating goal card…";
     postGoal({ objective: t }, "Goal card saved. It has not started.").then(function (d) {
@@ -860,7 +887,7 @@ function cardNode(c) {
     bl.style.color = "var(--warn-text)";
     bl.appendChild(icon("blocked", 14));
     bl.appendChild(document.createTextNode(" " + blocked.length));
-    bl.title = "Blocked by " + blocked.length + " card(s)";
+    bl.title = "Blocked by " + plural(blocked.length, { one: "card", other: "cards" });
     badges.appendChild(bl);
     hasBadges = true;
   }
@@ -1897,7 +1924,7 @@ function showCardDetail(id) {
 
   function addChecklistItem(inputNode, buttonNode, parentId) {
     var text = inputNode.value.trim();
-    if (!text) return;
+    if (!requireText(inputNode, parentId ? "Write the child item's text." : "Write the checklist item's text.")) return;
     buttonNode.disabled = true;
     var payload = { op: "subtask_add", id: c.id, text: text };
     if (parentId) payload.parent_subtask_id = parentId;
@@ -1922,7 +1949,8 @@ function showCardDetail(id) {
       postBoard({ op: "subtask_toggle", id: c.id, subtask_id: s.id, done: wanted }, null)
         .then(function (ok) {
           // The click already moved the checkbox; put it back rather than leave a
-          // state the server refused on screen.
+          // state the server refused on screen. The refusal itself already
+          // carries its reason in #board-status, so nothing is said here.
           if (!ok) tick.checked = !wanted;
         });
     });
@@ -2214,7 +2242,7 @@ function showCardDetail(id) {
   noteSend.className = DETAIL_SAVE_BTN_CLASS + " " + COMMENT_SEND_CLASS;
   noteSend.textContent = "Save";
   noteSend.addEventListener("click", function() {
-    if (!noteIn.value.trim()) return;
+    if (!requireText(noteIn, "Write a note before saving.")) return;
     postBoard({ op: "log", id: c.id, what: noteIn.value.trim() }, "Recorded.");
   });
   noteWrap.appendChild(noteSend);
@@ -2289,7 +2317,7 @@ export function bindBoard(deps) {
   el.cardForm.addEventListener("submit", function (e) {
     e.preventDefault();
     var title = el.cardTitle.value.trim();
-    if (!title) return;
+    if (!requireText(el.cardTitle, "Give the card a title.")) return;
     el.cardAdd.disabled = true;
     postBoard({ op: "create", title: title, column: el.cardColumn.value }, "Card added.").then(function (ok) {
       el.cardAdd.disabled = false;

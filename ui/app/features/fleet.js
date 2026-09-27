@@ -271,7 +271,7 @@ function renderDMs(container, chatData) {
     empty.appendChild(goRooms);
     container.appendChild(empty);
     if (rooms.length && !dmRooms.length) {
-      var hint = el("p", META_CLASS, rooms.length + " room(s), none are DMs.");
+      var hint = el("p", META_CLASS, plural(rooms.length, { one: "room", other: "rooms" }) + ", none are DMs.");
       container.appendChild(hint);
     }
     return;
@@ -366,7 +366,12 @@ function renderRuns(container, detailNode, runs) {
       var body = g.text ? JSON.parse(g.text) : g;
       renderSimpleGraph(detailNode, body);
       detailNode.hidden = false;
-    }).catch(function () {});
+    }).catch(function (e) {
+      // The Runs path above says so; leaving this half silent made the same
+      // click a working button in one view and a dead one in the other.
+      detailNode.textContent = "";
+      detailNode.appendChild(el("p", "run-empty", "Could not load " + id + ": " + e.message));
+    });
   }
 
   container.setAttribute("role", "list");
@@ -502,7 +507,9 @@ function renderRuns(container, detailNode, runs) {
         row2.appendChild(a);
         container.appendChild(row2);
       });
-    }).catch(function () {});
+    }).catch(function (e) {
+      container.appendChild(el("p", "run-empty", "Could not load the sub-runs: " + e.message));
+    });
   }
 }
 

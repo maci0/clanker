@@ -181,8 +181,13 @@ clanker.registerView({
     container.appendChild(distHead);
     container.appendChild(api.el("p", "meta",
       "Every request the server has answered since it started, by how long it took."));
+    // The band table is four columns wide with a bar in one of them, so on a
+    // phone it has to scroll inside its own box: every other table in the app
+    // gets the same wrapper, and without it this one scrolls the whole page.
+    var tableBox = api.el("div", "overflow-x-auto");
     var table = api.el("table", "mt-3 w-full border-collapse text-sm");
-    container.appendChild(table);
+    tableBox.appendChild(table);
+    container.appendChild(tableBox);
 
     /* ------------------------------------------------------------ painting */
 
@@ -314,7 +319,7 @@ clanker.registerView({
 
       table.textContent = "";
       var caption = api.el("caption", "caption-bottom mt-2 text-left text-xs text-fg-muted",
-        sum > 0 ? sum + " requests measured" : "No requests measured yet");
+        sum > 0 ? api.fmt.plural(sum, { one: "request", other: "requests" }) + " measured" : "No requests measured yet");
       table.appendChild(caption);
 
       var thead = api.el("thead");

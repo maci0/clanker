@@ -414,9 +414,11 @@ function loadWorkflows() {
       });
       if (status) status.textContent = utilPlural(list.length, { one: "workflow.", other: "workflows." });
     })
-    .catch(function () {
-      var msg = "Could not load templates.";
-      if (status) status.textContent = "Could not load workflows.";
+    .catch(function (err) {
+      // One wording: the panel and the announced status named two different
+      // features for the same failure.
+      var msg = "Could not load workflows: " + ((err && err.message) || "could not reach the server.");
+      if (status) status.textContent = msg;
       showLoadError(box, msg, loadWorkflows);
     });
 }

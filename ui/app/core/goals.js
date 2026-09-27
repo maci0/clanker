@@ -1,5 +1,6 @@
 // Pure goal helpers — no DOM, no van, no page state.
 // Extracted so goal sorting/filtering/projection can be imported as ES module.
+import { plural } from "./utils.js";
 
 export function goalSortKey(a, b) {
   return (b.updated || 0) - (a.updated || 0);
@@ -7,7 +8,7 @@ export function goalSortKey(a, b) {
 
 export function goalFields(g) {
   var loopResult = g.goal_loop_reason
-    ? ((g.goal_loop_turns || 0) + " turn(s): " + g.goal_loop_reason)
+    ? (plural(g.goal_loop_turns || 0, { one: "turn", other: "turns" }) + ": " + g.goal_loop_reason)
     : "";
   return [["Done when", g.completion_criterion], ["Proof", g.proof],
     ["Boundaries", g.boundaries], ["Stop rule", g.stop_rule],

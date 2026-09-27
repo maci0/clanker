@@ -157,16 +157,32 @@ function runFolderSync(){
   if(!path){ if(status) status.textContent = "Enter the folder path on the server."; return; }
   rememberSyncPath(syncOpenId, path);
   btn.disabled = true;
-  fetch("/api/knowledge/"+encodeURIComponent(syncOpenId)+"/sync", {
-    method: "POST", headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ path: path, prune: !!(prune && prune.checked) })
-  }).then(readJson)
-    .then(function(d){
-      if(status) status.textContent = "Synced " + d.synced + " document(s)" + (d.removed ? ", removed " + d.removed : "") + (d.skipped ? ", skipped " + d.skipped : "") + "." + (d.prune_skipped ? " Prune was skipped: the folder listing was incomplete, so a missing document may just be an unread file." : "");
-      openCollection(syncOpenId); loadKnowledge();
-    })
-    .catch(function(err){ if(status) status.textContent = "Sync failed: " + err.message; })
-    .finally(function(){ btn.disabled = false; });
+  var go = function(){
+    fetch("/api/knowledge/"+encodeURIComponent(syncOpenId)+"/sync", {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ path: path, prune: !!(prune && prune.checked) })
+    }).then(readJson)
+      .then(function(d){
+        if(status) status.textContent = "Synced " + plural(d.synced, {one:"document", other:"documents"}) + (d.removed ? ", removed " + plural(d.removed, {one:"document", other:"documents"}) : "") + (d.skipped ? ", skipped " + d.skipped : "") + "." + (d.prune_skipped ? " Prune was skipped: the folder listing was incomplete, so a missing document may just be an unread file." : "");
+        openCollection(syncOpenId); loadKnowledge();
+      })
+      .catch(function(err){ if(status) status.textContent = "Sync failed: " + err.message; })
+      .finally(function(){ btn.disabled = false; });
+  };
+  // Prune deletes every document whose file is gone from the folder, so it
+  // asks first like every other irreversible action here. The tick stays as it
+  // was: cancelling a confirmation is not a reason to clear the intent.
+  if(prune && prune.checked){
+    btn.disabled = false;
+    uiConfirm("Prune documents that are no longer in the folder? Every document in this collection whose file is missing from "+path+" is deleted. This cannot be undone.",
+      { danger: true, confirmLabel: "Sync and prune" }).then(function(yes){
+        if(!yes) return;
+        btn.disabled = true;
+        go();
+      });
+    return;
+  }
+  go();
 }
 
 /* The collection list and its cards, as Tailwind utilities over the cabinet
@@ -185,6 +201,11 @@ var TITLE_CLASS = "flex flex-wrap items-center gap-x-3 gap-y-2";
 var DOC_CLASS = "data-[found=true]:bg-accent-dim data-[found=true]:outline-1 data-[found=true]:outline-accent/35";
 
 function openCollection(id, docId){
+  // Clear before the fetch, not after: opening collection B while A is open
+  // used to leave A's documents under B's title until B answered, and a slow
+  // answer read as a click that did nothing.
+  var pending=document.getElementById("knowledge-detail");
+  if(pending){ pending.hidden=false; pending.textContent="Loading…"; }
   fetch("/api/knowledge/"+encodeURIComponent(id)).then(readJson).then(function(data){
     var detail=document.getElementById("knowledge-detail"); if(!detail) return;
     detail.hidden=false; detail.textContent="";
@@ -369,7 +390,6 @@ export function bindKnowledge(){
         var failed=document.createElement("p");
         failed.className="run-empty";
         failed.appendChild(document.createTextNode(msg+" "));
-        var retry=document.createElement("button");
         var retry = kit.button({variant:"secondary"}, "Try again");
         retry.addEventListener("click",doSearch);
         failed.appendChild(retry);

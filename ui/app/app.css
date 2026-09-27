@@ -582,8 +582,10 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   input[type="date"], select { min-height: 44px; }
   .composer .toolbar #submit,
   .composer .toolbar #cancel { min-height: 44px; }
-  .board-quick-add .board-add-actions button,
-  .card-quick-actions button, .slack-btn-icon, .slack-room-item, .label-picker-item,
+  /* The rest were board class names that no longer exist after the view moved
+     to Tailwind utilities; the board states its own coarse-pointer sizes in
+     features/board.js (LANE_CONTROL_CLASS, ADD_ACTIONS_CLASS), which is where
+     a control the mouse can shrink but a finger cannot belongs. */
   .session-actions .secondary, .session-actions .more > summary,
   .session-actions button,
   .composer .toolbar #voice-btn {
@@ -815,10 +817,16 @@ label:has(+ input[required])::after, label:has(+ textarea[required])::after, lab
   .fleet-card .fleet-actions, .fleet-card .toolbar-actions { width: 100%; justify-content: flex-end; }
   #view-kanban .board { gap: var(--space-3); }
   #view-kanban .board-col { min-width: 10rem; }
-  .board-goal-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .board-goal-form label, .board-goal-form input, .board-goal-form textarea, .board-goal-form button { grid-row: auto; }
-  .board-goal-form label { margin-top: var(--space-2); }
-  .board-filter { grid-template-columns: auto minmax(10rem, 1fr) auto auto; }
+  /* #goal-form and #board-filter carry their column layout as Tailwind
+     utilities in index.html, and those are class selectors: on a tie with a
+     class rule here the later stylesheet wins, so the narrow layout silently
+     stopped applying when the form moved out of the cabinet sheet. An id
+     selector settles it whichever order the two load in. */
+  #goal-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  #goal-form > * { grid-row: auto; }
+  #goal-form label { margin-top: var(--space-2); }
+  #board-filter { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+  #board-filter > input[type="search"] { flex: 1 1 14rem; }
 }
 @media (max-width: 40rem) {
   #view-kanban .section-head { align-items: flex-start; margin-bottom: var(--space-4); }
@@ -826,17 +834,13 @@ label:has(+ input[required])::after, label:has(+ textarea[required])::after, lab
   #view-kanban .section-head button { min-height: 44px; }
   #view-kanban .board { flex-direction: column; }
   #view-kanban .board-col:not([data-collapsed="true"]) { min-width: 0; max-width: none; width: 100%; max-height: none; }
-  .board-goal-form { display: flex; padding: var(--space-3); }
-  .board-goal-form input, .board-goal-form textarea, .board-goal-form button { width: 100%; min-height: 44px; }
+  #goal-form { display: flex; flex-direction: column; padding: var(--space-3); }
+  #goal-form > * { grid-row: auto; }
+  #goal-form input, #goal-form textarea, #goal-form button { width: 100%; min-height: 44px; }
   /* Exempt from the full-width rule above: a checkbox has nothing to fill. */
-  .board-goal-form input[type="checkbox"] { width: 1.05rem; min-height: 0; }
-  .board-filter { display: flex; align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
-  .board-filter > input[type="search"] { flex: 1 1 14rem; min-height: 44px; }
-  .board-filter select { min-height: 44px; }
+  #goal-form input[type="checkbox"] { width: 1.05rem; min-height: 0; }
+  #board-filter { align-items: center; border-radius: var(--radius); gap: var(--space-2) var(--space-3); }
+  #board-filter > input[type="search"] { min-height: 44px; }
+  #board-filter select { min-height: 44px; }
   .board-empty { margin: var(--space-4) auto; align-items: flex-start; text-align: start; }
-  /* Same iOS zoom contract as the page-wide phone-field guard: this
-     textarea's 13px rule is declared after that guard. */
-  .board-quick-add .board-add-form textarea { font-size: 16px; }
-}@media (max-width: 40rem) {
-  /* Every view-scoped field carries its own 16px reset as a utility now. */
 }
