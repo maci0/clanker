@@ -116,11 +116,10 @@ export function upgradePfButtons(root) {
 /* The field, label, check and chip bridges are gone: the cabinet styles a
    control by its tag and type (`input[type="text"]`, `select`, `.checkbox-row`,
    `.detail-row label`), so a class saying "this is a form control" only handed
-   the element to PatternFly. The names stay, because call sites across the page
-   and the plugins use them, and they do nothing now. Deleting those call sites
-   is a separate sweep. */
+   the element to PatternFly. The names stay, because call sites in this file
+   and across the page use them, and they do nothing now. Deleting those call
+   sites is a separate sweep. */
 export function upgradePfFormControl(el) { return el; }
-export function upgradePfCheckInput(input) { return input; }
 export function upgradePfLabel(el) { return el; }
 export function upgradePfForm(el) { return el; }
 export function upgradePfForms(root) { return root || document; }

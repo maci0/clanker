@@ -66,8 +66,6 @@ export function log(level: u32, msg: string): void {
   const bytes = String.UTF8.encode(msg);
   ck_log(level, changetype<usize>(bytes), bytes.byteLength);
 }
-export function logInfo(msg: string): void { log(1, msg); }
-export function logWarn(msg: string): void { log(2, msg); }
 export function logError(msg: string): void { log(3, msg); }
 
 /// Seconds since the Unix epoch. `ck_now` itself is nanoseconds (see
@@ -128,12 +126,6 @@ function hex4(n: i32): string {
 /// takes (matches lib.zig's okText).
 export function okText(text: string): u64 {
   return packOut('{"ok":true,"text":"' + jsonEscape(text) + '"}');
-}
-
-/// A JSON document the caller already built (e.g. via json.ts's stringify),
-/// returned verbatim rather than wrapped in a "text" string field.
-export function okRaw(json: string): u64 {
-  return packOut(json);
 }
 
 /// `{"ok":false,"error":"<msg>"}`, `msg` escaped (matches lib.zig's fail).
