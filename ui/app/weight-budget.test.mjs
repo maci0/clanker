@@ -78,14 +78,19 @@ for (const src of eager) {
 }
 
 const eagerJsGz = eager.reduce((sum, src) => sum + sizes[src].gzKib, 0);
-const firstPaintGz = gzKib(fileBytes("index.html")) + gzKib(fileBytes("app.css"));
+// tailwind.css is in the critical path by design: the utilities are the layer
+// that supersedes app.css as each view moves onto Tailwind, so they have to
+// arrive before the first draw. It costs its bytes every visit, which is why
+// the first-paint budget below counts it.
+const firstPaintGz = gzKib(fileBytes("index.html")) + gzKib(fileBytes("app.css")) + gzKib(fileBytes("tailwind.css"));
 
 console.log("-- web delivery weight (gzip level 9, what the wire carries) --");
 for (const src of eager.sort()) {
   console.log(`   ${sizes[src].rawKib.toFixed(1).padStart(7)}K raw ${sizes[src].gzKib.toFixed(1).padStart(6)}K gz  ${src}`);
 }
 console.log(`   eager JS (${eager.length} requests): ${eagerJsGz.toFixed(1)}K gz`);
-console.log(`   first paint (index.html + app.css): ${firstPaintGz.toFixed(1)}K gz`);
+console.log(`   first paint (index.html + app.css + tailwind.css): ${firstPaintGz.toFixed(1)}K gz`);
+console.log(`   tailwind.css: ${(fileBytes("tailwind.css").length / KiB).toFixed(1)}K raw ${gzKib(fileBytes("tailwind.css")).toFixed(1)}K gz`);
 console.log(`   views.css deferred: ${gzKib(fileBytes("views.css")).toFixed(1)}K gz`);
 console.log(`   patternfly.min.css deferred: ${gzKib(fileBytes(join("..", "vendor", "patternfly.min.css"))).toFixed(1)}K gz`);
 
@@ -116,12 +121,22 @@ test("eager JS stays inside its weight budget", function () {
 });
 
 test("first paint stays inside its weight budget", function () {
-  // index.html + app.css are the render-blocking critical path; the deferred
-  // views.css and patternfly must not creep back into them (css-split.test.mjs
-  // pins what each sheet may style).
+  // index.html, app.css and the compiled Tailwind sheet are the render-blocking
+  // critical path; the deferred views.css and patternfly must not creep back
+  // into them (css-split.test.mjs pins what each sheet may style).
   assert.ok(firstPaintGz <= 64, `first paint is ${firstPaintGz.toFixed(1)}K gz; budget is 64K`);
   const appCssRaw = fileBytes("app.css").length / KiB;
   assert.ok(appCssRaw <= 192, `app.css is ${appCssRaw.toFixed(1)}K raw; budget is 192K`);
+});
+
+test("the compiled Tailwind sheet stays inside its budget", function () {
+  // It is generated from the class names in ui/app and ui/plugins, so this
+  // number grows with nothing but the port itself. A jump that is not a view
+  // moving over means the scan picked up a tree it should not: `@source`
+  // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
+  // that looks like a utility into a rule.
+  const css = fileBytes("tailwind.css").length / KiB;
+  assert.ok(css <= 48, `tailwind.css is ${css.toFixed(1)}K raw; budget is 48K`);
 });
 
 test("single large files stay inside their budgets", function () {

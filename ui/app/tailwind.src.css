@@ -1,0 +1,151 @@
+/* Tailwind 4 source for the control cabinet.
+
+   `bun run css:build` compiles this file into ui/app/tailwind.css, which is
+   committed: the page is served by the `webui` WASM guest, `@embedFile`d at
+   comptime, and there is no bundler on either side of that boundary. Rebuild
+   after touching this file or a class name in any source `@source` reaches.
+
+   Theme values are `var()` references to tokens app.css already declares, not
+   copies of them. That keeps one authoring site per value, so the seven named
+   themes and the dark media query keep overriding the token and every utility
+   follows — and no Tailwind theme key collides with a token it reads (a
+   self-referential `--radius-sm: var(--radius-sm)` computes to nothing).
+
+   The radius scale is deliberately *not* Tailwind's: `rounded-plate`,
+   `rounded-plate-sm`, `rounded-plate-lg` and `rounded-capsule` are the cabinet
+   edges, and Tailwind's own `rounded-sm/md/lg` are cleared. A pasted shadcn
+   snippet that asks for `rounded-md` then matches nothing instead of silently
+   rounding a plate into a SaaS card.
+
+   Two imports, not `@import "tailwindcss"`: preflight is not here yet. It
+   resets margins, headings and controls, and app.css/views.css still own those
+   declarations; landing it now would repaint every unported view at once. It
+   arrives with the last cabinet sheet. The one rule the utility layer needs
+   from it — a border style to carry `border` + `border-rule` — is below. */
+
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+@source "./index.html";
+@source "./**/*.js";
+@source "../plugins/**/*.js";
+
+/* Preflight's `border-style` half. Without it `border` sets a width and
+   `border-rule` a colour, and no line is drawn because the initial style is
+   `none`. Width is zeroed, so a rule that sets only a colour stays inert. */
+*, ::before, ::after { border: 0 solid; }
+
+@theme inline {
+  /* No Tailwind palette: every colour on this page is a cabinet token, so a
+     stray `text-red-500` must compile to nothing rather than to Tailwind red. */
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-inherit: inherit;
+
+  --color-paper: var(--paper);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-rule: var(--rule);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-accent-text: var(--accent-text);
+  --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok);
+  --color-ok-fill: var(--ok-fill);
+  --color-violet: var(--violet);
+  --color-violet-text: var(--violet-text);
+  --color-danger: var(--danger);
+  --color-on-danger: var(--on-danger);
+  --color-warn: var(--warn);
+  --color-warn-text: var(--warn-text);
+  --color-scrim: var(--scrim);
+  --color-code-bg: var(--code-bg);
+  --color-code-fg: var(--code-fg);
+
+  /* One hue per clanker name, and the card cover enamels with the ink each one
+     pairs with. Both are tokens in app.css and are read here, never retyped. */
+  --color-chat-hue-0: var(--chat-hue-0);
+  --color-chat-hue-1: var(--chat-hue-1);
+  --color-chat-hue-2: var(--chat-hue-2);
+  --color-chat-hue-3: var(--chat-hue-3);
+  --color-chat-hue-4: var(--chat-hue-4);
+  --color-chat-hue-5: var(--chat-hue-5);
+  --color-chat-hue-6: var(--chat-hue-6);
+  --color-chat-hue-7: var(--chat-hue-7);
+  --color-card-green: var(--card-green);
+  --color-card-yellow: var(--card-yellow);
+  --color-card-orange: var(--card-orange);
+  --color-card-red: var(--card-red);
+  --color-card-purple: var(--card-purple);
+  --color-card-blue: var(--card-blue);
+  --color-card-sky: var(--card-sky);
+  --color-card-pink: var(--card-pink);
+  --color-card-lime: var(--card-lime);
+  --color-card-black: var(--card-black);
+  --color-card-ink-on-dark: var(--card-ink-on-dark);
+  --color-card-ink-on-light: var(--card-ink-on-light);
+  --color-card-green-ink: var(--card-green-ink);
+  --color-card-yellow-ink: var(--card-yellow-ink);
+  --color-card-orange-ink: var(--card-orange-ink);
+  --color-card-red-ink: var(--card-red-ink);
+  --color-card-purple-ink: var(--card-purple-ink);
+  --color-card-blue-ink: var(--card-blue-ink);
+  --color-card-sky-ink: var(--card-sky-ink);
+  --color-card-pink-ink: var(--card-pink-ink);
+  --color-card-lime-ink: var(--card-lime-ink);
+  --color-card-black-ink: var(--card-black-ink);
+
+  /* The six type steps, under the names a shadcn component already speaks:
+     text-sm is the step-0 body size, text-base the step-1 field size. */
+  --text-*: initial;
+  --text-2xs: var(--step--2);
+  --text-xs: var(--step--1);
+  --text-sm: var(--step-0);
+  --text-base: var(--step-1);
+  --text-lg: var(--step-2);
+  --text-xl: var(--step-3);
+
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+  --tracking-label: var(--track-label);
+
+  /* Spacing rungs 1-7 are the cabinet's own space scale, so `p-3` is
+     --space-3 and not Tailwind's 0.75rem. Numbers above 7 keep Tailwind's
+     0.25rem multiplier and are for geometry only (width, height, basis):
+     padding, margin and gap must stay on a rung, and tailwind.test.mjs is
+     what holds that line. */
+  --spacing-1: var(--space-1);
+  --spacing-2: var(--space-2);
+  --spacing-3: var(--space-3);
+  --spacing-4: var(--space-4);
+  --spacing-5: var(--space-5);
+  --spacing-6: var(--space-6);
+  --spacing-7: var(--space-7);
+  --spacing-gutter: var(--gutter);
+
+  --radius-*: initial;
+  --radius-plate-sm: var(--radius-sm);
+  --radius-plate: var(--radius);
+  --radius-plate-lg: var(--radius-lg);
+  --radius-capsule: var(--radius-pill);
+
+  --container-measure: var(--measure);
+
+  --shadow-low: var(--lift-low);
+  --shadow-lift: var(--lift);
+  --shadow-high: var(--lift-high);
+  --shadow-bevel-raised: var(--bevel-raised);
+  --shadow-bevel-inset: var(--bevel-inset);
+  --shadow-bevel-pressed: var(--bevel-pressed);
+  --shadow-lamp-ring: var(--lamp-ring);
+  --shadow-lamp-glow: var(--lamp-glow);
+
+  --background-image-lamp-dome: var(--lamp-dome);
+}

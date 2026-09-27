@@ -5,6 +5,23 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
 
 ## [Unreleased]
 
+### Added
+
+- The web UI gains a Tailwind 4 sheet (`ui/app/tailwind.css`), compiled from
+  `ui/app/tailwind.src.css` with `bun run css:build` and embedded by the
+  `webui` guest like every other asset. It is served render-blocking after
+  `app.css`, which makes it the layer that supersedes the cabinet rules as
+  each view moves over. The theme maps every cabinet token by reference rather
+  than copying its value, so utilities follow the seven themes and the dark
+  query, and no theme key collides with a token it reads.
+
+### Changed
+
+- The Activity plugin is styled with Tailwind utilities and ships no
+  stylesheet: `ui/plugins/activity/app.css` is deleted. Its 44px phone and
+  coarse-pointer touch target is now the `max-[40rem]`/`pointer-coarse`
+  variants on the card button, at the same measurements.
+
 ### Fixed
 
 - `ck_fs_write_if` no longer mints two locks for one file on a case-insensitive

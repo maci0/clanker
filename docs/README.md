@@ -1485,7 +1485,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/`, `/webui` | GET | Web UI (rendered by the internal `webui` WASM tool). Both paths serve it; the URL `serve` prints is `/webui` |
-| `/webui/app.css`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheet, each on its own route |
+| `/webui/app.css`, `/webui/views.css`, `/webui/tailwind.css`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheets, each on its own route. `tailwind.css` is compiled from `ui/app/tailwind.src.css` by `bun run css:build` and committed, because the `webui` guest embeds it at comptime and the serve path runs no build step |
 | `/webui/vendor/*.js` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid` |
 | `/health/live` | GET | Liveness probe; always `{"ok":true,"status":"live"}` if the process is up |
 | `/health/ready` | GET | Readiness probe. 200 with `in_flight`/`connection_limit` while the process can take work; 503 `saturated` when every connection slot is taken. Does not probe the LLM |

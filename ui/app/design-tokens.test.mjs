@@ -22,6 +22,12 @@ function sheets() {
   const out = [
     ["app/app.css", readFileSync(join(here, "app.css"), "utf8")],
     ["app/views.css", readFileSync(join(here, "views.css"), "utf8")],
+    // The Tailwind source, not its build product: tailwind.css is machine
+    // output, and every value a person writes lives in the source, which maps
+    // each one onto the token app.css declares. Migration in progress: when the
+    // last cabinet rule moves over, the tokens move into the @theme block and
+    // this entry is what the two sheets were pinned against.
+    ["app/tailwind.src.css", readFileSync(join(here, "tailwind.src.css"), "utf8")],
     // The win2k skin is fetched only when that theme is applied, but it is
     // still a sheet this page paints with, so it rides the same scale and edge
     // tokens as the two above instead of escaping their pins by living outside

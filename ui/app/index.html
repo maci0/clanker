@@ -8,6 +8,11 @@
 <link rel="stylesheet" href="/webui/vendor/patternfly.min.css" media="print" data-pf="1" fetchpriority="low">
 <noscript><link rel="stylesheet" href="/webui/vendor/patternfly.min.css"></noscript>
 <link rel="stylesheet" href="/webui/app.css">
+<!-- The Tailwind 4 utilities, render-blocking and last: they are the layer
+     that supersedes app.css/views.css as each view moves over, so on equal
+     specificity the utility wins by order. Compiled from
+     ui/app/tailwind.src.css by `bun run css:build`; see ui/app/tailwind.css. -->
+<link rel="stylesheet" href="/webui/tailwind.css">
 <!-- The runs/rooms/models/tools/fleet/kanban-adjacent view styles are not
      needed for the first draw, so like PatternFly they load with media="print"
      (never applied) and are swapped to "all" by app.js once ready. The frame

@@ -19,6 +19,12 @@ const lib = @import("lib.zig");
 const page = @embedFile("app/index.html");
 const styles = @embedFile("app/app.css");
 const view_styles = @embedFile("app/views.css");
+/// The Tailwind 4 sheet, compiled from app/tailwind.src.css by
+/// `bun run css:build` and committed: the guest embeds it at comptime and
+/// `clanker serve` has no build step to run one. The page loads it after
+/// app.css, because the utilities are what supersede the cabinet rules as each
+/// view moves over.
+const tailwind_styles = @embedFile("app/tailwind.css");
 const script = @embedFile("app/app.js");
 /// Bridges the vendored Preact/htm/signals ES modules onto window for the plugin API. Its
 /// own file because the policy forbids inline script.
@@ -90,8 +96,8 @@ comptime {
     // branches this entire comptime evaluation may spend, not a per-call
     // budget, so sizing it off one asset runs out once the assets together
     // exceed it — which is what adding a view used to do to the build.
-    const assets = [_][]const u8{ page, styles, view_styles, script, preact_boot, fleet, arena_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, steer, theme, slash, overlay, search, composer, chatprefs, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
-    const names = [_][]const u8{ "index.html", "app.css", "views.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/steer.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/chatprefs.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
+    const assets = [_][]const u8{ page, styles, view_styles, tailwind_styles, script, preact_boot, fleet, arena_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, steer, theme, slash, overlay, search, composer, chatprefs, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
+    const names = [_][]const u8{ "index.html", "app.css", "views.css", "tailwind.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/steer.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/chatprefs.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
     var total: usize = 0;
     for (assets) |a| total += a.len;
     @setEvalBranchQuota(4 * total);
@@ -114,6 +120,7 @@ const Asset = struct { body: []const u8, content_type: []const u8 };
 /// routes its own paths client-side and a deep link must still load it.
 fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/app.css")) return .{ .body = styles, .content_type = "text/css; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/tailwind.css")) return .{ .body = tailwind_styles, .content_type = "text/css; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/views.css")) return .{ .body = view_styles, .content_type = "text/css; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/app.js")) return .{ .body = script, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/preact-boot.js")) return .{ .body = preact_boot, .content_type = "text/javascript; charset=utf-8" };

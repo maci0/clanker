@@ -388,6 +388,11 @@ pub fn build(b: *std.Build) void {
     const design_tokens_js_test = b.addSystemCommand(&.{ "bun", "test" });
     design_tokens_js_test.addFileArg(b.path("ui/app/design-tokens.test.mjs"));
     test_step.dependOn(&design_tokens_js_test.step);
+    // The Tailwind sheet is a committed build product, so a utility written
+    // into markup and never regenerated would silently style nothing.
+    const tailwind_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    tailwind_js_test.addFileArg(b.path("ui/app/tailwind.test.mjs"));
+    test_step.dependOn(&tailwind_js_test.step);
     // What a visitor actually downloads, and what it is allowed to grow to.
     // These numbers are the regression record for the critical path.
     const weight_budget_js_test = b.addSystemCommand(&.{ "bun", "test" });
