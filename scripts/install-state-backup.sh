@@ -33,6 +33,32 @@ link_unit clanker-state-backup.service
 link_unit clanker-state-backup.timer
 link_unit clanker-state-verify.service
 link_unit clanker-state-verify.timer
+
+# Both units read their configuration from here (EnvironmentFile=). A user
+# service does not inherit the login shell's environment, so an export in a
+# profile never reaches the timer; writing the file is the only way to set
+# CLANKER_BACKUP_OFFSITE_DEST or CLANKER_BACKUP_RETENTION_DAYS for a scheduled
+# run. Written once, never overwritten: this is the operator's file, and a
+# reinstall must not drop a destination they set.
+backup_env_dir="${XDG_CONFIG_HOME:-$HOME/.config}/clanker"
+backup_env="$backup_env_dir/backup.env"
+mkdir -p "$backup_env_dir"
+if [ ! -e "$backup_env" ]; then
+    cat >"$backup_env" <<'EOF'
+# Configuration for clanker-state-backup.service / clanker-state-verify.service.
+# Read by systemd (EnvironmentFile=); a shell export does NOT reach the timer.
+# KEY=value, one per line, no `export`. See scripts/README.md.
+
+# Second failure domain: an rsync destination outside the storage root, e.g.
+# /mnt/second-disk/clanker-backups or user@host:/vol/clanker-backups. Unset
+# means every copy shares the store's disk.
+#CLANKER_BACKUP_OFFSITE_DEST=
+
+# Delete snapshots older than this many days. 0 keeps every snapshot.
+#CLANKER_BACKUP_RETENTION_DAYS=30
+EOF
+    printf 'wrote %s\n' "$backup_env"
+fi
 systemctl --user daemon-reload
 systemctl --user enable --now clanker-state-backup.timer
 systemctl --user enable --now clanker-state-verify.timer

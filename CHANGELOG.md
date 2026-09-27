@@ -281,6 +281,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   distinct files keep distinct locks on every platform.
 - `turn_stats` in the TUI reported the wall time of a turn through an
   undeclared `io` identifier, which did not compile.
+- The backup timer never received `CLANKER_BACKUP_OFFSITE_DEST`. The units are
+  user services with no `EnvironmentFile=`, so they inherit the user manager's
+  environment and never the login shell's: the documented "set it in the
+  service environment" had nowhere to go and the second failure domain could
+  not be turned on. Both units now read
+  `~/.config/clanker/backup.env`, which `scripts/install-state-backup.sh`
+  writes as a commented template once and never rewrites, and `clanker
+  doctor` reads the same file, warning when a shell's export disagrees with
+  what the timer is actually configured for.
+- `CLANKER_BACKUP_RETENTION_DAYS=0` (and an unparseable value) skipped the
+  stale `.incomplete` staging-dir sweep, so the remains of runs that died
+  before the EXIT trap accumulated indefinitely. Snapshots are still kept
+  forever; only the failed attempts are reclaimed.
 
 ## [0.5.0] - 2026-09-18
 

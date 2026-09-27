@@ -71,14 +71,22 @@ store's disk: this posture protects the store against checkout loss
 (re-clone, `git clean`), accidental deletion, and logical corruption, but a
 loss of the storage-root volume itself takes the snapshots with it. If that
 volume dies, there is no recovery from these backups — that is the accepted
-single-failure-domain trade-off. To buy a second domain, set
-`CLANKER_BACKUP_OFFSITE_DEST` in the service environment to an rsync
+single-failure-domain trade-off. To buy a second domain, set `CLANKER_BACKUP_OFFSITE_DEST` to an rsync
 destination outside the storage root (another disk, or another machine:
 `user@host:/vol/clanker-backups`); every successful run mirrors the whole
 backup root there, and a failed mirror fails the run loudly rather than
 leaving a silently stale second copy. The mirror never gets `--delete`: local
 retention prunes do not propagate, so one deletion path cannot destroy both
 copies (reclaim mirror space with a deliberate manual `rsync -a --delete`).
+
+The scheduled runs read that variable, and every other backup knob, from
+`~/.config/clanker/backup.env` (`$XDG_CONFIG_HOME/clanker/backup.env`), which
+`scripts/install-state-backup.sh` writes as a commented template on first run
+and never rewrites. It is a systemd `EnvironmentFile`: `KEY=value`, one per
+line, no `export`. A shell export is not enough and does not reach the timer,
+because a user service inherits the user manager's environment, not the login
+shell's; `clanker doctor` reads the same file, so a shell whose export
+disagrees with it is reported rather than believed.
 `clanker doctor` reads a local mirror and reports how it compares with the
 store's newest snapshot, so a destination that stopped being written shows up
 without waiting for the next backup run to fail; a remote `user@host:/path`

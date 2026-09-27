@@ -54,6 +54,12 @@ The script's own diagnostics are one line each and name the entry at fault:
   `CLANKER_BACKUP_OFFSITE_DEST` did not update. The local snapshot just
   taken is complete; fix the destination and re-run so the second failure
   domain stops lagging.
+- The backup runs fine and the journal says nothing, but the mirror is never
+  written: `CLANKER_BACKUP_OFFSITE_DEST` was exported in a shell, not set in
+  `~/.config/clanker/backup.env`. The units are user services, so they read
+  `EnvironmentFile=` and never the login shell's environment. `clanker
+  doctor`'s `state backups` section reports the value the service is
+  configured for, and warns when the shell's export disagrees with it.
 - `error: the newest snapshot is <age> old, past the <n>s bound` — the weekly
   restore drill found the newest snapshot older than
   `CLANKER_BACKUP_MAX_AGE_SECONDS` (default 7200, four timer intervals). The

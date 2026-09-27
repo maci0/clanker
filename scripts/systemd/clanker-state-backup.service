@@ -3,4 +3,9 @@ Description=Back up clanker runtime-local data
 
 [Service]
 Type=oneshot
+# A user service inherits the manager's environment, not the login shell's, so
+# an export in a shell profile never reaches the timer. The file is the one
+# place the service reads its configuration from; `-` keeps a missing file
+# from failing the unit (every setting has a default in backup-state.sh).
+EnvironmentFile=-%h/.config/clanker/backup.env
 ExecStart=%h/.local/bin/clanker-state-backup

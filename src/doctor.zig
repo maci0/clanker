@@ -440,6 +440,68 @@ fn checkStateBackups(
     try reportOffsiteMirror(io, arena, offsite_dest, found, rep);
 }
 
+/// `clanker-state-backup.service` is a systemd *user* service: it reads its
+/// configuration from `EnvironmentFile=`, not from the login shell, so a
+/// `CLANKER_BACKUP_OFFSITE_DEST` exported in a profile never reaches the timer.
+/// Reading the process environment here would report a second failure domain
+/// the scheduled run has never written to. The file wins, and the process
+/// environment is the fallback so a hand-run `backup-state.sh` is still
+/// described when no service file exists.
+fn serviceOffsiteDest(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+) []const u8 {
+    if (backupEnvFileValue(io, arena, environ_map, "CLANKER_BACKUP_OFFSITE_DEST")) |v| return v;
+    return environ_map.get("CLANKER_BACKUP_OFFSITE_DEST") orelse "";
+}
+
+/// `KEY=value` out of the service environment file, or null when the file is
+/// absent or leaves the key commented out. One `KEY=value` per line, matching
+/// what `EnvironmentFile=` accepts; the written template ships every setting
+/// commented, so a commented key must read as unset rather than as an empty
+/// destination.
+fn backupEnvFileValue(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    environ_map: *std.process.Environ.Map,
+    key: []const u8,
+) ?[]const u8 {
+    const config_home = environ_map.get("XDG_CONFIG_HOME");
+    const home = environ_map.get("HOME") orelse return null;
+    const base = if (config_home != null and config_home.?.len > 0)
+        config_home.?
+    else
+        try std.fmt.allocPrint(arena, "{s}/.config", .{home});
+    const path = try std.fmt.allocPrint(arena, "{s}/clanker/backup.env", .{base});
+    const text = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(max_backup_env_bytes)) catch return null;
+    return envFileLookup(arena, text, key);
+}
+
+const max_backup_env_bytes = 64 * 1024;
+
+/// systemd `EnvironmentFile=` syntax, restricted to what the template the
+/// installer writes can contain: a leading `#` comment, `KEY=value`, and an
+/// optional pair of matching quotes around the value.
+fn envFileLookup(arena: std.mem.Allocator, text: []const u8, key: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        if (!std.mem.eql(u8, std.mem.trim(u8, line[0..eq], " \t"), key)) continue;
+        var value = std.mem.trim(u8, line[eq + 1 ..], " \t");
+        if (value.len >= 2 and
+            (value[0] == '"' or value[0] == '\'') and value[value.len - 1] == value[0])
+        {
+            value = value[1 .. value.len - 1];
+        }
+        if (value.len == 0) return null;
+        return arena.dupe(u8, value) catch null;
+    }
+    return null;
+}
+
 /// The main checkout a linked worktree's `.git` FILE points back at, or null
 /// when this is not a linked worktree. In an ordinary checkout `.git` is a
 /// DIRECTORY, so the read fails and doctor skips the whole section rather than
@@ -690,10 +752,23 @@ fn runChecks(
         io,
         arena,
         std.Io.Dir.cwd(),
-        environ_map.get("CLANKER_BACKUP_OFFSITE_DEST") orelse "",
+        serviceOffsiteDest(io, arena, environ_map),
         @intCast(@divTrunc(log.unixMilliseconds(), std.time.ms_per_s)),
         rep,
     );
+    // A shell export and the service file naming different destinations is
+    // the shape that reads healthy here and is not: the timer writes the one
+    // in the file, the operator believes the other is being written.
+    if (backupEnvFileValue(io, arena, environ_map, "CLANKER_BACKUP_OFFSITE_DEST")) |from_file| {
+        const from_shell = environ_map.get("CLANKER_BACKUP_OFFSITE_DEST") orelse "";
+        if (!std.mem.eql(u8, from_file, from_shell)) {
+            rep.line(.warn, "offsite mirror", try std.fmt.allocPrint(
+                arena,
+                "this shell's CLANKER_BACKUP_OFFSITE_DEST is '{s}' but the backup service is configured for '{s}'; the timer uses the service value",
+                .{ from_shell, from_file },
+            ));
+        }
+    }
 
     // Only inside a linked worktree, where these names are supposed to be
     // symlinks back to the main checkout. An ordinary checkout has no main
@@ -1313,4 +1388,44 @@ test "doctor says a remote mirror cannot be read from here" {
 
     try std.testing.expectEqual(@as(usize, 0), rep.warnings);
     try std.testing.expect(std.mem.find(u8, text, "is remote") != null);
+}
+
+test "backup service env file wins over a shell export" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The shape the installer writes: every setting ships commented, so a
+    // commented key must read as unset rather than as an empty destination
+    // (which backup-state.sh treats as a configured mirror of nothing).
+    const text =
+        \\# Configuration for clanker-state-backup.service.
+        \\#CLANKER_BACKUP_OFFSITE_DEST=
+        \\#CLANKER_BACKUP_RETENTION_DAYS=30
+        \\
+    ;
+    try std.testing.expect(envFileLookup(arena, text, "CLANKER_BACKUP_OFFSITE_DEST") == null);
+    try std.testing.expect(envFileLookup(arena, text, "CLANKER_BACKUP_RETENTION_DAYS") == null);
+
+    const with_value =
+        \\
+        \\CLANKER_BACKUP_OFFSITE_DEST=/mnt/second-disk/clanker-backups
+        \\CLANKER_BACKUP_RETENTION_DAYS=7
+    ;
+    try std.testing.expectEqualStrings(
+        "/mnt/second-disk/clanker-backups",
+        envFileLookup(arena, with_value, "CLANKER_BACKUP_OFFSITE_DEST").?,
+    );
+    try std.testing.expectEqualStrings("7", envFileLookup(arena, with_value, "CLANKER_BACKUP_RETENTION_DAYS").?);
+
+    // systemd accepts a quoted value; a destination with spaces in it must
+    // survive the parse rather than be cut at the first space.
+    const quoted = "CLANKER_BACKUP_OFFSITE_DEST=\"/mnt/backup disk/clanker\"\n";
+    try std.testing.expectEqualStrings("/mnt/backup disk/clanker", envFileLookup(arena, quoted, "CLANKER_BACKUP_OFFSITE_DEST").?);
+
+    // A key that is present but empty is still an unset mirror, and an
+    // unterminated quote is a line systemd would reject: neither may be
+    // reported as a destination.
+    try std.testing.expect(envFileLookup(arena, "CLANKER_BACKUP_OFFSITE_DEST=\n", "CLANKER_BACKUP_OFFSITE_DEST") == null);
+    try std.testing.expectEqualStrings("\"/unterminated", envFileLookup(arena, "CLANKER_BACKUP_OFFSITE_DEST=\"/unterminated\n", "CLANKER_BACKUP_OFFSITE_DEST").?);
 }

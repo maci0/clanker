@@ -157,6 +157,19 @@ ln -sfn "$timestamp" "$latest"
 # a failed prune. CLANKER_BACKUP_RETENTION_DAYS (default 30) is the age after
 # which a snapshot is deleted; 0 keeps every snapshot.
 prune_old_snapshots() {
+    # Stale staging dirs first, and unconditionally: they are the remains of
+    # runs that died before the EXIT trap existed, so nothing else reclaims
+    # them, and each carries a full copy of the store. This used to sit below
+    # the retention guards, so `CLANKER_BACKUP_RETENTION_DAYS=0` (and an
+    # unparseable value) skipped it and the garbage grew without bound, which
+    # is the opposite of what "0 keeps every snapshot" means: it keeps every
+    # *snapshot*, not every failed attempt. The current run's own staging was
+    # already renamed away, so nothing live matches.
+    local stale
+    while IFS= read -r stale; do
+        rm -rf -- "$stale"
+    done < <(find "$backup_root" -maxdepth 1 -type d -name '.*.incomplete' 2>/dev/null)
+
     local keep_days=${CLANKER_BACKUP_RETENTION_DAYS:-30}
     case "$keep_days" in
         ''|0) return 0 ;;
@@ -164,13 +177,6 @@ prune_old_snapshots() {
             printf 'warning: CLANKER_BACKUP_RETENTION_DAYS=%s is not a day count; keeping all snapshots\n' "$keep_days" >&2
             return 0 ;;
     esac
-
-    # Stale staging dirs predate the EXIT trap; the current run's own staging
-    # has already been renamed away at this point, so nothing live matches.
-    local stale
-    while IFS= read -r stale; do
-        rm -rf -- "$stale"
-    done < <(find "$backup_root" -maxdepth 1 -type d -name '.*.incomplete' 2>/dev/null)
 
     local cutoff epoch
     # `date -d` is GNU-only (BSD/macOS date has no `-d STRING`), so compute

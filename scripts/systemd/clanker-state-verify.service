@@ -3,4 +3,9 @@ Description=Verify clanker state backup restores cleanly
 
 [Service]
 Type=oneshot
+# Same file as the backup unit: the weekly drill checks the off-site mirror
+# (`verify-backup.sh` reads CLANKER_BACKUP_OFFSITE_DEST), and a drill that
+# reads a different destination than the backup run writes would report on a
+# mirror the run never touches.
+EnvironmentFile=-%h/.config/clanker/backup.env
 ExecStart=%h/.local/bin/clanker-state-verify
