@@ -4,6 +4,16 @@
    Talks to local serve over /api/mesh/*. Fleet keeps the lamp map; this
    view is how you change membership. */
 
+/* The rows and lists this view draws. Named because a member row and a pending
+   row are the same plate, and the join form's field is deliberately left to the
+   page: `input[type="text"]:not(.pf-v6-c-form-control)` in app.css already
+   styles it and already carries the 16px phone guard, at a specificity this
+   plugin's own sheet never won against. */
+var FACTS_CLASS = "mt-0 mx-0 mb-3 grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1 text-sm max-[40rem]:grid-cols-[5.5rem_1fr]";
+var LIST_CLASS = "mb-3 flex flex-col gap-2";
+var ROW_CLASS = "flex min-h-8 flex-wrap items-center gap-x-3 gap-y-2 rounded-plate border border-rule bg-surface px-4 py-3";
+var JOIN_FORM_CLASS = "mb-4 flex flex-wrap items-end gap-x-3 gap-y-2";
+
 clanker.registerView({
   id: "mesh",
   title: "Mesh",
@@ -27,7 +37,7 @@ clanker.registerView({
     intro.appendChild(document.createTextNode(". Loopback HTTP to this serve; serve owns the sockets."));
     container.appendChild(intro);
 
-    var facts = api.el("dl", "mesh-facts");
+    var facts = api.el("dl", FACTS_CLASS);
     facts.id = "mesh-facts";
     container.appendChild(facts);
 
@@ -37,13 +47,13 @@ clanker.registerView({
     statusLine.setAttribute("aria-live", "polite");
     container.appendChild(statusLine);
 
-    var errHost = api.el("div", "mesh-error");
+    var errHost = api.el("div");
     container.appendChild(errHost);
 
     var membersHead = api.el("h3", "detail-head subsection-head", "Members");
     membersHead.id = "mesh-members-head";
     container.appendChild(membersHead);
-    var members = api.el("div", "mesh-members");
+    var members = api.el("div", LIST_CLASS);
     members.id = "mesh-members";
     container.appendChild(members);
 
@@ -53,7 +63,7 @@ clanker.registerView({
     joinHint.id = "mesh-join-hint";
     container.appendChild(joinHint);
     var form = document.createElement("form");
-    form.className = "mesh-join-form";
+    form.className = JOIN_FORM_CLASS;
     form.id = "mesh-join-form";
     var addrLabel = api.el("label", null, "Host and port");
     addrLabel.setAttribute("for", "mesh-join-addr");
@@ -76,11 +86,11 @@ clanker.registerView({
     var pendHead = api.el("h3", "detail-head subsection-head", "Pending joins");
     pendHead.id = "mesh-pending-head";
     container.appendChild(pendHead);
-    var pending = api.el("div", "mesh-pending");
+    var pending = api.el("div", LIST_CLASS);
     pending.id = "mesh-pending";
     container.appendChild(pending);
 
-    var leaveSelf = api.el("button", "secondary", "Leave the mesh");
+    var leaveSelf = api.el("button", "secondary mt-2 min-h-8", "Leave the mesh");
     leaveSelf.type = "button";
     leaveSelf.id = "mesh-leave-self";
     leaveSelf.hidden = true;
@@ -89,7 +99,7 @@ clanker.registerView({
     function showErr(msg, retry) {
       errHost.textContent = "";
       if (!msg) return;
-      var p = api.el("p", "run-empty");
+      var p = api.el("p", "run-empty mt-0");
       p.appendChild(document.createTextNode(msg + " "));
       if (retry) {
         var again = api.el("button", "secondary", "Try again");
@@ -101,8 +111,8 @@ clanker.registerView({
     }
 
     function fact(term, value, extra) {
-      var dt = api.el("dt", null, term);
-      var dd = api.el("dd");
+      var dt = api.el("dt", "font-semibold text-fg-muted", term);
+      var dd = api.el("dd", "m-0 flex flex-wrap items-center gap-2 wrap-anywhere");
       if (value) dd.appendChild(document.createTextNode(value));
       if (extra) dd.appendChild(extra);
       facts.appendChild(dt);
@@ -111,7 +121,7 @@ clanker.registerView({
     }
 
     function copyListen(text) {
-      var btn = api.el("button", "secondary mesh-copy", "Copy");
+      var btn = api.el("button", "secondary px-2 py-0.5", "Copy");
       btn.type = "button";
       btn.setAttribute("aria-label", "Copy listen address");
       btn.addEventListener("click", function () {
@@ -132,12 +142,12 @@ clanker.registerView({
     }
 
     function memberRow(m) {
-      var row = api.el("article", "mesh-member");
+      var row = api.el("article", ROW_CLASS + " data-[down=true]:border-dashed");
       if (!m.up) row.dataset.down = "true";
       var name = m.name || m.id || "?";
-      row.appendChild(api.el("code", "mesh-member-id", name));
+      row.appendChild(api.el("code", "text-sm", name));
       if (m.id && m.id !== name) row.appendChild(api.el("span", "meta", m.id));
-      var chip = api.el("span", "meta mesh-up");
+      var chip = api.el("span", "meta data-[state=ok]:text-ok data-[state=down]:text-danger");
       chip.dataset.state = m.up ? "ok" : "down";
       chip.textContent = m.up ? "up" : "down";
       row.appendChild(chip);
@@ -159,9 +169,9 @@ clanker.registerView({
     }
 
     function pendingRow(p) {
-      var row = api.el("article", "mesh-pending-row");
+      var row = api.el("article", ROW_CLASS);
       var id = p.id || "?";
-      row.appendChild(api.el("code", "mesh-member-id", id));
+      row.appendChild(api.el("code", "text-sm", id));
       if (p.name && p.name !== id) row.appendChild(api.el("span", "meta", p.name));
       row.appendChild(api.el("span", "meta", pendingAge(p) + "s"));
       var admit = api.el("button", "primary", "Admit");

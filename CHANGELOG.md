@@ -21,6 +21,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   stylesheet: `ui/plugins/activity/app.css` is deleted. Its 44px phone and
   coarse-pointer touch target is now the `max-[40rem]`/`pointer-coarse`
   variants on the card button, at the same measurements.
+- Four more addons ship no stylesheet: `ui/plugins/{search,compare,schedule,
+  mesh}/app.css` are deleted. Schedule's rows, log grid and paused-state
+  strike-through are utility strings; Mesh's facts list, member and pending
+  plates and join form likewise. The paused and ok/error states that were
+  attribute selectors are `data-[paused=true]` / `data-[state=…]` variants
+  (with `group` where the rule reached a child). Three rules turned out to be
+  dead weight and went with the sheets: both plugins' 16px phone guards, which
+  the page-wide `input[…]:not(.pf-v6-c-form-control)` 40rem block already
+  provides, and Mesh's join-input rule, which lost every property to that same
+  page rule. Two classes nothing ever styled (`schedule-list`, and Compare's
+  `tool-card-head`/`tool-card-body`) are gone from the markup as well.
+- `ui/app/tailwind.test.mjs` reads the named class lists a ported file keeps at
+  module scope (`ROW_CLASS`, `ENTRY_CLASS`), so those utilities are checked
+  too, and it accepts bracketed *variants* (a breakpoint, a data state) rather
+  than treating every bracket as an arbitrary value.
 
 ### Fixed
 

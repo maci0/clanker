@@ -11,6 +11,20 @@
    ADR 0008. If the ledger is empty while entries look due, the answer is
    almost always that nothing is calling `run-due`, so the empty state says so. */
 
+/* One row of the schedule list, the two lines that make up its head and foot,
+   the cron chip, and one row of the fires log. Named rather than inlined so the
+   head and the foot cannot drift apart.
+
+   `group` + `data-[paused=true]` is how the struck-through cron survives the
+   port: CSS could reach the child through the parent's attribute, and a utility
+   cannot, so the parent carries the group and the child asks about it. */
+var ENTRY_CLASS = "group mb-2 flex flex-col gap-2 rounded-plate border border-rule bg-surface px-4 py-3 data-[paused=true]:border-dashed";
+var ROW_LINE_CLASS = "flex flex-wrap items-center gap-x-3 gap-y-2";
+var CRON_CLASS = "rounded-plate-lg border border-rule bg-surface px-1.5 py-px text-sm group-data-[paused=true]:line-through";
+/* 6rem/6rem/1fr is the log's own column template; on a phone the last column
+   drops to a line of its own. */
+var LOG_ROW_CLASS = "grid grid-cols-[6rem_6rem_1fr] items-baseline gap-2.5 data-[state=error]:text-danger max-[40rem]:grid-cols-[minmax(5rem,auto)_1fr]";
+
 clanker.registerView({
   id: "schedule",
   title: "Schedule",
@@ -36,11 +50,11 @@ clanker.registerView({
     var status = api.el("p", "meta");
     container.appendChild(status);
 
-    var list = api.el("div", "schedule-list");
+    var list = api.el("div");
     container.appendChild(list);
 
     container.appendChild(api.el("h3", "detail-head subsection-head", "Recent fires"));
-    var logHost = api.el("ul", "schedule-log");
+    var logHost = api.el("ul", "m-0 flex list-none flex-col gap-1 p-0 text-sm");
     container.appendChild(logHost);
 
     const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
@@ -95,7 +109,7 @@ clanker.registerView({
     }
 
     function statusChip(e) {
-      var chip = api.el("span", "meta schedule-status");
+      var chip = api.el("span", "meta data-[state=ok]:text-ok data-[state=error]:text-danger");
       if (!e.runs) { chip.textContent = "never run"; return chip; }
       var ok = e.last_status !== "error";
       chip.dataset.state = ok ? "ok" : "error";
@@ -106,25 +120,25 @@ clanker.registerView({
     }
 
     function entryRow(e) {
-      var row = api.el("article", "schedule-entry");
+      var row = api.el("article", ENTRY_CLASS);
       if (!e.enabled) row.dataset.paused = "true";
 
-      var rowHead = api.el("div", "schedule-entry-head");
-      rowHead.appendChild(api.el("code", "schedule-id", e.id));
-      var cron = api.el("code", "schedule-cron", e.cron);
+      var rowHead = api.el("div", ROW_LINE_CLASS);
+      rowHead.appendChild(api.el("code", "text-sm text-fg-muted", e.id));
+      var cron = api.el("code", CRON_CLASS, e.cron);
       cron.title = "Read at " + (e.tz_offset_minutes ? "offset " + e.tz_offset_minutes + " minutes" : "UTC");
       rowHead.appendChild(cron);
       rowHead.appendChild(statusChip(e));
       row.appendChild(rowHead);
 
-      row.appendChild(api.el("p", "schedule-task", e.task));
+      row.appendChild(api.el("p", "m-0 text-sm wrap-anywhere", e.task));
 
-      var foot = api.el("div", "schedule-entry-foot");
-      foot.appendChild(api.el("span", "meta schedule-next", nextText(e)));
+      var foot = api.el("div", ROW_LINE_CLASS);
+      foot.appendChild(api.el("span", "meta mr-auto", nextText(e)));
       if (e.provider) {
         foot.appendChild(api.el("span", "meta", e.provider + (e.model ? " / " + e.model : "")));
       }
-      var toggle = api.el("button", "secondary schedule-toggle", e.enabled ? "Pause" : "Resume");
+      var toggle = api.el("button", "secondary self-start", e.enabled ? "Pause" : "Resume");
       toggle.type = "button";
       toggle.setAttribute("aria-label", (e.enabled ? "Pause " : "Resume ") + e.id);
       toggle.disabled = state.busy === e.id;
@@ -135,7 +149,7 @@ clanker.registerView({
     }
 
     function logRow(r) {
-      var li = api.el("li", "schedule-log-row");
+      var li = api.el("li", LOG_ROW_CLASS);
       li.dataset.state = r.ok ? "ok" : "error";
       li.appendChild(api.el("span", "meta", relative(r.ts)));
       li.appendChild(api.el("code", null, r.id));
@@ -143,7 +157,7 @@ clanker.registerView({
       if (r.duration_ms) bits.push(fmtMs(r.duration_ms));
       if (r.skipped) bits.push(r.skipped + " window(s) skipped");
       if (r.err) bits.push(r.err);
-      li.appendChild(api.el("span", null, bits.join(" · ")));
+      li.appendChild(api.el("span", "max-[40rem]:col-span-full", bits.join(" · ")));
       return li;
     }
 

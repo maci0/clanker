@@ -165,8 +165,8 @@ clanker.registerView({
       }
       if (doc.synthesis) {
         var card = api.el("div", "tool-card");
-        card.appendChild(api.el("div", "tool-card-head", "Merged answer"));
-        card.appendChild(api.el("div", "tool-card-body", doc.synthesis));
+        card.appendChild(api.el("div", null, "Merged answer"));
+        card.appendChild(api.el("div", null, doc.synthesis));
         host.appendChild(card);
       }
     }

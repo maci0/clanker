@@ -26,11 +26,22 @@ const viewsCss = readFileSync(join(here, "views.css"), "utf8");
 
 /// Files whose class strings are Tailwind utilities. Add a path only with the
 /// rules it replaces deleted in the same change.
-const migrated = ["../plugins/activity/app.js"];
+const migrated = [
+  "../plugins/activity/app.js",
+  "../plugins/search/app.js",
+  "../plugins/schedule/app.js",
+  "../plugins/mesh/app.js",
+  "../plugins/compare/app.js",
+];
 
-/// Utilities whose arbitrary value is a breakpoint or a real measurement, not
-/// a colour or a size that should have been a token.
-const arbitrary_ok = [/^max-\[40rem\]:/];
+/// Utilities whose arbitrary value has no scale to come from: a breakpoint, or
+/// a grid template the layout actually needs. A colour or a padding written
+/// this way is not on this list, and should not be.
+const arbitrary_ok = [/^max-\[40rem\]:/, /:?grid-cols-\[/];
+/// Variant prefixes that may carry brackets without being an arbitrary value:
+/// a breakpoint, or the element state a ported sheet reached through an
+/// attribute selector.
+const variant_bracket_ok = /^(max|min|data|group-data)-\[/;
 
 function escapeRe(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -44,7 +55,9 @@ const plain = built.replace(/\\(.)/g, "$1");
 const cabinet = (appCss + viewsCss).replace(/\\(.)/g, "$1");
 
 function hasSelector(sheet, token) {
-  return new RegExp("(^|[\\s,{])" + escapeRe("." + token) + "(?=[\\s,{:])", "m").test(sheet);
+  // The trailing `[` matters: a data variant emits
+  // `.data-\[state\=ok\]\:text-ok[data-state="ok"]`, one compound selector.
+  return new RegExp("(^|[\\s,{])" + escapeRe("." + token) + "(?=[\\s,{:\\[])", "m").test(sheet);
 }
 
 /// The cabinet half is a plain substring test: `primary` only ever appears in
@@ -62,6 +75,11 @@ function classStrings(src) {
   const out = [];
   for (const m of src.matchAll(/api\.el\(\s*[^,]+,\s*"([^"]*)"/g)) out.push(m[1]);
   for (const m of src.matchAll(/class="([^"]*)"/g)) out.push(m[1]);
+  // The named class lists a ported file keeps at module scope (`ROW_CLASS`,
+  // `FACTS_CLASS`) are class strings too: reading only the literals beside
+  // `api.el` would leave most of a ported view unchecked.
+  for (const m of src.matchAll(/\b[A-Z][A-Z0-9_]*CLASS\s*=\s*"([^"]*)"/g)) out.push(m[1]);
+  for (const m of src.matchAll(/\.className\s*=\s*"([^"]*)"/g)) out.push(m[1]);
   return out;
 }
 
@@ -97,6 +115,9 @@ test("every class a migrated file uses resolves in a shipped sheet", function ()
     const src = readFileSync(join(here, rel), "utf8");
     for (const classes of classStrings(src)) {
       for (const token of classes.split(/\s+/).filter(Boolean)) {
+        // `group` and `peer` are markers a variant names, never rules of their
+        // own: Tailwind emits nothing for either.
+        if (token === "group" || token === "peer") continue;
         if (hasSelector(plain, token) || inCabinet(token)) continue;
         missing.push(`${rel}: ${token}`);
       }
@@ -121,7 +142,8 @@ test("migrated files keep padding, margin and gap on a cabinet rung", function (
         const m = rung.exec(token);
         if (!m || m[2]) continue; // px/auto/size utilities are not rungs
         const n = Number(m[1]);
-        if (n < 1 || n > 7) offenders.push(`${rel}: ${raw}`);
+        // 0 is a reset (`margin: 0`), not a rung of the scale.
+        if (n !== 0 && (n < 1 || n > 7)) offenders.push(`${rel}: ${raw}`);
       }
     }
   }
@@ -136,7 +158,18 @@ test("migrated files use scale utilities, not arbitrary values", function () {
     const src = readFileSync(join(here, rel), "utf8");
     for (const classes of classStrings(src)) {
       for (const token of classes.split(/\s+/).filter(Boolean)) {
-        if (!token.includes("[")) continue;
+        // A variant may name a breakpoint or an element state in brackets;
+        // that is not an arbitrary value. The check is on what the utility
+        // itself does, so only the last segment counts — and an unknown
+        // bracketed variant is one more thing this list has not seen.
+        const parts = token.split(":");
+        for (const part of parts.slice(0, -1)) {
+          if (!part.includes("[")) continue;
+          if (variant_bracket_ok.test(part)) continue;
+          offenders.push(`${rel}: ${token}`);
+        }
+        const utility = parts[parts.length - 1];
+        if (!utility.includes("[")) continue;
         if (arbitrary_ok.some((re) => re.test(token))) continue;
         offenders.push(`${rel}: ${token}`);
       }
