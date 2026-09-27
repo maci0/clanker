@@ -602,7 +602,7 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |
 | `patches/` | — | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
-| `tests/` | — | Fixtures; the tests themselves live in `test` blocks beside the code |
+| `tests/` | `tests/e2e/` | `fixtures/` plus the black-box journey suites `zig build e2e` runs against a mock LLM server; the unit and integration tests live in `test` blocks beside the code |
 | `scripts/` | — | Development scripts (`verify.sh`, `apply-patches.sh`) |
 | `state/` | — | Runtime only, gitignored: `exports/`, `history/`, `logs/`, `runs/`, `sessions/`, `staging/`, `schedule.json` + `schedule/` |
 
@@ -619,7 +619,6 @@ dependency cache location is controlled by the Zig installation/environment.
 - `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
 - `tools/grammars/` — grammars used by tools that parse.
 - `tools/examples/manifests/` — descriptors the registry does not load. The matching sources already exist (`tools/c/`, `tools/cpp/`, `tools/ts/calc_ts.ts`); `zig build tools` compiles the C and C++ guests into `zig-out/tools/`. They stay parked so a language-showcase tool is not offered to the model until it is shipped.
-- `patches/` — patches applied on top of vendored dependencies (`scripts/apply-patches.sh`).
 - `ui/plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
 - `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).
 - `zig-out/tools/` — built WASM binaries from `zig build tools`.
@@ -670,7 +669,7 @@ changes as tools are added.
 | `context7` | none | Fetch library documentation (markdown plus examples) from context7.com |
 | `web_fetch` | none | HTTP GET a URL and return a truncated body; the host must be allowlisted |
 | `web_search` | none | No-key web search: tries DuckDuckGo Lite first, transparently falls back to Bing Search RSS when DDG is unreachable, bot-challenged, or empty. Input: `{"query", "max_results" (1-20, default 8), "region"}`; returns `{ok, backend, query, count, results:[{title,url,snippet}]}` |
-| `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. Value-taking global options (`-C <path>`, `--git-dir <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run) |
+| `git <args...>` | none | Sandboxed git: `status`, `diff`, `log`, `show`, `add`, `commit`, `ls-files`, `rev-parse`, `branch`, `worktree`, plus the index verbs `write-tree`, `read-tree` (never with `-u`) and `restore --staged` (never with `-W`/`--worktree`) that `smart_commit` needs, plus the PR-lifecycle verbs `push`, `merge`, `checkout` when `agent.git_remote_ops` is set in `config.local.toml`. `reset`, `rebase`, `clean`, `rm`, `fetch`, `revert`, `stash`, `remote`, `tag`, `filter-branch`, `gc`, `repack`, `prune`, `submodule`, and the flags `-f`, `--force`, `--exec` are always denied. Runs at the run's root, the directory the file tools resolve against, so plain `add`/`commit` stage what the agent edited. The two value-taking global options that stay legal (`-C <path>`, `--work-tree <path>`) are honored only for paths inside the run's own tree — an argument naming `.clanker-worktrees`, or stepping above the root with `..`, is refused as another run's worktree — and they do not relocate the agent's work: see [Isolating a run](#isolating-a-run). `-c`, `--config-env`, `--git-dir`, `--git-common-dir` and `--exec-path` are refused outright, not path-checked, because each either runs a program named by the argument or points git at a directory carrying its own hooks |
 | `docker` | none | Query the local Docker daemon over its Unix socket |
 | `peers` | none — reads clanker's own config through the host (ck_harness_config) | Scan peer agent cards (up/down) or deliver a machine notification (`notify`). Conversational DMs are `chat_dm` |
 | `chat_dm` | none | Direct message another instance (`to` + `text`); same send path as `chat_send`, canonical dm room |
@@ -1520,7 +1519,7 @@ Routes gated by a `modules.*` flag answer `404` with a body naming the flag when
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/`, `/webui` | GET | Web UI (rendered by the internal `webui` WASM tool). Both paths serve it; the URL `serve` prints is `/webui` |
-| `/webui/app.css`, `/webui/views.css`, `/webui/tailwind.css`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheets, each on its own route. `tailwind.css` is compiled from `ui/app/tailwind.src.css` by `bun run css:build` and committed, because the `webui` guest embeds it at comptime and the serve path runs no build step |
+| `/webui/app.css`, `/webui/tailwind.css`, `/webui/app.js`, `/webui/preact-boot.js`, `/webui/core/*.js`, `/webui/features/*.js`, `/webui/lib/*.js` | GET | Web UI modules and stylesheets, each on its own route. `tailwind.css` is compiled from `ui/app/tailwind.src.css` by `bun run css:build` and committed, because the `webui` guest embeds it at comptime and the serve path runs no build step |
 | `/webui/vendor/*` | GET | Vendored `preact`, `htm`, `signals-core`, `d3-dag`, `hljs`, `mermaid`, `three` (`vendor_assets` in `src/cli.zig` is the one list: route, bytes, gzip cache) |
 | `/health/live` | GET | Liveness probe; always `{"ok":true,"status":"live"}` if the process is up |
 | `/health/ready` | GET | Readiness probe. 200 with `in_flight`/`connection_limit` while the process can take work; 503 `saturated` when every connection slot is taken. Does not probe the LLM |
@@ -1693,15 +1692,6 @@ The LLM client supports SSE streaming (`client.chatStream`). The agent parses th
 
 ## Self-improvement loop
 
-1. **Proposal**: model returns JSON `{summary, rationale, changes[]}`.
-2. **Isolation**: create a temporary Git worktree and branch. If that is not
-   possible, continue in the current checkout.
-3. **Staging**: copy the project to `state/staging/<id>` within that checkout
-   and apply changes through the sandboxed `patch_apply` tool.
-4. **Gates**: run `zig build`, `zig build test`, `zig build tools`, `zig fmt`, lint.
-5. **Promote**: if all pass, copy staged files into the worktree checkout.
-6. **Commit**: commit there as `clanker: <summary> [imp-<id>]`, merge the
-   commit back into the original checkout, and remove the temporary worktree.
-7. **History**: store snapshots in `state/history/` for revert.
-
-Gate failures give feedback to retry.
+See [Self-improvement engine](#self-improvement-engine-srcimprove) for the
+current step order, the planning phase, the capability evals, and how a human
+revert is fed back to the next run.
