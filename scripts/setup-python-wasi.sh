@@ -50,7 +50,15 @@ fi
 
 command -v tar >/dev/null || { echo "setup-python-wasi: tar is required" >&2; exit 1; }
 
-work=$(mktemp -d)
+# Not `mktemp -d` with no template: that lands in $TMPDIR, a tmpfs on a stock
+# Linux box, and this script's payload is a ~25 MB archive plus its extraction.
+# Staging it in RAM is what the project rule in AGENTS.md rules out, and the
+# same reason scripts/verify-backup.sh stages beside the store. Scratch goes
+# under the gitignored .scratch/ at the project root; CLANKER_SCRATCH_DIR
+# overrides it.
+scratch_root="${CLANKER_SCRATCH_DIR:-$repo_root/.scratch}"
+mkdir -p "$scratch_root"
+work="$(mktemp -d "$scratch_root/python-wasi.XXXXXXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 echo "fetching $archive ..."

@@ -19,7 +19,15 @@ command -v bun >/dev/null || { printf 'error: bun is required to verify the Tail
 # cannot execute code on the runner.
 bun install --frozen-lockfile --silent
 
-scratch="$(mktemp -d)"
+# Not `mktemp -d`: that lands in $TMPDIR, a tmpfs on a stock Linux box, so the
+# compiled stylesheet is written to RAM and vanishes on reboot. The project's
+# own rule (AGENTS.md, and the same reason scripts/verify-backup.sh stages
+# beside the store rather than in /tmp) puts scratch in the gitignored
+# .scratch/ at the project root, which this script's `cd` above already put us
+# in. CLANKER_SCRATCH_DIR overrides it.
+scratch_root="${CLANKER_SCRATCH_DIR:-.scratch}"
+mkdir -p "$scratch_root"
+scratch="$(mktemp -d "$scratch_root/ui-verify-css.XXXXXXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
 # The npm script owns the input/output pair (CSS_OUT redirects the destination

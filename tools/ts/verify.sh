@@ -13,7 +13,15 @@ cd "$(dirname "$0")"
 
 command -v bun >/dev/null || { printf 'error: bun is required to verify AssemblyScript build output\n' >&2; exit 1; }
 
-scratch="$(mktemp -d)"
+# Not `mktemp -d`: that lands in $TMPDIR, which is a tmpfs on a stock Linux
+# box, so a whole rebuild of the AssemblyScript guests is written to RAM and
+# vanishes on reboot. The project's own rule (AGENTS.md, and the same reason
+# scripts/verify-backup.sh stages beside the store rather than in /tmp) puts
+# scratch in the gitignored .scratch/ at the project root. CLANKER_SCRATCH_DIR
+# overrides it for a machine that wants the build output somewhere else.
+scratch_root="${CLANKER_SCRATCH_DIR:-../../.scratch}"
+mkdir -p "$scratch_root"
+scratch="$(mktemp -d "$scratch_root/tools-ts-verify.XXXXXXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
 # The compiler has no required lifecycle scripts, and bun only runs them for

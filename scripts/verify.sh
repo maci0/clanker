@@ -47,8 +47,15 @@ fi
 
 step "SBOM generation (CI: Check SBOM generation)"
 if command -v python3 >/dev/null 2>&1; then
+    # The document goes to the gitignored .scratch/ rather than $TMPDIR: /tmp
+    # is a tmpfs on a stock Linux box, so the write lands in RAM and a reboot
+    # takes it. Same rule (and same reason) as the scratch dirs in
+    # tools/ts/verify.sh, ui/app/verify-css.sh and scripts/verify-backup.sh.
+    sbom_scratch="${CLANKER_SCRATCH_DIR:-.scratch}"
+    mkdir -p "$sbom_scratch"
     python3 -B -m unittest scripts.test_sbom || status=1
-    python3 scripts/sbom.py -o "${TMPDIR:-/tmp}/sbom.cdx.json" || status=1
+    python3 scripts/sbom.py -o "$sbom_scratch/sbom.cdx.json" || status=1
+    rm -f "$sbom_scratch/sbom.cdx.json"
 else
     echo "python3 not installed; skipping SBOM check (CI will run it)"
 fi

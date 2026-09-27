@@ -77,6 +77,12 @@ Before creating a tag:
    sidecar verifies against the merged artifacts
    (`scripts/release-checksum.sh`, see [scripts/README.md](scripts/README.md));
    both the binaries and the sidecars are attached to the Release.
+7. If you generate an SBOM locally rather than letting the tag's
+   `release-publish` job do it, export `SOURCE_DATE_EPOCH` first. The
+   generated document is byte-identical for a given tag only with it set;
+   without it `scripts/sbom.py` omits the timestamp field and the local
+   document no longer matches the published one. CI pins
+   `SOURCE_DATE_EPOCH=1704067200` for every job.
 
 ## Supported versions
 
