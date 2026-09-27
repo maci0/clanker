@@ -151,7 +151,18 @@ function renderRunList(matches) {
   if (!rows.length) {
     var empty = document.createElement("p");
     empty.className = "run-empty";
-    empty.textContent = "No runs recorded yet. Start one from Chat, or `clanker run \"<task>\"`, and it lands here.";
+    // The filter is live: it is read here, not only by the graph panel above,
+    // which renders its own "No recorded runs match" line. Saying "no runs
+    // recorded yet" beside a filled filter is false, and it offers no way out.
+    if (el.runFilter && el.runFilter.value.trim()) {
+      empty.textContent = "No runs match this filter.";
+    } else {
+      empty.appendChild(document.createTextNode("No runs recorded yet. Start one from Chat, or "));
+      var cmd = document.createElement("code");
+      cmd.textContent = "clanker run \"<task>\"";
+      empty.appendChild(cmd);
+      empty.appendChild(document.createTextNode(", and it lands here."));
+    }
     el.runList.appendChild(empty);
     return;
   }

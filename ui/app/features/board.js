@@ -9,7 +9,7 @@ import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
 import { doneColumn as doneColumnOf, blockers as blockersOf, dueState, priorityRank } from "../lib/board.js";
-import { goalState, postGoal, goalIdForCard, workCardAsGoal, syncCardsFromGoals, loadGoals, isGoalRunning } from "./goals.js";
+import { goalState, postGoal, goalIdForCard, mirrorCardForObjective, workCardAsGoal, syncCardsFromGoals, loadGoals, isGoalRunning } from "./goals.js";
 
 var el = null;
 var _setTabCount = null;
@@ -405,7 +405,13 @@ function boardColumn(col, s) {
         el.boardStatus.textContent = "Could not create the goal card.";
         return;
       }
-      el.boardStatus.textContent = "Goal card added to Backlog.";
+      // The goal mirror files a new card in the lane the goal's state asks
+      // for, so a card added under Doing or Archive used to appear in Ready.
+      var card = mirrorCardForObjective(t);
+      if (card && col.id && card.column !== col.id) {
+        postBoard({ op: "move", id: card.id, column: col.id, goal_sync: false }, null);
+      }
+      el.boardStatus.textContent = "Added to " + (col.title || "the board") + ".";
     });
   }
   qaSave.addEventListener("click", function(e){ e.stopPropagation(); doCreate(); });
@@ -1373,9 +1379,13 @@ function showCardDetail(id) {
     descDisplay.hidden = false;
   });
   descSave.addEventListener("click", function() {
-    bodyIn.dispatchEvent(new Event("change"));
-    var filled = !!bodyIn.value.trim();
-    descDisplay.textContent = filled ? bodyIn.value : "Add a more detailed description…";
+    // Post, don't just redraw. This button is the only control visible while
+    // the description is being edited, so reading as its save it has to
+    // write; the draft-only version lost the text on the next rebuild.
+    var text = bodyIn.value;
+    postBoard({ op: "update", id: c.id, body: text }, "Description saved.");
+    var filled = !!text.trim();
+    descDisplay.textContent = filled ? text : "Add a more detailed description…";
     descDisplay.classList.toggle("is-empty", !filled);
     bodyIn.style.display = "none";
     descActions.classList.remove("is-open");
@@ -1460,7 +1470,10 @@ function showCardDetail(id) {
   deadlineInput.addEventListener("change", function() {
     var val = deadlineInput.value;
     if (!val) {
-      postBoard({ op: "update", id: c.id, deadline: null }, "Deadline cleared.");
+      // 0, not null: the field is a ?i64 the guest only writes when present
+      // (cards.zig `if (act.deadline) |v|`), so a null posted a successful
+      // update that dropped the field and left the date on the card.
+      postBoard({ op: "update", id: c.id, deadline: 0 }, "Deadline cleared.");
     } else {
       // The board tool takes epoch seconds, not a date string; posting the
       // raw input used to fail the whole update against the guest's ?i64.
@@ -1471,30 +1484,10 @@ function showCardDetail(id) {
   deadlineWrap.appendChild(deadlineInput);
   sidebarCol.appendChild(deadlineWrap);
 
-  // Cover color picker
-  var coverTitle = document.createElement("div");
-  coverTitle.className = "card-detail-sidebar-title";
-  coverTitle.style.marginTop = "var(--space-2)";
-  coverTitle.textContent = "Cover";
-  sidebarCol.appendChild(coverTitle);
-  var coverPicker = document.createElement("div");
-  coverPicker.className = "cover-color-picker";
-  var coverColors = ["green", "yellow", "orange", "red", "purple", "blue", "sky", "pink", "none"];
-  var currentCover = c.cover_color || "";
-  coverColors.forEach(function(clr) {
-    var sw = document.createElement("button");
-    sw.type = "button";
-    sw.className = "cover-color-swatch";
-    sw.setAttribute("data-color", clr);
-    sw.title = clr === "none" ? "Remove cover" : clr;
-    if (clr === currentCover || (clr === "none" && !currentCover)) sw.setAttribute("data-selected", "true");
-    sw.addEventListener("click", function() {
-      var val = clr === "none" ? "" : clr;
-      postBoard({ op: "update", id: c.id, cover_color: val }, val ? "Cover → " + val : "Cover removed.");
-    });
-    coverPicker.appendChild(sw);
-  });
-  sidebarCol.appendChild(coverPicker);
+  // No cover swatches here: they posted `cover_color`, a field no card holds
+  // (the guest's update action has no such key and ignores unknown ones), so
+  // every click claimed "Cover → green" and changed nothing. The strip is
+  // derived from what persists — the first label's colour, else priority.
 
   var sideTitle2 = document.createElement("div");
   sideTitle2.className = "card-detail-sidebar-title";
@@ -1563,9 +1556,14 @@ function showCardDetail(id) {
   });
   sidebarCol.appendChild(archiveBtn);
 
-  // ---- Hidden original fields for save: title, assignee, priority, deadline ----
+  // ---- Hidden original fields for save: title, assignee, priority ----
   var hiddenFields = document.createElement("div");
   hiddenFields.className = "detail-row";
+  // The container itself, not each child: `.detail-row` is a flex row, so
+  // hiding only the inputs left a second "Title" box beside the header's
+  // rename and a second date box beside the sidebar's, each overwriting the
+  // other on save.
+  hiddenFields.hidden = true;
   var titleIn = input("card-f-title", "text", "");
   titleIn.maxLength = 500;
   var titleLabel = document.createElement("label");
@@ -1596,12 +1594,8 @@ function showCardDetail(id) {
   hiddenFields.appendChild(prioIn);
   mainCol.appendChild(hiddenFields);
 
-  // A date input, because a deadline typed as a unix timestamp is not a
-  // deadline anyone will set twice. Filled in the local zone, matching how
-  // the save button below parses it back.
-  var dueIn = input("card-f-deadline", "date", "");
-  bindDraft(dueIn, c.id, "deadline", c.deadline ? deadlineToDateInput(c.deadline) : "");
-  hiddenFields.appendChild(dueIn);
+  // A deadline needs no second control here: the sidebar's date input posts
+  // on change, so there is nothing for a save button to carry.
 
   // ---- Inline title editing (click header to rename) ----
   headerTitle.style.cursor = "pointer";
@@ -1623,14 +1617,20 @@ function showCardDetail(id) {
   save.className = "card-detail-save-btn";
   save.textContent = "Save changes";
   save.addEventListener("click", function () {
-    var deadline = 0;
-    if (dueIn.value) deadline = dateInputToDeadline(dueIn.value);
-    delete cardDrafts[c.id];
+    if (save.disabled) return;
+    save.disabled = true;
     postBoard({
       op: "update", id: c.id,
       title: titleIn.value || c.title, body: bodyIn.value,
-      assignee: assignIn.value, priority: prioIn.value, deadline: deadline
-    }, "Card saved.");
+      assignee: assignIn.value, priority: prioIn.value
+    }, "Card saved.").then(function (d) {
+      // The draft is what carries half-typed text across a rebuild, so it
+      // only goes once the server has the values: a refused write left the
+      // draft cleared and the next rebuild replaced the form with the old copy.
+      if (d !== false) delete cardDrafts[c.id];
+    }).then(function () {
+      save.disabled = false;
+    });
   });
   saveRow.appendChild(save);
 

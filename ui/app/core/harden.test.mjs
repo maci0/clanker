@@ -653,7 +653,18 @@ test("templates and skills say when none are on file", function () {
 
 test("phone fields stay at 16px so iOS does not zoom on focus", function () {
   assert.match(css, /iOS Safari zooms the page when a focused field is under 16px/);
-  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*?\.composer textarea \{\s*font-size:\s*16px/);
+  // The guard is one grouped rule, so a selector may follow `.composer
+  // textarea` inside it (the composer's two selects are in the same group).
+  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*?\.composer textarea,[^}]*font-size:\s*16px/);
+  // Every bare <select> on the page is 14px by the global rule, so the guard
+  // has to name it, or focusing one zooms iOS and never zooms back.
+  assert.match(css, /select:not\(\.pf-v6-c-form-control\)/);
+  // The composer's selects are 12px by a later rule, and a media query adds
+  // no specificity, so the 16px has to be restated after it.
+  const modelSelectPhone = css.lastIndexOf(".composer .model-select { font-size: 16px; }");
+  const modelSelectDesktop = css.indexOf(".composer .model-select {\n  min-height: 30px;");
+  assert.ok(modelSelectDesktop >= 0 && modelSelectPhone > modelSelectDesktop,
+    "the phone composer model selects must override the 12px desktop size");
   // These selectors set a smaller size after the page-wide guard. A later
   // 40rem block has to put 16px back or iOS Safari zooms the page on focus.
   const rail = css.lastIndexOf(".rail input[type=\"search\"] { font-size: 16px; }");

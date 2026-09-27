@@ -4178,7 +4178,7 @@ function loadKnowledgeModule() {
    board/goal was ever opened this session the lists are empty anyway. */
 var paletteRefs = {
   knownSessionsHolder: null,
-  allRunsHolder: null,
+  allRunsHolder: { list: [] },
   board: { columns: [], cards: [] },
   goalState: { val: [] },
   allToolsHolder: null,
@@ -5267,8 +5267,7 @@ wireRefresh(el.logsRefresh, loadLogList);
                 if(maybe && typeof maybe==="object") append("\n[structured]\n"+JSON.stringify(maybe, null, 2)+"\n");
               }catch(_){}
               if(progStatus) progStatus.textContent="Done.";
-              if(stopBtn) stopBtn.hidden=true;
-              progCtrl=null; renderHistory(); return;
+              if(stopBtn) stopBtn.hidden=true; progCtrl=null; renderHistory(); return;
             }
             buf += dec.decode(ch.value, {stream:true});
             var lines=buf.split("\n"); buf=lines.pop();

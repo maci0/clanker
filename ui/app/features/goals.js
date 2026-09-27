@@ -700,6 +700,20 @@ function bestGoalIdFor(objective) {
   return goalId;
 }
 
+/* The board card mirroring the newest goal carrying `objective`, or null.
+   The board's per-lane "+ Add a card" needs it: the card is created by the
+   goal mirror, which files it wherever the goal's state says (usually Ready),
+   and the lane the user clicked is applied afterwards. */
+export function mirrorCardForObjective(objective) {
+  var gid = bestGoalIdFor(objective);
+  if (!gid) return null;
+  var goals = goalState.val || [];
+  for (var i = 0; i < goals.length; i++) {
+    if (goals[i].id === gid) return cardOfGoal(goals[i]);
+  }
+  return null;
+}
+
 /* The goal a board card mirrors, or null: the card's own `goal` field, with
    a title match for cards that predate it. Used by board.js's board->goal
    sync when a card is moved. */

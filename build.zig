@@ -509,6 +509,11 @@ pub fn build(b: *std.Build) void {
     const modelpicker_js_test = b.addSystemCommand(&.{ "bun", "test" });
     modelpicker_js_test.addFileArg(b.path("ui/app/core/modelpicker.test.mjs"));
     test_step.dependOn(&modelpicker_js_test.step);
+    // The Jump palette has to answer on the first Ctrl+K, before any lazy view
+    // module has loaded, so the shipped stand-in refs are part of its contract.
+    const palette_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    palette_js_test.addFileArg(b.path("ui/app/core/palette.test.mjs"));
+    test_step.dependOn(&palette_js_test.step);
 
     // Logic that lives in a tool rather than in src/ still needs its tests run.
     // `zig build test` compiled only src/main.zig, so every `test` block under

@@ -388,6 +388,15 @@ body {
     margin-inline-start: 3.5rem;
   }
 }
+/* Above 75rem the same two widths are a grid track, not a margin, and PF
+   sizes that track from `--pf-v6-c-page__sidebar--Width` (18.125rem) with
+   nothing here overriding it. So collapsing the rail to its 3.5rem icon
+   strip left a 14.6rem column of blank panel between rail and content, and
+   the button read as broken. The track follows the rail instead. */
+@media (min-width: 75rem) {
+  #app-page.pf-v6-c-page { --pf-v6-c-page__sidebar--Width: 15rem; }
+  #app-page.pf-v6-c-page:has(#rail[data-collapsed="true"]) { --pf-v6-c-page__sidebar--Width: 3.5rem; }
+}
 #app-masthead.pf-v6-c-masthead {
   border-bottom: 1px solid var(--rule);
   background: var(--surface);
@@ -1747,11 +1756,13 @@ a { color: var(--accent-text); overflow-wrap: anywhere; }
   input[type="number"]:not(.pf-v6-c-form-control),
   input[type="url"]:not(.pf-v6-c-form-control),
   textarea:not(.pf-v6-c-form-control),
+  select:not(.pf-v6-c-form-control),
   .pf-v6-c-form-control,
   input.pf-v6-c-form-control,
   textarea.pf-v6-c-form-control,
   select.pf-v6-c-form-control,
-  .composer textarea {
+  .composer textarea,
+  .composer .model-select {
     font-size: 16px;
   }
 .composer .toolbar #submit,
@@ -1897,6 +1908,12 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
   flex: 0 1 auto; min-width: 12rem; max-width: 18rem; color: inherit;
 }
 .composer .model-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The phone guard above is an earlier rule, and a media query carries no
+   extra weight, so the 12px composer's two selects kept zooming the page on
+   focus. Restored here, next to the rule it corrects. */
+@media (max-width: 40rem) {
+  .composer .model-select { font-size: 16px; }
+}
 .composer .run-options .more > summary { min-height: 30px; border-radius: var(--radius-pill); font-size: var(--step--1); padding: var(--space-1) 0.75rem; }
 
 /* Model pill: short name + chevron, opens the popover (Kimi/Unsloth-style). */
@@ -2116,6 +2133,14 @@ mark {
   align-items: center; pointer-events: none;
   max-width: min(40rem, calc(100vw - var(--space-5) * 2));
 }
+/* Chat docks a composer at the bottom of the main column, and the composer's
+   toolbar is where Run and Stop live. A toast band at the viewport's bottom
+   edge landed exactly on those buttons — `pointer-events: auto` on the toast,
+   so the click dismissed the message instead of starting the task, and three
+   stacked toasts covered the whole composer. The band rides above the docked
+   composer there, and stays at the bottom edge on the views with no composer. */
+:root { --composer-docked-height: 10rem; }
+body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(--composer-docked-height)); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 
