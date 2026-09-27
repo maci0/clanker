@@ -3,6 +3,7 @@
 //! readers live here and `zig build test` runs their tests on the host.
 
 const std = @import("std");
+const fuzz_corpus = @import("fuzz_corpus");
 
 /// Minimal field readers: the guest has no allocator, and the arguments object
 /// is small and flat, so a full JSON parse would cost more than it returns.
@@ -74,7 +75,7 @@ test "jsonUint falls back only when no digits are present at all" {
 /// a schema-validated object, often a truncated or prose-wrapped one. The
 /// Smith corpus is the shapes seen in the wild, because random bytes rarely
 /// produce a key that *almost* matches.
-const fuzz_corpus = [_][]const u8{
+const seed_corpus = [_][]const u8{
     "{\"path\":\"src/cli.zig\"}",
     "{\"path\":\"a\",\"start_line\":603,\"line_count\":40}",
     "{\"path\":\"a\",\"start_line\":\"603\"}",
@@ -159,5 +160,5 @@ test "fuzz: field readers answer only with bytes of the input they were given" {
             return true;
         }
     };
-    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &fuzz_corpus });
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &seed_corpus });
 }

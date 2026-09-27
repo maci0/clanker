@@ -4,6 +4,7 @@ const std = @import("std");
 const api = @import("api.zig");
 const common = @import("common.zig");
 const types = @import("../types.zig");
+const fuzz_corpus = @import("../../util/fuzz_corpus.zig");
 
 pub const BuildOptions = struct {
     /// Send a completion budget. Off for Codex, whose ChatGPT subscription
@@ -291,4 +292,113 @@ test "Responses completed stream frame preserves final usage" {
     const event = (try parseStreamEvent(arena_state.allocator(), "{\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":3,\"total_tokens\":12}}}")).?;
     try std.testing.expect(!event.done);
     try std.testing.expectEqual(@as(u32, 12), event.usage.?.total.?);
+}
+
+/// Seed frames for the Responses stream fuzz target. Outside a fuzzing
+/// session `std.testing.fuzz` replays only its corpus, so these are what runs
+/// in `zig build test`: one of every frame shape the endpoint sends, plus the
+/// negative and over-large `output_index` and disagreeing token counts the
+/// saturating helpers are written for.
+const stream_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry("[DONE]"),
+    fuzz_corpus.entry(""),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_text.delta","delta":"he"}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_text.delta","delta":""}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_text.delta"}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"c9","name":"exec"}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_item.added","output_index":7,"item":{"type":"function_call","id":"fc_1"}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_item.added","output_index":-1,"item":{"type":"function_call","name":"exec"}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_item.added","output_index":4294967295,"item":{"type":"function_call","name":"exec"}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_item.added","output_index":0,"item":{"type":"message"}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{"}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.function_call_arguments.delta","output_index":"0","delta":3}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.completed","response":{"usage":{"input_tokens":9,"output_tokens":3,"total_tokens":12,"input_tokens_details":{"cached_tokens":4}}}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.completed","response":{"usage":{"input_tokens":5,"input_tokens_details":{"cached_tokens":99}}}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.completed","response":{"usage":{"input_tokens":-5,"output_tokens":-1,"total_tokens":0}}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.completed"}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.output_text.delta","delta":"\u00fcn\u00efcode \u2713"}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":"response.unknown.event","payload":{"nested":[1,2,{"deep":true}]}}
+    ),
+    fuzz_corpus.entry(
+        \\{"type":7}
+    ),
+    fuzz_corpus.entry(
+        \\{ not json
+    ),
+    fuzz_corpus.entry("[]"),
+    fuzz_corpus.entry("null"),
+    fuzz_corpus.entry("\"a string\""),
+    fuzz_corpus.entry("3"),
+};
+
+test "fuzz: responses stream events stay a well-formed event on any payload" {
+    // The Responses wire is the Codex and Grok stream, and `output_index` /
+    // the usage block are whatever the endpoint sends. Every field the codec
+    // derives from those is checked on a successful parse, so a frame that
+    // decodes into a self-contradictory event fails here rather than silently
+    // zeroing the token log or attaching a tool call to the wrong index.
+    const F = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const ev = (try parseStreamEvent(arena_state.allocator(), buf[0..len])) orelse return;
+
+            // `[DONE]` is the only source of `done` and returns before the
+            // payload is read, so it can never also carry a delta or usage.
+            if (ev.done) {
+                try std.testing.expect(ev.text == null);
+                try std.testing.expect(ev.tool_calls.len == 0);
+                try std.testing.expect(ev.usage == null);
+                try std.testing.expect(ev.finish_reason == null);
+                return;
+            }
+            // One frame describes at most one output item.
+
+            // `response.completed` is the only frame that sets a finish
+            // reason, and it sets this one literal.
+            if (ev.finish_reason) |r| try std.testing.expectEqualStrings("stop", r);
+            // The miss half is saturating, so adding the cache read back can
+            // only ever reach or exceed the prompt total, never fall short.
+            if (ev.usage) |u| if (u.prompt) |p| {
+                try std.testing.expect(
+                    @as(u64, p.cache_miss_tokens) + p.cache_hit_tokens >= p.tokens,
+                );
+            };
+        }
+    };
+    try std.testing.fuzz({}, F.one, .{ .corpus = &stream_fuzz_corpus });
 }

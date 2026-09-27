@@ -3,6 +3,7 @@
 //! `zig build test` needs no NIC. Serve-owned sockets come next.
 
 const std = @import("std");
+const fuzz_corpus = @import("../util/fuzz_corpus.zig");
 
 pub const protocol_version = "1.0";
 pub const default_max_frame_bytes: u32 = 1 << 20;
@@ -412,15 +413,15 @@ test "fuzz: no byte sequence crashes mesh frame decode or header parse" {
     };
     try std.testing.fuzz({}, Ctx.one, .{
         .corpus = &.{
-            "{\"version\":\"1.0\",\"kind\":\"PING\",\"id\":\"a\",\"from\":\"b\"}",
-            "{\"version\":\"1.0\",\"kind\":\"JOIN\",\"id\":\"f1\",\"from\":\"aaa\",\"to\":\"bbb\"}",
-            "{\"version\":\"1.0\",\"kind\":\"CHAT\",\"id\":\"c\",\"from\":\"a\"}",
-            "{\"version\":\"2.0\",\"kind\":\"PING\",\"id\":\"x\",\"from\":\"a\"}",
-            "{\"version\":\"1.0\",\"kind\":\"FILE_OFFER\",\"id\":\"x\",\"from\":\"a\"}",
-            "\x00\x00\x00\x05hello",
-            "\xff\xff\xff\xff",
-            "{",
-            "",
+            fuzz_corpus.entry("{\"version\":\"1.0\",\"kind\":\"PING\",\"id\":\"a\",\"from\":\"b\"}"),
+            fuzz_corpus.entry("{\"version\":\"1.0\",\"kind\":\"JOIN\",\"id\":\"f1\",\"from\":\"aaa\",\"to\":\"bbb\"}"),
+            fuzz_corpus.entry("{\"version\":\"1.0\",\"kind\":\"CHAT\",\"id\":\"c\",\"from\":\"a\"}"),
+            fuzz_corpus.entry("{\"version\":\"2.0\",\"kind\":\"PING\",\"id\":\"x\",\"from\":\"a\"}"),
+            fuzz_corpus.entry("{\"version\":\"1.0\",\"kind\":\"FILE_OFFER\",\"id\":\"x\",\"from\":\"a\"}"),
+            fuzz_corpus.entry("\x00\x00\x00\x05hello"),
+            fuzz_corpus.entry("\xff\xff\xff\xff"),
+            fuzz_corpus.entry("{"),
+            fuzz_corpus.entry(""),
         },
     });
 }

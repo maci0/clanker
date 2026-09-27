@@ -543,6 +543,14 @@ pub fn build(b: *std.Build) void {
         .target = test_target,
         .optimize = optimize,
     });
+    // The Smith encoding every fuzz corpus seed goes through, so a seed is
+    // the input the harness reads and not the same string minus its first
+    // four bytes.
+    const helper_fuzz_corpus_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/fuzz_corpus.zig"),
+        .target = test_target,
+        .optimize = optimize,
+    });
     for (host_tested_helpers) |stem| {
         const mod = b.createModule(.{
             .root_source_file = b.path(b.fmt("tools/zig/{s}.zig", .{stem})),
@@ -556,6 +564,9 @@ pub fn build(b: *std.Build) void {
                 // Same shape: the shared session-id alphabet, which
                 // `rewind_logic` validates through rather than re-spelling.
                 .{ .name = "session_id", .module = helper_session_id_mod },
+                // Same shape: the fuzz-corpus seed encoding, so a helper's
+                // corpus reaches its harness intact.
+                .{ .name = "fuzz_corpus", .module = helper_fuzz_corpus_mod },
             },
         });
         test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod, .filters = test_filters })).step);
@@ -655,6 +666,13 @@ pub fn build(b: *std.Build) void {
         .target = tool_target,
         .optimize = .ReleaseSmall,
     });
+    // The Smith encoding a fuzz corpus seed needs, the same file the host test
+    // modules get, so a helper's corpus means the same thing in both.
+    const tool_fuzz_corpus_mod = b.createModule(.{
+        .root_source_file = b.path("src/util/fuzz_corpus.zig"),
+        .target = tool_target,
+        .optimize = .ReleaseSmall,
+    });
 
     var threaded = std.Io.Threaded.init(b.allocator, .{});
     defer threaded.deinit();
@@ -702,6 +720,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "session_id", .module = tool_session_id_mod },
                     .{ .name = "alarm_store", .module = tool_alarm_store_mod },
                     .{ .name = "num", .module = tool_num_mod },
+                    .{ .name = "fuzz_corpus", .module = tool_fuzz_corpus_mod },
                 },
             }),
         });

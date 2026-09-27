@@ -10,6 +10,7 @@
 //! shape they all read.
 
 const std = @import("std");
+const fuzz_corpus = @import("fuzz_corpus");
 
 /// The body of a ``` fence, or `raw` trimmed when there is no fence. Trims
 /// its own input: a reply that opens with a blank line is still fenced.
@@ -92,7 +93,7 @@ test "objectSpan finds the object and ignores braces inside strings" {
 /// whole job is to survive a reply that is truncated mid-object, fenced twice,
 /// or full of braces inside strings. The corpus is those shapes: random bytes
 /// reach the `}`-inside-a-string case far too rarely to matter.
-const fuzz_corpus = [_][]const u8{
+const seed_corpus = [_][]const u8{
     "{\"a\":1}",
     "```json\n{\"a\":1}\n```",
     "Sure! Here you go:\n```json\n{\"move\":\"thrust\",\"conf\":0.9}\n```\nHope that helps.",
@@ -171,5 +172,5 @@ test "fuzz: a fenced reply yields a span that is a balanced subslice of the repl
             return @intCast(@max(depth, 0));
         }
     };
-    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &fuzz_corpus });
+    try std.testing.fuzz({}, Ctx.one, .{ .corpus = &seed_corpus });
 }

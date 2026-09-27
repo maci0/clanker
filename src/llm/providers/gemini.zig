@@ -13,6 +13,7 @@ const types = @import("../types.zig");
 const config = @import("../../config.zig");
 const log = @import("../../util/log.zig");
 const redact = @import("../../util/redact.zig");
+const fuzz_corpus = @import("../../util/fuzz_corpus.zig");
 
 pub const default_base = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -511,6 +512,187 @@ test "gemini stream frame yields a text delta" {
         \\{"candidates":[{"content":{"parts":[{"text":"hel"}]}}]}
     )).?;
     try std.testing.expectEqualStrings("hel", ev.text.?);
+}
+
+/// Seed frames for the stream codec fuzz targets. Outside a fuzzing session
+/// `std.testing.fuzz` replays only its corpus (plus the empty string), so
+/// without seeds the harness would parse nothing and assert nothing; these are
+/// the shapes the endpoint actually sends, plus the disagreeing-number and
+/// malformed cases the invariants are written against.
+const stream_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry("[DONE]"),
+    fuzz_corpus.entry(""),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":"Hello"}]},"finishReason":null}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":"a"},{"text":"b"},{"functionCall":{"name":"read_file","args":{"path":"src/main.zig"}}},{"text":"thinking","thought":true}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":3,"totalTokenCount":13}}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"functionCall":{"name":"f"}}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":""}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":10,"cachedContentTokenCount":12,"candidatesTokenCount":3,"totalTokenCount":13}}
+    ),
+    fuzz_corpus.entry(
+        \\{"usageMetadata":{"promptTokenCount":0,"totalTokenCount":0}}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":"héllo ✓ é"}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"functionCall":{"name":"","args":[1,2,3]}}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"functionCall":{"name":"a","args":{}}},{"functionCall":{"name":"b","args":{}}}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":"\ud800 lone surrogate"}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{ not json
+    ),
+    fuzz_corpus.entry("[]"),
+    fuzz_corpus.entry("null"),
+    fuzz_corpus.entry("3"),
+};
+
+test "fuzz: gemini stream events stay a well-formed event on any payload" {
+    // parseStreamEvent sees whatever the endpoint sends on the SSE wire, so
+    // the fuzzer feeds it the same untrusted bytes. Crashing is one failure
+    // mode; the other is a *successfully parsed* event that lies about its own
+    // shape, which the caller cannot check. So every field the codec fills
+    // from a provider-supplied number is pinned here.
+    const F = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const ev = (try parseStreamEvent(arena_state.allocator(), buf[0..len])) orelse return;
+
+            // The sentinel is the only source of `done`, and it returns before
+            // anything is read, so a done frame never also carries a delta.
+            if (ev.done) {
+                try std.testing.expect(ev.text == null);
+                try std.testing.expect(ev.tool_calls.len == 0);
+                try std.testing.expect(ev.usage == null);
+                try std.testing.expect(ev.finish_reason == null);
+                return;
+            }
+            // An empty delta would be appended as nothing and counted as a
+            // first-token tick, so the codec only sets the field when non-empty.
+            if (ev.text) |t| try std.testing.expect(t.len > 0);
+            if (ev.finish_reason) |r| try std.testing.expect(r.len > 0);
+
+            // Fragments are keyed by index, so two parts claiming one index
+            // would fold into a single corrupt call, and the minted id has to
+            // agree with the index the caller will look it up under.
+            var prev: ?usize = null;
+            for (ev.tool_calls) |f| {
+                if (prev) |p| try std.testing.expect(f.index > p);
+                prev = f.index;
+                var id_buf: [32]u8 = undefined;
+                const want_id = try std.fmt.bufPrint(&id_buf, "call_{d}", .{f.index});
+                try std.testing.expectEqualStrings(want_id, f.id.?);
+                if (f.name) |n| try std.testing.expect(n.len > 0);
+            }
+
+            // Token counts are provider-supplied and can disagree with each
+            // other; the miss half is clamped, so it can never report less
+            // than the prompt total once the cache read is added back.
+            if (ev.usage) |u| {
+                const p = u.prompt.?;
+                try std.testing.expect(@as(u64, p.cache_miss_tokens) + p.cache_hit_tokens >= p.tokens);
+            }
+        }
+    };
+    try std.testing.fuzz({}, F.one, .{ .corpus = &stream_fuzz_corpus });
+}
+
+/// Whole-body seeds for the non-streaming codec: the same frames, minus the
+/// `finishReason`-only shapes that never reach a full response.
+const body_fuzz_corpus = [_][]const u8{
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":"thought","thought":true},{"text":"answer"}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"functionCall":{"name":"exec","args":{"cmd":"ls"}}}]},"finishReason":"FUNCTION_CALL"}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"functionCall":{"name":"a","args":{}}},{"functionCall":{"name":"b","args":{}}}]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[{"text":"x"}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{"promptTokenCount":4,"cachedContentTokenCount":9,"candidatesTokenCount":1,"totalTokenCount":5}}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[{"content":{"parts":[]}}]}
+    ),
+    fuzz_corpus.entry(
+        \\{"candidates":[]}
+    ),
+    fuzz_corpus.entry(
+        \\{"error":{"code":429,"message":"quota"}}
+    ),
+    fuzz_corpus.entry(
+        \\{ not json
+    ),
+    fuzz_corpus.entry("[]"),
+    fuzz_corpus.entry("null"),
+};
+
+test "fuzz: gemini non-stream bodies decode to a consistent assistant message" {
+    // The non-streaming path takes the whole response body, so it sees every
+    // byte the endpoint sends on a single frame. The same shape promises hold
+    // here, and they are the ones the agent loop cannot re-check: a tool call
+    // whose minted id disagrees with its position is executed under the wrong
+    // key, and a usage report whose miss half is below the prompt total is
+    // billed to the cache-miss column.
+    const F = struct {
+        fn one(_: void, smith: *std.testing.Smith) anyerror!void {
+            var buf: [4096]u8 = undefined;
+            const len = smith.slice(&buf);
+
+            var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+            defer arena_state.deinit();
+            const resp = parseResponse(arena_state.allocator(), buf[0..len], null) catch return;
+
+            try std.testing.expectEqual(types.Role.assistant, resp.message.role);
+            if (resp.message.content) |c| try std.testing.expect(c.len > 0);
+            if (resp.reasoning) |r| try std.testing.expect(r.len > 0);
+            if (resp.finish_reason) |r| try std.testing.expect(r.len > 0);
+
+            // The id is minted from the part's position in `parts`, so it is
+            // not derivable from the call list; what the loop does guarantee is
+            // that two calls never collide on one id, since the agent loop
+            // keys results by it.
+            for (resp.message.tool_calls orelse &.{}, 0..) |call, i| {
+                try std.testing.expect(std.mem.startsWith(u8, call.id, "call_"));
+                try std.testing.expect(call.name.len > 0);
+                try std.testing.expect(call.arguments.len > 0);
+                for (resp.message.tool_calls.?[0..i]) |earlier| {
+                    try std.testing.expect(!std.mem.eql(u8, earlier.id, call.id));
+                }
+            }
+
+            if (resp.usage) |u| {
+                try std.testing.expect(
+                    @as(u64, u.prompt_cache_miss_tokens) + u.prompt_cache_hit_tokens >= u.prompt_tokens,
+                );
+            }
+        }
+    };
+    try std.testing.fuzz({}, F.one, .{ .corpus = &body_fuzz_corpus });
 }
 
 test "gemini puts the key on x-goog-api-key" {

@@ -224,6 +224,7 @@ comptime {
     _ = @import("util/file_tail.zig");
     _ = @import("util/utf8.zig");
     _ = @import("util/session_id.zig");
+    _ = @import("util/fuzz_corpus.zig");
     _ = @import("util/alarm_store.zig");
     _ = @import("util/http_client.zig");
     _ = @import("util/deadline.zig");

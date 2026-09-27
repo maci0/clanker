@@ -12,6 +12,7 @@
 //! out-of-domain operand rather than erroring; `requireFinite` is where a
 //! caller that must serialize the value into JSON refuses it instead.
 const std = @import("std");
+const fuzz_corpus = @import("fuzz_corpus");
 
 pub const ExprError = error{
     DivisionByZero,
@@ -444,15 +445,15 @@ test "fuzz: no byte sequence crashes the expression parser" {
     // parser; they steer the generator toward the shapes listed.
     try std.testing.fuzz({}, Ctx.one, .{
         .corpus = &.{
-            "2+3*4",
-            "(1+2)^3",
-            "sqrt(16)",
-            "1/0",
-            ".",
-            "(((((((((((((((((1)))))))))))))))))",
-            "1e3",
-            "0x10",
-            "",
+            fuzz_corpus.entry("2+3*4"),
+            fuzz_corpus.entry("(1+2)^3"),
+            fuzz_corpus.entry("sqrt(16)"),
+            fuzz_corpus.entry("1/0"),
+            fuzz_corpus.entry("."),
+            fuzz_corpus.entry("(((((((((((((((((1)))))))))))))))))"),
+            fuzz_corpus.entry("1e3"),
+            fuzz_corpus.entry("0x10"),
+            fuzz_corpus.entry(""),
         },
     });
 }

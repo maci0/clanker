@@ -2,6 +2,7 @@
 //! official stdio SDKs and clanker's MCP server framing.
 
 const std = @import("std");
+const fuzz_corpus = @import("../util/fuzz_corpus.zig");
 const json = std.json;
 const build_options = @import("build_options");
 const log = @import("../util/log.zig");
@@ -493,16 +494,16 @@ test "fuzz: no ACP JSON-RPC line crashes handleLine or grows past the session ca
     };
     try std.testing.fuzz({}, Ctx.one, .{
         .corpus = &.{
-            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/new\",\"params\":{\"cwd\":\"/tmp\"}}",
-            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"acp-1\",\"prompt\":\"hi\"}}",
-            "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"acp-1\",\"prompt\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"text\",\"text\":\"b\"}]}}",
-            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"authenticate\",\"params\":{}}",
-            "{\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{\"sessionId\":\"acp-1\"}}",
-            "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"nope\",\"params\":{}}",
-            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"session/new\",\"params\":{\"cwd\":\"relative\"}}",
-            "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"session/new\",\"params\":{\"cwd\":\"/\\u0000\"}}",
-            "{",
-            "",
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"session/new\",\"params\":{\"cwd\":\"/tmp\"}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"acp-1\",\"prompt\":\"hi\"}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"acp-1\",\"prompt\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"text\",\"text\":\"b\"}]}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"authenticate\",\"params\":{}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{\"sessionId\":\"acp-1\"}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"nope\",\"params\":{}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"session/new\",\"params\":{\"cwd\":\"relative\"}}"),
+            fuzz_corpus.entry("{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"session/new\",\"params\":{\"cwd\":\"/\\u0000\"}}"),
+            fuzz_corpus.entry("{"),
+            fuzz_corpus.entry(""),
         },
     });
 }
