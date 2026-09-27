@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit, fmtMs, sessionMatchesFilter, searchFold, searchFoldFind } from "./utils.js";
+import { clip, graphemes, callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost, recencyGroup, plural, fmtAgo, fmtUnit, fmtMs, sessionMatchesFilter, searchFold, searchFoldFind, selectHasValue, calendarDaysAgo } from "./utils.js";
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -299,4 +299,32 @@ test("searchFoldFind still maps a folded hit back to the original text", functio
   const hit = searchFoldFind("Ængström", "aeng");
   assert.deepEqual(hit && [hit.start, hit.end], [0, 3]); // the whole "Æ", both folded letters
   assert.equal(searchFoldFind("Ængström", "z"), null);
+});
+
+// The model select, the effort select, the fallback select and the log list all
+// rebuild their options and then ask the same question: is the operator's
+// current value still one of them. A log filename is a filesystem name, so a
+// quote or a bracket in it is a real input, and the selector spelling this
+// replaced threw on one — which surfaced as "Could not list logs" rather than
+// as the option simply being gone.
+test("selectHasValue matches on the option value, whatever the name contains", function () {
+  const select = { options: [{ value: "clanker.log" }, { value: 'weird "]name' }, { value: "other.log" }] };
+  assert.equal(selectHasValue(select, "clanker.log"), true);
+  assert.equal(selectHasValue(select, 'weird "]name'), true);
+  assert.equal(selectHasValue(select, "missing.log"), false);
+  assert.equal(selectHasValue(select, ""), false);
+  assert.equal(selectHasValue(select, null), false);
+  assert.equal(selectHasValue(null, "clanker.log"), false);
+});
+
+// The session rail and the Runs view both bucket by recency, and both got the
+// calendar-day correction from here. A DST spring-forward is the case the
+// arithmetic exists for: the local day is 23 hours, so a 24-hour block files
+// the previous evening under "Today".
+test("calendarDaysAgo counts local days, not 24-hour blocks", function () {
+  const evening = new Date(2026, 2, 8, 23, 50).getTime();
+  const justAfter = new Date(2026, 2, 9, 0, 10).getTime();
+  assert.equal(calendarDaysAgo(evening, justAfter), 1);
+  assert.equal(calendarDaysAgo(justAfter, evening), -1);
+  assert.equal(calendarDaysAgo(evening, evening), 0);
 });

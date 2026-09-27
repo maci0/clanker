@@ -282,7 +282,10 @@ export function classifyLoadFailure(err) {
   if (err && err.status === 404 && /\bdisabled\b/i.test(msg)) {
     return { kind: "disabled", retry: false, message: msg };
   }
-  if (!msg || !err || typeof err.status !== "number") {
+  // A fetch rejected before any response carries neither a status nor a
+  // message worth showing, and `msg` is already empty for a null `err`, so
+  // that is the one test to write.
+  if (!msg || typeof err.status !== "number") {
     return { kind: "failed", retry: true, message: "Could not reach the server." };
   }
   return { kind: "failed", retry: true, message: msg };
@@ -346,23 +349,26 @@ export function sessionMatchesFilter(item, q) {
   return searchFold(sessionLabel(item)).indexOf(needle) !== -1;
 }
 
+/* Whole calendar days from `since` back to `now`, not 24-hour blocks: a run at
+   23:50 was "yesterday" by 00:10, however few hours have passed. The session
+   rail and the Runs view both group by recency and each had its own copy. */
+export function calendarDaysAgo(sinceMs, nowMs) {
+  var a = new Date(sinceMs);
+  var b = new Date(nowMs);
+  a.setHours(0, 0, 0, 0);
+  b.setHours(0, 0, 0, 0);
+  return Math.round((b - a) / 86400000);
+}
+
 /* Conversations group by when they were last touched, because that is how
    you look for one: "the thing I was doing this morning", not an id.
-   Grouped by calendar day, never by a 24-hour block: after a spring-forward
-   the local day is 23 hours, so Saturday 00:00 read at Monday 00:30 is 47.5
-   hours old and a 48-hour window still filed it under "Yesterday". The
-   helper in lib/runs-list.js already made this correction for the Runs view;
-   `now` is a parameter here for the same reason it is one there. */
+   `now` is a parameter so the grouping is testable. */
 export function recencyGroup(updated, nowMs) {
   if (!updated) return "Undated";
   var now = typeof nowMs === "number" ? nowMs : Date.now();
-  var d = new Date(updated * 1000);
-  var today = new Date(now);
-  d.setHours(0, 0, 0, 0);
-  today.setHours(0, 0, 0, 0);
   // A clock stepped backwards puts a session in the future; it belongs with
   // today, not with yesterday.
-  var days = Math.max(0, Math.round((today - d) / 86400000));
+  var days = Math.max(0, calendarDaysAgo(updated * 1000, now));
   if (days === 0) return relative_time.format(0, "day");
   if (days === 1) return relative_time.format(-1, "day");
   if (days < 7) return "Previous 7 days";
@@ -459,6 +465,19 @@ export function callableProviders(list) {
 export function providerUnusableReason(p) {
   if (!p || p.usable !== false) return "";
   return p.reason || "not configured";
+}
+
+/* "Does this <select> still hold this value", behind every place that rebuilds
+   a select's options and puts the operator back where they were. Written
+   three times over with three selector escapes, and a name carrying a quote
+   or a bracket made querySelector throw. Walking `options` escapes nothing. */
+export function selectHasValue(select, value) {
+  if (!select || value == null || value === "") return false;
+  var options = select.options || [];
+  for (var i = 0; i < options.length; i++) {
+    if (options[i].value === String(value)) return true;
+  }
+  return false;
 }
 
 /* Every view's header carries a Refresh button, and they were wired a dozen

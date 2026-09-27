@@ -7,7 +7,7 @@
 // (id, task, provider, duration) is timeless, which is how a listing that had
 // gone stale still read as current. A row that says "3d ago" cannot.
 
-import { searchFold } from "../core/utils.js";
+import { calendarDaysAgo, searchFold } from "../core/utils.js";
 
 /** Nanoseconds is the widest clock a run id carries; see runStartedAt. */
 const NS_DIGITS = 19;
@@ -30,18 +30,6 @@ export function runStartedAt(run) {
   const digits = id.slice(dash + 1);
   if (!digits.length || digits.length > NS_DIGITS || !/^\d+$/.test(digits)) return 0;
   return Number(digits.padEnd(NS_DIGITS, "0").slice(0, MS_DIGITS));
-}
-
-function startOfDay(ms) {
-  const d = new Date(ms);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-/** Whole calendar days between two instants, not 24-hour blocks: a run at
-    23:50 was "yesterday" by 00:10, however few hours have passed. */
-function calendarDaysAgo(startedAt, now) {
-  return Math.round((startOfDay(now) - startOfDay(startedAt)) / 86400000);
 }
 
 /* Dates and relative labels follow the runtime locale, the way core/utils.js

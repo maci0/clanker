@@ -1,4 +1,6 @@
 // Vanilla, no bundler. Log tail viewer — list + tail fetch, no app state.
+import { selectHasValue } from "./utils.js";
+
 export function loadLog(name, els, readJson, fmtBytes) {
   if (!name) return Promise.resolve();
   return fetch("/api/logs/" + encodeURIComponent(name))
@@ -39,7 +41,7 @@ export function loadLogList(els, readJson, fmtBytes) {
         return;
       }
       els.logSelect.disabled = false;
-      els.logSelect.value = keep && els.logSelect.querySelector('option[value="' + keep.replace(/"/g, '\\"') + '"]') ? keep : logs[0].name;
+      els.logSelect.value = keep && selectHasValue(els.logSelect, keep) ? keep : logs[0].name;
       return loadLog(els.logSelect.value, els, readJson, fmtBytes);
     })
     .catch(function (err) {

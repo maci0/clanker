@@ -2,7 +2,7 @@
 // store, popover UI (search + provider groups) as the operator surface.
 
 import { icon } from "./icons.js";
-import { callableProviders, fmtUsd } from "./utils.js";
+import { callableProviders, fmtUsd, searchFold, selectHasValue } from "./utils.js";
 import { effectiveModel as cpEffectiveModel, effectiveEffort as cpEffectiveEffort } from "./chatprefs.js";
 
 var _providerCache = [];
@@ -134,11 +134,6 @@ function effectiveEffort() {
   return cpEffectiveEffort(chatPin(), readDefault(effort_key));
 }
 
-function hasOption(select, value) {
-  if (!select || !value) return false;
-  return !!select.querySelector('option[value="' + String(value).replace(/"/g, "") + '"]');
-}
-
 /* Puts the current conversation's model and effort back on the selects.
    Called on every conversation switch: the selects are shared DOM, so without
    this the chat you just opened would keep showing the one you left. */
@@ -146,11 +141,11 @@ export function applyChatPrefs() {
   if (!_el) return;
   if (_el.modelSelect) {
     var model = effectiveModel();
-    if (hasOption(_el.modelSelect, model)) _el.modelSelect.value = model;
+    if (selectHasValue(_el.modelSelect, model)) _el.modelSelect.value = model;
   }
   if (_el.paramEffort) {
     var effort = effectiveEffort();
-    _el.paramEffort.value = hasOption(_el.paramEffort, effort) ? effort : "";
+    _el.paramEffort.value = selectHasValue(_el.paramEffort, effort) ? effort : "";
   }
   if (_renderContextMeter) _renderContextMeter();
   if (_onModelChange) _onModelChange();
@@ -333,7 +328,7 @@ function paintActive() {
 }
 
 function renderList(query) {
-  var q = (query || "").trim().toLowerCase();
+  var q = searchFold((query || "").trim());
   _list.textContent = "";
   _flat = [];
   _active = -1;
@@ -342,7 +337,7 @@ function renderList(query) {
   var byProv = {};
   var order = [];
   _modelIndex.forEach(function (m) {
-    var hay = (m.label + " " + m.provider + " " + m.model + " " + (m.meta || "")).toLowerCase();
+    var hay = searchFold(m.label + " " + m.provider + " " + m.model + " " + (m.meta || ""));
     if (q && hay.indexOf(q) === -1) return;
     if (!byProv[m.provider]) {
       byProv[m.provider] = [];
@@ -554,14 +549,12 @@ export function loadProviders() {
           opt.textContent = prov.name;
           _el.fallbackProvider.appendChild(opt);
         });
-        if (fbSaved && _el.fallbackProvider.querySelector('option[value="' + fbSaved.replace(/\"/g, "") + '"]')) {
-          _el.fallbackProvider.value = fbSaved;
-        }
+        if (selectHasValue(_el.fallbackProvider, fbSaved)) _el.fallbackProvider.value = fbSaved;
       }
       // The conversation's pin first, the browser default only when it has
       // none: reloading a chat must not adopt whatever another tab last chose.
       var saved = effectiveModel();
-      if (hasOption(_el.modelSelect, saved)) _el.modelSelect.value = saved;
+      if (selectHasValue(_el.modelSelect, saved)) _el.modelSelect.value = saved;
       if (_onModelChange) _onModelChange();
       if (_open) renderList(_search ? _search.value : "");
     })
@@ -642,7 +635,7 @@ export function bindModelPicker(ctx) {
 
   if (_el.paramEffort) {
     var savedEffort = effectiveEffort();
-    if (hasOption(_el.paramEffort, savedEffort)) _el.paramEffort.value = savedEffort;
+    if (selectHasValue(_el.paramEffort, savedEffort)) _el.paramEffort.value = savedEffort;
     _el.paramEffort.addEventListener("change", function () {
       writeDefault(effort_key, _el.paramEffort.value);
       pinChat({ effort: _el.paramEffort.value });
