@@ -235,7 +235,7 @@ pub const History = struct {
         // reads it next sees a history that stops mid-line. Promotion already
         // writes through `atomic_write` for the same reason; this path was
         // the one whole-file write in the module that did not.
-        try atomic_write.writeFile(self.io, self.dir(), self.logPath(), buf.items);
+        try atomic_write.writeFilePerms(self.io, self.dir(), self.logPath(), buf.items, atomic_write.private_file);
         return flipped;
     }
 
@@ -394,7 +394,10 @@ pub const History = struct {
         // record. The file lock above serializes concurrent writers; the old
         // approach read the entire log into memory, appended in-memory, and
         // wrote the whole thing back, making every append O(log_size).
-        const file = try self.dir().createFile(self.io, self.logPath(), .{ .truncate = false });
+        // Owner-only: `instruction` is the operator's improve instruction
+        // verbatim, so this store belongs with the other 0600 personal-data
+        // stores rather than the default mode.
+        const file = try self.dir().createFile(self.io, self.logPath(), .{ .truncate = false, .permissions = atomic_write.private_file });
         defer file.close(self.io);
         // Pre-append length, still what trimTo's watermark arithmetic wants.
         const size = (try file.stat(self.io)).size;
@@ -442,7 +445,7 @@ pub const History = struct {
         if (kept.len == raw.len) return;
         // Atomic for the same reason markReverted is: a truncate-then-write
         // interrupted halfway leaves a log that stops mid-line.
-        atomic_write.writeFile(self.io, self.dir(), self.logPath(), kept) catch |err| {
+        atomic_write.writeFilePerms(self.io, self.dir(), self.logPath(), kept, atomic_write.private_file) catch |err| {
             log.log(.warn, "could not trim {s} ({d} bytes): {s}", .{ self.logPath(), size_after_append, @errorName(err) });
             return;
         };
@@ -1474,4 +1477,27 @@ test "firstLine trims, takes the first line, and clips to max" {
     try std.testing.expectEqualStrings("world", firstLine("  world  ", 10));
     // Empty / whitespace-only input yields empty.
     try std.testing.expectEqualStrings("", firstLine("   \n  ", 10));
+}
+
+test "the ledger is owner-only, so the operator's instruction is not world-readable" {
+    var gpa_state = std.heap.DebugAllocator(.{}).init;
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var hist = History.init(gpa, io, tmp.dir, "state");
+    defer hist.deinit();
+    try hist.append("imp-1", .accepted, "keep the private field private", "did a thing", &.{"src/a.zig"}, 0.0, 1.0, "", &.{}, null);
+
+    const st = try tmp.dir.statFile(io, "state/improvements.jsonl", .{});
+    try std.testing.expectEqual(
+        @as(std.posix.mode_t, 0o600),
+        @as(std.posix.mode_t, @intFromEnum(st.permissions)) & 0o777,
+    );
 }

@@ -26,6 +26,7 @@ const json_util = @import("../util/json.zig");
 const tool_out = @import("../util/tool_out.zig");
 const utf8 = @import("../util/utf8.zig");
 const prompt_fence = @import("../util/prompt_fence.zig");
+const redact = @import("../util/redact.zig");
 const file_tail = @import("../util/file_tail.zig");
 const advisor = @import("advisor.zig");
 const prune = @import("prune.zig");
@@ -890,7 +891,12 @@ pub const Agent = struct {
         }
         const prompt_hook = try self.runLifecycleHook(.UserPromptSubmit, "", try self.hookPayload(.UserPromptSubmit, "", "", task));
         if (prompt_hook.decision != .allow) {
-            log.log(.warn, "UserPromptSubmit hook rejected the turn: {s}", .{prompt_hook.reason});
+            // The reason is a hook's raw stderr, and the hook's stdin payload
+            // carries the user's task text, so an echo of it lands here whole.
+            // Capped like any other free-form detail reaching a log line; the
+            // uncapped reason still goes to the model below.
+            var reason_buf: [redact.max_log_detail_len]u8 = undefined;
+            log.log(.warn, "UserPromptSubmit hook rejected the turn: {s}", .{redact.forLog(&reason_buf, prompt_hook.reason)});
             return error.HookRejectedPrompt;
         }
         try messages.append(self.arena, .{ .role = .user, .content = task, .images = task_images });
@@ -3217,7 +3223,11 @@ pub const Agent = struct {
             const pre_hook = try self.runLifecycleHook(.PreToolUse, tc.name, try self.hookPayload(.PreToolUse, tc.name, tc.arguments, ""));
             if (pre_hook.context.len > 0) try self.pending_hook_contexts.append(self.arena, pre_hook.context);
             if (pre_hook.decision == .deny) {
-                log.log(.info, "PreToolUse hook denied tool '{s}': {s}", .{ tc.name, pre_hook.reason });
+                // Same hook stderr as the prompt case, and the tool arguments
+                // the hook read are often the user's own words (a search
+                // string, a commit message), so this line is capped too.
+                var reason_buf: [redact.max_log_detail_len]u8 = undefined;
+                log.log(.info, "PreToolUse hook denied tool '{s}': {s}", .{ tc.name, redact.forLog(&reason_buf, pre_hook.reason) });
                 results[i] = try toolErrorJson(self.arena, "PreToolUse hook denied {s}: {s}", .{ tc.name, if (pre_hook.reason.len > 0) pre_hook.reason else "blocked by policy" });
                 continue;
             }

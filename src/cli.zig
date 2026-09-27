@@ -5303,7 +5303,9 @@ fn cmdSessions(init: std.process.Init) !void {
 /// Rendering and the default state/exports write live in the internal
 /// session_export WASM tool. A custom destination is written here from the
 /// tool's returned HTML because descriptor policy cannot safely grant an
-/// arbitrary caller-selected filesystem prefix.
+/// arbitrary caller-selected filesystem prefix. That HTML is the whole
+/// conversation, so the custom destination gets the same owner-only mode the
+/// default `state/exports/` write already has rather than the umask default.
 fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -5336,7 +5338,7 @@ fn cmdSessionExport(init: std.process.Init, opts: Options) !void {
     }
     const path = opts.session_out orelse result.path;
     if (opts.session_out != null) {
-        try atomic_write.writeFile(io, std.Io.Dir.cwd(), path, result.html orelse return error.ToolFailed);
+        try atomic_write.writeFilePerms(io, std.Io.Dir.cwd(), path, result.html orelse return error.ToolFailed, atomic_write.private_file);
     }
     const line = try std.fmt.allocPrint(arena, "wrote {s} ({d} messages, {d} bytes)\n", .{ path, result.messages, result.bytes });
     try writeStdOut(io, line);

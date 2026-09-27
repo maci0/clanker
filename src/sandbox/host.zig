@@ -6458,16 +6458,21 @@ pub fn ckExec(caller: *zwasm.Caller, argv_ptr: u32, argv_len: u32) u32 {
     }
 
     if (execDenial(h.sandbox, cmd, argv.items)) |d| {
+        // The offending arg is model-written and often the user's own words
+        // (a search pattern, a commit subject, a path under their home), and
+        // an argv element is unbounded, so every arm that names one caps it
+        // before it reaches a log line.
+        var arg_buf: [redact.max_log_detail_len]u8 = undefined;
         switch (d) {
             .git_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted git verb", .{}),
             .zig_verb => log.log(.warn, "[sandbox] ck_exec denied unlisted zig verb", .{}),
             .uv_verb => log.log(.warn, "[sandbox] ck_exec denied uv argv; only uv run of tools/py/opencv.py is allowed", .{}),
             .no_pattern_match => log.log(.warn, "[sandbox] ck_exec denied '{s}': exec_pattern_allow makes this command strict and no pattern matches", .{cmd}),
-            .deny_token => |x| log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ x.token, x.arg }),
-            .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, x.arg }),
-            .foreign_worktree => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': it reaches into another run's worktree", .{a}),
-            .host_path => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': path is outside the sandbox", .{a}),
-            .git_config => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': git config injection / alternate git dir would run guest-chosen code", .{a}),
+            .deny_token => |x| log.log(.warn, "[sandbox] ck_exec denied token '{s}' in arg '{s}'", .{ x.token, redact.forLog(&arg_buf, x.arg) }),
+            .shell_operator => |x| log.log(.warn, "[sandbox] ck_exec denied shell operator '{s}' in arg '{s}'", .{ x.token, redact.forLog(&arg_buf, x.arg) }),
+            .foreign_worktree => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': it reaches into another run's worktree", .{redact.forLog(&arg_buf, a)}),
+            .host_path => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': path is outside the sandbox", .{redact.forLog(&arg_buf, a)}),
+            .git_config => |a| log.log(.warn, "[sandbox] ck_exec denied arg '{s}': git config injection / alternate git dir would run guest-chosen code", .{redact.forLog(&arg_buf, a)}),
         }
         return Err.denied;
     }
