@@ -460,8 +460,11 @@ test("rooms message actions stay visible without hover", function () {
 });
 
 test("rooms channel rows are 44px on coarse pointers", function () {
-  assert.match(css, /\.slack-room-item/);
-  assert.match(css, /pointer: coarse[\s\S]*\.slack-room-item/);
+  // The row is utilities now, so the guard is a variant on it rather than a
+  // media block: `pointer-coarse:` compiles to `@media (pointer: coarse)`.
+  const app = readFileSync(join(here, "..", "app.js"), "utf8");
+  assert.match(app, /pointer-coarse:min-h-11/);
+  assert.match(app, /ROOMS_ROOM_ITEM_CLASS/);
 });
 
 test("System view has an on-page jump list", function () {

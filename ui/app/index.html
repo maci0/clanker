@@ -496,29 +496,29 @@ lamps carry further). The seven named palettes ride the same tokens.
     </section>
   </div>
   <div class="view" id="view-rooms" role="tabpanel" aria-labelledby="tab-rooms" tabindex="-1" hidden>
-    <div class="slack-layout">
+    <div class="flex min-h-0 w-full flex-1 overflow-hidden rounded-plate border border-rule bg-surface">
       <!-- Sidebar: channel list -->
-      <aside class="slack-sidebar" id="chat-sidebar">
-        <div class="slack-sidebar-head">
+      <aside class="group flex w-65 max-w-80 min-w-50 flex-none basis-65 flex-col overflow-hidden border-r border-rule bg-bg translate-x-0 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none [&>*]:min-w-50 data-[collapsed=true]:pointer-events-none data-[collapsed=true]:-translate-x-full data-[collapsed=true]:border-r-transparent min-[769px]:data-[collapsed=true]:m-0 min-[769px]:data-[collapsed=true]:w-0 min-[769px]:data-[collapsed=true]:min-w-0 min-[769px]:data-[collapsed=true]:max-w-0 min-[769px]:data-[collapsed=true]:basis-0 min-[769px]:data-[collapsed=true]:translate-x-0 min-[769px]:data-[collapsed=true]:overflow-hidden min-[769px]:data-[collapsed=true]:p-0 min-[769px]:data-[collapsed=true]:transition-none" id="chat-sidebar">
+        <div class="flex flex-none items-center justify-between border-b border-rule px-4 py-3 [&_h2]:m-0 [&_h2]:text-base [&_h2]:font-bold">
           <h2>Channels</h2>
           <button type="button" class="slack-btn-icon" id="chat-create-room" title="Create channel" aria-label="Create channel">+</button>
         </div>
         <!-- Filter the channel list. Ctrl+K stays the page Jump palette. -->
-        <div class="slack-search-box">
+        <div class="flex-none px-3 py-2 [&_input]:w-full [&_input]:rounded-plate [&_input]:border [&_input]:border-rule [&_input]:bg-surface [&_input]:px-2 [&_input]:py-1 [&_input]:text-sm [&_input]:text-fg [&_input:focus-visible]:border-accent [&_input:focus-visible]:outline-2 [&_input:focus-visible]:outline-accent [&_input:focus-visible]:outline-offset-1">
           <input type="search" id="chat-room-filter" placeholder="Find a channel…" autocomplete="off" aria-label="Filter channels">
         </div>
-        <div class="slack-room-list" id="chat-room-list" role="group" aria-label="Channels">
-          <div class="slack-room-group" id="chat-rooms-group">
-            <button type="button" class="slack-room-group-head" data-group="rooms" aria-expanded="true" aria-controls="chat-rooms-items">
-              <span class="slack-caret" aria-hidden="true">▸</span> Channels
+        <div class="flex-1 overflow-x-hidden overflow-y-auto py-1" id="chat-room-list" role="group" aria-label="Channels">
+          <div class="group mb-1" data-collapsed="false" id="chat-rooms-group">
+            <button type="button" class="flex w-full cursor-pointer select-none items-center gap-1 border-0 bg-transparent px-3 py-1 text-left font-sans text-sm font-semibold uppercase tracking-label text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1" data-group="rooms" aria-expanded="true" aria-controls="chat-rooms-items">
+              <span class="inline-block rotate-90 text-2xs transition-transform group-data-[collapsed=true]:rotate-0" aria-hidden="true">▸</span> Channels
             </button>
-            <div class="slack-room-items" id="chat-rooms-items"><p class="meta slack-room-loading">Loading channels…</p></div>
+            <div class="group-data-[collapsed=true]:hidden" id="chat-rooms-items"><p class="meta">Loading channels…</p></div>
           </div>
-          <div class="slack-room-group" id="chat-dms-group">
-            <button type="button" class="slack-room-group-head" data-group="dms" aria-expanded="true" aria-controls="chat-dms-items">
-              <span class="slack-caret" aria-hidden="true">▸</span> Direct Messages
+          <div class="group mb-1" data-collapsed="false" id="chat-dms-group">
+            <button type="button" class="flex w-full cursor-pointer select-none items-center gap-1 border-0 bg-transparent px-3 py-1 text-left font-sans text-sm font-semibold uppercase tracking-label text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1" data-group="dms" aria-expanded="true" aria-controls="chat-dms-items">
+              <span class="inline-block rotate-90 text-2xs transition-transform group-data-[collapsed=true]:rotate-0" aria-hidden="true">▸</span> Direct Messages
             </button>
-            <div class="slack-room-items" id="chat-dms-items"></div>
+            <div class="group-data-[collapsed=true]:hidden" id="chat-dms-items"></div>
           </div>
         </div>
         <!-- Hidden select for backwards compat -->

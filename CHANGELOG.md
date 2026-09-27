@@ -421,6 +421,20 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   the run detail's own round had already replaced) and so it is deleted rather
   than ported.
 
+- The Rooms sidebar is utilities: its layout, head, search box, room lists and
+  rows, the group folds and the caret. State moved to attributes with the port —
+  the sidebar's `data-collapsed`, a group's `data-collapsed`, a row's
+  `data-active`/`data-unread`, the presence dot's `data-online` — because the
+  sheet has to read the same spelling the script writes; the row's active lamp
+  stays a component rule (`.room-row[data-active="true"]::before`), a
+  pseudo-element carrying a glow ring. The 44px coarse-pointer row is
+  `pointer-coarse:min-h-11` rather than a media block. First paint 58.5K gz; the
+  sheet's accounting figure goes to 88K.
+- `ui/app/app.js` joins the ledger, which is the file with the most classes in
+  the tree: it named six dead ones (`rail-group-row`, `slack-room-loading`,
+  `slack-emoji-option`, `fleet-roster-list`, `fleet-meta`, `fleet-run-link`),
+  each replaced by the utilities that say what it meant.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

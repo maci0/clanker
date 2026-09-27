@@ -108,6 +108,16 @@
   }
   @keyframes lamp-pulse { 50% { opacity: 0.35; } }
 
+  /* A room row's active lamp: a pseudo-element carrying a glow ring, which no
+     utility composes. The row's active/unread marks are data attributes, so the
+     rule reads the same spelling the script writes. */
+  .room-row[data-active="true"]::before {
+    content: ""; position: absolute; left: 0.4rem; top: 50%;
+    width: 0.4rem; height: 0.4rem; margin-top: -0.2rem; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
   /* A disclosure triangle: a chevron masked onto the summary's ::before,
      rotating when the branch is open. A pseudo-element carrying a masked image
      in both spellings (-webkit-mask beside mask) is what no utility composes;

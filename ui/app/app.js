@@ -597,7 +597,7 @@ bind(el.railList, railState, function (s) {
     }, T.span({ class: "rail-group-caret" }, collapsed ? "▸" : "▾"),
       T.span({ class: "rail-group-name" }, g.name),
       T.span({ class: "rail-group-count" }, String(g.items.length)));
-    out.push(T.li({ class: "rail-group-row", role: "presentation" }, head));
+    out.push(T.li({ role: "presentation" }, head));
     if (collapsed) { matched += g.items.length; return; }
     g.items.forEach(function (item) {
       out.push(railRowFor(item, s.current));
@@ -2819,16 +2819,28 @@ function renderChatSidebarList(container, list, icon) {
   list.forEach(function (r) {
     var row = document.createElement("button");
     row.type = "button";
-    row.className = "slack-room-item";
+    row.className = ROOMS_ROOM_ITEM_CLASS;
     row.dataset.room = r.room;
     var iconEl = document.createElement("span");
-    iconEl.className = "slack-room-icon";
+/* The Rooms sidebar's shapes. State is an attribute, not a class: the row's
+   active/unread marks, the group fold and the sidebar's collapsed drawer are
+   written by this file and read by the sheet, so `data-*` is the one spelling.
+   The active row's lamp is a component rule (`.room-row[data-active="true"]`)
+   because a pseudo-element with a box-shadow is what no utility composes. */
+var ROOMS_ROOM_ITEM_CLASS = "room-row relative flex min-h-8 w-full cursor-pointer items-center gap-2 rounded-none border-0 bg-transparent py-1 pl-5 pr-3 text-left text-sm text-fg-muted transition-colors hover:bg-[var(--surface-hover)] hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-1 pointer-coarse:min-h-11 data-[active=true]:bg-surface-2 data-[active=true]:font-semibold data-[active=true]:text-fg data-[active=true]:hover:bg-surface-2 data-[unread=true]:[&_.room-name]:font-bold data-[unread=true]:[&_.room-name]:text-fg";
+var ROOMS_ROOM_ICON_CLASS = "w-4 flex-none text-center text-sm";
+var ROOMS_ROOM_NAME_CLASS = "room-name min-w-0 flex-1 truncate";
+var ROOMS_ROOM_BADGE_CLASS = "flex h-[18px] min-w-[18px] flex-none items-center justify-center rounded-capsule bg-danger px-1 text-2xs font-bold text-on-danger";
+var ROOMS_PRESENCE_CLASS = "h-2 w-2 flex-none rounded-full border-[1.5px] border-fg-muted data-[online=true]:border-ok-fill data-[online=true]:bg-ok-fill";
+
+    iconEl.className = ROOMS_ROOM_ICON_CLASS;
     iconEl.setAttribute("aria-hidden", "true");
     var isRoomDm = r.room.indexOf("dm:") === 0;
     var peerUp = knownPeers.some(function (p) { return p.name === r.room || p.name === dmPartner(r.room); });
     if (isRoomDm) {
       var dot = document.createElement("span");
-      dot.className = "slack-presence-dot" + (peerUp ? " is-online" : "");
+      dot.className = ROOMS_PRESENCE_CLASS;
+      dot.setAttribute("data-online", peerUp ? "true" : "false");
       dot.title = peerUp ? "Online" : "Offline";
       dot.setAttribute("role", "img");
       dot.setAttribute("aria-label", peerUp ? "Online" : "Offline");
@@ -2838,22 +2850,22 @@ function renderChatSidebarList(container, list, icon) {
     }
     row.appendChild(iconEl);
     var name = document.createElement("span");
-    name.className = "slack-room-name";
+    name.className = ROOMS_ROOM_NAME_CLASS;
     name.textContent = chatRoomLabel(r).replace(/^[#@]/, "");
     name.title = name.textContent;
     row.appendChild(name);
     /* Unread indicator: bold name + dot when room has unread messages */
     var hasUnread = _roomHasUnread(r) && el.chatRoom.value !== r.room;
     if (hasUnread) {
-      row.classList.add("has-unread");
+      row.setAttribute("data-unread", "true");
       var unreadDot = document.createElement("span");
-      unreadDot.className = "slack-room-item-count";
+      unreadDot.className = ROOMS_ROOM_BADGE_CLASS;
       unreadDot.textContent = "•";
       unreadDot.title = "New messages";
       row.appendChild(unreadDot);
     } else if (r.messages) {
       var badge = document.createElement("span");
-      badge.className = "slack-room-badge";
+      badge.className = ROOMS_ROOM_BADGE_CLASS;
       badge.textContent = String(r.messages);
       row.appendChild(badge);
     }
@@ -2925,10 +2937,10 @@ function renderChatRooms(rooms) {
 
 var roomTopics = {};
 function loadChatRooms() {
-  if (el.chatRoomsItems && !el.chatRoomsItems.querySelector(".slack-room-item")) {
+  if (el.chatRoomsItems && !el.chatRoomsItems.querySelector("[data-room]")) {
     el.chatRoomsItems.textContent = "";
     var loading = document.createElement("p");
-    loading.className = "meta slack-room-loading";
+    loading.className = "meta";
     loading.textContent = "Loading channels…";
     el.chatRoomsItems.appendChild(loading);
   }
@@ -2947,7 +2959,7 @@ function loadChatRooms() {
       el.chatText.disabled = true;
       syncChatSend();
       el.chatStatus.textContent = "Could not load rooms: " + err.message;
-      if (el.chatRoomsItems && !el.chatRoomsItems.querySelector(".slack-room-item")) {
+      if (el.chatRoomsItems && !el.chatRoomsItems.querySelector("[data-room]")) {
         el.chatRoomsItems.textContent = "";
         var fail = document.createElement("p");
         fail.className = "meta";
@@ -3076,8 +3088,8 @@ function openChatRoom(room) {
   // Active-room highlight in the sidebar.
   [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
     if (!list) return;
-    Array.prototype.forEach.call(list.querySelectorAll(".slack-room-item"), function (row) {
-      row.classList.toggle("is-active", row.dataset.room === room);
+    Array.prototype.forEach.call(list.querySelectorAll("[data-room]"), function (row) {
+      row.setAttribute("data-active", row.dataset.room === room ? "true" : "false");
     });
   });
   // A room switch invalidates whatever the pins/search panels were showing.
@@ -3599,7 +3611,7 @@ function roomsSidebarIsPhone() {
 function setRoomsSidebarOpen(open, phoneOnly) {
   if (!el.chatSidebar) return;
   if (phoneOnly && !roomsSidebarIsPhone()) return;
-  el.chatSidebar.classList.toggle("is-collapsed", !open);
+  el.chatSidebar.setAttribute("data-collapsed", open ? "false" : "true");
   if (el.chatSidebarToggle) {
     el.chatSidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
     el.chatSidebarToggle.setAttribute("aria-label", open ? "Hide channels" : "Show channels");
@@ -3607,7 +3619,7 @@ function setRoomsSidebarOpen(open, phoneOnly) {
 }
 
 if (el.chatSidebarToggle) el.chatSidebarToggle.addEventListener("click", function () {
-  setRoomsSidebarOpen(el.chatSidebar.classList.contains("is-collapsed"), false);
+  setRoomsSidebarOpen(el.chatSidebar.getAttribute("data-collapsed") !== "true", false);
 });
 
 var chatSidebarScrim = document.getElementById("chat-sidebar-scrim");
@@ -3620,14 +3632,15 @@ if (chatSidebarScrim) chatSidebarScrim.addEventListener("click", function () {
 if (roomsSidebarIsPhone()) setRoomsSidebarOpen(false, true);
 else setRoomsSidebarOpen(true, false);
 
-// Group headers (Channels / Direct Messages) fold their own items away —
-// .slack-room-group.is-collapsed hides .slack-room-items via CSS. The head
+// Group headers (Channels / Direct Messages) fold their own items away: the
+// group's data-collapsed hides its items through the utility on them. The head
 // is a real button (keyboard-operable); aria-expanded tracks the fold.
 Array.prototype.forEach.call(document.querySelectorAll(".slack-room-group-head"), function (head) {
   head.addEventListener("click", function () {
     var group = head.closest(".slack-room-group");
     if (!group) return;
-    var collapsed = group.classList.toggle("is-collapsed");
+    var collapsed = group.getAttribute("data-collapsed") !== "true";
+    group.setAttribute("data-collapsed", collapsed ? "true" : "false");
     head.setAttribute("aria-expanded", String(!collapsed));
   });
 });
@@ -3637,7 +3650,7 @@ if (el.chatRoomFilter) el.chatRoomFilter.addEventListener("input", function () {
   var shown = 0;
   [el.chatRoomsItems, el.chatDmsItems].forEach(function (list) {
     if (!list) return;
-    Array.prototype.forEach.call(list.querySelectorAll(".slack-room-item"), function (row) {
+    Array.prototype.forEach.call(list.querySelectorAll("[data-room]"), function (row) {
       var hide = q.length > 0 && row.textContent.toLowerCase().indexOf(q) === -1;
       row.hidden = hide;
       if (!hide) shown += 1;
@@ -3799,7 +3812,7 @@ if (el.chatEmojiBtn && el.chatEmojiPicker) {
     CHAT_EMOJI_PICKER_SET.forEach(function (emoji) {
       var b = document.createElement("button");
       b.type = "button";
-      b.className = "slack-emoji-option";
+      b.className = "cursor-pointer rounded-plate-sm border-0 bg-transparent p-1 text-base hover:bg-surface-2";
       b.textContent = emoji;
       b.addEventListener("click", function () {
         var start = el.chatText.selectionStart || el.chatText.value.length;
@@ -5259,13 +5272,13 @@ wireRefresh(el.logsRefresh, function () { return loadLogList().catch(reportLogLo
         p.appendChild(go); progHist.appendChild(p); return;
       }
       var recent=runs.slice(0, 8);
-      var ul=document.createElement("ul"); ul.className="fleet-roster-list";
+      var ul=document.createElement("ul"); ul.className="m-0 list-none p-0";
       recent.forEach(function(r){
-        var li=document.createElement("li"); li.className="fleet-meta";
+        var li=document.createElement("li"); li.className="flex items-center gap-2 py-1 text-sm text-fg-muted";
         // A button wearing link clothes rather than an href="#" anchor:
         // the action opens the run in place, so a link was announced as one
         // that navigates somewhere it doesn't.
-        var openRunBtn=document.createElement("button"); openRunBtn.type="button"; openRunBtn.className="fleet-run-link";
+        var openRunBtn=document.createElement("button"); openRunBtn.type="button"; openRunBtn.className="cursor-pointer border-0 bg-transparent p-0 text-left font-sans text-fg hover:text-accent-text";
         openRunBtn.textContent=(r.run_id||"run")+" · "+(r.provider||"?")+" · "+fmtUnit(r.duration_ms||0, "millisecond");
         openRunBtn.addEventListener("click", function(){ if(typeof openRun==="function") openRun(r.run_id); });
         li.appendChild(openRunBtn);

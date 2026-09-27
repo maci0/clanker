@@ -50,6 +50,7 @@ const migrated = [
   "core/kit.js",
   "core/ui.js",
   "core/tools.js",
+  "app.js",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: geometry (a
