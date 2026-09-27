@@ -5451,9 +5451,15 @@ const ToolSession = struct {
                 // Descriptor missing from tools_dir, not a missing .wasm rebuild.
                 const dirs = config.toolsDirDisplay(arena, cfg.agent.tools_dir) catch "configured tool directories";
                 log.log(.error_, "internal tool '{s}' not found in {s}", .{ tool_name, dirs });
-            } else {
-                log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
+                // A missing descriptor and a missing .wasm are different
+                // repairs: `zig build tools` compiles what the manifests
+                // describe, so a tools_dir that points somewhere without this
+                // one comes back clean from that build and fails again. The
+                // operator needs the other line, so the two get their own
+                // errors rather than sharing the .wasm recovery hint.
+                return error.ToolDescriptorMissing;
             }
+            log.log(.error_, "'{s}' tool load failed: {s} (run `zig build tools`)", .{ tool_name, @errorName(err) });
             return error.ToolWasmMissing;
         };
         return .{ .arena = arena, .mod = mod };

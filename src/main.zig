@@ -481,6 +481,7 @@ fn recoveryHint(err: anyerror) ?[]const u8 {
         error.MissingProfile => "the --profile name has no profiles/<name>.toml; see the path named above, or drop --profile",
         error.DefaultProviderUnknown => "default_provider names a provider not in config; run `clanker doctor`",
         error.ToolWasmMissing => "a tool's .wasm module is missing; run `zig build tools`",
+        error.ToolDescriptorMissing => "an internal tool has no descriptor in agent.tools_dir; point it at the checkout's tools/manifests, then run `zig build tools`",
         error.ModuleDisabled => "this module is disabled in config.toml",
         error.UnknownProvider => "no provider by that name in the merged config (config.toml + config.local.toml); run `clanker providers check` for the list",
         error.ProviderCheckFailed => "provider check failed; run `clanker doctor` to diagnose",
@@ -516,4 +517,18 @@ test "a missing profile and a missing config.toml do not share one hint" {
     try std.testing.expect(std.mem.find(u8, missing_profile, "profiles/") != null);
     try std.testing.expect(std.mem.find(u8, missing_profile, "--profile") != null);
     try std.testing.expect(std.mem.find(u8, missing_profile, "clanker setup") == null);
+}
+
+test "a missing tool descriptor does not send the operator to rebuild wasm" {
+    // Both failures came back as `error.ToolWasmMissing`, so a tools_dir
+    // pointing at a directory without the manifest answered "run `zig build
+    // tools`". That build compiles what the manifests describe, so it comes
+    // back green and the command fails the same way: a remedy that cannot
+    // help is worse than none.
+    const descriptor = recoveryHint(error.ToolDescriptorMissing).?;
+    const wasm = recoveryHint(error.ToolWasmMissing).?;
+    try std.testing.expect(!std.mem.eql(u8, descriptor, wasm));
+    try std.testing.expect(std.mem.find(u8, descriptor, "agent.tools_dir") != null);
+    // The wasm remedy stays on the wasm failure, and only there.
+    try std.testing.expect(std.mem.find(u8, wasm, "zig build tools") != null);
 }

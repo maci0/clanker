@@ -151,7 +151,7 @@ function renderRunList(matches) {
   if (!rows.length) {
     var empty = document.createElement("p");
     empty.className = "run-empty";
-    empty.textContent = "No recorded runs to show.";
+    empty.textContent = "No runs recorded yet. Start one from Chat, or `clanker run \"<task>\"`, and it lands here.";
     el.runList.appendChild(empty);
     return;
   }
