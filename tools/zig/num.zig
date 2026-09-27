@@ -41,7 +41,9 @@ pub fn intFromFloat(comptime T: type, f: f64) ?T {
     const t = @trunc(f);
     const b = bounds(T);
     if (!(t >= b.lo and t < b.hi)) return null;
-    return @intFromFloat(t);
+    // `@trunc` with an integer result type is the 0.16 form of the conversion;
+    // the bound check above is what keeps it off an out-of-range value.
+    return @trunc(t);
 }
 
 /// `intFromFloat` that also demands the value be integral. A count, a token
@@ -117,7 +119,7 @@ test "intFromFloat refuses what @trunc would corrupt" {
     // Wider than 64 bits' worth of checking would not catch: every one of
     // these is inside the f64 range a 64-bit bound admits, and inside the
     // range of the *type* only at the very edge. A bound hardcoded to 64 bits
-    // let all four through to the unchecked `@intFromFloat`.
+    // let all four through to the unchecked conversion.
     try std.testing.expect(intFromFloat(u32, 5_000_000_000) == null);
     try std.testing.expectEqual(@as(u32, 4294967295), intFromFloat(u32, 4294967295).?);
     try std.testing.expect(intFromFloat(u16, 70000) == null);

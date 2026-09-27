@@ -80,7 +80,7 @@ pub const TzOffsetError = error{TzOffsetOutOfRange};
 pub fn parseTzOffset(f: f64) TzOffsetError!i32 {
     const bound: f64 = @floatFromInt(cron.max_tz_offset_minutes);
     if (!std.math.isFinite(f) or f < -bound or f > bound) return error.TzOffsetOutOfRange;
-    return @intFromFloat(@trunc(f));
+    return @trunc(f);
 }
 
 /// The next free `sch-N`. Sequential, never reused, so a removed id keeps

@@ -375,16 +375,35 @@ pub fn htmlCommentFree(body: []const u8) bool {
 }
 
 fn hasInlineRawText(body: []const u8) bool {
-    for ([_][]const u8{ "<script", "<style" }) |tag| {
-        var i: usize = 0;
-        while (std.mem.indexOfPos(u8, body, i, tag)) |at| {
-            i = at + tag.len;
-            // A tag with attributes is still raw text; only `</...>` would
-            // close it, and the next `<` is what has to be checked.
-            const close = std.mem.indexOfScalarPos(u8, body, i, '<') orelse continue;
-            if (body[close] == '/') continue;
-            return true;
+    var i: usize = 0;
+    while (std.mem.indexOfScalarPos(u8, body, i, '<')) |at| {
+        i = at + 1;
+        if (std.mem.startsWith(u8, body[at..], "<!--")) {
+            // A `<!--` region is markup being commented out, so a `<script>`
+            // named inside one is prose the page writes about itself rather
+            // than a body. The shipped index.html names the tag in its own
+            // header comment, and reading that as a body is what left the
+            // document it exists to strip unstripped. Nothing after an
+            // unterminated comment is markup.
+            const end = std.mem.indexOfPos(u8, body, at + 4, "-->") orelse return false;
+            i = end + 3;
+            continue;
         }
+        const name = if (std.mem.startsWith(u8, body[at..], "<script"))
+            "<script"
+        else if (std.mem.startsWith(u8, body[at..], "<style"))
+            "<style"
+        else
+            continue;
+        // A body is the span between the opening tag's own `>` and the next
+        // `<`. Reading that `<` for a `/` cannot decide the question, because
+        // in both `<script src=..></script>` and `<script>..</script>` it is
+        // the closing tag's own `<`; only the span tells them apart, and the
+        // first carries none.
+        const open_end = std.mem.indexOfScalarPos(u8, body, at + name.len, '>') orelse return false;
+        const close = std.mem.indexOfScalarPos(u8, body, open_end + 1, '<') orelse body.len;
+        i = @max(close, at + name.len);
+        if (std.mem.trim(u8, body[open_end + 1 .. close], " \t\r\n").len != 0) return true;
     }
     return false;
 }
@@ -460,6 +479,17 @@ test "htmlCommentFree sees an inline script or style body" {
     try std.testing.expect(!htmlCommentFree("<script type=\"module\">x</script>"));
     try std.testing.expect(!htmlCommentFree("<style>.a{}</style>"));
     try std.testing.expect(htmlCommentFree("<script src=\"/webui/app.js\"></script>"));
+}
+
+test "htmlCommentFree: a tag named in a comment is prose, and an empty body is no body" {
+    // The shipped page names `<script>` in its own header comment and ships
+    // only `src`-carrying tags. Neither may read as an inline body, or the one
+    // document this exists for is served with its comments intact.
+    try std.testing.expect(htmlCommentFree("<!-- their <script> tags sit at the end -->\n"));
+    try std.testing.expect(htmlCommentFree("<script src=\"/webui/a.js\"></script>\n<script src=\"/webui/b.js\"></script>"));
+    try std.testing.expect(htmlCommentFree("<script src=\"/webui/a.js\">   \n</script>"));
+    try std.testing.expect(!htmlCommentFree("<!-- <script>a()</script> --><style>.a{}</style>"));
+    try std.testing.expect(htmlCommentFree("<html><!-- oops"));
 }
 
 test "every shipped webui source strips smaller than it was" {
