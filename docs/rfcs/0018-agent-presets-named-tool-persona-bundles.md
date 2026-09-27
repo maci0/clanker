@@ -46,7 +46,7 @@ Today: every `Agent` gets the same `Registry` tool set from `agent.tools_dir` pl
 
 ### Option C — Role prompt files under docs/prompts (out-of-the-box)
 
-- **What it is:** Ship `docs/prompts/research.md` style persona files and reference them by name in the `subagent` task, no registry filter — already in tree, zero code.
+- **What it is:** Ship persona files in the style of the `docs/prompts/*.md` review prompts and reference them by name in the `subagent` task, no registry filter — the pattern is already in tree, zero code.
 - **Maturity:** Existing `docs/prompts/` + `subagent` free-text task — verified in tree.
 - **How it would fit:** Add markdown files only; no code change.
 - **Pros:** Zero code, reuses existing surface.

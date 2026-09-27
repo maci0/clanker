@@ -123,7 +123,7 @@ its current text.
 - [ADR 0007 — Plugin manifests are declarative and unsigned; distribution is out of scope](0007-plugin-manifests-are-declarative-and-unsigned.md) — Accepted
 - [ADR 0008 — The scheduler is driven by the system's cron, not by a clanker daemon](0008-the-scheduler-is-cron-driven-not-a-daemon.md) — Accepted
 - [ADR 0009 — Scheduled entries fire on fixed UTC offsets, not on local time](0009-schedule-fires-on-fixed-utc-offsets.md) — Accepted
-- [ADR 0010 — Eval kernels are opt-in, and sandboxed where a sandbox exists](0010-kernels-are-an-opt-in-unsandboxed-class.md) — Accepted
+- [ADR 0010 — Eval kernels are opt-in, and sandboxed where a sandbox exists](0010-kernels-are-an-opt-in-unsandboxed-class.md) — Accepted, not implemented as written; needs a decision (see the record)
 - [ADR 0011 — `ck_kernel` is a named host channel, not a `ck_exec` grant](0011-ck-kernel-is-a-named-host-channel.md) — Accepted
 - [ADR 0012 — Goal draft, persistence, and execution are separate capabilities](0012-goal-draft-persistence-and-execution-are-separate.md) — Accepted
 - [ADR 0013 — SIXEL precedes Unicode cells for mascot rendering](0013-sixel-precedes-unicode-mascot-fallback.md) — Accepted

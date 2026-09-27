@@ -30,10 +30,12 @@ docs/adrs/ and docs/prds/ were the only record stores with no verb: the taxonomy
 
 ## Non-goals
 
-- **No HTTP or web UI surface.** The stores are read and written by whoever is
-  changing the code, and that is a terminal or an agent run. A view can be
-  added later as a `ui/plugins/` addon over the same guests without touching
-  either tool.
+- **No HTTP or web UI surface.** True when this PRD was written, and since
+  overtaken: the HTTP relay over the same five guests shipped the same day as
+  [PRD 0038](0038-http-endpoints-for-the-record-stores.md) under
+  [ADR 0019](../adrs/0019-record-stores-are-exposed-over-http-as-one-relay-endpoint.md).
+  This PRD stays the record of the terminal half; the endpoints, their routes
+  and the web UI view over them belong to 0038.
 - **No judgement about content.** Neither tool decides whether a decision is
   right or a spec is complete; it enforces the shape the store documents and
   nothing else. A tool that scored an ADR would be wrong more often than the

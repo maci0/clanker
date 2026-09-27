@@ -4,6 +4,14 @@
 
 Discussion — 2026-08-19. Drafted 2026-08-19 at operator request after promotions were lost via 124d592e; open for the operator's comment — the phase-2 trigger (open question 2) is the main thing to settle.
 
+Partly implemented since, without the operator's comment having been
+recorded: the resync half of the recommended Option A landed as the fix for
+[bug 2026-08-19-improve-self-merge-leaves-worktree-reverted](../reports/bugs/2026-08-19-improve-self-merge-leaves-worktree-reverted.md)
+(`Worktree.resyncBaseCheckout` in `src/improve/worktree.zig`, resolved
+2026-08-19). The other two pieces of A (fetch-fresh base, push-pending
+epilogue) are still unbuilt, and the ADR this RFC's next steps call for is
+still unwritten, so the decision is not yet on record.
+
 ## Overview
 
 Worktree.mergeBack lands a promotion as a local update-ref on refs/heads/main: src/improve/ contains no git fetch, no reference to origin, and no git push (checked by grep over src/improve/*.zig, 2026-08-19). Three operational consequences are now on record: the invoking checkout is left showing the promotion's inverse diff, which an operator committed and pushed as 124d592e, deleting two promotions (bug 2026-08-19-improve-self-merge-leaves-worktree-reverted, reopened, fifth occurrence); promotions sit unpushed on local main until the operator notices; and because the worktree bases on the local main tip without fetching, a stale local main produces non-fast-forward push rejections. The decision: what lifecycle should a promotion follow between the engine's worktree, the invoking checkout, and origin.
@@ -22,9 +30,9 @@ All in src/improve/worktree.zig and engine.zig, verified 2026-08-19 by reading m
 
 1. Worktree.createOrReuse bases the engine's private worktree on the local branch tip — no fetch, so a local main behind origin seeds work on a stale base.
 2. Worktree.mergeBack lands a promotion by compare-and-swap git update-ref refs/heads/main (retried on concurrent movement), then git -C <worktree> reset --hard — deliberately pinned to the engine's own throwaway worktree so it can never reset the operator's checkout.
-3. Nothing pushes. Nothing resyncs the invoking checkout, whose index and working tree keep pre-promotion bytes and present the promotion's inverse diff as local changes; git pull then refuses.
+3. Nothing pushes. The invoking checkout was left with pre-promotion bytes and presented the promotion's inverse diff as local changes, so git pull refused; since 2026-08-19 `mergeBack` calls `resyncBaseCheckout` instead, which resyncs only a checkout that is on the merged branch and whose index and files are byte-identical to the pre-merge base, and warns rather than resetting a dirty one. Points 1 and 2 are unchanged.
 
-The workaround in place of a decision is operational guidance (AGENTS.md src/improve bullet, the reopened bug report): git restore --staged + git restore --source=HEAD --worktree, never commit the diff, push manually.
+The workaround still standing in place of a decision is operational guidance (AGENTS.md src/improve bullet, the bug report): git restore --staged + git restore --source=HEAD --worktree, never commit the diff, push manually. It applies to the two A pieces that never shipped, fetch-fresh base and the push-pending epilogue.
 
 ## Options considered
 
@@ -115,8 +123,8 @@ The options differ most in the short term (whether the data-loss path closes now
 ## Next steps / action items
 
 - [ ] Operator comment on the recommendation, especially open question 2 (the phase-2 trigger).
-- [ ] Test-first spike for the resync guard: two concurrent writers on one checkout, prove the guard never resets a tree with any local modification or a different branch checked out (settles open question 1).
-- [ ] If accepted: implement A in src/improve/worktree.zig + engine.zig behind the existing gate suite; the guard test lands with it.
+- [x] Test-first spike for the resync guard: shipped 2026-08-19 as `mergeBack's resync reaches the invoking checkout only when it is clean` and `a failed branch resync leaves the pinned merge base where it was` in `src/improve/worktree.zig`. Those cover the dirty-tree and wrong-branch halves of open question 1; the two-writers-on-one-checkout race is still open.
+- [ ] The rest of A: fetch-fresh base in `createOrReuse`, push-pending epilogue in engine.zig. The resync shipped as a bug fix, not as this decision, so it is not evidence that A was accepted.
 - [ ] Write the ADR once decided; supersede nothing — this is the first decision on the landing lifecycle.
 
 ## References
