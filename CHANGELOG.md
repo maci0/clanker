@@ -521,6 +521,11 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   create-channel dialog's `::backdrop`, which no utility composes. First paint
   60.4K gz.
 
+- `ui/app/lib/dom-stub.mjs` had two `installDom` definitions, the second
+  returning `document` where every caller (`markdown`, `skills`, `steer`)
+  expects the restore function, so nine suites that install the stub failed.
+  The duplicate is gone.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

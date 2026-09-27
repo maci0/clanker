@@ -87,14 +87,6 @@ export function installDom() {
   };
 }
 
-// One process runs every suite, and another installs its own document over
-// this one, so a suite that renders asks for the stub by name instead of
-// trusting what it finds ambient.
-export function installDom() {
-  globalThis.document = document;
-  return document;
-}
-
 export function serialize(el) {
   if (!el) return "";
   if (el.nodeType === 3) return el.textContent;
