@@ -1,7 +1,5 @@
 /* ---- runs: the execution graph of a recorded run ---- */
 
-
-
 /* Each label takes a full row so both sit above their own control, the way
    the composer's Task label does — otherwise one wraps above and the other
    lands beside its field. */
@@ -10,50 +8,15 @@
    of 50 and the graph below it is the point of the view, so the list must not
    push it off the screen. */
 
-
-
-
-
-
-
-
-
 /* A sub-agent run is a child of the run above it; the indent says so without
    costing a column. */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 /* The two that genuinely span their row: the model picker names a long model
    string, and the run picker is the only control on its line. */
 
-
 /* Text fields had no shared box at all, so an input sat 21px tall beside a
    44px select on the same row and the row looked broken rather than styled.
    One box for everything a caller types into; recessed, the way a slot is. */
-
-
-
-
-
-
-
 
 #view-schedule .run-empty { text-align: left; }
 
@@ -76,8 +39,6 @@
 
 .run-detail[hidden] { display: none; }
 
-
-
 .run-detail-meta { color: var(--fg-muted); }
 
 .run-detail-output {
@@ -92,8 +53,6 @@
   margin: 0 0 0.5rem; padding: 0.35rem var(--space-3);
   border-radius: var(--radius-sm); background: var(--surface-2);
 }
-
-
 
 /* ---- chat: rooms peer clankers share, and direct messages ----
    Same picker-then-pane shape as Runs, so the two read as one system and
@@ -111,7 +70,6 @@
   border: 1px solid var(--rule); border-radius: var(--radius);
   background: var(--surface);
 }
-
 
 /* ── Sidebar ──
    Collapse slides with transform (no width tween / layout thrash). Desktop
@@ -258,13 +216,11 @@
   background: var(--ok-fill); flex-shrink: 0;
 }
 
-
 /* ── Main chat area ── */
 .slack-main {
   flex: 1; display: flex; flex-direction: column;
   min-width: 0; overflow: hidden;
 }
-
 
 /* ── Channel header ── */
 .slack-channel-header {
@@ -308,7 +264,6 @@
 }
 
 .slack-sidebar-toggle:hover { background: var(--surface-hover); color: var(--fg); }
-
 
 /* ── Search & pins overlays ── */
 .slack-search-bar {
@@ -383,7 +338,6 @@
 
 .slack-pin-text { flex: 1; overflow-wrap: anywhere; }
 
-
 /* ── Composer ── */
 .chat-composer {
   padding: 0.5rem 1rem 0.75rem; border-top: 1px solid var(--rule);
@@ -417,7 +371,6 @@
 
 .slack-formatting-hint code { font-size: var(--step--1); padding: 0.1rem var(--space-1); }
 
-
 /* ── Emoji picker ── */
 .slack-emoji-picker {
   position: absolute; bottom: 100%; left: 1rem; z-index: 40;
@@ -436,7 +389,6 @@
 
 .slack-emoji-picker button:hover { background: var(--surface-hover); }
 
-
 /* ── Shared icon button ── */
 .slack-btn-icon {
   background: none; border: none; cursor: pointer;
@@ -449,7 +401,6 @@
 .slack-btn-icon:hover { background: var(--surface-hover); color: var(--fg); }
 
 .slack-btn-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
 
 /* ── Create channel dialog ── */
 .slack-dialog { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 0; background: var(--surface); box-shadow: var(--lift); max-width: 400px; width: 90vw; }
@@ -473,7 +424,6 @@
 .ui-dialog-message { margin: 0; font-size: var(--step-0); color: var(--fg); overflow-wrap: anywhere; }
 
 .slack-dialog-actions .danger { background: var(--danger); color: var(--on-danger); border-color: var(--danger); }
-
 
 /* ── Typing indicator ── */
 .slack-typing-indicator {
@@ -501,7 +451,6 @@
 
 @media (prefers-reduced-motion: reduce) { .slack-typing-dot { animation: none; opacity: 0.6; } }
 
-
 /* ── New messages divider ── */
 .slack-new-divider {
   display: flex; align-items: center; gap: 0.75rem;
@@ -513,7 +462,6 @@
 .slack-new-divider::before, .slack-new-divider::after {
   content: ""; flex: 1; height: 1px; background: var(--danger);
 }
-
 
 /* ── Mobile responsive ── */
 /* 48rem, not 768px: every other breakpoint here is rem so zoomed-text users
@@ -712,37 +660,10 @@
 
 .chat-composer button { border-radius: var(--radius-pill); min-height: 40px; }
 
-
 /* ---- usage: what the model calls actually cost ----
    A dense table rather than tiles: these are readings to compare across
    providers, and a number you can line up beats a number in a box. */
 /* ---- tools: every WASM plugin, and a switch for the optional ones ---- */
-.tool-group {
-  display: flex; align-items: center; gap: var(--space-2); width: 100%;
-  margin: var(--space-4) 0 var(--space-1); padding: 0.3rem 0.1rem;
-  border: none; border-top: 1px solid var(--rule); background: transparent;
-  cursor: pointer; text-align: left;
-  font-family: var(--sans); font-size: var(--step--1); color: var(--fg-muted);
-  text-transform: uppercase; letter-spacing: var(--track-label); font-weight: 600;
-}
-
-.tool-group:first-child { margin-top: 0; border-top: none; }
-
-.tool-group:hover { color: var(--fg); }
-
-.tool-group-caret { width: 1em; flex: none; }
-
-.tool-group-count { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-
-.tool-row {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3);
-  padding: var(--space-3) 0.1rem; border-bottom: 1px solid var(--rule);
-  transition: background 140ms ease;
-}
-
-.tool-row:hover { background: var(--surface-2); border-radius: var(--radius); }
-
-@media (prefers-reduced-motion: reduce) { .tool-row { transition: none; } .tool-row:hover { background: transparent; } }
 
 /* Skill cards under the tool rows: the catalogue of skills/ the prompt
    embeds. A card reads name + meta on one line, description below. */
@@ -759,146 +680,6 @@
 .skill-meta { font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 
 .skill-desc { margin: 0.2rem 0 0; font-family: var(--sans); font-size: var(--step-0); color: var(--fg-muted); overflow-wrap: anywhere; }
-
-.tool-name { font-family: var(--mono); font-size: var(--step-0); font-weight: 700; color: var(--fg); min-width: 9rem; line-height: 1.4; }
-
-button.tool-name:hover { color: var(--accent-text); }
-
-button.tool-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: var(--radius-sm); }
-
-.tool-desc {
-  flex: 1 1 18rem; font-family: var(--sans); font-size: var(--step-0);
-  color: var(--fg-muted); overflow-wrap: anywhere;
-}
-
-.tool-tag {
-  font-family: var(--mono); font-size: var(--step-0); color: var(--fg-muted);
-  border: 1px dashed var(--rule); border-radius: var(--radius-pill); padding: 0 0.5rem;
-}
-
-/* The breaker switch for one tool: a lamp lights when its circuit is on.
-   32px rather than the 44px the composer uses: the same exception the code
-   block's Copy button already makes, for a control that repeats down a list
-   of 45 rows. Still clears the 24px minimum. */
-.tool-toggle {
-  min-height: 32px; padding: 0.15rem 0.7rem; font-size: var(--step-0); font-weight: 600;
-  font-family: var(--mono); border-radius: var(--radius-sm); cursor: pointer;
-  background: var(--surface); border: 1px solid var(--border); color: var(--fg-muted);
-  box-shadow: var(--bevel-raised);
-}
-
-.tool-toggle[data-on="true"] { color: var(--ok); border-color: var(--ok); }
-
-.tool-toggle[data-on="true"]::before {
-  content: ""; display: inline-block; width: 0.5em; height: 0.5em;
-  border-radius: 50%; margin-right: 0.45em; vertical-align: 6%;
-  background: var(--lamp-dome);
-  box-shadow: var(--lamp-ring), var(--lamp-glow);
-}
-
-/* The name opens the detail panel, so it is a button that reads as a name. */
-button.tool-name {
-  min-height: auto; padding: 0; background: none; border: 0; box-shadow: none; text-align: left;
-  font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
-  color: var(--fg); cursor: pointer;
-}
-
-button.tool-name:hover { color: var(--accent-text); }
-
-.tool-detail-desc {
-  max-width: var(--measure);
-  font-family: var(--mono); font-size: var(--step-0); color: var(--fg);
-  margin: var(--space-1) 0 0.75rem; overflow-wrap: anywhere;
-}
-
-.tool-detail-llm-desc {
-  max-width: var(--measure);
-  font-family: var(--mono); font-size: var(--step--1); color: var(--fg-muted);
-  margin: -0.4rem 0 0.75rem; overflow-wrap: anywhere;
-}
-
-.tool-detail-llm-desc strong { color: var(--fg-muted); font-weight: 700; }
-
-.tool-detail-h {
-  font-family: var(--mono); font-size: var(--step-0); font-weight: 700;
-  letter-spacing: var(--track-label); text-transform: uppercase; color: var(--fg-muted);
-  margin: 0.75rem 0 0.35rem;
-}
-
-.tool-params {
-  display: grid; grid-template-columns: 10rem 1fr; gap: 0.2rem 1rem; margin: 0;
-  font-family: var(--mono); font-size: var(--step-0);
-}
-
-.tool-params dt { color: var(--fg); font-weight: 700; text-transform: none; letter-spacing: normal; overflow-wrap: anywhere; }
-
-.tool-params dd { margin: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
-
-.tool-req { color: var(--danger); font-weight: 400; }
-
-.tool-none { font-style: italic; }
-
-@media (max-width: 40rem) { .tool-params { grid-template-columns: 1fr; } .tool-params dt { margin-top: var(--space-2); } }
-
-.tool-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--fg); }
-
-.tool-toggle:active:not(:disabled) { transform: translateY(1px); box-shadow: var(--bevel-pressed); }
-
-.tool-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-@media (prefers-reduced-motion: reduce) { .tool-toggle:active:not(:disabled) { transform: none; } }
-
-
-/* A plugin's own settings, shown only when its descriptor opted some in. */
-.tool-config { flex-basis: 100%; margin: 0.35rem 0 0.15rem 0; }
-
-.tool-config > summary {
-  cursor: pointer; list-style: none; font-family: var(--mono);
-  font-size: var(--step-0); color: var(--fg-muted); padding: 0.15rem 0;
-}
-
-.tool-config > summary::-webkit-details-marker { display: none; }
-
-.tool-config > summary::before {
-  content: ""; display: inline-block; width: 0.85em; height: 0.85em;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.75' stroke-linecap='square'%3E%3Cpath d='M9 6l6 6-6 6'/%3E%3C/svg%3E") center / contain no-repeat;
-  transition: transform 120ms ease-out;
-}
-
-.tool-config[open] > summary::before { transform: rotate(90deg); }
-
-.tool-config > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.tool-config-body {
-  margin-left: 1.1rem; padding-left: var(--space-3); border-left: 1px dashed var(--rule);
-  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem 0.75rem; padding-top: 0.35rem;
-}
-
-.tool-field { display: flex; flex-direction: column; gap: var(--space-1); }
-
-.tool-field label {
-  margin: 0; font-size: var(--step-0); letter-spacing: var(--track-label);
-  text-transform: uppercase; color: var(--fg-muted);
-}
-
-.tool-field input {
-  min-height: 32px; min-width: 8rem; padding: 0.2rem 0.5rem;
-  font-family: var(--mono); font-size: var(--step-0);
-  background: var(--surface); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-}
-
-.tool-field input:focus { border-color: var(--accent); }
-
-.tool-config-save {
-  min-height: 32px; padding: 0.15rem 0.8rem; font-size: var(--step-0); font-weight: 600;
-  font-family: var(--mono); border-radius: var(--radius-sm); cursor: pointer;
-  background: var(--surface); color: var(--fg-muted); border: 1px solid var(--border);
-}
-
-.tool-config-save:hover:not(:disabled) { color: var(--fg); border-color: var(--accent); }
-
 
 /* ---- goals: what the agent is steering toward ---- */
 @media (forced-colors: active) {
@@ -935,9 +716,6 @@ button.tool-name:hover { color: var(--accent-text); }
   border-bottom: 1px solid var(--rule);
 }
 
-
-
-
 /* Compare: the blind side-by-side. Columns are deliberately identical to each
    other — equal width, one shared surface, no ordering cue beyond the letter —
    because any per-column decoration is a place a reader could learn something
@@ -948,7 +726,6 @@ button.tool-name:hover { color: var(--accent-text); }
    the file so it outranks the equal-specificity 40px rules above; coarse
    pointer only, so desktop density is untouched. Plugin sheets load after
    this one and may still opt controls out (Files' compact filenames). */
-
 
 /* ── config editor (System) ────────────────────────────────────────────────
    Overlay editor: the textarea owns text, caret, and scrolling; the pre
@@ -988,7 +765,6 @@ button.tool-name:hover { color: var(--accent-text); }
 #mcp-edit-remove[hidden] { display: none; }
 
 #mcp-edit[hidden] { display: none; }
-
 
 /* Rooms, workspace, run-picker, and the config overlay all set a desktop
    field size after (or more specifically than) the page-wide 16px phone

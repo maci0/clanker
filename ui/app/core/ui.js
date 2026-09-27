@@ -377,6 +377,21 @@ export function setTurnPhase(turn, phase) {
 // label — which is how the page once had two Refresh behaviours and three
 // status conventions.
 import { icon as iconFn } from "./icons.js";
+/* The tool-row family: the Tools view, the Fleet roster and the run header
+   all show a row of name, description and tags, so the strings live here
+   rather than in each of them. */
+export var toolRow = {
+  group: "mt-4 mb-1 flex w-full cursor-pointer items-center gap-2 border-0 border-t border-rule bg-transparent px-0 py-1 text-left font-sans text-xs font-semibold uppercase tracking-label text-fg-muted hover:text-fg first:mt-0 first:border-t-0",
+  groupCaret: "w-[1em] flex-none",
+  groupName: "min-w-0 flex-1 truncate",
+  groupCount: "font-mono tabular-nums",
+  row: "flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-rule px-0 py-3 transition-colors hover:rounded-plate hover:bg-surface-2 motion-reduce:transition-none motion-reduce:hover:bg-transparent",
+  name: "min-w-36 font-mono text-sm font-bold leading-snug text-fg",
+  nameButton: "min-h-0 min-w-36 cursor-pointer border-0 bg-transparent p-0 text-left font-mono text-sm font-bold leading-snug text-fg shadow-none hover:text-accent-text focus-visible:rounded-plate-sm focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1",
+  desc: "flex-1 basis-72 font-sans text-sm text-fg-muted wrap-anywhere",
+  tag: "rounded-capsule border border-dashed border-rule px-2 font-mono text-sm text-fg-muted",
+};
+
 export var UI = {
   button: function (label, onclick, opts) {
     opts = opts || {};

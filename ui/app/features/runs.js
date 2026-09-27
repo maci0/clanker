@@ -11,7 +11,7 @@
 // than being re-derived here. Everything else is imported directly, which is
 // what takes `lib/runs-list.js` off the eager path with this module.
 import { fmtInt, fmtMs, fmtUnit, plural, escapeHtml, readJson } from "../core/utils.js";
-import { skeletonRows, upgradePfButton, showLoadError } from "../core/ui.js";
+import { skeletonRows, toolRow as chrome, upgradePfButton, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { loadD3, copyText, scrollTo } from "../core/vendor.js";
 import { runLabel } from "../core/labels.js";
@@ -520,7 +520,7 @@ function drawRun(g) {
   head.className = "run-head";
   head.style.display = "flex"; head.style.flexWrap = "wrap"; head.style.gap = "var(--space-2)"; head.style.alignItems = "center";
   var headId = document.createElement("span"); headId.textContent = g.run_id; headId.style.fontWeight = "600"; head.appendChild(headId);
-  if (g.provider) { var hp = document.createElement("span"); hp.className = "tool-tag"; hp.textContent = g.provider; head.appendChild(hp); }
+  if (g.provider) { var hp = document.createElement("span"); hp.className = chrome.toolRow.tag; hp.textContent = g.provider; head.appendChild(hp); }
   var hm = document.createElement("span"); hm.className = "meta"; hm.textContent = g.duration_ms + "ms · " + g.total_prompt_tokens + " prompt + " + g.total_completion_tokens + " completion"; head.appendChild(hm);
   if (g.task) { var ht = document.createElement("span"); ht.className = "meta"; ht.style.flexBasis = "100%"; ht.textContent = g.task; head.appendChild(ht); }
   var copyHead = document.createElement("button"); copyHead.type = "button"; copyHead.className = "secondary"; copyHead.textContent = "Copy id"; upgradePfButton(copyHead);
@@ -1023,7 +1023,7 @@ function diffRows(oldText, newText) {
    toggle and correct semantics for free, no custom ARIA needed. */
 /* The run detail's two viewers, as Tailwind utilities over the cabinet tokens
    (ui/app/tailwind.src.css). The JSON tree's disclosure triangle is the one
-   component class (`json-caret`): a masked chevron on a pseudo-element. */
+   component class (`disclosure-caret`): a masked chevron on a pseudo-element. */
 var JSON_TREE_CLASS = "font-mono text-sm";
 var JSON_ROW_CLASS = "py-px wrap-anywhere before:inline-block before:w-[1em] before:content-['']";
 var JSON_KEY_CLASS = "text-accent-text";
@@ -1075,7 +1075,7 @@ function jsonLeaf(keyLabel, text, valueClass) {
 function jsonBranch(keyLabel, entries, open, close, countLabel, depth) {
   if (!entries.length) return jsonLeaf(keyLabel, open + close, JSON_EMPTY_CLASS);
   var details = document.createElement("details");
-  details.className = "json-caret";
+  details.className = "disclosure-caret";
   // Root and its immediate children open, everything below collapsed: a tree
   // that arrives fully expanded is the wall of text it was built to replace.
   // A closed branch still says what it holds ("{ 3 keys }"), so nothing is

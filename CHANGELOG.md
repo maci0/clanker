@@ -405,6 +405,22 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   while a caller remains. `core/ui.js` also joins the Tailwind ledger, which it
   passes as it stands.
 
+- The tool rows are Tailwind utilities, and the family they belong to is one
+  surface in `core/ui.js` (`toolRow`: row, name, name-as-button, description,
+  tag, group and its caret/name/count) because the Tools view, the Fleet roster
+  and the run header all show a row of name, description and tags. The Tools
+  view's own shapes — the settings fold, its fields, the breaker toggle with
+  its lamp, the parameter grid and the detail heads — are class lists in
+  `core/tools.js`, which joins the ledger. The masked disclosure chevron became
+  one component class (`.disclosure-caret`) for the JSON tree and the settings
+  fold, since both are a `::before` with a masked image in both spellings. The
+  toggle's lamp offset is a rung and a keyword (`mr-2`, `align-middle`) rather
+  than an em and a percentage. First paint 57.5K gz; the sheet's accounting
+  figure moves to 84K, its seventh named raise.
+- `core/tools.js` on the ledger named one dead class (`run-detail-close`, which
+  the run detail's own round had already replaced) and so it is deleted rather
+  than ported.
+
 ### Fixed
 
 - `clanker providers check` exits non-zero when the `default_provider` row is

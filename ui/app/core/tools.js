@@ -3,7 +3,7 @@
 // a derived state (toolState) so filter and data cannot disagree.
 import { scrollTo as vendorScrollTo } from "./vendor.js";
 import { fmtBytes as utilFmtBytes, plural as utilPlural } from "./utils.js";
-import { showLoadError } from "./ui.js";
+import { showLoadError, UI } from "./ui.js";
 import { toolCategoryLabel, compareToolCategories } from "./labels.js";
 
 var _el = null;
@@ -19,6 +19,23 @@ var _scrollTo = vendorScrollTo;
    from compareToolCategories. Which sections you have folded away is a
    property of how you are browsing right now, not of the tools, so it
    lives in this browser like the rail's day-groups do. */
+/* The Tools view's own shapes, on top of the shared tool-row family in
+   core/ui.js. The disclosure chevron is the Tailwind source's
+   `.disclosure-caret`: a masked chevron on a `::before`, in both mask
+   spellings, which no utility composes. */
+var TOOL_CONFIG_CLASS = "my-1 basis-full";
+var TOOL_CONFIG_SUMMARY_CLASS = "disclosure-caret cursor-pointer list-none py-0.5 font-mono text-sm text-fg-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+var TOOL_CONFIG_BODY_CLASS = "ml-4 flex flex-wrap items-end gap-x-2 gap-y-2 border-l border-dashed border-rule pl-3 pt-1";
+var TOOL_FIELD_CLASS = "flex flex-col gap-1 [&_input]:min-h-8 [&_input]:min-w-32 [&_input]:rounded-plate-sm [&_input]:border [&_input]:border-border [&_input]:bg-surface [&_input]:px-2 [&_input]:py-0.5 [&_input]:font-mono [&_input]:text-sm [&_input]:text-fg [&_input:focus]:border-accent [&_label]:m-0 [&_label]:text-sm [&_label]:uppercase [&_label]:tracking-label [&_label]:text-fg-muted";
+var TOOL_CONFIG_SAVE_CLASS = "min-h-8 cursor-pointer rounded-plate-sm border border-border bg-surface px-3 py-0.5 font-mono text-sm font-semibold text-fg-muted enabled:hover:border-accent enabled:hover:text-fg";
+var TOOL_TOGGLE_CLASS = "min-h-8 cursor-pointer rounded-plate-sm border border-border bg-surface px-3 py-0.5 font-mono text-sm font-semibold text-fg-muted shadow-[var(--bevel-raised)] enabled:hover:border-accent enabled:hover:text-fg enabled:active:translate-y-px enabled:active:shadow-[var(--bevel-pressed)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 motion-reduce:active:transform-none data-[on=true]:border-ok data-[on=true]:text-ok data-[on=true]:before:mr-2 data-[on=true]:before:inline-block data-[on=true]:before:h-[0.5em] data-[on=true]:before:w-[0.5em] data-[on=true]:before:rounded-full data-[on=true]:before:bg-lamp-dome data-[on=true]:before:align-middle data-[on=true]:before:shadow-[var(--lamp-ring),var(--lamp-glow)] data-[on=true]:before:content-['']";
+var TOOL_DETAIL_DESC_CLASS = "mt-1 mb-3 max-w-measure font-mono text-sm text-fg wrap-anywhere";
+var TOOL_DETAIL_LLM_DESC_CLASS = "-mt-1 mb-3 max-w-measure font-mono text-xs text-fg-muted wrap-anywhere [&_strong]:font-bold [&_strong]:text-fg-muted";
+var TOOL_DETAIL_H_CLASS = "mt-3 mb-1 font-mono text-sm font-bold uppercase tracking-label text-fg-muted";
+var TOOL_PARAMS_CLASS = "m-0 grid grid-cols-[10rem_1fr] gap-x-4 gap-y-0.5 font-mono text-sm max-[40rem]:grid-cols-1 [&_dd]:m-0 [&_dd]:text-fg-muted [&_dd]:wrap-anywhere [&_dt]:font-bold [&_dt]:normal-case [&_dt]:tracking-normal [&_dt]:text-fg [&_dt]:wrap-anywhere max-[40rem]:[&_dt]:mt-2";
+var TOOL_REQ_CLASS = "font-normal text-danger";
+var TOOL_NONE_CLASS = "italic";
+
 function loadCollapsedToolGroups() {
   try { return JSON.parse(window.localStorage.getItem("clanker.toolGroupsCollapsed") || "[]"); } catch (e) { return []; }
 }
@@ -46,23 +63,23 @@ var _toolLoadError = null;
 
 function buildToolRow(t) {
   var row = document.createElement("div");
-  row.className = "tool-row";
+  row.className = UI.toolRow.row;
   var name = document.createElement("button");
   name.type = "button";
-  name.className = "tool-name";
+  name.className = UI.toolRow.name;
   name.textContent = t.name;
   name.setAttribute("aria-label", "Show details for " + t.name);
   name.addEventListener("click", function () { showToolDetail(t); });
   row.appendChild(name);
   if (t.core) {
     var tag = document.createElement("span");
-    tag.className = "tool-tag";
+    tag.className = UI.toolRow.tag;
     tag.textContent = "core";
     row.appendChild(tag);
   } else {
     var btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "tool-toggle";
+    btn.className = TOOL_TOGGLE_CLASS;
     btn.dataset.on = String(!!t.enabled);
     btn.textContent = t.enabled ? "on" : "off";
     btn.setAttribute("aria-pressed", String(!!t.enabled));
@@ -72,25 +89,25 @@ function buildToolRow(t) {
   }
   if (t.transform) {
     var tr = document.createElement("span");
-    tr.className = "tool-tag";
+    tr.className = UI.toolRow.tag;
     tr.textContent = "transform " + t.transform.phase;
     row.appendChild(tr);
   }
   if (t.llm) {
     var llm = document.createElement("span");
-    llm.className = "tool-tag";
+    llm.className = UI.toolRow.tag;
     llm.textContent = "llm";
     row.appendChild(llm);
   }
   (t.tags || []).forEach(function (tagName) {
     var tg = document.createElement("span");
-    tg.className = "tool-tag";
+    tg.className = UI.toolRow.tag;
     tg.textContent = tagName;
     row.appendChild(tg);
   });
   if (t.config_editable && t.config_editable.length) row.appendChild(buildToolConfig(t));
   var desc = document.createElement("span");
-  desc.className = "tool-desc";
+  desc.className = UI.toolRow.desc;
   var text = (t.description || "").trim();
   var stop = text.indexOf(". ");
   desc.textContent = stop > 0 && stop < 160 ? text.slice(0, stop + 1) : _clip(text, 160);
@@ -113,18 +130,19 @@ export function configFieldKind(t, key, current) {
 
 function buildToolConfig(t) {
   var details = document.createElement("details");
-  details.className = "tool-config";
+  details.className = TOOL_CONFIG_CLASS;
   var summary = document.createElement("summary");
+  summary.className = TOOL_CONFIG_SUMMARY_CLASS;
   summary.textContent = "settings";
   details.appendChild(summary);
   var body = document.createElement("div");
-  body.className = "tool-config-body";
+  body.className = TOOL_CONFIG_BODY_CLASS;
   var inputs = {};
   t.config_editable.forEach(function (key) {
     var current = (t.config || {})[key];
     var kind = configFieldKind(t, key, current);
     var field = document.createElement("div");
-    field.className = "tool-field";
+    field.className = TOOL_FIELD_CLASS;
     var id = "cfg-" + t.name + "-" + key;
     var label = document.createElement("label");
     label.setAttribute("for", id);
@@ -141,7 +159,7 @@ function buildToolConfig(t) {
   });
   var save = document.createElement("button");
   save.type = "button";
-  save.className = "tool-config-save";
+  save.className = TOOL_CONFIG_SAVE_CLASS;
   save.textContent = "Save";
   save.addEventListener("click", function () { saveToolConfig(t, inputs, save); });
   body.appendChild(save);
@@ -213,7 +231,7 @@ export function showToolDetail(t) {
   head.appendChild(titleWrap);
   var closeBtn = document.createElement("button");
   closeBtn.type = "button";
-  closeBtn.className = "secondary run-detail-close";
+  closeBtn.className = "secondary";
   closeBtn.textContent = "Close";
   closeBtn.addEventListener("click", function () {
     _el.toolDetail.hidden = true;
@@ -222,14 +240,14 @@ export function showToolDetail(t) {
   head.appendChild(closeBtn);
   _el.toolDetail.appendChild(head);
   var desc = document.createElement("p");
-  desc.className = "tool-detail-desc";
+  desc.className = TOOL_DETAIL_DESC_CLASS;
   desc.textContent = t.description || "(no description)";
   _el.toolDetail.appendChild(desc);
   // Shown only when it actually differs: an unmigrated tool's llm_description
   // is a duplicate of description, and repeating it teaches nothing.
   if (t.llm_description && t.llm_description !== t.description) {
     var llmDesc = document.createElement("p");
-    llmDesc.className = "tool-detail-llm-desc";
+    llmDesc.className = TOOL_DETAIL_LLM_DESC_CLASS;
     var llmLabel = document.createElement("strong");
     llmLabel.textContent = "For the model: ";
     llmDesc.appendChild(llmLabel);
@@ -241,14 +259,14 @@ export function showToolDetail(t) {
   if (props.length) {
     var required = (schema.required || []);
     var list = document.createElement("dl");
-    list.className = "tool-params";
+    list.className = TOOL_PARAMS_CLASS;
     props.forEach(function (key) {
       var spec = schema.properties[key] || {};
       var dt = document.createElement("dt");
       dt.textContent = key;
       if (required.indexOf(key) !== -1) {
         var req = document.createElement("span");
-        req.className = "tool-req";
+        req.className = TOOL_REQ_CLASS;
         req.textContent = " required";
         dt.appendChild(req);
       }
@@ -262,7 +280,7 @@ export function showToolDetail(t) {
   }
   _el.toolDetail.appendChild(sectionTitle("Sandbox"));
   var policy = document.createElement("dl");
-  policy.className = "tool-params";
+  policy.className = TOOL_PARAMS_CLASS;
   [["Network", t.network_allow, "no network"],
    ["Filesystem", t.fs_prefixes, "no filesystem access"],
    ["Commands", t.exec_allow, "the harness default set"]].forEach(function (row) {
@@ -271,7 +289,7 @@ export function showToolDetail(t) {
     policy.appendChild(dt);
     var dd = document.createElement("dd");
     dd.textContent = row[1] && row[1].length ? row[1].join(", ") : row[2];
-    if (!(row[1] && row[1].length)) dd.className = "tool-none";
+    if (!(row[1] && row[1].length)) dd.className = TOOL_NONE_CLASS;
     policy.appendChild(dd);
   });
   _el.toolDetail.appendChild(policy);
@@ -281,7 +299,7 @@ export function showToolDetail(t) {
 
 function sectionTitle(text) {
   var h = document.createElement("h3");
-  h.className = "tool-detail-h";
+  h.className = TOOL_DETAIL_H_CLASS;
   h.textContent = text;
   return h;
 }
@@ -370,13 +388,13 @@ function loadWorkflows() {
         card.appendChild(meta);
         if (wf.chain) {
           var chainTag = document.createElement("span");
-          chainTag.className = "tool-tag";
+          chainTag.className = UI.toolRow.tag;
           chainTag.textContent = "chain";
           card.appendChild(chainTag);
         }
         (wf.tags || []).forEach(function (tagName) {
           var tg = document.createElement("span");
-          tg.className = "tool-tag";
+          tg.className = UI.toolRow.tag;
           tg.textContent = tagName;
           card.appendChild(tg);
         });
@@ -533,14 +551,14 @@ export function bindTools(ctx) {
         var collapsed = !filtering && isToolGroupCollapsed(cat);
         var head = ctx.T.button({
           type: "button",
-          class: "tool-group",
+          class: UI.toolRow.group,
           "aria-expanded": String(!collapsed),
           "aria-label": (collapsed ? "Expand " : "Collapse ") + groupLabel(cat),
           title: (collapsed ? "Show " : "Hide ") + utilPlural(items.length, { one: "tool", other: "tools" }) + " in " + groupLabel(cat),
           onclick: function () { toggleToolGroupCollapsed(cat); }
-        }, ctx.T.span({ class: "tool-group-caret" }, collapsed ? "▸" : "▾"),
-          ctx.T.span({ class: "tool-group-name" }, groupLabel(cat)),
-          ctx.T.span({ class: "tool-group-count" }, String(items.length)));
+        }, ctx.T.span({ class: UI.toolRow.groupCaret }, collapsed ? "▸" : "▾"),
+          ctx.T.span({ class: UI.toolRow.groupName }, groupLabel(cat)),
+          ctx.T.span({ class: UI.toolRow.groupCount }, String(items.length)));
         out.push(head);
         if (collapsed) return;
         items.forEach(function (t) { out.push(buildToolRow(t)); });
