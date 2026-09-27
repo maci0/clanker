@@ -1,7 +1,7 @@
 // Models view — what the configured providers offer, a provider's live
 // /models listing, and models.dev discovery. Save writes config.local.toml
 // only (never the shared config.toml), after an explicit confirm.
-import { readJson, postJson, fmtInt, fmtBytes, providerUnusableReason, wireRefresh } from "../core/utils.js";
+import { readJson, postJson, fmtInt, fmtBytes, fmtUsd, providerUnusableReason, wireRefresh } from "../core/utils.js";
 import { paintTomlInto } from "../core/vendor.js";
 
 function askConfirm(message, opts) {
@@ -386,8 +386,8 @@ function loadConfigured() {
             m.display || m.name,
             m.category || "",
             m.context_window ? fmtInt(m.context_window) : "",
-            m.cost_per_1m_input != null ? "$" + m.cost_per_1m_input : "",
-            m.cost_per_1m_output != null ? "$" + m.cost_per_1m_output : "",
+            m.cost_per_1m_input != null ? fmtUsd(m.cost_per_1m_input) : "",
+            m.cost_per_1m_output != null ? fmtUsd(m.cost_per_1m_output) : "",
             m.name === prov.default_model ? "default" : "",
             editButton(entry)
           ]);
@@ -837,8 +837,8 @@ function searchCatalog() {
         return [
           m.provider + "/" + m.id,
           m.context ? fmtInt(m.context) : "",
-          m.cost_in != null ? "$" + m.cost_in : "",
-          m.cost_out != null ? "$" + m.cost_out : "",
+          m.cost_in != null ? fmtUsd(m.cost_in) : "",
+          m.cost_out != null ? fmtUsd(m.cost_out) : "",
           caps.join(", "),
           snippetButton(m)
         ];

@@ -4,7 +4,7 @@
 // goal side of the card<->goal mirroring lives in ./goals.js. bindBoard()
 // wires the DOM and the app-level callbacks (tab counts, run opening, the
 // peer roster for @ mention hints).
-import { fmtInt, fmtCost, formatChatTime, fmtDeadline, readJson, clip, wireRefresh } from "../core/utils.js";
+import { fmtInt, fmtCost, fmtPct, formatChatTime, fmtDeadline, readJson, clip, wireRefresh } from "../core/utils.js";
 import { T, bind, state, add, toast, uiConfirm, uiPrompt, showLoadError } from "../core/ui.js";
 import { icon } from "../core/icons.js";
 import { openOverlay, closeOverlay, trapOverlayTab } from "../core/overlay.js";
@@ -720,7 +720,7 @@ function cardNode(c) {
     due.setAttribute("data-due", ds);
     due.appendChild(icon("calendar", 14));
     due.appendChild(document.createTextNode(" " + (ds === "late" ? "Late · " : ds === "soon" ? "Soon · " : "") + fmtDeadline(c.deadline)));
-    due.title = "Due " + c.deadline;
+    due.title = "Due " + fmtDeadline(c.deadline);
     badges.appendChild(due);
     hasBadges = true;
   }
@@ -1464,7 +1464,7 @@ function showCardDetail(id) {
     } else {
       // The board tool takes epoch seconds, not a date string; posting the
       // raw input used to fail the whole update against the guest's ?i64.
-      postBoard({ op: "update", id: c.id, deadline: dateInputToDeadline(val) }, "Due " + val);
+      postBoard({ op: "update", id: c.id, deadline: dateInputToDeadline(val) }, "Due " + fmtBoardDate(dateInputToDeadline(val)));
     }
   });
   deadlineWrap.appendChild(deadlineBtn);
@@ -1874,7 +1874,7 @@ function showCardDetail(id) {
     fill2.style.width = pct2 + "%";
     track.appendChild(fill2);
     var pctLabel = document.createElement("span");
-    pctLabel.className = "card-progress"; pctLabel.textContent = dN + "/" + tN + " · " + pct2 + "%";
+    pctLabel.className = "card-progress"; pctLabel.textContent = fmtInt(dN) + "/" + fmtInt(tN) + " · " + fmtPct(pct2, 0);
     pctLabel.style.marginLeft = "var(--space-3)";
     var progRow = document.createElement("div");
     progRow.className = "detail-row";
@@ -2124,7 +2124,7 @@ export function bindBoard(deps) {
       .then(function () {
         var moved = syncCardsFromGoals();
         el.boardStatus.textContent = moved
-          ? ("Moved " + moved + " card" + (moved === 1 ? "" : "s") + " to match their goals.")
+          ? ("Moved " + fmtInt(moved) + " card" + (moved === 1 ? "" : "s") + " to match their goals.")
           : "Every card already matches its goal.";
         // Let the moves' renderBoard calls flush, then re-enable.
         return loadBoard();
@@ -2262,11 +2262,13 @@ export function bindBoard(deps) {
     var listView=document.getElementById("board-list-view");
     var sortSel=document.getElementById("board-sort");
     if(!listView) return;
+    /* The Due column reads a date, so it is rendered as one in the reader's
+       locale (and field order) rather than as the ISO string a machine would.
+       deadlineToDateInput still produces YYYY-MM-DD, because that is what
+       <input type="date"> takes; this is the display side of the same value. */
     function fmtBoardDate(ts){
       if(!ts) return "";
-      var d=new Date(ts*1000);
-      var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), da=String(d.getDate()).padStart(2,"0");
-      return y+"-"+m+"-"+da;
+      return new Date(ts*1000).toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
     }
     function boardListRows(){
       var s=boardState.val;

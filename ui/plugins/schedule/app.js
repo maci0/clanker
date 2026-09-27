@@ -43,11 +43,19 @@ clanker.registerView({
     var logHost = api.el("ul", "schedule-log");
     container.appendChild(logHost);
 
+    const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+    /* Fire durations and the "in 5m" line are read in the reader's own units
+       and separators: a hardcoded "m"/"s" after toFixed renders "1,5s" in
+       German, and a hand-rolled "in "/" ago" pair is English-only. Both go
+       through Intl, which the app's own core/utils.js already relies on. */
     function fmtMs(ms) {
       if (typeof ms !== "number" || !isFinite(ms)) return "";
-      if (ms < 1000) return Math.round(ms) + "ms";
-      if (ms < 60000) return (ms / 1000).toFixed(1) + "s";
-      return Math.floor(ms / 60000) + "m " + Math.round((ms % 60000) / 1000) + "s";
+      var unit = ms < 1000 ? "millisecond" : "second";
+      var v = ms < 1000 ? Math.round(ms) : Math.round(ms / 100) / 10;
+      return new Intl.NumberFormat(undefined, {
+        style: "unit", unit: unit, unitDisplay: "narrow", maximumFractionDigits: ms < 1000 ? 0 : 1
+      }).format(v);
     }
 
     /* Entry times are read at the entry's own fixed UTC offset (never a DST-aware
@@ -70,12 +78,12 @@ clanker.registerView({
       var delta = secs - Math.floor(Date.now() / 1000);
       var ahead = delta >= 0;
       var n = Math.abs(delta);
-      var unit;
-      if (n < 60) unit = n + "s";
-      else if (n < 3600) unit = Math.round(n / 60) + "m";
-      else if (n < 86400) unit = Math.round(n / 3600) + "h";
-      else unit = Math.round(n / 86400) + "d";
-      return ahead ? "in " + unit : unit + " ago";
+      var value, unit;
+      if (n < 60) { value = n; unit = "second"; }
+      else if (n < 3600) { value = Math.round(n / 60); unit = "minute"; }
+      else if (n < 86400) { value = Math.round(n / 3600); unit = "hour"; }
+      else { value = Math.round(n / 86400); unit = "day"; }
+      return RELATIVE.format(ahead ? value : -value, unit);
     }
 
     function nextText(e) {

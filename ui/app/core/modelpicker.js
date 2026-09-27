@@ -2,7 +2,7 @@
 // store, popover UI (search + provider groups) as the operator surface.
 
 import { icon } from "./icons.js";
-import { callableProviders } from "./utils.js";
+import { callableProviders, fmtUsd } from "./utils.js";
 import { effectiveModel as cpEffectiveModel, effectiveEffort as cpEffectiveEffort } from "./chatprefs.js";
 
 var _providerCache = [];
@@ -33,6 +33,11 @@ var _open = false;
 export function getProviderCache() { return _providerCache; }
 export function getModelIndex() { return _modelIndex; }
 
+/// One side of a "per 1M tokens" price. A missing side reads "?", not $0.
+function per1m(v) {
+  return v == null ? "?" : fmtUsd(v);
+}
+
 /// A model's row description, shared by the flat index and the native
 /// <select> so the two surfaces cannot describe one model differently.
 function modelMeta(m, fmt) {
@@ -40,8 +45,7 @@ function modelMeta(m, fmt) {
   if (m.category) meta.push(m.category);
   if (m.context_window) meta.push(fmt(m.context_window) + " ctx");
   if (m.cost_per_1m_input != null || m.cost_per_1m_output != null) {
-    meta.push("$" + (m.cost_per_1m_input != null ? m.cost_per_1m_input : "?") +
-               " / $" + (m.cost_per_1m_output != null ? m.cost_per_1m_output : "?") + " per 1M");
+    meta.push(per1m(m.cost_per_1m_input) + " / " + per1m(m.cost_per_1m_output) + " per 1M");
   }
   return meta;
 }

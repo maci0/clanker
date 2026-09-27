@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { callableProviders, providerUnusableReason, readJson, classifyLoadFailure } from "./utils.js";
+import { callableProviders, providerUnusableReason, readJson, classifyLoadFailure, fmtUsd, fmtPct, fmtCompact, fmtCost } from "./utils.js";
 
 // The availability contract of GET /api/providers: rows the server marked
 // `usable:false` stay in the payload (the Models view is inventory) but the
@@ -104,4 +104,40 @@ test("a failure with no message at all still says something", function () {
   const out = classifyLoadFailure(null);
   assert.equal(out.kind, "failed");
   assert.equal(out.message, "Could not reach the server.");
+});
+
+// The number/percent/currency formatters. A hardcoded "$" + toFixed or a
+// hardcoded "K" suffix is the locale bug this pins: the value is right and the
+// rendering is not, and only the rendering differs between a US and a German
+// reader. Assertions run under the default locale, so they pin that the value
+// survives, not which locale a CI machine happens to be set to.
+
+test("a currency amount keeps its digits and its own locale's rendering", function () {
+  const four = fmtUsd(0.0001, 4);
+  assert.match(four, /0[,.]0001/);
+  assert.match(four, /0[,.]0001\s*\$|\$\s*0[,.]0001/);
+  assert.match(fmtUsd(3), /\$3/);
+  assert.equal(fmtUsd("nonsense"), fmtUsd(0));
+});
+
+test("a percentage formats from the 0-100 shape call sites hold", function () {
+  assert.match(fmtPct(80, 0), /^80\s*%$/);
+  assert.match(fmtPct(12.34), /^12[,.]3\s*%$/);
+  assert.match(fmtPct(0, 0), /^0\s*%$/);
+});
+
+test("a compact token count abbreviates in the reader's own units", function () {
+  assert.equal(fmtCompact(40), "40");
+  // Above a thousand the abbreviation is the locale's (K, Mio., 万, …), so
+  // the assertion is on the magnitude surviving, not on the suffix.
+  const k = fmtCompact(972000);
+  assert.match(k, /972|0[,.]97/);
+  const m = fmtCompact(225000000);
+  assert.match(m, /225|2[,.]25/);
+  assert.equal(fmtCompact(999), "999");
+});
+
+test("a sub-dollar cost keeps four digits, a larger one two", function () {
+  assert.match(fmtCost(0.0001), /0[,.]0001/);
+  assert.match(fmtCost(200), /200[,.]00/);
 });

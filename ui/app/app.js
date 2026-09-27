@@ -1,4 +1,4 @@
-import { readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
+import { readJson as utilReadJson, postJson as utilPostJson, classifyLoadFailure as utilClassifyLoadFailure, newSessionId as utilNewSessionId, fmtBytes as utilFmtBytes, clip as utilClip, sessionLabel as utilSessionLabel, sessionMatchesFilter as utilSessionMatchesFilter, summarizeTitle as utilSummarizeTitle, recencyGroup as utilRecencyGroup, fmtInt as utilFmtInt, fmtMs as utilFmtMs, fmtCost as utilFmtCost, fmtUsd as utilFmtUsd, formatChatTime as utilFormatChatTime, fuzzyMatch as utilFuzzyMatch, escapeHtml as utilEscapeHtml, searchFold as utilSearchFold, view_digit_max, wireRefresh } from "./core/utils.js";
 import { T as vanT, bind as vanBind, toast as uiToast, skeletonRows as vanSkeletonRows, setTurnPhase as vanSetTurnPhase, UI as vanUI, state as uiState, add as uiAdd, uiConfirm, uiPrompt, upgradePfButton, upgradePfButtons, upgradePfChip, upgradePfUi, showLoadError } from "./core/ui.js";
 import { icon as iconFn } from "./core/icons.js";
 import { copyText as copyTextMod, scrollTo as vendorScrollTo } from "./core/vendor.js";
@@ -46,6 +46,7 @@ var recencyGroup = utilRecencyGroup;
 var fmtInt = utilFmtInt;
 var fmtMs = utilFmtMs;
 var fmtCost = utilFmtCost;
+var fmtUsd = utilFmtUsd;
 var escapeHtml = utilEscapeHtml;
 var providerCache = [];
 var runLabel = function (r) { return runLabelMod(r, clip); };
@@ -1471,7 +1472,7 @@ function startElapsed(startedAt) {
   stopElapsed();
   function tick() {
     elapsedTimer = window.requestAnimationFrame(tick);
-    el.hint.textContent = runWaitLabel + " · " + ((Date.now() - startedAt) / 1000).toFixed(1) + "s";
+    el.hint.textContent = runWaitLabel + " · " + fmtMs(Date.now() - startedAt);
     paintRunMetrics();
   }
   tick();
@@ -1956,7 +1957,7 @@ function renderStats(turn, stats, task) {
     parts.push(fmtInt(stats.prompt_tokens) + " prompt + " + fmtInt(stats.completion_tokens) + " completion");
   }
   if (typeof stats.ms === "number") parts.push(fmtMs(stats.ms));
-  if (typeof stats.cost === "number" && stats.cost > 0) parts.push("$" + stats.cost.toFixed(4));
+  if (typeof stats.cost === "number" && stats.cost > 0) parts.push(fmtUsd(stats.cost, 4));
   var span = document.createElement("span");
   span.textContent = parts.join(" · ");
   turn.foot.appendChild(span);

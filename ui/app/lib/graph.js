@@ -1,12 +1,12 @@
 // Vanilla, no bundler. Execution-graph layout via d3-dag Sugiyama.
 // Imported by app.js. Imports only loadD3.
 import { loadD3 } from "../core/vendor.js";
-import { fmtInt, searchFold } from "../core/utils.js";
+import { fmtInt, fmtMs, fmtPct, searchFold } from "../core/utils.js";
 
 export function metricsFor(n) {
-  if (n.kind === "llm") return n.prompt_tokens + "/" + n.completion_tokens + " tok \u00b7 " + n.duration_ms + "ms";
-  if (n.kind === "tool") return n.result_bytes + " B \u00b7 " + n.duration_ms + "ms";
-  return "answer " + n.result_bytes + " B";
+  if (n.kind === "llm") return fmtInt(n.prompt_tokens) + "/" + fmtInt(n.completion_tokens) + " tok \u00b7 " + fmtMs(n.duration_ms);
+  if (n.kind === "tool") return fmtInt(n.result_bytes) + " B \u00b7 " + fmtMs(n.duration_ms);
+  return "answer " + fmtInt(n.result_bytes) + " B";
 }
 
 export function buildStages(nodes) {
@@ -69,10 +69,10 @@ export function graphSummaryText(built) {
   var worth = slowestWorthNaming(totals);
   if (worth) {
     parts.push("The slowest step was the " + totals.slowestKind + " " + (worth.label || worth.detail || "") +
-      " at " + worth.duration_ms + "ms, " + Math.round(worth.duration_ms / totals.total * 100) +
-      "% of the " + fmtInt(totals.total) + "ms the steps took together.");
+      " at " + fmtMs(worth.duration_ms) + ", " + fmtPct(worth.duration_ms / totals.total * 100, 0) +
+      " of the " + fmtMs(totals.total) + " the steps took together.");
   } else if (totals.total) {
-    parts.push("The steps took " + fmtInt(totals.total) + "ms together, none of them dominating.");
+    parts.push("The steps took " + fmtMs(totals.total) + " together, none of them dominating.");
   }
   return parts.join(" ");
 }
@@ -160,7 +160,7 @@ export function buildNodeBox(d, slowest, nodeW, opts) {
   if (node.duration_ms) {
     var dur = document.createElement("span");
     dur.className = "run-node-duration";
-    dur.textContent = (node.duration_ms < 1000 ? node.duration_ms + "ms" : (node.duration_ms/1000).toFixed(1) + "s");
+    dur.textContent = fmtMs(node.duration_ms);
     if (isSlowest) dur.dataset.slowest = "true";
     dur.setAttribute("aria-hidden", "true");
     box.appendChild(dur);

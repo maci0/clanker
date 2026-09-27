@@ -1,6 +1,6 @@
 // Fleet / cross-agent view — ES module, no bundler.
 // Owns #view-fleet: roster + DM channels + grouped runs. Works without app.js.
-import { clip, peerColor, escapeHtml, themeToken, cssColorAlpha, cssColorMix } from "../core/utils.js";
+import { clip, peerColor, escapeHtml, themeToken, cssColorAlpha, cssColorMix, fmtInt } from "../core/utils.js";
 import { readJson } from "../core/vendor.js";
 import { onLive, liveOk } from "../core/stream.js";
 
@@ -694,10 +694,10 @@ function meshStatusText(data, live) {
     var only = "This clanker only. Join another instance from Mesh, or add a peer in System → Config.";
     return bits.length ? bits.join(" · ") + " · " + only : only;
   }
-  bits.push(nodes.length + " node" + (nodes.length === 1 ? "" : "s"));
-  if (links.length) bits.push(links.length + " link" + (links.length === 1 ? "" : "s"));
-  if (working) bits.push(working + " working");
-  if (pulses.length) bits.push(pulses.length + " talking");
+  bits.push(fmtInt(nodes.length) + " node" + (nodes.length === 1 ? "" : "s"));
+  if (links.length) bits.push(fmtInt(links.length) + " link" + (links.length === 1 ? "" : "s"));
+  if (working) bits.push(fmtInt(working) + " working");
+  if (pulses.length) bits.push(fmtInt(pulses.length) + " talking");
   if (data.mesh === false) bits.push("module off; showing configured peers");
   return bits.join(" · ");
 }
@@ -720,7 +720,7 @@ function renderPendingBanner(el, pending) {
     return;
   }
   el.hidden = false;
-  el.textContent = rows.length + " pending join" + (rows.length === 1 ? "" : "s") + ". Open Mesh to admit or deny.";
+  el.textContent = fmtInt(rows.length) + " pending join" + (rows.length === 1 ? "" : "s") + ". Open Mesh to admit or deny.";
 }
 
 function patchMeshWorking(el, data, statusEl) {

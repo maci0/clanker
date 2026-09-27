@@ -112,14 +112,40 @@ export function fmtInt(n) {
   return (typeof n === "number" ? n : 0).toLocaleString();
 }
 
+/* Currency, percent and compact counts go through Intl: a hardcoded "$" plus
+   toFixed reads as `$0,0001` nowhere and `0,0001 $` outside the US. `digits`
+   is the fraction-digit count; omitted means "as needed, at most 4". */
+export function fmtUsd(n, digits) {
+  var v = typeof n === "number" && isFinite(n) ? n : 0;
+  var d = typeof digits === "number" ? digits : 0;
+  return new Intl.NumberFormat(undefined, {
+    style: "currency", currency: "USD", minimumFractionDigits: d,
+    maximumFractionDigits: typeof digits === "number" ? d : 4
+  }).format(v);
+}
+
+/* `value` is a percentage already (80, not 0.8); Intl wants the fraction. */
+export function fmtPct(value, digits) {
+  var v = typeof value === "number" && isFinite(value) ? value : 0;
+  return new Intl.NumberFormat(undefined, {
+    style: "percent", maximumFractionDigits: digits == null ? 1 : digits
+  }).format(v / 100);
+}
+
+/* K/M are English abbreviations; German reads "225,0 Mio.". */
+export function fmtCompact(n) {
+  var v = typeof n === "number" && isFinite(n) ? n : 0;
+  if (Math.abs(v) < 1000) return fmtInt(Math.round(v));
+  return new Intl.NumberFormat(undefined, {
+    notation: "compact", minimumFractionDigits: 1, maximumFractionDigits: 1
+  }).format(v);
+}
+
 export function fmtCost(n) {
   var v = typeof n === "number" ? n : 0;
   // Sub-dollar amounts (a single card or turn) need the extra precision;
   // a system-wide total reads better as $200.00 than $200.0000.
-  var digits = Math.abs(v) >= 1 ? 2 : 4;
-  return new Intl.NumberFormat(undefined, {
-    style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits
-  }).format(v);
+  return fmtUsd(v, Math.abs(v) >= 1 ? 2 : 4);
 }
 
 export function formatChatTime(ts) {

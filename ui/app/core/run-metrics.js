@@ -3,14 +3,11 @@
 // formatter. Times tick every frame. Tokens come from mid-run `usage`
 // events (this turn's totals) plus a live output estimate from streamed
 // chars until the next official snapshot.
-import { fmtInt, fmtMs } from "./utils.js";
+import { fmtInt, fmtMs, fmtCompact, fmtPct } from "./utils.js";
 
 export function fmtTok(n) {
   if (typeof n !== "number" || !isFinite(n)) return "0";
-  var abs = Math.abs(n);
-  if (abs >= 1e6) return (n / 1e6).toFixed(1) + "M";
-  if (abs >= 1e3) return (n / 1e3).toFixed(1) + "K";
-  return String(Math.round(n));
+  return fmtCompact(n);
 }
 
 export function estTokens(chars) {
@@ -141,12 +138,12 @@ export function formatRunMetricsParts(m, now) {
   else if (typeof m.liveTtftMs === "number") bits2.push("TTFT " + fmtMs(m.liveTtftMs));
   var completion = completionTokens(m);
   var totalMs = llmMs + toolMs;
-  if (completion > 0 && llmMs > 0) bits2.push((completion / (llmMs / 1000)).toFixed(0) + " tok/s");
-  else if (completion > 0 && totalMs > 0) bits2.push((completion / (totalMs / 1000)).toFixed(0) + " tok/s");
+  if (completion > 0 && llmMs > 0) bits2.push(fmtInt(Math.round(completion / (llmMs / 1000))) + " tok/s");
+  else if (completion > 0 && totalMs > 0) bits2.push(fmtInt(Math.round(completion / (totalMs / 1000))) + " tok/s");
   if (bits2.length) parts.push({ key: "rate", text: bits2.join(" · ") });
   var hit = cacheHit(m);
   var miss = cacheMiss(m);
-  if (hit + miss > 0) parts.push({ key: "cache", text: "Cache hit " + ((hit / (hit + miss)) * 100).toFixed(0) + "%" });
+  if (hit + miss > 0) parts.push({ key: "cache", text: "Cache hit " + fmtPct((hit / (hit + miss)) * 100, 0) });
   var prompt = promptTokens(m);
   if (prompt || completion) {
     parts.push({ key: "io", text: "Input " + fmtTok(prompt) + " tok · Output " + fmtTok(completion) + " tok" });

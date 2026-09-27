@@ -106,8 +106,13 @@ test("eager JS stays inside its weight budget", function () {
   // deferring core/logs.js out of the eager set trimmed the real number to
   // 143.8, so the budget is back at 144, the floor above it, per that
   // stopgap's own instruction. The fleet run rows' real <button> for screen
-  // readers (44abfedd, ~0.1K gz) is inside that 144.
-  assert.ok(eagerJsGz <= 144, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 144K`);
+  // readers (44abfedd, ~0.1K gz) is inside that 144. The locale-aware
+  // currency/percent/compact formatters in core/utils.js are the next 0.4K:
+  // they replace hardcoded "$" + toFixed and K/M suffixes at every price,
+  // rate and token count, which cannot shrink without giving the formatting
+  // back. Raised to 145 for that, the same deliberate step the 2026-08-29
+  // stopgap describes.
+  assert.ok(eagerJsGz <= 145, `eager JS is ${eagerJsGz.toFixed(1)}K gz; budget is 145K`);
 });
 
 test("first paint stays inside its weight budget", function () {

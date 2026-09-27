@@ -1,4 +1,6 @@
 // Vanilla, no bundler. Usage table — token/cost totals by provider/model.
+import { fmtPct } from "./utils.js";
+
 function usageColumns() {
   return [
     ["Provider / model", ""], ["Calls", "num"], ["Failed", "num"], ["Prompt", "num"],
@@ -15,7 +17,7 @@ function usageName(r, modelLabel, T) {
 function usageRow(r, modelLabel, fmtInt, fmtCost, T) {
   return T.tr(usageName(r, modelLabel, T), [
     fmtInt(r.calls), fmtInt(r.error_calls || 0), fmtInt(r.prompt_tokens), fmtInt(r.completion_tokens),
-    (r.cache_hit_rate || 0).toFixed(1) + "%", (r.tokens_per_sec || 0).toFixed(0), fmtCost(r.cost),
+    fmtPct(r.cache_hit_rate), fmtInt(Math.round(r.tokens_per_sec || 0)), fmtCost(r.cost),
   ].map(function (v) { return T.td({ class: "num" }, v); }));
 }
 
@@ -39,7 +41,7 @@ export function renderUsageTable(rows, modelLabel, fmtInt, fmtCost, UI, T) {
       }))),
       T.tbody(rows.map(function (r) { return usageRow(r, modelLabel, fmtInt, fmtCost, T); })),
       T.tfoot(T.tr(
-        T.td(rows.length + (rows.length === 1 ? " model" : " models")),
+        T.td(fmtInt(rows.length) + (rows.length === 1 ? " model" : " models")),
         [fmtInt(totals.calls), fmtInt(totals.failed), fmtInt(totals.prompt), fmtInt(totals.completion), "", "", fmtCost(totals.cost)]
           .map(function (v) { return T.td({ class: "num" }, v); })))));
 }

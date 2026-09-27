@@ -25,6 +25,17 @@
  * show. Colour is never the only encoding: the saturation state is a word.
  */
 
+import { fmtPct as fmtPctFmt } from "/webui/core/utils.js";
+
+// One duration or rate, in the reader's own units and separators: a hardcoded
+// "s" after a toFixed reads "1,5s" in German and "1.5 s" in French, and a
+// hardcoded "%" never gets the locale's percent sign or its spacing.
+function fmtUnit(v, unit, digits) {
+  return new Intl.NumberFormat(undefined, {
+    style: "unit", unit: unit, unitDisplay: "narrow", maximumFractionDigits: digits
+  }).format(v);
+}
+
 clanker.registerView({
   id: "health",
   title: "Health",
@@ -89,15 +100,13 @@ clanker.registerView({
 
     function fmtRate(r) {
       if (r === null) return "—";
-      if (r >= 10) return String(Math.round(r)) + "/s";
-      return (Math.round(r * 10) / 10) + "/s";
+      return new Intl.NumberFormat(undefined, { maximumFractionDigits: r >= 10 ? 0 : 1 }).format(r) + "/s";
     }
 
     function fmtMs(ms) {
       if (ms === null) return "—";
-      if (ms >= 1000) return (Math.round(ms / 100) / 10) + "s";
-      if (ms >= 10) return Math.round(ms) + "ms";
-      return (Math.round(ms * 10) / 10) + "ms";
+      if (ms >= 1000) return fmtUnit(Math.round(ms / 100) / 10, "second", 1);
+      return fmtUnit(ms >= 10 ? Math.round(ms) : Math.round(ms * 10) / 10, "millisecond", ms >= 10 ? 0 : 1);
     }
 
     function pct(part, whole) {
@@ -107,10 +116,9 @@ clanker.registerView({
 
     function fmtPct(p) {
       if (p === null) return "—";
-      if (p === 0) return "0%";
-      if (p < 0.1) return "<0.1%";
-      if (p >= 10) return Math.round(p) + "%";
-      return (Math.round(p * 10) / 10) + "%";
+      if (p === 0) return fmtPctFmt(0, 0);
+      if (p < 0.1) return "<" + fmtPctFmt(0.1, 1);
+      return fmtPctFmt(p, p >= 10 ? 0 : 1);
     }
 
     /// How alarming the error total is. Three states, and the middle one is
