@@ -234,6 +234,25 @@ pub const RunStats = struct {
     ttft_samples: u32 = 0,
 };
 
+/// Appends `text` as a `.system` message unless the transcript already
+/// carries that exact text. Returns true when a message was added.
+///
+/// A Stop hook that keeps denying returns the identical `reason` every
+/// iteration, and each copy is a row in the saved session and a repeat of the
+/// same directive in the next request: re-applying one denial teaches the
+/// model nothing the identical earlier copy did not already say, and the run
+/// carries up to `max_iterations` of them. Deduping the text is what makes
+/// re-running the denial a no-op instead of an accumulating write, and it is
+/// the rule the TTSR arm already applies to its own injected tag.
+fn appendSystemOnce(arena: std.mem.Allocator, messages: *std.ArrayList(types.Message), text: []const u8) !bool {
+    for (messages.items) |m| {
+        if (m.role != .system) continue;
+        if (std.mem.eql(u8, m.content orelse "", text)) return false;
+    }
+    try messages.append(arena, .{ .role = .system, .content = text });
+    return true;
+}
+
 pub const Agent = struct {
     ctx: *client.Ctx,
     arena: std.mem.Allocator,
@@ -1147,8 +1166,8 @@ pub const Agent = struct {
                 const stop_hook = try self.runLifecycleHook(.Stop, "", try self.hookPayload(.Stop, "", "", resp.message.content orelse ""));
                 if (stop_hook.decision != .allow) {
                     const feedback = if (stop_hook.reason.len > 0) stop_hook.reason else "A Stop hook requested another step; continue working before answering.";
-                    try messages.append(self.arena, .{ .role = .system, .content = feedback });
-                    if (stop_hook.context.len > 0) try messages.append(self.arena, .{ .role = .system, .content = stop_hook.context });
+                    _ = try appendSystemOnce(self.arena, &messages, feedback);
+                    if (stop_hook.context.len > 0) _ = try appendSystemOnce(self.arena, &messages, stop_hook.context);
                     log.log(.info, "Stop hook forced another step at iteration {d}", .{iteration + 1});
                     continue;
                 }
@@ -5597,4 +5616,26 @@ test "refreshSystemPrompt keeps unchanged tool guidance out of the session arena
     try std.testing.expect(!failing.has_induced_failure);
     try std.testing.expectEqual(installed.ptr, agent.system_prompt_text.ptr);
     try std.testing.expectEqual(installed.ptr, messages.items[0].content.?.ptr);
+}
+
+test "a repeated Stop-hook denial does not append the same feedback twice" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var messages: std.ArrayList(types.Message) = .empty;
+    try messages.append(arena, .{ .role = .system, .content = "base prompt" });
+
+    const denial = "tests are not green yet";
+    // One denial, then the model answers again and the same hook denies
+    // again: the second decision is the same operation run a second time.
+    try std.testing.expect(try appendSystemOnce(arena, &messages, denial));
+    try messages.append(arena, .{ .role = .assistant, .content = "still broken" });
+    try std.testing.expect(!try appendSystemOnce(arena, &messages, denial));
+    try std.testing.expectEqual(@as(usize, 3), messages.items.len);
+
+    // A different denial is a different directive and still lands.
+    try std.testing.expect(try appendSystemOnce(arena, &messages, "run the e2e suite too"));
+    try std.testing.expectEqual(@as(usize, 4), messages.items.len);
+    try std.testing.expectEqualStrings("run the e2e suite too", messages.items[3].content.?);
 }
