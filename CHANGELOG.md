@@ -43,6 +43,21 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   `.pixelated` component rule in `ui/app/tailwind.src.css`, which is what
   Tailwind's component layer is for. The dead `office-alarm` class is gone from
   the markup, and the log rows' 0.15rem padding rides the `py-0.5` rung.
+- The Music plugin ships no stylesheet (`ui/plugins/music/app.css` is deleted).
+  Its dock and view are utility strings, and the class names that doubled as
+  query hooks for `syncChrome` are data attributes now (`[data-music-play]`,
+  `[data-music-note]`): a name looked up by behaviour is not a style. Two rules
+  moved into the Tailwind source instead of the markup, each because no utility
+  can be written for it: the dock's `min(36rem, calc(100vw - 2rem))` cap, and
+  the `body:has(#music-dock:not([data-collapsed="true"]))` padding that keeps
+  the fixed dock from covering the last lines of Chat on a phone.
+- The Health plugin ships no stylesheet either. Its tile lamp is a `.lamp`
+  component rule in the Tailwind source — utilities cannot target `::before`,
+  and a lit lamp carries two shadows (ring plus glow) that one shadow utility
+  cannot compose — and the bar column's 55% share of the table is the second
+  component rule. The band ramp rides the opacity scale (35/50/65/80/100) where
+  it was five hand-written values, and the distribution table's cells carry
+  their own utilities.
 
 ### Fixed
 

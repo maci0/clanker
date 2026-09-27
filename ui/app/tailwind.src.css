@@ -40,6 +40,46 @@
    needs the pair, in that order, and a second declaration is not a class name. */
 @layer components {
   .pixelated { image-rendering: crisp-edges; image-rendering: pixelated; }
+
+  /* A state lamp drawn on a pseudo-element. Utilities cannot target `::before`,
+     and a lit lamp carries two shadows (the ring plus the glow) where one
+     shadow utility composes one value. The host element carries `lamp` and the
+     `data-state` that lights it; the Health tiles are the first user, and the
+     page's chips are the same dome. */
+  .lamp::before {
+    content: "";
+    position: absolute;
+    left: var(--space-3);
+    top: 1.15rem;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    color: var(--fg-muted);
+    background: var(--lamp-dome);
+    box-shadow: var(--lamp-ring);
+  }
+  .lamp[data-state="good"]::before { color: var(--ok-fill); box-shadow: var(--lamp-ring), var(--lamp-glow); }
+  .lamp[data-state="warn"]::before { color: var(--warn); box-shadow: var(--lamp-ring), var(--lamp-glow); }
+  .lamp[data-state="bad"]::before { color: var(--danger); box-shadow: var(--lamp-ring), var(--lamp-glow); }
+
+  /* The bar column takes the slack of the table, so the labels and numbers stay
+     put and only the picture stretches. A share of the table, not a rung. */
+  .health-band-barcell { width: 55%; }
+
+  /* Forced colours strip the fills, so give the lamp and the bars an edge that
+     survives it. The numbers are in their own cells regardless. */
+  @media (forced-colors: active) {
+    .lamp::before { background: CanvasText; box-shadow: none; }
+    .health-band-bar { background: CanvasText; opacity: 1; border: 1px solid CanvasText; }
+  }
+
+  /* The music dock is fixed to the viewport, so the page has to reserve room
+     for it or the last lines of Chat sit underneath. That is a rule about
+     `body` reacting to a descendant's attribute, and no utility can be written
+     on either element for it. Collapsed (the fab) is small enough to ignore. */
+  @media (max-width: 40rem) {
+    body:has(#music-dock:not([data-collapsed="true"])) { padding-bottom: 8rem; }
+  }
 }
 
 @theme inline {

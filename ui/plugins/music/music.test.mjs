@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const js = readFileSync(join(dir, "app.js"), "utf8");
-const css = readFileSync(join(dir, "app.css"), "utf8");
 const manifest = JSON.parse(readFileSync(join(dir, "plugin.json"), "utf8"));
 
 test("music plugin registers a view and a dock", () => {
@@ -16,7 +15,7 @@ test("music plugin registers a view and a dock", () => {
   assert.match(js, /music-dock/);
   assert.doesNotMatch(js, /innerHTML/);
   assert.doesNotMatch(js, /eval\(/);
-  assert.match(css, /--surface/);
+  assert.match(js, /bg-surface/);
 });
 
 test("playback ticks update chrome in place instead of rebuilding the tree", () => {
@@ -30,11 +29,19 @@ test("empty playlist and bad URL say what to do next", () => {
   assert.match(js, /No tracks yet\. Add audio files or a URL above to start\./);
   assert.match(js, /Need a full http\(s\) URL/);
   assert.match(js, /Those files are not audio/);
-  assert.match(css, /\.music-note/);
+  // The note is the error line: a hook attribute for setLastError to find,
+  // and a danger reading for the operator.
+  assert.match(js, /data-music-note/);
+  assert.match(js, /text-danger/);
 });
 
 test("music URL field is 16px on a phone so iOS does not zoom", () => {
-  assert.match(css, /@media \(max-width: 40rem\) \{[\s\S]*?\.music-url input \{ font-size: 16px; \}/);
+  // The plugin ships no sheet: its field is a plain `type="url"` input, which
+  // the page-wide 40rem guard covers (harden.test.mjs pins that guard). What
+  // this checks is that the field still qualifies for it.
+  assert.match(js, /url\.type = "url"/);
+  const host = readFileSync(join(dir, "..", "..", "app", "app.css"), "utf8");
+  assert.match(host, /@media \(max-width: 40rem\) \{[\s\S]*input\[type="url"\]:not\(\.pf-v6-c-form-control\)/);
 });
 
 // Every glyph the dock draws is a key in the host's icon grid, not a character.

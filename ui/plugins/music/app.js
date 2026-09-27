@@ -8,6 +8,27 @@
  * plugins checkbox is the on/off for the whole addon; the dock chevron only
  * tucks the chrome away. */
 
+/* The dock and the view. Everything here is a utility string over the cabinet
+   tokens; the class names that used to double as query hooks are data
+   attributes now (`[data-music-play]`, `[data-music-note]`), because a name
+   that syncChrome looks up is behaviour and not styling.
+
+   The dock's viewport cap has no scale to come from, and the page reserves room
+   for a fixed dock with one `body:has()` rule that no utility can express —
+   both are marked in ui/app/tailwind.src.css. */
+var DOCK_CLASS = "fixed right-4 bottom-4 z-40 flex max-w-[min(36rem,calc(100vw-2rem))] flex-wrap items-center gap-2 rounded-plate border border-border bg-surface px-3 py-2 shadow-lift data-[collapsed=true]:border-0 data-[collapsed=true]:bg-transparent data-[collapsed=true]:p-0 data-[collapsed=true]:shadow-none max-[40rem]:bottom-22 max-[40rem]:left-3 max-[40rem]:right-3 max-[40rem]:max-w-none";
+var BTN_CLASS = "inline-flex min-h-8 min-w-8 flex-none cursor-pointer items-center justify-center px-2 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+var PLAY_CLASS = "min-w-10 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+var FAB_CLASS = "min-h-10 min-w-10 rounded-capsule border-accent bg-accent text-on-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+var TITLE_CLASS = "min-w-0 flex-1 basis-32 overflow-hidden text-ellipsis whitespace-nowrap text-sm";
+var SEEK_CLASS = "flex min-w-32 flex-1 basis-40 items-center gap-2";
+var VOL_CLASS = "flex min-w-32 items-center gap-2";
+var TIME_CLASS = "min-w-10 font-mono text-sm text-fg-muted tabular-nums";
+var FILE_CLASS = "relative inline-flex min-h-8 cursor-pointer items-center rounded-plate border border-border px-3 pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+var URL_FORM_CLASS = "flex min-w-0 flex-1 basis-64 gap-2";
+/* The playing track is the row's own state, so the name asks about its parent. */
+var PICK_CLASS = "min-h-9 min-w-0 flex-1 cursor-pointer overflow-hidden border-0 bg-transparent text-left text-ellipsis whitespace-nowrap group-data-[current=true]:font-semibold group-data-[current=true]:text-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+
 clanker.registerView({
   id: "music",
   title: "Music",
@@ -90,7 +111,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
 
   function setLastError(msg) {
     lastError = msg || "";
-    var notes = document.querySelectorAll(".music-note");
+    var notes = document.querySelectorAll("[data-music-note]");
     for (var i = 0; i < notes.length; i++) {
       notes[i].textContent = lastError;
       notes[i].hidden = !lastError;
@@ -105,30 +126,30 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
 
   function syncChrome() {
     var paused = audio.paused;
-    document.querySelectorAll(".music-btn-play").forEach(function (b) {
+    document.querySelectorAll("[data-music-play]").forEach(function (b) {
       setGlyph(b, paused ? "play" : "pause");
       b.setAttribute("aria-label", paused ? "Play" : "Pause");
     });
     var muted = audio.muted || audio.volume === 0;
-    document.querySelectorAll(".music-mute").forEach(function (b) {
+    document.querySelectorAll("[data-music-mute]").forEach(function (b) {
       setGlyph(b, muted ? "mute" : "volume");
       b.setAttribute("aria-label", audio.muted ? "Unmute" : "Mute");
     });
     var title = current() ? current().title : "No track";
-    document.querySelectorAll(".music-dock-title").forEach(function (el) {
+    document.querySelectorAll("[data-music-title]").forEach(function (el) {
       el.textContent = title;
     });
     var now = current() ? ("Now playing: " + current().title) : "Add a file or a URL to start.";
-    document.querySelectorAll(".music-now").forEach(function (el) {
+    document.querySelectorAll("[data-music-now]").forEach(function (el) {
       el.textContent = now;
     });
     if (!scrubbing) {
       var ratio = seekRatio();
       var nowTxt = fmtTime(audio.currentTime);
       var endTxt = fmtTime(isFinite(audio.duration) ? audio.duration : 0);
-      document.querySelectorAll(".music-seek").forEach(function (wrap) {
+      document.querySelectorAll("[data-music-seek]").forEach(function (wrap) {
         var bar = wrap.querySelector("input[type=range]");
-        var times = wrap.querySelectorAll(".music-time");
+        var times = wrap.querySelectorAll("[data-music-time]");
         if (bar) bar.value = String(Math.round(ratio * 1000));
         // Position as time, not as 0–1000: a screen reader reading the bare
         // value says "500" where "1:23 of 3:45" is what the sighted times
@@ -138,7 +159,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
         if (times[1]) times[1].textContent = endTxt;
       });
     }
-    document.querySelectorAll(".music-vol input[type=range]").forEach(function (vol) {
+    document.querySelectorAll("[data-music-vol] input[type=range]").forEach(function (vol) {
       if (document.activeElement === vol) return;
     vol.value = String(Math.round((audio.muted ? 0 : audio.volume) * 100));
     vol.setAttribute("aria-valuetext", vol.value + "%");
@@ -257,7 +278,8 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   function btn(name, aria, onclick) {
     var b = document.createElement("button");
     b.type = "button";
-    b.className = "music-btn";
+    b.className = BTN_CLASS;
+    b.dataset.musicBtn = "";
     setGlyph(b, name);
     b.setAttribute("aria-label", aria);
     b.addEventListener("click", onclick);
@@ -267,19 +289,23 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
   function transport(into) {
     into.appendChild(btn("prev", "Previous", function () { step(-1); }));
     var play = btn(audio.paused ? "play" : "pause", audio.paused ? "Play" : "Pause", playPause);
-    play.className += " music-btn-play";
+    play.dataset.musicPlay = "";
+    play.className += " " + PLAY_CLASS;
     into.appendChild(play);
     into.appendChild(btn("next", "Next", function () { step(1); }));
   }
 
   function seekBlock() {
     var wrap = document.createElement("div");
-    wrap.className = "music-seek";
+    wrap.className = SEEK_CLASS;
+    wrap.dataset.musicSeek = "";
     var now = document.createElement("span");
-    now.className = "music-time";
+    now.className = TIME_CLASS;
+    now.dataset.musicTime = "";
     now.textContent = fmtTime(audio.currentTime);
     var bar = document.createElement("input");
     bar.type = "range";
+    bar.className = "min-w-16 flex-1";
     bar.min = "0";
     bar.max = "1000";
     bar.value = "0";
@@ -301,7 +327,8 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     });
     bar.addEventListener("change", function () { scrubbing = false; syncChrome(); });
     var end = document.createElement("span");
-    end.className = "music-time";
+    end.className = TIME_CLASS;
+    end.dataset.musicTime = "";
     end.textContent = fmtTime(isFinite(dur) ? dur : 0);
     wrap.appendChild(now);
     wrap.appendChild(bar);
@@ -311,14 +338,16 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
 
   function volumeBlock() {
     var wrap = document.createElement("div");
-    wrap.className = "music-vol";
+    wrap.className = VOL_CLASS;
+    wrap.dataset.musicVol = "";
     var mute = btn(audio.muted || audio.volume === 0 ? "mute" : "volume", audio.muted ? "Unmute" : "Mute", function () {
       audio.muted = !audio.muted;
       syncChrome();
     });
-    mute.className += " music-mute";
+    mute.dataset.musicMute = "";
     var vol = document.createElement("input");
     vol.type = "range";
+    vol.className = "min-w-16 flex-1";
     vol.min = "0";
     vol.max = "100";
     vol.value = String(Math.round((audio.muted ? 0 : audio.volume) * 100));
@@ -338,7 +367,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     if (dock && dock.isConnected) return;
     dock = document.createElement("div");
     dock.id = "music-dock";
-    dock.className = "music-dock";
+    dock.className = DOCK_CLASS;
     document.body.appendChild(dock);
   }
 
@@ -348,15 +377,16 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     dock.setAttribute("data-collapsed", String(collapsed));
     if (collapsed) {
       var open = btn("note", "Show music player", function () { setCollapsed(false); });
-      open.className += " music-fab";
+      open.className += " " + FAB_CLASS;
       dock.appendChild(open);
       return;
     }
     var title = document.createElement("span");
-    title.className = "music-dock-title";
+    title.className = TITLE_CLASS;
+    title.dataset.musicTitle = "";
     title.textContent = current() ? current().title : "No track";
     var transportRow = document.createElement("div");
-    transportRow.className = "music-transport";
+    transportRow.className = "flex items-center gap-1";
     transport(transportRow);
     var hide = btn("chevronDown", "Hide music player", function () { setCollapsed(true); });
     var openView = btn("list", "Open music view", function () { if (api) api.showView("music"); });
@@ -379,14 +409,15 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     viewRoot.appendChild(head);
 
     var now = document.createElement("p");
-    now.className = "music-now";
+    now.className = "my-3";
+    now.dataset.musicNow = "";
     now.textContent = current() ? ("Now playing: " + current().title) : "Add a file or a URL to start.";
     viewRoot.appendChild(now);
 
     var controls = document.createElement("div");
-    controls.className = "music-panel";
+    controls.className = "mb-4 flex flex-wrap items-center gap-3";
     var transportRow = document.createElement("div");
-    transportRow.className = "music-transport";
+    transportRow.className = "flex items-center gap-1";
     transport(transportRow);
     controls.appendChild(transportRow);
     controls.appendChild(seekBlock());
@@ -394,14 +425,15 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     viewRoot.appendChild(controls);
 
     var add = document.createElement("div");
-    add.className = "music-add";
+    add.className = "mb-4 flex flex-wrap items-center gap-3";
     var fileLab = document.createElement("label");
-    fileLab.className = "music-file";
+    fileLab.className = FILE_CLASS;
     fileLab.textContent = "Add files";
     var file = document.createElement("input");
     file.type = "file";
     file.accept = "audio/*,.mp3,.wav,.ogg,.oga,.opus,.flac,.m4a,.aac,.webm";
     file.multiple = true;
+    file.className = "sr-only";
     file.setAttribute("aria-label", "Add audio files");
     file.addEventListener("change", function () {
       addFiles(file.files);
@@ -409,7 +441,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     });
     fileLab.appendChild(file);
     var form = document.createElement("form");
-    form.className = "music-url";
+    form.className = URL_FORM_CLASS;
     var urlLab = document.createElement("label");
     urlLab.className = "sr-only";
     urlLab.htmlFor = "music-url";
@@ -419,6 +451,7 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     url.type = "url";
     url.placeholder = "https://…/track.mp3";
     url.autocomplete = "off";
+    url.className = "min-w-0 flex-1";
     var go = document.createElement("button");
     go.type = "submit";
     go.className = "secondary";
@@ -441,20 +474,21 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     viewRoot.appendChild(add);
 
     var list = document.createElement("ul");
-    list.className = "music-list";
+    list.className = "m-0 max-w-2xl list-none p-0";
     list.setAttribute("aria-label", "Playlist");
     if (!tracks.length) {
       var empty = document.createElement("li");
-      empty.className = "music-empty";
+      empty.className = "py-3 text-fg-muted";
       empty.textContent = "No tracks yet. Add audio files or a URL above to start.";
       list.appendChild(empty);
     }
     tracks.forEach(function (t, i) {
       var row = document.createElement("li");
-      row.className = "music-track" + (i === index ? " is-current" : "");
+      row.className = "group flex items-center gap-2 border-b border-rule";
+      row.dataset.current = i === index ? "true" : "false";
       var pick = document.createElement("button");
       pick.type = "button";
-      pick.className = "music-track-name";
+      pick.className = PICK_CLASS;
       pick.textContent = t.title;
       pick.addEventListener("click", function () { load(i, true); });
       // A name from the host's icon grid, not a glyph: api.icon returns an
@@ -469,7 +503,8 @@ var Music = window.clankerMusic || (window.clankerMusic = (function () {
     viewRoot.appendChild(list);
 
     var note = document.createElement("p");
-    note.className = "music-note";
+    note.className = "mt-2 text-danger";
+    note.dataset.musicNote = "";
     note.setAttribute("role", "status");
     note.hidden = !lastError;
     note.textContent = lastError;

@@ -36,6 +36,17 @@ function fmtUnit(v, unit, digits) {
   }).format(v);
 }
 
+/* The tiles and the distribution table. The tile is a plate with a lamp on its
+   edge: `lamp` is the component rule in ui/app/tailwind.src.css (a
+   pseudo-element and the two-shadow lit state are not utilities), and the rest
+   is utilities over the cabinet tokens. */
+var TILE_CLASS = "lamp relative flex flex-col gap-1 rounded-plate-lg border border-border bg-surface py-3 pe-4 ps-[1.8rem]";
+var HEAD_CELL_CLASS = "border-b border-border px-3 py-2 text-left align-middle text-xs font-semibold uppercase tracking-label text-fg-muted";
+var CELL_CLASS = "border-b border-rule px-3 py-2 text-left align-middle";
+/* One hue getting stronger as the band gets slower: an ordered magnitude, so
+   the ramp rides the opacity scale rather than five hand-written values. */
+var BAR_CLASS = "h-full min-w-0 rounded-plate-lg bg-accent data-[band=0]:opacity-35 data-[band=1]:opacity-50 data-[band=2]:opacity-65 data-[band=3]:opacity-80 data-[band=4]:opacity-100";
+
 clanker.registerView({
   id: "health",
   title: "Health",
@@ -156,7 +167,7 @@ clanker.registerView({
 
     var head = api.el("div", "section-head");
     head.appendChild(api.el("h2", null, "Server health"));
-    var state = api.el("span", "meta health-state");
+    var state = api.el("span", "meta font-mono tabular-nums data-[state=busy]:text-warn-text data-[state=saturated]:text-danger data-[state=warn]:text-warn-text");
     head.appendChild(state);
     var refresh = api.el("button", "secondary", "Refresh");
     refresh.type = "button";
@@ -167,14 +178,14 @@ clanker.registerView({
       "Read from /api/metrics and the live bus. Rates are measured between the last two samples, " +
       "so they describe recent traffic rather than the whole run."));
 
-    var tiles = api.el("div", "health-tiles");
+    var tiles = api.el("div", "mt-4 grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3");
     container.appendChild(tiles);
 
-    var distHead = api.el("h3", "health-sub", "Response times");
+    var distHead = api.el("h3", "mt-6 mb-2 text-base", "Response times");
     container.appendChild(distHead);
     container.appendChild(api.el("p", "meta",
       "Every request the server has answered since it started, by how long it took."));
-    var table = api.el("table", "health-bands");
+    var table = api.el("table", "mt-3 w-full border-collapse text-sm");
     container.appendChild(table);
 
     /* ------------------------------------------------------------ painting */
@@ -183,11 +194,11 @@ clanker.registerView({
     /// note is text rather than a second colour, so a tile still reads when the
     /// state colour does not survive (forced colours, print, monochrome).
     function tile(label, value, note, stateKey) {
-      var box = api.el("div", "health-tile");
+      var box = api.el("div", TILE_CLASS);
       if (stateKey) box.setAttribute("data-state", stateKey);
-      box.appendChild(api.el("span", "health-tile-label", label));
-      box.appendChild(api.el("strong", "health-tile-value", value));
-      box.appendChild(api.el("span", "health-tile-note", note));
+      box.appendChild(api.el("span", "text-xs uppercase tracking-label text-fg-muted", label));
+      box.appendChild(api.el("strong", "font-mono text-xl font-semibold text-fg tabular-nums", value));
+      box.appendChild(api.el("span", "text-xs text-fg-muted", note));
       return box;
     }
 
@@ -306,14 +317,14 @@ clanker.registerView({
       var peak = counts.reduce(function (a, b) { return b.count > a ? b.count : a; }, 0);
 
       table.textContent = "";
-      var caption = api.el("caption", "health-bands-caption",
+      var caption = api.el("caption", "caption-bottom mt-2 text-left text-xs text-fg-muted",
         sum > 0 ? sum + " requests measured" : "No requests measured yet");
       table.appendChild(caption);
 
       var thead = api.el("thead");
       var hrow = api.el("tr");
       ["Response time", "", "Requests", "Share"].forEach(function (label, i) {
-        var th = api.el("th", null, label);
+        var th = api.el("th", HEAD_CELL_CLASS, label);
         th.setAttribute("scope", "col");
         if (i === 1) th.setAttribute("aria-label", "Relative size");
         hrow.appendChild(th);
@@ -323,15 +334,15 @@ clanker.registerView({
 
       var tbody = api.el("tbody");
       counts.forEach(function (band, i) {
-        var tr = api.el("tr", "health-band");
-        var th = api.el("th", "health-band-label", band.label);
+        var tr = api.el("tr");
+        var th = api.el("th", CELL_CLASS + " font-medium whitespace-nowrap text-fg", band.label);
         th.setAttribute("scope", "row");
         tr.appendChild(th);
 
         var barCell = api.el("td", "health-band-barcell");
-        var track = api.el("div", "health-band-track");
+        var track = api.el("div", "h-2 overflow-hidden rounded-plate-lg bg-surface-2");
         track.setAttribute("aria-hidden", "true");
-        var bar = api.el("div", "health-band-bar");
+        var bar = api.el("div", BAR_CLASS);
         // Scaled against the largest band, so the shape of the distribution is
         // legible even when one band holds almost everything.
         bar.style.width = (peak > 0 ? (band.count / peak) * 100 : 0) + "%";
@@ -340,8 +351,8 @@ clanker.registerView({
         barCell.appendChild(track);
         tr.appendChild(barCell);
 
-        tr.appendChild(api.el("td", "health-band-count", String(band.count)));
-        tr.appendChild(api.el("td", "health-band-share", fmtPct(pct(band.count, sum))));
+        tr.appendChild(api.el("td", CELL_CLASS + " font-mono tabular-nums whitespace-nowrap", String(band.count)));
+        tr.appendChild(api.el("td", CELL_CLASS + " font-mono tabular-nums whitespace-nowrap text-fg-muted", fmtPct(pct(band.count, sum))));
         tbody.appendChild(tr);
       });
       table.appendChild(tbody);

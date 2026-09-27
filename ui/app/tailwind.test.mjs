@@ -33,12 +33,14 @@ const migrated = [
   "../plugins/mesh/app.js",
   "../plugins/compare/app.js",
   "../plugins/office/app.js",
+  "../plugins/music/app.js",
+  "../plugins/health/app.js",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: a breakpoint, or
 /// a grid template the layout actually needs. A colour or a padding written
 /// this way is not on this list, and should not be.
-const arbitrary_ok = [/^max-\[40rem\]:/, /:?grid-cols-\[/];
+const arbitrary_ok = [/^max-\[40rem\]:/, /:?grid-cols-\[/, /^max-w-\[min\(/, /^ps-\[1\.8rem\]$/];
 /// Variant prefixes that may carry brackets without being an arbitrary value:
 /// a breakpoint, or the element state a ported sheet reached through an
 /// attribute selector.
