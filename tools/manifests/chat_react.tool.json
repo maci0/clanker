@@ -8,7 +8,7 @@
     "properties": {
       "room": {
         "type": "string",
-        "description": "Room the message is in"
+        "description": "Not used by this action: the message is identified by msg_id alone."
       },
       "msg_id": {
         "type": "string",
@@ -19,7 +19,7 @@
         "description": "Emoji name or character, e.g. \"👍\" or \"thumbsup\""
       }
     },
-    "required": ["room", "msg_id", "emoji"]
+    "required": ["msg_id", "emoji"]
   },
   "fs_prefixes": [],
   "network_allow": [],

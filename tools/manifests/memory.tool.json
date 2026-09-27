@@ -1,7 +1,7 @@
 {
   "name": "memory",
-  "description": "Configurable memory layer for RAG: chunk/search/embed with built-in hash embedder (offline, zero deps). Actions: chunk {text,size,overlap}, embed {texts[] or text,dim}, search {query,top_k,threshold,dim,collection_ids,mode}. If action is omitted it is inferred: query -> search, texts -> embed, text -> chunk, else search. Vector: builtin hash+cosine default, muninndb/sqlite-vec swappable; embeddings: builtin / openai_compat via providers base_url / local_onnx stub.",
-  "llm_description": "RAG memory: action chunk {text,size,overlap}, embed {texts[] or text,dim}, or search {query,top_k,threshold,dim,collection_ids,mode: vector (default) or keyword}. Omit action to infer: query->search, texts->embed, text->chunk. Offline hash embedder by default; vector store and embeddings backend are swappable (muninndb/sqlite-vec, openai_compat, local_onnx).",
+  "description": "Configurable memory layer for RAG: chunk/search/embed with built-in hash embedder (offline, zero deps). Actions: chunk {text,size,overlap}, embed {texts[] or text,dim}, search {query,top_k,threshold,dim,collection_ids,mode}. If action is omitted it is inferred: query -> search, texts -> embed, text -> chunk, else search. Vectors are builtin hash+cosine; the embedder is offline and reads no config key.",
+  "llm_description": "RAG memory: action chunk {text,size,overlap}, embed {texts[] or text,dim}, or search {query,top_k,threshold,dim,collection_ids,mode: vector (default) or keyword}. Omit action to infer: query->search, texts->embed, text->chunk. Offline hash embedder; the vector store and embeddings backend are not swappable.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -58,7 +58,7 @@
         "type": "number",
         "minimum": 16,
         "maximum": 1024,
-        "description": "Embedding dimensions (default 128). Values are clamped to 16-1024 by the guest."
+        "description": "Embedding dimensions (default 384). Values are clamped to 16-1024 by the guest."
       },
       "collection_ids": {
         "type": "array",

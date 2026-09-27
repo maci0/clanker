@@ -74,3 +74,45 @@ test "validate refuses empty, overflow, and nested plans" {
     try std.testing.expectEqual(@as(usize, 12), clampMax(0));
     try std.testing.expectEqual(@as(usize, 12), clampMax(12));
 }
+
+/// The error a step's callee reported, when that callee answered
+/// `{"ok":false,...}`. A guest failure is a *successful* ck_tool call whose
+/// body carries the failure, so the host return code alone cannot tell a step
+/// that worked from one that refused; this reads the inner envelope. Returns
+/// null for a success, for a non-JSON body (a raw exec envelope), and for JSON
+/// that is not an object, so only a real `ok:false` flips a step.
+pub fn innerError(alloc: std.mem.Allocator, result: []const u8) ?[]const u8 {
+    const parsed = std.json.parseFromSliceLeaky(std.json.Value, alloc, result, .{}) catch return null;
+    if (parsed != .object) return null;
+    const flag = parsed.object.get("ok") orelse return null;
+    if (flag != .bool or flag.bool) return null;
+    const msg = parsed.object.get("error") orelse return "the tool reported ok:false";
+    if (msg != .string or msg.string.len == 0) return "the tool reported ok:false";
+    return msg.string;
+}
+
+test "innerError reads the callee's own envelope" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const alloc = arena_state.allocator();
+
+    try std.testing.expectEqualStrings(
+        "unknown todo id 7",
+        innerError(alloc, "{\"ok\":false,\"error\":\"unknown todo id 7\"}") orelse unreachable,
+    );
+    // A step that worked, a non-object body, a body with no ok, an
+    // ok:false with no usable message, and a non-JSON exec envelope all
+    // leave the step reporting the host return code.
+    try std.testing.expectEqual(@as(?[]const u8, null), innerError(alloc, "{\"ok\":true}"));
+    try std.testing.expectEqual(@as(?[]const u8, null), innerError(alloc, "[1,2]"));
+    try std.testing.expectEqual(@as(?[]const u8, null), innerError(alloc, "{\"code\":0}"));
+    try std.testing.expectEqual(
+        @as(?[]const u8, "the tool reported ok:false"),
+        innerError(alloc, "{\"ok\":false}"),
+    );
+    try std.testing.expectEqual(
+        @as(?[]const u8, "the tool reported ok:false"),
+        innerError(alloc, "{\"ok\":false,\"error\":\"\"}"),
+    );
+    try std.testing.expectEqual(@as(?[]const u8, null), innerError(alloc, "not json at all"));
+}

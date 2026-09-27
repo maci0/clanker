@@ -13,6 +13,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const alloc = lib.alloc;
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, alloc, input, .{});
+    if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
     const name = switch (obj.get("name") orelse return lib.fail(out, "missing name")) {
         .string => |s| s,

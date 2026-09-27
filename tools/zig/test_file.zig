@@ -11,6 +11,7 @@ export fn run(ptr: u32, len: u32) callconv(.c) u64 {
 
 fn tool_main(input: []const u8, out: *lib.Out) !void {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, lib.alloc, input, .{});
+    if (parsed != .object) return lib.fail(out, "input must be a JSON object");
     const obj = parsed.object;
     const file = switch (obj.get("file") orelse return lib.fail(out, "missing file")) {
         .string => |s| s,
@@ -63,7 +64,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
         }
     } else {
         // On failure, keep the tail of stderr where the actual error message lives.
-        try s.objectField("error_tail");
+        try s.objectField("error");
         const detail = if (stderr_str.len > 0) stderr_str else stdout_str;
         if (detail.len > tail_cap) {
             try s.write(detail[detail.len - tail_cap ..]);

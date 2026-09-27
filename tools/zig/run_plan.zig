@@ -64,7 +64,18 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
             try w.writeByte('}');
             continue;
         };
-        try w.writeAll(",\"ok\":true,\"text\":");
+        // A guest failure is a *successful* host call carrying
+        // {"ok":false,...}, so the ck_tool return code alone reports every
+        // logically failed step as ok:true and the whole plan reads green.
+        // Unwrap the inner envelope: keep `text` verbatim, but let the inner
+        // ok and its error surface at the step.
+        if (logic.innerError(lib.alloc, result)) |msg| {
+            try w.writeAll(",\"ok\":false,\"error\":");
+            try std.json.Stringify.value(msg, .{}, &w);
+        } else {
+            try w.writeAll(",\"ok\":true");
+        }
+        try w.writeAll(",\"text\":");
         try std.json.Stringify.value(result, .{}, &w);
         try w.writeByte('}');
     }

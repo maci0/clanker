@@ -8,7 +8,7 @@
     "properties": {
       "room": {
         "type": "string",
-        "description": "Room the message is in"
+        "description": "Not used by this action: the message is identified by msg_id alone."
       },
       "msg_id": {
         "type": "string",
@@ -19,7 +19,7 @@
         "description": "New message text (max 4096 chars)"
       }
     },
-    "required": ["room", "msg_id", "text"]
+    "required": ["msg_id", "text"]
   },
   "fs_prefixes": [],
   "network_allow": [],

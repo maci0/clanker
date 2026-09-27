@@ -22,9 +22,10 @@
           "report",
           "runbook",
           "bug",
-          "investigation"
+          "investigation",
+          "missing-tool"
         ],
-        "description": "For search: all, report, or runbook (default all). For create: bug, investigation, or runbook."
+        "description": "For search: all, report, or runbook (default all). For create: bug, investigation, missing-tool, or runbook."
       },
       "path": {
         "type": "string",

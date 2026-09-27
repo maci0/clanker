@@ -1,7 +1,7 @@
 {
   "name": "bugreport",
   "description": "File a structured bug report that lands on the Kanban board as a prioritised backlog card. Collects title, description, steps to reproduce, expected/actual behaviour, severity, environment and impact into a formatted body, prefixes the title with [BUG], maps severity to board priority, and calls kanban_add. repro_lang selects the language of the repro command's fenced block. Use this instead of kanban_add when the work item is a bug: the template keeps reports consistent and searchable.",
-  "llm_description": "File a bug as a prioritized Kanban card (prefixes title with [BUG], maps severity to priority, calls kanban_add). Use instead of kanban_add for bugs. Input: {title (required, max 500 chars), description?, steps_to_reproduce?, expected?, actual?, severity?:'critical'|'high'|'normal'(default)|'medium'|'low'|'minor', component?, environment?, impact?, repro?, repro_lang?(default 'sh'), fix_hint?, room?(default 'board')}. Returns {ok, card_id, board}.",
+  "llm_description": "File a bug as a prioritized Kanban card (prefixes title with [BUG], maps severity to priority, calls kanban_add). Use instead of kanban_add for bugs. Input: {title (required, max 500 chars), description?, steps_to_reproduce?, expected?, actual?, severity?:'critical'|'high'|'normal'|'medium'|'low'|'minor' (inferred from the report text when omitted), component?, environment?, impact?, repro?, repro_lang?(default 'sh'), fix_hint?, room?(default 'board')}. Returns {ok, card_id, board}.",
   "wasm": "zig-out/tools/bugreport.wasm",
   "input_schema": {
     "type": "object",
@@ -36,7 +36,7 @@
           "low",
           "minor"
         ],
-        "description": "critical, high, normal (default), medium (alias for normal), low, or minor (alias for low)"
+        "description": "critical, high, normal, medium (alias for normal), low, or minor (alias for low). Omitted: inferred from the text, so a report mentioning a crash, deadlock, security or data loss files as high, and a cosmetic one as low."
       },
       "component": {
         "type": "string",
