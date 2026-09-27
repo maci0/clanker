@@ -3837,6 +3837,45 @@
     background: var(--card-black);
     color: var(--card-black-ink);
   }
+  [data-role="from"][data-color] {
+    padding: 0.05rem var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size: var(--step--1);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  [data-role="from"][data-color="0"] {
+    color: var(--chat-hue-0);
+    border-bottom: 2px solid var(--chat-hue-0);
+  }
+  [data-role="from"][data-color="1"] {
+    color: var(--chat-hue-1);
+    border-bottom: 2px solid var(--chat-hue-1);
+  }
+  [data-role="from"][data-color="2"] {
+    color: var(--chat-hue-2);
+    border-bottom: 2px solid var(--chat-hue-2);
+  }
+  [data-role="from"][data-color="3"] {
+    color: var(--chat-hue-3);
+    border-bottom: 2px solid var(--chat-hue-3);
+  }
+  [data-role="from"][data-color="4"] {
+    color: var(--chat-hue-4);
+    border-bottom: 2px solid var(--chat-hue-4);
+  }
+  [data-role="from"][data-color="5"] {
+    color: var(--chat-hue-5);
+    border-bottom: 2px solid var(--chat-hue-5);
+  }
+  [data-role="from"][data-color="6"] {
+    color: var(--chat-hue-6);
+    border-bottom: 2px solid var(--chat-hue-6);
+  }
+  [data-role="from"][data-color="7"] {
+    color: var(--chat-hue-7);
+    border-bottom: 2px solid var(--chat-hue-7);
+  }
   .fleet-card--accent::before, .fleet-card--parent::before, .fleet-card--plain::before {
     content: "";
     flex: none;

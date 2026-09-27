@@ -44,6 +44,7 @@ test("user chat bubbles render the prompt as markdown and keep the source", func
 });
 
 test("renderMarkdown turns bold, lists and fences into elements", function () {
+  installDom();
   var bold = serialize(renderMarkdown("hello **world**"));
   assert.match(bold, /<strong>/);
   assert.match(bold, /world/);

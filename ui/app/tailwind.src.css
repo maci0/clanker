@@ -158,6 +158,27 @@
   .card-hue[data-color="lime"] { background: var(--card-lime); color: var(--card-lime-ink); }
   .card-hue[data-color="black"] { background: var(--card-black); color: var(--card-black-ink); }
 
+  /* The rooms sender name, the same shape of mapping: `data-color` is a hash of
+     the name mod 8, and eight utilities on the element would be eight rules to
+     keep in step with the hash. The pill, the size and the weight are the
+     component's own, so they live here too; a row of my own carries the accent
+     as a utility on the parent instead, which is what the hue table loses to. */
+  [data-role="from"][data-color] {
+    padding: 0.05rem var(--space-2);
+    border-radius: var(--radius-pill);
+    font-size: var(--step--1);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  [data-role="from"][data-color="0"] { color: var(--chat-hue-0); border-bottom: 2px solid var(--chat-hue-0); }
+  [data-role="from"][data-color="1"] { color: var(--chat-hue-1); border-bottom: 2px solid var(--chat-hue-1); }
+  [data-role="from"][data-color="2"] { color: var(--chat-hue-2); border-bottom: 2px solid var(--chat-hue-2); }
+  [data-role="from"][data-color="3"] { color: var(--chat-hue-3); border-bottom: 2px solid var(--chat-hue-3); }
+  [data-role="from"][data-color="4"] { color: var(--chat-hue-4); border-bottom: 2px solid var(--chat-hue-4); }
+  [data-role="from"][data-color="5"] { color: var(--chat-hue-5); border-bottom: 2px solid var(--chat-hue-5); }
+  [data-role="from"][data-color="6"] { color: var(--chat-hue-6); border-bottom: 2px solid var(--chat-hue-6); }
+  [data-role="from"][data-color="7"] { color: var(--chat-hue-7); border-bottom: 2px solid var(--chat-hue-7); }
+
   /* The Fleet card's state tab: a lamp on the card's leading edge, accent for a
      card with children and plain grey otherwise. It is a pseudo-element, and a
      lit one carries ring + glow — two shadows one shadow utility cannot

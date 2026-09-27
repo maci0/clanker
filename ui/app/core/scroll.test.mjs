@@ -43,11 +43,11 @@ test("scrollChatToLatest moves the conversation box, not window.scrollY", functi
   var windowY = 0;
   var prevDoc = globalThis.document;
   var prevWin = globalThis.window;
-  globalThis.document = {
+  globalThis.document = Object.assign(Object.create(prevDoc || null), {
     querySelector: function (sel) {
       return sel === "#view-chat .conversation-scroll" ? box : null;
     },
-  };
+  });
   globalThis.window = {
     scrollY: 0,
     scrollTo: function (arg) {

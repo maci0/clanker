@@ -29,13 +29,13 @@ test("lazy vendors share downloads and recover from errors, missing exports and 
     },
     clearTimeout(id) { timers.delete(id); },
   };
-  globalThis.document = {
+  globalThis.document = Object.assign(Object.create(savedDocument || null), {
     createElement(tag) {
       assert.equal(tag, "script");
       return { remove() { this.removed = true; } };
     },
     head: { appendChild(script) { scripts.push(script); } },
-  };
+  });
   const file = "delivery-test.js";
   let ready = false;
   const isReady = () => ready;

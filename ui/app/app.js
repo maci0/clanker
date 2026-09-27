@@ -3044,7 +3044,7 @@ function showRoomsComposerLocked(message, offerCreate) {
 function syncChatLogEmpty(room) {
   if (!el.chatLog) return;
   var existing = document.getElementById("chat-log-empty");
-  if (el.chatLog.querySelector(".chat-msg")) {
+  if (el.chatLog.querySelector("[data-role=msg]")) {
     if (existing) existing.remove();
     return;
   }
@@ -3228,7 +3228,7 @@ function pollChat(room) {
       el.chatStatus.textContent = "Could not load messages: " + err.message +
         " — retrying in " + Math.round(chatBackoff / 1000) + "s.";
       var empty = document.getElementById("chat-log-empty");
-      if (empty && !el.chatLog.querySelector(".chat-msg")) {
+      if (empty && !el.chatLog.querySelector("[data-role=msg]")) {
         empty.textContent = "Could not load messages. Retrying…";
       }
     });
@@ -3303,7 +3303,7 @@ var CHAT_HIGHLIGHT_CLASS = "animate-chat-highlight motion-reduce:animate-none mo
 var MSG_CLASS = "group relative box-border flex flex-col items-stretch gap-0.5 rounded-plate border-l-2 border-l-transparent px-2 py-1 font-sans text-sm leading-normal wrap-anywhere hover:border-l-rule hover:bg-[color-mix(in_srgb,var(--surface-2)_40%,transparent)] data-[grouped=true]:py-0.5 data-[grouped=true]:[&_[data-role=meta]]:hidden data-[mine=true]:bg-transparent data-[mine=true]:hover:bg-[color-mix(in_srgb,var(--surface-2)_35%,transparent)] data-[mine=true]:[&_[data-role=from]]:text-ok data-[deleted=true]:[&_[data-role=actions]]:hidden";
 var CHAT_META_CLASS = "mb-0.5 flex min-w-0 flex-wrap items-baseline gap-2";
 var CHAT_MARK_CLASS = "grid h-5 w-5 place-items-center rounded-capsule border border-rule bg-surface-2 text-xs leading-none";
-var CHAT_FROM_CLASS = "text-fg";
+var CHAT_FROM_CLASS = "";
 var CHAT_TIME_CLASS = "tabular-nums text-fg-muted data-[seen=true]:after:content-['_\u2713\u2713'] data-[seen=true]:after:text-ok";
 var CHAT_GUTTER_TIME_CLASS = "text-xs text-fg-muted opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100";
 var CHAT_TEXT_CLASS = "w-full min-w-0 whitespace-pre-wrap text-fg data-[md=true]:whitespace-normal data-[action=true]:italic data-[action=true]:text-fg-muted data-[deleted=true]:italic data-[deleted=true]:text-fg-muted";
@@ -3331,6 +3331,7 @@ function buildChatMessage(m) {
   var grouped = (m.from === _lastChatFrom) && (m.ts - _lastChatTs < 300) && (_chatDayKey(m.ts) === _lastChatDay);
   var wrap = document.createElement("div");
   wrap.className = MSG_CLASS;
+  wrap.setAttribute("data-role", "msg");
   if (m.from === instanceName) wrap.setAttribute("data-mine", "true");
   if (grouped) wrap.setAttribute("data-grouped", "true");
   if (m.id) wrap.dataset.msgId = m.id;
@@ -3389,6 +3390,7 @@ function buildChatMessage(m) {
 
   var text = document.createElement("div");
   text.className = CHAT_TEXT_CLASS;
+  text.setAttribute("data-role", "body");
   text.setAttribute("data-md", "true");
   // Deleted messages
   if (m.deleted) {
@@ -3710,9 +3712,9 @@ else setRoomsSidebarOpen(true, false);
 // Group headers (Channels / Direct Messages) fold their own items away: the
 // group's data-collapsed hides its items through the utility on them. The head
 // is a real button (keyboard-operable); aria-expanded tracks the fold.
-Array.prototype.forEach.call(document.querySelectorAll(".slack-room-group-head"), function (head) {
+Array.prototype.forEach.call(document.querySelectorAll("#chat-room-list [data-group]"), function (head) {
   head.addEventListener("click", function () {
-    var group = head.closest(".slack-room-group");
+    var group = head.closest("[data-collapsed]");
     if (!group) return;
     var collapsed = group.getAttribute("data-collapsed") !== "true";
     group.setAttribute("data-collapsed", collapsed ? "true" : "false");
@@ -3790,8 +3792,10 @@ function loadChatPins(room) {
           ids.forEach(function (id) {
             var node = have[id];
             var m = byId[id];
-            var sender = node ? node.querySelector(".chat-from").textContent : m ? m.from : "";
-            var text = node ? node.querySelector(".chat-text").textContent : m ? m.text : id;
+            var fromEl = node ? node.querySelector("[data-role=from]") : null;
+            var bodyEl = node ? node.querySelector("[data-role=body]") : null;
+            var sender = fromEl ? fromEl.textContent : m ? m.from : "";
+            var text = bodyEl ? bodyEl.textContent : m ? m.text : id;
             var row = document.createElement("div");
             row.className = PIN_ITEM_CLASS;
             row.setAttribute("role", "button");
@@ -3971,6 +3975,7 @@ var typingAt = 0, typingTimer = null;
 function setTyping(on){
   var ind = document.getElementById("chat-typing");
   if(!ind) return;
+  ind.className = TYPING_INDICATOR_CLASS;
   if (on) {
     ind.innerHTML = "";
     var name = (window._clankerInstance || "you");
