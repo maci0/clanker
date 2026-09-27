@@ -5,11 +5,20 @@
 
 # default_provider = "deepseek"
 
+# A [providers.<name>] stanza here replaces the committed one whole, models
+# included, so it has to bring its own: against the shipped config.toml, this
+# stanza alone leaves vllm-local with no models and the load fails with
+# "provider 'vllm-local': no models declared".
 # [providers.vllm-local]
 # base_url = "http://192.168.0.211:8000/v1"
 # cache_ttl_ms = 0
+#
+# [models."vllm-local/deepseek-v4-flash"]
+# provider = "vllm-local"
+# context_window = 512000
 
-# Add a model without repeating the whole provider stanza:
+# A model entry may also add to a provider only config.toml declares, with no
+# [providers.<name>] stanza of its own:
 # [models."deepseek/deepseek-chat"]
 # provider = "deepseek"
 # max_tokens = 2048

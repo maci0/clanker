@@ -4680,6 +4680,94 @@ test "a config.local.json sibling is ignored: TOML is canonical" {
     try std.testing.expectEqualStrings("config.toml", cfg.default_provider_from.?);
 }
 
+test "a local provider override drops the base file's models with it" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "lan"
+        \\providers = { lan = { base_url = "http://lan.test:8000/v1" } }
+        \\models = { "lan/m" = { provider = "lan" } }
+        ,
+    });
+
+    // Models that are not redeclared here.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[providers.lan]
+        \\base_url = "http://192.168.0.211:8000/v1"
+        ,
+    });
+    // A [providers.<name>] stanza is a new endpoint, not a patch over the
+    // committed one, so it replaces the provider whole and the base file's
+    // [models."lan/m"] goes with it. The provider is then left with none, and
+    // that has to be a load-time error: the alternative is a provider the
+    // operator redirected to their own box being served a model it never
+    // declared. config.local.toml.example spells the same trap out.
+    try std.testing.expectError(error.ProviderMissingModel, Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml"));
+
+    // The same override carrying its own model loads, and the model is there.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[providers.lan]
+        \\base_url = "http://192.168.0.211:8000/v1"
+        \\
+        \\[models."lan/m"]
+        \\provider = "lan"
+        ,
+    });
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+    const p = cfg.providers.getPtr("lan").?;
+    try std.testing.expect(p.models.get("m") != null);
+    try std.testing.expectEqualStrings("m", p.default_model);
+    // The base file no longer owns the endpoint.
+    try std.testing.expectEqualStrings("http://192.168.0.211:8000/v1", p.base_url);
+}
+
+test "a local model entry reaches a provider only the base file declares" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const io = env.io();
+
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.toml",
+        .data =
+        \\default_provider = "lan"
+        \\providers = { lan = { base_url = "http://lan.test:8000/v1", default_model = "m" } }
+        \\models = { "lan/m" = { provider = "lan" } }
+        ,
+    });
+
+    // The local file's [models] table is distributed after the provider merge,
+    // against the merged config, so a checkout-private file can add a model
+    // without repeating a [providers.<name>] stanza it has no reason to restate.
+    // Parsed on its own this file names a provider it does not declare, which
+    // is why the ordering is the whole point.
+    try env.tmp.dir.writeFile(io, .{
+        .sub_path = "config.local.toml",
+        .data =
+        \\[models."lan/extra"]
+        \\provider = "lan"
+        \\max_tokens = 4096
+        ,
+    });
+    const cfg = try Config.load(io, arena, env.tmp.dir, "config.toml", "config.local.toml");
+    const p = cfg.providers.getPtr("lan").?;
+    try std.testing.expect(p.models.get("m") != null);
+    const extra = p.models.get("extra").?;
+    try std.testing.expectEqual(@as(u32, 4096), extra.max_tokens);
+    // The base file's own choice still decides which one is active: an added
+    // model is added, not promoted.
+    try std.testing.expectEqualStrings("m", p.default_model);
+}
+
 test "default_provider provenance names the file that set it" {
     var env: test_env.Env = .init();
     defer env.deinit();

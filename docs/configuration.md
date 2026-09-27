@@ -19,6 +19,16 @@ code wins.
   replaced as a whole. Put machine-specific endpoints, a different
   `default_provider`, or a local vLLM URL here. See
   `config.local.toml.example`.
+
+  `[providers.<name>]` is replaced as a whole too, models included: a local
+  stanza is a new endpoint, not a patch over the committed one, so
+  re-declaring `[providers.nvidia]` with only a `base_url` leaves it with no
+  models and the load fails with `no models declared`. Copy the base file's
+  `[models."<provider>/..."]` entries alongside it, or leave the provider in
+  `config.toml` and override just `default_provider` here. A local
+  `[models."<provider>/<model>"]` entry is applied after the provider merge,
+  so it may add a model to a provider only `config.toml` declares, without
+  repeating that `[providers.<name>]` stanza.
 - **`.env`** — API keys. clanker loads it at startup (the `dotenv` module) into
   the process environment; a provider names the variable to read with
   `api_key_env`. Keys never go in the TOML. A line that is neither a comment

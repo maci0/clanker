@@ -27,6 +27,11 @@ tools/ts/build/
 # User-local configuration (API keys live in env vars anyway)
 config.local.json
 config.local.toml
+# Checkout-private half of a named profile, the same relationship
+# `config.local.toml` has to `config.toml`. It holds machine-local endpoints,
+# so it is exactly the file a `git add -A` must not pick up. The committed
+# `profiles/<name>.toml` beside it stays tracked.
+profiles/*.local.toml
 
 # User-local project agent instructions. No trailing slash: this can be a
 # symlink and must not be stageable as a regular Git entry.
