@@ -7,6 +7,8 @@ list anywhere:
 - build.zig.zon            — zwasm, vaxis (zig hash-pinned)
 - vendor/toml/README.md    — vendored zig-toml (MIT)
 - vendor/sqlite/README.md  — vendored SQLite amalgamation (Public Domain)
+- package.json             — root devDependencies, paired with bun.lock
+- tools/ts/package.json    — AssemblyScript devDependency
 - bun.lock                 — oxlint, tailwindcss + transitive npm deps
 - tools/ts/bun.lock        — assemblyscript + transitive npm deps
 - ui/vendor/README.md      — vendored web UI JS/CSS
@@ -148,11 +150,66 @@ def vendored_sqlite() -> dict | None:
 # binary, so everything they resolve is dev-scope in the document.
 NPM_LOCKFILES = ("bun.lock", "tools/ts/bun.lock")
 
+# Each npm manifest with the lockfile that pins it, in the same order. The
+# pairing is what lets a check say "this manifest's devDependencies" and
+# "that lockfile's workspace block" are the same set, rather than comparing
+# two unordered bags of names.
+NPM_MANIFESTS = (
+    ("package.json", "bun.lock"),
+    ("tools/ts/package.json", "tools/ts/bun.lock"),
+)
+
+# The manifest keys that would give a package install-time code execution or a
+# place in a shipped release. `trustedDependencies` is the one bun honours:
+# lifecycle scripts run only for packages named there, so its absence is what
+# keeps `bun install` inert. The others are scope, and every component below
+# is marked dev-only on the strength of both manifests declaring dev-only
+# dependencies.
+NPM_LIFECYCLE_KEY = "trustedDependencies"
+NPM_PRODUCTION_KEYS = ("dependencies", "optionalDependencies", "peerDependencies")
+
+# A version specifier that resolves to exactly one release. Anything carrying
+# a range operator, a comparator or a tag is excluded, so a caret that would
+# admit the next minor without review is not an exact pin.
+EXACT_VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]*")
+
+
+def is_exact_version(spec: str) -> bool:
+    return bool(EXACT_VERSION.fullmatch(spec))
+
 
 def _read_lock(lockfile: str) -> dict:
     # bun.lock is JSONC: valid JSON except for trailing commas, which bun emits
     # to keep diffs one-line-per-package. Strip them and parse as JSON.
     return json.loads(re.sub(r",(\s*[}\]])", r"\1", read(lockfile)))
+
+
+def npm_manifests() -> list:
+    """(manifest path, lockfile path, parsed manifest) for every npm manifest.
+
+    A manifest is plain JSON, unlike the JSONC lockfile beside it.
+    """
+    out = []
+    for manifest_path, lockfile in NPM_MANIFESTS:
+        try:
+            parsed = json.loads(read(manifest_path))
+        except json.JSONDecodeError as e:
+            die(f"{manifest_path} is not valid JSON: {e}")
+        if not isinstance(parsed, dict):
+            die(f"{manifest_path} is not a JSON object")
+        out.append((manifest_path, lockfile, parsed))
+    return out
+
+
+def workspace_devdeps(lockfile: str) -> dict:
+    """The devDependencies each workspace block of `lockfile` declares."""
+    workspaces = _read_lock(lockfile).get("workspaces", {})
+    if not isinstance(workspaces, dict):
+        die(f"{lockfile} has no workspaces object")
+    merged: dict = {}
+    for entry in workspaces.values():
+        merged.update(entry.get("devDependencies", {}))
+    return merged
 
 
 def npm_components() -> list:
@@ -191,9 +248,7 @@ def npm_direct_devdeps() -> list:
     """Names each lockfile's own workspace declares, in lockfile order."""
     names = []
     for lockfile in NPM_LOCKFILES:
-        workspaces = _read_lock(lockfile).get("workspaces", {})
-        for entry in workspaces.values():
-            names.extend(entry.get("devDependencies", {}))
+        names.extend(workspace_devdeps(lockfile))
     return names
 
 

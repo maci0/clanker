@@ -59,7 +59,12 @@ same tree with the same integrity digests (CI, `scripts/verify.sh` and
 script: neither manifest grants a `trustedDependencies` entry, and bun runs
 lifecycle scripts only for packages listed there. Both lockfiles are read by
 `scripts/sbom.py`, so the release SBOM names every one of these packages with
-the digest the lockfile pins it to.
+the digest the lockfile pins it to. Both manifests pin the package manager
+(`bun@1.4.2`), since `tools/ts/dist/` is committed and `tools/ts/verify.sh`
+rebuilds and diffs it with whatever bun the runner has. Each manifest's
+`devDependencies` must equal its lockfile's workspace block, so a manifest
+edited without re-locking fails `scripts/test_sbom.py` instead of resolving a
+different tree at the next install.
 
 One entry there is a pre-release build: `tools/ts/bun.lock` pins
 `binaryen@131.0.0-nightly.20260721`, the exact transitive version

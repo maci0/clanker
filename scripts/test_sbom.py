@@ -84,6 +84,59 @@ class SbomTest(unittest.TestCase):
             self.assertIn(dependency["ref"], refs)
             self.assertTrue(set(dependency["dependsOn"]).issubset(refs))
 
+    def test_manifests_declare_only_pinned_dev_dependencies(self) -> None:
+        # `tools-ts-toolchain` (src/gate/checks.zig) reads tools/ts/package.json
+        # and nothing refuses the root manifest, so neither of the two facts
+        # this repository states about the JS toolchain was enforced on half of
+        # it: `bun install` runs a lifecycle script only for a package named in
+        # trustedDependencies, and every component in the document is marked
+        # dev-only because both manifests declare dev-only dependencies. A
+        # range specifier is a third, quieter version of the same gap: the
+        # lockfile pins what resolved, so an unlocked range only shows up at
+        # the next `bun install`.
+        managers: set = set()
+        for path, lockfile, manifest in sbom.npm_manifests():
+            with self.subTest(manifest=path):
+                self.assertNotIn(
+                    sbom.NPM_LIFECYCLE_KEY, manifest,
+                    f"{path} grants install-time code execution to a package",
+                )
+                for key in sbom.NPM_PRODUCTION_KEYS:
+                    self.assertNotIn(
+                        key, manifest,
+                        f"{path} declares {key}; the document marks every "
+                        "component dev-only",
+                    )
+                dev = manifest.get("devDependencies")
+                self.assertTrue(dev, f"{path} declares no devDependencies")
+                for name, spec in dev.items():
+                    self.assertTrue(
+                        sbom.is_exact_version(spec),
+                        f"{path} pins {name} as {spec!r}, which is not one "
+                        "exact release",
+                    )
+                # A manifest edited without re-locking resolves a different
+                # tree on the next install than the one this document and the
+                # `bun install --frozen-lockfile` gate were built from.
+                self.assertEqual(
+                    dev, sbom.workspace_devdeps(lockfile),
+                    f"{path} and {lockfile} disagree on the direct devDependencies",
+                )
+                # tools/ts/dist/ is committed, so `tools/ts/verify.sh` rebuilds
+                # and diffs it with whatever bun the runner has. The root
+                # manifest pinned the package manager; this one did not, so
+                # the tree that produces a shipped artifact was the one
+                # resolving against an unpinned bun.
+                pinned = manifest.get("packageManager", "")
+                self.assertTrue(
+                    pinned.startswith("bun@"),
+                    f"{path} pins no bun version as packageManager",
+                )
+                managers.add(pinned)
+        # One toolchain builds both trees: the AssemblyScript guests and the
+        # Tailwind sheet are produced by the same project release.
+        self.assertEqual(len(managers), 1)
+
     def test_every_manifest_dependency_is_named_in_the_license_inventory(self) -> None:
         # THIRD_PARTY_LICENSES.md claims "adding a dependency means adding a
         # row in the same change"; nothing enforced that, and the Tailwind

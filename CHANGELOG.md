@@ -80,6 +80,19 @@ internal.
 
 ### Security
 
+- Both npm manifests are held to the toolchain rules the release SBOM already
+  stated: no `trustedDependencies` (bun runs an install script only for a
+  package named there, so its absence is what keeps `bun install` inert), no
+  production `dependencies` block (every component in `sbom.cdx.json` is
+  marked dev-only on that basis), and every devDependency pinned to one exact
+  release rather than a range. `tools-ts-toolchain` checked
+  `tools/ts/package.json` only, so none of the three was enforced on the root
+  manifest. Each manifest's devDependencies must also equal its lockfile's
+  workspace block, so a manifest edited without re-locking fails here instead
+  of resolving a different tree at the next `bun install`. `tools/ts/package.json`
+  now pins `bun@1.4.2` like the root manifest, so the tree that rebuilds the
+  committed `tools/ts/dist/` resolves against a named bun. Checked by
+  `scripts/test_sbom.py`, which `scripts/verify.sh` and CI already run.
 - Model output that feeds another model call is quoted, not concatenated. The
   `arena` prompts (combatant turn, judge, closing synthesis) now fence every
   opponent move, stance, artifact, question and persona, and `compare` fences

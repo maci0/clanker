@@ -2,6 +2,7 @@
   "name": "clanker-as-tools",
   "version": "0.6.0",
   "private": true,
+  "packageManager": "bun@1.4.2",
   "scripts": {
     "build:all": "bash -ec 'for f in *.ts; do case \"$f\" in env.d.ts|lib.ts|json.ts) continue;; esac; asc \"$f\" -o \"${DIST_OUT:-dist}/${f%.ts}.wasm\" --optimize --bindings raw --noExportMemory; done'"
   },
