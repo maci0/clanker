@@ -416,9 +416,6 @@ main {
 /* Idle Chat is a work-order stack, not a centered chat-product hero:
    legend plate, composer, jobs. Session verbs and find wait until a
    turn exists (they stay in the palette). */
-.plan-toggle.safety-toggle span {
-  font-family: var(--mono); letter-spacing: var(--track-label);
-}
 .view:not(#view-chat):not([hidden]) {
   flex: 1 1 auto; min-height: 0; width: 100%; overflow-y: auto; overscroll-behavior: contain;
 }
@@ -898,57 +895,15 @@ button, .chip, button.chip-btn, textarea, select, .turn, .run-node, .run-iter-ta
 /* Model pill: short name + chevron, opens the popover (Kimi/Unsloth-style). */
 /* Theme rows carry a colour dot, so they lay out across instead of down.
    Must stay after .model-picker__option, whose flex-direction it overrides. */
-.params-grid { align-items: center; }
-.params-grid label { color: var(--fg-muted); font-family: var(--mono); font-size: var(--step--1); }
-.params-grid input[type="number"] { width: 6rem; }
-.checkbox-row {
-  display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer;
-  min-width: 0; min-height: 32px;
-}
 /* Plan mode: the composer toggle sits beside Run, and the turn it produced
    carries a badge so a proposal is never mistaken for something that ran. */
-.plan-toggle {
-  color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0);
-  margin-inline-end: var(--space-2);
-}
-.plan-badge {
-  font-family: var(--mono); font-size: var(--step--1);
-  padding: 0.05rem var(--space-2); margin-inline-start: var(--space-2);
-  border: 1px solid var(--accent); border-radius: var(--radius-sm);
-  color: var(--accent-text); white-space: nowrap;
-  text-transform: uppercase; letter-spacing: var(--track-label);
-}
 /* The current/last turn's receipt: goal, tool-call count, sub-agent count,
    todo progress. Sits under the session title, above the transcript. */
-.session-status-bar {
-  display: flex; flex-wrap: wrap; gap: var(--space-2);
-  margin: 0 0 var(--space-2);
-}
-.status-chip {
-  font-family: var(--mono); font-size: var(--step--1);
-  padding: 0.1rem 0.5rem;
-  border: 1px solid var(--rule); border-radius: var(--radius-pill);
-  color: var(--fg-muted); white-space: nowrap;
-}
-#status-goal { border-color: var(--accent); color: var(--accent-text); }
 input[type="checkbox"] {
   flex: none; width: 1.05rem; height: 1.05rem; margin: 0;
   accent-color: var(--accent);
 }
 
-.transcript-tools {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
-  margin-top: var(--space-2);
-  border: 1px solid var(--rule); border-radius: var(--radius-pill);
-  padding: 0.2rem 0.5rem 0.2rem var(--space-3);
-  background: var(--surface);
-  font-size: var(--step-0);
-}
-.transcript-tools .meta#turn-filter-count { font-size: var(--step--1); }
-.transcript-tools:has(input:focus-visible) { border-color: var(--border); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent); }
-.transcript-tools > label { color: var(--fg-muted); font-family: var(--sans); font-size: var(--step-0); font-weight: 500; }
-.transcript-tools #turn-filter { min-height: 30px; border: 0; background: transparent; box-shadow: none; padding: 0.2rem var(--space-2); }
-.transcript-tools #turn-filter:focus-visible { outline-offset: 2px; }
 /* The match itself, not the whole turn: scanning a long answer for the word
    you searched is the part a filter alone does not help with. */
 mark {
@@ -980,18 +935,7 @@ mark {
   color: var(--fg-muted);
   margin: 0 0 var(--space-2);
 }
-.suggestions { display: grid; grid-template-columns: repeat(2, minmax(0, 18rem)); gap: var(--space-3); margin-top: var(--space-3); }
 @media (max-width: 520px) { .suggestions { grid-template-columns: 1fr; } }
-.suggestion {
-  min-height: 44px; padding: var(--space-3) var(--space-4); text-align: start;
-  border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--surface); color: var(--fg);
-  font-family: var(--sans); font-size: var(--step-0); line-height: 1.35; cursor: pointer;
-  box-shadow: none;
-}
-.suggestion:hover { border-color: var(--border); background: var(--surface-2); }
-.suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
 .toasts {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: var(--space-5); z-index: 30;
@@ -1017,10 +961,6 @@ body:has(#view-chat:not([hidden])) .toasts { bottom: calc(var(--space-5) + var(-
 .goal-form label { color: var(--fg); font-family: var(--mono); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.02em; }
 .goal-form input, .goal-form textarea { flex: 1 1 16rem; min-width: 0; }
 .goal-form textarea { resize: vertical; }
-.progress-log {
-  max-height: 18rem; overflow: auto; white-space: pre-wrap;
-  font-family: var(--mono); font-size: var(--step--1);
-}
 .settings-grid {
   display: grid; gap: var(--space-4);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));

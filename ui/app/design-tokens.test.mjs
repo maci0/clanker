@@ -128,13 +128,13 @@ function splitLayers(value) {
 }
 
 test("task suggestions are flat controls without entrance choreography", () => {
-  const css = readFileSync(join(here, "app.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-  const suggestion = css.match(/(?:^|\n)\.suggestion\s*\{([^}]*)\}/);
-  assert.ok(suggestion, "task suggestion styles must exist");
-  assert.match(suggestion[1], /box-shadow:\s*none\s*;/);
-  for (const rule of css.matchAll(/[^{}]*\.suggestion(?:\b|:)[^{}]*\{([^}]*)\}/g)) {
-    assert.doesNotMatch(rule[1], /\banimation(?:-[\w-]+)?\s*:/);
-  }
+  // The suggestion is a class list in app.js now, so the guard reads it: no
+  // shadow of its own, and no animation on the control.
+  const app = readFileSync(join(here, "app.js"), "utf8");
+  const m = /var SUGGESTION_CLASS = "([^"]*)"/.exec(app);
+  assert.ok(m, "the suggestion's class list must exist");
+  assert.match(m[1], /shadow-none/);
+  assert.doesNotMatch(m[1], /\banimate-/);
 });
 
 test("every border-radius is a token, a full circle, or none", () => {

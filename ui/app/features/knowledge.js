@@ -65,7 +65,7 @@ export function loadKnowledge(){
           persistKnowledge(); updateHint(); refreshBadge();
         });
         var include=document.createElement("label");
-        include.className="checkbox-row m-0 flex-none";
+        include.className="m-0 inline-flex min-h-8 min-w-0 flex-none cursor-pointer items-center gap-1";
         include.appendChild(cb);
         var includeTxt=document.createElement("span"); includeTxt.textContent="Include in chat";
         include.appendChild(includeTxt);

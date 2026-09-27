@@ -626,6 +626,12 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   channels — which a utility on the sidebar cannot express. The rail's search
   field carries its own phone guard. First paint 59.0 → 58.8K gz.
 
+- The chat's job buttons and its chrome are utilities: the suggestion grid and
+  each job button (the class list lives in app.js, so the flat-control guard
+  reads it there), the turn receipt's bar and its status chips, the transcript
+  toolbar, the progress log, the plan badge, the parameter grid and the
+  checkbox rows. First paint 58.8 → 58.7K gz.
+
 ### Fixed
 
 - Importing a chat file in the web UI no longer turns a `system` or `tool`

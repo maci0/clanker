@@ -1593,6 +1593,9 @@ var RAIL_EMPTY_CLASS = "font-mono text-sm text-fg-muted";
 var RAIL_EMPTY_ACTION_CLASS = "inline min-h-0 min-w-0 cursor-pointer border-0 bg-transparent p-0 [font:inherit] text-accent-text underline decoration-dotted underline-offset-2 hover:text-accent focus-visible:text-accent";
 var TAB_COUNT_CLASS = "ml-2 font-normal text-fg-muted in-aria-selected:text-accent-text";
 
+/* The idle chat's job buttons: one per saved prompt, sized to a thumb. */
+var SUGGESTION_CLASS = "min-h-11 cursor-pointer rounded-plate border border-border bg-surface px-4 py-2 text-start font-sans text-sm leading-snug text-fg shadow-none hover:border-border hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1";
+
 function createTurn(task) {
   if (el.transcriptEmpty) el.transcriptEmpty.hidden = true;
   document.getElementById("view-chat").setAttribute("data-empty", "false");
@@ -2541,7 +2544,7 @@ el.form.addEventListener("submit", function (e) {
        so a reader scanning back knows this answer never touched anything. */
     turn.root.setAttribute("data-plan", "true");
     var planBadge = document.createElement("span");
-    planBadge.className = "plan-badge";
+    planBadge.className = "ml-1 rounded-plate-sm border border-accent px-2 py-0.5 font-mono text-xs uppercase tracking-label whitespace-nowrap text-accent-text";
     planBadge.textContent = "plan";
     var youHead = turn.root.querySelector(".turn-you-head");
     (youHead || turn.root.querySelector("[data-turn=you]")).appendChild(planBadge);
@@ -4836,7 +4839,7 @@ var SUGGESTIONS = [
 SUGGESTIONS.forEach(function (text) {
   var b = document.createElement("button");
   b.type = "button";
-  b.className = "suggestion";
+  b.className = SUGGESTION_CLASS;
   b.textContent = text;
   b.addEventListener("click", function () {
     el.task.value = text;

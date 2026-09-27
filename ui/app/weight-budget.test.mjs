@@ -147,11 +147,12 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // reaching beyond ui/ (docs, changelogs, .scratch) turns every prose word
   // that looks like a utility into a rule.
   const css = fileBytes("tailwind.css").length / KiB;
-  // 120, raised from 48 fifteen times, each named in CHANGELOG: the run graph, the
+  // 124, raised from 48 sixteen times, each named in CHANGELOG: the run graph, the
   // board lane, the card face, its chips, its members, the detail panel, the
   // tool rows, the rooms sidebar, the message row, the rooms main column, the
   // transcript's turn, the dialog backdrop views.css held last, the rail, the
-  // masthead's chips, the model and theme pickers, the chat column. This is
+  // masthead's chips, the model and theme pickers, the chat column, its job
+  // buttons. This is
   // accounting, not a ceiling — the sheet absorbs the cabinet sheets' rules as
   // utilities while both still ship (app.css is still ~150K raw), and phase 6
   // deletes those sheets, leaving this one holding the whole UI. The binding
@@ -159,7 +160,7 @@ test("the compiled Tailwind sheet stays inside its budget", function () {
   // sheet plus app.css plus index.html. What this one catches is growth that is
   // *not* a view moving over: an `@source` glob reaching beyond ui/ turns prose
   // in docs or .scratch into rules.
-  assert.ok(css <= 120, `tailwind.css is ${css.toFixed(1)}K raw; budget is 120K`);
+  assert.ok(css <= 124, `tailwind.css is ${css.toFixed(1)}K raw; budget is 124K`);
 });
 
 test("single large files stay inside their budgets", function () {

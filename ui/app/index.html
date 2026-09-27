@@ -225,13 +225,13 @@ lamps carry further). The seven named palettes ride the same tokens.
          while streaming, left as a receipt once the turn finishes; resets
          when the next turn starts. Session-lifetime only, not persisted,
          so a reload clears it, same as the transcript's live caret does. -->
-    <div class="session-status-bar" id="session-status-bar" hidden>
-      <span class="status-chip" id="status-goal" hidden></span>
-      <span class="status-chip" id="status-tools" hidden></span>
-      <span class="status-chip" id="status-subagent" hidden></span>
-      <span class="status-chip" id="status-todos" hidden></span>
+    <div class="mb-1 flex flex-wrap gap-1" id="session-status-bar" hidden>
+      <span class="rounded-capsule border border-accent px-2 py-0.5 font-mono text-xs whitespace-nowrap text-accent-text" id="status-goal" hidden></span>
+      <span class="rounded-capsule border border-rule px-2 py-0.5 font-mono text-xs whitespace-nowrap text-fg-muted" id="status-tools" hidden></span>
+      <span class="rounded-capsule border border-rule px-2 py-0.5 font-mono text-xs whitespace-nowrap text-fg-muted" id="status-subagent" hidden></span>
+      <span class="rounded-capsule border border-rule px-2 py-0.5 font-mono text-xs whitespace-nowrap text-fg-muted" id="status-todos" hidden></span>
     </div>
-    <div class="transcript-tools" id="transcript-tools">
+    <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-capsule border border-rule bg-surface px-2 py-0.5 pl-3 text-sm" id="transcript-tools">
       <label for="turn-filter">Search this conversation</label>
       <input type="search" id="turn-filter" placeholder="Find in transcript…" autocomplete="off">
       <span class="meta" id="turn-filter-count"></span>
@@ -267,7 +267,7 @@ lamps carry further). The seven named palettes ride the same tokens.
                 title="Active model (driven by the model picker)"></select>
         <details class="more" id="params">
           <summary class="min-h-8 rounded-capsule px-3 py-1 text-xs">Advanced</summary>
-          <div class="more-actions params-grid">
+          <div class="more-actions items-center [&_input[type=number]]:w-24 [&_label]:font-mono [&_label]:text-xs [&_label]:text-fg-muted">
             <label class="text-xs" for="fallback-provider">Fallback provider</label>
             <select id="fallback-provider" class="model-select"
                     title="If a run's API request to the selected provider fails, retry it automatically with this provider. None disables auto-retry.">
@@ -287,7 +287,7 @@ lamps carry further). The seven named palettes ride the same tokens.
               <option value="high">high (thorough reasoning for hard problems)</option>
               <option value="max">max (maximum reasoning; slowest, most expensive)</option>
             </select>
-            <label for="enter-sends" class="checkbox-row">
+            <label for="enter-sends" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1">
               <input type="checkbox" id="enter-sends">
               <span>Enter sends, Shift+Enter makes a new line</span>
             </label>
@@ -305,19 +305,19 @@ lamps carry further). The seven named palettes ride the same tokens.
           <details class="group relative" id="run-shape">
             <summary class="max-w-56 min-h-8 cursor-pointer list-none truncate rounded-capsule border border-rule bg-surface px-2 py-1 font-mono text-xs font-semibold uppercase tracking-label text-fg-muted group-open:border-accent group-open:text-fg group-data-[active=true]:border-accent group-data-[active=true]:text-fg [&::-webkit-details-marker]:hidden">Run shape</summary>
             <div class="absolute bottom-[calc(100%+0.35rem)] left-0 z-4 flex min-w-64 flex-wrap gap-2 rounded-plate border border-rule bg-surface p-2 shadow-[var(--lift)]">
-          <label for="plan-mode" class="checkbox-row plan-toggle" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
+          <label for="plan-mode" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1 mr-1 font-sans text-sm text-fg-muted" title="The run proposes a plan instead of executing: write-capable tools are refused until you apply it">
             <input type="checkbox" id="plan-mode">
             <span>Plan</span>
           </label>
-          <label for="research-mode" class="checkbox-row plan-toggle" title="The run consults the web (web_search/web_fetch) for current, sourced information">
+          <label for="research-mode" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1 mr-1 font-sans text-sm text-fg-muted" title="The run consults the web (web_search/web_fetch) for current, sourced information">
             <input type="checkbox" id="research-mode">
             <span>Research</span>
           </label>
-          <label for="unlimited-iterations" class="checkbox-row plan-toggle" title="Raise this run's iteration budget to the hard ceiling (1000 steps) instead of the configured default (usually 50). The harness still stops.">
+          <label for="unlimited-iterations" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1 mr-1 font-sans text-sm text-fg-muted" title="Raise this run's iteration budget to the hard ceiling (1000 steps) instead of the configured default (usually 50). The harness still stops.">
             <input type="checkbox" id="unlimited-iterations">
             <span>Long run (1000 steps)</span>
           </label>
-          <label for="worktree-mode" class="checkbox-row plan-toggle safety-toggle" title="Run this chat in its own git worktree and branch, leaving the shared checkout untouched.">
+          <label for="worktree-mode" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1 mr-1 font-sans text-sm text-fg-muted [&_span]:font-mono [&_span]:tracking-label" title="Run this chat in its own git worktree and branch, leaving the shared checkout untouched.">
             <input type="checkbox" id="worktree-mode">
             <span>Isolated worktree</span>
           </label>
@@ -351,7 +351,7 @@ lamps carry further). The seven named palettes ride the same tokens.
          this thing does; each one is a real task against this repo. They sit
          under the composer and leave with the empty state once the first
          turn lands. -->
-    <div class="suggestions" id="suggestions"></div>
+    <div class="mt-2 grid grid-cols-[repeat(2,minmax(0,18rem))] gap-2 max-[520px]:grid-cols-1" id="suggestions"></div>
 
   </div>
   <div class="view" id="view-runs" role="tabpanel" aria-labelledby="tab-runs" tabindex="-1" hidden>
@@ -585,7 +585,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="section-head">
         <h2>Kanban</h2>
         <div class="toolbar-actions">
-          <label class="checkbox-row" for="board-room">
+          <label class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1" for="board-room">
             <span>Room</span>
             <select id="board-room"></select>
           </label>
@@ -603,7 +603,7 @@ lamps carry further). The seven named palettes ride the same tokens.
         <label for="goal-max-iterations">Max steps</label>
         <input type="number" id="goal-max-iterations" placeholder="usually 50" min="1" max="1000" autocomplete="off"
                title="How many tool steps each run of this goal may take. Leave blank to use the configured default (usually 50). The hard ceiling is 1000.">
-        <label class="checkbox-row" for="goal-worktree" title="Work this goal in its own git worktree and branch, leaving the shared checkout untouched">
+        <label class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1" for="goal-worktree" title="Work this goal in its own git worktree and branch, leaving the shared checkout untouched">
           <input type="checkbox" id="goal-worktree">
           <span>Isolated worktree</span>
         </label>
@@ -628,8 +628,8 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="transcript-tools mt-2 grid grid-cols-[auto_minmax(10rem,1fr)_auto_auto_auto_minmax(5rem,auto)_auto_minmax(5rem,auto)_auto_minmax(5rem,auto)] items-center gap-1 rounded-plate-lg bg-surface-2/60 p-1" id="board-filter">
         <label for="board-filter-input">Filter</label>
         <input type="search" id="board-filter-input" placeholder="Filter cards…" autocomplete="off">
-        <label for="board-mine" class="checkbox-row"><input type="checkbox" id="board-mine"> Only mine</label>
-        <label for="board-filter-blocked" class="checkbox-row"><input type="checkbox" id="board-filter-blocked"> Blocked only</label>
+        <label for="board-mine" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1"><input type="checkbox" id="board-mine"> Only mine</label>
+        <label for="board-filter-blocked" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1"><input type="checkbox" id="board-filter-blocked"> Blocked only</label>
         <label for="board-filter-assignee">Assignee</label>
         <select id="board-filter-assignee"><option value="">All</option></select>
         <label for="board-filter-priority">Priority</label>
@@ -642,7 +642,7 @@ lamps carry further). The seven named palettes ride the same tokens.
            "kanban", native fragment scrolling opens this view halfway down. -->
       <div class="mt-3 flex min-h-[60vh] flex-nowrap items-start gap-3 overflow-x-auto overflow-y-hidden pb-3 scroll-smooth [scrollbar-color:color-mix(in_srgb,var(--fg)_18%,transparent)_transparent] [scrollbar-width:thin]" id="board-grid"></div>
       <div class="toolbar-actions mt-3 [hidden]:hidden" id="board-list-controls">
-        <label for="board-sort" class="checkbox-row"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
+        <label for="board-sort" class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1"><span>Sort</span> <select id="board-sort"><option value="updated">Updated</option><option value="priority">Priority</option><option value="due">Due date</option><option value="cost">Cost</option></select></label>
       </div>
       <div id="board-list-view" class="mt-3 overflow-x-auto"></div>
       <!-- A sibling, not a child: inside .board it became a flex item after the
@@ -798,7 +798,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="transcript-tools" id="knowledge-sync-row" hidden>
         <label for="knowledge-sync-path">Linked folder</label>
         <input type="text" id="knowledge-sync-path" placeholder="/path/on/server/docs" autocomplete="off">
-        <label class="checkbox-row" for="knowledge-sync-prune" title="Also remove synced documents whose files no longer exist in the folder">
+        <label class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1" for="knowledge-sync-prune" title="Also remove synced documents whose files no longer exist in the folder">
           <input type="checkbox" id="knowledge-sync-prune">
           <span>Prune missing</span>
         </label>
@@ -888,7 +888,7 @@ lamps carry further). The seven named palettes ride the same tokens.
           <button type="button" class="secondary danger" id="progress-stop" hidden>Stop</button>
         </div>
       </div>
-      <div class="progress-log mt-4 rounded-plate-lg border border-rule bg-surface p-4 shadow-[var(--lift-low)]" id="progress-log" role="log" aria-label="Progress log"></div>
+      <div class="mt-4 max-h-72 overflow-auto rounded-plate-lg border border-rule bg-surface p-4 font-mono text-xs whitespace-pre-wrap shadow-[var(--lift-low)]" id="progress-log" role="log" aria-label="Progress log"></div>
       <p class="sr-only" id="progress-status" role="status" aria-live="polite"></p>
       <div class="subsection-head-row">
         <h3 class="detail-head">History</h3>
@@ -997,7 +997,7 @@ lamps carry further). The seven named palettes ride the same tokens.
       <div class="settings-grid">
         <div class="settings-panel">
           <div class="settings-panel-title">Composer</div>
-          <label class="checkbox-row" for="settings-enter-sends">
+          <label class="inline-flex min-h-8 min-w-0 cursor-pointer items-center gap-1" for="settings-enter-sends">
             <input type="checkbox" id="settings-enter-sends">
             <span>Enter sends, Shift+Enter makes a new line</span>
           </label>
