@@ -1645,6 +1645,11 @@ test "proxy policy is on the vtable, not a kind switch" {
     try std.testing.expect(providers.forKind(.vertex_anthropic).proxy.vertex_body);
     try std.testing.expect(providers.forKind(.vertex).proxy.rewrite_vertex_body);
     try std.testing.expect(!providers.forKind(.gemini).proxy.enabled);
+    // A Responses-API vtable has no chat-completions or messages counterpart
+    // for the proxy to transcode to, so it must not inherit "speaks".
+    try std.testing.expect(!providers.forKind(.codex).proxy.enabled);
+    try std.testing.expect(!providers.forKind(.codex).proxy.speaks);
+    try std.testing.expect(!speaks(.codex, .openai));
     try std.testing.expect(!speaks(.gemini, .openai));
     try std.testing.expect(!speaks(.vertex, .anthropic));
     try std.testing.expect(speaks(.openai_compat, .openai));

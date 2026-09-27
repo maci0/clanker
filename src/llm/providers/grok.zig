@@ -8,6 +8,12 @@ const responses = @import("responses.zig");
 pub const provider: api.Provider = .{
     .kind = .grok,
     .auth = .{ .default = .api_key },
+    // The vtable speaks the Responses API, but the xAI base URL
+    // (`https://api.x.ai/v1`) also serves `/v1/chat/completions`, which is what
+    // the proxy path-joins, so the OpenAI-compat default holds here. Stated
+    // rather than inherited so the Responses/chat-completions split is a
+    // decision and not an accident of the default.
+    .proxy = .{ .family = .openai, .enabled = true, .speaks = true },
     .buildRequest = responses.buildRequest,
     .parseResponse = responses.parseResponse,
     .parseErrorDetail = responses.parseErrorDetail,

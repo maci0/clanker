@@ -10,6 +10,11 @@ const responses = @import("responses.zig");
 pub const provider: api.Provider = .{
     .kind = .codex,
     .auth = .{ .default = .api_key },
+    // The compat proxy transcodes only between OpenAI chat-completions and
+    // Anthropic messages. This vtable speaks the Responses API at `/responses`,
+    // so the default (path-join `base_url` + the inbound path) would send a
+    // chat-completions body to an endpoint that serves neither.
+    .proxy = .{ .enabled = false, .speaks = false },
     .buildRequest = buildRequest,
     .parseResponse = responses.parseResponse,
     .parseErrorDetail = responses.parseErrorDetail,

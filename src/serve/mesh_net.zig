@@ -504,7 +504,10 @@ pub fn start(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, on_c
         .admission = std.meta.stringToEnum(mesh.Admission, cfg.mesh.admission) orelse .allowlist,
         .seeds = seeds,
         .max_frame = cfg.mesh.max_frame_bytes,
-        .max_pending = @min(cfg.mesh.max_pending_joins, 8),
+        // The pending table is a fixed array, so the configured ceiling is
+        // only meaningful up to its length; anything above it was silently
+        // ignored against a literal that had to be kept in step by hand.
+        .max_pending = @min(cfg.mesh.max_pending_joins, @as(u16, Runtime.pending.len)),
         .prompt_timeout_ns = @as(i64, cfg.mesh.prompt_timeout_seconds) * std.time.ns_per_s,
         .on_chat = on_chat,
         .server = server,

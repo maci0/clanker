@@ -287,7 +287,14 @@ fn loadStored(conn: *sqlite.Connection, arena: std.mem.Allocator, id: []const u8
         const calls_raw = try arena.dupe(u8, stmt.columnText(3) orelse "[]");
         const imgs = try decodeImages(arena, imgs_raw);
         const calls = try decodeToolCalls(arena, calls_raw);
-        const tc_id: ?[]const u8 = if (stmt.columnText(4)) |c| try arena.dupe(u8, c) else null;
+        // A null `tool_call_id` is stored as "", so restore the null. Otherwise
+        // every non-tool message comes back carrying an empty id, which the
+        // wire codecs emit as `"tool_call_id": ""` on roles that have no tool
+        // call to answer. Same empty-means-absent rule as the two siblings.
+        const tc_id: ?[]const u8 = if (stmt.columnText(4)) |c| blk: {
+            const owned = try arena.dupe(u8, c);
+            break :blk if (owned.len == 0) null else owned;
+        } else null;
         try out.append(arena, .{
             .role = role,
             .content = content,
@@ -1142,6 +1149,10 @@ test "a saved session round-trips messages, attachments and the system prompt" {
     try std.testing.expectEqualStrings("read_file", s.messages[1].tool_calls.?[0].name);
     try std.testing.expectEqualStrings("call_1", s.messages[2].tool_call_id.?);
     try std.testing.expectEqualStrings("you are a test", s.system_prompt.?);
+    // Absent stays absent: a null id must not come back as "", which the
+    // OpenAI codec would then write onto a plain user turn.
+    try std.testing.expect(s.messages[0].tool_call_id == null);
+    try std.testing.expect(s.messages[1].tool_call_id == null);
 
     // The listing scores the row with counts.
     const metas = try listSessions(io, arena, dir);
