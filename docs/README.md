@@ -574,8 +574,9 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `themes/` | `src/tui/theme.zig` | Color palettes as JSON, shared by the REPL themes and web tokens. A `<name>.css` beside a palette is that theme's companion chrome sheet (`/webui/themes/<name>.css`), which the web UI links only while that theme is applied |
 | `commands/` | — | Drop-in JSON catalogs served to the web UI (`/webui/commands/*`; slash commands today) |
 | `tui-plugins/`, `cli-plugins/` | `src/tui/slash_plugins.zig`, `src/cli/cli_plugins.zig` | Slash-command / subcommand plugin manifests (PRD 0012) |
+| `hooks/` | `src/hooks/` | Claude-compatible lifecycle hook catalogs (`[hooks] config_path`, `ponytail.json` is the shipped one) |
 | `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
-| `rules/` | — | Rule files |
+| `rules/` | — | `ast-grep` rules, loaded through `sgconfig.yml` (`ruleDirs: rules`) alongside the custom Zig grammar built by `tools/grammars/build.sh` |
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |
 | `patches/` | — | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |

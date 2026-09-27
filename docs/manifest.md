@@ -187,6 +187,34 @@ exists for plugins that do not live in this repo: a directory someone unpacked
 has no idea what clanker's working directory will be, so a self-contained
 `{name.tool.json, name.wasm}` pair is the portable shape.
 
+### One module, several descriptors
+
+A descriptor name is not a module name. One guest can back a family of tools,
+so the `wasm` path often does not repeat the manifest's `name`, and pairing
+`name.tool.json` against `tools/zig/<name>.zig` reports a defect that is not
+there. 27 of the 121 shipped descriptors share a module with another:
+
+| Module | Descriptors | How it tells them apart |
+|---|---|---|
+| `tools/zig/chat.zig` | 14: the ten `chat_*` tools plus `todo_add`, `todo_claim`, `todo_close`, `todo_list` | Each descriptor's `config` object pins the op, `{"op":"send"}`; the guest re-emits the arguments with that op and forwards the host JSON from `ck_chat` |
+| `tools/zig/board.zig` | 11: `kanban` and the ten `kanban_*` tools | Same `config.op` dispatch, with `room` injected by the host in a workspace |
+| `tools/zig/sessions.zig` | 2: `sessions`, `session_search` | No `config` at all: the guest branches on the input (`q` present means search) |
+
+The split is by *argument shape*, not by name. A one-op tool gets its own
+descriptor for the same reason it gets its own entry in the catalog: the model
+sees one name and one schema, and the guest sees one function. Reach for a
+shared module when the ops differ only in which arguments they read and share
+the host calls underneath.
+
+Grants stay per-descriptor, so sharing a module never widens what a tool may
+do: the host builds each manifest's sandbox from that manifest's own
+`fs_prefixes`, `network_allow`, `exec_allow`, and `llm`, and a privileged call
+is checked at call time against the descriptor being served, not against what
+the module imported. None of the three shipped families diverges in any grant
+(`chat_*` and `todo_*` are all sequential with no fs or network, every
+`kanban_*` reads the board the same way), so today the only thing the split
+buys is one schema per op.
+
 ## Distributing a plugin
 
 A plugin package is a directory holding a manifest and the module it names:
