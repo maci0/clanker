@@ -14472,8 +14472,13 @@ fn openWorkspaceRoot(io: std.Io, arena: std.mem.Allocator, id: []const u8) !Work
     if (!validWorkspace(id)) return error.BadName;
     const list = workspace_mod.load(io, arena, std.Io.Dir.cwd()) catch return error.NotFound;
     if (workspace_mod.pathFor(list, id)) |p| {
-        const dir = std.Io.Dir.cwd().openDir(io, p, .{ .iterate = true }) catch return error.NotFound;
+        // Every fallible check first, the handle last. `find` is what
+        // `pathFor` resolves through, so the check cannot fail where
+        // `pathFor` succeeded today -- but openDir returning an owned handle
+        // that the `orelse return` below it would drop on the floor is a
+        // leak waiting for the two to ever disagree.
         const ws = workspace_mod.find(list, id) orelse return error.NotFound;
+        const dir = std.Io.Dir.cwd().openDir(io, p, .{ .iterate = true }) catch return error.NotFound;
         return .{ .dir = dir, .owned = true, .label = ws.name };
     }
     return .{ .dir = std.Io.Dir.cwd(), .owned = false, .label = id };
