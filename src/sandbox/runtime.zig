@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const log = @import("../util/log.zig");
+const seed_rng = @import("../util/seed_rng.zig");
 const protocol = @import("protocol.zig");
 const host = @import("host.zig");
 const config_mod = @import("../config.zig");
@@ -121,8 +122,8 @@ pub const ToolModule = struct {
         errdefer self.deinit();
 
         self.h = try gpa.create(host.Host);
-        const replay_seed = if (sb.seed == 0) @max(1, seedRng(0, wasm_bytes, io)) else sb.seed;
-        const rng_seed = seedRng(replay_seed, wasm_bytes, io);
+        const replay_seed = if (sb.seed == 0) @max(1, seed_rng.derive(0, wasm_bytes, io)) else sb.seed;
+        const rng_seed = seed_rng.derive(replay_seed, wasm_bytes, io);
         self.h.* = .{
             .sandbox = sb,
             .rng = std.Random.DefaultPrng.init(rng_seed),
@@ -309,38 +310,6 @@ fn cachedWasm(io: std.Io, path: []const u8) ![]const u8 {
     if (!gop.found_existing) gop.key_ptr.* = try WasmCache.gpa.dupe(u8, path);
     gop.value_ptr.* = .{ .stamp = stamp, .bytes = bytes };
     return bytes;
-}
-
-fn seedRng(seed: u64, salt: []const u8, io: std.Io) u64 {
-    var h = std.hash.Wyhash.init(0x6A09E667F3BCC909);
-    h.update(std.mem.asBytes(&seed));
-    // `agent.seed = 0` (the default) is documented as time-seeded: the tool
-    // RNG is reproducible only when a nonzero seed is set. Without this, seed
-    // 0 would be a pure function of the module bytes and every clanker
-    // instance everywhere would draw the identical ck_random stream. The
-    // clock mixes per-process entropy in; a nonzero seed stays deterministic.
-    if (seed == 0) {
-        const ts: u64 = @intCast(std.Io.Timestamp.now(io, .real).nanoseconds);
-        h.update(std.mem.asBytes(&ts));
-    }
-    h.update(salt);
-    return h.final();
-}
-
-test "seedRng with a nonzero seed is clock-independent (same seed ⇒ same stream)" {
-    var tp_a = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer tp_a.deinit();
-    var tp_b = std.Io.Threaded.init(std.testing.allocator, .{});
-    defer tp_b.deinit();
-    const salt = "module bytes";
-    // Two independent Io instances carry two different clocks. A pinned
-    // (nonzero) seed must derive the identical effective seed anyway, or
-    // `agent.seed` could not replay a run; the seed-0 branch exists precisely
-    // so the nonzero branch never has to touch the clock.
-    try std.testing.expectEqual(
-        seedRng(0x1234_5678_9abc_def0, salt, tp_a.io()),
-        seedRng(0x1234_5678_9abc_def0, salt, tp_b.io()),
-    );
 }
 
 // ------------------------------------------------------------------- tests --

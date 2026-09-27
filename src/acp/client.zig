@@ -11,6 +11,7 @@
 const std = @import("std");
 const json = std.json;
 const log = @import("../util/log.zig");
+const elapsed = @import("../util/elapsed.zig");
 const subprocess = @import("../agent/subprocess.zig");
 const vendor = @import("vendor.zig");
 const llm_types = @import("../llm/types.zig");
@@ -127,6 +128,10 @@ pub const Error = error{
 
 pub const Client = struct {
     alloc: std.mem.Allocator,
+    /// The awake clock, for the response budget. Every deadline on this
+    /// path reads it, so a simulated clock drives the client's timeouts
+    /// rather than a wall read the harness cannot intercept.
+    io: std.Io,
     transport: Transport,
     timeout_ms: u64 = 120_000,
     next_id: i64 = 1,
@@ -207,9 +212,9 @@ pub const Client = struct {
     }
 
     fn waitResponse(self: *Client, want_id: i64) ![]const u8 {
-        const deadline = nowMs() + @as(i64, @intCast(self.timeout_ms));
+        const t0 = std.Io.Timestamp.now(self.io, .awake);
         while (true) {
-            if (nowMs() >= deadline) {
+            if (elapsed.since(self.io, t0) >= self.timeout_ms) {
                 self.transport.cancel();
                 return Error.Hang;
             }
@@ -473,22 +478,23 @@ pub const ChildTransport = struct {
         var stop = std.atomic.Value(bool).init(false);
         var hung = std.atomic.Value(bool).init(false);
         const Watch = struct {
+            io: std.Io,
             transport: *ChildTransport,
             stop: *std.atomic.Value(bool),
             hung: *std.atomic.Value(bool),
             ms: u64,
             fn run(w: *@This()) void {
-                const deadline = nowMs() + @as(i64, @intCast(w.ms));
-                while (nowMs() < deadline) {
+                const t0 = std.Io.Timestamp.now(w.io, .awake);
+                while (elapsed.since(w.io, t0) < w.ms) {
                     if (w.stop.load(.acquire)) return;
-                    pauseNs(5 * std.time.ns_per_ms);
+                    w.io.sleep(.fromMilliseconds(5), .awake) catch return;
                 }
                 if (w.stop.load(.acquire)) return;
                 w.hung.store(true, .release);
                 w.transport.reg.terminate(w.transport.session_id, "acp");
             }
         };
-        var watch = Watch{ .transport = self, .stop = &stop, .hung = &hung, .ms = self.timeout_ms };
+        var watch = Watch{ .io = self.io, .transport = self, .stop = &stop, .hung = &hung, .ms = self.timeout_ms };
         const thread = try std.Thread.spawn(.{}, Watch.run, .{&watch});
         defer {
             stop.store(true, .release);
@@ -511,28 +517,6 @@ pub const ChildTransport = struct {
 // ---------------------------------------------------------------------------
 // In-process fake ACP agent used by the unit tests. Not a second client.
 // ---------------------------------------------------------------------------
-
-/// Milliseconds on a monotonic clock. Every caller measures how long one
-/// call has taken (`waitResponse`'s budget, the silent-child watchdog, the
-/// test fake's mailbox poll), and a wall step mid-run must not stretch a
-/// hang window by the size of the step or fire one early.
-///
-/// Residual std.c clock: these loops run beside blocking reads that carry no
-/// `std.Io` handle to ask for `.awake` (same shape as util/mascot's clock).
-fn nowMs() i64 {
-    var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
-    _ = std.c.clock_gettime(.MONOTONIC, &ts);
-    return @as(i64, @intCast(ts.sec)) * std.time.ms_per_s +
-        @divTrunc(@as(i64, @intCast(ts.nsec)), std.time.ns_per_ms);
-}
-
-fn pauseNs(ns: u64) void {
-    var req = std.c.timespec{
-        .sec = @intCast(ns / std.time.ns_per_s),
-        .nsec = @intCast(ns % std.time.ns_per_s),
-    };
-    _ = std.c.nanosleep(&req, null);
-}
 
 const FakeMode = enum { happy, auth, permission, hang, demand_fs };
 
@@ -557,6 +541,7 @@ const Mailbox = struct {
     mutex: SpinMutex = .{},
     lines: std.ArrayList([]const u8) = .empty,
     alloc: std.mem.Allocator,
+    io: std.Io,
     closed: bool = false,
 
     fn push(self: *Mailbox, line: []const u8) !void {
@@ -566,7 +551,7 @@ const Mailbox = struct {
     }
 
     fn pop(self: *Mailbox, alloc: std.mem.Allocator, timeout_ms: u64) ![]u8 {
-        const deadline = nowMs() + @as(i64, @intCast(timeout_ms));
+        const t0 = std.Io.Timestamp.now(self.io, .awake);
         while (true) {
             self.mutex.lock();
             if (self.lines.items.len > 0) {
@@ -578,8 +563,8 @@ const Mailbox = struct {
             const closed = self.closed;
             self.mutex.unlock();
             if (closed) return Error.Closed;
-            if (nowMs() >= deadline) return Error.Hang;
-            pauseNs(2 * std.time.ns_per_ms);
+            if (elapsed.since(self.io, t0) >= timeout_ms) return Error.Hang;
+            self.io.sleep(.fromMilliseconds(2), .awake) catch return Error.Closed;
         }
     }
 
@@ -599,15 +584,17 @@ const Pair = struct {
     to_agent: Mailbox,
     to_client: Mailbox,
     alloc: std.mem.Allocator,
+    io: std.Io,
     replies: std.ArrayList([]const u8) = .empty,
     mutex: SpinMutex = .{},
     job: FakeJob = undefined,
 
-    fn init(alloc: std.mem.Allocator) Pair {
+    fn init(io: std.Io, alloc: std.mem.Allocator) Pair {
         return .{
-            .to_agent = .{ .alloc = alloc },
-            .to_client = .{ .alloc = alloc },
+            .to_agent = .{ .alloc = alloc, .io = io },
+            .to_client = .{ .alloc = alloc, .io = io },
             .alloc = alloc,
+            .io = io,
         };
     }
 
@@ -700,10 +687,13 @@ fn fakeAgentMain(job: *FakeJob) void {
     }
 }
 
-fn runAgainst(mode: FakeMode, timeout_ms: u64) !struct { result: PromptResult, pair: *Pair, client: *Client, arena: *std.heap.ArenaAllocator, agent: std.Thread } {
+fn runAgainst(mode: FakeMode, timeout_ms: u64) !struct { result: PromptResult, pair: *Pair, client: *Client, arena: *std.heap.ArenaAllocator, agent: std.Thread, threaded: *std.Io.Threaded } {
     const gpa = std.testing.allocator;
+    const threaded = try gpa.create(std.Io.Threaded);
+    threaded.* = std.Io.Threaded.init(gpa, .{});
+    const io = threaded.io();
     const pair = try gpa.create(Pair);
-    pair.* = Pair.init(gpa);
+    pair.* = Pair.init(io, gpa);
     pair.job = .{ .pair = pair, .mode = mode };
     const agent = try std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job});
     const arena = try gpa.create(std.heap.ArenaAllocator);
@@ -711,11 +701,12 @@ fn runAgainst(mode: FakeMode, timeout_ms: u64) !struct { result: PromptResult, p
     const client = try gpa.create(Client);
     client.* = .{
         .alloc = arena.allocator(),
+        .io = io,
         .transport = pair.clientTransport(),
         .timeout_ms = timeout_ms,
     };
     const result = try client.prompt("/tmp", "hello");
-    return .{ .result = result, .pair = pair, .client = client, .arena = arena, .agent = agent };
+    return .{ .result = result, .pair = pair, .client = client, .arena = arena, .agent = agent, .threaded = threaded };
 }
 
 fn cleanupRun(run: anytype) void {
@@ -731,6 +722,8 @@ fn cleanupRun(run: anytype) void {
     std.testing.allocator.destroy(run.arena);
     run.pair.deinit();
     std.testing.allocator.destroy(run.pair);
+    run.threaded.deinit();
+    std.testing.allocator.destroy(run.threaded);
 }
 
 test "ACP client sends initialize, session/new, session/prompt and consumes session/update" {
@@ -771,8 +764,10 @@ test "ACP client answers session/request_permission with a JSON-RPC result" {
 
 test "ACP client times out a hung prompt as Hang and cancels" {
     const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
     const pair = try gpa.create(Pair);
-    pair.* = Pair.init(gpa);
+    pair.* = Pair.init(threaded.io(), gpa);
     pair.job = .{ .pair = pair, .mode = .hang };
     const agent = std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job}) catch |err| {
         pair.deinit();
@@ -790,6 +785,7 @@ test "ACP client times out a hung prompt as Hang and cancels" {
     defer arena_state.deinit();
     var client = Client{
         .alloc = arena_state.allocator(),
+        .io = threaded.io(),
         .transport = pair.clientTransport(),
         .timeout_ms = 80,
     };
@@ -799,8 +795,10 @@ test "ACP client times out a hung prompt as Hang and cancels" {
 
 test "ACP client refuses fs/* from the agent" {
     const gpa = std.testing.allocator;
+    var threaded = std.Io.Threaded.init(gpa, .{});
+    defer threaded.deinit();
     const pair = try gpa.create(Pair);
-    pair.* = Pair.init(gpa);
+    pair.* = Pair.init(threaded.io(), gpa);
     pair.job = .{ .pair = pair, .mode = .demand_fs };
     const agent = std.Thread.spawn(.{}, fakeAgentMain, .{&pair.job}) catch |err| {
         pair.deinit();
@@ -818,6 +816,7 @@ test "ACP client refuses fs/* from the agent" {
     defer arena_state.deinit();
     var client = Client{
         .alloc = arena_state.allocator(),
+        .io = threaded.io(),
         .transport = pair.clientTransport(),
         .timeout_ms = 500,
     };

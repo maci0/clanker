@@ -11,6 +11,7 @@ const std = @import("std");
 const log = @import("../util/log.zig");
 const redact = @import("../util/redact.zig");
 const elapsed = @import("../util/elapsed.zig");
+const seed_rng = @import("../util/seed_rng.zig");
 const json_util = @import("../util/json.zig");
 const protocol = @import("protocol.zig");
 const client = @import("../llm/client.zig");
@@ -5660,7 +5661,22 @@ pub fn ckTool(caller: *zwasm.Caller, ptr: u32, len: u32) u32 {
     var linker = engine.linker();
     defer linker.deinit();
     const child_host = arena.create(Host) catch return Err.too_large;
-    child_host.* = .{ .sandbox = &child_sb, .rng = std.Random.DefaultPrng.init(0x9E3779B97F4A7C15 ^ @as(u64, @intCast(std.hash.Wyhash.hash(0, tool_name)))) };
+    // The child's stream is the parent's, one governed draw further along.
+    // Deriving it from a constant made every invocation of the same nested
+    // tool draw the identical numbers in every run, and none of it replayed
+    // from `agent.seed`; taking one value from the parent's already-seeded
+    // stream keeps a pinned seed replayable while still distinguishing two
+    // calls of the same tool in one run.
+    const child_draw = h.rng.random().int(u64);
+    const child_seed = if (child_sb.seed == 0) child_draw else (child_sb.seed ^ child_draw);
+    child_host.* = .{
+        .sandbox = &child_sb,
+        .rng = std.Random.DefaultPrng.init(seed_rng.derive(child_seed, tool_name, h.sandbox.io)),
+    };
+    if (child_sb.seed == 0) {
+        child_host.seed_notice = @max(1, child_draw);
+        log.log(.debug, "sandbox rng: nested tool {s} seeded from the parent stream", .{tool_name});
+    }
     linker.defineFuncCtx("env", "ck_log", child_host, fn (*zwasm_mod.Caller, u32, u32, u32) void, &ckLog) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_now", child_host, fn (*zwasm_mod.Caller) u64, &ckNow) catch return Err.invalid;
     linker.defineFuncCtx("env", "ck_random", child_host, fn (*zwasm_mod.Caller) u64, &ckRandom) catch return Err.invalid;

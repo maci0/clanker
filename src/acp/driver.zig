@@ -206,6 +206,7 @@ fn runAcp(opts: RunOpts, g: *graph_mod.Graph, answer: *[]const u8) !AcpOutcome {
     defer if (owned_transport) |*t| t.reg.terminate(t.session_id, "acp");
     var client = acp_client.Client{
         .alloc = opts.arena,
+        .io = opts.io,
         .transport = transport,
         .timeout_ms = opts.timeout_ms,
     };
