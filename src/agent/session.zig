@@ -8,6 +8,7 @@
 const std = @import("std");
 const types = @import("../llm/types.zig");
 const sqlite = @import("../util/sqlite.zig");
+const session_events = @import("session_events.zig");
 const session_fts = @import("session_fts.zig");
 const test_env = @import("../util/test_env.zig");
 const utf8 = @import("../util/utf8.zig");
@@ -33,18 +34,18 @@ pub const Session = struct {
 /// format is gone).
 pub const db_suffix = ".db";
 
-const schema: [:0]const u8 =
-    \\CREATE TABLE IF NOT EXISTS meta (
-    \\  key TEXT PRIMARY KEY,
-    \\  value TEXT NOT NULL
-    \\);
-    // The CHECKs are the same invariants `types.Role` and the boolean columns
-    // already carry, enforced where a foreign writer (the mesh transcript
-    // pull) writes rows nobody validated. A role the read path cannot decode
-    // fails `loadStored` for the whole conversation, so it is refused at the
-    // insert instead. Only databases created after this change carry them:
-    // tightening an existing table is a rebuild, not an ALTER, and
-    // `CREATE TABLE IF NOT EXISTS` leaves the old shape alone.
+/// The transcript projection's table. The CHECKs are the same invariants
+/// `types.Role` and the boolean columns already carry, enforced where a foreign
+/// writer (the mesh transcript pull) writes rows nobody validated. A role the
+/// read path cannot decode fails `loadStored` for the whole conversation, so it
+/// is refused at the insert instead. Only databases created after this change
+/// carry them: tightening an existing table is a rebuild, not an ALTER, and
+/// `CREATE TABLE IF NOT EXISTS` leaves the old shape alone.
+///
+/// Exported because a mesh replica holds the same projection in its own
+/// database and the owner read path selects these columns by name: a second
+/// copy of this DDL is a shape that can drift from the one that reads it.
+pub const messages_ddl =
     \\CREATE TABLE IF NOT EXISTS messages (
     \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
     \\  role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
@@ -54,17 +55,22 @@ const schema: [:0]const u8 =
     \\  tool_call_id TEXT,
     \\  steered INTEGER NOT NULL DEFAULT 0 CHECK (steered IN (0, 1))
     \\);
-    \\CREATE TABLE IF NOT EXISTS events (
-    \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    \\  ts_ms INTEGER NOT NULL,
-    \\  kind TEXT NOT NULL,
-    \\  payload TEXT NOT NULL
-    \\);
-    \\CREATE TRIGGER IF NOT EXISTS events_no_update BEFORE UPDATE ON events
-    \\BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
-    \\CREATE TRIGGER IF NOT EXISTS events_no_delete BEFORE DELETE ON events
-    \\BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
 ;
+
+const meta_ddl =
+    \\CREATE TABLE IF NOT EXISTS meta (
+    \\  key TEXT PRIMARY KEY,
+    \\  value TEXT NOT NULL
+    \\);
+;
+
+/// Everything a session database is created with, in order: the session
+/// record, the transcript projection, and the append-only event stream. The
+/// event stream's DDL is the one `session_events.Store` writes and the one
+/// mesh replicas open with, so it is defined there rather than spelled out a
+/// second time here; the transcript table is this module's own, exported for
+/// the replica that holds the same projection.
+const schema_parts = [_][:0]const u8{ meta_ddl, messages_ddl, session_events.schema };
 
 /// Session ids are path fragments, not arbitrary labels. Enforce the storage
 /// boundary here even when a caller forgets its own input validation. One
@@ -90,10 +96,12 @@ fn openDb(arena: std.mem.Allocator, sessions_dir: []const u8, id: []const u8) !s
     const path = try std.fmt.allocPrint(arena, "{s}/{s}{s}", .{ sessions_dir, id, db_suffix });
     const pathz = try arena.dupeZ(u8, path);
     try conn.open(pathz);
-    conn.exec(schema) catch |err| {
-        conn.close();
-        return err;
-    };
+    for (schema_parts) |ddl| {
+        conn.exec(ddl) catch |err| {
+            conn.close();
+            return err;
+        };
+    }
     // `CREATE TABLE IF NOT EXISTS` leaves a database created before a column
     // existed untouched, so every added column needs its own ALTER here.
     // SQLite refuses a duplicate column, which is exactly the "already
@@ -911,10 +919,6 @@ pub fn searchSessions(
     }
     for (metas) |meta| {
         if (out.items.len >= max_hits) break;
-        var conn = openDb(arena, sessions_dir, meta.id) catch continue;
-        defer conn.close();
-        var stmt = conn.prepare("SELECT role, content FROM messages ORDER BY seq;") catch continue;
-        defer stmt.finalize();
         var any = false;
         var more: usize = 0;
         var turn: usize = 0;
@@ -923,25 +927,43 @@ pub fn searchSessions(
         var best_at: usize = 0;
         var best_len: usize = 0;
         var best_turn: usize = 0;
-        while (true) {
-            if ((stmt.step() catch null) != .row) break;
-            const content = stmt.columnText(1) orelse continue;
-            if (!rawMayContainQuery(content, query)) {
-                turn += 1;
-                continue;
-            }
-            if (findFold(content, query)) |at| {
-                any = true;
-                more += 1;
-                if (best_len == 0 or at < best_at) {
-                    best_at = at;
-                    best_len = query.len;
-                    best_content = arena.dupe(u8, content) catch content;
-                    role = arena.dupe(u8, stmt.columnText(0) orelse "") catch "";
-                    best_turn = turn;
+        // One connection and statement per candidate, closed at the end of
+        // this block. A `defer` in the loop body itself runs when the search
+        // returns, holding every candidate database open (each with its own
+        // page cache) for the whole pass, and the FTS path can name up to
+        // `session_fts`'s candidate cap of them. Everything kept past the block
+        // is arena-owned, so nothing below outlives the statement it came from.
+        {
+            var conn = openDb(arena, sessions_dir, meta.id) catch continue;
+            defer conn.close();
+            var stmt = conn.prepare("SELECT role, content FROM messages ORDER BY seq;") catch continue;
+            defer stmt.finalize();
+            while (true) {
+                if ((stmt.step() catch null) != .row) break;
+                // columnText is valid only until the next step, so a kept
+                // snippet is an arena copy; an allocation failure leaves this
+                // candidate without a snippet rather than aliasing the
+                // statement's buffer.
+                const content = stmt.columnText(1) orelse continue;
+                if (!rawMayContainQuery(content, query)) {
+                    turn += 1;
+                    continue;
                 }
+                if (findFold(content, query)) |at| {
+                    any = true;
+                    more += 1;
+                    if (best_len == 0 or at < best_at) {
+                        if (arena.dupe(u8, content)) |owned| {
+                            best_at = at;
+                            best_len = query.len;
+                            best_content = owned;
+                            role = arena.dupe(u8, stmt.columnText(0) orelse "") catch "";
+                            best_turn = turn;
+                        } else |_| {}
+                    }
+                }
+                turn += 1;
             }
-            turn += 1;
         }
         if (!any) continue;
         try out.append(arena, .{

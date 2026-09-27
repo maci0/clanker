@@ -15,6 +15,7 @@
 const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
 const session_events = @import("../agent/session_events.zig");
+const session_mod = @import("../agent/session.zig");
 const log = @import("../util/log.zig");
 
 pub const replica_root = "state/mesh";
@@ -489,21 +490,15 @@ test "the replica messages table matches the owner schema" {
 /// Ensures the replica database also has the messages table, in the owner's
 /// shape, so a replica can hold the transcript projection and resume a
 /// session (or serve it through the same read path), not only audit it.
-/// The CHECKs are the owner's `messages` constraints: a peer that sends a row
-/// the read path cannot decode is refused at the insert, which rolls the pull
-/// back to the previous snapshot rather than storing an unreadable transcript.
+/// The owner's DDL is used rather than a copy of it: the replica is read by
+/// the same `loadStored` projection, and a second copy of the table is a shape
+/// that can drift from the one that reads it (the owner read path selects every
+/// column by name, so a drifted replica fails every read). Its CHECKs come with
+/// it: a peer that sends a row the read path cannot decode is refused at the
+/// insert, which rolls the pull back to the previous snapshot rather than
+/// storing an unreadable transcript.
 fn ensureMessages(store: *session_events.Store) void {
-    store.conn.exec(
-        \\CREATE TABLE IF NOT EXISTS messages (
-        \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-        \\  role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
-        \\  content TEXT,
-        \\  images TEXT,
-        \\  tool_calls TEXT,
-        \\  tool_call_id TEXT,
-        \\  steered INTEGER NOT NULL DEFAULT 0 CHECK (steered IN (0, 1))
-        \\);
-    ) catch {};
+    store.conn.exec(session_mod.messages_ddl) catch {};
 }
 
 const TranscriptRow = struct {

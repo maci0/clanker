@@ -28,8 +28,27 @@ pub const Event = struct {
     payload: []const u8,
 };
 
+/// Every event kind, in the order the constants below name them. One list, so
+/// the closed set the `events` CHECK constraint enforces and the constants a
+/// caller writes cannot drift: `test "the events CHECK covers every kind"`
+/// inserts each entry here and refuses one that is not.
+pub const event_kind_names = [_][]const u8{
+    "system_prompt",
+    "task",
+    "assistant",
+    "tool_call",
+    "tool_result",
+    "llm",
+    "reasoning",
+    "subagent",
+    "injection",
+    "compaction",
+};
+
 /// The event kinds the harness records. Payload field names are stable once
-/// shipped; adding a kind is additive, never a rename.
+/// shipped; adding a kind is additive, never a rename, and the table's CHECK
+/// is the closed list of them (only in databases created after the constraint
+/// existed, the same rule the `messages` role CHECK follows).
 pub const EventKind = struct {
     /// The built system prompt (preset persona + injected context) the model
     /// saw. Payload: {"prompt": string}.
@@ -59,11 +78,16 @@ pub const EventKind = struct {
     pub const compaction = "compaction";
 };
 
-const schema: [:0]const u8 =
+/// The per-session schema. `kind` is a closed enum, so it carries the same
+/// CHECK the `messages.role` column does: a kind nothing in this tree writes
+/// is refused at the insert rather than stored for a reader that cannot decode
+/// it. Only databases created here carry it, since `CREATE TABLE IF NOT
+/// EXISTS` leaves an existing table's shape alone.
+pub const schema =
     \\CREATE TABLE IF NOT EXISTS events (
     \\  seq INTEGER PRIMARY KEY AUTOINCREMENT,
     \\  ts_ms INTEGER NOT NULL,
-    \\  kind TEXT NOT NULL,
+    \\  kind TEXT NOT NULL CHECK (kind IN ('system_prompt', 'task', 'assistant', 'tool_call', 'tool_result', 'llm', 'reasoning', 'subagent', 'injection', 'compaction')),
     \\  payload TEXT NOT NULL
     \\);
     \\CREATE TABLE IF NOT EXISTS meta (
@@ -216,6 +240,42 @@ test "events append in stream order with a dense seq cursor" {
     const tail = try store.since(1);
     try std.testing.expectEqual(@as(usize, 2), tail.len);
     try std.testing.expectEqual(@as(i64, 2), tail[0].seq);
+}
+
+test "the events CHECK covers every kind the tree writes" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+
+    const path = try dbPath(arena, &env, "kinds");
+
+    var store = try Store.open(arena, path);
+    defer store.close();
+
+    // Every name the closed list carries is insertable, and each is a kind a
+    // caller actually writes: a name added to the list without a constant, or
+    // a constant missing from the list, fails one of the two directions.
+    const declared = [_][]const u8{
+        EventKind.system_prompt, EventKind.task,        EventKind.assistant,
+        EventKind.tool_call,     EventKind.tool_result, EventKind.llm,
+        EventKind.reasoning,     EventKind.subagent,    EventKind.injection,
+        EventKind.compaction,
+    };
+    try std.testing.expectEqual(declared.len, event_kind_names.len);
+    for (event_kind_names) |name| {
+        var found = false;
+        for (declared) |d| {
+            if (std.mem.eql(u8, d, name)) found = true;
+        }
+        try std.testing.expect(found);
+    }
+    for (declared) |name| _ = try store.append(1, name, "{}");
+
+    // Anything outside the list is refused where the writer is.
+    var bad = try store.conn.prepare("INSERT INTO events (ts_ms, kind, payload) VALUES (1, 'not_a_kind', '{}');");
+    defer bad.finalize();
+    try std.testing.expectError(sqlite.Error.StepFailed, bad.step());
+    try std.testing.expectEqual(@as(i64, declared.len), try store.count());
 }
 
 test "the store is append-only: UPDATE and DELETE are refused by trigger" {

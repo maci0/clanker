@@ -208,8 +208,16 @@ pub const Statement = struct {
         return c.sqlite3_column_int64(s, index);
     }
 
+    /// Rewinds a statement for reuse, clearing its bindings. A bare
+    /// `sqlite3_reset` keeps every bound value, so a caller that rebinds only
+    /// the columns it cares about re-inserts the previous row's value into the
+    /// ones it left alone. `bindText`/`bindInt` take the value they are given,
+    /// so clearing here is the only place the leftover can go.
     pub fn reset(self: *Statement) void {
-        if (self.stmt) |s| _ = c.sqlite3_reset(s);
+        if (self.stmt) |s| {
+            _ = c.sqlite3_clear_bindings(s);
+            _ = c.sqlite3_reset(s);
+        }
     }
 };
 
@@ -286,6 +294,36 @@ test "open tightens the database and WAL sidecars to owner-only" {
     try expectOwnerOnly(io, path);
     try expectOwnerOnly(io, try std.fmt.allocPrint(arena, "{s}-wal", .{path}));
     try expectOwnerOnly(io, try std.fmt.allocPrint(arena, "{s}-shm", .{path}));
+}
+
+test "reset clears the bindings a previous row left behind" {
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const arena = env.arena();
+    const path = try std.fmt.allocPrint(arena, ".zig-cache/tmp/{s}/reset.db", .{&env.tmp.sub_path});
+    const pathz = try arena.dupeZ(u8, path);
+
+    var conn: Connection = .{};
+    try conn.open(pathz);
+    defer conn.close();
+    try conn.exec("CREATE TABLE rows (a TEXT, b TEXT);");
+
+    var stmt = try conn.prepare("INSERT INTO rows (a, b) VALUES (?1, ?2);");
+    defer stmt.finalize();
+    try stmt.bindText(1, "first");
+    try stmt.bindText(2, "second");
+    _ = try stmt.step();
+
+    // The everyday reuse shape: only column `a` is rebound, so `b` must come
+    // back NULL rather than as the previous row's value.
+    stmt.reset();
+    try stmt.bindText(1, "third");
+    _ = try stmt.step();
+
+    var rd = try conn.prepare("SELECT b FROM rows WHERE a = 'third';");
+    defer rd.finalize();
+    try std.testing.expectEqual(Step.row, try rd.step());
+    try std.testing.expect(rd.columnText(0) == null);
 }
 
 test "open re-tightens a database that was created world-readable" {
