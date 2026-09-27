@@ -59,6 +59,7 @@ const mesh_cmd = @import("peers/command.zig");
 const mesh_net = @import("serve/mesh_net.zig");
 const live = @import("serve/live.zig");
 const webui_assets = @import("serve/webui_assets.zig");
+const webui_strip = @import("serve/webui_strip.zig");
 const serve_http = @import("serve/http.zig");
 const skills_logic = @import("skills_logic");
 const providers_logic = @import("providers_logic");
@@ -10950,6 +10951,21 @@ fn renderWebui(
     return arena.dupe(u8, body) catch null;
 }
 
+/// Which comment syntax the asset at `path` is written in, or null when it is
+/// served by a route of its own. Vendored files (`/webui/vendor/*`), plugin
+/// assets, themes and command catalogs never reach here, so a third-party or
+/// hand-edited file is never rewritten on its way out.
+fn stripWebuiComments(arena: std.mem.Allocator, path: []const u8, body: []const u8) []const u8 {
+    if (isWebuiIndexPath(path)) {
+        // A document is markup only while it has no inline script or style
+        // body; with one, `<!--` inside that body is not a comment.
+        return if (webui_strip.htmlCommentFree(body)) webui_strip.strip(.html, arena, body) else body;
+    }
+    if (std.mem.endsWith(u8, path, ".css")) return webui_strip.strip(.css, arena, body);
+    if (std.mem.endsWith(u8, path, ".js")) return webui_strip.strip(.js, arena, body);
+    return body;
+}
+
 /// Renders through the tool once and keeps the bytes. Returns null only when
 /// the render itself failed, in which case the caller has already responded.
 fn renderWebuiCached(
@@ -10966,7 +10982,12 @@ fn renderWebuiCached(
         .ready => return cache.body,
         .idle, .rendering => {},
     }
-    const body = renderWebui(io, gpa, arena, cfg, environ_map, path, stream) orelse return null;
+    const rendered = renderWebui(io, gpa, arena, cfg, environ_map, path, stream) orelse return null;
+    // Comments off the wire before anything else looks at the bytes, so the
+    // render cache, the ETag, Content-Length and the gzip cache all speak about
+    // the same body. A quarter of the eager page is developer prose the
+    // browser never reads (see serve/webui_strip.zig).
+    const body = stripWebuiComments(arena, path, rendered);
     // Only one thread publishes; the rest just used their own copy, which is
     // identical because the source is compiled in. A claim that cannot keep its
     // copy hands the slot back rather than burning it, so the next request can

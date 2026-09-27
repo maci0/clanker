@@ -187,6 +187,7 @@ comptime {
     _ = @import("serve/mesh_net.zig");
     _ = @import("serve/http.zig");
     _ = @import("serve/webui_assets.zig");
+    _ = @import("serve/webui_strip.zig");
     _ = @import("agent/session.zig");
     _ = @import("agent/workspace.zig");
     _ = @import("agent/prune.zig");
