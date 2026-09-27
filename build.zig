@@ -393,6 +393,11 @@ pub fn build(b: *std.Build) void {
     const tailwind_js_test = b.addSystemCommand(&.{ "bun", "test" });
     tailwind_js_test.addFileArg(b.path("ui/app/tailwind.test.mjs"));
     test_step.dependOn(&tailwind_js_test.step);
+    // The component kit's variant table is a table of class strings: a typo in
+    // it renders a view with no styling and nothing else would notice.
+    const kit_js_test = b.addSystemCommand(&.{ "bun", "test" });
+    kit_js_test.addFileArg(b.path("ui/app/core/kit.test.mjs"));
+    test_step.dependOn(&kit_js_test.step);
     // What a visitor actually downloads, and what it is allowed to grow to.
     // These numbers are the regression record for the critical path.
     const weight_budget_js_test = b.addSystemCommand(&.{ "bun", "test" });

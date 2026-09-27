@@ -40,6 +40,8 @@ const models_view = @embedFile("app/features/models.js");
 const system_view = @embedFile("app/features/system.js");
 const icons = @embedFile("app/core/icons.js");
 const ui = @embedFile("app/core/ui.js");
+/// The shadcn-shaped component kit (dom factories, variant tables).
+const kit = @embedFile("app/core/kit.js");
 const utils = @embedFile("app/core/utils.js");
 const vendor = @embedFile("app/core/vendor.js");
 const chat = @embedFile("app/core/chat.js");
@@ -96,8 +98,8 @@ comptime {
     // branches this entire comptime evaluation may spend, not a per-call
     // budget, so sizing it off one asset runs out once the assets together
     // exceed it — which is what adding a view used to do to the build.
-    const assets = [_][]const u8{ page, styles, view_styles, tailwind_styles, script, preact_boot, fleet, arena_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, utils, vendor, chat, labels, goals, stream, steer, theme, slash, overlay, search, composer, chatprefs, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
-    const names = [_][]const u8{ "index.html", "app.css", "views.css", "tailwind.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/steer.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/chatprefs.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
+    const assets = [_][]const u8{ page, styles, view_styles, tailwind_styles, script, preact_boot, fleet, arena_view, board_view, goals_view, knowledge_view, prompts_view, todos_view, models_view, system_view, icons, ui, kit, utils, vendor, chat, labels, goals, stream, steer, theme, slash, overlay, search, composer, chatprefs, ai_disclosure, scroll, run_metrics, dialog, usage, status, attachments, logs, plugins, palette, modelpicker, tools, markdown, graph, board, runs_list, runs_view };
+    const names = [_][]const u8{ "index.html", "app.css", "views.css", "tailwind.css", "app.js", "preact-boot.js", "features/fleet.js", "features/arena.js", "features/board.js", "features/goals.js", "features/knowledge.js", "features/prompts.js", "features/todos.js", "features/models.js", "features/system.js", "core/icons.js", "core/ui.js", "core/kit.js", "core/utils.js", "core/vendor.js", "core/chat.js", "core/labels.js", "core/goals.js", "core/stream.js", "core/steer.js", "core/theme.js", "core/slash.js", "core/overlay.js", "core/search.js", "core/composer.js", "core/chatprefs.js", "core/ai-disclosure.js", "core/scroll.js", "core/run-metrics.js", "core/dialog.js", "core/usage.js", "core/status.js", "core/attachments.js", "core/logs.js", "core/plugins.js", "core/palette.js", "core/modelpicker.js", "core/tools.js", "lib/markdown.js", "lib/graph.js", "lib/board.js", "lib/runs-list.js", "features/runs.js" };
     var total: usize = 0;
     for (assets) |a| total += a.len;
     @setEvalBranchQuota(4 * total);
@@ -127,6 +129,7 @@ fn assetFor(path: []const u8) Asset {
     if (std.mem.endsWith(u8, path, "/core/utils.js")) return .{ .body = utils, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/icons.js")) return .{ .body = icons, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/ui.js")) return .{ .body = ui, .content_type = "text/javascript; charset=utf-8" };
+    if (std.mem.endsWith(u8, path, "/core/kit.js")) return .{ .body = kit, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/vendor.js")) return .{ .body = vendor, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/chat.js")) return .{ .body = chat, .content_type = "text/javascript; charset=utf-8" };
     if (std.mem.endsWith(u8, path, "/core/labels.js")) return .{ .body = labels, .content_type = "text/javascript; charset=utf-8" };

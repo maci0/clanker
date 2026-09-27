@@ -116,6 +116,7 @@ pub const Kind = enum {
     utils,
     icons,
     ui,
+    kit,
     dialog,
     usage,
     status,
@@ -164,6 +165,7 @@ pub fn kindFor(target: []const u8) Kind {
     if (std.mem.endsWith(u8, target, "utils.js")) return .utils;
     if (std.mem.endsWith(u8, target, "icons.js")) return .icons;
     if (std.mem.endsWith(u8, target, "ui.js")) return .ui;
+    if (std.mem.endsWith(u8, target, "kit.js")) return .kit;
     if (std.mem.endsWith(u8, target, "dialog.js")) return .dialog;
     if (std.mem.endsWith(u8, target, "usage.js")) return .usage;
     if (std.mem.endsWith(u8, target, "status.js")) return .status;
@@ -221,6 +223,7 @@ pub const asset_paths = [_][]const u8{
     "/webui/core/slash.js",
     "/webui/core/tools.js",
     "/webui/core/ui.js",
+    "/webui/core/kit.js",
     "/webui/core/usage.js",
     "/webui/core/utils.js",
     "/webui/core/vendor.js",

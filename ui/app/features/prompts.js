@@ -1,7 +1,16 @@
 // Prompts library — single-user. Browse / create / use / delete prompt templates backed by GET/POST/DELETE /api/prompts.
 import { uiConfirm, toast, showLoadError } from "../core/ui.js";
+import * as kit from "../core/kit.js";
 import { readJson, wireRefresh } from "../core/utils.js";
 import { copyText } from "../core/vendor.js";
+
+/* The prompt cards, as Tailwind utilities over the cabinet tokens
+   (ui/app/tailwind.src.css). A card is a name-and-meta line with the body
+   under it and a rule between one card and the next; the buttons come from
+   the kit (core/kit.js). */
+var CARD_CLASS = "border-b border-rule px-0.5 py-3";
+var HEAD_CLASS = "flex flex-wrap items-center gap-3";
+var BODY_CLASS = "m-0 mt-3 max-h-36 overflow-auto p-0 font-mono text-sm text-fg-muted whitespace-pre-wrap wrap-anywhere";
 
 export function loadPromptsView() {
   var status = document.getElementById("prompts-status");
@@ -54,10 +63,7 @@ function applyPromptFilter(){
     }
     note.textContent="";
     note.appendChild(document.createTextNode("No prompt matches “"+raw+"”. "));
-    var clear=document.createElement("button");
-    clear.type="button";
-    clear.className="secondary";
-    clear.textContent="Clear filter";
+    var clear=kit.button({variant:"secondary"}, "Clear filter");
     clear.addEventListener("click",function(){
       if(filterEl){ filterEl.value=""; filterEl.focus(); }
       applyPromptFilter();
@@ -82,8 +88,7 @@ function renderPrompts(prompts){
   if(!prompts.length){
     var empty=document.createElement("p"); empty.className="run-empty";
     empty.appendChild(document.createTextNode("No prompts yet. Save one from the chat composer or create it here. "));
-    var start=document.createElement("button");
-    start.type="button"; start.className="primary"; start.textContent="Create a prompt";
+    var start=kit.button({variant:"primary"}, "Create a prompt");
     start.addEventListener("click",function(){
       var title=document.getElementById("prompts-title");
       if(title){
@@ -95,20 +100,20 @@ function renderPrompts(prompts){
     listEl.appendChild(empty); applyPromptFilter(); return;
   }
   prompts.forEach(function(p){
-    var card=document.createElement("div"); card.className="prompt-card";
-    var head=document.createElement("div"); head.className="prompt-head";
-    var title=document.createElement("strong"); title.textContent=p.title||p.id; head.appendChild(title);
-    var useBtn=document.createElement("button"); useBtn.type="button"; useBtn.className="secondary"; useBtn.textContent="Use";
+    var card=document.createElement("div"); card.className=CARD_CLASS;
+    var head=document.createElement("div"); head.className=HEAD_CLASS;
+    var title=document.createElement("strong"); title.className="grow"; title.textContent=p.title||p.id; head.appendChild(title);
+    var useBtn=kit.button({variant:"secondary"}, "Use");
     useBtn.addEventListener("click",function(){ applyPromptToComposer(p.content); });
     head.appendChild(useBtn);
     var body=document.createElement("pre"); body.textContent=p.content;
-    body.className="prompt-body";
-    var copyBtn=document.createElement("button"); copyBtn.type="button"; copyBtn.className="secondary"; copyBtn.textContent="Copy";
+    body.className=BODY_CLASS;
+    var copyBtn=kit.button({variant:"secondary"}, "Copy");
     copyBtn.addEventListener("click",function(){
       copyText(p.content, copyBtn, "Copy", body);
     });
     head.appendChild(copyBtn);
-    var delBtn=document.createElement("button"); delBtn.type="button"; delBtn.className="secondary danger"; delBtn.textContent="Delete";
+    var delBtn=kit.button({variant:"secondary-danger"}, "Delete");
     delBtn.addEventListener("click",function(){
       uiConfirm("Delete prompt \""+(p.title||p.id)+"\"?", { danger: true, confirmLabel: "Delete" }).then(function(yes){
         if(!yes) return;
@@ -120,9 +125,9 @@ function renderPrompts(prompts){
     });
     head.appendChild(delBtn); card.appendChild(head);
     card.appendChild(body);
-    var meta=document.createElement("div"); meta.className="meta";
+    var meta=document.createElement("div"); meta.className="meta mt-2";
     meta.textContent=p.id+(p.updated?" · "+new Date(p.updated*1000).toLocaleString():"");
-    meta.style.marginTop="var(--space-2)"; card.appendChild(meta);
+    card.appendChild(meta);
     listEl.appendChild(card);
   });
   applyPromptFilter();

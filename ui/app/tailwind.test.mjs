@@ -36,6 +36,7 @@ const migrated = [
   "../plugins/music/app.js",
   "../plugins/health/app.js",
   "../plugins/files/app.js",
+  "features/todos.js",
 ];
 
 /// Utilities whose arbitrary value has no scale to come from: a breakpoint, or

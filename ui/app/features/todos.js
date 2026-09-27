@@ -16,6 +16,19 @@
 
 import { T, state, bind } from "../core/ui.js";
 
+/* The panel's shapes, as Tailwind utilities over the cabinet tokens
+   (ui/app/tailwind.src.css) — only palette variables, so the checklist
+   inherits every flavour the sheet defines instead of pinning colours of its
+   own. `todo-box` is the one component rule: its tick is an `::after` and its
+   square is em-sized to the item's text. */
+var PANEL_CLASS = "mb-3 max-w-measure rounded-plate-lg border border-rule bg-surface-2 px-3 py-2 empty:hidden";
+var LIST_CLASS = "mx-0 mb-0 mt-1 flex list-none flex-col gap-0.5 p-0";
+// `group` so the box, the title and the state word all read the item's status.
+var ITEM_CLASS = "group flex items-baseline gap-2 font-sans text-sm wrap-anywhere";
+var BOX_CLASS = "todo-box";
+var TITLE_CLASS = "grow shrink basis-auto group-data-[status=closed]:text-fg-muted group-data-[status=closed]:line-through";
+var STATE_CLASS = "flex-none font-mono text-xs text-fg-muted group-data-[status=closed]:text-ok";
+
 // A title is capped at 512 chars server-side and the list at 100 items; both
 // are honest numbers to render, but a pathological run should not be able to
 // push 50 KB of text into one turn card either. Clip for display only.
@@ -52,10 +65,10 @@ function todoRow(item) {
   // and marked aria-hidden, and the state is also spelled out in words beside
   // it, so a screen reader and a stylesheet-less page both still read it.
   return T.li(
-    { class: "todo-item", "data-status": item.status },
-    T.span({ class: "todo-box", "aria-hidden": "true" }),
-    T.span({ class: "todo-title" }, item.title),
-    T.span({ class: "todo-state" }, item.status === "closed" ? "done" : item.status)
+    { class: ITEM_CLASS, "data-status": item.status },
+    T.span({ class: BOX_CLASS, "aria-hidden": "true" }),
+    T.span({ class: TITLE_CLASS }, item.title),
+    T.span({ class: STATE_CLASS }, item.status === "closed" ? "done" : item.status)
   );
 }
 
@@ -63,11 +76,11 @@ function panelContent(todos) {
   if (!todos || !todos.length) return null;
   return [
     T.div(
-      { class: "todos-head" },
-      T.span({ class: "todos-label" }, "Checklist"),
+      { class: "flex items-baseline gap-2 font-sans text-sm" },
+      T.span({ class: "font-semibold" }, "Checklist"),
       T.span({ class: "meta" }, todoSummary(todos))
     ),
-    T.ul({ class: "todo-list" }, todos.map(todoRow))
+    T.ul({ class: LIST_CLASS }, todos.map(todoRow))
   ];
 }
 
@@ -78,7 +91,7 @@ export function renderTurnTodos(turn, rawTodos) {
   if (!turn || !turn.answer) return null;
   if (!turn.todosPanel) {
     turn.todosState = state([]);
-    var panel = T.div({ class: "turn-todos", "aria-live": "polite" });
+    var panel = T.div({ class: PANEL_CLASS, "aria-live": "polite" });
     bind(panel, turn.todosState, panelContent);
     turn.todosPanel = panel;
     // Above the answer, below the tool chips: the checklist is context for

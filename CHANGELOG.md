@@ -14,6 +14,15 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   each view moves over. The theme maps every cabinet token by reference rather
   than copying its value, so utilities follow the seven themes and the dark
   query, and no theme key collides with a token it reads.
+- `ui/app/core/kit.js`: the shadcn-shaped component kit. shadcn/ui is React
+  over Radix with a CLI that assumes TypeScript and a bundler, none of which
+  this page has, so what is ported is the shape — `cn`, a small `variants`
+  (cva), and `button({variant, …})` — over the DOM factory in `core/ui.js`.
+  The variant table spells the cabinet's control classes (`primary`,
+  `secondary`, `danger`, `secondary-danger`) while `app.css` still owns them;
+  when that sheet goes they become utilities in the Tailwind source and this
+  file is the one place that changes. `core/kit.test.mjs` pins the merge, the
+  defaults, and that every class the table names exists in a shipped sheet.
 
 ### Changed
 
@@ -68,6 +77,19 @@ numbers follow the policy in [RELEASES.md](RELEASES.md).
   sets `data-preview` beside the pane's own `hidden`. `ui/plugins/README.md`
   now points a new addon at the page's Tailwind sheet rather than a sheet of
   its own.
+
+- The run checklist (`ui/app/features/todos.js`) is styled with Tailwind
+  utilities; its rules left `app.css`. The drawn box is one `.todo-box`
+  component rule in the Tailwind source, because its tick is an `::after` and
+  its square is em-sized to the item's own text; the item, its title and its
+  state word read the status through `group-data-[status=…]`, and the closed
+  state's strikethrough rides the group rather than a descendant selector.
+- The prompts catalogue (`ui/app/features/prompts.js`) is styled with Tailwind
+  utilities and its buttons come from the kit. Its card rules left
+  `views.css`, along with three rules no markup had used since the card was
+  rewritten (`prompt-name`, `prompt-meta`, `prompt-desc`). The meta line's
+  inline `style.marginTop` is a `mt-2` class, so it is visible to the token
+  sweep that never saw an inline style.
 
 ### Fixed
 

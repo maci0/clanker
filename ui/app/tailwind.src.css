@@ -62,6 +62,40 @@
   .lamp[data-state="warn"]::before { color: var(--warn); box-shadow: var(--lamp-ring), var(--lamp-glow); }
   .lamp[data-state="bad"]::before { color: var(--danger); box-shadow: var(--lamp-ring), var(--lamp-glow); }
 
+  /* The run checklist's box (ui/app/features/todos.js). Drawn, not a glyph: a
+     bordered square that fills in as the item is claimed and gains a tick when
+     it closes. It is a component rule because the tick is an `::after` and the
+     square is em-sized to the item's own text; the word beside it carries the
+     same state for anyone the colour never reaches. */
+  .todo-box {
+    position: relative;
+    flex: none;
+    align-self: center;
+    width: 0.75em;
+    height: 0.75em;
+    border: 1px solid var(--fg-muted);
+    border-radius: var(--radius-sm);
+  }
+  .todo-item[data-status="claimed"] .todo-box {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .todo-item[data-status="closed"] .todo-box {
+    border-color: var(--ok-fill);
+    background: var(--ok-fill);
+  }
+  .todo-item[data-status="closed"] .todo-box::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 0.2em;
+    height: 0.4em;
+    border: solid var(--surface);
+    border-width: 0 2px 2px 0;
+    transform: translateY(-0.08em) rotate(45deg);
+  }
+
   /* The bar column takes the slack of the table, so the labels and numbers stay
      put and only the picture stretches. A share of the table, not a rung. */
   .health-band-barcell { width: 55%; }
