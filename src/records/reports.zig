@@ -16,6 +16,10 @@ const std = @import("std");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 
+/// The full invocation `clanker reports create` refuses with, named once so
+/// the refusal and the store's own help text cannot spell it differently.
+const create_usage = "clanker reports create investigation 2026-08-16-worktree-symlink \"Worktree setup rejects a symlink\" \"TL;DR of what was seen\"";
+
 pub const Options = struct {
     /// "list" (default), "search", "open", "create", "append", "update" or
     /// "status".
@@ -175,8 +179,7 @@ fn rename(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    common.usageError("reports create needs {s}: clanker reports create investigation 2026-08-16-worktree-symlink \"Worktree setup rejects a symlink\" \"TL;DR of what was seen\"", .{what});
-    return Error.MissingArg;
+    return common.missingCreateArg("reports", what, create_usage);
 }
 
 fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {

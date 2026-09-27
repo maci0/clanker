@@ -23,6 +23,10 @@
 const std = @import("std");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
+
+/// The full invocation `clanker research create` refuses with, named once so
+/// the refusal and the store's own help text cannot spell it differently.
+const create_usage = "clanker research create embedded-kv \"Embedded key-value stores\" \"Which one fits a single-writer sidecar?\"";
 const reports_cmd = @import("reports.zig");
 
 pub const Options = struct {
@@ -166,8 +170,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    common.usageError("research create needs {s}: clanker research create embedded-kv \"Embedded key-value stores\" \"Which one fits a single-writer sidecar?\"", .{what});
-    return Error.MissingArg;
+    return common.missingCreateArg("research", what, create_usage);
 }
 
 fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {

@@ -7,6 +7,7 @@ const config = @import("../config.zig");
 const native = @import("oauth_native.zig");
 const plugins = @import("oauth_plugins/registry.zig");
 const store = @import("oauth_store.zig");
+const elapsed = @import("../util/elapsed.zig");
 
 pub fn status(io: std.Io, dir: std.Io.Dir, alloc: std.mem.Allocator, cfg: *const config.Config, provider_name: ?[]const u8, environ: *const std.process.Environ.Map, out: *std.Io.Writer) !void {
     for (plugins.plugins) |plugin| {
@@ -48,7 +49,7 @@ fn loginDevice(init: std.process.Init, arena: std.mem.Allocator, plugin: @import
     const started = std.Io.Timestamp.now(init.io, .awake);
     while (started.durationTo(std.Io.Timestamp.now(init.io, .awake)).nanoseconds < @as(i96, device.expires_in) * std.time.ns_per_s) {
         try std.Io.sleep(init.io, .{ .nanoseconds = @as(i96, interval) * std.time.ns_per_s }, .awake);
-        switch (try native.pollDeviceOnce(init.io, init.gpa, arena, plugin, device.device_code, nowMs(init.io))) {
+        switch (try native.pollDeviceOnce(init.io, init.gpa, arena, plugin, device.device_code, elapsed.nowRealMs(init.io))) {
             .token => |record| return record,
             .wait => |reason| switch (reason) {
                 .pending => {},
@@ -70,7 +71,7 @@ fn loginCodexDevice(init: std.process.Init, arena: std.mem.Allocator, plugin: @i
     while (started.durationTo(std.Io.Timestamp.now(init.io, .awake)).nanoseconds < 15 * std.time.ns_per_min) {
         try std.Io.sleep(init.io, .{ .nanoseconds = @as(i96, device.interval) * std.time.ns_per_s }, .awake);
         if (try native.pollCodexDeviceOnce(init.io, init.gpa, arena, plugin, device)) |grant|
-            return native.exchangeAuthorizationCode(init.io, init.gpa, arena, plugin, grant.code, grant.verifier, "", nowMs(init.io));
+            return native.exchangeAuthorizationCode(init.io, init.gpa, arena, plugin, grant.code, grant.verifier, "", elapsed.nowRealMs(init.io));
     }
     return error.OAuthDeviceExpired;
 }
@@ -89,11 +90,7 @@ fn loginManual(init: std.process.Init, arena: std.mem.Allocator, plugin: @import
     const hash = std.mem.findScalar(u8, pasted, '#');
     const code = if (hash) |i| pasted[0..i] else pasted;
     if (hash) |i| if (!std.mem.eql(u8, pasted[i + 1 ..], state)) return error.OAuthStateMismatch;
-    return native.exchangeAuthorizationCode(init.io, init.gpa, arena, plugin, code, pkce.verifier, state, nowMs(init.io));
-}
-
-fn nowMs(io: std.Io) i64 {
-    return @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
+    return native.exchangeAuthorizationCode(init.io, init.gpa, arena, plugin, code, pkce.verifier, state, elapsed.nowRealMs(init.io));
 }
 
 test "OAuth command status never prints stored token values" {

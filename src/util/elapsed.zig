@@ -29,6 +29,15 @@ pub fn sinceSigned(io: std.Io, t0: std.Io.Timestamp) i64 {
     return msSigned(t0.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
 }
 
+/// Whole milliseconds since the epoch on the real clock, for the stamps a
+/// human or a stored record reads: token issue and expiry times, file mtimes
+/// compared against a deadline. `since` answers how long a call took, so it
+/// reads the awake clock; a wall stamp has to survive an NTP step reading the
+/// other way, so this one does not.
+pub fn nowRealMs(io: std.Io) i64 {
+    return @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
+}
+
 fn ms(ns: i96) u64 {
     return @intCast(@max(0, @divTrunc(ns, std.time.ns_per_ms)));
 }
@@ -63,4 +72,16 @@ test "since and sinceSigned measure the same span within a millisecond" {
     const s = sinceSigned(io, t0);
     try std.testing.expect(u >= 29);
     try std.testing.expectEqual(u, @as(u64, @intCast(@max(0, s))));
+}
+
+test "nowRealMs is a wall stamp, not a span since process start" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Past 2020-01-01 on any real machine, and inside a second of itself, so
+    // a change to the awake clock here fails the test.
+    const now = nowRealMs(io);
+    try std.testing.expect(now > 1_577_836_800_000);
+    try std.testing.expect(@abs(now - nowRealMs(io)) < 1000);
 }

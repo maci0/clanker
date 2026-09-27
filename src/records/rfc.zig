@@ -16,6 +16,10 @@ const std = @import("std");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 
+/// The full invocation `clanker rfc create` refuses with, named once so the
+/// refusal and the store's own help text cannot spell it differently.
+const create_usage = "clanker rfc create \"HTTP client for the proxy\" \"The proxy needs one client and the choice is not recorded\"";
+
 pub const Options = struct {
     /// "list" (default), "search", "open", "checklist", "create", "append",
     /// "update", "recommend" or "status".
@@ -148,8 +152,7 @@ fn create(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    common.usageError("rfc create needs {s}: clanker rfc create \"HTTP client for the proxy\" \"The proxy needs one client and the choice is not recorded\"", .{what});
-    return Error.MissingArg;
+    return common.missingCreateArg("rfc", what, create_usage);
 }
 
 fn append(arena: std.mem.Allocator, opts: Options, tool: Tool) ![]const u8 {

@@ -16,6 +16,10 @@ const std = @import("std");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 
+/// The full invocation `clanker adr create` refuses with, named once so the
+/// refusal and the store's own help text cannot spell it differently.
+const create_usage = "clanker adr create \"<decision as the choice made>\" \"<context>\" \"<decision>\" \"<consequences>\" [rfc path]";
+
 pub const Options = struct {
     /// "list" (default), "search", "open", "create", "append", "update" or
     /// "status".
@@ -148,8 +152,7 @@ pub fn renderCreated(arena: std.mem.Allocator, path: []const u8, rfc: []const u8
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    common.usageError("adr create needs {s}: clanker adr create \"<decision as the choice made>\" \"<context>\" \"<decision>\" \"<consequences>\" [rfc path]", .{what});
-    return Error.MissingArg;
+    return common.missingCreateArg("adr", what, create_usage);
 }
 
 fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {

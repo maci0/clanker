@@ -22,6 +22,7 @@ const oauth_plugins = @import("oauth_plugins/registry.zig");
 const oauth_store = @import("oauth_store.zig");
 const oauth_native = @import("oauth_native.zig");
 const file_lock = @import("../util/file_lock.zig");
+const elapsed = @import("../util/elapsed.zig");
 
 pub const Strategy = config.AuthStrategy;
 
@@ -121,15 +122,10 @@ pub fn selectStrategy(spec: Spec, provider: *const config.Provider, raw: ?[]cons
     return spec.default;
 }
 
-/// Wall clock in milliseconds. Token expiry is a wall-clock property (the
-/// provider issues `expires_in` seconds from its own now), so this is `.real`
-/// and not the monotonic clock. Sampled at each use rather than once per
-/// `resolve`: a wait on the cross-process refresh lock makes any earlier
-/// sample stale, and a stale sample is what puts a short-lived token's
-/// recorded expiry in the past.
-fn nowMs(io: std.Io) i64 {
-    return @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_ms));
-}
+// The wall clock here is `elapsed.nowRealMs`, and it is sampled at each use
+// rather than once per `resolve`: a wait on the cross-process refresh lock
+// makes any earlier sample stale, and a stale sample is what puts a
+// short-lived token's recorded expiry in the past.
 
 /// Resolves the provider's credential into a ready-to-send form. The caller
 /// owns the result and must `deinit` it.
@@ -156,7 +152,7 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
             defer oauth_arena_state.deinit();
             const oauth_arena = oauth_arena_state.allocator();
             var record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
-            const now_ms: i64 = nowMs(env.io);
+            const now_ms: i64 = elapsed.nowRealMs(env.io);
             if (record.needsRefresh(now_ms, refresh_skew_ms)) {
                 // Refresh tokens commonly rotate on use. Serialize across
                 // clanker processes, then reload: another process may have
@@ -173,7 +169,7 @@ pub fn resolve(env: Env, spec: Spec, provider: *const config.Provider) !Credenti
                 // stamped the replacement's `expires_at_ms` that far in the
                 // past, so the next request found it stale again: one refresh
                 // per request, each rotating the refresh token.
-                const held_ms = nowMs(env.io);
+                const held_ms = elapsed.nowRealMs(env.io);
                 record = (try oauth_store.load(env.io, env.state_base, oauth_arena, env.state_dir, plugin.name)) orelse return error.OAuthLoginRequired;
                 if (record.needsRefresh(held_ms, refresh_skew_ms)) {
                     record = try oauth_native.refresh(env.io, env.gpa, oauth_arena, plugin.*, record, held_ms);

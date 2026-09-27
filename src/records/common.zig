@@ -119,6 +119,16 @@ pub fn usageError(comptime fmt: []const u8, args: anytype) void {
     diag.errorLine(fmt, args);
 }
 
+/// The refusal a store answers a `create` missing a required argument with:
+/// what is missing, then a full example invocation. Each store kept its own
+/// copy of the wrapper around that message, so the shape drifted with the
+/// copies; the usage line is the only part that differs, so it is the only
+/// part a store passes.
+pub fn missingCreateArg(store: []const u8, what: []const u8, usage: []const u8) Error {
+    usageError("{s} create needs {s}: {s}", .{ store, what, usage });
+    return Error.MissingArg;
+}
+
 /// A store's `search <query>` argument. Missing is the usage mistake every
 /// store already refused; empty or whitespace-only is refused here because a
 /// blank grep pattern matches every line of every record, and that result

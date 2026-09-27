@@ -16,6 +16,10 @@ const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
 const common = @import("common.zig");
 
+/// The full invocation `clanker prd create` refuses with, named once so the
+/// refusal and the store's own help text cannot spell it differently.
+const create_usage = "clanker prd create \"Scheduled runs\" \"<what breaks without it>\" \"1. ...\" [draft|in_progress|shipped]";
+
 pub const Options = struct {
     /// "list" (default), "search", "open", "checklist", "create", "append",
     /// "update" or "status".
@@ -153,8 +157,7 @@ pub fn renderCreated(arena: std.mem.Allocator, path: []const u8, status: []const
 }
 
 fn missingCreateArg(what: []const u8) Error {
-    common.usageError("prd create needs {s}: clanker prd create \"Scheduled runs\" \"<what breaks without it>\" \"1. ...\" [draft|in_progress|shipped]", .{what});
-    return Error.MissingArg;
+    return common.missingCreateArg("prd", what, create_usage);
 }
 
 fn append(io: std.Io, arena: std.mem.Allocator, opts: Options, tool: Tool) !void {

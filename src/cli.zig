@@ -18939,7 +18939,11 @@ test "the browser's answer crosses threads to the waiting run" {
     try std.testing.expectEqualStrings("hold", answer);
 }
 
-// --------------------------------------------------------- providers check --
+// ---- providers check, and the rest of the test blocks that follow the code --
+//
+// A section banner, so these read as tests of the code above rather than as
+// the start of a new section: `writeCheckSummary`, the sweep and the `/models`
+// pickers are all defined next to the `providers` command, 16000 lines up.
 
 test "the sweep summary is one row per provider, with the default marked in the table" {
     const rows = [_]CheckRow{
