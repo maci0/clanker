@@ -380,6 +380,15 @@ fn readLoop(rt: *Runtime, stream: std.Io.net.Stream) void {
     }
     rt.mu.lock();
     defer rt.mu.unlock();
+    unregisterFdLocked(rt, fd);
+}
+
+/// Every path that closes a *joined* peer's socket must clear its member
+/// entry. The entry is keyed by raw fd number, and `forgetMemberLocked` /
+/// `remember` close whatever number they hold, so a stale entry is not just a
+/// burned slot: once the OS reissues that number to a new connection, the
+/// next teardown closes someone else's socket.
+fn unregisterFdLocked(rt: *Runtime, fd: std.posix.fd_t) void {
     for (&rt.members) |*m| {
         if (m.used and m.fd == fd) m.fd = -1;
     }
@@ -449,6 +458,11 @@ fn acceptOne(arg: *Conn) void {
         return;
     }
     if (!drainFrames(rt, &acc)) {
+        // Joined, so the member row is already registered; retire it here or
+        // the slot stays burned and the snapshot reports a closed fd as up.
+        rt.mu.lock();
+        unregisterFdLocked(rt, fd);
+        rt.mu.unlock();
         stream.close(rt.io);
         return;
     }

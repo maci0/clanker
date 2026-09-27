@@ -37,6 +37,9 @@ const user_agent = "clanker/" ++ build_options.version;
 // forwards. setNamed drops silently when full, so undersizing loses a
 // forwarded header rather than crashing — size for the real maximum.
 const extra_slots = 12;
+/// Ceiling for the `anthropic-beta` value this proxy builds itself, sized
+/// well past any real client's list. See `mergeBetas` for the overflow rule.
+const beta_buffer_bytes = 4096;
 
 pub fn isProxyPath(path: []const u8, surface: Surface) bool {
     return switch (surface) {
@@ -374,6 +377,7 @@ fn pipe(
     }
     var extra: [extra_slots]std.http.Header = undefined;
     var extra_len: usize = 0;
+    var beta_buf: [beta_buffer_bytes]u8 = undefined;
 
     var scratch: providers.ExtraHeaders = undefined;
     const n = impl.authHeaders(cred, &headers, &scratch);
@@ -381,7 +385,7 @@ fn pipe(
         extra[extra_len] = h;
         extra_len += 1;
     }
-    extra_len = overlayAnthropic(ctx, impl, cred, &extra, extra_len);
+    extra_len = overlayAnthropic(ctx, impl, cred, &extra, extra_len, &beta_buf);
     // Accept rides extra_headers: std.http 0.16's Request.Headers has no
     // `accept` field (it was removed with the auto-Accept default).
     extra_len = copyIfPresent(ctx.headers_raw, "accept", &extra, extra_len);
@@ -673,6 +677,7 @@ fn overlayAnthropic(
     cred: auth.Credential,
     extra: *[extra_slots]std.http.Header,
     extra_len: usize,
+    beta_buf: []u8,
 ) usize {
     if (!impl.proxy.overlay_anthropic) return extra_len;
     var len = extra_len;
@@ -683,7 +688,7 @@ fn overlayAnthropic(
     const client_beta = headerValue(ctx.headers_raw, "anthropic-beta");
     const oauth = cred.strategy == .oauth_static or cred.strategy == .oauth_refresh;
     if (oauth) {
-        const merged = mergeBetas(ctx.gpa, client_beta, anthropic.oauth_beta) catch client_beta orelse anthropic.oauth_beta;
+        const merged = mergeBetas(client_beta, anthropic.oauth_beta, beta_buf);
         len = setNamed(extra, len, "anthropic-beta", merged);
     } else if (client_beta) |b| {
         len = setNamed(extra, len, "anthropic-beta", b);
@@ -691,13 +696,25 @@ fn overlayAnthropic(
     return len;
 }
 
-fn mergeBetas(gpa: std.mem.Allocator, client_beta: ?[]const u8, required: []const u8) ![]const u8 {
+/// The merged value is borrowed by the caller and must outlive nothing but
+/// the request, so it lands in the caller's stack buffer rather than in an
+/// allocation: the header is read from `Ctx.gpa`, the process-lifetime serve
+/// allocator, and nothing downstream owns header values, so an `allocPrint`
+/// here leaked its bytes for the life of the process, once per proxied
+/// request. A merged value too long for the buffer keeps `required` and
+/// drops the client's list: losing an optional beta degrades the request,
+/// losing the credential-mandated one is a 400 from the provider.
+fn mergeBetas(client_beta: ?[]const u8, required: []const u8, buf: []u8) []const u8 {
     const raw = client_beta orelse return required;
     var it = std.mem.splitScalar(u8, raw, ',');
     while (it.next()) |part| {
         if (std.mem.eql(u8, std.mem.trim(u8, part, " "), required)) return raw;
     }
-    return std.fmt.allocPrint(gpa, "{s},{s}", .{ raw, required });
+    if (raw.len + 1 + required.len > buf.len) return required;
+    @memcpy(buf[0..raw.len], raw);
+    buf[raw.len] = ',';
+    @memcpy(buf[raw.len + 1 ..][0..required.len], required);
+    return buf[0 .. raw.len + 1 + required.len];
 }
 
 fn setNamed(extra: *[extra_slots]std.http.Header, len: usize, name: []const u8, value: []const u8) usize {

@@ -2844,7 +2844,10 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
     const dir = std.Io.Dir.cwd();
     const arena = init.arena.allocator();
     const local = "config.local.toml";
-    _ = dir.openFile(io, local, .{}) catch |err| switch (err) {
+    if (dir.openFile(io, local, .{})) |existing| {
+        var probe = existing;
+        probe.close(io);
+    } else |err| switch (err) {
         error.FileNotFound => {
             const ident = try friendlyInstanceName(arena, io);
             const content = try std.fmt.allocPrint(arena, local_template, .{ ident.name, ident.id });
@@ -2852,7 +2855,7 @@ fn cmdInit(init: std.process.Init, announce: bool) !void {
             log.log(.info, "wrote {s} (instance '{s}')", .{ local, ident.name });
         },
         else => return err,
-    };
+    }
     ensure_dir.ensureDir(dir, io, "state") catch |err|
         log.log(.warn, "init: mkdir 'state' failed: {s}", .{@errorName(err)});
     if (announce) log.log(.info, "clanker initialized. Run `clanker setup` to check it over.", .{});
@@ -6197,11 +6200,19 @@ fn cmdPreset(init: std.process.Init, opts: Options) !void {
         const name = target orelse usageExitFor(io, "preset", "preset new needs a name: clanker preset new <name>", .{});
         if (name.len == 0 or std.mem.findScalar(u8, name, '/') != null or std.mem.findScalar(u8, name, '\\') != null or std.mem.find(u8, name, "..") != null)
             usageExitFor(io, "preset", "invalid preset name '{s}'; use a plain file name with no '/', '\\' or '..'", .{name});
-        _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch {
+        // Probes close the handle they open: `openDir` returns an owned Dir,
+        // so dropping it to test existence leaked the descriptor.
+        if (std.Io.Dir.cwd().openDir(io, "presets", .{})) |present| {
+            var probe = present;
+            probe.close(io);
+        } else |_| {
             var cwd = std.Io.Dir.cwd();
             try cwd.createDirPath(io, "presets");
-            _ = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return error.PresetsDirUnusable;
-        };
+            if (std.Io.Dir.cwd().openDir(io, "presets", .{})) |probe| {
+                var opened = probe;
+                opened.close(io);
+            } else |_| return error.PresetsDirUnusable;
+        }
         // Re-open after maybe-create to get a handle we own.
         var dir = std.Io.Dir.cwd().openDir(io, "presets", .{}) catch return error.PresetsDirUnusable;
         defer dir.close(io);
@@ -16478,16 +16489,18 @@ fn handleRun(io: std.Io, gpa: std.mem.Allocator, cfg: *const config.Config, envi
         run_cfg.agent.sandbox_root = created.path;
         run_cfg.agent.shared_root = root;
         wt = created;
-        if (resolved.goal_id) |gid| {
-            markGoalWorktree(io, gpa, arena, cfg, environ_map, gid, created.branch);
-            retire.register(gpa, io, std.Io.Dir.cwd(), .{
-                .path = created.path,
-                .branch = created.branch,
-                .base_branch = created.base_branch,
-                .goal_id = gid,
-                .created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000)),
-            });
-        }
+        // Registered unconditionally, like `cmdRun`: registration is the only
+        // thing that puts a worktree in the lifecycle store `reconcile` reads,
+        // and gating it on a goal id left every goal-less isolated web run
+        // with a full checkout on disk that no janitor could even count.
+        retire.register(gpa, io, std.Io.Dir.cwd(), .{
+            .path = created.path,
+            .branch = created.branch,
+            .base_branch = created.base_branch,
+            .goal_id = resolved.goal_id orelse "",
+            .created = @intCast(@divTrunc(std.Io.Timestamp.now(io, .real).nanoseconds, 1_000_000_000)),
+        });
+        if (resolved.goal_id) |gid| markGoalWorktree(io, gpa, arena, cfg, environ_map, gid, created.branch);
         final_task = std.fmt.allocPrint(arena,
             \\You are on a worktree run: this run lives in a separate git worktree on branch "{s}" (path {s}, based on "{s}"), isolated from the shared checkout. Make your edits, test, and commit here.
             \\

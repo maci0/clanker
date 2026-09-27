@@ -394,6 +394,7 @@ pub fn startExec(
         gpa.destroy(job);
         return error.InvalidArg;
     };
+    var appended: std.mem.Allocator.Error!void = error.OutOfMemory;
     {
         mu.lock();
         defer mu.unlock();
@@ -403,15 +404,18 @@ pub fn startExec(
         // the lock was a plain data race with that locked read.
         gpa_ref = gpa;
         reapDone(ExecJob, &execs, gpa);
-        execs.append(gpa, job) catch {
-            // Residual posix: signal delivery has no std.Io equivalent.
-            std.posix.kill(pid, std.posix.SIG.TERM) catch {};
-            if (job.thread) |th| th.join();
-            gpa.free(job.id);
-            gpa.free(job.session_id);
-            gpa.destroy(job);
-            return error.InvalidArg;
-        };
+        // The unwind below joins the waiter thread, which takes `mu` itself
+        // (`reg.forget`), so it must not run inside the locked block.
+        appended = execs.append(gpa, job);
+    }
+    if (appended) |_| {} else |err| {
+        // Residual posix: signal delivery has no std.Io equivalent.
+        std.posix.kill(pid, std.posix.SIG.TERM) catch {};
+        if (job.thread) |th| th.join();
+        gpa.free(job.id);
+        gpa.free(job.session_id);
+        gpa.destroy(job);
+        return err;
     }
     // argv[0] only: the rest can carry paths and prompt text, and the full
     // command is already recoverable from the run graph.

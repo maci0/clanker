@@ -936,6 +936,9 @@ pub const Agent = struct {
         var advisor_note: ?advisor.Note = null;
         defer if (advisor_note) |n| self.ctx.gpa.free(n.text);
         var advisor_abort: ?[]const u8 = null;
+        // Every other `run` return hands back arena-owned content; this one
+        // arrives gpa-owned, and the `defer` freed it before the caller read
+        // it. Duplicated into the arena on the way out.
         defer if (advisor_abort) |t| self.ctx.gpa.free(t);
         while (iteration < self.max_iterations) : (iteration += 1) {
             if (self.stopRequested()) {
@@ -1243,7 +1246,7 @@ pub const Agent = struct {
                         .output = graph_mod.truncatedPreview(text),
                         .ok = false,
                     });
-                    return .{ .message = .{ .role = .assistant, .content = text } };
+                    return .{ .message = .{ .role = .assistant, .content = try self.arena.dupe(u8, text) } };
                 }
             }
             // The batch has joined, so the private list is quiescent again and
