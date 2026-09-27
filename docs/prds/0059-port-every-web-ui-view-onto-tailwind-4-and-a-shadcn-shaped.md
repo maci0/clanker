@@ -131,8 +131,22 @@ kit only through the plugin API and a declared capability, gated in
    (ui/app/core/plugins.js), declare it in ui/plugins/README.md and gate it in
    ui/plugins/capabilities.test.mjs, then drop the duplicated class strings
    in the ported plugins.
-6. Deletion: import preflight in ui/app/tailwind.src.css; delete
-   ui/app/views.css and ui/app/app.css; (the PatternFly sheet, its subset
+6. Deletion (one atomic step — the two sheets must not both carry the
+   moved rules, or first paint crosses its 64K ceiling: shipping the tokens and
+   the element layer in both measures 64.1K gz). Move the cabinet token block
+   (ui/app/app.css's :root, including the system dark block) into
+   ui/app/tailwind.src.css as a plain :root after the imports; move the
+   element layer into @layer base in the same file; add
+   `@import "tailwindcss/preflight.css" layer(base);` after the utilities
+   import; then delete ui/app/app.css and its <link>. The wiring that goes with
+   it: the @embedFile and size constant plus the asset row in ui/webui.zig, the
+   path/Kind entry in src/serve/webui_assets.zig, the two /webui/app.css
+   entries in src/cli.zig's import map (its plugin asset route keeps its own
+   app.css), the ui/app/app.css row and its fixtures in src/gate/checks.zig's
+   webui_first_paint_caps, and the app.css reads in ui/app/{design-tokens,
+   layout,harden,scroll,tailwind,weight-budget}.test.mjs. Verify with
+   `bun run css:build`, `bun test ui/app ui/plugins`, `zig build tools` and
+   a full `zig build test`, since the host's asset table changes. (the PatternFly sheet, its subset
    script `scripts/subset-patternfly.py` and `ui/PATTERNFLY.md` are already
    gone, deleted with the last `pf-v6-*` class); drop the
    upgradePf* bridges in ui/app/core/ui.js and the deferred-sheet swap if
@@ -171,3 +185,20 @@ kit only through the plugin API and a declared capability, gated in
   use the kit and equivalent ones do not. Settling on whether a repeated
   control is migrated to the kit or left as utilities is a per-component call
   once three or more callers exist.
+## Progress since the last revision
+
+Phases 2 to 5 are done: every plugin app.js, feature view and the chat frame
+are utilities or component rules in ui/app/tailwind.src.css, and app.css is
+down to 44.7K raw — its token block, its element layer and a handful of media
+blocks. The chrome vocabulary (meta, section-head, toast, overlay, the run
+picker, the chip's lamp, the turn's live/found marks) moved into the sheet's
+component layer rather than becoming utilities: a plugin's markup is its own
+document and cannot import a JavaScript constant, so those names are the
+page's public surface. The rendered document (mermaid, fenced code, tables and
+the markdown body) moved there for the same reason: its shapes are the
+renderer's class names.
+
+Two guards grew rather than weakened along the way: ui/app/tailwind.test.mjs's
+class scanner skips a token ending in `-` (the front half of a composed name,
+which is highlight.js's own convention), and the assertions that compare rule
+positions now read app.css and tailwind.src.css in cascade order.
