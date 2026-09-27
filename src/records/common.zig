@@ -14,10 +14,11 @@ const diag = @import("../util/diag.zig");
 const log = @import("../util/log.zig");
 const utf8 = @import("../util/utf8.zig");
 const json_util = @import("../util/json.zig");
-/// Terminal column measurement. Not TUI state: `tui/width.zig` is a pure
-/// function over bytes, and a record's `status` is arbitrary author text, so
-/// the `clanker reports list` table needs the same answer the REPL's does.
-const width = @import("../tui/width.zig");
+/// Terminal column measurement. Shared with the REPL because it is the same
+/// question: `util/width.zig` is a pure function over bytes, and a record's
+/// `status` is arbitrary author text, so the `clanker reports list` table
+/// needs the same answer the REPL's does.
+const width = @import("../util/width.zig");
 
 pub const Error = error{
     BadSubcommand,

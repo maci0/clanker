@@ -598,7 +598,8 @@ One rule: a top-level directory holds the data the agent works with, and `src/<s
 | `tui-plugins/`, `cli-plugins/` | `src/tui/slash_plugins.zig`, `src/cli/cli_plugins.zig` | Slash-command / subcommand plugin manifests (PRD 0012) |
 | `hooks/` | `src/hooks/` | Claude-compatible lifecycle hook catalogs (`[hooks] config_path`, `ponytail.json` is the shipped one) |
 | `ui/` | — | Web UI surface: `app/`, plugin views under `plugins/`, vendored JS in `vendor/` |
-| `rules/` | — | `ast-grep` rules, loaded through `sgconfig.yml` (`ruleDirs: rules`) alongside the custom Zig grammar built by `tools/grammars/build.sh` |
+| `rules/` | — | `ast-grep` rules, loaded through `sgconfig.yml` (`ruleDirs: rules`) |
+| `grammars/` | — | `ast-grep` language grammars it does not ship: `build.sh` compiles the Zig tree-sitter grammar to `grammars/zig.so`, which `sgconfig.yml` registers as `customLanguages.zig` |
 | `vendor/` | — | Vendored third-party source, committed rather than fetched |
 | `patches/` | — | Patches applied to vendored dependencies (`scripts/apply-patches.sh`) |
 | `docs/` | — | This reference, the roadmap, review prompts, assets |
@@ -617,7 +618,6 @@ dependency cache location is controlled by the Zig installation/environment.
 - `tools/zig/` — Zig tool sources.
 - `tools/ts/` — AssemblyScript tool sources.
 - `tools/c/`, `tools/cpp/`, `tools/py/` — tool sources in those languages.
-- `tools/grammars/` — grammars used by tools that parse.
 - `tools/examples/manifests/` — descriptors the registry does not load. The matching sources already exist (`tools/c/`, `tools/cpp/`, `tools/ts/calc_ts.ts`); `zig build tools` compiles the C and C++ guests into `zig-out/tools/`. They stay parked so a language-showcase tool is not offered to the model until it is shipped.
 - `ui/plugins/` — web UI plugin apps, served under `/webui/plugins/<name>`.
 - `tools/manifests/*.tool.json` — tool descriptors, with optional `"internal": true` flag for internal tools (like `webui`). Full field reference: [docs/manifest.md](manifest.md).

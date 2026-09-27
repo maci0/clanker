@@ -6,7 +6,7 @@
 # library and drops it where sgconfig.yml expects it. The .so is a build
 # artifact: it is not committed, and this script is how you get it back.
 #
-# Usage: tools/grammars/build.sh [zig]
+# Usage: grammars/build.sh [zig]
 set -euo pipefail
 
 OUT_DIR="${CLANKER_GRAMMAR_DIR:-$(cd "$(dirname "$0")" && pwd)}"

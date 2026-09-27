@@ -12,7 +12,7 @@
 //! can't visually break no matter what the tool printed.
 
 const std = @import("std");
-const width = @import("width.zig");
+const width = @import("../util/width.zig");
 const theme_mod = @import("theme.zig");
 const syntax = @import("syntax.zig");
 const sanitize = @import("../util/sanitize.zig");

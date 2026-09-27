@@ -257,7 +257,7 @@ comptime {
     _ = @import("agent/private_todos.zig");
     _ = @import("stats/tokens.zig");
     _ = @import("llm/stream.zig");
-    _ = @import("tui/width.zig");
+    _ = @import("util/width.zig");
     _ = @import("tui/transcript.zig");
     _ = @import("tui/theme.zig");
     _ = @import("tui/syntax.zig");

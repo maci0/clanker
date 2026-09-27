@@ -41,7 +41,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
     } else if (std.mem.eql(u8, engine, "ast-grep")) {
         try args.append(lib.alloc, "run");
         // ast-grep ships no Zig parser; sgconfig.yml registers one built by
-        // tools/grammars/build.sh. Passing the config always (not only for
+        // grammars/build.sh. Passing the config always (not only for
         // .zig) also picks up any rules the project defines.
         try args.append(lib.alloc, "--config");
         try args.append(lib.alloc, "sgconfig.yml");
@@ -132,7 +132,7 @@ fn tool_main(input: []const u8, out: *lib.Out) !void {
                 std.mem.find(u8, ag_stderr, "Cannot find") != null)
             {
                 try s.objectField("hint");
-                try s.write("run tools/grammars/build.sh to build the Zig tree-sitter grammar, then retry");
+                try s.write("run grammars/build.sh to build the Zig tree-sitter grammar, then retry");
             }
             try s.endObject();
             lib.commit(out, &w);

@@ -59,7 +59,7 @@ a one-byte codepoint only below 0x80.
 
 ## Verification
 
-Two unit tests in `src/tui/width.zig`: "a codepoint cut short at the end of
+Two unit tests in `src/util/width.zig`: "a codepoint cut short at the end of
 the slice is one byte, not a panic" and "malformed bytes lay out as width 1
 each, the way this module documents". The reproduction above passes after the
 fix. `clanker gate` green (all eleven checks).
