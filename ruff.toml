@@ -12,10 +12,12 @@ target-version = "py310"
 
 [lint]
 select = [
+    "A",   # flake8-builtins: a parameter or local named after a builtin
     "B",   # bugbear: mutable defaults, bare except shapes
     "BLE", # blind except; only the one deliberate tool top-level catch is exempt
     "C4",  # comprehensions
     "E",   # pycodestyle errors
+    "ERA", # commented-out code left behind by a debug session
     "F",   # pyflakes
     "I",   # import order
     "PIE", # misc lints

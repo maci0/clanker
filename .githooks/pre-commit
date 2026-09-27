@@ -52,10 +52,14 @@ if [ -n "$(staged '*.zig' | tr -d '\0')" ]; then
         fail "zig fmt --check failed (fix: zig fmt <files above>)"
 fi
 
-# Shell scripts, when shellcheck is installed (CI runs it regardless).
+# Shell scripts, when shellcheck is installed (CI runs it regardless). This
+# hook is a tracked shell script with no .sh suffix and nothing runs it in CI
+# except the `git ls-files '*.sh' '.githooks/pre-commit'` step, so it is named
+# here too: a hook that lints every other script but not itself is the one
+# script whose failures stay invisible until CI reads the tree.
 if command -v shellcheck >/dev/null 2>&1; then
-    if [ -n "$(staged '*.sh' | tr -d '\0')" ]; then
-        staged '*.sh' | xargs -0 shellcheck || fail "shellcheck failed"
+    if [ -n "$(staged '*.sh' '.githooks/pre-commit' | tr -d '\0')" ]; then
+        staged '*.sh' '.githooks/pre-commit' | xargs -0 shellcheck || fail "shellcheck failed"
     fi
 fi
 
