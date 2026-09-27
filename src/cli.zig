@@ -9255,7 +9255,8 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
     const schedule = schedule_runner.snapshotScheduleMetrics();
     const job = jobs.snapshotJobMetrics();
     const live_bus = live.snapshotMetrics();
-    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}}}}", .{
+    const mesh_sync = session_sync.snapshotSyncMetrics();
+    return std.fmt.bufPrint(buf, "{{\"ok\":true,\"t\":\"metrics\",\"http\":{{\"requests_total\":{d},\"errors_total\":{d},\"client_errors_total\":{d},\"in_flight\":{d},\"connection_limit\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_10\":{d},\"le_100\":{d},\"le_1000\":{d},\"le_10000\":{d}}}}},\"live\":{{\"subscribers\":{d},\"dropped_total\":{d}}},\"llm\":{{\"requests_total\":{d},\"errors_total\":{d},\"retries_total\":{d},\"timeouts_total\":{d},\"latency_ms_sum\":{d},\"latency_buckets\":{{\"le_1000\":{d},\"le_5000\":{d},\"le_15000\":{d},\"le_60000\":{d}}}}},\"tools\":{{\"requests_total\":{d},\"errors_total\":{d}}},\"schedule\":{{\"fires_total\":{d},\"errors_total\":{d}}},\"jobs\":{{\"starts_total\":{d},\"completions_total\":{d},\"errors_total\":{d},\"active\":{d}}},\"mesh\":{{\"fanouts_total\":{d},\"fanout_failures_total\":{d},\"backfill_failures_total\":{d}}}}}", .{
         http_requests_total.load(.monotonic),
         http_errors_total.load(.monotonic),
         http_client_errors_total.load(.monotonic),
@@ -9285,6 +9286,9 @@ fn metricsSnapshot(buf: []u8) ?[]const u8 {
         job.completions_total,
         job.errors_total,
         job.active,
+        mesh_sync.fanouts_total,
+        mesh_sync.fanout_failures_total,
+        mesh_sync.backfill_failures_total,
     }) catch null;
 }
 
@@ -9295,7 +9299,7 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     const body = metricsSnapshot(&buf) orelse return error.SnapshotTruncated;
     const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, body, .{});
     defer parsed.deinit();
-    for ([_][]const u8{ "http", "live", "llm", "tools", "schedule", "jobs" }) |group| {
+    for ([_][]const u8{ "http", "live", "llm", "tools", "schedule", "jobs", "mesh" }) |group| {
         try std.testing.expect(parsed.value.object.get(group) != null);
     }
     const live_obj = (parsed.value.object.get("live").?).object;
@@ -9306,6 +9310,13 @@ test "metricsSnapshot stays parseable and reports background job counters" {
     const jobs_obj = (parsed.value.object.get("jobs").?).object;
     for ([_][]const u8{ "starts_total", "completions_total", "errors_total", "active" }) |field| {
         const v = jobs_obj.get(field) orelse return error.MissingJobField;
+        try std.testing.expect(v == .integer);
+    }
+    // Mesh replication is fire-and-forget, so a failure counter is the only
+    // signal a peer going quiet produces outside the log.
+    const mesh_obj = (parsed.value.object.get("mesh").?).object;
+    for ([_][]const u8{ "fanouts_total", "fanout_failures_total", "backfill_failures_total" }) |field| {
+        const v = mesh_obj.get(field) orelse return error.MissingMeshField;
         try std.testing.expect(v == .integer);
     }
     // A timeout is the one provider failure a retry cannot fix, and latency is
@@ -13232,7 +13243,11 @@ fn handleSessionEventsPost(
         respond(stream, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad request body\"}");
         return;
     };
-    const result = session_sync.receive(io, arena, parsed.owner, id, parsed.events) catch {
+    const result = session_sync.receive(io, arena, parsed.owner, id, parsed.events) catch |err| {
+        // The sender sees a 500 and retries; the replica's side of that
+        // failure is otherwise nothing, since the completion line records the
+        // status and no error name reaches the log.
+        log.log(.error_, "mesh session sync: could not store events owner={s} session={s} err={s}", .{ parsed.owner, id, @errorName(err) });
         respond(stream, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"could not store events\"}");
         return;
     };

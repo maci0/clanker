@@ -76,6 +76,7 @@ const sampling = @import("../llm/sampling_profiles.zig");
 // `_mod` because saveConversation has a local named `transcript`.
 const transcript_mod = @import("transcript.zig");
 const stats_mod = @import("turn_stats.zig");
+const elapsed = @import("../util/elapsed.zig");
 const mascot = @import("mascot.zig");
 const clipboard = @import("clipboard.zig");
 const worktree_mod = @import("../improve/worktree.zig");

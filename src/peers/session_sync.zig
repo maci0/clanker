@@ -15,8 +15,51 @@
 const std = @import("std");
 const sqlite = @import("../util/sqlite.zig");
 const session_events = @import("../agent/session_events.zig");
+const log = @import("../util/log.zig");
 
 pub const replica_root = "state/mesh";
+
+/// Process-local counters for mesh session replication. Every step below is
+/// fire-and-forget: the caller that triggers a push or a backfill is already
+/// answering or has already returned, and nothing retries until the next
+/// session write, so a replica that stops converging is otherwise
+/// indistinguishable from a healthy idle one. No per-peer or per-session
+/// labels; those live in the correlated log lines, keeping cardinality
+/// bounded the way the HTTP, tool, job, and schedule counters already do.
+var fanouts_total = std.atomic.Value(u64).init(0);
+var fanout_failures_total = std.atomic.Value(u64).init(0);
+var backfill_failures_total = std.atomic.Value(u64).init(0);
+
+pub const SyncMetrics = struct {
+    /// Peer fan-outs that carried the whole tail, cursor recorded.
+    fanouts_total: u64,
+    /// Fan-outs abandoned before the tail was delivered, at the first failure.
+    fanout_failures_total: u64,
+    /// Pull-side failures: a peer that is down, or a store that would not open.
+    backfill_failures_total: u64,
+};
+
+pub fn snapshotSyncMetrics() SyncMetrics {
+    return .{
+        .fanouts_total = fanouts_total.load(.monotonic),
+        .fanout_failures_total = fanout_failures_total.load(.monotonic),
+        .backfill_failures_total = backfill_failures_total.load(.monotonic),
+    };
+}
+
+/// One swallowed replication failure, counted and named. The stage says which
+/// step gave up, the peer says which dependency did not answer, and the
+/// session says what stayed unconverged; without all three an operator has a
+/// counter that moved and nothing to grep for.
+fn fanoutFailed(comptime stage: []const u8, owner: []const u8, peer: []const u8, id: []const u8, err: anyerror) void {
+    _ = fanout_failures_total.fetchAdd(1, .monotonic);
+    log.log(.warn, "mesh session sync: {s} failed owner={s} peer={s} session={s} err={s}", .{ stage, owner, peer, id, @errorName(err) });
+}
+
+fn backfillFailed(comptime stage: []const u8, owner: []const u8, peer: []const u8, id: []const u8, err: anyerror) void {
+    _ = backfill_failures_total.fetchAdd(1, .monotonic);
+    log.log(.warn, "mesh session sync: {s} failed owner={s} peer={s} session={s} err={s}", .{ stage, owner, peer, id, @errorName(err) });
+}
 
 /// Opens (creating if needed) the replica database for `owner`'s session
 /// `<id>`, with the append-only events table.
@@ -137,22 +180,55 @@ pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
     if (session_id.len == 0) return;
     const peers = peersOf(cfg, arena);
     if (peers.len == 0) return;
-    var store = session_events.Store.open(arena, sessionDbPathZ(arena, session_id) catch return) catch return;
+    const owner = ownerId(cfg);
+    var store = session_events.Store.open(arena, sessionDbPathZ(arena, session_id) catch |err| {
+        fanoutFailed("build local store path", owner, "-", session_id, err);
+        return;
+    }) catch |err| {
+        fanoutFailed("open local store", owner, "-", session_id, err);
+        return;
+    };
     defer store.close();
     const last_fanned = std.fmt.parseInt(i64, store.getMeta("mesh_last_fanned") orelse "0", 10) catch 0;
-    const events = store.since(last_fanned) catch return;
+    const events = store.since(last_fanned) catch |err| {
+        fanoutFailed("read local events", owner, "-", session_id, err);
+        return;
+    };
     if (events.len == 0) return;
-    const owner = ownerId(cfg);
     const from: i64 = last_fanned;
     for (peers) |peer| {
         var cursor: i64 = from;
+        // A failure abandons this peer's fan-out rather than the others, but
+        // it has to be visible: the tail below stays un-fanned, so the next
+        // push retries it and the peer stays behind with nothing said.
+        var delivered = true;
         while (cursor < events[events.len - 1].seq) {
-            const tail = store.since(cursor) catch break;
+            const tail = store.since(cursor) catch |err| {
+                fanoutFailed("read local events", owner, peer.name, session_id, err);
+                delivered = false;
+                break;
+            };
             if (tail.len == 0) break;
-            const batch = encodeBatch(arena, owner, tail) catch break;
-            const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}/events", .{ peer.url, session_id }) catch break;
-            const resp = httpFetch(io, gpa, arena, .POST, url, batch) catch break;
-            const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, resp, .{ .ignore_unknown_fields = true }) catch break;
+            const batch = encodeBatch(arena, owner, tail) catch |err| {
+                fanoutFailed("encode batch", owner, peer.name, session_id, err);
+                delivered = false;
+                break;
+            };
+            const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}/events", .{ peer.url, session_id }) catch |err| {
+                fanoutFailed("build peer url", owner, peer.name, session_id, err);
+                delivered = false;
+                break;
+            };
+            const resp = httpFetch(io, gpa, arena, .POST, url, batch) catch |err| {
+                fanoutFailed("push tail", owner, peer.name, session_id, err);
+                delivered = false;
+                break;
+            };
+            const parsed = std.json.parseFromSliceLeaky(std.json.Value, arena, resp, .{ .ignore_unknown_fields = true }) catch |err| {
+                fanoutFailed("parse peer reply", owner, peer.name, session_id, err);
+                delivered = false;
+                break;
+            };
             var advanced = false;
             if (parsed == .object) {
                 if (parsed.object.get("gap")) |g| {
@@ -174,8 +250,12 @@ pub fn pushTail(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
             }
             if (!advanced) cursor = tail[tail.len - 1].seq;
         }
+        if (!delivered) continue;
+        _ = fanouts_total.fetchAdd(1, .monotonic);
     }
-    store.setMeta("mesh_last_fanned", std.fmt.allocPrint(arena, "{d}", .{events[events.len - 1].seq}) catch "0") catch {};
+    store.setMeta("mesh_last_fanned", std.fmt.allocPrint(arena, "{d}", .{events[events.len - 1].seq}) catch "0") catch |err| {
+        fanoutFailed("record fan-out cursor", owner, "-", session_id, err);
+    };
 }
 
 pub fn backfill(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: *const config_mod.Config) void {
@@ -183,33 +263,79 @@ pub fn backfill(io: std.Io, gpa: std.mem.Allocator, arena: std.mem.Allocator, cf
     if (peers.len == 0) return;
     var owner_url: std.StringHashMapUnmanaged([]const u8) = .empty;
     defer owner_url.deinit(gpa);
-    for (peers) |p| owner_url.put(gpa, p.name, p.url) catch {};
-    var dir = std.Io.Dir.cwd().openDir(io, "state/mesh", .{ .iterate = true }) catch return;
+    for (peers) |p| owner_url.put(gpa, p.name, p.url) catch |err| {
+        backfillFailed("index peers", p.name, p.name, "-", err);
+    };
+    var dir = std.Io.Dir.cwd().openDir(io, replica_root, .{ .iterate = true }) catch |err| {
+        backfillFailed("open replica root", "-", "-", "-", err);
+        return;
+    };
     defer dir.close(io);
     var owners = dir.iterate();
-    while (owners.next(io) catch null) |owner_entry| {
+    while (true) {
+        // A walk that dies mid-iteration used to end the loop with no line and
+        // no counter, which reads as "nothing to back off" rather than "the
+        // rest of this owner's replicas were not attempted".
+        const owner_entry = owners.next(io) catch |err| {
+            backfillFailed("walk replica root", "-", "-", "-", err);
+            break;
+        } orelse break;
         if (owner_entry.kind != .directory) continue;
         const owner = owner_entry.name;
         const url = owner_url.get(owner) orelse continue;
-        const sessions_sub = std.fmt.allocPrint(arena, "{s}/sessions", .{owner}) catch continue;
-        var sdir = dir.openDir(io, sessions_sub, .{ .iterate = true }) catch continue;
+        const sessions_sub = std.fmt.allocPrint(arena, "{s}/sessions", .{owner}) catch |err| {
+            backfillFailed("build replica path", owner, owner, "-", err);
+            continue;
+        };
+        var sdir = dir.openDir(io, sessions_sub, .{ .iterate = true }) catch |err| {
+            backfillFailed("open replica sessions", owner, owner, "-", err);
+            continue;
+        };
         defer sdir.close(io);
         var sit = sdir.iterate();
-        while (sit.next(io) catch null) |s_entry| {
+        // A session that cannot be pulled is skipped, not fatal: the rest of
+        // the owner's replicas are still worth backfilling, which is what the
+        // bare `catch continue` did while saying nothing about it.
+        sessions: while (true) {
+            const s_entry = sit.next(io) catch |err| {
+                backfillFailed("walk replica sessions", owner, owner, "-", err);
+                break;
+            } orelse break;
             if (s_entry.kind != .file) continue;
             if (!std.mem.endsWith(u8, s_entry.name, ".db")) continue;
             const id = s_entry.name[0 .. s_entry.name.len - 3];
-            var store = session_events.Store.open(arena, replicaPathZ(arena, owner, id) catch continue) catch continue;
+            var store = session_events.Store.open(arena, replicaPathZ(arena, owner, id) catch |err| {
+                backfillFailed("build replica path", owner, owner, id, err);
+                continue :sessions;
+            }) catch |err| {
+                backfillFailed("open replica store", owner, owner, id, err);
+                continue :sessions;
+            };
             defer store.close();
-            const after = store.lastSeq() catch continue;
-            const pull_url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}/events?after={d}", .{ url, id, after }) catch continue;
-            const body = httpFetch(io, gpa, arena, .GET, pull_url, null) catch continue;
-            const parsed = std.json.parseFromSliceLeaky(PullResponse, arena, body, .{ .ignore_unknown_fields = true }) catch continue;
+            const after = store.lastSeq() catch |err| {
+                backfillFailed("read replica cursor", owner, owner, id, err);
+                continue :sessions;
+            };
+            const pull_url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}/events?after={d}", .{ url, id, after }) catch |err| {
+                backfillFailed("build pull url", owner, owner, id, err);
+                continue :sessions;
+            };
+            const body = httpFetch(io, gpa, arena, .GET, pull_url, null) catch |err| {
+                backfillFailed("pull events", owner, owner, id, err);
+                continue :sessions;
+            };
+            const parsed = std.json.parseFromSliceLeaky(PullResponse, arena, body, .{ .ignore_unknown_fields = true }) catch |err| {
+                backfillFailed("parse event pull", owner, owner, id, err);
+                continue :sessions;
+            };
             var accepted: i64 = after;
             for (parsed.events) |e| {
                 if (e.seq <= after) continue;
                 if (e.seq != accepted + 1) break;
-                _ = store.append(e.ts_ms, e.kind, e.payload) catch break;
+                _ = store.append(e.ts_ms, e.kind, e.payload) catch |err| {
+                    backfillFailed("append pulled event", owner, owner, id, err);
+                    break;
+                };
                 accepted = e.seq;
             }
             // The transcript projection too, so a peer can resume the
@@ -227,6 +353,37 @@ const PullResponse = struct {
 // ------------------------------------------------------------------- tests --
 
 const test_env = @import("../util/test_env.zig");
+
+test "snapshotSyncMetrics reports the live counters" {
+    const before = snapshotSyncMetrics();
+    _ = fanouts_total.fetchAdd(1, .monotonic);
+    _ = fanout_failures_total.fetchAdd(1, .monotonic);
+    _ = backfill_failures_total.fetchAdd(1, .monotonic);
+    defer {
+        _ = fanouts_total.fetchSub(1, .monotonic);
+        _ = fanout_failures_total.fetchSub(1, .monotonic);
+        _ = backfill_failures_total.fetchSub(1, .monotonic);
+    }
+    const after = snapshotSyncMetrics();
+    try std.testing.expectEqual(before.fanouts_total + 1, after.fanouts_total);
+    try std.testing.expectEqual(before.fanout_failures_total + 1, after.fanout_failures_total);
+    try std.testing.expectEqual(before.backfill_failures_total + 1, after.backfill_failures_total);
+}
+
+test "a failed pull leaves the counter moved, so a silent peer is visible" {
+    const gpa = std.testing.allocator;
+    var env: test_env.Env = .init();
+    defer env.deinit();
+    const io = env.io();
+    const arena = env.arena();
+    const owner = try std.fmt.allocPrint(arena, "silent-{s}", .{&env.tmp.sub_path});
+
+    const before = snapshotSyncMetrics().backfill_failures_total;
+    // No listener on this port, so the pull fails where an operator would
+    // otherwise see nothing at all.
+    pullTranscript(io, gpa, arena, "http://127.0.0.1:1", owner, "session");
+    try std.testing.expectEqual(before + 1, snapshotSyncMetrics().backfill_failures_total);
+}
 
 test "receive accepts appends at cursor+1, drops duplicates, and reports gaps" {
     var env: test_env.Env = .init();
@@ -365,7 +522,9 @@ const TranscriptResponse = struct {
 /// replica's meta + messages tables, so a peer can resume the conversation.
 /// The whole snapshot is one transaction: a pull that dies halfway leaves the
 /// previous snapshot intact, never half a transcript. Fail-open: any failure
-/// only means resume happens from an older snapshot.
+/// only means resume happens from an older snapshot, so every one of them is
+/// counted and named rather than dropped, or a replica silently resumes from
+/// a stale conversation with no record of why.
 pub fn pullTranscript(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -374,36 +533,86 @@ pub fn pullTranscript(
     owner: []const u8,
     id: []const u8,
 ) void {
-    var store = replicaStore(io, arena, owner, id) catch return;
+    var store = replicaStore(io, arena, owner, id) catch |err| {
+        backfillFailed("open replica store", owner, owner_url, id, err);
+        return;
+    };
     defer store.close();
     ensureMessages(&store);
-    const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}", .{ owner_url, id }) catch return;
-    const body = httpFetch(io, gpa, arena, .GET, url, null) catch return;
-    const parsed = std.json.parseFromSliceLeaky(TranscriptResponse, arena, body, .{ .ignore_unknown_fields = true }) catch return;
-    var tx = sqlite.Transaction.begin(&store.conn) catch return;
+    const url = std.fmt.allocPrint(arena, "{s}/api/sessions/{s}", .{ owner_url, id }) catch |err| {
+        backfillFailed("build pull url", owner, owner_url, id, err);
+        return;
+    };
+    const body = httpFetch(io, gpa, arena, .GET, url, null) catch |err| {
+        backfillFailed("pull transcript", owner, owner_url, id, err);
+        return;
+    };
+    const parsed = std.json.parseFromSliceLeaky(TranscriptResponse, arena, body, .{ .ignore_unknown_fields = true }) catch |err| {
+        backfillFailed("parse transcript", owner, owner_url, id, err);
+        return;
+    };
+    var tx = sqlite.Transaction.begin(&store.conn) catch |err| {
+        backfillFailed("begin transcript write", owner, owner_url, id, err);
+        return;
+    };
     defer tx.rollback();
-    store.setMeta("id", parsed.id) catch return;
-    store.setMeta("title", parsed.title) catch return;
+    store.setMeta("id", parsed.id) catch |err| {
+        backfillFailed("store transcript id", owner, owner_url, id, err);
+        return;
+    };
+    store.setMeta("title", parsed.title) catch |err| {
+        backfillFailed("store transcript title", owner, owner_url, id, err);
+        return;
+    };
     var buf: [24]u8 = undefined;
-    store.setMeta("created", std.fmt.bufPrint(&buf, "{d}", .{parsed.created}) catch "0") catch return;
-    store.setMeta("updated", std.fmt.bufPrint(&buf, "{d}", .{parsed.updated}) catch "0") catch return;
-    store.conn.exec("DELETE FROM messages;") catch return;
-    var ins = store.conn.prepare("INSERT INTO messages (role, content) VALUES (?1, ?2);") catch return;
+    store.setMeta("created", std.fmt.bufPrint(&buf, "{d}", .{parsed.created}) catch "0") catch |err| {
+        backfillFailed("store transcript created", owner, owner_url, id, err);
+        return;
+    };
+    store.setMeta("updated", std.fmt.bufPrint(&buf, "{d}", .{parsed.updated}) catch "0") catch |err| {
+        backfillFailed("store transcript updated", owner, owner_url, id, err);
+        return;
+    };
+    store.conn.exec("DELETE FROM messages;") catch |err| {
+        backfillFailed("clear replica messages", owner, owner_url, id, err);
+        return;
+    };
+    var ins = store.conn.prepare("INSERT INTO messages (role, content) VALUES (?1, ?2);") catch |err| {
+        backfillFailed("prepare message insert", owner, owner_url, id, err);
+        return;
+    };
     defer ins.finalize();
     var stored_bytes: usize = 0;
     for (parsed.messages) |m| {
         ins.reset();
-        ins.bindText(1, m.role) catch return;
-        ins.bindText(2, m.content) catch return;
-        _ = ins.step() catch return;
+        ins.bindText(1, m.role) catch |err| {
+            backfillFailed("bind message role", owner, owner_url, id, err);
+            return;
+        };
+        ins.bindText(2, m.content) catch |err| {
+            backfillFailed("bind message content", owner, owner_url, id, err);
+            return;
+        };
+        _ = ins.step() catch |err| {
+            backfillFailed("insert message", owner, owner_url, id, err);
+            return;
+        };
         stored_bytes += m.content.len;
     }
     // Keep the listing's cached counts beside the rows they describe, the
     // same invariant saveSession maintains; a stale figure here would make
     // every later listing scan this transcript instead of trusting meta.
     var nbuf: [24]u8 = undefined;
-    store.setMeta("message_count", std.fmt.bufPrint(&nbuf, "{d}", .{parsed.messages.len}) catch return) catch return;
+    store.setMeta("message_count", std.fmt.bufPrint(&nbuf, "{d}", .{parsed.messages.len}) catch "0") catch |err| {
+        backfillFailed("store message count", owner, owner_url, id, err);
+        return;
+    };
     var bbuf: [24]u8 = undefined;
-    store.setMeta("message_bytes", std.fmt.bufPrint(&bbuf, "{d}", .{stored_bytes}) catch return) catch return;
-    tx.commit() catch return;
+    store.setMeta("message_bytes", std.fmt.bufPrint(&bbuf, "{d}", .{stored_bytes}) catch "0") catch |err| {
+        backfillFailed("store message bytes", owner, owner_url, id, err);
+        return;
+    };
+    tx.commit() catch |err| {
+        backfillFailed("commit transcript", owner, owner_url, id, err);
+    };
 }
